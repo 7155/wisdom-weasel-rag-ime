@@ -35,6 +35,8 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "planning.mutation.rollback",
                 "memory.summary",
                 "memory.pages",
+                "memory.graph.get",
+                "memory.entity.get",
                 "history.page",
                 "knowledge.start",
                 "knowledge.cancel",

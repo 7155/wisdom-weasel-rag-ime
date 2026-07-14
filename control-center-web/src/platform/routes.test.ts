@@ -63,6 +63,8 @@ const canonicalPathIds = [
   'planning.mutation.rollback',
   'memory.summary',
   'memory.pages',
+  'memory.graph.get',
+  'memory.entity.get',
   'history.page',
   'knowledge.start',
   'knowledge.cancel',
@@ -81,7 +83,7 @@ const canonicalPathIds = [
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(68);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(70);
   });
 
   it('resolves only allowlisted path parameters', () => {
@@ -92,6 +94,12 @@ describe('control route policy', () => {
       resolveControlPath('agent.session.prompt', { sessionId: 'https://evil.invalid' }),
     ).toThrow(ControlRoutePolicyError);
     expect(() => resolveControlPath('memory.pages', { kind: 'private-db' })).toThrow(
+      /not allowlisted/,
+    );
+    expect(resolveControlPath('memory.entity.get', { kind: 'group', entityId: 'group:input-method' })).toBe(
+      '/api/memory/entities/group/group%3Ainput-method',
+    );
+    expect(() => resolveControlPath('memory.entity.get', { kind: 'book', entityId: 'book-1' })).toThrow(
       /not allowlisted/,
     );
   });

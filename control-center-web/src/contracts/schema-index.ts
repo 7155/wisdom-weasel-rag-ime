@@ -4378,6 +4378,213 @@ export const contractSchemas = {
       }
     }
   },
+  "management-work-error.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.management-work-error.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "errorCode",
+      "error",
+      "currentRevision"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.management-work-error.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": false
+      },
+      "errorCode": {
+        "type": "string",
+        "enum": [
+          "confirmation_mismatch",
+          "domain_not_applicable",
+          "domain_not_found",
+          "domain_rejected",
+          "domain_scope_mismatch",
+          "invalid_payload",
+          "invalid_request",
+          "payload_hash_mismatch",
+          "payload_too_large",
+          "preview_already_used",
+          "preview_expired",
+          "preview_not_found",
+          "preview_path_mismatch",
+          "receipt_already_rolled_back",
+          "receipt_not_found",
+          "receipt_path_mismatch",
+          "revision_mismatch",
+          "rollback_authority_mismatch",
+          "rollback_path_mismatch",
+          "rollback_state_changed",
+          "rollback_token_mismatch",
+          "rollback_unavailable",
+          "stored_contract_invalid",
+          "unsupported_backend",
+          "unsupported_mutation"
+        ]
+      },
+      "error": {
+        "type": "string",
+        "minLength": 1
+      },
+      "currentRevision": {
+        "type": "object"
+      }
+    }
+  },
+  "management-work-preview.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.management-work-preview.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "previewToken",
+      "pathId",
+      "payloadSha256",
+      "expectedRevision",
+      "expiresAtMs",
+      "requiredConfirm",
+      "summary"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.management-work-preview.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "previewToken": {
+        "type": "string",
+        "minLength": 32
+      },
+      "pathId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "payloadSha256": {
+        "type": "string",
+        "minLength": 71
+      },
+      "expectedRevision": {
+        "type": "object"
+      },
+      "expiresAtMs": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "requiredConfirm": {
+        "type": "string",
+        "minLength": 1
+      },
+      "summary": {
+        "type": "object",
+        "required": [
+          "title",
+          "items",
+          "risk"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "management-work-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.management-work-receipt.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "receiptId",
+      "pathId",
+      "payloadSha256",
+      "appliedAtMs",
+      "auditId",
+      "rollbackAvailable",
+      "rollbackToken",
+      "rollbackAuthority",
+      "restartComponents",
+      "result"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.management-work-receipt.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "pathId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "payloadSha256": {
+        "type": "string",
+        "minLength": 71
+      },
+      "appliedAtMs": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "auditId": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "rollbackAvailable": {
+        "type": "boolean"
+      },
+      "rollbackToken": {
+        "type": "string"
+      },
+      "rollbackAuthority": {
+        "type": "object"
+      },
+      "restartComponents": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "result": {
+        "type": "object"
+      },
+      "rollbackOfReceiptId": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
   "memory-catalog.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.memory-catalog.v1",
@@ -4462,6 +4669,697 @@ export const contractSchemas = {
             ]
           }
         }
+      }
+    }
+  },
+  "memory-entity.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.memory-entity.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "settingsRevision",
+      "runtimeRevision",
+      "kind",
+      "entityId",
+      "entityRevision",
+      "project",
+      "entity",
+      "attributes",
+      "connections",
+      "members",
+      "limits"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.memory-entity.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "settingsRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "runtimeRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "tag",
+          "group"
+        ]
+      },
+      "entityId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "entityRevision": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "project": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "entity": {
+        "$ref": "#/$defs/node"
+      },
+      "attributes": {
+        "$ref": "#/$defs/attributes"
+      },
+      "connections": {
+        "$ref": "#/$defs/page"
+      },
+      "members": {
+        "$ref": "#/$defs/page"
+      },
+      "limits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "connectionsLimit",
+          "membersLimit"
+        ],
+        "properties": {
+          "connectionsLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "membersLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      }
+    },
+    "$defs": {
+      "nodeKind": {
+        "type": "string",
+        "enum": [
+          "tag",
+          "group",
+          "atom",
+          "book",
+          "phrase",
+          "memory"
+        ]
+      },
+      "node": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "entityId",
+          "kind",
+          "label",
+          "description",
+          "color",
+          "status",
+          "source",
+          "project",
+          "qualityScore",
+          "memberCount",
+          "edgeCount",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "entityId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "$ref": "#/$defs/nodeKind"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "teal",
+              "green",
+              "orange",
+              "pink",
+              "purple",
+              "gray"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "project": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "qualityScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "memberCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "edgeCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "attributes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "aliases",
+          "tags"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "aliases": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        }
+      },
+      "edge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "sourceId",
+          "targetId",
+          "sourceKind",
+          "targetKind",
+          "relation",
+          "weight",
+          "directionBias",
+          "evidenceCount",
+          "source",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tagRelation",
+              "groupMember",
+              "tagMember"
+            ]
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "targetId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "sourceKind": {
+            "$ref": "#/$defs/nodeKind"
+          },
+          "targetKind": {
+            "$ref": "#/$defs/nodeKind"
+          },
+          "relation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "directionBias": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "evidenceCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "related": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node",
+          "edge"
+        ],
+        "properties": {
+          "node": {
+            "$ref": "#/$defs/node"
+          },
+          "edge": {
+            "$ref": "#/$defs/edge"
+          }
+        }
+      },
+      "page": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextCursor",
+          "limit",
+          "hasMore"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/$defs/related"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "maxLength": 7
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "memory-graph.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.memory-graph.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "settingsRevision",
+      "runtimeRevision",
+      "graphRevision",
+      "plane",
+      "project",
+      "filters",
+      "nodes",
+      "edges",
+      "truncated",
+      "limits"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.memory-graph.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "settingsRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "runtimeRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "graphRevision": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "plane": {
+        "type": "string",
+        "enum": [
+          "tags",
+          "groups"
+        ]
+      },
+      "project": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "filters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "query",
+          "focusId",
+          "minWeight"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "merged",
+              "all"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "focusId": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "minWeight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "nodes": {
+        "type": "array",
+        "maxItems": 200,
+        "items": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "edges": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "$ref": "#/$defs/edge"
+        }
+      },
+      "truncated": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "boolean"
+          },
+          "edges": {
+            "type": "boolean"
+          }
+        }
+      },
+      "limits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodeLimit",
+          "edgeLimit",
+          "depth"
+        ],
+        "properties": {
+          "nodeLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "edgeLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          }
+        }
+      }
+    },
+    "$defs": {
+      "nodeKind": {
+        "type": "string",
+        "enum": [
+          "tag",
+          "group",
+          "atom",
+          "book",
+          "phrase"
+        ]
+      },
+      "node": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "entityId",
+          "kind",
+          "label",
+          "description",
+          "color",
+          "status",
+          "source",
+          "project",
+          "qualityScore",
+          "memberCount",
+          "edgeCount",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "entityId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "$ref": "#/$defs/nodeKind"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "teal",
+              "green",
+              "orange",
+              "pink",
+              "purple",
+              "gray"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "project": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "qualityScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "memberCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "edgeCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "edge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "sourceId",
+          "targetId",
+          "sourceKind",
+          "targetKind",
+          "relation",
+          "weight",
+          "directionBias",
+          "evidenceCount",
+          "source",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tagRelation",
+              "groupMember"
+            ]
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "targetId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "sourceKind": {
+            "$ref": "#/$defs/nodeKind"
+          },
+          "targetKind": {
+            "$ref": "#/$defs/nodeKind"
+          },
+          "relation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "directionBias": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "evidenceCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "memory-read-error.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.memory-read-error.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "errorCode",
+      "error"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.memory-read-error.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": false
+      },
+      "errorCode": {
+        "type": "string",
+        "const": "invalid_request"
+      },
+      "error": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
       }
     }
   },

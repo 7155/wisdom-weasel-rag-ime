@@ -6,8 +6,8 @@ import { useMemoryGraphQueries } from './api';
 import {
   buildGroupTagGraph,
   buildTagGraph,
-  parseMemoryGroupPage,
-  parseMemoryTagPage,
+  mergeMemoryGraphTags,
+  parseMemoryGraph,
   truncateGraphLabel,
   type BipartiteGraphEdge,
   type BipartiteGraphLayout,
@@ -30,17 +30,21 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
   const [selectedTagId, setSelectedTagId] = useState('');
   const [selectedBipartiteKey, setSelectedBipartiteKey] = useState('');
   const queries = useMemoryGraphQueries(enabled);
-  const tagPage = useMemo(() => parseMemoryTagPage(queries.tags.data), [queries.tags.data]);
-  const groupPage = useMemo(() => parseMemoryGroupPage(queries.groups.data), [queries.groups.data]);
-  const tagGraph = useMemo(() => buildTagGraph(tagPage.items), [tagPage.items]);
-  const groupTagGraph = useMemo(() => buildGroupTagGraph(groupPage.items, tagPage.items), [groupPage.items, tagPage.items]);
+  const tagPayload = useMemo(() => parseMemoryGraph(queries.tags.data), [queries.tags.data]);
+  const groupPayload = useMemo(() => parseMemoryGraph(queries.groups.data), [queries.groups.data]);
+  const tags = useMemo(
+    () => mergeMemoryGraphTags(tagPayload.tags, groupPayload.tags),
+    [groupPayload.tags, tagPayload.tags],
+  );
+  const tagGraph = useMemo(() => buildTagGraph(tagPayload.tags), [tagPayload.tags]);
+  const groupTagGraph = useMemo(() => buildGroupTagGraph(groupPayload.groups, tags), [groupPayload.groups, tags]);
   const error = (queries.tags.error ?? queries.groups.error) as Error | null;
   const pending = queries.tags.isPending || queries.groups.isPending;
   const refresh = () => void Promise.all([queries.tags.refetch(), queries.groups.refetch()]);
 
   return (
     <ManagementSection
-      description="只读取 tags 与 groups 当前页，各页最多 50 条；不会把局部关系误当成完整知识图谱。"
+      description="读取受控的 Tag 与 Group 关系图；节点和边均有明确上限，不读取原始记忆正文。"
       title="记忆关系"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
@@ -54,10 +58,10 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
             />
             <GraphScope
               clipped={view === 'tags'
-                ? tagPage.hasMore || tagGraph.clipped
-                : tagPage.hasMore || groupPage.hasMore || groupTagGraph.clipped}
-              groups={groupPage.items.length}
-              tags={tagPage.items.length}
+                ? tagPayload.truncated || tagGraph.clipped
+                : tagPayload.truncated || groupPayload.truncated || groupTagGraph.clipped}
+              groups={groupPayload.groups.length}
+              tags={tags.length}
             />
           </div>
 
@@ -346,7 +350,7 @@ function GroupTagNetwork({
                 <circle className="memory-graph__node-shape" fill={tag.color} r={tag.radius} stroke={tag.color} />
                 <text className="memory-graph__bipartite-label" x={tag.radius + 8} y={-2}>{truncateGraphLabel(tag.label, 16)}</text>
                 <text className="memory-graph__bipartite-count" x={tag.radius + 8} y={12}>
-                  {tag.presentOnTagPage ? `${tag.itemCount} 记忆` : '仅见于 Group 页'}
+                  {tag.presentOnTagGraph ? `${tag.itemCount} 记忆` : '仅见于 Group 图'}
                 </text>
               </g>
             );
@@ -389,7 +393,7 @@ function BipartiteInspector({
         <dl>
           <div><dt>{group ? '知识事件' : '关联记忆'}</dt><dd>{group?.eventCount ?? tag?.itemCount ?? 0}</dd></div>
           <div><dt>当前页连接</dt><dd>{relations.length}</dd></div>
-          {tag ? <div><dt>标签详情</dt><dd>{tag.presentOnTagPage ? '当前页已加载' : '当前页缺失'}</dd></div> : null}
+          {tag ? <div><dt>标签详情</dt><dd>{tag.presentOnTagGraph ? 'Tag 图已加载' : '仅 Group 图'}</dd></div> : null}
         </dl>
         {group?.tags.length ? <p>标签：{group.tags.join('、')}</p> : null}
       </div>
@@ -407,7 +411,7 @@ function BipartiteInspector({
                   <tr key={`${edge.groupId}-${edge.tagId}`}>
                     <td><button className="memory-graph__relation-link" onClick={() => onSelect(groupKey(edge.groupId))} type="button">{relatedGroup?.label ?? edge.groupId}</button></td>
                     <td><button className="memory-graph__relation-link" onClick={() => onSelect(tagKey(edge.tagId))} type="button">{relatedTag?.label ?? edge.tagId}</button></td>
-                    <td>{relatedTag?.presentOnTagPage ? 'Group + Tag 当前页' : '仅 Group 当前页'}</td>
+                    <td>{relatedTag?.presentOnTagGraph ? 'Group + Tag 图' : '仅 Group 图'}</td>
                   </tr>
                 );
               }) : <tr><td colSpan={3}>当前页没有可见成员关系。</td></tr>}

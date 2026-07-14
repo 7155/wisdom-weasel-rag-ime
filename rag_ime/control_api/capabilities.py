@@ -73,6 +73,8 @@ def build_capabilities(
             "managementWorkContract": ControlPathId.PLANNING_MUTATION_PREVIEW.value in route_ids,
             "planningWorkContract": ControlPathId.PLANNING_TASK_SAVE.value in route_ids,
             "knowledgeDatabaseWorkContract": ControlPathId.KNOWLEDGE_DATABASE_APPLY_PREVIEW.value in route_ids,
+            "memoryGraphRead": ControlPathId.MEMORY_GRAPH_GET.value in route_ids,
+            "memoryEntityRead": ControlPathId.MEMORY_ENTITY_GET.value in route_ids,
             "subscriptions": bool(subscriptions),
             "sessionSnapshot": ControlPathId.AGENT_SESSION_SNAPSHOT.value in route_ids,
             "roomSnapshot": ControlPathId.AGENT_ROOM_SNAPSHOT.value in route_ids,

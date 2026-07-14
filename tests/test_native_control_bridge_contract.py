@@ -175,6 +175,8 @@ class NativeControlBridgeContractTests(unittest.TestCase):
             "managementWorkContract",
             "planningWorkContract",
             "knowledgeDatabaseWorkContract",
+            "memoryGraphRead",
+            "memoryEntityRead",
         ):
             self.assertIn(f'"{key}": true', capability_block)
 

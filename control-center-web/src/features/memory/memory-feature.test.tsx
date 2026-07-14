@@ -11,12 +11,13 @@ import { MemoryFeature } from './index';
 afterEach(cleanup);
 
 describe('MemoryFeature relations', () => {
-  it('loads bounded tag/group pages and links keyboard node selection to accessible tables', async () => {
+  it('loads bounded tag/group graphs and links keyboard node selection to accessible tables', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
         'memory.summary': { ok: true, eventCount: 18, memoryItemCount: 14, memoryBookCount: 4, memoryAtomCount: 10, pendingCompileEvents: 2 },
         'memory.pages': (request: ControlRequest) => memoryPage(String(request.params?.kind ?? '')),
+        'memory.graph.get': (request: ControlRequest) => memoryGraph(String(request.query?.plane ?? '')),
       },
     });
     renderMemory(transport);
@@ -28,10 +29,10 @@ describe('MemoryFeature relations', () => {
 
     await waitFor(() => {
       const graphRequests = transport.requests.filter((call) =>
-        call.request.pathId === 'memory.pages' && ['groups', 'tags'].includes(String(call.request.params?.kind)));
+        call.request.pathId === 'memory.graph.get');
       expect(graphRequests).toHaveLength(2);
       for (const call of graphRequests) {
-        expect(call.request.query).toMatchObject({ limit: 50, cursor: '' });
+        expect(call.request.query).toMatchObject({ depth: 1, minWeight: 0 });
       }
     });
 
@@ -62,6 +63,92 @@ function renderMemory(transport: MockControlTransport) {
       </ControlTransportProvider>
     </TooltipProvider>,
   );
+}
+
+function memoryGraph(plane: string): Record<string, unknown> {
+  const tagAgent = graphNode('tag:agent', 'tag', 'Agent Runtime', 11, 'Agent 生命周期与工具边界');
+  const tagMemory = graphNode('tag:memory', 'tag', 'Memory', 5, '记忆组织与检索');
+  if (plane === 'tags') {
+    return graphEnvelope('tags', [tagAgent, tagMemory], [{
+      id: 'edge:agent-memory',
+      kind: 'tagRelation',
+      sourceId: 'tag:agent',
+      targetId: 'tag:memory',
+      sourceKind: 'tag',
+      targetKind: 'tag',
+      relation: 'related_to',
+      weight: 0.9,
+      directionBias: 0,
+      evidenceCount: 6,
+      source: 'sqlite',
+      updatedAtMs: 1,
+    }], true);
+  }
+  return graphEnvelope(
+    'groups',
+    [graphNode('group:agent', 'group', 'Agent 工程', 12, 'Agent 陪伴与恢复'), tagAgent, tagMemory],
+    [tagAgent, tagMemory].map((tag) => ({
+      id: `membership:${String(tag.id)}`,
+      kind: 'groupMember',
+      sourceId: 'group:agent',
+      targetId: tag.id,
+      sourceKind: 'group',
+      targetKind: 'tag',
+      relation: 'contains',
+      weight: 1,
+      directionBias: 0,
+      evidenceCount: 1,
+      source: 'sqlite',
+      updatedAtMs: 1,
+    })),
+    false,
+  );
+}
+
+function graphEnvelope(
+  plane: 'tags' | 'groups',
+  nodes: Record<string, unknown>[],
+  edges: Record<string, unknown>[],
+  truncated: boolean,
+): Record<string, unknown> {
+  return {
+      schemaVersion: 'rag-ime.memory-graph.v1',
+    ok: true,
+    settingsRevision: 'settings:test',
+    runtimeRevision: 1,
+    graphRevision: `sha256:${'a'.repeat(64)}`,
+    plane,
+    project: 'wisdom-weasel-rag-ime',
+    filters: { status: 'active', query: '', focusId: '', minWeight: 0 },
+    nodes,
+    edges,
+    truncated: { nodes: truncated, edges: false },
+    limits: { nodeLimit: 80, edgeLimit: 160, depth: 1 },
+  };
+}
+
+function graphNode(
+  id: string,
+  kind: 'tag' | 'group',
+  label: string,
+  memberCount: number,
+  description: string,
+): Record<string, unknown> {
+  return {
+    id,
+    entityId: id.split(':').at(-1),
+    kind,
+    label,
+    description,
+    color: kind === 'group' ? 'blue' : 'teal',
+    status: 'active',
+    source: 'sqlite',
+    project: 'wisdom-weasel-rag-ime',
+    qualityScore: 1,
+    memberCount,
+    edgeCount: 1,
+    updatedAtMs: 1,
+  };
 }
 
 function memoryPage(kind: string): Record<string, unknown> {

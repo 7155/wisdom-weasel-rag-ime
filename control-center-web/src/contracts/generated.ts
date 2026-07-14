@@ -44,7 +44,13 @@ import type { FrontendSelectionResponseV1 } from './generated/frontend-selection
 import type { FrontendSelectionV1 } from './generated/frontend-selection.v1';
 import type { FrontendSuggestRequestV1 } from './generated/frontend-suggest-request.v1';
 import type { FrontendSuggestResponseV1 } from './generated/frontend-suggest-response.v1';
+import type { ManagementWorkErrorV1 } from './generated/management-work-error.v1';
+import type { ManagementWorkPreviewV1 } from './generated/management-work-preview.v1';
+import type { ManagementWorkReceiptV1 } from './generated/management-work-receipt.v1';
 import type { MemoryCatalogV1 } from './generated/memory-catalog.v1';
+import type { MemoryEntityV1 } from './generated/memory-entity.v1';
+import type { MemoryGraphV1 } from './generated/memory-graph.v1';
+import type { MemoryReadErrorV1 } from './generated/memory-read-error.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
 import type { PiRuntimeManifestV1 } from './generated/pi-runtime-manifest.v1';
 import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
@@ -93,7 +99,13 @@ export type {
   FrontendSelectionV1,
   FrontendSuggestRequestV1,
   FrontendSuggestResponseV1,
+  ManagementWorkErrorV1,
+  ManagementWorkPreviewV1,
+  ManagementWorkReceiptV1,
   MemoryCatalogV1,
+  MemoryEntityV1,
+  MemoryGraphV1,
+  MemoryReadErrorV1,
   OverlayConfigV1,
   PiRuntimeManifestV1,
   RimeRankSelectionV1,
@@ -143,7 +155,13 @@ export interface ContractTypeMap {
   'frontend-selection.v1': FrontendSelectionV1;
   'frontend-suggest-request.v1': FrontendSuggestRequestV1;
   'frontend-suggest-response.v1': FrontendSuggestResponseV1;
+  'management-work-error.v1': ManagementWorkErrorV1;
+  'management-work-preview.v1': ManagementWorkPreviewV1;
+  'management-work-receipt.v1': ManagementWorkReceiptV1;
   'memory-catalog.v1': MemoryCatalogV1;
+  'memory-entity.v1': MemoryEntityV1;
+  'memory-graph.v1': MemoryGraphV1;
+  'memory-read-error.v1': MemoryReadErrorV1;
   'overlay-config.v1': OverlayConfigV1;
   'pi-runtime-manifest.v1': PiRuntimeManifestV1;
   'rime-rank-selection.v1': RimeRankSelectionV1;

@@ -135,6 +135,8 @@ final class NativeRoutePolicy {
             "planning.mutation.rollback": route("POST", "/api/planning/mutation/rollback", "/control/v1/planning/mutation/rollback", bodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
             "memory.summary": route("GET", "/api/memory/summary", "/control/v1/memory/summary", remoteSafe: true),
             "memory.pages": route("GET", "/api/memory/{kind}", "/control/v1/memory/{kind}", query: ["limit", "cursor", "query", "status"], remoteSafe: true),
+            "memory.graph.get": route("GET", "/api/memory/graph", "/control/v1/memory/graph", query: ["plane", "project", "status", "query", "focusId", "depth", "nodeLimit", "edgeLimit", "minWeight"], requiredQuery: ["plane"], remoteSafe: true),
+            "memory.entity.get": route("GET", "/api/memory/entities/{kind}/{entityId}", "/control/v1/memory/entities/{kind}/{entityId}", query: ["project", "connectionsLimit", "connectionsCursor", "membersLimit", "membersCursor"], remoteSafe: true),
             "history.page": route("GET", "/api/history/page", "/control/v1/history/page", query: ["limit", "cursor", "query", "filter"], remoteSafe: true),
             "knowledge.start": route("POST", "/api/knowledge/start", "/control/v1/knowledge/start", bodyKeys: ["question", "context", "mode", "includeNotion", "generation", "contextHash", "clientId", "project", "app", "maxChars", "latencyBudgetMs"], requiredBodyKeys: ["question"]),
             "knowledge.cancel": route("POST", "/api/knowledge/cancel", "/control/v1/knowledge/cancel", bodyKeys: ["sessionId", "id"]),
@@ -242,6 +244,11 @@ final class NativeRoutePolicy {
         if pathId == "memory.pages",
            let kind = parameters["kind"],
            !Set(["books", "atoms", "tags", "phrases", "groups", "negative"]).contains(kind) {
+            throw NativeRoutePolicyError.invalidParameter("kind")
+        }
+        if pathId == "memory.entity.get",
+           let kind = parameters["kind"],
+           !Set(["tag", "group"]).contains(kind) {
             throw NativeRoutePolicyError.invalidParameter("kind")
         }
 

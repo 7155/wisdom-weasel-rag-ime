@@ -69,6 +69,8 @@ class ControlPathId(str, Enum):
     PLANNING_MUTATION_ROLLBACK = "planning.mutation.rollback"
     MEMORY_SUMMARY = "memory.summary"
     MEMORY_PAGES = "memory.pages"
+    MEMORY_GRAPH_GET = "memory.graph.get"
+    MEMORY_ENTITY_GET = "memory.entity.get"
     HISTORY_PAGE = "history.page"
     KNOWLEDGE_START = "knowledge.start"
     KNOWLEDGE_CANCEL = "knowledge.cancel"
@@ -429,6 +431,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.PLANNING_MUTATION_ROLLBACK, ControlMethod.POST, "/api/planning/mutation/rollback", "/control/v1/planning/mutation/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_SUMMARY, ControlMethod.GET, "/api/memory/summary", "/control/v1/memory/summary", scopes=[ControlScope.MEMORY_READ], remote_safe=True),
         _route(ControlPathId.MEMORY_PAGES, ControlMethod.GET, "/api/memory/{kind}", "/control/v1/memory/{kind}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind"}, param_values={"kind": {"books", "atoms", "tags", "phrases", "groups", "negative"}}, query=_PAGE_QUERY),
+        _route(ControlPathId.MEMORY_GRAPH_GET, ControlMethod.GET, "/api/memory/graph", "/control/v1/memory/graph", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"plane", "project", "status", "query", "focusId", "depth", "nodeLimit", "edgeLimit", "minWeight"}, required_query={"plane"}),
+        _route(ControlPathId.MEMORY_ENTITY_GET, ControlMethod.GET, "/api/memory/entities/{kind}/{entityId}", "/control/v1/memory/entities/{kind}/{entityId}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind", "entityId"}, param_values={"kind": {"tag", "group"}}, query={"project", "connectionsLimit", "connectionsCursor", "membersLimit", "membersCursor"}),
         _route(ControlPathId.HISTORY_PAGE, ControlMethod.GET, "/api/history/page", "/control/v1/history/page", scopes=[ControlScope.HISTORY_READ], remote_safe=True, query={"limit", "cursor", "query", "filter"}),
         _route(ControlPathId.KNOWLEDGE_START, ControlMethod.POST, "/api/knowledge/start", "/control/v1/knowledge/start", body={"question", "context", "mode", "includeNotion", "generation", "contextHash", "clientId", "project", "app", "maxChars", "latencyBudgetMs"}, required_body={"question"}),
         _route(ControlPathId.KNOWLEDGE_CANCEL, ControlMethod.POST, "/api/knowledge/cancel", "/control/v1/knowledge/cancel", body={"sessionId", "id"}),

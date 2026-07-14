@@ -83,6 +83,24 @@ struct NativeRoutePolicyTests {
             scope: .remote
         )
 
+        let memoryGraph = try policy.resolveRequest(
+            pathId: "memory.graph.get",
+            parameters: [:],
+            query: ["plane": "groups", "nodeLimit": "80", "edgeLimit": "160"],
+            body: nil,
+            scope: .remote
+        )
+        expect(memoryGraph.request.url?.path == "/api/memory/graph", "bounded memory graph route")
+
+        let memoryEntity = try policy.resolveRequest(
+            pathId: "memory.entity.get",
+            parameters: ["kind": "group", "entityId": "group:input-method"],
+            query: ["membersLimit": "50"],
+            body: nil,
+            scope: .remote
+        )
+        expect(memoryEntity.request.url?.path == "/api/memory/entities/group/group:input-method", "bounded memory entity route")
+
         let planningPreview = try policy.resolveRequest(
             pathId: "planning.mutation.preview",
             parameters: [:],
@@ -205,6 +223,22 @@ struct NativeRoutePolicyTests {
             _ = try policy.resolveRequest(
                 pathId: "memory.pages",
                 parameters: ["kind": "../../etc"],
+                query: [:],
+                body: nil
+            )
+        }
+        expectThrows("missing memory graph plane") {
+            _ = try policy.resolveRequest(
+                pathId: "memory.graph.get",
+                parameters: [:],
+                query: [:],
+                body: nil
+            )
+        }
+        expectThrows("invalid memory entity kind") {
+            _ = try policy.resolveRequest(
+                pathId: "memory.entity.get",
+                parameters: ["kind": "book", "entityId": "book-1"],
                 query: [:],
                 body: nil
             )

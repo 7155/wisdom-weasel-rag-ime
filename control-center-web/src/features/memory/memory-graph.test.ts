@@ -2,54 +2,37 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGroupTagGraph,
   buildTagGraph,
-  parseMemoryGroupPage,
-  parseMemoryTagPage,
+  mergeMemoryGraphTags,
+  parseMemoryGraph,
   safeGraphColor,
   tagEdgeStrokeWidth,
   tagNodeRadius,
 } from './memory-graph';
 
 describe('memory graph parsing', () => {
-  it('accepts only the existing tag and group page shapes', () => {
-    const tags = parseMemoryTagPage({
-      items: [
-        {
-          id: '7',
-          tag: 'Agent Runtime',
-          description: '运行时边界',
-          aliases: ['Agent', 42, 'Agent'],
-          item_count: 9,
-          edge_count: 2,
-          color_token: 'teal',
-          connections: [
-            { id: '8', tag: 'Memory', type: 'related_to', weight: 0.8, evidenceCount: 4 },
-            { id: 9, weight: '1.0' },
-          ],
-        },
-        { id: 8, tag: null },
-        'not-an-item',
-      ],
-      nextCursor: '7',
-    });
-    const groups = parseMemoryGroupPage({
-      items: [
-        { id: 'group:runtime', title: 'Agent 工程', note: '边界与恢复', tags: ['Agent Runtime', 8, 'Memory'], event_count: 12, color_token: 'green' },
-        { id: 3, title: 'invalid' },
-      ],
-      nextCursor: '',
-    });
+  it('accepts the bounded memory graph contract and rejects legacy page payloads', () => {
+    const tags = parseMemoryGraph(tagGraphPayload());
+    const groups = parseMemoryGraph(groupGraphPayload());
 
-    expect(tags.hasMore).toBe(true);
-    expect(tags.items).toEqual([
-      expect.objectContaining({ id: '7', label: 'Agent Runtime', aliases: ['Agent'], itemCount: 9, edgeCount: 2 }),
+    expect(tags.truncated).toBe(true);
+    expect(tags.tags).toEqual([
+      expect.objectContaining({ id: 'tag:agent', entityId: 'agent', label: 'Agent Runtime', itemCount: 11 }),
+      expect.objectContaining({ id: 'tag:memory', entityId: 'memory', label: 'Memory', itemCount: 5 }),
     ]);
-    expect(tags.items[0]?.connections).toEqual([
-      expect.objectContaining({ targetId: '8', weight: 0.8, evidenceCount: 4 }),
+    expect(tags.tags[0]?.connections).toEqual([
+      expect.objectContaining({ targetId: 'tag:memory', weight: 0.9, evidenceCount: 6 }),
     ]);
-    expect(groups).toEqual({
-      hasMore: false,
-      items: [expect.objectContaining({ id: 'group:runtime', label: 'Agent 工程', tags: ['Agent Runtime', 'Memory'], eventCount: 12 })],
-    });
+    expect(groups.groups).toEqual([
+      expect.objectContaining({
+        id: 'group:agent',
+        entityId: 'agent',
+        label: 'Agent 工程',
+        tagIds: ['tag:agent', 'tag:memory'],
+        tags: ['Agent Runtime', 'Memory'],
+        eventCount: 12,
+      }),
+    ]);
+    expect(parseMemoryGraph({ items: [] })).toEqual({ groups: [], tags: [], truncated: false });
   });
 
   it('maps untrusted color values only through the safe token table', () => {
@@ -68,43 +51,104 @@ describe('memory graph layout', () => {
   });
 
   it('produces deterministic tag nodes and deduplicated visible edges', () => {
-    const page = parseMemoryTagPage({
-      items: [
-        { id: 'b', tag: 'Memory', item_count: 5, edge_count: 1, connections: [{ id: 'a', type: 'related_to', weight: 0.4, evidenceCount: 1 }] },
-        { id: 'a', tag: 'Agent', item_count: 8, edge_count: 2, connections: [{ id: 'b', type: 'related_to', weight: 0.8, evidenceCount: 4 }] },
-      ],
-    });
-    const forward = buildTagGraph(page.items);
-    const reverse = buildTagGraph([...page.items].reverse());
+    const tags = parseMemoryGraph(tagGraphPayload()).tags;
+    const forward = buildTagGraph(tags);
+    const reverse = buildTagGraph([...tags].reverse());
 
     expect(forward).toEqual(reverse);
-    expect(forward.nodes.map((node) => node.id)).toEqual(['a', 'b']);
+    expect(forward.nodes.map((node) => node.id)).toEqual(['tag:agent', 'tag:memory']);
     expect(forward.edges).toHaveLength(1);
-    expect(forward.edges[0]).toEqual(expect.objectContaining({ source: 'a', target: 'b', weight: 0.8, evidenceCount: 4 }));
+    expect(forward.edges[0]).toEqual(expect.objectContaining({
+      source: 'tag:agent',
+      target: 'tag:memory',
+      weight: 0.9,
+      evidenceCount: 6,
+    }));
   });
 
-  it('builds the Group and Tag bipartite graph from group tags without inventing counts', () => {
-    const groups = parseMemoryGroupPage({
-      items: [
-        { id: 'g1', title: 'Agent 工程', tags: ['Agent', 'Missing'], event_count: 20 },
-        { id: 'g2', title: '输入法', tags: ['Agent'], event_count: 4 },
-      ],
-    });
-    const tags = parseMemoryTagPage({
-      items: [{ id: 't1', tag: 'Agent', item_count: 11, edge_count: 1, color_token: 'teal' }],
-    });
-    const graph = buildGroupTagGraph(groups.items, tags.items);
+  it('builds a collision-free Group and Tag graph at the maximum visible node count', () => {
+    const parsedGroups = parseMemoryGraph(groupGraphPayload(12));
+    const parsedTags = parseMemoryGraph(tagGraphPayload(12));
+    const tags = mergeMemoryGraphTags(parsedTags.tags, parsedGroups.tags);
+    const graph = buildGroupTagGraph(parsedGroups.groups, tags);
 
-    expect(graph.groups.map((group) => group.id)).toEqual(['g1', 'g2']);
-    expect(graph.tags.map((tag) => [tag.label, tag.itemCount, tag.presentOnTagPage])).toEqual([
-      ['Agent', 11, true],
-      ['Missing', 0, false],
-    ]);
-    expect(graph.edges).toEqual([
-      { groupId: 'g1', tagId: 'group-tag:missing' },
-      { groupId: 'g1', tagId: 't1' },
-      { groupId: 'g2', tagId: 't1' },
-    ]);
-    expect(graph.groups[0]!.width).toBeGreaterThan(graph.groups[1]!.width);
+    expect(graph.tags).toHaveLength(12);
+    expect(graph.height).toBeGreaterThan(620);
+    for (let index = 1; index < graph.tags.length; index += 1) {
+      const previous = graph.tags[index - 1]!;
+      const current = graph.tags[index]!;
+      expect(current.y - previous.y).toBeGreaterThanOrEqual(previous.radius + current.radius + 12);
+    }
   });
 });
+
+function graphNode(
+  id: string,
+  kind: 'tag' | 'group',
+  label: string,
+  memberCount: number,
+): Record<string, unknown> {
+  return {
+    id,
+    entityId: id.split(':').at(-1),
+    kind,
+    label,
+    description: `${label} description`,
+    color: kind === 'group' ? 'blue' : 'teal',
+    status: 'active',
+    source: 'sqlite',
+    project: 'wisdom-weasel-rag-ime',
+    qualityScore: 1,
+    memberCount,
+    edgeCount: 1,
+    updatedAtMs: 1,
+  };
+}
+
+function tagGraphPayload(count = 2): Record<string, unknown> {
+  const nodes = Array.from({ length: count }, (_, index) => graphNode(
+    index === 0 ? 'tag:agent' : index === 1 ? 'tag:memory' : `tag:${index}`,
+    'tag',
+    index === 0 ? 'Agent Runtime' : index === 1 ? 'Memory' : `Tag ${index}`,
+    index === 0 ? 11 : index === 1 ? 5 : 5 + index,
+  ));
+  return {
+    schemaVersion: 'rag-ime.memory-graph.v1',
+    plane: 'tags',
+    nodes,
+    edges: count > 1 ? [{
+      id: 'edge:agent-memory',
+      kind: 'tagRelation',
+      sourceId: 'tag:agent',
+      targetId: 'tag:memory',
+      relation: 'related_to',
+      weight: 0.9,
+      evidenceCount: 6,
+    }] : [],
+    truncated: { nodes: true, edges: false },
+  };
+}
+
+function groupGraphPayload(tagCount = 2): Record<string, unknown> {
+  const tags = Array.from({ length: tagCount }, (_, index) => graphNode(
+    index === 0 ? 'tag:agent' : index === 1 ? 'tag:memory' : `tag:${index}`,
+    'tag',
+    index === 0 ? 'Agent Runtime' : index === 1 ? 'Memory' : `Tag ${index}`,
+    5 + index,
+  ));
+  return {
+    schemaVersion: 'rag-ime.memory-graph.v1',
+    plane: 'groups',
+    nodes: [graphNode('group:agent', 'group', 'Agent 工程', 12), ...tags],
+    edges: tags.map((tag) => ({
+      id: `membership:${String(tag.id)}`,
+      kind: 'groupMember',
+      sourceId: 'group:agent',
+      targetId: tag.id,
+      relation: 'contains',
+      weight: 1,
+      evidenceCount: 1,
+    })),
+    truncated: { nodes: false, edges: false },
+  };
+}

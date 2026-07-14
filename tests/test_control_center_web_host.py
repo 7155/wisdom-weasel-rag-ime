@@ -52,7 +52,7 @@ class ControlCenterWebHostTests(unittest.TestCase):
         swift_ids.update(re.findall(r'"(control\.(?:bootstrap|capabilities))"', source))
         python_ids = {item.value for item in ControlPathId}
         self.assertEqual(swift_ids, python_ids)
-        self.assertEqual(len(swift_ids), 68)
+        self.assertEqual(len(swift_ids), 70)
 
     def test_native_route_policy_executes_fail_closed_security_cases(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-native-route-") as temporary:

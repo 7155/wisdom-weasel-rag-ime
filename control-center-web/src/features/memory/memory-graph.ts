@@ -16,14 +16,18 @@ const GRAPH_COLORS = {
 const TAG_GRAPH_WIDTH = 1_000;
 const TAG_GRAPH_HEIGHT = 540;
 const BIPARTITE_GRAPH_WIDTH = 1_000;
-const BIPARTITE_GRAPH_HEIGHT = 620;
+const MIN_BIPARTITE_GRAPH_HEIGHT = 620;
+const BIPARTITE_CONTENT_TOP = 72;
+const BIPARTITE_CONTENT_BOTTOM = 48;
+const BIPARTITE_NODE_GAP = 12;
 const MAX_TAG_GRAPH_NODES = 24;
 const MAX_BIPARTITE_GROUPS = 10;
 const MAX_BIPARTITE_TAGS = 12;
 
-export interface MemoryGraphPage<Item> {
-  items: Item[];
-  hasMore: boolean;
+export interface ParsedMemoryGraph {
+  groups: MemoryGroupNode[];
+  tags: MemoryTagNode[];
+  truncated: boolean;
 }
 
 export interface MemoryTagConnection {
@@ -36,6 +40,7 @@ export interface MemoryTagConnection {
 
 export interface MemoryTagNode {
   id: string;
+  entityId: string;
   label: string;
   description: string;
   aliases: string[];
@@ -43,12 +48,15 @@ export interface MemoryTagNode {
   edgeCount: number;
   color: string;
   connections: MemoryTagConnection[];
+  presentOnTagGraph: boolean;
 }
 
 export interface MemoryGroupNode {
   id: string;
+  entityId: string;
   label: string;
   note: string;
+  tagIds: string[];
   tags: string[];
   eventCount: number;
   color: string;
@@ -88,8 +96,6 @@ export interface PositionedBipartiteTagNode extends MemoryTagNode {
   x: number;
   y: number;
   radius: number;
-  presentOnTagPage: boolean;
-  normalizedLabel: string;
 }
 
 export interface BipartiteGraphEdge {
@@ -106,12 +112,70 @@ export interface BipartiteGraphLayout {
   clipped: boolean;
 }
 
-export function parseMemoryTagPage(payload: unknown): MemoryGraphPage<MemoryTagNode> {
-  return parsePage(payload, parseTag);
+interface GraphNode {
+  id: string;
+  entityId: string;
+  kind: 'tag' | 'group' | 'atom' | 'book' | 'phrase';
+  label: string;
+  description: string;
+  color: string;
+  memberCount: number;
+  edgeCount: number;
 }
 
-export function parseMemoryGroupPage(payload: unknown): MemoryGraphPage<MemoryGroupNode> {
-  return parsePage(payload, parseGroup);
+interface GraphEdge {
+  id: string;
+  kind: 'tagRelation' | 'groupMember';
+  sourceId: string;
+  targetId: string;
+  relation: string;
+  weight: number;
+  evidenceCount: number;
+}
+
+export function parseMemoryGraph(payload: unknown): ParsedMemoryGraph {
+  if (!isRecord(payload)) return { groups: [], tags: [], truncated: false };
+  const plane = payload.plane === 'tags' || payload.plane === 'groups' ? payload.plane : null;
+  if (payload.schemaVersion !== 'rag-ime.memory-graph.v1' || !plane) {
+    return { groups: [], tags: [], truncated: false };
+  }
+
+  const rawNodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+  const rawEdges = Array.isArray(payload.edges) ? payload.edges : [];
+  const graphNodes = rawNodes.map(parseGraphNode).filter((node): node is GraphNode => node !== null);
+  const graphNodeById = new Map(graphNodes.map((node) => [node.id, node]));
+  const graphEdges = rawEdges
+    .map(parseGraphEdge)
+    .filter((edge): edge is GraphEdge => edge !== null)
+    .filter((edge) => graphNodeById.has(edge.sourceId) && graphNodeById.has(edge.targetId));
+  const tagConnections = tagConnectionsByNode(graphEdges, graphNodeById);
+  const tags = graphNodes
+    .filter((node) => node.kind === 'tag')
+    .map((node) => toTagNode(node, tagConnections.get(node.id) ?? [], plane === 'tags'));
+  const groups = graphNodes
+    .filter((node) => node.kind === 'group')
+    .map((node) => toGroupNode(node, graphEdges, graphNodeById));
+  const truncated = isRecord(payload.truncated)
+    && (payload.truncated.nodes === true || payload.truncated.edges === true);
+
+  return { groups, tags, truncated };
+}
+
+export function mergeMemoryGraphTags(
+  primary: readonly MemoryTagNode[],
+  secondary: readonly MemoryTagNode[],
+): MemoryTagNode[] {
+  const merged = new Map<string, MemoryTagNode>();
+  for (const tag of [...secondary, ...primary]) {
+    const current = merged.get(tag.id);
+    merged.set(tag.id, current ? {
+      ...tag,
+      aliases: [...new Set([...current.aliases, ...tag.aliases])],
+      connections: mergeConnections(current.connections, tag.connections),
+      presentOnTagGraph: current.presentOnTagGraph || tag.presentOnTagGraph,
+    } : tag);
+  }
+  return [...merged.values()].sort(compareTags);
 }
 
 export function safeGraphColor(token: unknown): string {
@@ -174,63 +238,56 @@ export function buildGroupTagGraph(
   const selectedGroups = [...groups]
     .sort((left, right) => right.eventCount - left.eventCount || compareText(left.label, right.label) || compareText(left.id, right.id))
     .slice(0, MAX_BIPARTITE_GROUPS);
-  const tagByLabel = preferredTagByLabel(tags);
-  const membership = new Map<string, { count: number; label: string }>();
+  const tagById = preferredTagById(tags);
+  const membership = new Map<string, number>();
 
   for (const group of selectedGroups) {
-    for (const label of group.tags) {
-      const normalized = normalizeLabel(label);
-      if (!normalized) continue;
-      const current = membership.get(normalized);
-      membership.set(normalized, { count: (current?.count ?? 0) + 1, label: current?.label ?? label });
+    for (const tagId of group.tagIds) {
+      if (!tagById.has(tagId)) continue;
+      membership.set(tagId, (membership.get(tagId) ?? 0) + 1);
     }
   }
 
-  const tagCandidates = [...membership.entries()].map(([normalizedLabel, member]) => {
-    const source = tagByLabel.get(normalizedLabel);
-    return {
-      ...(source ?? missingTag(normalizedLabel, member.label)),
-      presentOnTagPage: Boolean(source),
-      normalizedLabel,
-      membershipCount: member.count,
-    };
+  const tagCandidates = [...membership.entries()].map(([tagId, membershipCount]) => {
+    const source = tagById.get(tagId)!;
+    return { ...source, membershipCount };
   }).sort((left, right) =>
     right.membershipCount - left.membershipCount
       || right.itemCount - left.itemCount
       || compareText(left.label, right.label)
       || compareText(left.id, right.id));
   const selectedTags = tagCandidates.slice(0, MAX_BIPARTITE_TAGS);
-  const visibleLabels = new Map(selectedTags.map((tag) => [tag.normalizedLabel, tag]));
+  const visibleTagIds = new Set(selectedTags.map((tag) => tag.id));
+  const groupDimensions = selectedGroups.map((group) => groupNodeDimensions(group.eventCount));
+  const tagRadii = selectedTags.map((tag) => clamp(tagNodeRadius(tag.itemCount) - 2, 15, 28));
+  const graphHeight = bipartiteGraphHeight(groupDimensions, tagRadii);
   const positionedGroups = selectedGroups.map((group, index) => {
-    const dimensions = groupNodeDimensions(group.eventCount);
     return {
       ...group,
       x: 210,
-      y: evenlySpacedY(index, selectedGroups.length, BIPARTITE_GRAPH_HEIGHT),
-      ...dimensions,
+      y: evenlySpacedY(index, selectedGroups.length, graphHeight),
+      ...groupDimensions[index]!,
     };
   });
   const positionedTags = selectedTags.map((tag, index) => ({
     ...tag,
     x: 790,
-    y: evenlySpacedY(index, selectedTags.length, BIPARTITE_GRAPH_HEIGHT),
-    radius: clamp(tagNodeRadius(tag.itemCount) - 2, 15, 28),
+    y: evenlySpacedY(index, selectedTags.length, graphHeight),
+    radius: tagRadii[index]!,
   }));
   const edges: BipartiteGraphEdge[] = [];
 
   for (const group of positionedGroups) {
-    const seen = new Set<string>();
-    for (const label of group.tags) {
-      const tag = visibleLabels.get(normalizeLabel(label));
-      if (!tag || !seen.add(tag.id)) continue;
-      edges.push({ groupId: group.id, tagId: tag.id });
+    for (const tagId of new Set(group.tagIds)) {
+      if (!visibleTagIds.has(tagId)) continue;
+      edges.push({ groupId: group.id, tagId });
     }
   }
   edges.sort((left, right) => compareText(`${left.groupId}\u0000${left.tagId}`, `${right.groupId}\u0000${right.tagId}`));
 
   return {
     width: BIPARTITE_GRAPH_WIDTH,
-    height: BIPARTITE_GRAPH_HEIGHT,
+    height: graphHeight,
     groups: positionedGroups,
     tags: positionedTags,
     edges,
@@ -242,58 +299,133 @@ export function truncateGraphLabel(label: string, maxLength = 16): string {
   return label.length > maxLength ? `${label.slice(0, Math.max(1, maxLength - 1))}…` : label;
 }
 
-function parsePage<Item>(payload: unknown, parseItem: (value: unknown) => Item | null): MemoryGraphPage<Item> {
-  if (!isRecord(payload)) return { items: [], hasMore: false };
-  const rawItems = Array.isArray(payload.items) ? payload.items : [];
-  return {
-    items: rawItems.map(parseItem).filter((item): item is Item => item !== null),
-    hasMore: typeof payload.nextCursor === 'string' && payload.nextCursor.length > 0,
-  };
-}
-
-function parseTag(value: unknown): MemoryTagNode | null {
+function parseGraphNode(value: unknown): GraphNode | null {
   if (!isRecord(value)) return null;
   const id = requiredString(value.id);
-  const label = requiredString(value.tag);
-  if (!id || !label) return null;
-  const rawConnections = Array.isArray(value.connections) ? value.connections : [];
+  const entityId = requiredString(value.entityId);
+  const label = requiredString(value.label);
+  const kind = value.kind;
+  if (!id || !entityId || !label || !['tag', 'group', 'atom', 'book', 'phrase'].includes(String(kind))) {
+    return null;
+  }
   return {
     id,
+    entityId,
+    kind: kind as GraphNode['kind'],
     label,
     description: optionalString(value.description),
-    aliases: stringArray(value.aliases),
-    itemCount: nonNegative(value.item_count, 1_000_000),
-    edgeCount: nonNegative(value.edge_count, 10_000),
-    color: safeGraphColor(value.color_token),
-    connections: rawConnections.map(parseConnection).filter((connection): connection is MemoryTagConnection => connection !== null),
+    color: optionalString(value.color) || 'blue',
+    memberCount: nonNegative(value.memberCount, 1_000_000),
+    edgeCount: nonNegative(value.edgeCount, 10_000),
   };
 }
 
-function parseConnection(value: unknown): MemoryTagConnection | null {
+function parseGraphEdge(value: unknown): GraphEdge | null {
   if (!isRecord(value)) return null;
-  const targetId = requiredString(value.id);
-  if (!targetId) return null;
+  const id = requiredString(value.id);
+  const sourceId = requiredString(value.sourceId);
+  const targetId = requiredString(value.targetId);
+  const kind = value.kind;
+  if (!id || !sourceId || !targetId || (kind !== 'tagRelation' && kind !== 'groupMember')) return null;
   return {
+    id,
+    kind,
+    sourceId,
     targetId,
-    targetLabel: optionalString(value.tag),
-    type: optionalString(value.type) || 'related_to',
+    relation: optionalString(value.relation) || (kind === 'groupMember' ? 'member' : 'related_to'),
     weight: clamp(finiteNumber(value.weight), 0, 4),
     evidenceCount: nonNegative(value.evidenceCount, 10_000),
   };
 }
 
-function parseGroup(value: unknown): MemoryGroupNode | null {
-  if (!isRecord(value)) return null;
-  const id = requiredString(value.id);
-  if (!id) return null;
+function tagConnectionsByNode(
+  edges: readonly GraphEdge[],
+  nodesById: ReadonlyMap<string, GraphNode>,
+): Map<string, MemoryTagConnection[]> {
+  const result = new Map<string, MemoryTagConnection[]>();
+  for (const edge of edges) {
+    if (edge.kind !== 'tagRelation') continue;
+    const source = nodesById.get(edge.sourceId);
+    const target = nodesById.get(edge.targetId);
+    if (source?.kind !== 'tag' || target?.kind !== 'tag') continue;
+    pushConnection(result, source.id, target, edge);
+    pushConnection(result, target.id, source, edge);
+  }
+  return result;
+}
+
+function pushConnection(
+  target: Map<string, MemoryTagConnection[]>,
+  sourceId: string,
+  related: GraphNode,
+  edge: GraphEdge,
+): void {
+  const connections = target.get(sourceId) ?? [];
+  connections.push({
+    targetId: related.id,
+    targetLabel: related.label,
+    type: edge.relation,
+    weight: edge.weight,
+    evidenceCount: edge.evidenceCount,
+  });
+  target.set(sourceId, connections);
+}
+
+function toTagNode(
+  node: GraphNode,
+  connections: readonly MemoryTagConnection[],
+  presentOnTagGraph: boolean,
+): MemoryTagNode {
   return {
-    id,
-    label: optionalString(value.title) || id,
-    note: optionalString(value.note),
-    tags: stringArray(value.tags),
-    eventCount: nonNegative(value.event_count, 1_000_000),
-    color: safeGraphColor(value.color_token),
+    id: node.id,
+    entityId: node.entityId,
+    label: node.label,
+    description: node.description,
+    aliases: [],
+    itemCount: node.memberCount,
+    edgeCount: node.edgeCount,
+    color: safeGraphColor(node.color),
+    connections: [...connections].sort((left, right) => compareText(left.targetId, right.targetId)),
+    presentOnTagGraph,
   };
+}
+
+function toGroupNode(
+  node: GraphNode,
+  edges: readonly GraphEdge[],
+  nodesById: ReadonlyMap<string, GraphNode>,
+): MemoryGroupNode {
+  const tagNodes = edges.flatMap((edge) => {
+    if (edge.kind !== 'groupMember') return [];
+    const relatedId = edge.sourceId === node.id
+      ? edge.targetId
+      : edge.targetId === node.id ? edge.sourceId : '';
+    const related = nodesById.get(relatedId);
+    return related?.kind === 'tag' ? [related] : [];
+  });
+  return {
+    id: node.id,
+    entityId: node.entityId,
+    label: node.label,
+    note: node.description,
+    tagIds: [...new Set(tagNodes.map((tag) => tag.id))],
+    tags: [...new Set(tagNodes.map((tag) => tag.label))],
+    eventCount: node.memberCount,
+    color: safeGraphColor(node.color),
+  };
+}
+
+function mergeConnections(
+  left: readonly MemoryTagConnection[],
+  right: readonly MemoryTagConnection[],
+): MemoryTagConnection[] {
+  const merged = new Map<string, MemoryTagConnection>();
+  for (const connection of [...left, ...right]) {
+    const key = `${connection.targetId}\u0000${connection.type}`;
+    const current = merged.get(key);
+    if (!current || connection.weight > current.weight) merged.set(key, connection);
+  }
+  return [...merged.values()].sort((a, b) => compareText(a.targetId, b.targetId));
 }
 
 function tagPosition(index: number, count: number): { x: number; y: number } {
@@ -309,26 +441,12 @@ function tagPosition(index: number, count: number): { x: number; y: number } {
   return { x: 500 + Math.cos(angle) * 420, y: 270 + Math.sin(angle) * 218 };
 }
 
-function preferredTagByLabel(tags: readonly MemoryTagNode[]): Map<string, MemoryTagNode> {
+function preferredTagById(tags: readonly MemoryTagNode[]): Map<string, MemoryTagNode> {
   const result = new Map<string, MemoryTagNode>();
   for (const tag of [...tags].sort(compareTags)) {
-    const normalized = normalizeLabel(tag.label);
-    if (normalized && !result.has(normalized)) result.set(normalized, tag);
+    if (!result.has(tag.id)) result.set(tag.id, tag);
   }
   return result;
-}
-
-function missingTag(normalizedLabel: string, label: string): MemoryTagNode {
-  return {
-    id: `group-tag:${normalizedLabel}`,
-    label,
-    description: '当前 Group 页包含此标签，但当前标签页未返回对应详情。',
-    aliases: [],
-    itemCount: 0,
-    edgeCount: 0,
-    color: GRAPH_COLORS.blue,
-    connections: [],
-  };
 }
 
 function groupNodeDimensions(eventCount: number): { width: number; height: number } {
@@ -337,6 +455,19 @@ function groupNodeDimensions(eventCount: number): { width: number; height: numbe
     width: clamp(160 + scale * 4.5, 160, 230),
     height: clamp(31 + scale * 0.75, 31, 44),
   };
+}
+
+function bipartiteGraphHeight(
+  groups: readonly { height: number }[],
+  tagRadii: readonly number[],
+): number {
+  const tallestGroup = Math.max(0, ...groups.map((group) => group.height));
+  const largestTagDiameter = Math.max(0, ...tagRadii.map((radius) => radius * 2));
+  const groupHeight = BIPARTITE_CONTENT_TOP + BIPARTITE_CONTENT_BOTTOM
+    + Math.max(0, groups.length - 1) * (tallestGroup + BIPARTITE_NODE_GAP);
+  const tagHeight = BIPARTITE_CONTENT_TOP + BIPARTITE_CONTENT_BOTTOM
+    + Math.max(0, tagRadii.length - 1) * (largestTagDiameter + BIPARTITE_NODE_GAP);
+  return Math.ceil(Math.max(MIN_BIPARTITE_GRAPH_HEIGHT, groupHeight, tagHeight));
 }
 
 function evenlySpacedY(index: number, count: number, height: number): number {
@@ -354,15 +485,6 @@ function compareTags(left: MemoryTagNode, right: MemoryTagNode): number {
 
 function compareText(left: string, right: string): number {
   return left.localeCompare(right, 'zh-CN');
-}
-
-function normalizeLabel(value: string): string {
-  return value.trim().toLocaleLowerCase('zh-CN');
-}
-
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.map(requiredString).filter((item): item is string => Boolean(item)))];
 }
 
 function requiredString(value: unknown): string | null {

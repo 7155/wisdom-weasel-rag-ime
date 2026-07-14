@@ -8,7 +8,7 @@ export const memoryQueryKeys = {
   root: ['memory'] as const,
   summary: () => [...memoryQueryKeys.root, 'summary'] as const,
   page: (kind: MemoryKind, query: string, status: string) => [...memoryQueryKeys.root, 'page', kind, query, status] as const,
-  graphPage: (kind: 'groups' | 'tags') => [...memoryQueryKeys.root, 'graph', kind] as const,
+  graph: (plane: 'groups' | 'tags') => [...memoryQueryKeys.root, 'graph', plane] as const,
 };
 
 export function useMemoryQueries(kind: MemoryKind, query: string, status: string) {
@@ -35,21 +35,33 @@ export function useMemoryGraphQueries(enabled: boolean) {
   const transport = useControlTransport();
   const tags = useQuery({
     enabled,
-    queryKey: memoryQueryKeys.graphPage('tags'),
+    queryKey: memoryQueryKeys.graph('tags'),
     queryFn: ({ signal }) => transport.request({
-      pathId: 'memory.pages',
-      params: { kind: 'tags' },
-      query: { limit: 50, cursor: '' },
+      pathId: 'memory.graph.get',
+      query: {
+        plane: 'tags',
+        status: 'active',
+        depth: 1,
+        nodeLimit: 50,
+        edgeLimit: 150,
+        minWeight: 0,
+      },
       signal,
     }),
   });
   const groups = useQuery({
     enabled,
-    queryKey: memoryQueryKeys.graphPage('groups'),
+    queryKey: memoryQueryKeys.graph('groups'),
     queryFn: ({ signal }) => transport.request({
-      pathId: 'memory.pages',
-      params: { kind: 'groups' },
-      query: { limit: 50, cursor: '' },
+      pathId: 'memory.graph.get',
+      query: {
+        plane: 'groups',
+        status: 'active',
+        depth: 1,
+        nodeLimit: 80,
+        edgeLimit: 160,
+        minWeight: 0,
+      },
       signal,
     }),
   });

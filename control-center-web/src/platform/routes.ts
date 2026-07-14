@@ -322,6 +322,20 @@ export const CONTROL_ROUTES = {
     params: { kind: ['books', 'atoms', 'tags', 'phrases', 'groups', 'negative'] },
     query: ['limit', 'cursor', 'query', 'status'],
   },
+  'memory.graph.get': {
+    method: 'GET',
+    path: '/api/memory/graph',
+    query: ['plane', 'project', 'status', 'query', 'focusId', 'depth', 'nodeLimit', 'edgeLimit', 'minWeight'],
+    requiredQuery: ['plane'],
+    responseContract: 'memory-graph.v1',
+  },
+  'memory.entity.get': {
+    method: 'GET',
+    path: '/api/memory/entities/:kind/:entityId',
+    params: { kind: ['tag', 'group'], entityId: null },
+    query: ['project', 'connectionsLimit', 'connectionsCursor', 'membersLimit', 'membersCursor'],
+    responseContract: 'memory-entity.v1',
+  },
   'history.page': {
     method: 'GET',
     path: '/api/history/page',

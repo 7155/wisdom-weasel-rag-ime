@@ -107,6 +107,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 "managementWorkContract": true,
                 "planningWorkContract": true,
                 "knowledgeDatabaseWorkContract": true,
+                "memoryGraphRead": true,
+                "memoryEntityRead": true,
             ],
             "native": [
                 "pickFiles": true,
