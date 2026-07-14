@@ -1,5 +1,6 @@
-import { Bot, Gauge, LockKeyhole, Plus, ShieldCheck, Sparkles, Wrench } from 'lucide-react';
+import { Bot, Gauge, LockKeyhole, MessageCirclePlus, ShieldCheck, Sparkles, Wrench } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, SegmentedControl } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
@@ -11,11 +12,13 @@ import './roles.css';
 
 export function RolesFeature() {
   const transport = useControlTransport();
+  const navigate = useNavigate();
   const [view, setView] = useState<'personas' | 'templates'>('personas');
   const [personas, setPersonas] = useState<AgentPersonaV1[]>(previewPersonas);
   const [templates, setTemplates] = useState<AgentTemplateV1[]>(previewTemplates);
   const [selectedPersona, setSelectedPersona] = useState(previewPersonas[0]?.roleId ?? '');
   const [selectedTemplate, setSelectedTemplate] = useState(previewTemplates[0]?.templateId ?? '');
+  const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState('');
   useEffect(() => {
     let active = true;
@@ -33,13 +36,41 @@ export function RolesFeature() {
   }, [transport]);
   const persona = personas.find((item) => item.roleId === selectedPersona);
   const template = templates.find((item) => item.templateId === selectedTemplate);
+
+  async function startPersonaSession(): Promise<void> {
+    if (!persona || creating) return;
+    setCreating(true);
+    setNotice('');
+    try {
+      const response = await transport.request({
+        pathId: 'agent.sessions.create',
+        body: {
+          title: `${persona.displayName} 对话`,
+          mode: 'assistant',
+          roleId: persona.roleId,
+          roleVersion: persona.version,
+          modelProfile: persona.defaults.modelPolicy,
+          toolProfileVersion: persona.defaults.toolProfileVersion,
+          workspaceRoots: [],
+        },
+      });
+      const sessionId = createdSessionId(response);
+      if (!sessionId) throw new Error('创建 Session 失败，请重试。');
+      navigate(`/agent?session=${encodeURIComponent(sessionId)}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <main className="roles-feature" data-route-id="roles">
-      <header className="roles-header"><span><h2>角色与 Agent 模板</h2><p>说话者视觉与运行权限保持独立</p></span><SegmentedControl aria-label="角色视图" value={view} onValueChange={(value) => setView(value as 'personas' | 'templates')} items={[{ value: 'personas', label: 'Persona' }, { value: 'templates', label: 'Agent Template' }]} /><Button size="small" leadingIcon={<Plus size={15} />} onClick={() => setNotice('当前 Control API 尚未开放角色写入 pathId。')}>创建</Button></header>
+      <header className="roles-header"><span><h2>角色与 Agent 模板</h2><p>说话者视觉与运行权限保持独立</p></span><SegmentedControl aria-label="角色视图" value={view} onValueChange={(value) => setView(value as 'personas' | 'templates')} items={[{ value: 'personas', label: 'Persona' }, { value: 'templates', label: 'Agent Template' }]} />{view === 'personas' ? <Button variant="primary" size="small" loading={creating} leadingIcon={<MessageCirclePlus size={15} />} onClick={() => void startPersonaSession()}>开始对话</Button> : null}</header>
       {notice ? <p className="roles-notice" role="status">{notice}</p> : null}
       {view === 'personas' ? (
         <div className="roles-layout">
-          <section className="persona-grid" aria-label="Persona 列表">{personas.map((item) => <button type="button" key={item.roleId} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => setSelectedPersona(item.roleId)}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div>{item.traits.map((trait) => <i key={trait}>{trait}</i>)}</div></button>)}</section>
+          <section className="persona-grid" aria-label="Persona 列表">{personas.map((item) => <button type="button" key={item.roleId} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div>{item.traits.map((trait) => <i key={trait}>{trait}</i>)}</div></button>)}</section>
           {persona ? <PersonaInspector persona={persona} /> : null}
         </div>
       ) : (
@@ -61,4 +92,5 @@ function TemplateInspector({ template }: { template: AgentTemplateV1 }) {
 }
 
 function templateItems(value: unknown): AgentTemplateV1[] { const source = record(value); const items = Array.isArray(source.items) ? source.items : Array.isArray(source.templates) ? source.templates : []; return items.filter((item) => record(item).schemaVersion === 'rag-ime.agent-template.v1') as AgentTemplateV1[]; }
+function createdSessionId(value: unknown): string { const session = record(record(value).session); return typeof session.id === 'string' ? session.id : ''; }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }

@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
@@ -44,7 +45,7 @@ describe('Agent experience', () => {
   it('sends through the allowlisted prompt path', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
-    render(<ControlTransportProvider transport={transport}><TooltipProvider><AgentFeature /></TooltipProvider></ControlTransportProvider>);
+    renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
     await user.type(composer, '检查 reducer 边界');
     await user.click(screen.getByRole('button', { name: '发送' }));
@@ -57,7 +58,7 @@ describe('Agent experience', () => {
   it('imports managed images for the current session before sending mediaIds', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
-    render(<ControlTransportProvider transport={transport}><TooltipProvider><AgentFeature /></TooltipProvider></ControlTransportProvider>);
+    renderAgent(transport);
     await screen.findByRole('textbox', { name: '消息' });
     await user.click(screen.getByRole('button', { name: '添加附件' }));
     expect(transport.filePickCalls).toEqual([{
@@ -76,7 +77,7 @@ describe('Agent experience', () => {
   it('starts with the session rail closed on mobile and closes it after selection', async () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
     const user = userEvent.setup();
-    render(<ControlTransportProvider transport={featureTransport()}><TooltipProvider><AgentFeature /></TooltipProvider></ControlTransportProvider>);
+    renderAgent(featureTransport());
     const feature = document.querySelector('.agent-feature');
     expect(feature).toHaveAttribute('data-rail-open', 'false');
 
@@ -85,7 +86,30 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
     expect(feature).toHaveAttribute('data-rail-open', 'false');
   });
+
+  it('selects the Session requested by the roles route handoff', async () => {
+    const transport = featureTransport();
+    renderAgent(transport, '/agent?session=session-memory');
+
+    expect(await screen.findByRole('button', { name: /记忆整理/ })).toHaveAttribute('aria-current', 'true');
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.snapshot',
+        params: { sessionId: 'session-memory' },
+      }),
+    })));
+  });
 });
+
+function renderAgent(transport: MockControlTransport, initialEntry = '/agent') {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider><AgentFeature /></TooltipProvider>
+      </ControlTransportProvider>
+    </MemoryRouter>,
+  );
+}
 
 function featureTransport(): MockControlTransport {
   return new MockControlTransport({

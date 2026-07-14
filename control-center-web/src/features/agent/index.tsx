@@ -1,5 +1,6 @@
 import { AlertCircle, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
@@ -22,6 +23,8 @@ import './agent.css';
 
 export function AgentFeature() {
   const transport = useControlTransport();
+  const [searchParams] = useSearchParams();
+  const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [personas, setPersonas] = useState(previewPersonas);
   const [selectedId, setSelectedId] = useState('');
@@ -49,12 +52,14 @@ export function AgentFeature() {
       const usableSessions = transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
       setSessions(usableSessions);
       if (nextRoles.length) setPersonas(nextRoles);
-      setSelectedId((current) => preferredId || current || usableSessions[0]?.id || '');
+      const preferredSessionId = usableSessions.some((item) => item.id === preferredId) ? preferredId : '';
+      setSelectedId((current) => preferredSessionId || current || usableSessions[0]?.id || '');
       setError('');
     } catch (loadError) {
       if (transport.kind === 'mock') {
         setSessions(previewSessions);
-        setSelectedId((current) => preferredId || current || previewSessions[0]?.id || '');
+        const preferredSessionId = previewSessions.some((item) => item.id === preferredId) ? preferredId : '';
+        setSelectedId((current) => preferredSessionId || current || previewSessions[0]?.id || '');
       } else {
         setError(errorText(loadError));
       }
@@ -63,7 +68,7 @@ export function AgentFeature() {
     }
   }, [transport]);
 
-  useEffect(() => { void loadSessions(); }, [loadSessions]);
+  useEffect(() => { void loadSessions(requestedSessionId); }, [loadSessions, requestedSessionId]);
   useEffect(() => { setAttachments([]); }, [selectedId]);
 
   useEffect(() => {
