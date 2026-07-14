@@ -35,6 +35,8 @@ cp "$SHARED/Assets/CompanionStatesFull/"*.png "$RESOURCES/"
 mapfile=()
 while IFS= read -r file; do mapfile+=("$file"); done < <(find "$SHARED" "$SRC" -type f -name '*.swift' | sort)
 
+CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-/tmp/rag-ime-control-clang-cache}" \
+SWIFT_MODULECACHE_PATH="${SWIFT_MODULECACHE_PATH:-/tmp/rag-ime-control-swift-cache}" \
 xcrun swiftc \
   -O \
   -target arm64-apple-macosx13.0 \
