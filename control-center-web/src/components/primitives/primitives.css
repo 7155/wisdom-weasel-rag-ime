@@ -13,15 +13,15 @@
   cursor: pointer;
   user-select: none;
   transition:
-    background-color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard),
-    transform var(--duration-instant) var(--ease-standard);
+    transform var(--duration-press) var(--ease-press),
+    box-shadow var(--duration-enter) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
 }
 
 .ui-button:active:not(:disabled),
 .ui-icon-button:active:not(:disabled) {
-  transform: translateY(var(--distance-xs));
+  box-shadow: var(--shadow-control-press);
+  transform: scale(var(--scale-press));
 }
 
 .ui-button:disabled,
@@ -62,23 +62,12 @@
   color: var(--color-accent-text);
 }
 
-.ui-button[data-variant='primary']:hover:not(:disabled) {
-  border-color: var(--color-accent-hover);
-  background: var(--color-accent-hover);
-}
-
 .ui-button[data-variant='primary']:active:not(:disabled) {
   background: var(--color-accent-pressed);
 }
 
 .ui-button[data-variant='secondary'] {
   border-color: var(--color-border);
-}
-
-.ui-button[data-variant='secondary']:hover:not(:disabled),
-.ui-button[data-variant='quiet']:hover:not(:disabled),
-.ui-icon-button:hover:not(:disabled) {
-  background: var(--color-surface-hover);
 }
 
 .ui-button[data-variant='secondary']:active:not(:disabled),
@@ -97,10 +86,6 @@
   border-color: var(--color-danger);
   background: var(--color-danger);
   color: #fff;
-}
-
-.ui-button[data-variant='danger']:hover:not(:disabled) {
-  filter: brightness(.92);
 }
 
 .ui-button__icon {
@@ -144,6 +129,26 @@
   display: inline-flex;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .ui-button[data-variant='primary']:hover:not(:disabled) {
+    border-color: var(--color-accent-hover);
+    background: var(--color-accent-hover);
+    box-shadow: var(--shadow-control-hover);
+  }
+
+  .ui-button[data-variant='secondary']:hover:not(:disabled),
+  .ui-button[data-variant='quiet']:hover:not(:disabled),
+  .ui-icon-button:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+    box-shadow: var(--shadow-control-hover);
+  }
+
+  .ui-button[data-variant='danger']:hover:not(:disabled) {
+    filter: brightness(.92);
+    box-shadow: var(--shadow-control-hover);
+  }
+}
+
 .ui-spin {
   animation: ui-spin 900ms linear infinite;
 }
@@ -170,7 +175,7 @@
   color: var(--color-canvas);
   font-size: 12px;
   line-height: 1.35;
-  animation: ui-content-in var(--duration-fast) var(--ease-standard);
+  animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
 }
 
 .ui-tooltip__arrow {
@@ -187,7 +192,7 @@
   background: var(--color-surface);
   box-shadow: var(--shadow-menu);
   color: var(--color-text);
-  animation: ui-content-in var(--duration-fast) var(--ease-standard);
+  animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
 }
 
 .ui-menu__item {
@@ -204,11 +209,19 @@
   cursor: default;
   outline: none;
   user-select: none;
+  transition:
+    transform var(--duration-press) var(--ease-press),
+    box-shadow var(--duration-enter) var(--ease-standard);
 }
 
 .ui-menu__item[data-highlighted] {
   background: var(--color-surface-hover);
   color: var(--color-text);
+}
+
+.ui-menu__item:active:not([data-disabled]) {
+  box-shadow: var(--shadow-control-press);
+  transform: scale(var(--scale-press));
 }
 
 .ui-menu__item[data-disabled] {
@@ -252,7 +265,7 @@
   z-index: 99;
   inset: 0;
   background: var(--color-overlay);
-  animation: ui-fade-in var(--duration-normal) var(--ease-standard);
+  animation: ui-fade-in var(--duration-panel) var(--ease-standard) both;
 }
 
 .ui-dialog {
@@ -268,7 +281,7 @@
   background: var(--color-surface);
   box-shadow: var(--shadow-dialog);
   transform: translate(-50%, -50%);
-  animation: ui-dialog-in var(--duration-normal) var(--ease-standard);
+  animation: ui-dialog-in var(--duration-panel) var(--ease-standard) both;
 }
 
 .ui-dialog__close {
@@ -327,12 +340,14 @@
   white-space: nowrap;
   cursor: pointer;
   transition:
-    background-color var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard);
+    transform var(--duration-press) var(--ease-press),
+    box-shadow var(--duration-enter) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
 }
 
-.ui-segmented__item:hover:not(:disabled) {
-  color: var(--color-text);
+.ui-segmented__item:active:not(:disabled) {
+  box-shadow: var(--shadow-control-press);
+  transform: scale(var(--scale-press));
 }
 
 .ui-segmented__item[data-state='checked'] {
@@ -344,6 +359,12 @@
 .ui-segmented__item:disabled {
   cursor: not-allowed;
   opacity: .45;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-segmented__item:hover:not(:disabled) {
+    color: var(--color-text);
+  }
 }
 
 .ui-field {
@@ -425,8 +446,14 @@
   background: var(--color-surface-pressed);
   cursor: pointer;
   transition:
-    background-color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard);
+    transform var(--duration-press) var(--ease-press),
+    box-shadow var(--duration-enter) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+.ui-switch:active:not(:disabled) {
+  box-shadow: var(--shadow-control-press);
+  transform: scale(var(--scale-press));
 }
 
 .ui-switch[data-state='checked'] {
@@ -465,6 +492,13 @@
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    transform var(--duration-press) var(--ease-press),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+.ui-tabs__trigger:active:not(:disabled) {
+  transform: scale(var(--scale-press));
 }
 
 .ui-tabs__trigger::after {
@@ -496,6 +530,10 @@
   outline: none;
 }
 
+.ui-tabs__content[data-state='active'] {
+  animation: ui-panel-in var(--duration-panel) var(--ease-standard) both;
+}
+
 .ui-toast__viewport {
   position: fixed;
   z-index: 120;
@@ -525,7 +563,7 @@
 }
 
 .ui-toast[data-state='open'] {
-  animation: ui-toast-in var(--duration-normal) var(--ease-standard);
+  animation: ui-toast-in var(--duration-panel) var(--ease-standard) both;
 }
 
 .ui-toast[data-state='closed'] {
@@ -618,6 +656,11 @@
 @keyframes ui-dialog-in {
   from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)) scale(.985); }
   to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes ui-panel-in {
+  from { opacity: 0; transform: translateY(var(--distance-enter)); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes ui-toast-in {

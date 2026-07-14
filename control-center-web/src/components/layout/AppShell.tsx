@@ -38,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             />
             <MobileRouteMenu activeRouteId={activeRoute.id} />
           </div>
-          <div className="shell-topbar__title">
+          <div className="shell-topbar__title" key={activeRoute.id}>
             <h1>{activeRoute.label}</h1>
             <span>{activeRoute.group === 'system' ? 'SYSTEM' : activeRoute.group === 'knowledge' ? 'KNOWLEDGE' : 'WORKSPACE'}</span>
           </div>
@@ -48,7 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <GlobalNoticeRegion />
-        <div className="shell-route-stage">{children}</div>
+        <div className="shell-route-stage" data-active-route={activeRoute.id}>{children}</div>
         <MobileBottomNavigation activeRouteId={activeRoute.id} />
       </div>
     </div>

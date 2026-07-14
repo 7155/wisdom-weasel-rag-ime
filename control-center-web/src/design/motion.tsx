@@ -10,10 +10,25 @@ import {
 import { MotionConfig } from 'motion/react';
 
 export const motionTokens = {
-  duration: { instant: 0.08, fast: 0.14, normal: 0.22, slow: 0.32 },
-  distance: { xs: 2, sm: 6, md: 12 },
-  easing: { standard: [0.2, 0.8, 0.2, 1] as const, exit: [0.4, 0, 1, 1] as const },
-  spring: { soft: { stiffness: 360, damping: 32, mass: 0.8 } },
+  duration: {
+    instant: 0.08,
+    press: 0.09,
+    fast: 0.14,
+    enter: 0.18,
+    normal: 0.22,
+    panel: 0.22,
+    slow: 0.32,
+    statusPulse: 0.72,
+  },
+  distance: { xs: 2, enter: 4, sm: 6, md: 12 },
+  scale: { press: 0.985 },
+  easing: {
+    standard: [0.22, 1, 0.36, 1] as const,
+    press: [0.2, 1.25, 0.4, 1] as const,
+    exit: [0.4, 0, 1, 1] as const,
+  },
+  spring: { soft: { stiffness: 340, damping: 30, mass: 0.82 } },
+  statusPulse: { iterations: 3 },
 } as const;
 
 export type MotionPreference = 'system' | 'reduce' | 'full';

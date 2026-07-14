@@ -52,15 +52,26 @@
   --shadow-menu: 0 12px 32px rgb(29 42 35 / 16%), 0 2px 8px rgb(29 42 35 / 10%);
   --shadow-dialog: 0 24px 80px rgb(18 27 23 / 28%), 0 4px 18px rgb(18 27 23 / 14%);
   --shadow-inset: inset 0 0 0 1px rgb(255 255 255 / 30%);
+  --shadow-control-hover: 0 3px 10px rgb(28 42 34 / 10%);
+  --shadow-control-press: 0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent), 0 1px 4px rgb(28 42 34 / 12%);
+  --shadow-composer: 0 8px 24px rgb(20 35 28 / 10%);
+  --shadow-composer-focus: 0 12px 32px rgb(20 35 28 / 13%), 0 0 0 3px color-mix(in srgb, var(--color-focus) 16%, transparent);
 
   --duration-instant: 80ms;
+  --duration-press: 90ms;
   --duration-fast: 140ms;
+  --duration-enter: 180ms;
   --duration-normal: 220ms;
+  --duration-panel: 220ms;
   --duration-slow: 320ms;
+  --duration-status-pulse: 720ms;
   --distance-xs: 2px;
+  --distance-enter: 4px;
   --distance-sm: 6px;
   --distance-md: 12px;
-  --ease-standard: cubic-bezier(.2, .8, .2, 1);
+  --scale-press: .985;
+  --ease-standard: cubic-bezier(.22, 1, .36, 1);
+  --ease-press: cubic-bezier(.2, 1.25, .4, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
 
   --sidebar-wide: 240px;
@@ -104,6 +115,10 @@
   --shadow-menu: 0 14px 38px rgb(0 0 0 / 42%), 0 2px 8px rgb(0 0 0 / 26%);
   --shadow-dialog: 0 28px 90px rgb(0 0 0 / 54%), 0 4px 20px rgb(0 0 0 / 34%);
   --shadow-inset: inset 0 0 0 1px rgb(255 255 255 / 5%);
+  --shadow-control-hover: 0 4px 14px rgb(0 0 0 / 28%);
+  --shadow-control-press: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent), 0 1px 5px rgb(0 0 0 / 32%);
+  --shadow-composer: 0 9px 28px rgb(0 0 0 / 24%);
+  --shadow-composer-focus: 0 14px 36px rgb(0 0 0 / 32%), 0 0 0 3px color-mix(in srgb, var(--color-focus) 20%, transparent);
 }
 
 *,
