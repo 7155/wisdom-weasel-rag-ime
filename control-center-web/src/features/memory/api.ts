@@ -8,6 +8,7 @@ export const memoryQueryKeys = {
   root: ['memory'] as const,
   summary: () => [...memoryQueryKeys.root, 'summary'] as const,
   page: (kind: MemoryKind, query: string, status: string) => [...memoryQueryKeys.root, 'page', kind, query, status] as const,
+  graphPage: (kind: 'groups' | 'tags') => [...memoryQueryKeys.root, 'graph', kind] as const,
 };
 
 export function useMemoryQueries(kind: MemoryKind, query: string, status: string) {
@@ -28,4 +29,29 @@ export function useMemoryQueries(kind: MemoryKind, query: string, status: string
     getNextPageParam: (lastPage) => stringValue(asRecord(lastPage).nextCursor) || undefined,
   });
   return { pages, summary, transportKind: transport.kind };
+}
+
+export function useMemoryGraphQueries(enabled: boolean) {
+  const transport = useControlTransport();
+  const tags = useQuery({
+    enabled,
+    queryKey: memoryQueryKeys.graphPage('tags'),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'memory.pages',
+      params: { kind: 'tags' },
+      query: { limit: 50, cursor: '' },
+      signal,
+    }),
+  });
+  const groups = useQuery({
+    enabled,
+    queryKey: memoryQueryKeys.graphPage('groups'),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'memory.pages',
+      params: { kind: 'groups' },
+      query: { limit: 50, cursor: '' },
+      signal,
+    }),
+  });
+  return { groups, tags };
 }

@@ -1,0 +1,302 @@
+.memory-view-tabs {
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+
+.memory-view-tabs > .ui-tabs__list {
+  background: var(--color-canvas);
+}
+
+.memory-relations {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.memory-relations__toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.memory-graph__scope {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 10px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.memory-graph__scope strong {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.memory-graph__scope[data-clipped='true'] span:last-child {
+  color: var(--color-warning);
+  font-weight: 700;
+}
+
+.memory-graph__viewport {
+  width: 100%;
+  max-width: 100%;
+  border-block: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+.memory-graph__canvas {
+  display: block;
+  width: max(100%, 820px);
+  min-width: 820px;
+  height: 540px;
+}
+
+.memory-graph__canvas--bipartite {
+  height: 620px;
+}
+
+.memory-graph__edge {
+  stroke: var(--color-border-strong);
+  opacity: .5;
+  vector-effect: non-scaling-stroke;
+}
+
+.memory-graph__edge[data-emphasized='true'] {
+  stroke: var(--color-accent);
+  opacity: .9;
+}
+
+.memory-graph__edge--membership {
+  stroke-width: 1.15;
+}
+
+.memory-graph__node {
+  outline: none;
+  cursor: pointer;
+}
+
+.memory-graph__node-shape {
+  fill-opacity: .16;
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
+}
+
+.memory-graph__node:hover .memory-graph__node-shape {
+  fill-opacity: .25;
+}
+
+.memory-graph__node[data-selected='true'] .memory-graph__node-shape,
+.memory-graph__node:focus-visible .memory-graph__node-shape {
+  fill-opacity: .3;
+  stroke: var(--color-focus);
+  stroke-width: 3;
+}
+
+.memory-graph__node-label,
+.memory-graph__bipartite-label {
+  fill: var(--color-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+
+.memory-graph__node-count,
+.memory-graph__bipartite-count,
+.memory-graph__column-title {
+  fill: var(--color-text-secondary);
+  font-size: 8px;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+
+.memory-graph__bipartite-label {
+  font-size: 11px;
+}
+
+.memory-graph__bipartite-count {
+  font-size: 8px;
+}
+
+.memory-graph__column-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.memory-graph__inspector {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-5);
+  padding-block: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  grid-template-columns: minmax(220px, .8fr) minmax(0, 1.5fr);
+}
+
+.memory-graph__summary,
+.memory-graph__relations {
+  min-width: 0;
+}
+
+.memory-graph__summary h3,
+.memory-graph__relations h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.memory-graph__summary p {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.memory-graph__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.memory-graph__summary dl {
+  display: grid;
+  margin: 0 0 var(--space-3);
+  border-block: 1px solid var(--color-border);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.memory-graph__summary dl div {
+  min-width: 0;
+  padding: 8px 9px;
+  border-right: 1px solid var(--color-border);
+}
+
+.memory-graph__summary dl div:last-child {
+  border-right: 0;
+}
+
+.memory-graph__summary dt {
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+}
+
+.memory-graph__summary dd {
+  margin: 3px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.memory-graph__table-wrap {
+  width: 100%;
+  max-width: 100%;
+  max-height: 260px;
+  border-block: 1px solid var(--color-border);
+  overflow: auto;
+}
+
+.memory-graph__table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 10px;
+}
+
+.memory-graph__table caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.memory-graph__table th,
+.memory-graph__table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.memory-graph__table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-weight: 700;
+}
+
+.memory-graph__relation-link {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font-weight: 700;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .memory-relations__toolbar,
+  .memory-graph__inspector {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .memory-graph__scope {
+    justify-content: flex-start;
+  }
+
+  .memory-graph__canvas {
+    width: 820px;
+  }
+
+  .memory-graph__summary dl {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-graph__summary dl div {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .memory-graph__summary dl div:last-child {
+    border-bottom: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-graph__node,
+  .memory-graph__edge,
+  .memory-graph__node-shape {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root[data-reduce-motion='true'] .memory-graph__node,
+:root[data-reduce-motion='true'] .memory-graph__edge,
+:root[data-reduce-motion='true'] .memory-graph__node-shape {
+  animation: none !important;
+  transition: none !important;
+}

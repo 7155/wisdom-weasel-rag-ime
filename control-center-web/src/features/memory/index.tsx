@@ -1,7 +1,18 @@
 import { Archive, BookOpen, BrainCircuit, Database, RefreshCw, Search, Tags } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Button, EmptyState, Field, Input, SegmentedControl } from '@/components/primitives';
+import {
+  Button,
+  EmptyState,
+  Field,
+  Input,
+  SegmentedControl,
+  Tabs as ViewTabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/primitives';
 import { useMemoryQueries, type MemoryKind } from './api';
+import { MemoryRelations } from './MemoryRelations';
 import {
   DataTable,
   InlineNotice,
@@ -16,6 +27,7 @@ import {
   numberValue,
   stringValue,
 } from '@/features/overview/management-ui';
+import './memory.css';
 
 const kinds = [
   { value: 'books', label: '主题书' },
@@ -27,6 +39,7 @@ const kinds = [
 ] as const;
 
 export function MemoryFeature() {
+  const [view, setView] = useState<'catalog' | 'relations'>('catalog');
   const [kind, setKind] = useState<MemoryKind>('books');
   const [draftQuery, setDraftQuery] = useState('');
   const [query, setQuery] = useState('');
@@ -61,82 +74,97 @@ export function MemoryFeature() {
           ]} />
         </ManagementSection>
 
-        <ManagementSection title="记忆目录" description="每次加载最多 50 条，可继续读取下一页。">
-          <div className="mgmt-stack">
-            <SegmentedControl aria-label="记忆类型" items={kinds} onValueChange={(next) => { setKind(next); setSelectedId(''); }} value={kind} />
-            <div className="mgmt-filter-row">
-              <Field htmlFor="memory-search" label="搜索">
-                <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="标题、正文或标签" value={draftQuery} />
-              </Field>
-              <Button leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">搜索</Button>
-              <label className="ui-field">
-                <span className="ui-field__label">状态</span>
-                <select className="ui-input" onChange={(event) => setStatus(event.target.value)} value={status}>
-                  <option value="">全部</option>
-                  <option value="active">active</option>
-                  <option value="archived">archived</option>
-                  <option value="suppressed">suppressed</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          {rows.length ? (
-            <>
-              <DataTable caption={`${kind} 记忆分页`} columns={[
-                { key: 'id', label: 'ID', width: '18%' },
-                { key: 'title', label: '标题', width: '24%' },
-                { key: 'detail', label: '内容' },
-                { key: 'source', label: '来源', width: '14%' },
-                { key: 'status', label: '状态', width: '11%' },
-              ]} rows={rows} />
-              <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} />
-            </>
-          ) : (
-            <EmptyState description="当前筛选没有记忆项。" icon={Search} title="没有匹配结果" />
-          )}
-        </ManagementSection>
+        <ViewTabs
+          className="memory-view-tabs"
+          onValueChange={(next) => setView(next === 'relations' ? 'relations' : 'catalog')}
+          value={view}
+        >
+          <TabsList aria-label="记忆视图">
+            <TabsTrigger value="catalog">目录</TabsTrigger>
+            <TabsTrigger value="relations">关系图</TabsTrigger>
+          </TabsList>
+          <TabsContent value="catalog">
+            <ManagementSection title="记忆目录" description="每次加载最多 50 条，可继续读取下一页。">
+              <div className="mgmt-stack">
+                <SegmentedControl aria-label="记忆类型" items={kinds} onValueChange={(next) => { setKind(next); setSelectedId(''); }} value={kind} />
+                <div className="mgmt-filter-row">
+                  <Field htmlFor="memory-search" label="搜索">
+                    <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="标题、正文或标签" value={draftQuery} />
+                  </Field>
+                  <Button leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">搜索</Button>
+                  <label className="ui-field">
+                    <span className="ui-field__label">状态</span>
+                    <select className="ui-input" onChange={(event) => setStatus(event.target.value)} value={status}>
+                      <option value="">全部</option>
+                      <option value="active">active</option>
+                      <option value="archived">archived</option>
+                      <option value="suppressed">suppressed</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              {rows.length ? (
+                <>
+                  <DataTable caption={`${kind} 记忆分页`} columns={[
+                    { key: 'id', label: 'ID', width: '18%' },
+                    { key: 'title', label: '标题', width: '24%' },
+                    { key: 'detail', label: '内容' },
+                    { key: 'source', label: '来源', width: '14%' },
+                    { key: 'status', label: '状态', width: '11%' },
+                  ]} rows={rows} />
+                  <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} />
+                </>
+              ) : (
+                <EmptyState description="当前筛选没有记忆项。" icon={Search} title="没有匹配结果" />
+              )}
+            </ManagementSection>
 
-        <ManagementSection title="编辑与归档" description="选择条目后预览字段差异与归档影响；当前操作为演练。">
-          <div className="mgmt-filter-row">
-            <label className="ui-field" style={{ minWidth: 280 }}>
-              <span className="ui-field__label">条目</span>
-              <select className="ui-input" onChange={(event) => setSelectedId(event.target.value)} value={selectedId}>
-                <option value="">请选择</option>
-                {rows.map((row) => <option key={stringValue(row.id)} value={stringValue(row.id)}>{stringValue(row.title, stringValue(row.id))}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="mgmt-grid-2">
-            <WorkflowAction
-              actionId="memory.edit"
-              description="编辑标题、正文、标签、别名或合并目标。"
-              mutationKey={['memory', 'mutation', 'edit']}
-              preview={[`kind：${kind}`, `memoryId：${selectedId || '尚未选择'}`, `当前标题：${stringValue(selected?.title, '尚未选择')}`]}
-              risk="R1"
-              title="保存记忆差异"
-            />
-            <WorkflowAction
-              actionId="memory.archive"
-              description="归档所选记忆；原始记录与来源关系保留，可回滚。"
-              mutationKey={['memory', 'mutation', 'archive']}
-              preview={[`memoryId：${selectedId || '尚未选择'}`, `当前状态：${stringValue(selected?.status, 'unknown')}`, '归档不会物理删除来源事件。']}
-              risk="R2"
-              title="归档记忆"
-            />
-          </div>
-        </ManagementSection>
+            <ManagementSection title="编辑与归档" description="选择条目后预览字段差异与归档影响；当前操作为演练。">
+              <div className="mgmt-filter-row">
+                <label className="ui-field" style={{ minWidth: 280 }}>
+                  <span className="ui-field__label">条目</span>
+                  <select className="ui-input" onChange={(event) => setSelectedId(event.target.value)} value={selectedId}>
+                    <option value="">请选择</option>
+                    {rows.map((row) => <option key={stringValue(row.id)} value={stringValue(row.id)}>{stringValue(row.title, stringValue(row.id))}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="mgmt-grid-2">
+                <WorkflowAction
+                  actionId="memory.edit"
+                  description="编辑标题、正文、标签、别名或合并目标。"
+                  mutationKey={['memory', 'mutation', 'edit']}
+                  preview={[`kind：${kind}`, `memoryId：${selectedId || '尚未选择'}`, `当前标题：${stringValue(selected?.title, '尚未选择')}`]}
+                  risk="R1"
+                  title="保存记忆差异"
+                />
+                <WorkflowAction
+                  actionId="memory.archive"
+                  description="归档所选记忆；原始记录与来源关系保留，可回滚。"
+                  mutationKey={['memory', 'mutation', 'archive']}
+                  preview={[`memoryId：${selectedId || '尚未选择'}`, `当前状态：${stringValue(selected?.status, 'unknown')}`, '归档不会物理删除来源事件。']}
+                  risk="R2"
+                  title="归档记忆"
+                />
+              </div>
+            </ManagementSection>
 
-        <ManagementSection title="维护草案" description="清理与合并先生成草案，再逐项审阅差异。">
-          <InlineNotice title="维护边界" tone="warning">维护只影响已选草案，完成后可查看结果并回滚。</InlineNotice>
-          <WorkflowAction
-            actionId="memory.maintenance.apply"
-            description="应用已审阅的去重、合并、归档或标签关系草案。"
-            mutationKey={['memory', 'mutation', 'maintenance']}
-            preview={['只应用已批准的差异。', '同时更新来源关系与检索索引。', '完成后提供可回滚收据。']}
-            risk="R2"
-            title="应用维护草案"
-          />
-        </ManagementSection>
+            <ManagementSection title="维护草案" description="清理与合并先生成草案，再逐项审阅差异。">
+              <InlineNotice title="维护边界" tone="warning">维护只影响已选草案，完成后可查看结果并回滚。</InlineNotice>
+              <WorkflowAction
+                actionId="memory.maintenance.apply"
+                description="应用已审阅的去重、合并、归档或标签关系草案。"
+                mutationKey={['memory', 'mutation', 'maintenance']}
+                preview={['只应用已批准的差异。', '同时更新来源关系与检索索引。', '完成后提供可回滚收据。']}
+                risk="R2"
+                title="应用维护草案"
+              />
+            </ManagementSection>
+          </TabsContent>
+          <TabsContent value="relations">
+            <MemoryRelations enabled={view === 'relations'} />
+          </TabsContent>
+        </ViewTabs>
       </QueryState>
     </ManagementPage>
   );
