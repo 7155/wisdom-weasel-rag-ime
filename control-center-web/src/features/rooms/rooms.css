@@ -27,11 +27,12 @@
 .room-group-activity { margin: 8px 0 12px 39px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface-subtle); }
 .room-group-activity > summary { display: flex; min-height: 42px; align-items: center; gap: 9px; padding: 7px 10px; cursor: pointer; list-style: none; }
 .room-group-activity > summary::-webkit-details-marker { display: none; }
-.room-group-activity > summary > span, .room-group-activity p > span { display: grid; flex: 1; gap: 2px; }
+.room-group-activity > summary > span, .room-group-activity__copy { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .room-group-activity strong { font-size: 10px; }
 .room-group-activity small { color: var(--color-text-tertiary); font-size: 8px; }
 .room-group-activity > div { padding: 3px 10px 8px; border-top: 1px solid var(--color-border); }
 .room-group-activity p { display: flex; align-items: center; gap: 8px; margin: 0; padding: 5px 0; }
+.room-group-activity p > .agent-persona-avatar { width: 28px; height: 28px; flex: 0 0 28px; }
 .room-group-activity i { color: var(--color-success); font-size: 8px; font-style: normal; }
 .room-composer { display: flex; width: min(calc(100% - 32px), 860px); align-items: end; gap: 6px; margin: 8px auto 14px; padding: 6px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-3); }
 .room-composer textarea { min-width: 0; min-height: 42px; max-height: 110px; flex: 1; resize: none; border: 0; outline: 0; padding: 7px; background: transparent; font-size: 12px; }

@@ -12,7 +12,7 @@ import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import './rooms.css';
 
 interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; status: string; ordinal: number; }
-interface RoomSummary { id: string; title: string; status: string; routingPolicy: string; moderatorParticipantId: string; updatedAtMs: number; participants: RoomParticipant[]; }
+export interface RoomSummary { id: string; title: string; status: string; routingPolicy: string; moderatorParticipantId: string; updatedAtMs: number; participants: RoomParticipant[]; }
 
 export function RoomsFeature() {
   const transport = useControlTransport();
@@ -88,7 +88,7 @@ export function RoomsFeature() {
   );
 }
 
-function RoomTurn({ turnId, room, projection }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState }) {
+export function RoomTurn({ turnId, room, projection }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState }) {
   const turn = projection.turnsById[turnId];
   if (!turn) return null;
   const activities = turn.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean);
@@ -100,7 +100,7 @@ function RoomTurn({ turnId, room, projection }: { turnId: string; room?: RoomSum
       const participant = room?.participants.find((item) => item.id === message.participantId);
       return <div key={id} className="room-participant-message"><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant?.roleId)} size="small" presence={message.status === 'streaming' ? 'thinking' : 'done'} /><div><header><strong>{participant?.displayName ?? 'Agent'}</strong><small>{message.status === 'streaming' ? '正在响应' : '已完成'}</small></header>{message.message ? <AgentBlocks blocks={message.message.blocks} /> : <MarkdownBody text={message.text} />}</div></div>;
     })}
-    {activities.length ? <details className="room-group-activity"><summary><GitBranch size={15} /><span><strong>{turn.participantIds.length || activities.length} 个 Agent 协同处理</strong><small>{activities.length} 条结构化活动，展开查看分支</small></span></summary><div>{activities.map((activity) => { const participant = room?.participants.find((item) => item.id === activity.participantId); return <p key={activity.id}><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant?.roleId)} size="small" /><span><strong>{participant?.displayName ?? '路由器'}</strong><small>{activity.summary}</small></span><i>{activity.status === 'running' ? '进行中' : activity.status === 'failed' ? '失败' : '完成'}</i></p>; })}</div></details> : null}
+    {activities.length ? <details className="room-group-activity"><summary><GitBranch size={15} /><span><strong>{turn.participantIds.length || activities.length} 个 Agent 协同处理</strong><small>{activities.length} 条结构化活动，展开查看分支</small></span></summary><div>{activities.map((activity) => { const participant = room?.participants.find((item) => item.id === activity.participantId); return <p key={activity.id}><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant?.roleId)} size="small" /><span className="room-group-activity__copy"><strong>{participant?.displayName ?? '路由器'}</strong><small>{activity.summary}</small></span><i>{activity.status === 'running' ? '进行中' : activity.status === 'failed' ? '失败' : '完成'}</i></p>; })}</div></details> : null}
   </article>;
 }
 
