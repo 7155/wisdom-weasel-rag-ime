@@ -18,6 +18,7 @@ class ControlApiFacadeTests(unittest.TestCase):
         facade = ControlApiFacade(
             native_capabilities=NativeCapabilityState(
                 file_picker=True,
+                managed_agent_image_import=True,
                 reveal_path=True,
                 keychain_status=True,
                 tcc_status=True,
@@ -51,6 +52,7 @@ class ControlApiFacadeTests(unittest.TestCase):
             "agent.configuration.get",
         )
         self.assertTrue(bootstrap["capabilities"]["native"]["filePicker"])
+        self.assertTrue(bootstrap["capabilities"]["native"]["managedAgentImageImport"])
         self.assertFalse(bootstrap["capabilities"]["native"]["keychainValues"])
 
     def test_remote_capabilities_force_native_and_privileged_features_off(self) -> None:
@@ -58,6 +60,7 @@ class ControlApiFacadeTests(unittest.TestCase):
             adapter=Gateway8768Adapter(),
             native_capabilities=NativeCapabilityState(
                 file_picker=True,
+                managed_agent_image_import=True,
                 reveal_path=True,
                 keychain_status=True,
                 tcc_status=True,
@@ -72,6 +75,7 @@ class ControlApiFacadeTests(unittest.TestCase):
             capabilities["native"],
             {
                 "filePicker": False,
+                "managedAgentImageImport": False,
                 "revealPath": False,
                 "keychainStatus": False,
                 "tccStatus": False,
@@ -231,7 +235,7 @@ class ControlApiFacadeTests(unittest.TestCase):
         control_events = next(
             item for item in internal if item["pathId"] == ControlPathId.CONTROL_EVENTS.value
         )
-        self.assertEqual(control_events["target"]["8766"], "/api/agent/control/events")
+        self.assertEqual(control_events["target"]["8766"], "/api/agent/events")
         self.assertEqual(control_events["target"]["8768"], "/control/v1/events")
 
 

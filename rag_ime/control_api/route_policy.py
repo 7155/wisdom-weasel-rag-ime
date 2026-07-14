@@ -22,6 +22,7 @@ class ControlPathId(str, Enum):
     AGENT_RUNTIME_GET = "agent.runtime.get"
     AGENT_RUNTIME_ENSURE = "agent.runtime.ensure"
     AGENT_CONFIGURATION_GET = "agent.configuration.get"
+    AGENT_CONFIGURATION_UPDATE = "agent.configuration.update"
     AGENT_SESSIONS_LIST = "agent.sessions.list"
     AGENT_SESSIONS_CREATE = "agent.sessions.create"
     AGENT_SESSION_SNAPSHOT = "agent.session.snapshot"
@@ -36,6 +37,11 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_MODEL_SELECT = "agent.session.model.select"
     AGENT_SESSION_THINKING_SELECT = "agent.session.thinking.select"
     AGENT_SESSION_EVENTS = "agent.session.events"
+    AGENT_SESSION_INTERCOM_LIST = "agent.session.intercom.list"
+    AGENT_SESSION_INTERCOM_SEND = "agent.session.intercom.send"
+    AGENT_ARTIFACT_GET = "agent.artifact.get"
+    AGENT_MEDIA_LIST = "agent.media.list"
+    AGENT_DEEP_SEARCH = "agent.deep-search"
     AGENT_ROOMS_LIST = "agent.rooms.list"
     AGENT_ROOMS_CREATE = "agent.rooms.create"
     AGENT_ROOM_GET = "agent.room.get"
@@ -348,6 +354,7 @@ _SESSION = {"sessionId"}
 _ROOM = {"roomId"}
 _APPROVAL = {"approvalId"}
 _RUN = {"runId"}
+_ARTIFACT = {"artifactId"}
 _PAGE_QUERY = {"limit", "cursor", "query", "status"}
 _LAST_EVENT_QUERY = {"lastEventId"}
 
@@ -356,7 +363,7 @@ def default_route_policy() -> ControlRoutePolicy:
     routes = [
         _route(ControlPathId.CONTROL_BOOTSTRAP, ControlMethod.GET, None, None, remote_safe=True, facade=True, anonymous_remote=True),
         _route(ControlPathId.CONTROL_CAPABILITIES, ControlMethod.GET, None, None, remote_safe=True, facade=True, anonymous_remote=True),
-        _route(ControlPathId.CONTROL_EVENTS, ControlMethod.GET, "/api/agent/control/events", "/control/v1/events", scopes=[ControlScope.CONTROL_READ], remote_safe=True, subscription=True, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
+        _route(ControlPathId.CONTROL_EVENTS, ControlMethod.GET, "/api/agent/events", "/control/v1/events", scopes=[ControlScope.CONTROL_READ], remote_safe=True, subscription=True, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.SYSTEM_HEALTH, ControlMethod.GET, "/api/health", "/control/v1/health", scopes=[ControlScope.CONTROL_READ], remote_safe=True),
         _route(ControlPathId.OVERVIEW_GET, ControlMethod.GET, "/api/overview", "/control/v1/overview", scopes=[ControlScope.OVERVIEW_READ], remote_safe=True),
         _route(ControlPathId.INPUT_SOURCE_GET, ControlMethod.GET, "/api/input-source", "/control/v1/input/source", scopes=[ControlScope.INPUT_READ], remote_safe=True),
@@ -364,6 +371,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_RUNTIME_GET, ControlMethod.GET, "/api/agent/runtime", "/control/v1/agent/runtime", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_RUNTIME_ENSURE, ControlMethod.POST, "/api/agent/runtime/ensure", "/control/v1/agent/runtime/ensure", body={"sessionId"}, required_body={"sessionId"}),
         _route(ControlPathId.AGENT_CONFIGURATION_GET, ControlMethod.GET, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_READ], remote_safe=True),
+        _route(ControlPathId.AGENT_CONFIGURATION_UPDATE, ControlMethod.POST, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"expectedRevision", "changes", "updatedBy"}, required_body={"expectedRevision", "changes"}, remote_body={"expectedRevision", "changes"}),
         _route(ControlPathId.AGENT_SESSIONS_LIST, ControlMethod.GET, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "includeInternal", "limit"}, remote_query={"includeArchived", "limit"}),
         _route(ControlPathId.AGENT_SESSIONS_CREATE, ControlMethod.POST, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "workspaceRoots"}, remote_body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion"}, remote_body_values={"mode": {"assistant"}}),
         _route(ControlPathId.AGENT_SESSION_SNAPSHOT, ControlMethod.GET, "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
@@ -378,6 +386,11 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_MODEL_SELECT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/model", "/control/v1/agent/sessions/{sessionId}/model", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"provider", "modelId"}, required_body={"provider", "modelId"}, remote_body={"provider", "modelId"}),
         _route(ControlPathId.AGENT_SESSION_THINKING_SELECT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/thinking", "/control/v1/agent/sessions/{sessionId}/thinking", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"level"}, required_body={"level"}, remote_body={"level"}),
         _route(ControlPathId.AGENT_SESSION_EVENTS, ControlMethod.GET, "/api/agent/sessions/{sessionId}/events", "/control/v1/agent/sessions/{sessionId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_SESSION, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
+        _route(ControlPathId.AGENT_SESSION_INTERCOM_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"status", "limit"}),
+        _route(ControlPathId.AGENT_SESSION_INTERCOM_SEND, ControlMethod.POST, "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"kind", "targetParticipantId", "clientMessageId", "replyTo", "content"}, required_body={"kind", "clientMessageId", "content"}, remote_body={"kind", "targetParticipantId", "clientMessageId", "replyTo", "content"}, remote_body_values={"kind": {"send", "ask", "reply"}}),
+        _route(ControlPathId.AGENT_ARTIFACT_GET, ControlMethod.GET, "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ARTIFACT, query={"sessionId", "limit"}, required_query={"sessionId"}),
+        _route(ControlPathId.AGENT_MEDIA_LIST, ControlMethod.GET, "/api/agent/media", "/control/v1/agent/media", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
+        _route(ControlPathId.AGENT_DEEP_SEARCH, ControlMethod.POST, "/api/agent/deep-search", "/control/v1/agent/deep-search", body={"query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"}, required_body={"query", "privacyDisposition"}),
 
         _route(ControlPathId.AGENT_ROOMS_LIST, ControlMethod.GET, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "limit"}),
         _route(ControlPathId.AGENT_ROOMS_CREATE, ControlMethod.POST, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "participants", "routingPolicy", "moderatorRoleId"}, required_body={"participants"}, remote_body={"title", "participants", "routingPolicy", "moderatorRoleId"}),
@@ -463,80 +476,19 @@ def _invalid_field(field_name: str, key: str) -> ControlApiError:
     )
 
 
-@dataclass(frozen=True)
-class ControlRoute:
-    path_id: str
-    method: str
-    local_path: str
-    remote_path: str
-    capability: str
-    streaming: bool = False
-    remote_allowed: bool = True
-
-    def payload(self) -> dict[str, object]:
-        return {
-            "pathId": self.path_id,
-            "method": self.method,
-            "localPath": self.local_path,
-            "remotePath": self.remote_path,
-            "capability": self.capability,
-            "streaming": self.streaming,
-            "remoteAllowed": self.remote_allowed,
-        }
-
-
-# Page code selects a pathId. Only transport adapters are allowed to expand it
-# into a concrete URL, so a WebView or plugin cannot turn the bridge into fetch().
-_CONTROL_ROUTES = (
-    ControlRoute("agent.configuration.get", "GET", "/api/agent/configuration", "/remote/v1/agent/configuration", "agent.settings.read"),
-    ControlRoute("agent.configuration.update", "POST", "/api/agent/configuration", "/remote/v1/agent/configuration", "agent.settings.write"),
-    ControlRoute("agent.control.events", "GET", "/api/agent/events", "/remote/v1/agent/events", "agent.events.read", streaming=True),
-    ControlRoute("agent.runtime.get", "GET", "/api/agent/runtime", "/remote/v1/agent/runtime", "agent.runtime.read"),
-    ControlRoute("agent.runtime.ensure", "POST", "/api/agent/runtime/ensure", "/remote/v1/agent/runtime/ensure", "agent.runtime.start"),
-    ControlRoute("agent.roles.list", "GET", "/api/agent/roles", "/remote/v1/agent/roles", "agent.roles.read"),
-    ControlRoute("agent.templates.list", "GET", "/api/agent/templates", "/remote/v1/agent/templates", "agent.templates.read"),
-    ControlRoute("agent.tools.list", "GET", "/api/agent/tools", "/remote/v1/agent/tools", "agent.tools.read"),
-    ControlRoute("agent.sessions.list", "GET", "/api/agent/sessions", "/remote/v1/agent/sessions", "agent.sessions.read"),
-    ControlRoute("agent.sessions.create", "POST", "/api/agent/sessions", "/remote/v1/agent/sessions", "agent.sessions.write"),
-    ControlRoute("agent.session.get", "GET", "/api/agent/sessions/{sessionId}", "/remote/v1/agent/sessions/{sessionId}", "agent.sessions.read"),
-    ControlRoute("agent.session.update", "PATCH", "/api/agent/sessions/{sessionId}", "/remote/v1/agent/sessions/{sessionId}", "agent.sessions.write"),
-    ControlRoute("agent.session.delete", "DELETE", "/api/agent/sessions/{sessionId}", "/remote/v1/agent/sessions/{sessionId}", "agent.sessions.delete"),
-    ControlRoute("agent.session.messages", "GET", "/api/agent/sessions/{sessionId}/messages", "/remote/v1/agent/sessions/{sessionId}/messages", "agent.messages.read"),
-    ControlRoute("agent.session.events", "GET", "/api/agent/sessions/{sessionId}/events", "/remote/v1/agent/sessions/{sessionId}/events", "agent.events.read", streaming=True),
-    ControlRoute("agent.session.prompt", "POST", "/api/agent/sessions/{sessionId}/prompt", "/remote/v1/agent/sessions/{sessionId}/prompt", "agent.messages.write"),
-    ControlRoute("agent.session.abort", "POST", "/api/agent/sessions/{sessionId}/abort", "/remote/v1/agent/sessions/{sessionId}/abort", "agent.turn.abort"),
-    ControlRoute("agent.session.compact", "POST", "/api/agent/sessions/{sessionId}/compact", "/remote/v1/agent/sessions/{sessionId}/compact", "agent.session.compact"),
-    ControlRoute("agent.session.models", "GET", "/api/agent/sessions/{sessionId}/models", "/remote/v1/agent/sessions/{sessionId}/models", "agent.models.read"),
-    ControlRoute("agent.session.model", "POST", "/api/agent/sessions/{sessionId}/model", "/remote/v1/agent/sessions/{sessionId}/model", "agent.models.write"),
-    ControlRoute("agent.session.thinking", "POST", "/api/agent/sessions/{sessionId}/thinking", "/remote/v1/agent/sessions/{sessionId}/thinking", "agent.models.write"),
-    ControlRoute("agent.session.intercom.list", "GET", "/api/agent/sessions/{sessionId}/intercom", "/remote/v1/agent/sessions/{sessionId}/intercom", "agent.rooms.read"),
-    ControlRoute("agent.session.intercom.send", "POST", "/api/agent/sessions/{sessionId}/intercom", "/remote/v1/agent/sessions/{sessionId}/intercom", "agent.messages.write"),
-    ControlRoute("agent.artifact.get", "GET", "/api/agent/artifacts/{artifactId}", "/remote/v1/agent/artifacts/{artifactId}", "agent.artifacts.read"),
-    ControlRoute("agent.rooms.list", "GET", "/api/agent/rooms", "/remote/v1/agent/rooms", "agent.rooms.read"),
-    ControlRoute("agent.rooms.create", "POST", "/api/agent/rooms", "/remote/v1/agent/rooms", "agent.rooms.write"),
-    ControlRoute("agent.room.get", "GET", "/api/agent/rooms/{roomId}", "/remote/v1/agent/rooms/{roomId}", "agent.rooms.read"),
-    ControlRoute("agent.room.update", "PATCH", "/api/agent/rooms/{roomId}", "/remote/v1/agent/rooms/{roomId}", "agent.rooms.write"),
-    ControlRoute("agent.room.messages", "POST", "/api/agent/rooms/{roomId}/messages", "/remote/v1/agent/rooms/{roomId}/messages", "agent.messages.write"),
-    ControlRoute("agent.room.events", "GET", "/api/agent/rooms/{roomId}/events", "/remote/v1/agent/rooms/{roomId}/events", "agent.events.read", streaming=True),
-    ControlRoute("agent.approvals.list", "GET", "/api/agent/approvals", "/remote/v1/agent/approvals", "agent.approvals.read"),
-    ControlRoute("agent.approval.decision", "POST", "/api/agent/approvals/{approvalId}/decision", "/remote/v1/agent/approvals/{approvalId}/decision", "agent.approvals.decide"),
-    ControlRoute("agent.media.list", "GET", "/api/agent/media", "/remote/v1/agent/media", "agent.media.read"),
-    ControlRoute("agent.media.import", "POST", "/api/agent/media/import", "/remote/v1/agent/media/import", "agent.media.write"),
-    ControlRoute("agent.deep-search", "POST", "/api/agent/deep-search", "/remote/v1/agent/deep-search", "agent.messages.write"),
-    # Internal Pi tools use a process capability token and are never a browser route.
-    ControlRoute("agent.tool.execute", "POST", "/api/agent/tool/execute", "", "agent.tools.execute", remote_allowed=False),
-)
-
-
 def control_route_catalog() -> list[dict[str, object]]:
-    return [route.payload() for route in _CONTROL_ROUTES]
+    """Compatibility name backed by the one canonical strict manifest."""
+
+    return route_manifest(include_targets=True)
 
 
-def control_route(path_id: str, *, remote: bool = False) -> ControlRoute:
-    for route in _CONTROL_ROUTES:
-        if route.path_id != path_id:
-            continue
-        if remote and (not route.remote_allowed or not route.remote_path):
-            raise ValueError(f"control route is not available remotely: {path_id}")
-        return route
-    raise ValueError(f"unknown control pathId: {path_id}")
+def control_route(path_id: str, *, remote: bool = False) -> ControlRouteSpec:
+    """Compatibility resolver backed by ``default_route_policy``."""
+
+    try:
+        route = default_route_policy().resolve(path_id)
+    except ControlApiError as exc:
+        raise ValueError(f"unknown control pathId: {path_id}") from exc
+    if remote and (not route.remote_safe or route.gateway_8768_path is None):
+        raise ValueError(f"control route is not available remotely: {path_id}")
+    return route

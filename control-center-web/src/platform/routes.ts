@@ -25,7 +25,7 @@ export const CONTROL_ROUTES = {
   },
   'control.events': {
     method: 'GET',
-    path: '/api/agent/control/events',
+    path: '/api/agent/events',
     query: ['lastEventId'],
     requiredQuery: ['lastEventId'],
     subscription: 'control',
@@ -46,6 +46,12 @@ export const CONTROL_ROUTES = {
     requiredBody: ['sessionId'],
   },
   'agent.configuration.get': { method: 'GET', path: '/api/agent/configuration' },
+  'agent.configuration.update': {
+    method: 'POST',
+    path: '/api/agent/configuration',
+    body: ['expectedRevision', 'changes', 'updatedBy'],
+    requiredBody: ['expectedRevision', 'changes'],
+  },
   'agent.sessions.list': {
     method: 'GET',
     path: '/api/agent/sessions',
@@ -140,6 +146,38 @@ export const CONTROL_ROUTES = {
     query: ['lastEventId'],
     requiredQuery: ['lastEventId'],
     subscription: 'agent',
+  },
+  'agent.session.intercom.list': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/intercom',
+    params: { sessionId: null },
+    query: ['status', 'limit'],
+  },
+  'agent.session.intercom.send': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/intercom',
+    params: { sessionId: null },
+    body: ['kind', 'targetParticipantId', 'clientMessageId', 'replyTo', 'content'],
+    requiredBody: ['kind', 'clientMessageId', 'content'],
+  },
+  'agent.artifact.get': {
+    method: 'GET',
+    path: '/api/agent/artifacts/:artifactId',
+    params: { artifactId: null },
+    query: ['sessionId', 'limit'],
+    requiredQuery: ['sessionId'],
+  },
+  'agent.media.list': {
+    method: 'GET',
+    path: '/api/agent/media',
+    query: ['sessionId', 'limit'],
+    requiredQuery: ['sessionId'],
+  },
+  'agent.deep-search': {
+    method: 'POST',
+    path: '/api/agent/deep-search',
+    body: ['query', 'privacyDisposition', 'context', 'frontAppBundleId', 'contextSource', 'evidence'],
+    requiredBody: ['query', 'privacyDisposition'],
   },
   'agent.rooms.list': {
     method: 'GET',

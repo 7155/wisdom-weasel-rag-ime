@@ -32,20 +32,29 @@
         "required": [
           "pathId",
           "method",
-          "localPath",
-          "remotePath",
-          "capability",
-          "streaming",
-          "remoteAllowed"
+          "remoteSafe",
+          "subscription",
+          "params",
+          "query",
+          "target"
         ],
         "properties": {
           "pathId": {"type": "string", "minLength": 1},
           "method": {"type": "string", "enum": ["GET", "POST", "PATCH", "DELETE"]},
-          "localPath": {"type": "string", "minLength": 1},
-          "remotePath": {"type": "string"},
-          "capability": {"type": "string", "minLength": 1},
-          "streaming": {"type": "boolean"},
-          "remoteAllowed": {"type": "boolean"}
+          "remoteSafe": {"type": "boolean"},
+          "subscription": {"type": "boolean"},
+          "params": {"type": "array", "items": {"type": "string"}},
+          "query": {"type": "array", "items": {"type": "string"}},
+          "remoteScopes": {"type": "array", "items": {"type": "string"}},
+          "remoteQuery": {"type": "array", "items": {"type": "string"}},
+          "target": {
+            "type": "object",
+            "required": ["8766", "8768"],
+            "properties": {
+              "8766": {"type": "string", "minLength": 1},
+              "8768": {"type": "string", "minLength": 1}
+            }
+          }
         }
       }
     }

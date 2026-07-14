@@ -88,16 +88,23 @@ class ControlApiTests(unittest.TestCase):
         routes = control_route_catalog()
         ids = [str(item["pathId"]) for item in routes]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue(control_route("agent.session.events", remote=True).streaming)
+        self.assertTrue(control_route("agent.session.events", remote=True).subscription)
         self.assertEqual(
-            control_route("agent.artifact.get", remote=True).capability,
-            "agent.artifacts.read",
+            control_route("agent.artifact.get", remote=True).remote_scopes,
+            frozenset({"agent.read"}),
         )
         self.assertEqual(
-            control_route("agent.session.intercom.send").method,
+            control_route("agent.session.intercom.send").method.value,
             "POST",
         )
-        with self.assertRaisesRegex(ValueError, "not available remotely"):
+        self.assertEqual(control_route("control.events").local_8766_path, "/api/agent/events")
+        self.assertEqual(
+            control_route("agent.subagents.templates").local_8766_path,
+            "/api/agent/subagents/templates",
+        )
+        for forbidden in ("agent.media.import", "agent.tool.execute", "agent.session.get"):
+            self.assertNotIn(forbidden, ids)
+        with self.assertRaisesRegex(ValueError, "unknown control pathId"):
             control_route("agent.tool.execute", remote=True)
         with self.assertRaisesRegex(ValueError, "unknown control pathId"):
             control_route("debug.anything")

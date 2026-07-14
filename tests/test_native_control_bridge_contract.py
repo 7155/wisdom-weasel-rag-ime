@@ -39,11 +39,11 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         expected = set(FIXTURE["pathIds"])
         python_ids = {item.value for item in ControlPathId}
         typescript_ids = set(
-            re.findall(r"^\s{2}'([A-Za-z][A-Za-z0-9.]+)':", self.routes, re.MULTILINE)
+            re.findall(r"^\s{2}'([A-Za-z][A-Za-z0-9.-]+)':", self.routes, re.MULTILINE)
         )
         swift_ids = set(
             re.findall(
-                r'^\s{12}"([A-Za-z][A-Za-z0-9.]+)":\s*route\(',
+                r'^\s{12}"([A-Za-z][A-Za-z0-9.-]+)":\s*route\(',
                 self.native_routes,
                 re.MULTILINE,
             )

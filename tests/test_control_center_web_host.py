@@ -17,11 +17,11 @@ class ControlCenterWebHostTests(unittest.TestCase):
         from rag_ime.control_api.route_policy import ControlPathId
 
         source = (HOST / "NativeRoutePolicy.swift").read_text(encoding="utf-8")
-        swift_ids = set(re.findall(r'"([A-Za-z][A-Za-z0-9.]+)"\s*:\s*route\(', source))
+        swift_ids = set(re.findall(r'"([A-Za-z][A-Za-z0-9.-]+)"\s*:\s*route\(', source))
         swift_ids.update(re.findall(r'"(control\.(?:bootstrap|capabilities))"', source))
         python_ids = {item.value for item in ControlPathId}
         self.assertEqual(swift_ids, python_ids)
-        self.assertEqual(len(swift_ids), 52)
+        self.assertEqual(len(swift_ids), 58)
 
     def test_native_route_policy_executes_fail_closed_security_cases(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-native-route-") as temporary:

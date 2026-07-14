@@ -18,6 +18,7 @@ NATIVE_BRIDGE_HANDLER = "ragImeNativeBridge"
 @dataclass(frozen=True)
 class NativeCapabilityState:
     file_picker: bool = False
+    managed_agent_image_import: bool = False
     reveal_path: bool = False
     keychain_status: bool = False
     tcc_status: bool = False
@@ -71,10 +72,17 @@ def build_capabilities(
             "managementReads": ControlPathId.OVERVIEW_GET.value in route_ids,
             "subscriptions": bool(subscriptions),
             "sessionSnapshot": ControlPathId.AGENT_SESSION_SNAPSHOT.value in route_ids,
+            "roomSnapshot": ControlPathId.AGENT_ROOM_SNAPSHOT.value in route_ids,
+            "agentConfigurationWrite": ControlPathId.AGENT_CONFIGURATION_UPDATE.value in route_ids,
+            "sessionIntercom": ControlPathId.AGENT_SESSION_INTERCOM_SEND.value in route_ids,
+            "boundedArtifacts": ControlPathId.AGENT_ARTIFACT_GET.value in route_ids,
+            "agentMediaList": ControlPathId.AGENT_MEDIA_LIST.value in route_ids,
+            "agentDeepSearch": ControlPathId.AGENT_DEEP_SEARCH.value in route_ids,
             "globalControlEvents": ControlPathId.CONTROL_EVENTS.value in route_ids,
         },
         "native": {
             "filePicker": native_client and native_state.file_picker,
+            "managedAgentImageImport": native_client and native_state.managed_agent_image_import,
             "revealPath": native_client and native_state.reveal_path,
             "keychainStatus": native_client and native_state.keychain_status,
             "tccStatus": native_client and native_state.tcc_status,

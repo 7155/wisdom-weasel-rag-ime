@@ -17,6 +17,7 @@ const canonicalPathIds = [
   'agent.runtime.get',
   'agent.runtime.ensure',
   'agent.configuration.get',
+  'agent.configuration.update',
   'agent.sessions.list',
   'agent.sessions.create',
   'agent.session.snapshot',
@@ -31,6 +32,11 @@ const canonicalPathIds = [
   'agent.session.model.select',
   'agent.session.thinking.select',
   'agent.session.events',
+  'agent.session.intercom.list',
+  'agent.session.intercom.send',
+  'agent.artifact.get',
+  'agent.media.list',
+  'agent.deep-search',
   'agent.rooms.list',
   'agent.rooms.create',
   'agent.room.get',
@@ -65,7 +71,7 @@ const canonicalPathIds = [
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(52);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(58);
   });
 
   it('resolves only allowlisted path parameters', () => {
@@ -78,6 +84,16 @@ describe('control route policy', () => {
     expect(() => resolveControlPath('memory.pages', { kind: 'private-db' })).toThrow(
       /not allowlisted/,
     );
+  });
+
+  it('uses the concrete Agent handlers without advertising privileged internal routes', () => {
+    expect(CONTROL_ROUTES['control.events'].path).toBe('/api/agent/events');
+    expect(CONTROL_ROUTES['agent.subagents.templates'].path).toBe(
+      '/api/agent/subagents/templates',
+    );
+    expect(Object.hasOwn(CONTROL_ROUTES, 'agent.media.import')).toBe(false);
+    expect(Object.hasOwn(CONTROL_ROUTES, 'agent.tool.execute')).toBe(false);
+    expect(Object.hasOwn(CONTROL_ROUTES, 'agent.session.get')).toBe(false);
   });
 
   it('rejects arbitrary URL/host fields and fields outside each route contract', () => {
@@ -120,6 +136,24 @@ describe('control route policy', () => {
         query: { limit: Number.NaN },
       }),
     ).toThrow(/query field is invalid/);
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.artifact.get',
+        params: { artifactId: 'artifact-1' },
+      }),
+    ).toThrow(/required query/);
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.session.intercom.send',
+        params: { sessionId: 'session-1' },
+        body: {
+          kind: 'send',
+          clientMessageId: 'message-1',
+          content: 'hello',
+          sourceSessionId: 'session-2',
+        },
+      } as never),
+    ).toThrow(/body field/);
   });
 
   it('requires an explicit lastEventId for every subscription', () => {

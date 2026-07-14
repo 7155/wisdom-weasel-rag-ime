@@ -72,6 +72,15 @@ class ControlRoutePolicyTests(unittest.TestCase):
         self.assertTrue(events["subscription"])
         self.assertIn("lastEventId", events["query"])
 
+        control_events = entries[ControlPathId.CONTROL_EVENTS.value]
+        self.assertEqual(control_events["target"]["8766"], "/api/agent/events")
+
+        templates = entries[ControlPathId.AGENT_SUBAGENTS_TEMPLATES.value]
+        self.assertEqual(
+            templates["target"]["8766"],
+            "/api/agent/subagents/templates",
+        )
+
         room_snapshot = entries[ControlPathId.AGENT_ROOM_SNAPSHOT.value]
         self.assertEqual(room_snapshot["method"], "GET")
         self.assertEqual(
@@ -240,6 +249,65 @@ class ControlRoutePolicyTests(unittest.TestCase):
         with self.assertRaises(ControlApiError):
             self.policy.authorize(request, context)
 
+    def test_remote_configuration_update_cannot_spoof_audit_identity(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_CONFIGURATION_UPDATE.value,
+            body={
+                "expectedRevision": 4,
+                "changes": {"defaultModel": "local"},
+                "updatedBy": "spoofed-device",
+            },
+        )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(request, context)
+
+    def test_bounded_artifact_reads_require_session_ownership(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_ARTIFACT_GET.value,
+            params={"artifactId": "artifact-1"},
+        )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(request, ControlAccessContext.native())
+
+    def test_intercom_rejects_client_supplied_source_identity(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_SESSION_INTERCOM_SEND.value,
+            params={"sessionId": "session-1"},
+            body={
+                "kind": "send",
+                "clientMessageId": "message-1",
+                "content": "hello",
+                "sourceSessionId": "session-2",
+            },
+        )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(request, ControlAccessContext.native())
+
+    def test_deep_search_remains_local_only(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_DEEP_SEARCH.value,
+            body={"query": "hello", "privacyDisposition": "allowed"},
+        )
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize(request, context)
+        self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
     def test_remote_manifest_contains_only_explicit_remote_safe_routes_and_no_targets(self) -> None:
         context = ControlAccessContext.remote(
             device_id="phone-1",
@@ -270,6 +338,9 @@ class ControlRoutePolicyTests(unittest.TestCase):
         self.assertNotIn("/api/action", targets)
         self.assertNotIn("/api/knowledge/database/apply", targets)
         self.assertNotIn("/api/configuration/import-apply", targets)
+        self.assertNotIn("agent.media.import", path_ids)
+        self.assertNotIn("agent.tool.execute", path_ids)
+        self.assertNotIn("agent.session.get", path_ids)
 
 
 if __name__ == "__main__":

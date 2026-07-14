@@ -82,13 +82,14 @@ final class NativeRoutePolicy {
         }
 
         return [
-            "control.events": route("GET", "/api/agent/control/events", "/control/v1/events", remoteSafe: true, subscription: true),
+            "control.events": route("GET", "/api/agent/events", "/control/v1/events", remoteSafe: true, subscription: true),
             "system.health": route("GET", "/api/health", "/control/v1/health", remoteSafe: true),
             "overview.get": route("GET", "/api/overview", "/control/v1/overview", remoteSafe: true),
             "input.source.get": route("GET", "/api/input-source", "/control/v1/input/source", remoteSafe: true),
             "agent.runtime.get": route("GET", "/api/agent/runtime", "/control/v1/agent/runtime", remoteSafe: true),
             "agent.runtime.ensure": route("POST", "/api/agent/runtime/ensure", "/control/v1/agent/runtime/ensure", bodyKeys: ["sessionId"], requiredBodyKeys: ["sessionId"]),
             "agent.configuration.get": route("GET", "/api/agent/configuration", "/control/v1/agent/configuration", remoteSafe: true),
+            "agent.configuration.update": route("POST", "/api/agent/configuration", "/control/v1/agent/configuration", remoteSafe: true, bodyKeys: ["expectedRevision", "changes", "updatedBy"], requiredBodyKeys: ["expectedRevision", "changes"]),
             "agent.sessions.list": route("GET", "/api/agent/sessions", "/control/v1/agent/sessions", query: ["includeArchived", "includeInternal", "limit"], remoteSafe: true),
             "agent.sessions.create": route("POST", "/api/agent/sessions", "/control/v1/agent/sessions", remoteSafe: true, bodyKeys: ["title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "workspaceRoots"]),
             "agent.session.snapshot": route("GET", "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", remoteSafe: true),
@@ -103,6 +104,11 @@ final class NativeRoutePolicy {
             "agent.session.model.select": route("POST", "/api/agent/sessions/{sessionId}/model", "/control/v1/agent/sessions/{sessionId}/model", remoteSafe: true, bodyKeys: ["provider", "modelId"], requiredBodyKeys: ["provider", "modelId"]),
             "agent.session.thinking.select": route("POST", "/api/agent/sessions/{sessionId}/thinking", "/control/v1/agent/sessions/{sessionId}/thinking", remoteSafe: true, bodyKeys: ["level"], requiredBodyKeys: ["level"]),
             "agent.session.events": route("GET", "/api/agent/sessions/{sessionId}/events", "/control/v1/agent/sessions/{sessionId}/events", remoteSafe: true, subscription: true),
+            "agent.session.intercom.list": route("GET", "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", query: ["status", "limit"], remoteSafe: true),
+            "agent.session.intercom.send": route("POST", "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", remoteSafe: true, bodyKeys: ["kind", "targetParticipantId", "clientMessageId", "replyTo", "content"], requiredBodyKeys: ["kind", "clientMessageId", "content"]),
+            "agent.artifact.get": route("GET", "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
+            "agent.media.list": route("GET", "/api/agent/media", "/control/v1/agent/media", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
+            "agent.deep-search": route("POST", "/api/agent/deep-search", "/control/v1/agent/deep-search", bodyKeys: ["query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"], requiredBodyKeys: ["query", "privacyDisposition"]),
             "agent.rooms.list": route("GET", "/api/agent/rooms", "/control/v1/agent/rooms", query: ["includeArchived", "limit"], remoteSafe: true),
             "agent.rooms.create": route("POST", "/api/agent/rooms", "/control/v1/agent/rooms", remoteSafe: true, bodyKeys: ["title", "participants", "routingPolicy", "moderatorRoleId"], requiredBodyKeys: ["participants"]),
             "agent.room.get": route("GET", "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", remoteSafe: true),
@@ -275,6 +281,11 @@ final class NativeRoutePolicy {
                   let dictionary = body as? [String: Any],
                   dictionary.keys.allSatisfy(definition.allowedBodyKeys.contains),
                   definition.requiredBodyKeys.allSatisfy({ dictionary[$0] != nil }) else {
+                throw NativeRoutePolicyError.invalidBody
+            }
+            if scope == .remote,
+               pathId == "agent.configuration.update",
+               dictionary["updatedBy"] != nil {
                 throw NativeRoutePolicyError.invalidBody
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: body)

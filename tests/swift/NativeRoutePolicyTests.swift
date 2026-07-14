@@ -50,6 +50,14 @@ struct NativeRoutePolicyTests {
         )
         expect(subscription.request.value(forHTTPHeaderField: "Last-Event-ID") == "session-a:41", "resume cursor")
 
+        let controlEvents = try policy.resolveSubscription(
+            pathId: "control.events",
+            parameters: [:],
+            query: [:],
+            lastEventId: "agent-control:9"
+        )
+        expect(controlEvents.request.url?.path == "/api/agent/events", "canonical control event route")
+
         let roomSnapshot = try policy.resolveRequest(
             pathId: "agent.room.snapshot",
             parameters: ["roomId": "room:alpha"],
@@ -58,6 +66,14 @@ struct NativeRoutePolicyTests {
         )
         expect(roomSnapshot.request.url?.absoluteString.contains("room:alpha/snapshot") == true, "room snapshot route")
         expect(roomSnapshot.request.httpMethod == "GET", "room snapshot method")
+
+        let artifact = try policy.resolveRequest(
+            pathId: "agent.artifact.get",
+            parameters: ["artifactId": "artifact:alpha"],
+            query: ["sessionId": "session:alpha", "limit": "5"],
+            body: nil
+        )
+        expect(artifact.request.url?.path.contains("/api/agent/artifacts/artifact:alpha") == true, "artifact route")
 
         _ = try policy.resolveRequest(
             pathId: "memory.pages",
@@ -101,6 +117,49 @@ struct NativeRoutePolicyTests {
                 parameters: [:],
                 query: ["url": "http://example.com"],
                 body: nil
+            )
+        }
+        expectThrows("artifact ownership query") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.artifact.get",
+                parameters: ["artifactId": "artifact:alpha"],
+                query: [:],
+                body: nil
+            )
+        }
+        expectThrows("intercom source identity injection") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.session.intercom.send",
+                parameters: ["sessionId": "session-a"],
+                query: [:],
+                body: [
+                    "kind": "send",
+                    "clientMessageId": "message-a",
+                    "content": "hello",
+                    "sourceSessionId": "session-b",
+                ]
+            )
+        }
+        expectThrows("deep search is local only") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.deep-search",
+                parameters: [:],
+                query: [:],
+                body: ["query": "hello", "privacyDisposition": "allowed"],
+                scope: .remote
+            )
+        }
+        expectThrows("remote configuration audit identity injection") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.configuration.update",
+                parameters: [:],
+                query: [:],
+                body: [
+                    "expectedRevision": 4,
+                    "changes": ["defaultModel": "local"],
+                    "updatedBy": "spoofed-device",
+                ],
+                scope: .remote
             )
         }
         expectThrows("invalid memory kind") {
