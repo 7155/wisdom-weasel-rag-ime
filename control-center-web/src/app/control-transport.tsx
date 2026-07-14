@@ -53,11 +53,29 @@ function detectTransport(): 'native' | 'http' | 'mock' {
 }
 
 function createPreviewTransport(): MockControlTransport {
+  let nextSessionId = 1;
+  const sessions: Record<string, unknown>[] = [
+    previewSession('session-preview', '控制中心迁移', 'zhiyou-v1', Date.now()),
+    previewSession('session-memory', '记忆整理', 'zhiyou-v1', Date.now() - 360_000),
+  ];
   const routes = Object.fromEntries(
     (Object.keys(CONTROL_ROUTES) as ControlPathId[])
       .filter((pathId) => !controlRoute(pathId).subscription)
       .map((pathId) => [pathId, previewResponse(pathId)]),
   ) as Partial<Record<ControlPathId, MockRouteHandler>>;
+  routes['agent.sessions.list'] = () => ({ ok: true, sessions: [...sessions] });
+  routes['agent.sessions.create'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const session = previewSession(
+      `session-persona-${nextSessionId++}`,
+      stringValue(body.title) || '新对话',
+      stringValue(body.roleId) || 'zhiyou-v1',
+      Date.now(),
+      stringValue(body.roleVersion) || '1',
+    );
+    sessions.unshift(session);
+    return { ok: true, session };
+  };
   return new MockControlTransport({
     routes,
     pickedFiles: [
@@ -117,14 +135,6 @@ function previewResponse(pathId: ControlPathId): unknown {
           },
         ],
       };
-    case 'agent.sessions.list':
-      return {
-        ok: true,
-        sessions: [
-          { id: 'session-preview', title: '控制中心迁移', status: 'ready', updatedAtMs: Date.now() },
-          { id: 'session-memory', title: '记忆整理', status: 'idle', updatedAtMs: Date.now() - 360_000 },
-        ],
-      };
     case 'agent.rooms.list':
       return { ok: true, rooms: [] };
     case 'agent.room.snapshot':
@@ -145,6 +155,38 @@ function previewResponse(pathId: ControlPathId): unknown {
     default:
       return { ok: true, schemaVersion: 'rag-ime.control-preview.v1' };
   }
+}
+
+function previewSession(
+  id: string,
+  title: string,
+  roleId: string,
+  updatedAtMs: number,
+  roleVersion = '1',
+): Record<string, unknown> {
+  return {
+    id,
+    title,
+    mode: 'assistant',
+    status: 'ready',
+    roleId,
+    roleVersion,
+    updatedAtMs,
+    workspaceRoots: [],
+    modelProfile: 'session-selected',
+    messageCount: 0,
+    lastMessagePreview: '',
+  };
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function previewRoomSnapshot(roomId: string) {

@@ -105,6 +105,14 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   await page.goto('/#/roles');
   await expect(page.getByRole('region', { name: 'Persona 列表' })).toBeVisible();
   await expect(page.locator('.persona-grid > button')).toHaveCount(3);
+  const secondPersona = page.locator('.persona-grid > button').nth(1);
+  const personaName = (await secondPersona.locator('strong').innerText()).trim();
+  await secondPersona.click();
+  await page.getByRole('button', { name: '开始对话' }).click();
+  await expect(page).toHaveURL(/#\/agent\?session=session-persona-1$/);
+  await expect(page.getByText(`${personaName} 对话`, { exact: true }).first()).toBeVisible();
+
+  await page.goto('/#/roles');
   await page.getByRole('radio', { name: 'Agent Template' }).click();
   await expect(page.getByRole('region', { name: 'Agent Template 列表' })).toBeVisible();
   await expect(page.locator('.template-list > button')).toHaveCount(3);
