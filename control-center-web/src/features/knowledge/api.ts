@@ -182,6 +182,17 @@ export interface KnowledgeSearchHit {
   heading: string;
   lineStart: number | null;
   lineEnd: number | null;
+  diagnostics: {
+    effectiveMode: 'hybrid' | 'lexical' | 'dense' | 'unknown';
+    lexicalRank: number | null;
+    denseRank: number | null;
+    graphRank: number | null;
+    lexicalScore: number | null;
+    denseScore: number | null;
+    graphScore: number | null;
+    graphMatches: string[];
+    graphPaths: string[];
+  };
 }
 
 export type KnowledgeGraphNodeKind = 'document' | 'chunk' | 'topic' | 'entity' | 'term' | 'unknown';
@@ -974,7 +985,9 @@ function normalizeSearchHits(value: unknown): KnowledgeSearchHit[] {
   return list(payload.items ?? payload.hits ?? payload.results ?? value).map((item, index) => {
     const row = record(item);
     const citation = record(row.citation ?? row.provenance);
+    const diagnostics = record(row.diagnostics);
     const score = row.score;
+    const effectiveMode = text(diagnostics.effectiveMode);
     return {
       id: text(row.id, text(row.chunkId, `hit-${index + 1}`)),
       documentId: text(row.documentId, text(citation.documentId)),
@@ -986,6 +999,17 @@ function normalizeSearchHits(value: unknown): KnowledgeSearchHit[] {
       heading: text(row.heading, text(citation.heading)),
       lineStart: nullableNumber(row.lineStart ?? citation.lineStart),
       lineEnd: nullableNumber(row.lineEnd ?? citation.lineEnd),
+      diagnostics: {
+        effectiveMode: effectiveMode === 'hybrid' || effectiveMode === 'lexical' || effectiveMode === 'dense' ? effectiveMode : 'unknown',
+        lexicalRank: nullableNumber(diagnostics.lexicalRank),
+        denseRank: nullableNumber(diagnostics.denseRank),
+        graphRank: nullableNumber(diagnostics.graphRank),
+        lexicalScore: nullableNumber(diagnostics.lexicalScore),
+        denseScore: nullableNumber(diagnostics.denseScore),
+        graphScore: nullableNumber(diagnostics.graphScore),
+        graphMatches: list(diagnostics.graphMatches).map((item) => text(item)).filter(Boolean),
+        graphPaths: list(diagnostics.graphPaths).map((item) => text(item)).filter(Boolean),
+      },
     };
   });
 }

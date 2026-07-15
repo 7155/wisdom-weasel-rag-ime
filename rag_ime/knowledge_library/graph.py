@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import uuid
 from collections.abc import Sequence
@@ -71,6 +72,168 @@ class KnowledgeGraph:
                 "SELECT revision FROM knowledge_graph_state WHERE base_id=?", (base_id,)
             ).fetchone()
         return int(row["revision"]) if row is not None else 0
+
+    def retrieval_candidates(
+        self,
+        base_id: str,
+        query: str,
+        *,
+        seed_chunk_ids: Sequence[str] = (),
+        limit: int = 40,
+    ) -> dict[str, Any]:
+        """Expand text/vector seeds through ready semantic graph concepts."""
+        self.store.get_base(base_id)
+        candidate_limit = max(1, min(100, int(limit)))
+        normalized_query = " ".join(str(query or "").split()).casefold()[:500]
+        unique_seed_ids = tuple(dict.fromkeys(str(item) for item in seed_chunk_ids if str(item)))[:20]
+        with self.store.connection() as connection:
+            state = connection.execute(
+                "SELECT * FROM knowledge_graph_state WHERE base_id=?", (base_id,)
+            ).fetchone()
+            fingerprint = self._source_fingerprint_from_connection(connection, base_id, ())
+            status = self._effective_status(
+                state,
+                fingerprint,
+                self._has_stale_source(connection, base_id),
+            )
+            if status != "ready":
+                return {"status": status, "items": [], "matchedNodes": []}
+
+            concept_rows = connection.execute(
+                "SELECT id, label, kind, weight FROM knowledge_graph_nodes "
+                "WHERE base_id=? AND kind IN ('entity', 'term', 'topic') "
+                "ORDER BY weight DESC, label COLLATE NOCASE, id LIMIT 3000",
+                (base_id,),
+            ).fetchall()
+            ascii_terms = {
+                token.casefold()
+                for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9._+:-]*", normalized_query)
+                if len(token) >= 2
+            }
+            concepts: dict[str, dict[str, Any]] = {}
+            for row in concept_rows:
+                label = " ".join(str(row["label"] or "").split())
+                normalized_label = label.casefold()
+                direct = bool(
+                    normalized_label
+                    and (
+                        normalized_query in normalized_label
+                        or (len(normalized_label) >= 2 and normalized_label in normalized_query)
+                        or any(term in normalized_label for term in ascii_terms)
+                    )
+                )
+                if direct:
+                    concepts[str(row["id"])] = {
+                        "label": label,
+                        "kind": str(row["kind"]),
+                        "source": "query",
+                        "seedRank": None,
+                        "weight": float(row["weight"]),
+                    }
+                if len(concepts) >= 40:
+                    break
+
+            seed_ranks = {chunk_id: rank for rank, chunk_id in enumerate(unique_seed_ids, start=1)}
+            if unique_seed_ids:
+                placeholders = ", ".join("?" for _ in unique_seed_ids)
+                seed_nodes = connection.execute(
+                    f"SELECT id, chunk_id FROM knowledge_graph_nodes WHERE base_id=? AND kind='chunk' "
+                    f"AND chunk_id IN ({placeholders})",
+                    [base_id, *unique_seed_ids],
+                ).fetchall()
+                seed_node_ranks = {
+                    str(row["id"]): seed_ranks.get(str(row["chunk_id"]), len(seed_ranks) + 1)
+                    for row in seed_nodes
+                }
+                if seed_node_ranks:
+                    node_placeholders = ", ".join("?" for _ in seed_node_ranks)
+                    incident = connection.execute(
+                        "SELECT source_id, target_id FROM knowledge_graph_edges WHERE base_id=? "
+                        f"AND kind IN ('mentions', 'covers') AND (source_id IN ({node_placeholders}) "
+                        f"OR target_id IN ({node_placeholders}))",
+                        [base_id, *seed_node_ranks, *seed_node_ranks],
+                    ).fetchall()
+                    related_ranks: dict[str, int] = {}
+                    for edge in incident:
+                        source_id = str(edge["source_id"])
+                        target_id = str(edge["target_id"])
+                        seed_node_id = source_id if source_id in seed_node_ranks else target_id
+                        concept_id = target_id if seed_node_id == source_id else source_id
+                        related_ranks[concept_id] = min(
+                            related_ranks.get(concept_id, len(seed_ranks) + 1),
+                            seed_node_ranks[seed_node_id],
+                        )
+                    if related_ranks:
+                        related_placeholders = ", ".join("?" for _ in related_ranks)
+                        related_rows = connection.execute(
+                            "SELECT id, label, kind, weight FROM knowledge_graph_nodes WHERE base_id=? "
+                            f"AND kind IN ('entity', 'term', 'topic') AND id IN ({related_placeholders})",
+                            [base_id, *related_ranks],
+                        ).fetchall()
+                        for row in related_rows:
+                            node_id = str(row["id"])
+                            concepts.setdefault(
+                                node_id,
+                                {
+                                    "label": " ".join(str(row["label"] or "").split()),
+                                    "kind": str(row["kind"]),
+                                    "source": "seed",
+                                    "seedRank": related_ranks[node_id],
+                                    "weight": float(row["weight"]),
+                                },
+                            )
+
+            if not concepts:
+                return {"status": status, "items": [], "matchedNodes": []}
+            concept_ids = tuple(concepts)
+            placeholders = ", ".join("?" for _ in concept_ids)
+            evidence_edges = connection.execute(
+                "SELECT source_id, target_id, kind, label, weight, chunk_id FROM knowledge_graph_edges "
+                "WHERE base_id=? AND chunk_id IS NOT NULL AND kind IN ('mentions', 'covers', 'relation') "
+                f"AND (source_id IN ({placeholders}) OR target_id IN ({placeholders}))",
+                [base_id, *concept_ids, *concept_ids],
+            ).fetchall()
+
+        candidates: dict[str, dict[str, Any]] = {}
+        for edge in evidence_edges:
+            chunk_id = str(edge["chunk_id"] or "")
+            if not chunk_id:
+                continue
+            linked_ids = [
+                node_id for node_id in (str(edge["source_id"]), str(edge["target_id"]))
+                if node_id in concepts
+            ]
+            if not linked_ids:
+                continue
+            best_concept_id = max(
+                linked_ids,
+                key=lambda node_id: (
+                    concepts[node_id]["source"] == "query",
+                    -int(concepts[node_id]["seedRank"] or 0),
+                    float(concepts[node_id]["weight"]),
+                ),
+            )
+            concept = concepts[best_concept_id]
+            seed_rank = int(concept["seedRank"] or 0)
+            source_score = 1.0 if concept["source"] == "query" else 1.0 / (1.0 + 0.08 * seed_rank)
+            score = source_score * (0.7 + 0.3 * max(0.0, min(1.0, float(edge["weight"]))))
+            candidate = candidates.setdefault(
+                chunk_id,
+                {"chunkId": chunk_id, "score": 0.0, "matchedNodes": [], "paths": []},
+            )
+            candidate["score"] = max(float(candidate["score"]), score)
+            label = str(concept["label"])
+            if label and label not in candidate["matchedNodes"] and len(candidate["matchedNodes"]) < 4:
+                candidate["matchedNodes"].append(label)
+            path = f"{label} → {str(edge['label'] or edge['kind'])} → 文档片段"
+            if path not in candidate["paths"] and len(candidate["paths"]) < 3:
+                candidate["paths"].append(path)
+        ranked = sorted(candidates.values(), key=lambda item: (-float(item["score"]), str(item["chunkId"])))
+        matched_nodes = [
+            {"id": node_id, "label": item["label"], "kind": item["kind"], "source": item["source"]}
+            for node_id, item in concepts.items()
+        ][:40]
+        return {"status": status, "items": ranked[:candidate_limit], "matchedNodes": matched_nodes}
 
     def reserve_rebuild(
         self,

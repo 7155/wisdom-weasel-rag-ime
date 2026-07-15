@@ -41,6 +41,10 @@ describe('document knowledge library', () => {
     await user.type(screen.getByRole('textbox', { name: '检索测试' }), '工具如何注册');
     await user.click(screen.getByRole('button', { name: '检索' }));
     expect(await screen.findByRole('option', { name: /Tool 注册/ })).toBeInTheDocument();
+    expect(screen.getByText('排名分融合关键词、向量与已就绪图谱的候选名次，只用于排列召回片段，不代表答案正确率。')).toBeInTheDocument();
+    expect(screen.getByText('92 / 100（非正确率）')).toBeInTheDocument();
+    expect(screen.getByText('混合检索 · 关键词候选第 1 · 向量候选第 2 · 图谱候选第 1 · 关联 Tool、Knowledge Worker')).toBeInTheDocument();
+    expect(screen.getByText('Tool → mentions → 文档片段')).toBeInTheDocument();
     expect(screen.getByText('第 12 页')).toBeInTheDocument();
     expect(screen.getByText('Agent Loop > Tools')).toBeInTheDocument();
     const search = request(transport, 'knowledgeBases.search');
@@ -382,6 +386,7 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
         hits: [{
           id: 'chunk-tool', documentId: 'file-runtime', documentName: 'runtime.pdf', title: 'Tool 注册',
           excerpt: 'Agent 启动时注册 ime_knowledge。', score: .92, page: 12, heading: 'Agent Loop > Tools',
+          diagnostics: { effectiveMode: 'hybrid', lexicalRank: 1, denseRank: 2, graphRank: 1, lexicalScore: .95, denseScore: .88, graphScore: .9, graphMatches: ['Tool', 'Knowledge Worker'], graphPaths: ['Tool → mentions → 文档片段'] },
         }],
       },
       'knowledgeBases.document.get': options.pagedDetail ? pagedKnowledgeDetail : knowledgeDetail(),

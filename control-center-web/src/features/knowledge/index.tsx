@@ -352,6 +352,7 @@ export function KnowledgeFeature() {
                           heading: node.heading,
                           lineStart: null,
                           lineEnd: null,
+                          diagnostics: { effectiveMode: 'unknown', lexicalRank: null, denseRank: null, graphRank: null, lexicalScore: null, denseScore: null, graphScore: null, graphMatches: [], graphPaths: [] },
                         } : null);
                         setTab('viewer');
                       }}
@@ -547,15 +548,17 @@ function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKn
         <span>阈值 {base.retrievalConfig.threshold.toFixed(2)}</span>
         {base.retrievalConfig.mode === 'hybrid' ? <span>L {base.retrievalConfig.lexicalWeight.toFixed(1)} / D {base.retrievalConfig.denseWeight.toFixed(1)}</span> : null}
         {base.retrievalConfig.mode === 'hybrid' ? <span>RRF K {base.retrievalConfig.rrfK} · 候选 ×{base.retrievalConfig.candidateMultiplier}</span> : null}
+        {base.retrievalConfig.mode === 'hybrid' ? <span>图谱辅助 自动</span> : null}
       </div>
+      <p className="knowledge-search__score-note">排名分融合关键词、向量与已就绪图谱的候选名次，只用于排列召回片段，不代表答案正确率。</p>
       {searchMutation.error ? <InlineNotice title="检索失败" tone="warning">{publicErrorText(searchMutation.error, 'Knowledge Worker 暂时无法完成检索。')}</InlineNotice> : null}
       {hits.length ? (
         <div className="knowledge-search__results">
           <div className="knowledge-search__list" role="listbox" aria-label="检索结果">
             {hits.map((hit) => (
               <button aria-selected={selected?.id === hit.id} data-selected={selected?.id === hit.id || undefined} key={hit.id} onClick={() => setSelectedId(hit.id)} role="option" type="button">
-                <span><strong>{hit.title}</strong><small>{hit.excerpt || '没有可显示的摘录'}</small></span>
-                <b>{scoreLabel(hit.score)}</b>
+                <span><strong>{hit.documentName}</strong><small>{hit.title} · {citationLabel(hit)}{hit.diagnostics.graphRank === null ? '' : ' · 图谱关联'}</small><small>{hit.excerpt || '没有可显示的摘录'}</small></span>
+                <b>{scorePoints(hit.score)}</b>
               </button>
             ))}
           </div>
@@ -579,7 +582,9 @@ function KnowledgeHitDetail({ baseId, hit, onOpen, transport }: { baseId: string
       <p>{hit.excerpt || '这个片段没有可显示的摘录。'}</p>
       <dl>
         <div><dt>位置</dt><dd>{citationLabel(hit)}</dd></div>
-        <div><dt>相关度</dt><dd>{scoreLabel(hit.score)}</dd></div>
+        <div><dt>综合排名分</dt><dd>{scorePoints(hit.score)} / 100（非正确率）</dd></div>
+        <div><dt>命中依据</dt><dd>{retrievalEvidenceLabel(hit)}</dd></div>
+        {hit.diagnostics.graphPaths.length ? <div><dt>图谱路径</dt><dd>{hit.diagnostics.graphPaths.slice(0, 2).join('；')}</dd></div> : null}
         <div><dt>标题路径</dt><dd>{hit.heading || '未提供'}</dd></div>
       </dl>
       <Button leadingIcon={<ExternalLink size={14} />} loading={openMutation.isPending} onClick={() => openMutation.mutate()} size="small">打开来源</Button>
@@ -862,7 +867,17 @@ function asRetrievalMode(value: string): KnowledgeRetrievalConfig['mode'] { retu
 function retrievalModeLabel(value: KnowledgeRetrievalConfig['mode']): string { return value === 'dense' ? '向量检索' : value === 'lexical' ? '关键词检索' : '混合检索'; }
 function equalConfig(left: object, right: object): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 function parserLabel(value: KnowledgeParserMode): string { return value === 'builtin' ? '内置' : value === 'mineru' ? 'MinerU' : '自动'; }
-function scoreLabel(value: number | null): string { return value === null ? '未提供评分' : `${Math.round(value <= 1 ? value * 100 : value)}%`; }
+function scorePoints(value: number | null): string { return value === null ? '未提供' : String(Math.round(value <= 1 ? value * 100 : value)); }
+function retrievalEvidenceLabel(hit: KnowledgeSearchHit): string {
+  const mode = hit.diagnostics.effectiveMode === 'hybrid' ? '混合检索' : hit.diagnostics.effectiveMode === 'lexical' ? '关键词检索' : hit.diagnostics.effectiveMode === 'dense' ? '向量检索' : '检索服务未报告';
+  const ranks = [
+    hit.diagnostics.lexicalRank === null ? '' : `关键词候选第 ${hit.diagnostics.lexicalRank}`,
+    hit.diagnostics.denseRank === null ? '' : `向量候选第 ${hit.diagnostics.denseRank}`,
+    hit.diagnostics.graphRank === null ? '' : `图谱候选第 ${hit.diagnostics.graphRank}`,
+  ].filter(Boolean);
+  const matches = hit.diagnostics.graphMatches.length ? ` · 关联 ${hit.diagnostics.graphMatches.slice(0, 3).join('、')}` : '';
+  return ranks.length ? `${mode} · ${ranks.join(' · ')}${matches}` : mode;
+}
 function citationLabel(hit: KnowledgeSearchHit): string { if (hit.page !== null) return `第 ${hit.page} 页`; if (hit.lineStart !== null) return hit.lineEnd && hit.lineEnd !== hit.lineStart ? `第 ${hit.lineStart}-${hit.lineEnd} 行` : `第 ${hit.lineStart} 行`; return '文档片段'; }
 function uploadItemId(file: File, index: number): string { return `upload-${Date.now()}-${index}-${file.name}-${file.size}`; }
 function replaceUploadItem(items: KnowledgeUploadItem[], id: string, patch: Partial<KnowledgeUploadItem>): KnowledgeUploadItem[] { return items.map((item) => item.id === id ? { ...item, ...patch } : item); }

@@ -51,6 +51,7 @@ DEFAULT_RETRIEVAL_CONFIG: dict[str, Any] = {
     "rrfK": 60,
     "candidateMultiplier": 4,
 }
+_GRAPH_RETRIEVAL_WEIGHT = 0.7
 CHUNKING_STRATEGIES = ("general", "markdown", "book", "qa", "laws", "separator", "fixed")
 _IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"})
 _SOURCE_PREVIEW_MIME_TYPES = _IMAGE_MIME_TYPES | frozenset(
@@ -750,9 +751,45 @@ class KnowledgeLibraryService:
                 agent_only=agent_only,
                 document_ids=document_ids,
             )
+            graph_result: dict[str, Any] = {"status": "not-requested", "items": [], "matchedNodes": []}
+            graph_hits: list[Any] = []
+            if requested_mode == "hybrid":
+                seed_chunk_ids = tuple(dict.fromkeys(
+                    [hit.chunk_id for hit in lexical_hits[:10]]
+                    + [hit.chunk_id for hit in dense_hits[:10]]
+                ))
+                graph_result = self.graph.retrieval_candidates(
+                    base_id,
+                    query,
+                    seed_chunk_ids=seed_chunk_ids,
+                    limit=candidate_limit,
+                )
+                graph_items = list(graph_result.get("items") or [])
+                graph_by_id = {str(item.get("chunkId") or ""): item for item in graph_items}
+                hydrated_graph_hits = self.store.hydrate_graph_hits(
+                    [
+                        (str(item.get("chunkId") or ""), float(item.get("score") or 0.0))
+                        for item in graph_items
+                        if str(item.get("chunkId") or "")
+                    ],
+                    base_ids=(base_id,),
+                    agent_only=agent_only,
+                    document_ids=document_ids,
+                )
+                graph_hits = [
+                    replace(
+                        hit,
+                        diagnostics={
+                            "graphMatches": list(graph_by_id.get(hit.chunk_id, {}).get("matchedNodes") or []),
+                            "graphPaths": list(graph_by_id.get(hit.chunk_id, {}).get("paths") or []),
+                        },
+                    )
+                    for hit in hydrated_graph_hits
+                ]
             ranked, effective_mode = _rank_retrieval_hits(
                 lexical_hits,
                 dense_hits,
+                graph_hits,
                 requested_mode=requested_mode,
                 config=retrieval_config,
             )
@@ -769,6 +806,9 @@ class KnowledgeLibraryService:
                     "candidateLimit": candidate_limit,
                     "lexicalCandidates": len(lexical_hits),
                     "denseCandidates": len(dense_hits),
+                    "graphCandidates": len(graph_hits),
+                    "graphStatus": str(graph_result.get("status") or "unavailable"),
+                    "graphMatchedNodes": len(list(graph_result.get("matchedNodes") or [])),
                     "returned": len(ranked),
                 }
             )
@@ -1356,6 +1396,7 @@ class KnowledgeLibraryService:
 def _rank_retrieval_hits(
     lexical_hits: Sequence[Any],
     dense_hits: Sequence[Any],
+    graph_hits: Sequence[Any] = (),
     *,
     requested_mode: str,
     config: dict[str, Any],
@@ -1384,7 +1425,7 @@ def _rank_retrieval_hits(
             )
             for rank, hit in enumerate(dense_hits, start=1)
         ], "dense"
-    if not dense_hits:
+    if not dense_hits and not graph_hits:
         return [
             replace(
                 hit,
@@ -1397,7 +1438,7 @@ def _rank_retrieval_hits(
             )
             for rank, hit in enumerate(lexical_hits, start=1)
         ], "lexical"
-    if not lexical_hits:
+    if not lexical_hits and not graph_hits:
         return [
             replace(
                 hit,
@@ -1413,23 +1454,36 @@ def _rank_retrieval_hits(
 
     lexical_weight = float(config["lexicalWeight"])
     dense_weight = float(config["denseWeight"])
+    graph_weight = _GRAPH_RETRIEVAL_WEIGHT if graph_hits else 0.0
     rrf_k = int(config["rrfK"])
     lexical_ranks = {hit.chunk_id: rank for rank, hit in enumerate(lexical_hits, start=1)}
     dense_ranks = {hit.chunk_id: rank for rank, hit in enumerate(dense_hits, start=1)}
+    graph_ranks = {hit.chunk_id: rank for rank, hit in enumerate(graph_hits, start=1)}
     lexical_scores = {hit.chunk_id: hit.score for hit in lexical_hits}
     dense_scores = {hit.chunk_id: hit.score for hit in dense_hits}
+    graph_scores = {hit.chunk_id: hit.score for hit in graph_hits}
+    graph_diagnostics = {hit.chunk_id: dict(hit.diagnostics) for hit in graph_hits}
     hits_by_id = {hit.chunk_id: hit for hit in lexical_hits}
     hits_by_id.update({hit.chunk_id: hit for hit in dense_hits})
-    maximum = (lexical_weight + dense_weight) / (rrf_k + 1)
+    hits_by_id.update({hit.chunk_id: hit for hit in graph_hits})
+    available_weight = (
+        (lexical_weight if lexical_hits else 0.0)
+        + (dense_weight if dense_hits else 0.0)
+        + graph_weight
+    )
+    maximum = available_weight / (rrf_k + 1)
     ranked: list[Any] = []
     for chunk_id, hit in hits_by_id.items():
         lexical_rank = lexical_ranks.get(chunk_id)
         dense_rank = dense_ranks.get(chunk_id)
+        graph_rank = graph_ranks.get(chunk_id)
         raw_score = 0.0
         if lexical_rank is not None:
             raw_score += lexical_weight / (rrf_k + lexical_rank)
         if dense_rank is not None:
             raw_score += dense_weight / (rrf_k + dense_rank)
+        if graph_rank is not None:
+            raw_score += graph_weight / (rrf_k + graph_rank)
         fused_score = raw_score / maximum if maximum > 0 else 0.0
         ranked.append(
             replace(
@@ -1437,14 +1491,19 @@ def _rank_retrieval_hits(
                 score=round(max(0.0, min(1.0, fused_score)), 6),
                 diagnostics={
                     "effectiveMode": "hybrid",
-                    "fusion": "weighted-rrf",
+                    "fusion": "weighted-rrf-graph" if graph_hits else "weighted-rrf",
                     "fusionScoreRaw": round(raw_score, 9),
                     "lexicalRank": lexical_rank,
                     "denseRank": dense_rank,
+                    "graphRank": graph_rank,
                     "lexicalScore": lexical_scores.get(chunk_id),
                     "denseScore": dense_scores.get(chunk_id),
+                    "graphScore": graph_scores.get(chunk_id),
                     "lexicalWeight": lexical_weight,
                     "denseWeight": dense_weight,
+                    "graphWeight": graph_weight,
+                    "graphMatches": graph_diagnostics.get(chunk_id, {}).get("graphMatches", []),
+                    "graphPaths": graph_diagnostics.get(chunk_id, {}).get("graphPaths", []),
                     "rrfK": rrf_k,
                 },
             )

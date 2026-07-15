@@ -144,6 +144,27 @@ class KnowledgeGraphTests(unittest.TestCase):
         with self.assertRaises(KnowledgeConflictError):
             self.service.rebuild_knowledge_graph(self.base["id"], expected_revision=0)
 
+    def test_ready_graph_expands_hybrid_retrieval_with_visible_evidence(self) -> None:
+        self.service.rebuild_knowledge_graph(self.base["id"], expected_revision=0)
+
+        result = self.service.search(
+            "SQLite",
+            base_ids=(self.base["id"],),
+            mode="hybrid",
+            threshold=0.0,
+            limit=10,
+        )
+
+        self.assertTrue(result["hits"])
+        library = result["retrieval"]["libraries"][0]
+        self.assertEqual("ready", library["graphStatus"])
+        self.assertGreater(library["graphCandidates"], 0)
+        graph_hits = [hit for hit in result["hits"] if hit["diagnostics"].get("graphRank")]
+        self.assertTrue(graph_hits)
+        self.assertEqual("weighted-rrf-graph", graph_hits[0]["diagnostics"]["fusion"])
+        self.assertTrue(graph_hits[0]["diagnostics"]["graphMatches"])
+        self.assertTrue(graph_hits[0]["diagnostics"]["graphPaths"])
+
     def test_graph_becomes_stale_when_document_revision_changes(self) -> None:
         self.service.store.update_document(self.document["documentId"], {"status": "stale"})
         rebuilt = self.service.rebuild_knowledge_graph(self.base["id"], expected_revision=0)

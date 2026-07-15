@@ -805,6 +805,7 @@
 .knowledge-job-detail p { margin: 0; color: var(--color-danger); font-size: 9px; }
 .knowledge-search__config { display: flex; flex-wrap: wrap; gap: 6px; }
 .knowledge-search__config span { padding: 3px 6px; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text-secondary); font-size: 8px; }
+.knowledge-search__score-note { margin: -4px 0 0; color: var(--color-text-tertiary); font-size: 9px; line-height: 1.5; }
 
 .knowledge-reindex-preview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .knowledge-reindex-preview dl { display: grid; min-width: min(480px, 70%); margin: 0; border-block: 1px solid var(--color-border); grid-template-columns: repeat(3, minmax(0, 1fr)); }

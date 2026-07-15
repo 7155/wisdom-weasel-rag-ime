@@ -633,6 +633,39 @@ class KnowledgeStore:
         agent_only: bool,
         document_ids: Sequence[str] = (),
     ) -> list[SearchHit]:
+        return self._hydrate_scored_hits(
+            scored_ids,
+            base_ids=base_ids,
+            agent_only=agent_only,
+            document_ids=document_ids,
+            cosine_scores=True,
+        )
+
+    def hydrate_graph_hits(
+        self,
+        scored_ids: Sequence[tuple[str, float]],
+        *,
+        base_ids: Sequence[str],
+        agent_only: bool,
+        document_ids: Sequence[str] = (),
+    ) -> list[SearchHit]:
+        return self._hydrate_scored_hits(
+            scored_ids,
+            base_ids=base_ids,
+            agent_only=agent_only,
+            document_ids=document_ids,
+            cosine_scores=False,
+        )
+
+    def _hydrate_scored_hits(
+        self,
+        scored_ids: Sequence[tuple[str, float]],
+        *,
+        base_ids: Sequence[str],
+        agent_only: bool,
+        document_ids: Sequence[str],
+        cosine_scores: bool,
+    ) -> list[SearchHit]:
         if not scored_ids:
             return []
         chunk_ids = [item[0] for item in scored_ids]
@@ -660,6 +693,7 @@ class KnowledgeStore:
             row = rows_by_id.get(chunk_id)
             if row is None:
                 continue
+            normalized_score = (float(raw_score) + 1.0) / 2.0 if cosine_scores else float(raw_score)
             hits.append(
                 SearchHit(
                     chunk_id=chunk_id,
@@ -669,7 +703,7 @@ class KnowledgeStore:
                     document_name=str(row["document_name"]),
                     ordinal=int(row["ordinal"]),
                     content=str(row["content"]),
-                    score=round(max(0.0, min(1.0, (float(raw_score) + 1.0) / 2.0)), 6),
+                    score=round(max(0.0, min(1.0, normalized_score)), 6),
                     page=int(row["page"]) if row["page"] is not None else None,
                     heading=str(row["heading"] or ""),
                 )
