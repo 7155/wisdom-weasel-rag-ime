@@ -388,6 +388,8 @@ applicable notices and exact corresponding source; see
   interaction study. [Volcengine Doubao streaming ASR 2.0](https://docs.volcengine.com/docs/6561/1354869?lang=zh)
   is an optional configured provider.
 - [Yuxi](https://github.com/xerrors/Yuxi) informed the document knowledge-base
-  and knowledge-graph management workflow. This project adapts that workflow
-  to its existing local worker, SQLite storage, and Control Center design
-  rather than importing Yuxi's Neo4j/PostgreSQL/Milvus runtime stack.
+  and knowledge-graph management workflow. The reference review used tag
+  `v0.7.1.beta1` (`c765d904`), released under the MIT License. This project
+  adapts the workflow to its existing local worker, SQLite storage, and Control
+  Center design; it does not copy or redistribute Yuxi source code or import
+  Yuxi's Neo4j/PostgreSQL/Milvus runtime stack.
