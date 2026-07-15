@@ -107,6 +107,8 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "maintenance_rollback",
             "list",
             "search",
+            "expand",
+            "get_sources",
         ),
         "operationRisks": {
             "maintenance_apply": "R1",
@@ -311,6 +313,7 @@ class ControlToolGateway:
         workspace_harness: WorkspaceHarness | None = None,
         delegation: object | None = None,
         collaboration: object | None = None,
+        memory_queries: object | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -320,6 +323,7 @@ class ControlToolGateway:
         self.workspace_harness = workspace_harness or WorkspaceHarness()
         self.delegation = delegation
         self.collaboration = collaboration
+        self.memory_queries = memory_queries
 
     def manifests(self) -> dict[str, object]:
         manifests = []
@@ -2836,6 +2840,47 @@ class ControlToolGateway:
         }
 
     def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation in {"search", "expand", "get_sources"}:
+            if self.memory_queries is None:
+                raise ValueError("agent memory query is unavailable")
+            session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+            if not session_id:
+                raise ValueError("agent memory session is missing")
+            project = _bounded_text(args.get("project"), maximum=160)
+            if operation == "search":
+                result = self.memory_queries.search(  # type: ignore[attr-defined]
+                    session_id,
+                    query_text=_bounded_text(args.get("query"), maximum=500),
+                    project=project,
+                    app=_bounded_text(args.get("app"), maximum=160),
+                    limit=_bounded_int(args.get("limit"), default=8, minimum=1, maximum=20),
+                )
+            elif operation == "expand":
+                result = self.memory_queries.expand(  # type: ignore[attr-defined]
+                    session_id,
+                    anchor_ids=_string_list(args.get("anchorIds"), limit=40, maximum=240),
+                    project=project,
+                    max_depth=_bounded_int(args.get("depth"), default=2, minimum=1, maximum=3),
+                    limit=_bounded_int(args.get("limit"), default=20, minimum=1, maximum=50),
+                    as_of_ms=args.get("asOfMs"),
+                )
+            else:
+                raw_refs = args.get("sourceRefs")
+                source_refs = (
+                    [dict(item) for item in raw_refs[:50] if isinstance(item, Mapping)]
+                    if isinstance(raw_refs, (list, tuple))
+                    else []
+                )
+                result = self.memory_queries.get_sources(  # type: ignore[attr-defined]
+                    session_id,
+                    relation_ids=_string_list(args.get("relationIds"), limit=50, maximum=240),
+                    source_refs=source_refs,
+                    project=project,
+                    limit=_bounded_int(args.get("limit"), default=20, minimum=1, maximum=50),
+                )
+            if not isinstance(result, Mapping):
+                raise ValueError("agent memory query returned an invalid payload")
+            return _safe_mapping_payload(result)
         if operation == "catalog":
             return self._catalog(args)
         if operation == "read":
@@ -3374,10 +3419,14 @@ def _safe_int(value: object) -> int:
         return 0
 
 
-def _string_list(value: object, *, limit: int) -> list[str]:
+def _string_list(value: object, *, limit: int, maximum: int = 120) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
-    return [_bounded_text(item, maximum=120) for item in value[:limit] if _bounded_text(item, maximum=1)]
+    return [
+        _bounded_text(item, maximum=maximum)
+        for item in value[:limit]
+        if _bounded_text(item, maximum=1)
+    ]
 
 
 def _review_key_list(value: object, *, limit: int) -> list[str]:
@@ -3438,7 +3487,19 @@ def _tool_profile_allows(
         return not profile.startswith("subagent-")
     allowed: dict[str, frozenset[str]] = {
         "ime_overview": frozenset({"status", "capabilities", "recent_activity"}),
-        "ime_memory": frozenset({"catalog", "read", "recent", "trace", "maintenance_status", "list", "search"}),
+        "ime_memory": frozenset(
+            {
+                "catalog",
+                "read",
+                "recent",
+                "trace",
+                "maintenance_status",
+                "list",
+                "search",
+                "expand",
+                "get_sources",
+            }
+        ),
         "ime_knowledge": frozenset({"recall", "deep_recall", "route_status"}),
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),

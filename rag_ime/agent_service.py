@@ -276,10 +276,24 @@ class AgentService:
         mode = str(payload.get("mode") or "assistant")
         configuration = self.configuration_store.snapshot()["configuration"]
         session_defaults = configuration["sessionDefaults"]
-        role = agent_role(
-            payload.get("roleId") or session_defaults["roleId"],
-            payload.get("roleVersion") or session_defaults["roleVersion"],
-        )
+        identity_source_id = str(payload.get("continueAgentFromSessionId") or "").strip()
+        identity_source = self.sessions.get(identity_source_id) if identity_source_id else None
+        if identity_source is not None:
+            source_role_id = str(identity_source["roleId"])
+            source_role_version = str(identity_source["roleVersion"])
+            requested_role_id = str(payload.get("roleId") or source_role_id)
+            requested_role_version = str(payload.get("roleVersion") or source_role_version)
+            if (requested_role_id, requested_role_version) != (
+                source_role_id,
+                source_role_version,
+            ):
+                raise ValueError("a continued Agent identity cannot change role")
+            role = agent_role(source_role_id, source_role_version)
+        else:
+            role = agent_role(
+                payload.get("roleId") or session_defaults["roleId"],
+                payload.get("roleVersion") or session_defaults["roleVersion"],
+            )
         if mode not in role.selectable_modes:
             raise ValueError(f"agent role {role.role_id}@{role.version} is not available for {mode} sessions")
         roots_value = payload.get("workspaceRoots")
@@ -292,6 +306,10 @@ class AgentService:
         session = self.sessions.create(
             title=title,
             mode=mode,
+            # A raw client-provided agentId is never trusted. The only public
+            # cross-session continuation path inherits an identity already
+            # bound to a server-owned session record.
+            agent_id=str(identity_source["agentId"]) if identity_source is not None else "",
             role_id=role.role_id,
             role_version=role.version,
             model_profile=str(

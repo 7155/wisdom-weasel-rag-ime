@@ -267,14 +267,30 @@ class PiRuntimeConfig:
                 f"{template.prompt.strip()}\n"
             )
         command.extend(["--system-prompt", system_prompt])
-        session_provider, session_model = _split_model_reference(session.get("modelProfile"))
-        selected_provider = session_provider or self.provider
-        selected_model = session_model or self.model
+        selected_provider, selected_model = self.resolved_model_reference(session)
         if selected_provider:
             command.extend(["--provider", selected_provider])
         if selected_model:
             command.extend(["--model", selected_model])
         return command
+
+    def resolved_model_reference(self, session: Mapping[str, object]) -> tuple[str, str]:
+        """Resolve a persisted selection without inventing a Pi catalog entry.
+
+        Providers with an explicit ``models`` list are app-owned custom
+        catalogs, so a stale session model must fall back inside that provider.
+        Providers without such a list are Pi built-ins/overrides and remain
+        Pi's responsibility; their persisted selection is passed through and
+        validated by ``get_available_models`` when the live client starts.
+        """
+
+        session_provider, session_model = _split_model_reference(session.get("modelProfile"))
+        selected_provider = session_provider or self.provider
+        selected_model = session_model or self.model
+        configured_ids = _configured_model_ids(self.model_providers.get(selected_provider))
+        if configured_ids and selected_model not in configured_ids:
+            selected_model = configured_ids[0]
+        return selected_provider, selected_model
 
     def child_environment(self, *, session: Mapping[str, object] | None = None) -> dict[str, str]:
         allowed = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -308,7 +324,10 @@ class PiRuntimeConfig:
         providers = dict(self.model_providers)
         if not providers and self.provider == "deepseek" and self.model_base_url:
             providers = {
-                "deepseek": _deepseek_pi_provider(self.model_base_url),
+                "deepseek": _deepseek_pi_provider(
+                    self.model_base_url,
+                    model=self.model,
+                ),
             }
         if not providers:
             return
@@ -716,6 +735,42 @@ class PiRuntimeManager:
         try:
             response = client.start()
             state = _mapping(response.get("data"))
+            desired_provider, desired_model_id = self.config.resolved_model_reference(session)
+            started_model = _mapping(state.get("model"))
+            if (
+                desired_provider
+                and desired_model_id
+                and (
+                    str(started_model.get("provider") or "") != desired_provider
+                    or str(started_model.get("id") or "") != desired_model_id
+                )
+            ):
+                available_response = client.send({"type": "get_available_models"})
+                available_data = _mapping(available_response.get("data"))
+                available_models = available_data.get("models")
+                desired_available = isinstance(available_models, list) and any(
+                    isinstance(value, Mapping)
+                    and str(value.get("provider") or "") == desired_provider
+                    and str(value.get("id") or "") == desired_model_id
+                    for value in available_models
+                )
+                if desired_available:
+                    client.send(
+                        {
+                            "type": "set_model",
+                            "provider": desired_provider,
+                            "modelId": desired_model_id,
+                        }
+                    )
+                    state = _mapping(client.send({"type": "get_state"}).get("data"))
+            selected_model = _mapping(state.get("model"))
+            selected_provider = str(selected_model.get("provider") or "").strip()
+            selected_model_id = str(selected_model.get("id") or "").strip()
+            if selected_provider and selected_model_id:
+                self.sessions.set_model_profile(
+                    session_id,
+                    f"{selected_provider}/{selected_model_id}",
+                )
             bound = self.sessions.bind_runtime_session(
                 session_id,
                 driver_id=self.driver_id,
@@ -840,7 +895,7 @@ class PiRuntimeManager:
         return {
             "selected": selected or None,
             "models": models,
-            "thinkingLevel": str(state.get("thinkingLevel") or "off"),
+            "thinkingLevel": _effective_thinking_level(state.get("thinkingLevel"), selected),
         }
 
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
@@ -853,6 +908,17 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             self._cancel_idle_locked()
         try:
+            models_response = client.send({"type": "get_available_models"})
+            models_data = _mapping(models_response.get("data"))
+            raw_models = models_data.get("models")
+            available = isinstance(raw_models, list) and any(
+                isinstance(value, Mapping)
+                and str(value.get("provider") or "") == normalized_provider
+                and str(value.get("id") or "") == normalized_model
+                for value in raw_models
+            )
+            if not available:
+                raise PiRuntimeError("当前 Pi 目录中没有这个模型")
             response = client.send(
                 {
                     "type": "set_model",
@@ -883,12 +949,20 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             self._cancel_idle_locked()
         try:
+            before = _mapping(client.send({"type": "get_state"}).get("data"))
+            before_model = _public_pi_model(_mapping(before.get("model")))
+            supported = before_model.get("thinkingLevels") if before_model else ["off"]
+            if not isinstance(supported, list) or normalized not in supported:
+                raise ValueError("当前 Pi 模型不支持这个思考强度")
             client.send({"type": "set_thinking_level", "level": normalized})
             state_response = client.send({"type": "get_state"})
             state = _mapping(state_response.get("data"))
             selected = _public_pi_model(_mapping(state.get("model")))
             return {
-                "thinkingLevel": str(state.get("thinkingLevel") or normalized),
+                "thinkingLevel": _effective_thinking_level(
+                    state.get("thinkingLevel") or normalized,
+                    selected,
+                ),
                 "selected": selected or None,
             }
         finally:
@@ -1538,6 +1612,14 @@ def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
     return levels or ["off"]
 
 
+def _effective_thinking_level(value: object, selected: Mapping[str, object]) -> str:
+    normalized = str(value or "off").strip().lower() or "off"
+    supported = selected.get("thinkingLevels")
+    if not isinstance(supported, list) or normalized not in supported:
+        return "off"
+    return normalized
+
+
 def _is_within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -1580,7 +1662,10 @@ def _pi_model_configuration_from_environment() -> tuple[
         elif knowledge.extra_headers:
             deepseek_error = "带自定义请求头的 DeepSeek 网关尚未接入 Pi 隔离配置"
         else:
-            providers["deepseek"] = _deepseek_pi_provider(model_base_url)
+            providers["deepseek"] = _deepseek_pi_provider(
+                model_base_url,
+                model=deepseek_model,
+            )
             provider_environment["DEEPSEEK_API_KEY"] = knowledge.api_key
             deepseek_error = ""
 
@@ -1604,6 +1689,9 @@ def _pi_model_configuration_from_environment() -> tuple[
         model = explicit_model or deepseek_model
     else:
         model = explicit_model or _first_provider_model(providers.get(provider)) or imported_first_model
+    configured_ids = _configured_model_ids(providers.get(provider))
+    if configured_ids and model not in configured_ids:
+        model = configured_ids[0]
 
     if not providers:
         error = imported_error or deepseek_error or "尚未配置 Pi 对话模型"
@@ -1626,22 +1714,32 @@ def _pi_model_configuration_from_environment() -> tuple[
     return provider, model, model_base_url, provider_environment, providers, ""
 
 
-def _deepseek_pi_provider(base_url: str) -> dict[str, object]:
-    # The bundled Pi catalog may lag the source catalog. These explicit
-    # compatibility flags prevent OpenAI-only `developer` messages from being
-    # sent to DeepSeek-compatible gateways.
-    return {
+def _deepseek_pi_provider(base_url: str, *, model: str = "") -> dict[str, object]:
+    endpoint = urlsplit(base_url)
+    native_endpoint = (endpoint.hostname or "").lower() == "api.deepseek.com"
+    provider: dict[str, object] = {
         "baseUrl": base_url,
         "apiKey": "$DEEPSEEK_API_KEY",
         "compat": {
             "supportsStore": False,
             "supportsDeveloperRole": False,
-            "supportsReasoningEffort": True,
-            "supportsUsageInStreaming": True,
-            "requiresReasoningContentOnAssistantMessages": True,
-            "thinkingFormat": "deepseek",
+            "supportsReasoningEffort": native_endpoint,
+            "supportsUsageInStreaming": native_endpoint,
+            "requiresReasoningContentOnAssistantMessages": native_endpoint,
+            "thinkingFormat": "deepseek" if native_endpoint else "openai",
         },
     }
+    if not native_endpoint:
+        # A third-party OpenAI-compatible gateway may expose a DeepSeek-named
+        # model without implementing DeepSeek's proprietary reasoning fields.
+        model_ids = {"deepseek-v4-flash", "deepseek-v4-pro"}
+        if model.strip():
+            model_ids.add(model.strip())
+        provider["modelOverrides"] = {
+            model_id: {"reasoning": False}
+            for model_id in sorted(model_ids)
+        }
+    return provider
 
 
 def _first_provider_model(provider: Mapping[str, object] | None) -> str:
@@ -1652,6 +1750,21 @@ def _first_provider_model(provider: Mapping[str, object] | None) -> str:
         return ""
     first = models[0]
     return str(first.get("id") or "").strip() if isinstance(first, Mapping) else ""
+
+
+def _configured_model_ids(provider: Mapping[str, object] | None) -> list[str]:
+    if not isinstance(provider, Mapping):
+        return []
+    raw_models = provider.get("models")
+    if not isinstance(raw_models, list):
+        return []
+    return [
+        model_id
+        for value in raw_models
+        if isinstance(value, Mapping)
+        for model_id in [str(value.get("id") or "").strip()]
+        if model_id
+    ]
 
 
 def _env_bool(name: str, default: bool) -> bool:

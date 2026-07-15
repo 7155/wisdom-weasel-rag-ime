@@ -12,6 +12,7 @@ from typing import Any
 from .db import apply_database_migrations
 from .deepseek_memory_organizer import MEMORY_BOOK_COMPILE_SCHEMA_VERSION
 from .memory_ingest import normalize_text, upsert_memory_item
+from .memory_graph import MemoryGraphStore
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms, truncate_text
 
 
@@ -49,6 +50,7 @@ _IPV6_CANDIDATE_RE = re.compile(
     r"(?<![0-9A-Fa-f:])(?=[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:)(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])"
 )
 _RIME_PINYIN_RE = re.compile(r"^[a-zv]+(?: [a-zv]+)*$")
+_GRAPH_TYPE_RE = re.compile(r"^[a-z][a-z0-9_:-]{0,63}$")
 _PATH_RE = re.compile(
     r"(?:(?:/(?:Users|Volumes|home)/|~/)[^\s\"']+|(?:[A-Za-z]:\\(?:Users\\)?|\\\\[^\\\s]+\\[^\\\s]+\\)[^\s\"']+)",
     re.IGNORECASE,
@@ -72,6 +74,24 @@ _RUNTIME_PROBE_MARKERS = (
 )
 
 
+def _compilable_event_predicate(alias: str = "input_events") -> str:
+    """One ownership/deletion rule shared by bundle, due-state and cursor updates."""
+
+    return f"""
+        {alias}.source != 'pi_agent_tool_receipt'
+        AND
+        NOT EXISTS (
+            SELECT 1 FROM memory_state AS compile_ms
+            WHERE compile_ms.event_id = {alias}.id AND compile_ms.deleted = 1
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM agent_memory_sources AS compile_ams
+            WHERE compile_ams.input_event_id = {alias}.id
+              AND compile_ams.source_role = 'tool_receipt'
+        )
+    """
+
+
 def build_memory_book_source_bundle(
     conn: sqlite3.Connection,
     *,
@@ -83,22 +103,29 @@ def build_memory_book_source_bundle(
     state = memory_compile_state(conn, project=project)
     cursor = int(state["lastCompiledEventId"]) if after_event_id is None else max(0, int(after_event_id))
     cutoff_ms = now_ms() - max(1, int(since_days)) * 24 * 60 * 60 * 1000
+    # Source events are a lossless cursor stream. ``since_days`` still bounds
+    # time-based feedback and remains in the bundle contract, but must not
+    # discard a pending event after a long offline period. ``limit`` keeps a
+    # cold-start backlog bounded and later applies advance it batch by batch.
     rows = conn.execute(
-        """
-        SELECT id, created_at_ms, source, committed_text, recent_context, app, project, tags_json,
+        f"""
+        SELECT id, created_at_ms, source, committed_text, recent_context, preedit,
+               schema_id, app, project, provider_name, tags_json,
                context_group_id, context_group_level
         FROM input_events
         WHERE id > ?
-          AND created_at_ms >= ?
           AND (? = '' OR project = ? OR project = '')
+          AND {_compilable_event_predicate()}
         ORDER BY id ASC
         LIMIT ?
         """,
-        (cursor, cutoff_ms, project, project, max(1, int(limit))),
+        (cursor, project, project, max(1, int(limit))),
     ).fetchall()
     raw_events: list[dict[str, object]] = []
+    source_event_fingerprints: dict[str, str] = {}
     redaction_stats = _empty_redaction_counts()
     for row in rows:
+        source_event_fingerprints[str(int(row["id"]))] = _source_event_fingerprint(row)
         text, text_counts = _sanitize_text(str(row["committed_text"] or ""), max_chars=220)
         recent, recent_counts = _sanitize_text(str(row["recent_context"] or ""), max_chars=220)
         app, app_counts = _sanitize_text(str(row["app"] or ""), max_chars=120)
@@ -151,11 +178,15 @@ def build_memory_book_source_bundle(
     existing_groups = _existing_semantic_groups(conn, project=project)
     existing_tags = _existing_semantic_tags(conn)
     existing_tag_edges = _existing_semantic_tag_edges(conn)
+    existing_memory_entities = _existing_memory_entities(conn, project=project)
+    existing_memory_relations = _existing_memory_relations(conn, project=project)
     legal_groups = sorted({str(item.get("contextGroupId") or "") for item in events if item.get("contextGroupId")})
     max_event_id = max(raw_event_ids, default=cursor)
     pending_count = int(
         conn.execute(
-            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            f"""SELECT COUNT(*) FROM input_events
+                WHERE id > ? AND (? = '' OR project = ? OR project = '')
+                  AND {_compilable_event_predicate()}""",
             (cursor, project, project),
         ).fetchone()[0]
     )
@@ -174,13 +205,23 @@ def build_memory_book_source_bundle(
         "existingSemanticGroups": existing_groups,
         "existingSemanticTags": existing_tags,
         "existingTagEdges": existing_tag_edges,
+        "existingMemoryEntities": existing_memory_entities,
+        "existingMemoryRelations": existing_memory_relations,
         "legalContextGroupIds": legal_groups,
+        "sourceEventFingerprints": source_event_fingerprints,
         "cursor": {
             "fromEventId": cursor,
             "toEventId": max_event_id,
             "pendingEventCount": pending_count,
         },
     }
+    source_event_fingerprints.update(
+        _load_source_event_fingerprints(
+            conn,
+            event_ids=_legal_source_event_ids(payload),
+        )
+    )
+    payload["sourceEventFingerprints"] = source_event_fingerprints
     hash_payload = dict(payload)
     hash_payload.pop("exportedAtMs", None)
     payload["bundleHash"] = stable_text_hash(
@@ -368,7 +409,9 @@ def memory_compile_state(conn: sqlite3.Connection, *, project: str) -> dict[str,
     last_event_id = int(row["last_compiled_event_id"] or 0) if row is not None else 0
     pending = int(
         conn.execute(
-            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            f"""SELECT COUNT(*) FROM input_events
+                WHERE id > ? AND (? = '' OR project = ? OR project = '')
+                  AND {_compilable_event_predicate()}""",
             (last_event_id, project, project),
         ).fetchone()[0]
     )
@@ -426,6 +469,32 @@ def memory_book_plan_from_compile_output(
         for item in _list_of_dicts((source_bundle or {}).get("existingSemanticGroups"))
         if compact_whitespace(str(item.get("groupId") or ""))
     }
+    existing_entities = _list_of_dicts((source_bundle or {}).get("existingMemoryEntities"))
+    existing_entity_by_id = {
+        compact_whitespace(str(item.get("entityId") or "")): item
+        for item in existing_entities
+        if compact_whitespace(str(item.get("entityId") or ""))
+    }
+    existing_relations = _list_of_dicts((source_bundle or {}).get("existingMemoryRelations"))
+    existing_relation_by_id = {
+        compact_whitespace(str(item.get("relationId") or "")): item
+        for item in existing_relations
+        if compact_whitespace(str(item.get("relationId") or ""))
+    }
+    entity_ref_map: dict[str, str] = {}
+    for existing_entity in existing_entities:
+        existing_id = compact_whitespace(str(existing_entity.get("entityId") or ""))
+        if not existing_id:
+            continue
+        for value in (
+            existing_id,
+            existing_entity.get("canonicalName"),
+            existing_entity.get("name"),
+            *_strings(existing_entity.get("aliases")),
+        ):
+            normalized = normalize_text(str(value or ""))
+            if normalized:
+                entity_ref_map.setdefault(normalized, existing_id)
     accepted_group_ids: set[str] = set()
     group_source_ids: dict[str, list[int]] = {}
     new_group_count = 0
@@ -619,6 +688,218 @@ def memory_book_plan_from_compile_output(
             "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
         }
         diffs.append({"op": "upsert_memory_atom", "targetId": atom_id, "payload": payload, "status": "pending"})
+    raw_entities = _list_of_dicts(compile_output.get("entities"))
+    rejected_entity_refs: set[str] = set()
+    if len(raw_entities) > 32:
+        warnings.append("memory_entity_limit_applied")
+    for item in raw_entities[:32]:
+        name = compact_whitespace(str(item.get("canonicalName") or item.get("name") or ""))
+        entity_type = compact_whitespace(str(item.get("entityType") or item.get("type") or "concept")) or "concept"
+        if not name:
+            continue
+        requested_entity_id = compact_whitespace(str(item.get("entityId") or item.get("id") or ""))
+        matched_entity_id = requested_entity_id if requested_entity_id in existing_entity_by_id else entity_ref_map.get(normalize_text(name), "")
+        existing_entity = existing_entity_by_id.get(matched_entity_id)
+        if existing_entity is not None:
+            allowed_names = {
+                normalize_text(str(value or ""))
+                for value in (
+                    existing_entity.get("canonicalName"),
+                    existing_entity.get("name"),
+                    *_strings(existing_entity.get("aliases")),
+                )
+                if normalize_text(str(value or ""))
+            }
+            existing_type = compact_whitespace(str(existing_entity.get("entityType") or "concept")) or "concept"
+            if normalize_text(name) not in allowed_names or entity_type != existing_type:
+                rejected_ref = requested_entity_id or matched_entity_id or name
+                rejected_entity_refs.add(normalize_text(rejected_ref))
+                warnings.append(f"memory_entity_identity_mismatch:{rejected_ref}")
+                continue
+            revision = _optional_int(existing_entity.get("revision"))
+            if revision < 1:
+                warnings.append(f"memory_entity_revision_missing:{matched_entity_id}")
+                continue
+            entity_id = matched_entity_id
+            entity_type = existing_type
+            canonical_name = compact_whitespace(str(existing_entity.get("canonicalName") or name)) or name
+            aliases = _strings(
+                [
+                    *_strings(existing_entity.get("aliases")),
+                    *_strings(item.get("aliases")),
+                    *([name] if normalize_text(name) != normalize_text(canonical_name) else []),
+                ]
+            )
+            expected_revision = revision
+        else:
+            entity_id = requested_entity_id or f"entity:{stable_text_hash(':'.join(('user', 'local-user', project, normalize_text(entity_type), normalize_text(name))))[:20]}"
+            canonical_name = name
+            aliases = _strings(item.get("aliases"))
+            expected_revision = 0
+        source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
+            [name, *_strings(item.get("aliases"))],
+            source_bundle=source_bundle,
+        )
+        if not _source_ids_support_claim(
+            source_ids,
+            [name, *_strings(item.get("aliases"))],
+            source_bundle=source_bundle,
+        ):
+            warnings.append(f"memory_entity_evidence_mismatch:{entity_id}")
+            continue
+        payload = {
+            "entityId": entity_id,
+            "entityType": entity_type,
+            "canonicalName": canonical_name,
+            "aliases": aliases,
+            "sourceEventIds": source_ids,
+            "ownerKind": "user",
+            "ownerId": "local-user",
+            "project": project,
+            "confidence": _bounded_float(item.get("confidence"), default=0.6),
+            "status": "active",
+            "expectedRevision": expected_revision,
+        }
+        diffs.append({"op": "upsert_memory_entity", "targetId": entity_id, "payload": payload, "status": "pending"})
+        for value in (requested_entity_id, entity_id, canonical_name, name, *aliases):
+            normalized = normalize_text(str(value or ""))
+            if normalized:
+                entity_ref_map[normalized] = entity_id
+    raw_relations = _list_of_dicts(compile_output.get("relations"))
+    if len(raw_relations) > 64:
+        warnings.append("memory_relation_limit_applied")
+    for item in raw_relations[:64]:
+        source_ref = compact_whitespace(
+            str(item.get("sourceEntityId") or item.get("source") or item.get("subject") or "")
+        )
+        target_ref = compact_whitespace(
+            str(item.get("targetEntityId") or item.get("target") or item.get("object") or "")
+        )
+        source_entity_id = entity_ref_map.get(normalize_text(source_ref), source_ref)
+        target_entity_id = entity_ref_map.get(normalize_text(target_ref), target_ref)
+        if normalize_text(source_ref) in rejected_entity_refs or normalize_text(target_ref) in rejected_entity_refs:
+            warnings.append(f"memory_relation_rejected_entity:{source_ref}:{target_ref}")
+            continue
+        relation_type = compact_whitespace(
+            str(item.get("relationType") or item.get("predicate") or "related_to")
+        ) or "related_to"
+        fact = compact_whitespace(str(item.get("fact") or item.get("statement") or ""))
+        evidence_ids = _positive_ints(item.get("evidenceEventIds"))
+        confidence = _bounded_float(item.get("confidence"), default=0.5)
+        if (
+            not source_entity_id
+            or not target_entity_id
+            or not fact
+            or source_entity_id == target_entity_id
+            or not evidence_ids
+            or confidence < 0.55
+        ):
+            continue
+        minimum_overlap = 2 if relation_type in {"causes", "caused_by", "affects", "leads_to"} else 1
+        if not _source_ids_support_claim(
+            evidence_ids,
+            [fact],
+            source_bundle=source_bundle,
+            minimum_overlap=minimum_overlap,
+        ):
+            warnings.append(f"memory_relation_evidence_mismatch:{relation_type}:{source_entity_id}:{target_entity_id}")
+            continue
+        valid_from_ms = _optional_int(item.get("validFromMs"))
+        valid_to_ms = _optional_int(item.get("validToMs"))
+        identity = stable_text_hash(
+            "|".join(
+                (
+                    "user",
+                    "local-user",
+                    project,
+                    source_entity_id,
+                    relation_type,
+                    target_entity_id,
+                    normalize_text(fact),
+                    str(valid_from_ms),
+                )
+            )
+        )[:24]
+        relation_id = compact_whitespace(str(item.get("relationId") or item.get("id") or "")) or f"relation:{identity}"
+        existing_relation = existing_relation_by_id.get(relation_id)
+        if existing_relation is not None:
+            relation_revision = _optional_int(existing_relation.get("revision"))
+            if relation_revision < 1:
+                warnings.append(f"memory_relation_revision_missing:{relation_id}")
+                continue
+            expected_revision = relation_revision
+        else:
+            expected_revision = 0
+        diffs.append(
+            {
+                "op": "upsert_memory_relation",
+                "targetId": relation_id,
+                "payload": {
+                    "relationId": relation_id,
+                    "sourceEntityId": source_entity_id,
+                    "targetEntityId": target_entity_id,
+                    "relationType": relation_type,
+                    "fact": fact,
+                    "evidenceEventIds": evidence_ids,
+                    "ownerKind": "user",
+                    "ownerId": "local-user",
+                    "project": project,
+                    "confidence": confidence,
+                    "validFromMs": valid_from_ms or None,
+                    "validToMs": valid_to_ms or None,
+                    "observedAtMs": _latest_source_event_ms(evidence_ids, source_bundle=source_bundle),
+                    "idempotencyKey": f"memory-relation:{identity}",
+                    "status": "active",
+                    "expectedRevision": expected_revision,
+                },
+                "status": "pending",
+            }
+        )
+    raw_relation_retractions = _list_of_dicts(compile_output.get("relationRetractions"))
+    if len(raw_relation_retractions) > 32:
+        warnings.append("memory_relation_retraction_limit_applied")
+    for item in raw_relation_retractions[:32]:
+        relation_id = compact_whitespace(str(item.get("relationId") or item.get("id") or ""))
+        existing_relation = existing_relation_by_id.get(relation_id)
+        if not relation_id or existing_relation is None:
+            warnings.append(f"memory_relation_retraction_unknown:{relation_id or 'missing'}")
+            continue
+        if _optional_int(existing_relation.get("validToMs")) > 0:
+            continue
+        evidence_ids = _positive_ints(item.get("evidenceEventIds"))
+        reason = compact_whitespace(str(item.get("reason") or item.get("fact") or "事实被更新"))
+        if not _source_ids_support_claim(
+            evidence_ids,
+            [reason, str(existing_relation.get("fact") or "")],
+            source_bundle=source_bundle,
+        ):
+            warnings.append(f"memory_relation_retraction_evidence_mismatch:{relation_id}")
+            continue
+        revision = _optional_int(existing_relation.get("revision"))
+        if revision < 1:
+            warnings.append(f"memory_relation_revision_missing:{relation_id}")
+            continue
+        valid_from_ms = _optional_int(existing_relation.get("validFromMs")) or 0
+        requested_close_ms = _optional_int(item.get("validToMs")) or _latest_source_event_ms(
+            evidence_ids,
+            source_bundle=source_bundle,
+        )
+        close_ms = max(valid_from_ms + 1, requested_close_ms)
+        diffs.append(
+            {
+                "op": "close_memory_relation",
+                "targetId": relation_id,
+                "payload": {
+                    "relationId": relation_id,
+                    "validToMs": close_ms,
+                    "reason": reason,
+                    "evidenceEventIds": evidence_ids,
+                    "expectedRevision": revision,
+                    "project": project,
+                },
+                "status": "pending",
+            }
+        )
     for item in _list_of_dicts(compile_output.get("tagEdges")):
         src = _canonical_tag_name(
             compact_whitespace(str(item.get("src") or item.get("sourceTagName") or item.get("source") or "")),
@@ -808,15 +1089,33 @@ def memory_book_plan_from_compile_output(
                 "proposedMerges": sum(1 for diff in diffs if diff.get("op") == "merge_semantic_tag"),
                 "isolatedProposedTags": isolated_proposed_tags,
             },
+            "temporalGraphDiagnostics": {
+                "existingEntities": len(existing_entities),
+                "proposedEntities": sum(1 for diff in diffs if diff.get("op") == "upsert_memory_entity"),
+                "proposedRelations": sum(1 for diff in diffs if diff.get("op") == "upsert_memory_relation"),
+            },
             "project": project,
             "bundleHash": str((source_bundle or {}).get("bundleHash") or ""),
             "sourceCursor": dict((source_bundle or {}).get("cursor") or {}),
             "legalContextGroupIds": list((source_bundle or {}).get("legalContextGroupIds") or []),
             "legalSourceEventIds": _legal_source_event_ids(source_bundle),
+            "sourceEventFingerprints": dict(
+                (source_bundle or {}).get("sourceEventFingerprints") or {}
+            ),
             "existingSemanticGroupIds": [
                 str(item.get("groupId") or "")
                 for item in _list_of_dicts((source_bundle or {}).get("existingSemanticGroups"))
                 if compact_whitespace(str(item.get("groupId") or ""))
+            ],
+            "existingMemoryEntityIds": [
+                str(item.get("entityId") or "")
+                for item in existing_entities
+                if compact_whitespace(str(item.get("entityId") or ""))
+            ],
+            "existingMemoryRelationIds": [
+                str(item.get("relationId") or "")
+                for item in existing_relations
+                if compact_whitespace(str(item.get("relationId") or ""))
             ],
         },
         "diffs": diffs,
@@ -839,6 +1138,9 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         "tagMerges": 0,
         "memoryBooks": 0,
         "memoryAtoms": 0,
+        "memoryEntities": 0,
+        "memoryRelations": 0,
+        "closedMemoryRelations": 0,
         "tagEdges": 0,
         "phraseCandidates": 0,
         "negativePhrases": 0,
@@ -860,6 +1162,16 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
     existing_semantic_groups = {
         compact_whitespace(str(item))
         for item in metadata.get("existingSemanticGroupIds", [])
+        if compact_whitespace(str(item))
+    }
+    planned_entity_ids = {
+        compact_whitespace(str(item.get("payload", {}).get("entityId") or ""))
+        for item in diffs
+        if item.get("op") == "upsert_memory_entity" and isinstance(item.get("payload"), dict)
+    }
+    existing_entity_ids = {
+        compact_whitespace(str(item))
+        for item in metadata.get("existingMemoryEntityIds", [])
         if compact_whitespace(str(item))
     }
     if compact_whitespace(str(plan.get("schemaVersion") or "")) != MEMORY_BOOK_RUN_SCHEMA_VERSION:
@@ -905,6 +1217,75 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             )
             if bool(payload.get("directCandidateAllowed")):
                 errors.append(_issue(index, op, "directCandidateAllowed", "canonical_text_must_not_be_direct_candidate"))
+        elif op == "upsert_memory_entity":
+            counts["memoryEntities"] += 1
+            _validate_required_text(errors, index, op, payload, "entityId")
+            _validate_required_text(errors, index, op, payload, "entityType")
+            _validate_required_text(errors, index, op, payload, "canonicalName")
+            if not _GRAPH_TYPE_RE.fullmatch(compact_whitespace(str(payload.get("entityType") or ""))):
+                errors.append(_issue(index, op, "entityType", "invalid_entity_type"))
+            _validate_source_ids(
+                errors,
+                index,
+                op,
+                payload.get("sourceEventIds"),
+                legal_source_event_ids=legal_source_event_ids,
+            )
+            _validate_secret_free(errors, index, op, payload, ("canonicalName", "aliases"))
+        elif op == "upsert_memory_relation":
+            counts["memoryRelations"] += 1
+            _validate_required_text(errors, index, op, payload, "relationId")
+            _validate_required_text(errors, index, op, payload, "sourceEntityId")
+            _validate_required_text(errors, index, op, payload, "targetEntityId")
+            _validate_required_text(errors, index, op, payload, "relationType")
+            _validate_required_text(errors, index, op, payload, "fact")
+            if not _GRAPH_TYPE_RE.fullmatch(compact_whitespace(str(payload.get("relationType") or ""))):
+                errors.append(_issue(index, op, "relationType", "invalid_relation_type"))
+            _validate_source_ids(
+                errors,
+                index,
+                op,
+                payload.get("evidenceEventIds"),
+                field="evidenceEventIds",
+                legal_source_event_ids=legal_source_event_ids,
+            )
+            for field in ("sourceEntityId", "targetEntityId"):
+                entity_id = compact_whitespace(str(payload.get(field) or ""))
+                if entity_id not in planned_entity_ids | existing_entity_ids:
+                    errors.append(_issue(index, op, field, "relation_entity_not_in_plan", preview=entity_id))
+            if payload.get("sourceEntityId") == payload.get("targetEntityId"):
+                errors.append(_issue(index, op, "targetEntityId", "self_relation_not_allowed"))
+            if len(compact_whitespace(str(payload.get("fact") or ""))) > 300:
+                errors.append(_issue(index, op, "fact", "relation_fact_too_long"))
+            valid_from = _optional_int(payload.get("validFromMs"))
+            valid_to = _optional_int(payload.get("validToMs"))
+            if valid_from and valid_to and valid_to <= valid_from:
+                errors.append(_issue(index, op, "validToMs", "invalid_relation_validity_window"))
+            _validate_secret_free(errors, index, op, payload, ("relationType", "fact"))
+        elif op == "close_memory_relation":
+            counts["closedMemoryRelations"] += 1
+            _validate_required_text(errors, index, op, payload, "relationId")
+            _validate_required_text(errors, index, op, payload, "reason")
+            _validate_source_ids(
+                errors,
+                index,
+                op,
+                payload.get("evidenceEventIds"),
+                field="evidenceEventIds",
+                legal_source_event_ids=legal_source_event_ids,
+            )
+            existing_relation_ids = {
+                compact_whitespace(str(item))
+                for item in metadata.get("existingMemoryRelationIds", [])
+                if compact_whitespace(str(item))
+            }
+            if compact_whitespace(str(payload.get("relationId") or "")) not in existing_relation_ids:
+                errors.append(_issue(index, op, "relationId", "relation_not_in_source_bundle"))
+            if (_optional_int(payload.get("validToMs")) or 0) <= 0:
+                errors.append(_issue(index, op, "validToMs", "invalid_relation_close_time"))
+            if (_optional_int(payload.get("expectedRevision")) or 0) <= 0:
+                errors.append(_issue(index, op, "expectedRevision", "missing_relation_revision"))
+            _validate_secret_free(errors, index, op, payload, ("reason",))
         elif op == "upsert_tag_edge":
             counts["tagEdges"] += 1
             _validate_required_text(errors, index, op, payload, "src")
@@ -983,37 +1364,225 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
 
 
 def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) -> dict[str, object]:
+    # Plans produced by older/local callers may not have passed through the
+    # source-bundle compiler. Capture a baseline once; an existing baseline is
+    # never overwritten, so stored drafts still fail closed after source edits.
+    _capture_plan_source_event_fingerprints(conn, plan)
     validation = inspect_memory_book_plan(plan)
     if not validation.get("ok"):
         raise ValueError("memory book plan failed validation")
     run_id = compact_whitespace(str(plan.get("runId") or ""))
     if not run_id:
         raise ValueError("memory book runId is required")
+    source_error: ValueError | None = None
     with conn:
-        _persist_memory_book_run(conn, plan)
-        rows = conn.execute(
-            """
-            SELECT id, op, target_memory_id, payload_json
-            FROM memory_cleanup_diffs
-            WHERE run_id = ? AND status IN ('pending', 'approved')
-            ORDER BY id ASC
-            """,
-            (run_id,),
-        ).fetchall()
-        for row in rows:
-            rollback = _apply_memory_book_diff(conn, row=row)
-            conn.execute(
-                """
-                UPDATE memory_cleanup_diffs
-                SET status = 'applied', applied_at_ms = ?, rollback_json = ?
-                WHERE id = ?
-                """,
-                (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        selected_diffs = [
+            item
+            for item in _list_of_dicts(plan.get("diffs"))
+            if compact_whitespace(str(item.get("status") or "pending")) in {"pending", "approved"}
+        ]
+        try:
+            metadata = dict(plan.get("metadata") or {})
+            _assert_memory_book_source_events_eligible(
+                conn,
+                project=compact_whitespace(str(metadata.get("project") or "")),
+                payloads=[dict(item.get("payload") or {}) for item in selected_diffs],
+                expected_fingerprints=dict(metadata.get("sourceEventFingerprints") or {}),
             )
-        _sync_run_status(conn, run_id)
-        if rows:
-            _advance_compile_state(conn, plan=plan)
+        except ValueError as exc:
+            # A stored draft whose evidence was deleted or reclassified must
+            # not remain indefinitely applyable in the review queue.
+            source_error = exc
+            conn.execute(
+                "UPDATE memory_cleanup_runs SET status = 'superseded' WHERE run_id = ?",
+                (run_id,),
+            )
+        if source_error is None:
+            _persist_memory_book_run(conn, plan)
+            rows = conn.execute(
+                """
+                SELECT id, op, target_memory_id, payload_json
+                FROM memory_cleanup_diffs
+                WHERE run_id = ? AND status IN ('pending', 'approved')
+                ORDER BY id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+            for row in rows:
+                rollback = _apply_memory_book_diff(conn, row=row)
+                conn.execute(
+                    """
+                    UPDATE memory_cleanup_diffs
+                    SET status = 'applied', applied_at_ms = ?, rollback_json = ?
+                    WHERE id = ?
+                    """,
+                    (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
+                )
+            _sync_run_status(conn, run_id)
+            if rows:
+                _advance_compile_state(conn, plan=plan)
+    if source_error is not None:
+        raise source_error
     return memory_book_run_payload(conn, run_id=run_id)
+
+
+def _assert_memory_book_source_events_eligible(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    payloads: list[dict[str, object]],
+    expected_fingerprints: Mapping[str, object] | None = None,
+) -> None:
+    """Fail one apply batch when its source evidence changed after drafting."""
+
+    source_event_ids = sorted(
+        {
+            event_id
+            for payload in payloads
+            for field in ("sourceEventIds", "evidenceEventIds")
+            for event_id in _positive_ints(payload.get(field))
+        }
+    )
+    if not source_event_ids:
+        return
+
+    placeholders = ",".join("?" for _ in source_event_ids)
+    rows = conn.execute(
+        f"""
+        SELECT e.id, e.created_at_ms, e.source, e.project, e.committed_text,
+               e.recent_context, e.preedit, e.schema_id, e.app,
+               e.provider_name, e.tags_json, e.context_group_id,
+               e.context_group_level,
+               CASE WHEN {_compilable_event_predicate("e")} THEN 1 ELSE 0 END AS compilable
+        FROM input_events AS e
+        WHERE e.id IN ({placeholders})
+        """,
+        source_event_ids,
+    ).fetchall()
+    rows_by_id = {int(row["id"]): row for row in rows}
+    expected = {
+        str(key): compact_whitespace(str(value or ""))
+        for key, value in dict(expected_fingerprints or {}).items()
+    }
+    failures: list[str] = []
+    for event_id in source_event_ids:
+        row = rows_by_id.get(event_id)
+        if row is None:
+            failures.append(f"{event_id}:missing")
+            continue
+        event_project = compact_whitespace(str(row["project"] or ""))
+        if project and event_project not in {"", project}:
+            failures.append(f"{event_id}:project_changed")
+            continue
+        if not bool(row["compilable"]):
+            failures.append(f"{event_id}:not_compilable")
+            continue
+        if any(
+            _contains_sensitive_text(str(row[field] or ""))
+            for field in ("committed_text", "recent_context", "preedit", "app", "tags_json")
+        ):
+            failures.append(f"{event_id}:sensitive")
+            continue
+        expected_fingerprint = expected.get(str(event_id), "")
+        if not expected_fingerprint:
+            failures.append(f"{event_id}:fingerprint_missing")
+            continue
+        if _source_event_fingerprint(row) != expected_fingerprint:
+            failures.append(f"{event_id}:source_changed")
+
+    if failures:
+        raise ValueError(
+            "memory book source events are no longer eligible: " + ", ".join(failures[:12])
+        )
+
+
+_SOURCE_FINGERPRINT_FIELDS = (
+    "id",
+    "created_at_ms",
+    "source",
+    "committed_text",
+    "recent_context",
+    "preedit",
+    "schema_id",
+    "app",
+    "project",
+    "provider_name",
+    "tags_json",
+    "context_group_id",
+    "context_group_level",
+)
+
+
+def _source_event_fingerprint(row: Mapping[str, object] | sqlite3.Row) -> str:
+    payload = {field: row[field] for field in _SOURCE_FINGERPRINT_FIELDS}
+    return stable_text_hash(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+
+
+def _load_source_event_fingerprints(
+    conn: sqlite3.Connection,
+    *,
+    event_ids: list[int],
+) -> dict[str, str]:
+    wanted = sorted(set(_positive_ints(event_ids)))
+    if not wanted:
+        return {}
+    placeholders = ",".join("?" for _ in wanted)
+    rows = conn.execute(
+        f"""
+        SELECT id, created_at_ms, source, committed_text, recent_context, preedit,
+               schema_id, app, project, provider_name, tags_json,
+               context_group_id, context_group_level
+        FROM input_events
+        WHERE id IN ({placeholders})
+        """,
+        wanted,
+    ).fetchall()
+    return {str(int(row["id"])): _source_event_fingerprint(row) for row in rows}
+
+
+def _source_event_fingerprints_match(
+    conn: sqlite3.Connection,
+    *,
+    event_ids: list[int],
+    expected_fingerprints: Mapping[str, object],
+) -> bool:
+    wanted = sorted(set(_positive_ints(event_ids)))
+    expected = {
+        str(key): compact_whitespace(str(value or ""))
+        for key, value in dict(expected_fingerprints or {}).items()
+    }
+    if not wanted or any(not expected.get(str(event_id)) for event_id in wanted):
+        return not wanted
+    actual = _load_source_event_fingerprints(conn, event_ids=wanted)
+    return all(actual.get(str(event_id)) == expected[str(event_id)] for event_id in wanted)
+
+
+def _capture_plan_source_event_fingerprints(
+    conn: sqlite3.Connection,
+    plan: dict[str, object],
+) -> None:
+    metadata = dict(plan.get("metadata") or {})
+    event_ids = sorted(
+        {
+            event_id
+            for diff in _list_of_dicts(plan.get("diffs"))
+            for field in ("sourceEventIds", "evidenceEventIds")
+            for event_id in _positive_ints(dict(diff.get("payload") or {}).get(field))
+        }
+    )
+    current = {
+        str(key): compact_whitespace(str(value or ""))
+        for key, value in dict(metadata.get("sourceEventFingerprints") or {}).items()
+        if compact_whitespace(str(value or ""))
+    }
+    missing = [event_id for event_id in event_ids if str(event_id) not in current]
+    current.update(_load_source_event_fingerprints(conn, event_ids=missing))
+    metadata["sourceEventFingerprints"] = current
+    plan["metadata"] = metadata
 
 
 def find_memory_book_draft_for_bundle(
@@ -1072,6 +1641,16 @@ def memory_book_run_is_stale(conn: sqlite3.Connection, *, run: Mapping[str, obje
         return False
     if not project or to_event_id <= 0:
         return False
+    expected_fingerprints = dict(metadata.get("sourceEventFingerprints") or {})
+    fingerprint_ids = _positive_ints(metadata.get("legalSourceEventIds")) or _positive_ints(
+        list(expected_fingerprints)
+    )
+    if fingerprint_ids and not _source_event_fingerprints_match(
+        conn,
+        event_ids=fingerprint_ids,
+        expected_fingerprints=expected_fingerprints,
+    ):
+        return True
     state = memory_compile_state(conn, project=project)
     return int(state.get("lastCompiledEventId") or 0) >= to_event_id
 
@@ -1115,6 +1694,7 @@ def store_memory_book_plan(
     if not run_id:
         raise ValueError("memory book runId is required")
     with conn:
+        _capture_plan_source_event_fingerprints(conn, plan)
         if supersede_project_drafts:
             _supersede_project_memory_book_drafts(conn, plan=plan)
         _persist_memory_book_run(conn, plan)
@@ -1248,8 +1828,26 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
     if status not in {"draft", "partial"}:
         raise ValueError(f"memory book run is not reviewable: {run_id} ({status or 'unknown'})")
     if memory_book_run_is_stale(conn, run=current):
-        raise ValueError(f"memory book draft is stale: {run_id}")
+        with conn:
+            conn.execute(
+                "UPDATE memory_cleanup_runs SET status = 'superseded' WHERE run_id = ?",
+                (run_id,),
+            )
+            conn.execute(
+                """
+                UPDATE memory_cleanup_diffs
+                SET status = 'rejected'
+                WHERE run_id = ? AND status IN ('pending', 'approved')
+                """,
+                (run_id,),
+            )
+        raise ValueError(
+            f"memory book draft is stale; source events are no longer eligible: {run_id}"
+        )
+    source_error: ValueError | None = None
     with conn:
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """
             SELECT id, op, target_memory_id, payload_json
@@ -1259,19 +1857,36 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
             """,
             (run_id,),
         ).fetchall()
-        for row in rows:
-            rollback = _apply_memory_book_diff(conn, row=row)
-            conn.execute(
-                """
-                UPDATE memory_cleanup_diffs
-                SET status = 'applied', applied_at_ms = ?, rollback_json = ?
-                WHERE id = ?
-                """,
-                (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
+        try:
+            metadata = dict(current.get("metadata") or {})
+            _assert_memory_book_source_events_eligible(
+                conn,
+                project=compact_whitespace(str(metadata.get("project") or "")),
+                payloads=[json.loads(row["payload_json"] or "{}") for row in rows],
+                expected_fingerprints=dict(metadata.get("sourceEventFingerprints") or {}),
             )
-        _sync_run_status(conn, run_id)
-        if rows:
-            _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
+        except ValueError as exc:
+            source_error = exc
+            conn.execute(
+                "UPDATE memory_cleanup_runs SET status = 'superseded' WHERE run_id = ?",
+                (run_id,),
+            )
+        if source_error is None:
+            for row in rows:
+                rollback = _apply_memory_book_diff(conn, row=row)
+                conn.execute(
+                    """
+                    UPDATE memory_cleanup_diffs
+                    SET status = 'applied', applied_at_ms = ?, rollback_json = ?
+                    WHERE id = ?
+                    """,
+                    (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
+                )
+            _sync_run_status(conn, run_id)
+            if rows:
+                _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
+    if source_error is not None:
+        raise source_error
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1442,6 +2057,12 @@ def _apply_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) -> di
         return _apply_memory_book(conn, payload)
     if op == "upsert_memory_atom":
         return _apply_memory_atom(conn, payload)
+    if op == "upsert_memory_entity":
+        return _apply_memory_entity(conn, payload)
+    if op == "upsert_memory_relation":
+        return _apply_memory_relation(conn, payload)
+    if op == "close_memory_relation":
+        return _apply_close_memory_relation(conn, payload)
     if op == "upsert_tag_edge":
         return _apply_tag_edge(conn, payload)
     if op == "merge_semantic_tag":
@@ -1472,6 +2093,24 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         _restore_semantic_group_members(conn, rollback)
         for alias_id in rollback.get("createdAliasIds", []) or []:
             conn.execute("DELETE FROM memory_aliases WHERE id = ?", (str(alias_id),))
+    elif op == "upsert_memory_entity":
+        MemoryGraphStore(":memory:").restore_entity(
+            entity_id=str(rollback.get("entityId") or ""),
+            snapshot=dict(rollback["previous"]) if isinstance(rollback.get("previous"), dict) else None,
+            conn=conn,
+        )
+    elif op == "upsert_memory_relation":
+        MemoryGraphStore(":memory:").restore_relation(
+            relation_id=str(rollback.get("relationId") or ""),
+            snapshot=dict(rollback["previous"]) if isinstance(rollback.get("previous"), dict) else None,
+            conn=conn,
+        )
+    elif op == "close_memory_relation":
+        MemoryGraphStore(":memory:").restore_relation(
+            relation_id=str(rollback.get("relationId") or ""),
+            snapshot=dict(rollback["previous"]) if isinstance(rollback.get("previous"), dict) else None,
+            conn=conn,
+        )
     elif op == "upsert_tag_edge":
         edge = rollback.get("edge")
         if isinstance(edge, dict):
@@ -1514,6 +2153,140 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
                 pk="supersession_id",
                 rollback=relation,
             )
+
+
+def _apply_memory_entity(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    store = MemoryGraphStore(":memory:")
+    source_event_ids = _positive_ints(payload.get("sourceEventIds"))
+    result = store.upsert_entity(
+        entity_id=str(payload.get("entityId") or ""),
+        entity_type=str(payload.get("entityType") or "concept"),
+        name=str(payload.get("canonicalName") or ""),
+        aliases=_strings(payload.get("aliases")),
+        sources=[
+            {
+                "sourceType": "input_event",
+                "sourceId": str(event_id),
+                "sourceRevision": 1,
+            }
+            for event_id in source_event_ids
+        ],
+        description=str(payload.get("description") or ""),
+        # The user-memory compiler cannot promote model output into another
+        # Agent/session scope. Private Agent writes use their own service.
+        owner_kind="user",
+        owner_id="local-user",
+        project=str(payload.get("project") or ""),
+        status=str(payload.get("status") or "active"),
+        confidence=_bounded_float(payload.get("confidence"), default=0.6),
+        metadata={"sourceEventIds": source_event_ids},
+        expected_revision=_optional_int(payload.get("expectedRevision")),
+        conn=conn,
+    )
+    entity = dict(result.get("entity") or {})
+    return {
+        "graphType": "entity",
+        "entityId": str(entity.get("entityId") or payload.get("entityId") or ""),
+        "appliedRevision": int(entity.get("revision") or 0),
+        "previous": result.get("previous"),
+        "outboxEventId": result.get("outboxEventId"),
+    }
+
+
+def _apply_memory_relation(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    store = MemoryGraphStore(":memory:")
+    evidence_event_ids = _positive_ints(payload.get("evidenceEventIds"))
+    observed_at_ms = _optional_int(payload.get("observedAtMs"))
+    result = store.upsert_relation(
+        relation_id=str(payload.get("relationId") or ""),
+        source_entity_id=str(payload.get("sourceEntityId") or ""),
+        target_entity_id=str(payload.get("targetEntityId") or ""),
+        relation_type=str(payload.get("relationType") or "related_to"),
+        fact=str(payload.get("fact") or ""),
+        idempotency_key=str(payload.get("idempotencyKey") or payload.get("relationId") or ""),
+        sources=[
+            {
+                "sourceType": "input_event",
+                "sourceId": str(event_id),
+                "sourceRevision": 1,
+                "evidence": {"observedAtMs": observed_at_ms or 0},
+            }
+            for event_id in evidence_event_ids
+        ],
+        owner_kind="user",
+        owner_id="local-user",
+        project=str(payload.get("project") or ""),
+        valid_from_ms=_optional_int(payload.get("validFromMs")) or observed_at_ms,
+        valid_to_ms=_optional_int(payload.get("validToMs")) or None,
+        status=str(payload.get("status") or "active"),
+        confidence=_bounded_float(payload.get("confidence"), default=0.6),
+        metadata={"observedAtMs": observed_at_ms or 0},
+        expected_revision=_optional_int(payload.get("expectedRevision")),
+        conn=conn,
+    )
+    relation = dict(result.get("relation") or {})
+    return {
+        "graphType": "relation",
+        "relationId": str(relation.get("relationId") or payload.get("relationId") or ""),
+        "appliedRevision": int(relation.get("revision") or 0),
+        "previous": result.get("previous"),
+        "outboxEventId": result.get("outboxEventId"),
+    }
+
+
+def _apply_close_memory_relation(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    relation_id = compact_whitespace(str(payload.get("relationId") or ""))
+    row = conn.execute(
+        "SELECT * FROM memory_relations WHERE relation_id = ?",
+        (relation_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("memory relation to close was not found")
+    if (str(row["owner_kind"]), str(row["owner_id"])) != ("user", "local-user"):
+        raise PermissionError("memory compiler cannot close another owner's relation")
+    project = compact_whitespace(str(payload.get("project") or ""))
+    if project != str(row["project"] or ""):
+        raise PermissionError("memory relation close belongs to another project")
+    evidence_event_ids = _positive_ints(payload.get("evidenceEventIds"))
+    close_at_ms = _optional_int(payload.get("validToMs"))
+    if close_at_ms <= 0:
+        raise ValueError("memory relation close time is required")
+    metadata = _json_object(row["metadata_json"])
+    result = MemoryGraphStore(":memory:").upsert_relation(
+        relation_id=relation_id,
+        source_entity_id=str(row["source_entity_id"]),
+        target_entity_id=str(row["target_entity_id"]),
+        relation_type=str(row["relation_type"]),
+        fact=str(row["fact"]),
+        idempotency_key=str(row["idempotency_key"]),
+        sources=[
+            {
+                "sourceType": "input_event",
+                "sourceId": str(event_id),
+                "sourceRevision": 1,
+                "evidence": {"observedAtMs": close_at_ms},
+            }
+            for event_id in evidence_event_ids
+        ],
+        owner_kind="user",
+        owner_id="local-user",
+        project=project,
+        valid_from_ms=int(row["valid_from_ms"]),
+        valid_to_ms=close_at_ms,
+        status=str(row["status"]),
+        confidence=float(row["confidence"]),
+        metadata=metadata,
+        expected_revision=_optional_int(payload.get("expectedRevision")),
+        conn=conn,
+    )
+    relation = dict(result.get("relation") or {})
+    return {
+        "graphType": "relation_close",
+        "relationId": relation_id,
+        "appliedRevision": int(relation.get("revision") or 0),
+        "previous": result.get("previous"),
+        "outboxEventId": result.get("outboxEventId"),
+    }
 
 
 def _apply_semantic_group(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -2459,6 +3232,42 @@ def _infer_source_event_ids(
     return [int(event["eventId"]) for event in events[:limit]]
 
 
+def _source_ids_support_claim(
+    source_ids: list[int],
+    claim_texts: list[str],
+    *,
+    source_bundle: dict[str, object] | None,
+    minimum_overlap: int = 1,
+) -> bool:
+    if not source_ids:
+        return False
+    claim_tokens: set[str] = set()
+    for text in claim_texts:
+        claim_tokens.update(_evidence_tokens(text))
+    if not claim_tokens:
+        return False
+    wanted = set(source_ids)
+    evidence_tokens: set[str] = set()
+    matched_source = False
+    for event in _source_event_records(source_bundle):
+        event_ids = set(_positive_ints(event.get("sourceEventIds") or [event.get("eventId")]))
+        if not wanted.intersection(event_ids):
+            continue
+        matched_source = True
+        evidence_tokens.update(
+            _evidence_tokens(
+                " ".join(
+                    (
+                        str(event.get("committedText") or ""),
+                        str(event.get("recentContext") or ""),
+                        " ".join(_strings(event.get("tags"))),
+                    )
+                )
+            )
+        )
+    return matched_source and len(claim_tokens.intersection(evidence_tokens)) >= max(1, minimum_overlap)
+
+
 def _source_event_records(source_bundle: dict[str, object] | None) -> list[dict[str, object]]:
     if not isinstance(source_bundle, dict):
         return []
@@ -2528,12 +3337,29 @@ def _optional_int(value: object) -> int:
         return 0
 
 
+def _latest_source_event_ms(
+    event_ids: list[int],
+    *,
+    source_bundle: dict[str, object] | None,
+) -> int:
+    wanted = set(event_ids)
+    timestamps = [
+        _optional_int(item.get("createdAtMs"))
+        for item in _list_of_dicts((source_bundle or {}).get("recentEvents"))
+        if wanted.intersection(_positive_ints(item.get("sourceEventIds") or [item.get("eventId")]))
+    ]
+    return max(timestamps, default=0)
+
+
 def _memory_book_summary(diffs: list[dict[str, object]]) -> str:
     counts = {
         "分组": sum(1 for item in diffs if item.get("op") == "upsert_semantic_group"),
         "标签": sum(1 for item in diffs if item.get("op") == "upsert_semantic_tag"),
         "主题": sum(1 for item in diffs if item.get("op") == "upsert_memory_book"),
         "记忆": sum(1 for item in diffs if item.get("op") == "upsert_memory_atom"),
+        "实体": sum(1 for item in diffs if item.get("op") == "upsert_memory_entity"),
+        "实体关系": sum(1 for item in diffs if item.get("op") == "upsert_memory_relation"),
+        "关闭旧关系": sum(1 for item in diffs if item.get("op") == "close_memory_relation"),
         "标签关系": sum(1 for item in diffs if item.get("op") == "upsert_tag_edge"),
         "标签合并": sum(1 for item in diffs if item.get("op") == "merge_semantic_tag"),
         "词表提案": sum(1 for item in diffs if item.get("op") == "add_phrase_candidate"),
@@ -2833,7 +3659,9 @@ def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object])
     _ensure_compile_state_table(conn)
     pending = int(
         conn.execute(
-            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            f"""SELECT COUNT(*) FROM input_events
+                WHERE id > ? AND (? = '' OR project = ? OR project = '')
+                  AND {_compilable_event_predicate()}""",
             (to_event_id, project, project),
         ).fetchone()[0]
     )
@@ -3158,6 +3986,91 @@ def _existing_semantic_tag_edges(conn: sqlite3.Connection) -> list[dict[str, obj
             "edgeType": str(row["edge_type"] or "related_to"),
             "weight": float(row["weight"] or 0.0),
             "evidenceCount": int(row["evidence_count"] or 0),
+        }
+        for row in rows
+    ]
+
+
+def _existing_memory_entities(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+) -> list[dict[str, object]]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT entity_id, entity_type, canonical_name, confidence, revision
+            FROM memory_entities
+            WHERE status = 'active'
+              AND owner_kind IN ('user', 'shared')
+              AND (? = '' OR project = ? OR project = '')
+            ORDER BY confidence DESC, updated_at_ms DESC
+            LIMIT 120
+            """,
+            (project, project),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    result: list[dict[str, object]] = []
+    for row in rows:
+        aliases = conn.execute(
+            """
+            SELECT alias
+            FROM memory_entity_aliases
+            WHERE entity_id = ?
+            ORDER BY weight DESC, alias ASC
+            LIMIT 12
+            """,
+            (str(row["entity_id"]),),
+        ).fetchall()
+        result.append(
+            {
+                "entityId": str(row["entity_id"]),
+                "entityType": str(row["entity_type"] or "concept"),
+                "canonicalName": _sanitize_text(str(row["canonical_name"] or ""), max_chars=80)[0],
+                "aliases": [
+                    _sanitize_text(str(alias["alias"] or ""), max_chars=80)[0]
+                    for alias in aliases
+                ],
+                "confidence": float(row["confidence"] or 0.0),
+                "revision": int(row["revision"] or 0),
+            }
+        )
+    return result
+
+
+def _existing_memory_relations(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+) -> list[dict[str, object]]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT relation_id, source_entity_id, target_entity_id, relation_type,
+                   fact, valid_from_ms, valid_to_ms, confidence, revision
+            FROM memory_relations
+            WHERE status = 'active'
+              AND owner_kind IN ('user', 'shared')
+              AND (? = '' OR project = ? OR project = '')
+            ORDER BY confidence DESC, updated_at_ms DESC
+            LIMIT 160
+            """,
+            (project, project),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [
+        {
+            "relationId": str(row["relation_id"]),
+            "sourceEntityId": str(row["source_entity_id"]),
+            "targetEntityId": str(row["target_entity_id"]),
+            "relationType": str(row["relation_type"]),
+            "fact": _sanitize_text(str(row["fact"] or ""), max_chars=220)[0],
+            "validFromMs": _optional_int(row["valid_from_ms"]) or None,
+            "validToMs": _optional_int(row["valid_to_ms"]) or None,
+            "confidence": float(row["confidence"] or 0.0),
+            "revision": int(row["revision"] or 0),
         }
         for row in rows
     ]

@@ -28,6 +28,7 @@ struct AgentActivityItem: Equatable, Identifiable {
     var detail: String
     var state: State
     let createdAtMs: Int
+    var turnId: String = ""
     var references: [AgentActivityReference] = []
 }
 
@@ -162,10 +163,16 @@ enum AgentConversationReducer {
                 upsertMessage(state: &state, message: message)
                 if message.role == "assistant" {
                     if message.status == "failed" || message.blocks.contains(where: { $0.type == .error }) {
+                        let error = message.blocks.first(where: { $0.type == .error })?
+                            .data.objectValue["message"]?.stringValue ?? "模型请求失败，请重试"
+                        replacePendingWithFailure(
+                            state: &state,
+                            title: "模型请求失败",
+                            detail: error
+                        )
                         completeRunningActivity(state: &state, failed: true)
                         state.status = "failed"
-                        state.failureMessage = message.blocks.first(where: { $0.type == .error })?
-                            .data.objectValue["message"]?.stringValue ?? "模型请求失败，请重试"
+                        state.failureMessage = error
                     } else {
                         completeRunningActivity(state: &state)
                         state.status = "finishing"
@@ -180,16 +187,23 @@ enum AgentConversationReducer {
         case .turnFailed:
             let error = clipped(payload["error"]?.stringValue ?? "本轮没有完成")
             completeRunningActivity(state: &state, failed: true)
-            upsertActivity(
+            if !replacePendingWithFailure(
                 state: &state,
-                item: AgentActivityItem(
-                    id: "\(event.turnId):failure",
-                    title: "本轮没有完成",
-                    detail: error,
-                    state: .failed,
-                    createdAtMs: event.createdAtMs
+                title: "本轮没有完成",
+                detail: error
+            ) {
+                upsertActivity(
+                    state: &state,
+                    item: AgentActivityItem(
+                        id: "\(event.turnId):failure",
+                        title: "本轮没有完成",
+                        detail: error,
+                        state: .failed,
+                        createdAtMs: event.createdAtMs,
+                        turnId: event.turnId
+                    )
                 )
-            )
+            }
             state.status = "failed"
             state.failureMessage = error
         case .snapshotRequired:
@@ -262,11 +276,12 @@ enum AgentConversationReducer {
         )
         state.activity = [
             AgentActivityItem(
-                id: "\(id):analyze",
-                title: "理解问题中…",
-                detail: "",
+                id: "\(id):thinking",
+                title: "正在思考",
+                detail: "正在等待 Pi 接收请求",
                 state: .running,
-                createdAtMs: nowMs
+                createdAtMs: nowMs,
+                turnId: id
             )
         ]
         state.status = "busy"
@@ -281,6 +296,11 @@ enum AgentConversationReducer {
     ) {
         guard let index = state.messages.firstIndex(where: { $0.id == messageId }) else { return }
         state.messages[index] = replacingStatus(state.messages[index], status: "failed")
+        _ = replacePendingWithFailure(
+            state: &state,
+            title: "发送失败",
+            detail: clipped(error)
+        )
         state.status = "failed"
         state.failureMessage = clipped(error)
     }
@@ -294,27 +314,41 @@ enum AgentConversationReducer {
         if !status.isEmpty { state.status = status }
         switch status {
         case "busy":
-            upsertActivity(
-                state: &state,
-                item: AgentActivityItem(
-                    id: "\(event.turnId):understand",
-                    title: "理解问题中…",
-                    detail: "",
-                    state: .running,
-                    createdAtMs: event.createdAtMs
+            if let index = pendingActivityIndex(state) {
+                state.activity[index].title = "正在思考"
+                state.activity[index].detail = "Pi 已接收请求"
+                state.activity[index].turnId = event.turnId
+            } else {
+                upsertActivity(
+                    state: &state,
+                    item: AgentActivityItem(
+                        id: "\(event.turnId):understand",
+                        title: "正在思考",
+                        detail: "Pi 已接收请求",
+                        state: .running,
+                        createdAtMs: event.createdAtMs,
+                        turnId: event.turnId
+                    )
                 )
-            )
+            }
         case "analyzing":
-            upsertActivity(
-                state: &state,
-                item: AgentActivityItem(
-                    id: "\(event.turnId):analyzing",
-                    title: "整理检索线索中…",
-                    detail: "正在选择需要查询的工具书、近期对话与知识",
-                    state: .running,
-                    createdAtMs: event.createdAtMs
+            if let index = pendingActivityIndex(state) {
+                state.activity[index].title = "整理检索线索中…"
+                state.activity[index].detail = "正在选择需要查询的工具书、近期对话与知识"
+                state.activity[index].turnId = event.turnId
+            } else {
+                upsertActivity(
+                    state: &state,
+                    item: AgentActivityItem(
+                        id: "\(event.turnId):analyzing",
+                        title: "整理检索线索中…",
+                        detail: "正在选择需要查询的工具书、近期对话与知识",
+                        state: .running,
+                        createdAtMs: event.createdAtMs,
+                        turnId: event.turnId
+                    )
                 )
-            )
+            }
         case "ready", "idle", "stopped":
             completeRunningActivity(state: &state)
         default:
@@ -332,6 +366,7 @@ enum AgentConversationReducer {
         let delta = payload["delta"]?.stringValue ?? ""
         let replaceBlock = payload["replaceBlock"]?.boolValue == true
         guard !delta.isEmpty else { return }
+        completePendingActivity(state: &state)
         let now = event.createdAtMs
         if let index = state.messages.firstIndex(where: { $0.id == messageId }) {
             var blocks = state.messages[index].blocks
@@ -396,6 +431,25 @@ enum AgentConversationReducer {
         let title = toolActivityTitle(toolName: toolName, operation: operation, finished: finished)
         let detail = toolActivityDetail(payload: payload, operation: operation, finished: finished)
         let references = toolActivityReferences(payload: payload, operation: operation, finished: finished)
+        completePendingActivity(state: &state)
+        if failed,
+           let duplicate = state.activity.first(where: {
+               $0.id != toolCallId
+                   && $0.turnId == event.turnId
+                   && $0.state == .failed
+                   && $0.title == title
+           }) {
+            state.activity.removeAll(where: { $0.id == toolCallId })
+            if let duplicateIndex = state.activity.firstIndex(where: { $0.id == duplicate.id }) {
+                state.activity[duplicateIndex].detail = detail
+                state.activity[duplicateIndex].references = mergedReferences(
+                    state.activity[duplicateIndex].references,
+                    references
+                )
+            }
+            state.status = "failed"
+            return
+        }
         upsertActivity(
             state: &state,
             item: AgentActivityItem(
@@ -404,6 +458,7 @@ enum AgentConversationReducer {
                 detail: detail,
                 state: failed ? .failed : (finished ? .completed : .running),
                 createdAtMs: event.createdAtMs,
+                turnId: event.turnId,
                 references: references
             )
         )
@@ -438,6 +493,47 @@ enum AgentConversationReducer {
         if state.activity.count > 12 {
             state.activity.removeFirst(state.activity.count - 12)
         }
+    }
+
+    private static func pendingActivityIndex(_ state: AgentConversationState) -> Int? {
+        state.activity.firstIndex(where: {
+            $0.state == .running
+                && ($0.id.hasSuffix(":thinking")
+                    || $0.title == "正在思考"
+                    || $0.title == "理解问题中…")
+        })
+    }
+
+    private static func completePendingActivity(state: inout AgentConversationState) {
+        guard let index = pendingActivityIndex(state) else { return }
+        state.activity[index].state = .completed
+        state.activity[index].title = completedTitle(state.activity[index].title)
+    }
+
+    @discardableResult
+    private static func replacePendingWithFailure(
+        state: inout AgentConversationState,
+        title: String,
+        detail: String
+    ) -> Bool {
+        let index = state.activity.firstIndex(where: {
+            $0.id.hasSuffix(":thinking")
+                || ["正在思考", "已思考", "理解问题中…", "模型请求失败", "发送失败", "本轮没有完成"]
+                    .contains($0.title)
+        })
+        guard let index else { return false }
+        state.activity[index].title = title
+        state.activity[index].detail = clipped(detail)
+        state.activity[index].state = .failed
+        return true
+    }
+
+    private static func mergedReferences(
+        _ existing: [AgentActivityReference],
+        _ incoming: [AgentActivityReference]
+    ) -> [AgentActivityReference] {
+        var seen = Set<String>()
+        return (existing + incoming).filter { seen.insert($0.id).inserted }
     }
 
     private static func completeRunningActivity(state: inout AgentConversationState, failed: Bool = false) {

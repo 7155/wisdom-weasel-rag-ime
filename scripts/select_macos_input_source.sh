@@ -43,7 +43,7 @@ done
 INPUT_SOURCE_ID="${INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MENU_FALLBACK_ENABLED="${RAG_IME_INPUT_SOURCE_MENU_FALLBACK:-1}"
-MENU_NAME_ALIASES="${RAG_IME_INPUT_SOURCE_MENU_NAMES:-鼠须管|Squirrel - Simplified|Squirrel}"
+MENU_NAME_ALIASES="${RAG_IME_INPUT_SOURCE_MENU_NAMES:-智鼬输入法|鼠须管|Squirrel - Simplified|Squirrel}"
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-tis-select-input-source.XXXXXX")"
@@ -68,7 +68,7 @@ on splitAliases(rawAliases)
 end splitAliases
 
 on run argv
-  set aliases to splitAliases(item 1 of argv)
+  set aliasNames to splitAliases(item 1 of argv)
   tell application "System Events"
     if not (exists process "TextInputMenuAgent") then error "TextInputMenuAgent is unavailable"
     tell process "TextInputMenuAgent"
@@ -77,7 +77,7 @@ on run argv
       click statusItem
       delay 0.25
       set inputMenu to menu 1 of statusItem
-      repeat with candidateName in aliases
+      repeat with candidateName in aliasNames
         set resolvedName to candidateName as text
         if exists menu item resolvedName of inputMenu then
           click menu item resolvedName of inputMenu

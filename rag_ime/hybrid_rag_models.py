@@ -20,6 +20,9 @@ class HybridRagQuery:
     context_group_parent_ids: tuple[str, ...] = ()
     enabled_lanes: tuple[tuple[str, bool], ...] = ()
     lane_weights: tuple[tuple[str, float], ...] = ()
+    reader_session_id: str = ""
+    reader_agent_id: str = ""
+    reader_room_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

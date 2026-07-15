@@ -328,6 +328,10 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("private struct AgentMarkdownView", page)
         self.assertIn("case .code", page)
         self.assertIn("activityExpansionBySession", page)
+        self.assertIn('title: "正在思考"', store)
+        self.assertIn("replacePendingWithFailure", store)
+        self.assertIn("RoundedRectangle(cornerRadius: 7)", page)
+        self.assertIn("showsBoundedState ? tint.opacity(0.24) : Color.clear", page)
         self.assertIn("AgentTranscriptSurface: NSViewRepresentable", page)
         self.assertIn("AgentTranscriptTableView: NSTableView", page)
         self.assertIn("tableView.usesAutomaticRowHeights = true", page)
@@ -398,6 +402,7 @@ class NativeControlCenterTests(unittest.TestCase):
             ROOT / "scripts" / "render_agent_activity_snapshot.sh"
         ).read_text(encoding="utf-8")
         self.assertIn('status: "working"', activity_snapshot)
+        self.assertIn('title: "正在思考"', activity_snapshot)
         self.assertIn("AgentActivityPanel(items: items", activity_snapshot)
         self.assertIn("AgentActivityPanelSnapshot.swift", activity_script)
         self.assertIn("AgentTranscriptSurface.Coordinator()", benchmark)
@@ -493,6 +498,24 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn('await run(action: "redeploy_rime")', app_model)
         self.assertIn("struct RimeLexiconReviewResponse", models)
         self.assertIn("struct RimeLexiconReviewEntry", models)
+
+    def test_input_method_uses_stable_native_control_columns_and_real_updates(self) -> None:
+        root = ROOT / "macos" / "RagImeControl"
+        page = (root / "Pages" / "InputMethodPage.swift").read_text(encoding="utf-8")
+        components = (root / "Components" / "ControlComponents.swift").read_text(encoding="utf-8")
+
+        self.assertIn("ControlSettingsSection(section: section)", page)
+        self.assertNotIn("SchemaSectionView(section: section)", page)
+        self.assertIn("static let valueColumnWidth: CGFloat = 260", components)
+        self.assertIn("struct ControlLabelValueRow", components)
+        self.assertIn("ControlSettingsFieldRow", components)
+        self.assertIn("model.update(field: field", components)
+        self.assertIn("ShortcutRecorder(value: stringBinding)", components)
+        self.assertIn("frame(width: ControlDesign.valueColumnWidth", components)
+        self.assertIn("Task { await model.loadRimeLexiconReview() }", page)
+        self.assertIn("Task { await model.applyRimeLexiconReview() }", page)
+        self.assertIn("Task { await model.rollbackRimeLexiconReview() }", page)
+        self.assertNotIn(".font(.caption", page)
 
     def test_native_app_supervises_only_allowlisted_external_commands(self) -> None:
         root = ROOT / "macos" / "RagImeControl"
@@ -786,10 +809,79 @@ struct AgentConversationReducerHarness {
     }
 
     static func main() {
+        var optimistic = AgentConversationState()
+        let localId = AgentConversationReducer.appendOptimisticUser(
+            state: &optimistic,
+            sessionId: "agent:test",
+            text: "先帮我看看",
+            nowMs: 999
+        )
+        precondition(optimistic.status == "busy")
+        precondition(optimistic.activity.count == 1)
+        precondition(optimistic.activity.first?.title == "正在思考")
+        precondition(optimistic.activity.first?.state == .running)
+        AgentConversationReducer.markOptimisticFailure(
+            state: &optimistic,
+            messageId: localId,
+            error: "404 model unavailable"
+        )
+        precondition(optimistic.activity.count == 1)
+        precondition(optimistic.activity.first?.title == "发送失败")
+        precondition(optimistic.activity.first?.state == .failed)
+        precondition(optimistic.activity.first?.detail.contains("404") == true)
+        precondition(!optimistic.activity.contains(where: { $0.state == .running }))
+
+        var failedTurn = AgentConversationState()
+        _ = AgentConversationReducer.appendOptimisticUser(
+            state: &failedTurn,
+            sessionId: "agent:test",
+            text: "再试一次",
+            nowMs: 999
+        )
+        _ = AgentConversationReducer.reduce(
+            state: &failedTurn,
+            event: event(1, .turnFailed, .object(["error": .string("provider unavailable")]))
+        )
+        precondition(failedTurn.activity.count == 1)
+        precondition(failedTurn.activity.first?.title == "本轮没有完成")
+        precondition(failedTurn.activity.first?.state == .failed)
+
+        var retriedTool = AgentConversationState()
+        let planningStarted1 = event(1, .toolStarted, .object([
+            "toolCallId": .string("planning:1"),
+            "toolName": .string("ime_planning"),
+            "args": .object(["op": .string("task_action")]),
+            "isError": .bool(false),
+        ]))
+        let planningFailed1 = event(2, .toolFinished, .object([
+            "toolCallId": .string("planning:1"),
+            "toolName": .string("ime_planning"),
+            "args": .object(["op": .string("task_action")]),
+            "isError": .bool(true),
+        ]))
+        let planningStarted2 = event(3, .toolStarted, .object([
+            "toolCallId": .string("planning:2"),
+            "toolName": .string("ime_planning"),
+            "args": .object(["op": .string("task_action")]),
+            "isError": .bool(false),
+        ]))
+        let planningFailed2 = event(4, .toolFinished, .object([
+            "toolCallId": .string("planning:2"),
+            "toolName": .string("ime_planning"),
+            "args": .object(["op": .string("task_action")]),
+            "isError": .bool(true),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &retriedTool, event: planningStarted1)
+        _ = AgentConversationReducer.reduce(state: &retriedTool, event: planningFailed1)
+        _ = AgentConversationReducer.reduce(state: &retriedTool, event: planningStarted2)
+        _ = AgentConversationReducer.reduce(state: &retriedTool, event: planningFailed2)
+        precondition(retriedTool.activity.filter { $0.state == .failed }.count == 1)
+        precondition(!retriedTool.activity.contains(where: { $0.id == "planning:2" }))
+
         var state = AgentConversationState()
         let busy = event(1, .statusChanged, .object(["status": .string("busy")]))
         precondition(AgentConversationReducer.reduce(state: &state, event: busy) == .applied)
-        precondition(state.activity.first?.title == "理解问题中…")
+        precondition(state.activity.first?.title == "正在思考")
 
         let started = event(2, .toolStarted, .object([
             "toolCallId": .string("tool:1"),

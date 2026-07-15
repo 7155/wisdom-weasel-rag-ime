@@ -40,6 +40,7 @@ class ModelProfileStore:
 
 
 def _profile_from_payload(payload: dict[str, Any]) -> ModelProfile:
+    sampling = dict(payload.get("sampling") or {})
     return ModelProfile(
         id=str(payload.get("id") or ""),
         lane=str(payload.get("lane") or "hot"),
@@ -53,4 +54,41 @@ def _profile_from_payload(payload: dict[str, Any]) -> ModelProfile:
         sequence_fork=bool(payload.get("sequenceFork", payload.get("sequence_fork", True))),
         idle_unload_ms=int(payload.get("idleUnloadMs") or payload.get("idle_unload_ms") or 0),
         append_only=bool(payload.get("appendOnly", payload.get("append_only", False))),
+        prompt_mode=str(payload.get("promptMode") or payload.get("prompt_mode") or "chat-json"),
+        decode_strategy=str(payload.get("decodeStrategy") or payload.get("decode_strategy") or "chat-json"),
+        branch_count=int(payload.get("branchCount") or payload.get("branch_count") or 1),
+        stream_first=bool(payload.get("streamFirst", payload.get("stream_first", True))),
+        sampling_temperature=float(
+            sampling.get("temperature")
+            if sampling.get("temperature") is not None
+            else payload.get("sampling_temperature", 0.15)
+        ),
+        sampling_top_p=float(
+            sampling.get("topP")
+            if sampling.get("topP") is not None
+            else payload.get("sampling_top_p", 0.85)
+        ),
+        sampling_top_k=int(
+            sampling.get("topK")
+            if sampling.get("topK") is not None
+            else payload.get("sampling_top_k", 0)
+        ),
+        max_candidate_chars=int(
+            payload.get("maxCandidateChars") or payload.get("max_candidate_chars") or 24
+        ),
+        expected_hidden_layers=int(
+            dict(payload.get("expectedArchitecture") or {}).get("numHiddenLayers")
+            or payload.get("expected_hidden_layers")
+            or 0
+        ),
+        expected_attention_heads=int(
+            dict(payload.get("expectedArchitecture") or {}).get("numAttentionHeads")
+            or payload.get("expected_attention_heads")
+            or 0
+        ),
+        expected_vocab_size=int(
+            dict(payload.get("expectedArchitecture") or {}).get("vocabSize")
+            or payload.get("expected_vocab_size")
+            or 0
+        ),
     )

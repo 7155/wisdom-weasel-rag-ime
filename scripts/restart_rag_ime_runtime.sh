@@ -31,12 +31,16 @@ detect_mlx_model() {
   local candidates=()
   if is_low_memory_profile; then
     candidates=(
+      "$PORTABLE_MODELS_DIR/minimind-ime-60m-daily-short-final-v8"
+      "$PORTABLE_MODELS_DIR/minimind-ime-100m-user-daily-core-v1"
       "$PORTABLE_MODELS_DIR/minimind-ime-v2"
       "$PORTABLE_MODELS_DIR/minimind-ime-v2-q8"
       "$ROOT/../models/mlx/Qwen3-0.6B-4bit"
     )
   else
     candidates=(
+      "$PORTABLE_MODELS_DIR/minimind-ime-100m-user-daily-core-v1"
+      "$PORTABLE_MODELS_DIR/minimind-ime-60m-daily-short-final-v8"
       "$PORTABLE_MODELS_DIR/minimind-ime-v2"
       "$PORTABLE_MODELS_DIR/minimind-ime-v2-fp16"
       "$ROOT/../models/mlx/Qwen3-0.6B-4bit"
@@ -87,6 +91,7 @@ resolve_registered_model() {
 detect_mlx_prompt_mode() {
   local model_dir="$1"
   case "$model_dir" in
+    *minimind-ime-100m-user-daily-core-v1*|*minimind-ime-60m-daily-short-final-v8*) printf '%s\n' "base-completion" ;;
     *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "base-completion" ;;
     *) printf '%s\n' "" ;;
   esac
@@ -95,18 +100,45 @@ detect_mlx_prompt_mode() {
 detect_mlx_profile() {
   local model_dir="$1"
   case "$model_dir" in
+    *minimind-ime-100m-user-daily-core-v1*) printf '%s\n' "minimind_ime_100m_v1" ;;
+    *minimind-ime-60m-daily-short-final-v8*) printf '%s\n' "minimind_ime_60m_v8" ;;
     *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "minimind_ime_v2" ;;
     *Qwen3*|*qwen3*) printf '%s\n' "qwen3_06b_ime_hot" ;;
-    *) printf '%s\n' "qwen3_06b_ime_hot" ;;
+    *) return 1 ;;
   esac
 }
 
-detect_predictor_stream_first() {
-  local model_dir="$1"
-  case "$model_dir" in
-    *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "0" ;;
-    *) printf '%s\n' "1" ;;
-  esac
+resolve_profile_contract() {
+  local python_exec="$1"
+  local profile_id="$2"
+  local model_dir="$3"
+  PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$python_exec" - "$profile_id" "$model_dir" <<'PY'
+import shlex
+import sys
+
+from rag_ime.model_profiles import profile_by_id, validate_profile, validate_profile_artifact
+
+try:
+    profile = profile_by_id(sys.argv[1])
+except ValueError as exc:
+    raise SystemExit(str(exc)) from None
+errors = [*validate_profile(profile), *validate_profile_artifact(profile, sys.argv[2])]
+if errors:
+    raise SystemExit("; ".join(errors))
+values = {
+    "RAG_IME_RESOLVED_PROFILE_ID": profile.id,
+    "RAG_IME_PROFILE_DEFAULT_PROMPT_MODE": profile.prompt_mode,
+    "RAG_IME_PROFILE_DEFAULT_MAX_TOKENS": str(profile.max_tokens),
+    "RAG_IME_PROFILE_DEFAULT_STREAM_FIRST": "1" if profile.stream_first else "0",
+    "RAG_IME_PROFILE_DEFAULT_DECODE_STRATEGY": profile.decode_strategy,
+    "RAG_IME_PROFILE_DEFAULT_BRANCH_COUNT": str(profile.branch_count),
+    "RAG_IME_PROFILE_DEFAULT_TEMPERATURE": str(profile.sampling_temperature),
+    "RAG_IME_PROFILE_DEFAULT_TOP_P": str(profile.sampling_top_p),
+    "RAG_IME_PROFILE_DEFAULT_TOP_K": str(profile.sampling_top_k),
+}
+for key, value in values.items():
+    print(f"{key}={shlex.quote(value)}")
+PY
 }
 
 RAG_IME_REGISTERED_MODEL_PATH=""
@@ -114,6 +146,10 @@ RAG_IME_REGISTERED_MODEL_PROFILE=""
 RAG_IME_REGISTERED_MODEL_PROMPT_MODE=""
 RAG_IME_REGISTERED_MODEL_ID=""
 RAG_IME_REGISTERED_MODEL_FINGERPRINT=""
+RAG_IME_REGISTERED_MODEL_MAX_TOKENS=""
+RAG_IME_REGISTERED_MODEL_STREAM_FIRST=""
+RAG_IME_REGISTERED_MODEL_DECODE_STRATEGY=""
+RAG_IME_REGISTERED_MODEL_BRANCH_COUNT=""
 RAG_IME_MODEL_RUNTIME=""
 RAG_IME_MODEL_RUNTIME_LIFECYCLE=""
 RAG_IME_MODEL_RUNTIME_READY="0"
@@ -128,11 +164,22 @@ fi
 MODEL_RUNTIME="${RAG_IME_MODEL_RUNTIME:-mlx}"
 
 if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
-  MODEL_DIR="${RAG_IME_MLX_MODEL:-${RAG_IME_REGISTERED_MODEL_PATH:-$(detect_mlx_model || true)}}"
+  MODEL_DIR="${RAG_IME_REGISTERED_MODEL_PATH:-${RAG_IME_MLX_MODEL:-$(detect_mlx_model || true)}}"
 else
   MODEL_DIR="${RAG_IME_PREDICTOR_MODEL:-${RAG_IME_REGISTERED_MODEL_NAME:-${RAG_IME_REGISTERED_MODEL_PATH:-}}}"
 fi
-LEGACY_MODEL_PROFILE="$(detect_mlx_profile "$MODEL_DIR")"
+LEGACY_MODEL_PROFILE=""
+if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
+  if [[ -n "$RAG_IME_REGISTERED_MODEL_PROFILE" ]]; then
+    LEGACY_MODEL_PROFILE="$RAG_IME_REGISTERED_MODEL_PROFILE"
+  elif [[ -n "${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}" ]]; then
+    LEGACY_MODEL_PROFILE="${RAG_IME_MLX_PROFILE:-$RAG_IME_PREDICTOR_PROFILE}"
+  elif ! LEGACY_MODEL_PROFILE="$(detect_mlx_profile "$MODEL_DIR")"; then
+    echo "Cannot infer a safe MLX profile for: $MODEL_DIR" >&2
+    echo "Register the model with an explicit supported profile." >&2
+    exit 1
+  fi
+fi
 LEGACY_MODEL_ID="$(basename "${MODEL_DIR:-local-model}")"
 MLX_PYTHON=""
 if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
@@ -164,6 +211,37 @@ if [[ -z "$SIDECAR_PYTHON" || ! -x "$SIDECAR_PYTHON" ]]; then
   echo "Sidecar Python is not available; set RAG_IME_PYTHON to an executable Python 3.11+." >&2
   exit 1
 fi
+if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
+  if [[ -n "$RAG_IME_REGISTERED_MODEL_PROFILE" ]]; then
+    RESOLVED_MODEL_PROFILE="$RAG_IME_REGISTERED_MODEL_PROFILE"
+  else
+    RESOLVED_MODEL_PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-$LEGACY_MODEL_PROFILE}}"
+  fi
+  if ! PROFILE_CONTRACT_ENV="$(resolve_profile_contract "$SIDECAR_PYTHON" "$RESOLVED_MODEL_PROFILE" "$MODEL_DIR")"; then
+    echo "MLX model/profile contract validation failed: $RESOLVED_MODEL_PROFILE ($MODEL_DIR)" >&2
+    exit 1
+  fi
+  eval "$PROFILE_CONTRACT_ENV"
+  RESOLVED_MODEL_PROFILE="$RAG_IME_RESOLVED_PROFILE_ID"
+  if [[ -n "${RAG_IME_MLX_DECODE_STRATEGY:-}" && "$RAG_IME_MLX_DECODE_STRATEGY" != "$RAG_IME_PROFILE_DEFAULT_DECODE_STRATEGY" ]]; then
+    echo "Profile $RESOLVED_MODEL_PROFILE requires decodeStrategy=$RAG_IME_PROFILE_DEFAULT_DECODE_STRATEGY, got $RAG_IME_MLX_DECODE_STRATEGY" >&2
+    exit 1
+  fi
+  if [[ -n "${RAG_IME_MLX_BRANCH_COUNT:-}" && "$RAG_IME_MLX_BRANCH_COUNT" != "$RAG_IME_PROFILE_DEFAULT_BRANCH_COUNT" ]]; then
+    echo "Profile $RESOLVED_MODEL_PROFILE requires branchCount=$RAG_IME_PROFILE_DEFAULT_BRANCH_COUNT, got $RAG_IME_MLX_BRANCH_COUNT" >&2
+    exit 1
+  fi
+  if [[ -n "$RAG_IME_REGISTERED_MODEL_PROMPT_MODE" ]]; then
+    RESOLVED_MODEL_PROMPT_MODE="$RAG_IME_REGISTERED_MODEL_PROMPT_MODE"
+  else
+    RESOLVED_MODEL_PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-$(detect_mlx_prompt_mode "$MODEL_DIR")}"
+    RESOLVED_MODEL_PROMPT_MODE="${RESOLVED_MODEL_PROMPT_MODE:-$RAG_IME_PROFILE_DEFAULT_PROMPT_MODE}"
+  fi
+  if [[ "$RESOLVED_MODEL_PROMPT_MODE" != "$RAG_IME_PROFILE_DEFAULT_PROMPT_MODE" ]]; then
+    echo "Profile $RESOLVED_MODEL_PROFILE requires promptMode=$RAG_IME_PROFILE_DEFAULT_PROMPT_MODE, got $RESOLVED_MODEL_PROMPT_MODE" >&2
+    exit 1
+  fi
+fi
 eval "$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$SIDECAR_PYTHON" -m rag_ime.runtime_profile --profile "$RUNTIME_PROFILE" --format shell)"
 
 export RAG_IME_MODEL_REGISTRY="$MODEL_REGISTRY_PATH"
@@ -179,9 +257,19 @@ if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
 fi
 export RAG_IME_PYTHON="$SIDECAR_PYTHON"
 export RAG_IME_MEMORY_PROFILE="$MEMORY_PROFILE"
-export RAG_IME_MLX_MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-8}"
-export RAG_IME_MLX_TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-0.15}"
-export RAG_IME_MLX_TOP_P="${RAG_IME_MLX_TOP_P:-0.85}"
+if [[ "$MODEL_RUNTIME" == "mlx" && -n "$RAG_IME_REGISTERED_MODEL_PROFILE" ]]; then
+  RAG_IME_MLX_MAX_TOKENS="${RAG_IME_REGISTERED_MODEL_MAX_TOKENS:-$RAG_IME_PROFILE_DEFAULT_MAX_TOKENS}"
+  RAG_IME_MLX_DECODE_STRATEGY="${RAG_IME_REGISTERED_MODEL_DECODE_STRATEGY:-$RAG_IME_PROFILE_DEFAULT_DECODE_STRATEGY}"
+  RAG_IME_MLX_BRANCH_COUNT="${RAG_IME_REGISTERED_MODEL_BRANCH_COUNT:-$RAG_IME_PROFILE_DEFAULT_BRANCH_COUNT}"
+else
+  RAG_IME_MLX_MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-${RAG_IME_PROFILE_DEFAULT_MAX_TOKENS:-8}}"
+  RAG_IME_MLX_DECODE_STRATEGY="${RAG_IME_PROFILE_DEFAULT_DECODE_STRATEGY:-}"
+  RAG_IME_MLX_BRANCH_COUNT="${RAG_IME_PROFILE_DEFAULT_BRANCH_COUNT:-1}"
+fi
+export RAG_IME_MLX_MAX_TOKENS
+export RAG_IME_MLX_TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-${RAG_IME_PROFILE_DEFAULT_TEMPERATURE:-0.15}}"
+export RAG_IME_MLX_TOP_P="${RAG_IME_MLX_TOP_P:-${RAG_IME_PROFILE_DEFAULT_TOP_P:-0.85}}"
+export RAG_IME_MLX_TOP_K="${RAG_IME_MLX_TOP_K:-${RAG_IME_PROFILE_DEFAULT_TOP_K:-0}}"
 if is_low_memory_profile; then
   export RAG_IME_MLX_PROMPT_CACHE="${RAG_IME_MLX_PROMPT_CACHE:-0}"
 else
@@ -190,8 +278,10 @@ fi
 export RAG_IME_MLX_PREFIX_CACHE="${RAG_IME_MLX_PREFIX_CACHE:-0}"
 export RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES="${RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES:-8}"
 export RAG_IME_MLX_PREFIX_CACHE_MAX_MB="${RAG_IME_MLX_PREFIX_CACHE_MAX_MB:-32}"
-export RAG_IME_MLX_PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_REGISTERED_MODEL_PROFILE:-$LEGACY_MODEL_PROFILE}}"
-export RAG_IME_MLX_PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-${RAG_IME_REGISTERED_MODEL_PROMPT_MODE:-$(detect_mlx_prompt_mode "$MODEL_DIR")}}"
+export RAG_IME_MLX_PROFILE="${RESOLVED_MODEL_PROFILE:-${RAG_IME_REGISTERED_MODEL_PROFILE:-$LEGACY_MODEL_PROFILE}}"
+export RAG_IME_MLX_PROMPT_MODE="${RESOLVED_MODEL_PROMPT_MODE:-${RAG_IME_REGISTERED_MODEL_PROMPT_MODE:-}}"
+export RAG_IME_MLX_DECODE_STRATEGY
+export RAG_IME_MLX_BRANCH_COUNT
 export RAG_IME_LAUNCH_KEEP_ALIVE="${RAG_IME_LAUNCH_KEEP_ALIVE:-0}"
 
 MLX_BASE_HOST="${RAG_IME_MLX_HOST:-127.0.0.1}"
@@ -202,13 +292,17 @@ DEFAULT_PREDICTOR_BASE_URL="http://$MLX_BASE_HOST:${RAG_IME_MLX_PORT:-8767}"
 export RAG_IME_PREDICTOR_PROVIDER="${RAG_IME_PREDICTOR_PROVIDER:-$MODEL_RUNTIME}"
 export RAG_IME_PREDICTOR_BASE_URL="${RAG_IME_PREDICTOR_BASE_URL:-${RAG_IME_REGISTERED_MODEL_ENDPOINT:-$DEFAULT_PREDICTOR_BASE_URL}}"
 export RAG_IME_PREDICTOR_MODEL="${RAG_IME_PREDICTOR_MODEL:-$MODEL_DIR}"
-export RAG_IME_PREDICTOR_PROFILE="${RAG_IME_PREDICTOR_PROFILE:-${RAG_IME_REGISTERED_MODEL_PROFILE:-$LEGACY_MODEL_PROFILE}}"
-export RAG_IME_PREDICTOR_PROMPT_MODE="${RAG_IME_PREDICTOR_PROMPT_MODE:-${RAG_IME_REGISTERED_MODEL_PROMPT_MODE:-}}"
-export RAG_IME_PREDICTOR_STREAM_FIRST="${RAG_IME_PREDICTOR_STREAM_FIRST:-$(detect_predictor_stream_first "$MODEL_DIR")}"
+export RAG_IME_PREDICTOR_PROFILE="${RESOLVED_MODEL_PROFILE:-${RAG_IME_REGISTERED_MODEL_PROFILE:-$LEGACY_MODEL_PROFILE}}"
+export RAG_IME_PREDICTOR_PROMPT_MODE="${RESOLVED_MODEL_PROMPT_MODE:-${RAG_IME_REGISTERED_MODEL_PROMPT_MODE:-}}"
+if [[ "$MODEL_RUNTIME" == "mlx" && -n "$RAG_IME_REGISTERED_MODEL_PROFILE" ]]; then
+  export RAG_IME_PREDICTOR_STREAM_FIRST="${RAG_IME_REGISTERED_MODEL_STREAM_FIRST:-$RAG_IME_PROFILE_DEFAULT_STREAM_FIRST}"
+else
+  export RAG_IME_PREDICTOR_STREAM_FIRST="${RAG_IME_PREDICTOR_STREAM_FIRST:-${RAG_IME_PROFILE_DEFAULT_STREAM_FIRST:-1}}"
+fi
 export RAG_IME_PREDICTOR_TIMEOUT_MS="${RAG_IME_PREDICTOR_TIMEOUT_MS:-3000}"
-export RAG_IME_PREDICTOR_MAX_TOKENS="${RAG_IME_PREDICTOR_MAX_TOKENS:-8}"
-export RAG_IME_PREDICTOR_TEMPERATURE="${RAG_IME_PREDICTOR_TEMPERATURE:-0.15}"
-export RAG_IME_PREDICTOR_TOP_P="${RAG_IME_PREDICTOR_TOP_P:-0.85}"
+export RAG_IME_PREDICTOR_MAX_TOKENS="${RAG_IME_PREDICTOR_MAX_TOKENS:-$RAG_IME_MLX_MAX_TOKENS}"
+export RAG_IME_PREDICTOR_TEMPERATURE="${RAG_IME_PREDICTOR_TEMPERATURE:-$RAG_IME_MLX_TEMPERATURE}"
+export RAG_IME_PREDICTOR_TOP_P="${RAG_IME_PREDICTOR_TOP_P:-$RAG_IME_MLX_TOP_P}"
 export RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS="${RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS:-0}"
 export RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION="${RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION:-1}"
 export RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL="${RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL:-1}"

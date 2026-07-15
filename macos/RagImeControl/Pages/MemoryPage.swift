@@ -7,14 +7,23 @@ struct MemoryPage: View {
     @State private var pendingAction: PendingMemoryAction?
     @State private var detailSelection: MemoryDetailSelection?
     @State private var tagPresentation = "network"
+    @State private var pageMode = "catalog"
+    @State private var selectedGraphEntityId = ""
+    @State private var selectedGraphRelationId = ""
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            kindPicker
+            pagePicker
             Divider()
-            content
+            if pageMode == "graph" {
+                graphBrowser
+            } else {
+                kindPicker
+                Divider()
+                content
+            }
         }
         .sheet(isPresented: $editorPresented) {
             MemoryEditorSheet(
@@ -63,6 +72,29 @@ struct MemoryPage: View {
                 secondaryButton: .cancel(Text("取消"))
             )
         }
+        .onChange(of: pageMode) { value in
+            guard value == "graph" else { return }
+            Task { await model.loadMemoryGraph() }
+        }
+    }
+
+    private var pagePicker: some View {
+        HStack(spacing: 14) {
+            Picker("记忆视图", selection: $pageMode) {
+                Label("目录", systemImage: "list.bullet.rectangle").tag("catalog")
+                Label("关系图", systemImage: "point.3.connected.trianglepath.dotted").tag("graph")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 250)
+            Spacer()
+            if pageMode == "graph", let summary = model.memoryGraph?.summary {
+                Text("\(summary.visibleEntityCount) 个实体 · \(summary.visibleRelationCount) 条关系 · \(summary.evidenceCount) 份证据")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 12)
     }
 
     private var header: some View {
@@ -142,6 +174,105 @@ struct MemoryPage: View {
                 MemoryTagTile(item: item, view: { openDetail(item) }, edit: { openEditor(item) })
             }
         }
+    }
+
+    private var graphBrowser: some View {
+        VStack(spacing: 0) {
+            graphToolbar
+            Divider()
+            if model.memoryGraphLoading, model.memoryGraph == nil {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("正在读取关系图").font(.callout).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let graph = model.memoryGraph, !graph.entities.isEmpty {
+                HSplitView {
+                    MemoryEntityGraph(
+                        graph: graph,
+                        selectedEntityId: selectedGraphEntityId,
+                        selectedRelationId: selectedGraphRelationId,
+                        onSelectEntity: { entityId in
+                            selectedGraphEntityId = entityId
+                            selectedGraphRelationId = ""
+                            model.memoryGraphSources = nil
+                        }
+                    )
+                    .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
+
+                    MemoryGraphInspector(
+                        graph: graph,
+                        selectedEntityId: selectedGraphEntityId,
+                        selectedRelationId: selectedGraphRelationId,
+                        sources: model.memoryGraphSources,
+                        sourcesLoading: model.memoryGraphSourcesLoading,
+                        sourcesRelationId: model.memoryGraphSourcesRelationId,
+                        onSelectRelation: selectGraphRelation
+                    )
+                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 390, maxHeight: .infinity)
+                }
+            } else {
+                EmptyState(symbol: "point.3.connected.trianglepath.dotted", text: "当前筛选范围没有已确认关系")
+            }
+        }
+    }
+
+    private var graphToolbar: some View {
+        HStack(spacing: 10) {
+            TextField("搜索实体或事实", text: $model.memoryGraphQuery)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 220, maxWidth: 340)
+                .onSubmit { Task { await model.loadMemoryGraph() } }
+            Button {
+                Task { await model.loadMemoryGraph() }
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .help("搜索")
+
+            Picker("归属", selection: $model.memoryGraphOwnerKind) {
+                Text("全部归属").tag("")
+                ForEach(model.memoryGraph?.filters.ownerKinds ?? [], id: \.self) { owner in
+                    Text(memoryOwnerLabel(owner)).tag(owner)
+                }
+            }
+            .frame(width: 145)
+            .onChange(of: model.memoryGraphOwnerKind) { _ in Task { await model.loadMemoryGraph() } }
+
+            Picker("类型", selection: $model.memoryGraphEntityType) {
+                Text("全部类型").tag("")
+                ForEach(model.memoryGraph?.filters.entityTypes ?? []) { item in
+                    Text("\(memoryEntityTypeLabel(item.value)) · \(item.count)").tag(item.value)
+                }
+            }
+            .frame(width: 185)
+            .onChange(of: model.memoryGraphEntityType) { _ in Task { await model.loadMemoryGraph() } }
+
+            Spacer()
+            if let pending = model.memoryGraph?.summary.projectionPendingCount, pending > 0 {
+                Label("\(pending) 待投影", systemImage: "clock.arrow.circlepath")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            Button {
+                Task { await model.loadMemoryGraph() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .disabled(model.memoryGraphLoading)
+            .help("刷新")
+        }
+        .controlSize(.large)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 12)
+    }
+
+    private func selectGraphRelation(_ relationId: String) {
+        selectedGraphRelationId = relationId
+        guard let relation = model.memoryGraph?.relations.first(where: { $0.id == relationId }) else { return }
+        selectedGraphEntityId = relation.sourceEntityId
+        model.clearMemoryGraphSources()
+        Task { await model.loadMemoryGraphSources(relationId: relationId) }
     }
 
     private var tagContent: some View {
@@ -439,6 +570,340 @@ private struct MemoryRecordRow: View {
 
     private var statusIsInactive: Bool {
         ["archived", "disabled", "tombstoned", "expired"].contains(item["status"]?.stringValue ?? "")
+    }
+}
+
+private struct MemoryEntityGraph: View {
+    let graph: MemoryGraphResponse
+    let selectedEntityId: String
+    let selectedRelationId: String
+    let onSelectEntity: (String) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let points = positions(in: proxy.size)
+            ZStack {
+                Canvas { context, _ in
+                    for relation in visibleRelations {
+                        guard let start = points[relation.sourceEntityId],
+                              let end = points[relation.targetEntityId] else { continue }
+                        var path = Path()
+                        path.move(to: start)
+                        path.addLine(to: end)
+                        let selected = relation.id == selectedRelationId
+                        context.stroke(
+                            path,
+                            with: .color(selected ? ControlDesign.brand : Color.secondary.opacity(0.24)),
+                            lineWidth: selected ? 2.2 : 0.8 + relation.confidence
+                        )
+                    }
+                }
+
+                ForEach(visibleEntities) { entity in
+                    if let point = points[entity.id] {
+                        Button {
+                            onSelectEntity(entity.id)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: memoryEntitySymbol(entity.entityType))
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(entity.id == selectedEntityId ? Color.white : memoryOwnerColor(entity.ownerKind))
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entity.canonicalName)
+                                        .font(ControlDesign.bodyFont.weight(.semibold))
+                                        .lineLimit(1)
+                                    Text("\(memoryEntityTypeLabel(entity.entityType)) · \(entity.relationCount) 关系")
+                                        .font(ControlDesign.metadataFont)
+                                        .foregroundStyle(entity.id == selectedEntityId ? Color.white.opacity(0.84) : Color.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(width: 156, height: 54)
+                            .background(entity.id == selectedEntityId ? ControlDesign.brand : Color(nsColor: .controlBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(
+                                        entity.id == selectedEntityId
+                                            ? ControlDesign.brand
+                                            : memoryOwnerColor(entity.ownerKind).opacity(0.34),
+                                        lineWidth: entity.id == selectedEntityId ? 1.5 : 0.8
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .position(point)
+                        .help(entity.canonicalName)
+                    }
+                }
+            }
+        }
+        .frame(minHeight: 560)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.28))
+        .overlay(Rectangle().fill(ControlDesign.hairline).frame(width: 1), alignment: .trailing)
+    }
+
+    private var visibleEntities: [MemoryGraphEntity] {
+        Array(
+            graph.entities
+                .sorted {
+                    if $0.relationCount == $1.relationCount { return $0.confidence > $1.confidence }
+                    return $0.relationCount > $1.relationCount
+                }
+                .prefix(18)
+        )
+    }
+
+    private var visibleRelations: [MemoryGraphRelation] {
+        let ids = Set(visibleEntities.map(\.id))
+        return graph.relations.filter {
+            ids.contains($0.sourceEntityId) && ids.contains($0.targetEntityId)
+        }
+    }
+
+    private func positions(in size: CGSize) -> [String: CGPoint] {
+        guard !visibleEntities.isEmpty else { return [:] }
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        var result: [String: CGPoint] = [visibleEntities[0].id: center]
+        let firstRing = Array(visibleEntities.dropFirst().prefix(6))
+        let secondRing = Array(visibleEntities.dropFirst(7))
+        let horizontalBound = max(0, size.width / 2 - 90)
+        let verticalBound = max(0, size.height / 2 - 36)
+        let innerX = min(min(175, max(112, size.width * 0.23)), horizontalBound)
+        let innerY = min(min(132, max(88, size.height * 0.21)), verticalBound)
+        let outerX = min(min(330, max(184, size.width * 0.39)), horizontalBound)
+        let outerY = min(min(236, max(150, size.height * 0.36)), verticalBound)
+        for (index, entity) in firstRing.enumerated() {
+            let angle = (Double(index) / Double(max(1, firstRing.count))) * Double.pi * 2 - Double.pi / 2
+            result[entity.id] = CGPoint(
+                x: center.x + cos(angle) * innerX,
+                y: center.y + sin(angle) * innerY
+            )
+        }
+        for (index, entity) in secondRing.enumerated() {
+            let angle = (Double(index) / Double(max(1, secondRing.count))) * Double.pi * 2 - Double.pi / 2
+            result[entity.id] = CGPoint(
+                x: center.x + cos(angle) * outerX,
+                y: center.y + sin(angle) * outerY
+            )
+        }
+        return result
+    }
+}
+
+private struct MemoryGraphInspector: View {
+    let graph: MemoryGraphResponse
+    let selectedEntityId: String
+    let selectedRelationId: String
+    let sources: MemoryGraphSourcesResponse?
+    let sourcesLoading: Bool
+    let sourcesRelationId: String
+    let onSelectRelation: (String) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if let relation = selectedRelation {
+                    relationDetail(relation)
+                } else if let entity = selectedEntity {
+                    entityDetail(entity)
+                } else {
+                    graphSummary
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var selectedEntity: MemoryGraphEntity? {
+        graph.entities.first(where: { $0.id == selectedEntityId })
+    }
+
+    private var selectedRelation: MemoryGraphRelation? {
+        graph.relations.first(where: { $0.id == selectedRelationId })
+    }
+
+    private var connectedRelations: [MemoryGraphRelation] {
+        guard let entity = selectedEntity else { return [] }
+        return graph.relations
+            .filter { $0.sourceEntityId == entity.id || $0.targetEntityId == entity.id }
+            .sorted { $0.confidence > $1.confidence }
+    }
+
+    private var graphSummary: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("关系概览", systemImage: "point.3.connected.trianglepath.dotted")
+                .font(.title3.weight(.semibold))
+            inspectorMetric("实体", value: graph.summary.visibleEntityCount)
+            inspectorMetric("关系", value: graph.summary.visibleRelationCount)
+            inspectorMetric("证据", value: graph.summary.evidenceCount)
+            if graph.summary.projectionPendingCount > 0 {
+                inspectorMetric("待投影", value: graph.summary.projectionPendingCount, tint: .orange)
+            }
+            Text(Date(timeIntervalSince1970: Double(graph.asOfMs) / 1_000).formatted(date: .abbreviated, time: .shortened))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func entityDetail(_ entity: MemoryGraphEntity) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: memoryEntitySymbol(entity.entityType))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(memoryOwnerColor(entity.ownerKind))
+                    .frame(width: 32, height: 32)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(entity.canonicalName).font(.title3.weight(.semibold)).textSelection(.enabled)
+                    Text("\(memoryEntityTypeLabel(entity.entityType)) · \(memoryOwnerLabel(entity.ownerKind))")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if !entity.description.isEmpty {
+                Text(entity.description)
+                    .font(.body)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            }
+            if !entity.aliases.isEmpty {
+                labeledValue("别名", entity.aliases.joined(separator: "、"))
+            }
+            labeledValue("可信度", "\(Int(entity.confidence * 100))%")
+            labeledValue("来源", "\(entity.sources.count) 份")
+
+            Divider()
+            Text("相关事实").font(.headline)
+            if connectedRelations.isEmpty {
+                Text("暂无关系").font(.callout).foregroundStyle(.secondary)
+            } else {
+                ForEach(connectedRelations.prefix(16)) { relation in
+                    Button {
+                        onSelectRelation(relation.id)
+                    } label: {
+                        HStack(alignment: .top, spacing: 9) {
+                            Image(systemName: "arrow.left.and.right")
+                                .foregroundStyle(ControlDesign.brand)
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(relation.fact).font(.callout.weight(.medium)).lineLimit(3)
+                                Text("\(relation.sourceName) → \(relation.targetName)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                }
+            }
+        }
+    }
+
+    private func relationDetail(_ relation: MemoryGraphRelation) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("关系事实", systemImage: "arrow.triangle.branch")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Text("\(Int(relation.confidence * 100))%")
+                    .font(.callout.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(ControlDesign.brand)
+            }
+            Text(relation.fact)
+                .font(.body.weight(.medium))
+                .lineSpacing(4)
+                .textSelection(.enabled)
+            HStack(spacing: 8) {
+                Text(relation.sourceName).lineLimit(1)
+                Image(systemName: "arrow.right").foregroundStyle(ControlDesign.brand)
+                Text(relation.targetName).lineLimit(1)
+            }
+            .font(.callout.weight(.semibold))
+            labeledValue("关系类型", relation.relationType)
+            labeledValue("归属", memoryOwnerLabel(relation.ownerKind))
+            labeledValue("生效时间", graphDate(relation.validFromMs))
+            if let validTo = relation.validToMs {
+                labeledValue("失效时间", graphDate(validTo))
+            }
+
+            Divider()
+            HStack {
+                Text("证据").font(.headline)
+                Spacer()
+                Text("\(relation.sourceCount) 份").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            if sourcesLoading, sourcesRelationId == relation.id {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在读取证据").font(ControlDesign.metadataFont).foregroundStyle(.secondary)
+                }
+            } else if sourcesRelationId == relation.id,
+                      let sources,
+                      !sourcesForSelectedRelation(sources, relationId: relation.id).isEmpty {
+                ForEach(sourcesForSelectedRelation(sources, relationId: relation.id)) { source in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Label(memorySourceTypeLabel(source.sourceType), systemImage: memorySourceSymbol(source.sourceType))
+                                .font(.callout.weight(.semibold))
+                            Spacer()
+                            Text(graphDate(source.createdAtMs)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text(source.text)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(8)
+                            .textSelection(.enabled)
+                        let scope = [source.app, source.project].filter { !$0.isEmpty }.joined(separator: " · ")
+                        if !scope.isEmpty {
+                            Text(scope).font(.caption).foregroundStyle(.tertiary)
+                        }
+                    }
+                    Divider()
+                }
+            } else if sourcesRelationId == relation.id {
+                Text("证据已被隐私规则过滤或当前不可展示")
+                    .font(ControlDesign.metadataFont)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("选择关系后读取证据")
+                    .font(ControlDesign.metadataFont)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func sourcesForSelectedRelation(
+        _ payload: MemoryGraphSourcesResponse,
+        relationId: String
+    ) -> [MemoryGraphEvidence] {
+        payload.sources.filter { $0.relationIds.contains(relationId) }
+    }
+
+    private func labeledValue(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
+            Text(value).textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+    }
+
+    private func inspectorMetric(_ label: String, value: Int, tint: Color = ControlDesign.brand) -> some View {
+        HStack {
+            Text(label).font(.callout).foregroundStyle(.secondary)
+            Spacer()
+            Text("\(value)").font(.title3.monospacedDigit().weight(.semibold)).foregroundStyle(tint)
+        }
+        .padding(.vertical, 3)
     }
 }
 
@@ -1103,6 +1568,91 @@ private struct MemoryMergeCandidate: Identifiable {
 private func memoryDate(_ milliseconds: Double) -> String {
     guard milliseconds > 0 else { return "" }
     return Date(timeIntervalSince1970: milliseconds / 1000).formatted(date: .abbreviated, time: .omitted)
+}
+
+private func graphDate(_ milliseconds: Int) -> String {
+    guard milliseconds > 0 else { return "未知" }
+    return Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+        .formatted(date: .abbreviated, time: .shortened)
+}
+
+private func memoryOwnerLabel(_ owner: String) -> String {
+    switch owner {
+    case "user": return "用户"
+    case "shared": return "共享"
+    case "agent": return "Agent"
+    case "session": return "会话"
+    case "room": return "群聊"
+    default: return owner.isEmpty ? "未知" : owner
+    }
+}
+
+private func memoryOwnerColor(_ owner: String) -> Color {
+    switch owner {
+    case "user": return .teal
+    case "shared": return .blue
+    case "agent": return .purple
+    case "session": return .orange
+    case "room": return .pink
+    default: return .secondary
+    }
+}
+
+private func memoryEntityTypeLabel(_ type: String) -> String {
+    switch type {
+    case "person": return "人物"
+    case "agent": return "Agent"
+    case "project": return "项目"
+    case "app", "application": return "应用"
+    case "topic", "concept": return "主题"
+    case "task": return "任务"
+    case "event": return "事件"
+    case "place": return "地点"
+    case "organization": return "组织"
+    case "preference": return "偏好"
+    case "skill": return "技能"
+    case "document", "book": return "文档"
+    default: return type.isEmpty ? "实体" : type
+    }
+}
+
+private func memoryEntitySymbol(_ type: String) -> String {
+    switch type {
+    case "person": return "person"
+    case "agent": return "brain.head.profile"
+    case "project": return "folder"
+    case "app", "application": return "app"
+    case "task": return "checklist"
+    case "event": return "calendar"
+    case "place": return "mappin.and.ellipse"
+    case "organization": return "building.2"
+    case "preference": return "slider.horizontal.3"
+    case "skill": return "hammer"
+    case "document", "book": return "doc.text"
+    default: return "circle.hexagongrid"
+    }
+}
+
+private func memorySourceTypeLabel(_ type: String) -> String {
+    switch type {
+    case "input_event": return "输入记录"
+    case "agent_memory_source": return "Agent 经历"
+    case "atom": return "记忆原子"
+    case "book": return "主题书"
+    case "phrase", "item": return "短语记忆"
+    default: return type.isEmpty ? "证据" : type
+    }
+}
+
+private func memorySourceSymbol(_ type: String) -> String {
+    switch type {
+    case "input_event": return "keyboard"
+    case "agent_memory_source": return "brain.head.profile"
+    case "atom": return "circle.hexagongrid"
+    case "book": return "book.closed"
+    case "phrase", "item": return "text.quote"
+    default: return "doc.text.magnifyingglass"
+    }
 }
 
 private func memoryColor(_ token: String) -> Color {

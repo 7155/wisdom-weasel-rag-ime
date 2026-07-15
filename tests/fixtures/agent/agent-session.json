@@ -1,6 +1,7 @@
 {
   "schemaVersion": "rag-ime.agent-session.v1",
   "id": "agent-session-1",
+  "agentId": "agent-session-1",
   "piSessionId": "pi-session-1",
   "sessionFile": "",
   "title": "输入助手 2026-07-13",

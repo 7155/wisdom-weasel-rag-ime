@@ -1157,9 +1157,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         help="Model profile id for the resident inference lane.",
     )
-    mlx_predictor_server.add_argument("--max-tokens", type=int, default=int(os.environ.get("RAG_IME_MLX_MAX_TOKENS", "8")))
-    mlx_predictor_server.add_argument("--temperature", type=float, default=float(os.environ.get("RAG_IME_MLX_TEMPERATURE", "0.15")))
-    mlx_predictor_server.add_argument("--top-p", type=float, default=float(os.environ.get("RAG_IME_MLX_TOP_P", "0.85")))
+    mlx_predictor_server.add_argument(
+        "--decode-strategy",
+        default=os.environ.get("RAG_IME_MLX_DECODE_STRATEGY", ""),
+        help="Decode contract expected by the selected model profile.",
+    )
+    mlx_predictor_server.add_argument(
+        "--branch-count",
+        type=int,
+        default=int(os.environ.get("RAG_IME_MLX_BRANCH_COUNT") or "0"),
+        help="Branch budget expected by the selected model profile.",
+    )
+    mlx_predictor_server.add_argument("--max-tokens", type=int, default=int(os.environ.get("RAG_IME_MLX_MAX_TOKENS") or "0"))
+    mlx_predictor_server.add_argument("--temperature", type=float, default=float(os.environ.get("RAG_IME_MLX_TEMPERATURE", "-1")))
+    mlx_predictor_server.add_argument("--top-p", type=float, default=float(os.environ.get("RAG_IME_MLX_TOP_P", "-1")))
     mlx_predictor_server.add_argument(
         "--prompt-cache",
         action="store_true",
@@ -1186,6 +1197,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 port=args.port,
                 model=args.model,
                 profile_id=args.profile,
+                decode_strategy=args.decode_strategy,
+                branch_count=args.branch_count,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,

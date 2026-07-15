@@ -18,7 +18,7 @@ DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION = (
     "按本项目默认策略整理：先把连续键盘与语音碎片重建为完整表达，结合上下文修正有证据的错别字和语音误识别，"
     "删除口头重复、残句与运行探针；优先复用并合并现有分组，只保留输入法、个人知识库等少量长期主题，不按应用、"
     "日期、状态或一次动作拆组；区分事实、偏好、决定、计划、问题和条件，绝不把未完成计划写成事实；为有效记忆生成"
-    "少量语义标签、别名和有来源的标签关系；先把同义、缩写、大小写或新旧叫法合并到已有规范标签，不建立平行标签；"
+    "少量语义标签、别名、有来源的标签关系，以及原文明确支持的实体关系；先把同义、缩写、大小写或新旧叫法合并到已有规范标签，不建立平行标签；"
     "让同一长期主题中有证据的标签形成可遍历关系图，而不是每条记忆各自长出一组孤立标签；依据接受、退格与替换反馈"
     "提出词库新增、提权、降权或屏蔽项。所有变更只"
     "生成可编辑草稿，不直接写入正式记忆、RAG 索引或 Rime 词库。"
@@ -102,6 +102,9 @@ class DeepSeekMemoryOrganizer:
         payload.setdefault("semanticTags", [])
         payload.setdefault("tagMerges", [])
         payload.setdefault("memoryAtoms", [])
+        payload.setdefault("entities", [])
+        payload.setdefault("relations", [])
+        payload.setdefault("relationRetractions", [])
         payload.setdefault("tagEdges", [])
         payload.setdefault("phraseCandidates", [])
         payload.setdefault("negativePhrases", [])
@@ -122,6 +125,8 @@ class DeepSeekMemoryOrganizer:
             "existingGroupCount": len(model_bundle.get("existingSemanticGroups") or []),
             "existingTagCount": len(model_bundle.get("existingSemanticTags") or []),
             "existingTagEdgeCount": len(model_bundle.get("existingTagEdges") or []),
+            "existingEntityCount": len(model_bundle.get("existingMemoryEntities") or []),
+            "existingRelationCount": len(model_bundle.get("existingMemoryRelations") or []),
         }
         payload["elapsedMs"] = int((time.perf_counter() - started) * 1000)
         return payload
@@ -385,6 +390,16 @@ def _model_facing_bundle(bundle: dict[str, object]) -> dict[str, object]:
             240,
             ("src", "dst", "edgeType", "weight", "evidenceCount"),
         ),
+        "existingMemoryEntities": compact_collection(
+            "existingMemoryEntities",
+            120,
+            ("entityId", "entityType", "canonicalName", "aliases"),
+        ),
+        "existingMemoryRelations": compact_collection(
+            "existingMemoryRelations",
+            160,
+            ("relationId", "sourceEntityId", "targetEntityId", "relationType", "fact", "validFromMs", "validToMs"),
+        ),
         "cursor": dict(bundle.get("cursor") or {}),
         "reconstruction": dict(bundle.get("reconstruction") or {}),
     }
@@ -402,12 +417,16 @@ def _memory_book_recovery_prompt() -> str:
         semanticTags 字段为 name/description/aliases/semanticGroupIds/sourceEventIds/confidence/qualityScore；
         每个 semanticTag 和 memoryAtom 的 semanticGroupIds 都必须引用上面输出的 groupId。
         memoryAtoms 字段为 canonicalText/summary/tags/semanticGroupIds/sourceEventIds/confidence/qualityScore/
-        directCandidateAllowed(false)；tagEdges 字段为 src/dst/edgeType/weight/evidenceEventIds；
+        directCandidateAllowed(false)；entities 字段为 entityId/name/entityType/aliases/sourceEventIds/confidence，
+        entityType 使用小写英文标识；
+        relations 字段为 sourceEntityId/targetEntityId/relationType/fact/evidenceEventIds/confidence，只有原文明确
+        表达或无歧义蕴含时才输出；旧关系被明确更正时，relationRetractions 输出
+        relationId/reason/evidenceEventIds；tagEdges 字段为 src/dst/edgeType/weight/evidenceEventIds；
         tagMerges 字段为 source/target/reason/evidenceEventIds/confidence，只有确定同义、缩写、大小写或新旧叫法时才合并；
         phraseCandidates 仅在有接受、退格或纠错证据时输出 text/pinyin/tags/weight/sourceEventIds。
         修正口语重复和明显错别字；问题、条件句、计划不能被改写成已完成事实。不得生成应用名、窗口名、
         来源字段、测试步骤、中文碎片或无证据事实。
-        同时返回 dailyBooks/topicBooks/tagMerges/negativePhrases/supersedes 数组，允许为空。
+        同时返回 dailyBooks/topicBooks/entities/relations/relationRetractions/tagMerges/negativePhrases/supersedes 数组，允许为空。
         """
     )
 
@@ -417,7 +436,7 @@ def _memory_book_system_prompt() -> str:
         """
         你是 RAG 输入法的周期性离线记忆维护器。原始历史可能有语音识别错字、口语重复、残句、
         删除前旧版本和临时描述；先结合相邻事件与反馈纠错、去重、合并和规范化，再输出可长期检索的
-        dailyBooks、topicBooks、semanticGroups、semanticTags、Memory Atom、Tag Edge 和短
+        dailyBooks、topicBooks、semanticGroups、semanticTags、Memory Atom、Entity、Temporal Relation、Tag Edge 和短
         phraseCandidate。只输出 JSON 对象，schemaVersion 必须是
         rag-ime.memory-book-compile.v1。sourceEventIds/evidenceEventIds 必须来自输入 bundle 的 eventId，
         且不能为空。bundle 中 contextGroupId/app 只是隐藏的运行时作用域，绝不能作为语义分组名称。
@@ -454,6 +473,18 @@ def _memory_book_system_prompt() -> str:
         canonicalText 和 summary 必须是清洗改正后的事实表达，而不是原始口语转录；无法由多条证据确认时
         降低 confidence 或不输出。canonicalText 只用于检索证据，不能直接作为输入法候选；
         directCandidateAllowed 默认 false。同时输出 tagMerges、negativePhrases 和 supersedes 数组。
+        Entity/Relation 与 Tag 图职责不同：Entity 表示具体的人、项目、产品、任务、事件或时间对象；Relation
+        表示这些对象之间有方向、有来源、可带有效期的事实，relationType 使用小写英文标识。
+        不要把任意 Tag Edge 机械复制成 Relation。
+        entityId 优先复用 existingMemoryEntities；新 ID 使用稳定英文或拼音。实体规范名若改写了原文措辞，aliases
+        必须保留至少一个来源中的原词，便于本地程序机械核验来源。Relation 端点必须引用 entities 或
+        existingMemoryEntities 中的 entityId，fact 必须是来源直接支持的短事实。不得凭“考试”和“压力”同现就
+        推断因果；只有原文明确表达“复习使我焦虑”等关系时才允许 caused_by/affects。每条 Relation 必须提供
+        非空 evidenceEventIds，fact 应保留来源中的关键措辞而不是完全换一种说法，否则本地证据门会拒绝；
+        validFromMs/validToMs 只有来源给出明确时间时才填写。
+        若新证据明确更正或否定 existingMemoryRelations 中仍有效的旧事实，在 relationRetractions 输出
+        relationId、reason、evidenceEventIds，可选 validToMs；同时在 relations 输出新事实。不得静默改写旧 relation，
+        也不得仅新增相互冲突的事实而不关闭旧关系。
         “是否实现”“以后再做”“等完成后”等问题、条件句和未来计划不是已经完成的事实；只在能抽取出稳定偏好
         或要求时改写为 requirement/preference，否则不输出，绝不能把条件句改成已完成状态。
         只要 recentEvents 中存在至少两条可理解且围绕同一主题的用户输入，就至少输出一个

@@ -9,6 +9,8 @@ from contextlib import closing, redirect_stdout
 from pathlib import Path
 
 import rag_ime.cli as cli_module
+from rag_ime.agent_memory_sources import AgentMemorySourceStore
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.cli import main
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import (
@@ -18,6 +20,7 @@ from rag_ime.memory_book_compiler import (
     find_newer_applied_memory_book_run,
     find_memory_book_draft_for_bundle,
     inspect_memory_book_plan,
+    memory_compile_due,
     memory_compile_state,
     memory_book_plan_from_compile_output,
     memory_book_plan_from_stored_run,
@@ -25,6 +28,7 @@ from rag_ime.memory_book_compiler import (
     store_memory_book_plan,
     update_stored_memory_book_diff,
 )
+from rag_ime.memory_graph import MemoryGraphPrincipal, MemoryGraphStore
 from rag_ime.models import InputEvent
 from rag_ime.rime_rank_export import record_rime_rank_feedback
 from rag_ime.text_utils import now_ms
@@ -728,6 +732,158 @@ class MemoryBookCompilerTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
 
+    def test_stored_draft_revalidates_source_scope_privacy_and_lifecycle_atomically(self) -> None:
+        def store_draft(event_id: int, suffix: str) -> str:
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                bundle = build_memory_book_source_bundle(
+                    conn,
+                    project="wisdom-weasel-rag-ime",
+                    after_event_id=0,
+                )
+                output = sample_compile_output(event_id)
+                output["entities"] = [
+                    {
+                        "entityId": f"entity:source-revalidation-{suffix}",
+                        "entityType": "project",
+                        "canonicalName": "RAG 输入法",
+                        "sourceEventIds": [event_id],
+                    }
+                ]
+                plan = memory_book_plan_from_compile_output(
+                    output,
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                    source_bundle=bundle,
+                )
+                plan["runId"] = f"memory_book_source_revalidation_{suffix}"
+                self.assertTrue(inspect_memory_book_plan(plan)["ok"])
+                store_memory_book_plan(conn, plan)
+            return str(plan["runId"])
+
+        def assert_rejected_without_writes(run_id: str) -> None:
+            tables = ("memory_books", "memory_atoms", "memory_tags", "memory_entities")
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                before = {
+                    table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                    for table in tables
+                }
+                with self.assertRaisesRegex(ValueError, "source events are no longer eligible"):
+                    apply_stored_memory_book_run(conn, run_id=run_id)
+                after = {
+                    table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                    for table in tables
+                }
+                self.assertEqual(after, before)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT status FROM memory_cleanup_runs WHERE run_id = ?",
+                        (run_id,),
+                    ).fetchone()[0],
+                    "superseded",
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM memory_cleanup_diffs WHERE run_id = ? AND status = 'applied'",
+                        (run_id,),
+                    ).fetchone()[0],
+                    0,
+                )
+
+        project_run = store_draft(self.event_id, "project")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("UPDATE input_events SET project = 'other-project' WHERE id = ?", (self.event_id,))
+        assert_rejected_without_writes(project_run)
+
+        deleted_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source="manual",
+                    committed_text="RAG 输入法删除后不应编译",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        deleted_run = store_draft(deleted_id, "deleted")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("UPDATE memory_state SET deleted = 1 WHERE event_id = ?", (deleted_id,))
+        assert_rejected_without_writes(deleted_run)
+
+        sensitive_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source="manual",
+                    committed_text="RAG 输入法隐私检查",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        sensitive_run = store_draft(sensitive_id, "sensitive")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                "UPDATE input_events SET committed_text = 'api_key=stale-draft-secret' WHERE id = ?",
+                (sensitive_id,),
+            )
+        assert_rejected_without_writes(sensitive_run)
+
+        changed_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source="manual",
+                    committed_text="RAG 输入法原始证据",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        changed_run = store_draft(changed_id, "ordinary-edit")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                "UPDATE input_events SET committed_text = '完全不同但不敏感的新内容' WHERE id = ?",
+                (changed_id,),
+            )
+        assert_rejected_without_writes(changed_run)
+
+        session = AgentSessionStore(self.db_path).create(
+            title="draft source lifecycle",
+            role_id="memory-owner",
+            created_at_ms=now_ms(),
+        )
+        source = AgentMemorySourceStore(
+            self.db_path,
+            project="wisdom-weasel-rag-ime",
+        ).checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="draft-source-user",
+            turn_id="turn-source-user",
+            text="RAG 输入法 Agent 用户证据",
+            created_at_ms=now_ms(),
+        )
+        agent_event_id = int(source["source"]["inputEventId"])
+        lifecycle_run = store_draft(agent_event_id, "tool-lifecycle")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                """
+                UPDATE agent_memory_sources
+                SET source_role = 'tool_receipt', status = 'archived'
+                WHERE input_event_id = ?
+                """,
+                (agent_event_id,),
+            )
+            conn.execute(
+                "UPDATE agent_sessions SET status = 'archived', archived_at_ms = ? WHERE id = ?",
+                (now_ms(), str(session["id"])),
+            )
+        assert_rejected_without_writes(lifecycle_run)
+
     def test_memory_book_runs_must_roll_back_in_reverse_apply_order(self) -> None:
         first = memory_book_plan_from_compile_output(
             sample_compile_output(self.event_id),
@@ -1119,6 +1275,437 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(merge["status"], "applied")
         self.assertTrue(rollback["noOp"])
         self.assertEqual(rollback["reason"], "missing_source")
+
+    def test_memory_graph_diffs_apply_incrementally_and_rollback_with_outbox(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
+        plan = memory_book_plan_from_compile_output(
+            {
+                "schemaVersion": "rag-ime.memory-book-compile.v1",
+                "entities": [
+                    {
+                        "entityId": "entity:rag-ime",
+                        "entityType": "project",
+                        "canonicalName": "RAG 输入法",
+                        "sourceEventIds": [self.event_id],
+                        "confidence": 0.9,
+                    },
+                    {
+                        "entityId": "entity:vector-search",
+                        "entityType": "concept",
+                        "canonicalName": "向量检索",
+                        "sourceEventIds": [self.event_id],
+                        "confidence": 0.85,
+                    },
+                ],
+                "relations": [
+                    {
+                        "relationId": "relation:rag-vector",
+                        "sourceEntityId": "entity:rag-ime",
+                        "targetEntityId": "entity:vector-search",
+                        "relationType": "uses",
+                        "fact": "RAG 输入法多路召回使用向量检索",
+                        "evidenceEventIds": [self.event_id],
+                        "confidence": 0.9,
+                    }
+                ],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["counts"]["memoryEntities"], 2)
+        self.assertEqual(report["counts"]["memoryRelations"], 1)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            applied = apply_memory_book_plan(conn, plan)
+            self.assertEqual(applied["status"], "applied")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_entities WHERE status = 'active'").fetchone()[0], 2)
+            relation = conn.execute(
+                "SELECT status, revision FROM memory_relations WHERE relation_id = 'relation:rag-vector'"
+            ).fetchone()
+            self.assertEqual(tuple(relation), ("active", 1))
+            self.assertEqual(
+                tuple(
+                    conn.execute(
+                        "SELECT source_type, source_id FROM memory_relation_sources WHERE relation_id = 'relation:rag-vector'"
+                    ).fetchone()
+                ),
+                ("input_event", str(self.event_id)),
+            )
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_projection_outbox").fetchone()[0], 3)
+
+            rollback_memory_book_run(conn, run_id=plan["runId"])
+            self.assertEqual(
+                conn.execute("SELECT status FROM memory_relations WHERE relation_id = 'relation:rag-vector'").fetchone()[0],
+                "tombstoned",
+            )
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_entities WHERE status = 'tombstoned'").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_projection_outbox").fetchone()[0], 6)
+
+    def test_memory_entity_without_supporting_source_is_rejected(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
+        plan = memory_book_plan_from_compile_output(
+            {
+                "entities": [
+                    {
+                        "entityId": "entity:hallucinated-exam",
+                        "entityType": "event",
+                        "canonicalName": "八月考试",
+                    }
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+
+        self.assertFalse(any(item["op"] == "upsert_memory_entity" for item in plan["diffs"]))
+        self.assertIn("memory_entity_evidence_mismatch:entity:hallucinated-exam", plan["metadata"]["warnings"])
+
+    def test_memory_relation_with_unrelated_legal_evidence_is_rejected(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
+        plan = memory_book_plan_from_compile_output(
+            {
+                "entities": [
+                    {"entityId": "entity:rag", "entityType": "project", "canonicalName": "RAG 输入法", "sourceEventIds": [self.event_id]},
+                    {"entityId": "entity:vector", "entityType": "concept", "canonicalName": "向量检索", "sourceEventIds": [self.event_id]},
+                ],
+                "relations": [
+                    {
+                        "sourceEntityId": "entity:rag",
+                        "targetEntityId": "entity:vector",
+                        "relationType": "related_to",
+                        "fact": "用户喜欢海鲜",
+                        "evidenceEventIds": [self.event_id],
+                        "confidence": 0.9,
+                    }
+                ],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+
+        self.assertEqual(sum(item["op"] == "upsert_memory_entity" for item in plan["diffs"]), 2)
+        self.assertFalse(any(item["op"] == "upsert_memory_relation" for item in plan["diffs"]))
+        self.assertTrue(any(str(item).startswith("memory_relation_evidence_mismatch:") for item in plan["metadata"]["warnings"]))
+
+    def test_user_agent_prompt_enters_user_bundle_but_tool_receipt_stays_private(self) -> None:
+        session = AgentSessionStore(self.db_path).create(
+            title="memory owner",
+            role_id="memory-owner",
+            created_at_ms=now_ms(),
+        )
+        sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="user-entry",
+            turn_id="turn-1",
+            text="用户今天讨论输入法记忆重构",
+            created_at_ms=now_ms(),
+        )
+        sources.checkpoint_tool_receipt(
+            {
+                "state": "applied",
+                "sessionId": str(session["id"]),
+                "approvalId": "private-tool",
+                "receipt": {"mutationApplied": True, "summary": "Agent 私有工具执行细节"},
+            },
+            created_at_ms=now_ms(),
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime", after_event_id=0)
+        source_text = " ".join(str(item.get("text") or "") for item in bundle["recentEvents"])
+
+        self.assertIn("用户今天讨论输入法记忆重构", source_text)
+        self.assertNotIn("Agent 私有工具执行细节", source_text)
+
+    def test_deleted_and_archived_tool_events_do_not_keep_incremental_compile_pending(self) -> None:
+        session = AgentSessionStore(self.db_path).create(
+            title="private source",
+            role_id="private-agent",
+            created_at_ms=now_ms(),
+        )
+        sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        tool = sources.checkpoint_tool_receipt(
+            {
+                "state": "applied",
+                "sessionId": str(session["id"]),
+                "approvalId": "trailing-private-tool",
+                "receipt": {"mutationApplied": True, "summary": "只能由 Agent 自己看到的结果"},
+            },
+            created_at_ms=now_ms(),
+        )
+        deleted_event_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source="manual",
+                    committed_text="无法合并的原子碎片",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                "UPDATE agent_memory_sources SET status = 'archived' WHERE source_id = ?",
+                (tool["source"]["sourceId"],),
+            )
+            conn.execute("UPDATE memory_state SET deleted = 1 WHERE event_id = ?", (deleted_event_id,))
+            conn.execute(
+                """
+                INSERT INTO memory_compile_state(
+                    project, last_compiled_event_id, last_run_ms, pending_event_count, last_bundle_hash
+                ) VALUES ('wisdom-weasel-rag-ime', ?, 1, 0, '')
+                ON CONFLICT(project) DO UPDATE SET last_compiled_event_id = excluded.last_compiled_event_id
+                """,
+                (self.event_id,),
+            )
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
+            state = memory_compile_state(conn, project="wisdom-weasel-rag-ime")
+            due, reason, _ = memory_compile_due(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                idle_ms=24 * 60 * 60 * 1000,
+                current_ms=now_ms(),
+            )
+
+        self.assertEqual(bundle["recentEvents"], [])
+        self.assertEqual(bundle["cursor"]["pendingEventCount"], 0)
+        self.assertEqual(state["pendingEventCount"], 0)
+        self.assertFalse(due)
+        self.assertEqual(reason, "not_due")
+
+    def test_existing_entity_identity_is_stable_and_stale_draft_cannot_overwrite(self) -> None:
+        store = MemoryGraphStore(self.db_path)
+        store.upsert_entity(
+            entity_id="entity:stable-project",
+            entity_type="project",
+            name="RAG 输入法",
+            project="wisdom-weasel-rag-ime",
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime", after_event_id=0)
+
+        mismatch = memory_book_plan_from_compile_output(
+            {
+                "entities": [
+                    {
+                        "entityId": "entity:stable-project",
+                        "entityType": "project",
+                        "canonicalName": "向量检索",
+                        "sourceEventIds": [self.event_id],
+                    }
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        self.assertFalse(any(item["op"] == "upsert_memory_entity" for item in mismatch["diffs"]))
+        self.assertIn(
+            "memory_entity_identity_mismatch:entity:stable-project",
+            mismatch["metadata"]["warnings"],
+        )
+
+        plan = memory_book_plan_from_compile_output(
+            {
+                "entities": [
+                    {
+                        "entityId": "entity:stable-project",
+                        "entityType": "project",
+                        "canonicalName": "RAG 输入法",
+                        "sourceEventIds": [self.event_id],
+                    }
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        entity_diff = next(item for item in plan["diffs"] if item["op"] == "upsert_memory_entity")
+        self.assertEqual(entity_diff["payload"]["expectedRevision"], 1)
+        store.upsert_entity(
+            entity_id="entity:stable-project",
+            entity_type="project",
+            name="RAG 输入法",
+            description="并发更新",
+            project="wisdom-weasel-rag-ime",
+            expected_revision=1,
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            with self.assertRaisesRegex(ValueError, "revision conflict"):
+                apply_memory_book_plan(conn, plan)
+            row = conn.execute(
+                "SELECT canonical_name, description, revision FROM memory_entities WHERE entity_id = 'entity:stable-project'"
+            ).fetchone()
+        self.assertEqual(tuple(row), ("RAG 输入法", "并发更新", 2))
+
+        base_bundle = {
+            "recentEvents": [
+                {
+                    "eventId": self.event_id,
+                    "sourceEventIds": [self.event_id],
+                    "text": "RAG 输入法多路召回方案",
+                }
+            ],
+            "cursor": {"pendingEventCount": 1},
+        }
+        generated_ids = []
+        for project in ("project-a", "project-b"):
+            generated = memory_book_plan_from_compile_output(
+                {
+                    "entities": [
+                        {
+                            "entityType": "project",
+                            "canonicalName": "RAG 输入法",
+                            "sourceEventIds": [self.event_id],
+                        }
+                    ]
+                },
+                project=project,
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                source_bundle=base_bundle,
+            )
+            generated_ids.append(
+                next(item for item in generated["diffs"] if item["op"] == "upsert_memory_entity")["targetId"]
+            )
+        self.assertNotEqual(*generated_ids)
+
+    def test_relation_correction_closes_old_fact_and_rollback_restores_history(self) -> None:
+        old_time = now_ms() - 20_000
+        old_event_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=old_time,
+                    source="manual",
+                    committed_text="用户将在八月参加考试",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        store = MemoryGraphStore(self.db_path)
+        store.upsert_entity(
+            entity_id="entity:user",
+            entity_type="person",
+            name="用户",
+            project="wisdom-weasel-rag-ime",
+        )
+        store.upsert_entity(
+            entity_id="entity:exam",
+            entity_type="event",
+            name="考试",
+            project="wisdom-weasel-rag-ime",
+        )
+        store.upsert_relation(
+            relation_id="relation:exam-august",
+            source_entity_id="entity:user",
+            target_entity_id="entity:exam",
+            relation_type="plans",
+            fact="用户将在八月参加考试",
+            idempotency_key="exam-august-v1",
+            sources=[{"sourceType": "input_event", "sourceId": str(old_event_id)}],
+            project="wisdom-weasel-rag-ime",
+            valid_from_ms=old_time,
+        )
+        correction_time = now_ms()
+        correction_event_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=correction_time,
+                    source="manual",
+                    committed_text="考试改到九月，八月安排作废",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                after_event_id=old_event_id,
+            )
+        plan = memory_book_plan_from_compile_output(
+            {
+                "relations": [
+                    {
+                        "sourceEntityId": "entity:user",
+                        "targetEntityId": "entity:exam",
+                        "relationType": "plans",
+                        "fact": "用户将在九月参加考试",
+                        "evidenceEventIds": [correction_event_id],
+                        "confidence": 0.9,
+                    }
+                ],
+                "relationRetractions": [
+                    {
+                        "relationId": "relation:exam-august",
+                        "reason": "考试从八月改到九月",
+                        "evidenceEventIds": [correction_event_id],
+                    }
+                ],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+        self.assertTrue(report["ok"], report)
+        close_diff = next(item for item in plan["diffs"] if item["op"] == "close_memory_relation")
+        close_at = int(close_diff["payload"]["validToMs"])
+        new_relation_id = next(
+            item["targetId"] for item in plan["diffs"] if item["op"] == "upsert_memory_relation"
+        )
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            apply_memory_book_plan(conn, plan)
+            principal = MemoryGraphPrincipal(project="wisdom-weasel-rag-ime")
+            current = store.expand(principal, anchor_ids=["entity:user"], as_of_ms=close_at + 1)
+            historical = store.expand(principal, anchor_ids=["entity:user"], as_of_ms=old_time + 1)
+            self.assertEqual({item["relationId"] for item in current["relations"]}, {new_relation_id})
+            self.assertEqual(
+                {item["relationId"] for item in historical["relations"]},
+                {"relation:exam-august"},
+            )
+            rollback_memory_book_run(conn, run_id=plan["runId"])
+
+        restored = store.expand(
+            MemoryGraphPrincipal(project="wisdom-weasel-rag-ime"),
+            anchor_ids=["entity:user"],
+            as_of_ms=close_at + 1,
+        )
+        self.assertEqual(
+            {item["relationId"] for item in restored["relations"]},
+            {"relation:exam-august"},
+        )
 
     def _write_sample_plan(self) -> Path:
         plan = memory_book_plan_from_compile_output(

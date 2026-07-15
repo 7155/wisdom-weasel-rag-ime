@@ -69,6 +69,62 @@ class MemoryCompileStateTest(unittest.TestCase):
             next_bundle = build_memory_book_source_bundle(conn, project="ime")
             self.assertEqual([item["eventId"] for item in next_bundle["recentEvents"]], [second_id])
 
+    def test_incremental_cursor_does_not_drop_old_pending_event_outside_since_window(self) -> None:
+        first_id = int(self.core.record_event(self._event("先建立增量水位", "doc:a")).split(":", 1)[1])
+        with self._connect() as conn:
+            first_bundle = build_memory_book_source_bundle(conn, project="ime", since_days=1)
+            first_plan = memory_book_plan_from_compile_output(
+                {
+                    "phraseCandidates": [
+                        {"text": "增量水位", "sourceEventIds": [first_id]}
+                    ]
+                },
+                project="ime",
+                provider="deepseek",
+                model="v4-flash",
+                source_bundle=first_bundle,
+            )
+            apply_memory_book_plan(conn, first_plan)
+
+        old_pending_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms() - 30 * 24 * 60 * 60 * 1000,
+                    source="squirrel",
+                    committed_text="离线期间积压的有效事件",
+                    privacy_disposition="allowed",
+                    app="com.apple.TextEdit",
+                    project="ime",
+                    context_group_id="doc:a",
+                    context_group_level="document",
+                )
+            ).split(":", 1)[1]
+        )
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(conn, project="ime", since_days=1)
+            self.assertEqual([item["eventId"] for item in bundle["recentEvents"]], [old_pending_id])
+            self.assertEqual(bundle["cursor"]["pendingEventCount"], 1)
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "phraseCandidates": [
+                        {"text": "离线积压", "sourceEventIds": [old_pending_id]}
+                    ]
+                },
+                project="ime",
+                provider="deepseek",
+                model="v4-flash",
+                source_bundle=bundle,
+            )
+            apply_memory_book_plan(conn, plan)
+            state = memory_compile_state(conn, project="ime")
+            self.assertEqual(state["lastCompiledEventId"], old_pending_id)
+            self.assertEqual(state["pendingEventCount"], 0)
+            self.assertEqual(
+                build_memory_book_source_bundle(conn, project="ime", since_days=1)["recentEvents"],
+                [],
+            )
+
     def test_invalid_apply_does_not_advance_cursor(self) -> None:
         self.core.record_event(self._event("保持普通拼音稳定", "doc:a"))
         with self._connect() as conn:

@@ -2219,12 +2219,13 @@ struct AgentActivityPanel: View, Equatable {
                 }
             } label: {
                 HStack(spacing: 9) {
-                    AgentThinkingIndicator(active: isRunning, color: tint)
+                    AgentActivityGlyph(state: headerState, tint: tint)
+                        .frame(width: 18, height: 18)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(isRunning ? activeHeadline : "已核对资料")
+                        Text(isRunning ? activeHeadline : hasFailure ? failureHeadline : "已核对资料")
                             .font(.callout.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text(isRunning ? activeDetail : completionSummary)
+                            .foregroundStyle(hasFailure ? Color.orange : Color.primary)
+                        Text(isRunning ? activeDetail : hasFailure ? failureDetail : completionSummary)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -2263,6 +2264,14 @@ struct AgentActivityPanel: View, Equatable {
         }
         .padding(.vertical, 9)
         .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(showsBoundedState ? tint.opacity(0.055) : Color.clear)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(showsBoundedState ? tint.opacity(0.24) : Color.clear, lineWidth: 0.8)
+        }
         .overlay(alignment: .leading) {
             Rectangle()
                 .fill(tint.opacity(isRunning ? 0.72 : 0.28))
@@ -2328,7 +2337,7 @@ struct AgentActivityPanel: View, Equatable {
     }
 
     private var activeHeadline: String {
-        items.last(where: { $0.state == .running })?.title ?? "正在查找和核对"
+        items.last(where: { $0.state == .running })?.title ?? "正在思考"
     }
 
     private var activeDetail: String {
@@ -2342,7 +2351,28 @@ struct AgentActivityPanel: View, Equatable {
         completedCount == 0 ? "本轮没有调用外部资料" : "完成 \(completedCount) 个步骤，可展开查看"
     }
 
-    private var tint: Color { isRunning ? RagImeCompanionState.thinking.accent : Color.green }
+    private var failureHeadline: String {
+        items.last(where: { $0.state == .failed })?.title ?? "本轮没有完成"
+    }
+
+    private var failureDetail: String {
+        let detail = items.last(where: { $0.state == .failed })?.detail ?? ""
+        return detail.isEmpty ? "请检查模型或网络后重试" : detail
+    }
+
+    private var headerState: AgentActivityItem.State {
+        isRunning ? .running : hasFailure ? .failed : .completed
+    }
+
+    private var showsBoundedState: Bool { isRunning || hasFailure }
+
+    private var tint: Color {
+        isRunning ? RagImeCompanionState.thinking.accent : hasFailure ? Color.orange : Color.green
+    }
+
+    private var hasFailure: Bool {
+        items.contains(where: { $0.state == .failed }) || status == "failed"
+    }
 
     private var isRunning: Bool {
         items.contains(where: { $0.state == .running }) || ["busy", "analyzing", "working"].contains(status)

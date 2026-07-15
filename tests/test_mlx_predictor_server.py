@@ -16,12 +16,15 @@ from rag_ime.mlx_predictor_server import (
     MlxLmEngine,
     _PromptCacheState,
     _branch_continuation_candidates,
+    _base_completion_boundary_quality,
+    _base_completion_sample_candidate,
     _build_mlx_dynamic_prompt,
     _best_non_eos_token_id,
     _is_base_completion_model,
     _is_low_value_base_candidate,
     _initial_base_completion_seed_indexes,
     QWEN_NON_THINKING_ASSISTANT_PREFIX,
+    main as mlx_predictor_server_main,
     _normalize_prediction_request,
     _seed_replay_specs_from_logits,
     _seeded_replay_candidate,
@@ -89,6 +92,190 @@ class _BrokenPipeWriter:
 
 
 class MlxPredictorServerTests(unittest.TestCase):
+    def test_bos_sample_ranking_prefers_finished_sentences(self) -> None:
+        self.assertEqual(_base_completion_boundary_quality("今晚再确认一次。", "今晚再确认一次"), 3)
+        self.assertEqual(_base_completion_boundary_quality("今晚只收一小", "今晚只收一小"), 1)
+        self.assertEqual(_base_completion_boundary_quality("晚点给你发消息", "晚点给你发消息"), 2)
+
+    def test_bos_sample_candidate_keeps_sentence_and_removes_tokenizer_spacing(self) -> None:
+        candidate = _base_completion_sample_candidate(
+            "等水温稳定后，再 喂食。",
+            current_input="",
+            recent_context="我先给鱼缸换水",
+            max_candidate_chars=24,
+        )
+
+        self.assertEqual(candidate, "等水温稳定后，再喂食")
+
+    def test_direct_server_cli_passes_profile_decode_and_branch_contract(self) -> None:
+        with patch("rag_ime.mlx_predictor_server.serve_mlx_predictor") as serve:
+            result = mlx_predictor_server_main(
+                [
+                    "--model",
+                    "/tmp/minimind-100m",
+                    "--profile",
+                    "minimind_ime_100m_v1",
+                    "--decode-strategy",
+                    "bos-sampled-completion-v1",
+                    "--branch-count",
+                    "8",
+                    "--max-tokens",
+                    "16",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        config = serve.call_args.args[0]
+        self.assertEqual(config.profile_id, "minimind_ime_100m_v1")
+        self.assertEqual(config.decode_strategy, "bos-sampled-completion-v1")
+        self.assertEqual(config.branch_count, 8)
+        self.assertEqual(config.max_tokens, 16)
+
+    def test_heterogeneous_minimind_profiles_drive_real_engine_decode_contract(self) -> None:
+        cases = (
+            ("minimind_ime_100m_v1", 14, 12, 16384, "bos-sampled-completion-v1", 16),
+            ("minimind_ime_60m_v8", 8, 8, 6400, "bos-short-completion-v8", 8),
+        )
+        for profile_id, layers, heads, vocab, strategy, branch_tokens in cases:
+            with self.subTest(profile=profile_id), tempfile.TemporaryDirectory() as tmp:
+                model_dir = Path(tmp)
+                (model_dir / "config.json").write_text(
+                    json.dumps(
+                        {
+                            "num_hidden_layers": layers,
+                            "num_attention_heads": heads,
+                            "vocab_size": vocab,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                modules, _calls = _fake_mlx_modules(
+                    generated_text=["候选排序", "来源诊断", "上下文管理"],
+                )
+                with patch.dict(sys.modules, modules), patch.dict(
+                    os.environ,
+                    {"RAG_IME_MLX_PROMPT_MODE": ""},
+                ):
+                    engine = MlxLmEngine(str(model_dir), profile_id=profile_id)
+                    with patch.object(
+                        engine,
+                        "prefill_base_completion_logits",
+                        return_value={
+                            "candidateScores": [
+                                {"text": "结果", "tokenId": 101, "logprob": -0.1},
+                                {"text": "速度", "tokenId": 102, "logprob": -0.2},
+                                {"text": "方式", "tokenId": 103, "logprob": -0.3},
+                            ],
+                            "elapsedMs": 7,
+                            "promptCache": {"shared": True},
+                            "sharedPrefill": True,
+                        },
+                    ):
+                        payload = engine.predict(
+                            current_input="",
+                            recent_context="本地模型已经完成快速推理",
+                            max_candidates=3,
+                            max_tokens=branch_tokens,
+                            temperature=0.15,
+                            top_p=0.85,
+                            request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                        )
+                    health = engine.health()
+
+                self.assertEqual(payload["candidateMode"], "base-completion-samples")
+                self.assertEqual(payload["timing"]["decodeStrategy"], strategy)
+                self.assertEqual(payload["timing"]["branchBudget"], 8)
+                self.assertEqual(payload["timing"]["sampling"]["topK"], 50)
+                self.assertEqual(health["modelProfile"]["id"], profile_id)
+                self.assertEqual(health["decodeContract"]["strategy"], strategy)
+                self.assertEqual(health["decodeContract"]["branchCount"], 8)
+                self.assertTrue(health["capabilities"]["baseCompletion"])
+
+    def test_engine_rejects_decode_contract_that_disagrees_with_profile(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text="候选")
+        with patch.dict(sys.modules, modules):
+            with self.assertRaisesRegex(RuntimeError, "requires decodeStrategy"):
+                MlxLmEngine(
+                    "fake-minimind",
+                    profile_id="minimind_ime_v2",
+                    decode_strategy="bos-short-completion-v8",
+                )
+
+    def test_minimind_100m_http_health_and_predict_use_registered_profile_contract(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=["候选排序", "来源诊断", "上下文管理"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp)
+            (model_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "num_hidden_layers": 14,
+                        "num_attention_heads": 12,
+                        "vocab_size": 16384,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(sys.modules, modules), patch.dict(
+                os.environ,
+                {"RAG_IME_MLX_PROMPT_MODE": ""},
+            ):
+                engine = MlxLmEngine(str(model_dir), profile_id="minimind_ime_100m_v1")
+                with patch.object(
+                    engine,
+                    "prefill_base_completion_logits",
+                    return_value={
+                        "candidateScores": [
+                            {"text": "结果", "tokenId": 101, "logprob": -0.1},
+                            {"text": "速度", "tokenId": 102, "logprob": -0.2},
+                            {"text": "方式", "tokenId": 103, "logprob": -0.3},
+                        ],
+                        "elapsedMs": 7,
+                        "promptCache": {"shared": True},
+                        "sharedPrefill": True,
+                    },
+                ):
+                    try:
+                        server, thread = _start_fake_server(engine)
+                    except PermissionError:
+                        self.skipTest("local socket binding is unavailable in this sandbox")
+                    try:
+                        with urllib.request.urlopen(
+                            f"http://127.0.0.1:{server.server_port}/health",
+                            timeout=1.0,
+                        ) as response:
+                            health = json.loads(response.read().decode("utf-8"))
+                        body = json.dumps(
+                            {
+                                "current_input": "",
+                                "recent_context": "本地模型已经完成快速推理",
+                                "max_candidates": 3,
+                                "request_type": "post_commit_completion",
+                            },
+                            ensure_ascii=False,
+                        ).encode("utf-8")
+                        request = urllib.request.Request(
+                            f"http://127.0.0.1:{server.server_port}/predict",
+                            data=body,
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(request, timeout=1.0) as response:
+                            prediction = json.loads(response.read().decode("utf-8"))
+                    finally:
+                        _stop_server(server, thread)
+
+        self.assertEqual(health["modelProfile"]["id"], "minimind_ime_100m_v1")
+        self.assertEqual(health["decodeContract"]["strategy"], "bos-sampled-completion-v1")
+        self.assertFalse(health["decodeContract"]["streamFirst"])
+        self.assertEqual(prediction["candidateMode"], "base-completion-samples")
+        self.assertEqual(len(prediction["candidates"]), 3)
+        self.assertTrue(all(len(candidate) > 1 for candidate in prediction["candidates"]))
+        self.assertEqual(prediction["timing"]["sampling"]["topK"], 50)
+        self.assertEqual(prediction["timing"]["sampling"]["temperature"], 0.42)
+        self.assertEqual(prediction["timing"]["sampling"]["topP"], 0.92)
+
     def test_base_candidate_rejects_dirty_adjacent_function_character_repeat(self) -> None:
         self.assertTrue(_is_low_value_base_candidate("能能接"))
         self.assertTrue(_is_low_value_base_candidate("再再处理"))
@@ -1671,8 +1858,8 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
 
     sample_utils = types.ModuleType("mlx_lm.sample_utils")
 
-    def make_sampler(temp: float, top_p: float):
-        return {"temp": temp, "top_p": top_p}
+    def make_sampler(temp: float, top_p: float, top_k: int = 0):
+        return {"temp": temp, "top_p": top_p, "top_k": top_k}
 
     sample_utils.make_sampler = make_sampler
 

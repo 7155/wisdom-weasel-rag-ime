@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -18,6 +20,17 @@ class ModelProfile:
     sequence_fork: bool = True
     idle_unload_ms: int = 0
     append_only: bool = False
+    prompt_mode: str = "chat-json"
+    decode_strategy: str = "chat-json"
+    branch_count: int = 1
+    stream_first: bool = True
+    sampling_temperature: float = 0.15
+    sampling_top_p: float = 0.85
+    sampling_top_k: int = 0
+    max_candidate_chars: int = 24
+    expected_hidden_layers: int = 0
+    expected_attention_heads: int = 0
+    expected_vocab_size: int = 0
 
     def to_payload(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -34,6 +47,21 @@ class ModelProfile:
             "sequenceFork": payload["sequence_fork"],
             "idleUnloadMs": payload["idle_unload_ms"],
             "appendOnly": payload["append_only"],
+            "promptMode": payload["prompt_mode"],
+            "decodeStrategy": payload["decode_strategy"],
+            "branchCount": payload["branch_count"],
+            "streamFirst": payload["stream_first"],
+            "sampling": {
+                "temperature": payload["sampling_temperature"],
+                "topP": payload["sampling_top_p"],
+                "topK": payload["sampling_top_k"],
+            },
+            "maxCandidateChars": payload["max_candidate_chars"],
+            "expectedArchitecture": {
+                "numHiddenLayers": payload["expected_hidden_layers"],
+                "numAttentionHeads": payload["expected_attention_heads"],
+                "vocabSize": payload["expected_vocab_size"],
+            },
         }
 
 
@@ -49,6 +77,56 @@ DEFAULT_MODEL_PROFILES: tuple[ModelProfile, ...] = (
         prefix_cache=False,
         sequence_fork=False,
         append_only=True,
+        prompt_mode="base-completion",
+        decode_strategy="seeded-logit-branches-v2",
+        branch_count=4,
+        stream_first=False,
+    ),
+    ModelProfile(
+        id="minimind_ime_100m_v1",
+        lane="hot",
+        model_path="~/Library/Application Support/RagIme/Models/minimind-ime-100m-user-daily-core-v1",
+        max_tokens=16,
+        target_candidates=3,
+        latency_budget_ms=1200,
+        resident=True,
+        prefix_cache=False,
+        sequence_fork=True,
+        append_only=True,
+        prompt_mode="base-completion",
+        decode_strategy="bos-sampled-completion-v1",
+        branch_count=8,
+        stream_first=False,
+        sampling_temperature=0.42,
+        sampling_top_p=0.92,
+        sampling_top_k=50,
+        max_candidate_chars=24,
+        expected_hidden_layers=14,
+        expected_attention_heads=12,
+        expected_vocab_size=16384,
+    ),
+    ModelProfile(
+        id="minimind_ime_60m_v8",
+        lane="hot",
+        model_path="~/Library/Application Support/RagIme/Models/minimind-ime-60m-daily-short-final-v8",
+        max_tokens=8,
+        target_candidates=3,
+        latency_budget_ms=700,
+        resident=True,
+        prefix_cache=False,
+        sequence_fork=True,
+        append_only=True,
+        prompt_mode="base-completion",
+        decode_strategy="bos-short-completion-v8",
+        branch_count=8,
+        stream_first=False,
+        sampling_temperature=0.38,
+        sampling_top_p=0.90,
+        sampling_top_k=50,
+        max_candidate_chars=8,
+        expected_hidden_layers=8,
+        expected_attention_heads=8,
+        expected_vocab_size=6400,
     ),
     ModelProfile(
         id="qwen3_06b_ime_hot",
@@ -61,6 +139,10 @@ DEFAULT_MODEL_PROFILES: tuple[ModelProfile, ...] = (
         resident=True,
         prefix_cache=True,
         sequence_fork=True,
+        prompt_mode="chat-json",
+        decode_strategy="chat-json",
+        branch_count=1,
+        stream_first=True,
     ),
     ModelProfile(
         id="qwen25_15b_ime_main",
@@ -73,6 +155,10 @@ DEFAULT_MODEL_PROFILES: tuple[ModelProfile, ...] = (
         resident=True,
         prefix_cache=True,
         sequence_fork=True,
+        prompt_mode="chat-json",
+        decode_strategy="chat-json",
+        branch_count=1,
+        stream_first=False,
     ),
     ModelProfile(
         id="qwen3_17b_ime_quality",
@@ -86,28 +172,48 @@ DEFAULT_MODEL_PROFILES: tuple[ModelProfile, ...] = (
         prefix_cache=True,
         sequence_fork=False,
         append_only=True,
+        prompt_mode="chat-json",
+        decode_strategy="chat-json",
+        branch_count=1,
+        stream_first=False,
     ),
 )
+
+SUPPORTED_DECODE_STRATEGIES = {
+    "chat-json",
+    "seeded-logit-branches-v2",
+    "bos-sampled-completion-v1",
+    "bos-short-completion-v8",
+}
 
 
 def profile_by_id(profile_id: str) -> ModelProfile:
     normalized = normalize_profile_id(profile_id)
+    aliases = {
+        "minimind": "minimind_ime_v2",
+        "minimind_v2": "minimind_ime_v2",
+        "base_completion": "minimind_ime_v2",
+        "minimind_100m": "minimind_ime_100m_v1",
+        "minimind_60m": "minimind_ime_60m_v8",
+        "ime_hot": "qwen3_06b_ime_hot",
+        "instant": "qwen3_06b_ime_hot",
+        "hot": "qwen3_06b_ime_hot",
+        "qwen_hot": "qwen3_06b_ime_hot",
+        "ime_post_commit": "qwen25_15b_ime_main",
+        "main": "qwen25_15b_ime_main",
+        "post_commit": "qwen25_15b_ime_main",
+        "ime_quality": "qwen3_17b_ime_quality",
+        "quality": "qwen3_17b_ime_quality",
+    }
+    normalized = aliases.get(normalized, normalized)
     for profile in DEFAULT_MODEL_PROFILES:
         if profile.id == normalized:
             return profile
-    if normalized in {"minimind", "minimind_v2", "base_completion"}:
-        return DEFAULT_MODEL_PROFILES[0]
-    if normalized in {"ime_hot", "instant", "hot", "qwen_hot"}:
-        return next(item for item in DEFAULT_MODEL_PROFILES if item.id == "qwen3_06b_ime_hot")
-    if normalized in {"ime_post_commit", "main", "post_commit"}:
-        return next(item for item in DEFAULT_MODEL_PROFILES if item.lane == "main")
-    if normalized in {"ime_quality", "quality"}:
-        return next(item for item in DEFAULT_MODEL_PROFILES if item.lane == "quality")
-    return DEFAULT_MODEL_PROFILES[0]
+    raise ValueError(f"unknown model profile: {profile_id or '<empty>'}")
 
 
 def normalize_profile_id(profile_id: str) -> str:
-    return str(profile_id or "").strip().lower().replace("-", "_") or "qwen3_06b_ime_hot"
+    return str(profile_id or "").strip().lower().replace("-", "_")
 
 
 def validate_profile(profile: ModelProfile) -> list[str]:
@@ -122,4 +228,57 @@ def validate_profile(profile: ModelProfile) -> list[str]:
         errors.append("latency budget must be positive")
     if profile.target_candidates <= 0:
         errors.append("target candidates must be positive")
+    if profile.max_tokens <= 0:
+        errors.append("max tokens must be positive")
+    if profile.branch_count <= 0:
+        errors.append("branch count must be positive")
+    if profile.sampling_temperature < 0:
+        errors.append("sampling temperature must not be negative")
+    if not 0 < profile.sampling_top_p <= 1:
+        errors.append("sampling top-p must be in (0, 1]")
+    if profile.sampling_top_k < 0:
+        errors.append("sampling top-k must not be negative")
+    if profile.max_candidate_chars <= 0:
+        errors.append("max candidate chars must be positive")
+    if profile.prompt_mode not in {"base-completion", "chat-json", "chat"}:
+        errors.append("unsupported prompt mode")
+    if profile.prompt_mode == "base-completion" and not profile.decode_strategy:
+        errors.append("base-completion profile requires a decode strategy")
+    if profile.decode_strategy not in SUPPORTED_DECODE_STRATEGIES:
+        errors.append("unsupported decode strategy")
+    architecture = (
+        profile.expected_hidden_layers,
+        profile.expected_attention_heads,
+        profile.expected_vocab_size,
+    )
+    if any(value < 0 for value in architecture):
+        errors.append("expected architecture values must not be negative")
+    if any(architecture) and not all(architecture):
+        errors.append("expected architecture must specify layers, heads, and vocab together")
+    return errors
+
+
+def validate_profile_artifact(profile: ModelProfile, model_path: str | Path) -> list[str]:
+    """Validate strict MiniMind geometry without guessing from a directory name."""
+
+    expected = {
+        "num_hidden_layers": profile.expected_hidden_layers,
+        "num_attention_heads": profile.expected_attention_heads,
+        "vocab_size": profile.expected_vocab_size,
+    }
+    if not any(expected.values()):
+        return []
+    config_path = Path(model_path).expanduser() / "config.json"
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return [f"model profile {profile.id} requires a readable config.json"]
+    errors: list[str] = []
+    for field, wanted in expected.items():
+        try:
+            actual = int(payload.get(field) or 0)
+        except (TypeError, ValueError):
+            actual = 0
+        if actual != wanted:
+            errors.append(f"{profile.id} expects {field}={wanted}, got {actual}")
     return errors

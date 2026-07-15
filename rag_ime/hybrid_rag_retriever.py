@@ -5,9 +5,10 @@ import math
 import re
 import sqlite3
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .context_group import ContextGroup, context_group_compatibility
 from .embeddings import EmbeddingProvider, cosine_similarity, embed_query
@@ -15,8 +16,9 @@ from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery
 from .hybrid_rag_ranker import rank_hybrid_hits
 from .memory_book_lifecycle import set_memory_book_archive_status
 from .memory_ingest import normalize_text
+from .memory_tag_graph import TagActivation
 from .query_expansion import build_query_expansion
-from .retrieval_vector_index import load_retrieval_doc_vectors
+from .retrieval_vector_index import build_tag_boosted_query_vector, load_retrieval_doc_vectors
 from .text_utils import compact_whitespace, token_terms
 
 
@@ -34,6 +36,9 @@ def retrieve_hybrid_rag_candidates(
     embedding_provider: EmbeddingProvider | None = None,
 ) -> dict[str, object]:
     started = time.perf_counter()
+    # ACL is the first retrieval stage: private documents must not seed aliases,
+    # Tag activation, expansion terms, vectors, or diagnostics.
+    docs = _active_docs(conn, query=query)
     expansion = build_query_expansion(
         conn,
         query_text=query.query_text,
@@ -43,8 +48,12 @@ def retrieve_hybrid_rag_candidates(
         committed_tail=query.committed_tail,
         project=query.project,
         app=query.app,
+        visible_doc_ids=tuple(str(doc["doc_id"]) for doc in docs),
+        visible_source_ids=tuple(str(doc["source_id"]) for doc in docs),
+        visible_atom_ids=tuple(
+            str(doc["source_id"]) for doc in docs if str(doc["doc_type"]) == "atom"
+        ),
     )
-    docs = _active_docs(conn, query=query)
     blocked = _blocked_sets(conn)
     vector_available = bool(embedding_provider and embedding_provider.fingerprint != "none")
     enabled_lanes = _resolved_lane_enabled(query.enabled_lanes, vector_available=vector_available)
@@ -54,6 +63,12 @@ def retrieve_hybrid_rag_candidates(
         if vector_available and embedding_provider is not None else {}
     )
     query_vector = embed_query(embedding_provider, expansion.primary_query) if vectors and embedding_provider else []
+    boosted_query_vector, tag_boost_diagnostics = build_tag_boosted_query_vector(
+        conn,
+        provider_fingerprint=embedding_provider.fingerprint if embedding_provider is not None else "",
+        query_vector=query_vector,
+        weighted_tags=((item.tag, item.energy) for item in expansion.activated_tag_details),
+    )
     # SQLite connections are thread-affine by default. Complete SQL-backed
     # lanes here; CPU-only scoring lanes then run in parallel.
     lexical_lane_meta: dict[str, str] = {}
@@ -96,6 +111,11 @@ def retrieve_hybrid_rag_candidates(
             app=query.app,
             limit=max(8, query.top_k * 4),
         )
+        tagmemo_hits = _rerank_tagmemo_hits(
+            tagmemo_hits,
+            docs=docs,
+            activations=expansion.activated_tag_details,
+        )
     feedback_hits = (
         _feedback_hits(
             conn,
@@ -113,7 +133,7 @@ def retrieve_hybrid_rag_candidates(
             blocked=blocked, limit=max(8, query.top_k * 4),
         ) if enabled_lanes["vector_raw"] else [],
         "vector_tag_boost": lambda: _rank_vector_docs(
-            docs, vectors=vectors, query_vector=query_vector, lane="vector_tag_boost", vector_index=1,
+            docs, vectors=vectors, query_vector=boosted_query_vector, lane="vector_tag_boost", vector_index=1,
             blocked=blocked, limit=max(8, query.top_k * 4), include_group=True,
         ) if enabled_lanes["vector_tag_boost"] else [],
         "time": lambda: (
@@ -163,8 +183,20 @@ def retrieve_hybrid_rag_candidates(
             "lexicalTerms": list(expansion.lexical_terms),
             "matchedAliases": list(expansion.matched_aliases),
             "activatedTags": list(expansion.activated_tags),
+            "activatedTagDetails": [
+                {
+                    "tag": item.tag,
+                    "energy": round(item.energy, 6),
+                    "hop": item.hop,
+                    "path": list(item.path_tags),
+                    "edgeTypes": list(item.edge_types),
+                    "evidenceCount": item.evidence_count,
+                }
+                for item in expansion.activated_tag_details
+            ],
             "negativeTags": list(expansion.negative_tags),
             "expansionTerms": list(expansion.expansion_terms),
+            "tagBoost": tag_boost_diagnostics,
         },
         "lanes": {
             name: {
@@ -384,29 +416,8 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
         """,
         (query.project, query.project, query.app, query.app),
     ).fetchall()
-    current_group = ContextGroup(
-        context_group_id=compact_whitespace(query.context_group_id),
-        context_group_level=query.context_group_level if query.context_group_level in {"document", "project", "app", "global"} else "app",
-        confidence=1.0 if query.context_group_id else 0.0,
-        parent_group_ids=tuple(query.context_group_parent_ids),
-        app_bundle_id=compact_whitespace(query.app),
-        project=compact_whitespace(query.project),
-    )
-    docs: list[dict[str, object]] = []
-    for row in rows:
-        metadata = _metadata(row["metadata_json"])
-        short_term = bool(metadata.get("shortTerm") or metadata.get("short_term"))
-        compatibility = context_group_compatibility(
-            current_group,
-            candidate_group_id=str(metadata.get("contextGroupId") or metadata.get("context_group_id") or ""),
-            candidate_project=str(row["project"] or ""),
-            candidate_app=str(row["app"] or ""),
-            short_term=short_term,
-        )
-        if compatibility <= 0.0:
-            continue
-        metadata["groupCompatibility"] = compatibility
-        docs.append({
+    prepared = [
+        {
             "doc_id": str(row["doc_id"]),
             "doc_type": str(row["doc_type"]),
             "source_id": str(row["source_id"]),
@@ -419,10 +430,267 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
             "project": str(row["project"] or ""),
             "app": str(row["app"] or ""),
             "updated_at_ms": int(row["updated_at_ms"] or 0),
-            "metadata": metadata,
-        })
+            "metadata": _metadata(row["metadata_json"]),
+        }
+        for row in rows
+    ]
+    event_ids_by_doc = _retrieval_doc_event_map(conn, prepared)
+    all_event_ids = sorted({event_id for values in event_ids_by_doc.values() for event_id in values})
+    agent_links = _agent_event_links(conn, all_event_ids)
+    deleted_event_ids = _deleted_event_ids(conn, all_event_ids)
+    room_owner_ids: set[str] = set()
+    for doc in prepared:
+        metadata = dict(doc.get("metadata") or {})
+        if str(metadata.get("ownerKind") or metadata.get("owner_kind") or "") == "room":
+            room_id = str(metadata.get("ownerId") or metadata.get("owner_id") or "")
+            if room_id and room_id in query.reader_room_ids:
+                room_owner_ids.add(room_id)
+    room_members = _active_room_members(conn, room_owner_ids)
+    current_group = ContextGroup(
+        context_group_id=compact_whitespace(query.context_group_id),
+        context_group_level=query.context_group_level if query.context_group_level in {"document", "project", "app", "global"} else "app",
+        confidence=1.0 if query.context_group_id else 0.0,
+        parent_group_ids=tuple(query.context_group_parent_ids),
+        app_bundle_id=compact_whitespace(query.app),
+        project=compact_whitespace(query.project),
+    )
+    docs: list[dict[str, object]] = []
+    for doc in prepared:
+        metadata = dict(doc.get("metadata") or {})
+        if not _retrieval_doc_visible_to_reader(
+            event_ids=event_ids_by_doc.get(str(doc["doc_id"]), ()),
+            agent_links=agent_links,
+            deleted_event_ids=deleted_event_ids,
+            room_members=room_members,
+            metadata=metadata,
+            query=query,
+        ):
+            continue
+        short_term = bool(metadata.get("shortTerm") or metadata.get("short_term"))
+        compatibility = context_group_compatibility(
+            current_group,
+            candidate_group_id=str(metadata.get("contextGroupId") or metadata.get("context_group_id") or ""),
+            candidate_project=str(doc["project"] or ""),
+            candidate_app=str(doc["app"] or ""),
+            short_term=short_term,
+        )
+        if compatibility <= 0.0:
+            continue
+        metadata["groupCompatibility"] = compatibility
+        docs.append({**doc, "metadata": metadata})
     docs.sort(key=lambda item: float(dict(item.get("metadata") or {}).get("groupCompatibility") or 0.0), reverse=True)
     return docs
+
+
+def _retrieval_doc_visible_to_reader(
+    *,
+    event_ids: Iterable[int],
+    agent_links: Mapping[int, tuple[Mapping[str, object], ...]],
+    deleted_event_ids: set[int],
+    room_members: Mapping[str, set[str]],
+    metadata: dict[str, object],
+    query: HybridRagQuery,
+) -> bool:
+    owner_kind = compact_whitespace(str(metadata.get("ownerKind") or metadata.get("owner_kind") or ""))
+    owner_id = compact_whitespace(str(metadata.get("ownerId") or metadata.get("owner_id") or ""))
+    if owner_kind == "session" and owner_id != query.reader_session_id:
+        return False
+    if owner_kind == "agent" and owner_id != query.reader_agent_id:
+        return False
+    if owner_kind == "room" and owner_id not in query.reader_room_ids:
+        return False
+    if owner_kind not in {"", "user", "shared", "session", "agent", "room"}:
+        return False
+
+    for event_id in event_ids:
+        if event_id in deleted_event_ids:
+            return False
+        rows = agent_links.get(event_id, ())
+        if not rows:
+            continue
+        if any(str(row.get("status") or "") != "active" for row in rows):
+            return False
+        visible = False
+        for row in rows:
+            if str(row.get("source_role") or "") == "user":
+                visible = True
+                break
+            if query.reader_session_id and query.reader_session_id == str(row.get("session_id") or ""):
+                visible = True
+                break
+            if query.reader_agent_id and query.reader_agent_id == str(row.get("agent_id") or ""):
+                visible = True
+                break
+            if owner_kind == "room" and owner_id in query.reader_room_ids:
+                if str(row.get("session_id") or "") in room_members.get(owner_id, set()):
+                    visible = True
+                    break
+        if not visible:
+            return False
+    return True
+
+
+def _retrieval_doc_event_map(
+    conn: sqlite3.Connection,
+    docs: Iterable[Mapping[str, object]],
+) -> dict[str, tuple[int, ...]]:
+    result: dict[str, tuple[int, ...]] = {}
+    fallback: dict[str, set[str]] = {"atom": set(), "book": set(), "item": set()}
+    pending_docs: list[tuple[str, str, str]] = []
+    for doc in docs:
+        doc_id = str(doc.get("doc_id") or "")
+        doc_type = str(doc.get("doc_type") or "")
+        source_id = str(doc.get("source_id") or "")
+        metadata = dict(doc.get("metadata") or {})
+        values: list[object] = []
+        source_ids = metadata.get("sourceEventIds") or metadata.get("source_event_ids")
+        if isinstance(source_ids, (list, tuple)):
+            values.extend(source_ids)
+        source_event_id = metadata.get("sourceEventId") or metadata.get("source_event_id")
+        if source_event_id not in (None, "", 0, "0"):
+            values.append(source_event_id)
+        event_ids = _positive_event_ids(values)
+        if event_ids:
+            result[doc_id] = tuple(event_ids)
+            continue
+        family = "item" if doc_type in {"item", "phrase"} else doc_type
+        if family in fallback and source_id:
+            fallback[family].add(source_id)
+            pending_docs.append((doc_id, family, source_id))
+        else:
+            result[doc_id] = ()
+
+    source_events: dict[tuple[str, str], tuple[int, ...]] = {}
+    if fallback["atom"]:
+        rows = conn.execute(
+            """SELECT a.id, a.source_event_ids_json FROM memory_atoms AS a
+               JOIN json_each(?) AS wanted ON CAST(wanted.value AS TEXT) = a.id""",
+            (json.dumps(sorted(fallback["atom"])),),
+        ).fetchall()
+        source_events.update({("atom", str(row["id"])): tuple(_json_event_ids(row["source_event_ids_json"])) for row in rows})
+    if fallback["book"]:
+        rows = conn.execute(
+            """SELECT b.book_id, b.source_event_ids_json FROM memory_books AS b
+               JOIN json_each(?) AS wanted ON CAST(wanted.value AS TEXT) = b.book_id""",
+            (json.dumps(sorted(fallback["book"])),),
+        ).fetchall()
+        source_events.update({("book", str(row["book_id"])): tuple(_json_event_ids(row["source_event_ids_json"])) for row in rows})
+    if fallback["item"]:
+        rows = conn.execute(
+            """SELECT i.memory_id, i.source_event_id FROM memory_items AS i
+               JOIN json_each(?) AS wanted ON CAST(wanted.value AS TEXT) = i.memory_id""",
+            (json.dumps(sorted(fallback["item"])),),
+        ).fetchall()
+        source_events.update({("item", str(row["memory_id"])): tuple(_positive_event_ids([row["source_event_id"]])) for row in rows})
+    for doc_id, family, source_id in pending_docs:
+        result[doc_id] = source_events.get((family, source_id), ())
+    return result
+
+
+def _agent_event_links(
+    conn: sqlite3.Connection,
+    event_ids: Iterable[int],
+) -> dict[int, tuple[Mapping[str, object], ...]]:
+    ids = tuple(dict.fromkeys(int(value) for value in event_ids if int(value) > 0))
+    if not ids:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT ams.input_event_id, ams.session_id, ams.source_role, ams.status, s.agent_id
+        FROM agent_memory_sources AS ams
+        JOIN agent_sessions AS s ON s.id = ams.session_id
+        JOIN json_each(?) AS wanted ON CAST(wanted.value AS INTEGER) = ams.input_event_id
+        """,
+        (json.dumps(ids),),
+    ).fetchall()
+    grouped: dict[int, list[Mapping[str, object]]] = {}
+    for row in rows:
+        grouped.setdefault(int(row["input_event_id"]), []).append(
+            {
+                "session_id": str(row["session_id"]),
+                "source_role": str(row["source_role"]),
+                "status": str(row["status"]),
+                "agent_id": str(row["agent_id"]),
+            }
+        )
+    source_rows = conn.execute(
+        """
+        SELECT e.id, e.source
+        FROM input_events AS e
+        JOIN json_each(?) AS wanted ON CAST(wanted.value AS INTEGER) = e.id
+        WHERE e.source IN ('pi_agent_tool_receipt', 'pi_agent_user')
+        """,
+        (json.dumps(ids),),
+    ).fetchall()
+    for row in source_rows:
+        event_id = int(row["id"])
+        if event_id in grouped:
+            continue
+        source = str(row["source"] or "")
+        grouped[event_id] = [
+            {
+                "session_id": "",
+                "source_role": "user" if source == "pi_agent_user" else "tool_receipt",
+                "status": "active" if source == "pi_agent_user" else "orphaned",
+                "agent_id": "",
+            }
+        ]
+    return {event_id: tuple(values) for event_id, values in grouped.items()}
+
+
+def _deleted_event_ids(conn: sqlite3.Connection, event_ids: Iterable[int]) -> set[int]:
+    ids = tuple(dict.fromkeys(int(value) for value in event_ids if int(value) > 0))
+    if not ids:
+        return set()
+    return {
+        int(row["event_id"])
+        for row in conn.execute(
+            """SELECT ms.event_id FROM memory_state AS ms
+               JOIN json_each(?) AS wanted ON CAST(wanted.value AS INTEGER) = ms.event_id
+               WHERE ms.deleted = 1""",
+            (json.dumps(ids),),
+        ).fetchall()
+    }
+
+
+def _active_room_members(conn: sqlite3.Connection, room_ids: Iterable[str]) -> dict[str, set[str]]:
+    ids = tuple(dict.fromkeys(str(value) for value in room_ids if str(value)))
+    if not ids:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT p.room_id, p.session_id
+        FROM agent_room_participants AS p
+        JOIN agent_rooms AS r ON r.id = p.room_id
+        JOIN json_each(?) AS wanted ON CAST(wanted.value AS TEXT) = p.room_id
+        WHERE p.participant_status = 'active' AND r.status = 'active'
+        """,
+        (json.dumps(ids),),
+    ).fetchall()
+    result: dict[str, set[str]] = {}
+    for row in rows:
+        result.setdefault(str(row["room_id"]), set()).add(str(row["session_id"]))
+    return result
+
+
+def _json_event_ids(value: object) -> list[int]:
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return _positive_event_ids(parsed if isinstance(parsed, list) else [])
+
+
+def _positive_event_ids(values: Iterable[object]) -> list[int]:
+    result: list[int] = []
+    for raw in values:
+        try:
+            event_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if event_id > 0 and event_id not in result:
+            result.append(event_id)
+    return result
 
 
 def _rank_docs(
@@ -487,6 +755,8 @@ def _rank_fts5_docs(
             FROM memory_retrieval_docs_fts
             JOIN memory_retrieval_docs AS d
               ON d.rowid = memory_retrieval_docs_fts.rowid
+            JOIN json_each(?) AS visible_docs
+              ON CAST(visible_docs.value AS TEXT) = d.doc_id
             WHERE memory_retrieval_docs_fts MATCH ?
               AND d.status = 'active'
               AND (? = '' OR d.project = ? OR d.project = '')
@@ -494,7 +764,15 @@ def _rank_fts5_docs(
             ORDER BY bm25(memory_retrieval_docs_fts) ASC, d.updated_at_ms DESC
             LIMIT ?
             """,
-            (match_query, project, project, app, app, max(1, limit * 8)),
+            (
+                json.dumps(sorted(docs_by_id), ensure_ascii=False),
+                match_query,
+                project,
+                project,
+                app,
+                app,
+                max(1, limit * 8),
+            ),
         ).fetchall()
     except sqlite3.OperationalError:
         return (
@@ -528,6 +806,50 @@ def _rank_fts5_docs(
         if fallback_hits:
             return fallback_hits, "lexical_substring_fallback"
     return hits, "sqlite_fts5_bm25"
+
+
+def _rerank_tagmemo_hits(
+    hits: list[HybridRagHit],
+    *,
+    docs: list[dict[str, object]],
+    activations: tuple[TagActivation, ...],
+) -> list[HybridRagHit]:
+    if not hits or not activations:
+        return hits
+    docs_by_id = {str(doc["doc_id"]): doc for doc in docs}
+    normalized_activations = [
+        (normalize_text(activation.tag), activation)
+        for activation in activations
+        if normalize_text(activation.tag)
+    ]
+    weighted: list[tuple[float, int, HybridRagHit]] = []
+    for hit in hits:
+        doc = docs_by_id.get(hit.doc_id)
+        if doc is None:
+            weighted.append((0.0, hit.rank, hit))
+            continue
+        haystack = normalize_text(" ".join(
+            str(doc.get(field) or "")
+            for field in ("tags_text", "aliases_text", "query_expansions_text")
+        ))
+        matched = [
+            activation
+            for normalized_tag, activation in normalized_activations
+            if normalized_tag in haystack
+        ]
+        best = max(matched, key=lambda activation: activation.energy) if matched else None
+        metadata = dict(hit.metadata)
+        if best is not None:
+            metadata.update({
+                "tagActivationEnergy": round(best.energy, 6),
+                "tagActivationHop": best.hop,
+                "tagActivationPath": list(best.path_tags),
+                "tagActivationEvidenceCount": best.evidence_count,
+            })
+        updated = replace(hit, metadata=metadata)
+        weighted.append((best.energy if best is not None else 0.0, hit.rank, updated))
+    weighted.sort(key=lambda item: (-item[0], item[1]))
+    return [replace(hit, rank=index) for index, (_energy, _old_rank, hit) in enumerate(weighted, start=1)]
 
 
 def _fts5_match_query(terms: Iterable[str], *, fields: tuple[str, ...]) -> str:
@@ -651,16 +973,25 @@ def _feedback_hits(
         return []
     rows = conn.execute(
         """
-        SELECT memory_id, COUNT(*) AS accepted_count
-        FROM candidate_feedback
-        WHERE action = 'accepted'
-          AND (? = '' OR project = ? OR project = '')
-          AND (? = '' OR app = ? OR app = '')
-        GROUP BY memory_id
+        SELECT feedback.memory_id, COUNT(*) AS accepted_count
+        FROM candidate_feedback AS feedback
+        JOIN json_each(?) AS visible_sources
+          ON CAST(visible_sources.value AS TEXT) = feedback.memory_id
+        WHERE feedback.action = 'accepted'
+          AND (? = '' OR feedback.project = ? OR feedback.project = '')
+          AND (? = '' OR feedback.app = ? OR feedback.app = '')
+        GROUP BY feedback.memory_id
         ORDER BY accepted_count DESC
         LIMIT ?
         """,
-        (query.project, query.project, query.app, query.app, max(1, limit)),
+        (
+            json.dumps(sorted(source_ids), ensure_ascii=False),
+            query.project,
+            query.project,
+            query.app,
+            query.app,
+            max(1, limit),
+        ),
     ).fetchall()
     hits: list[HybridRagHit] = []
     normalized_terms = _unique(token_terms(" ".join(str(item) for item in terms), max_terms=32))

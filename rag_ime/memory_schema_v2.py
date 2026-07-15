@@ -28,5 +28,13 @@ def memory_v2_table_names() -> tuple[str, ...]:
         "memory_candidate_suppressions",
         "memory_feedback_events",
         "memory_optimizer_traces",
+        "memory_entity_sources",
+        "memory_relation_sources",
+        "memory_entity_aliases",
+        "memory_relations",
+        "memory_entities",
+        "memory_projection_outbox",
+        "memory_projection_checkpoints",
+        "memory_graph_projection_map",
         *memory_book_table_names(),
     )

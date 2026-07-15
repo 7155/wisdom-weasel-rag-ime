@@ -32,7 +32,7 @@ from .predictor import (
 from .anti_echo import candidate_has_self_repetition, collapse_repeated_tail
 from .ime_candidate_stream import ImeCandidateStreamParser
 from .model_lane_scheduler import LatestWinsModelScheduler, model_request_token_from_metadata
-from .model_profiles import profile_by_id
+from .model_profiles import profile_by_id, validate_profile_artifact
 from .model_registry import fingerprint_model_artifact
 from .mlx_prefix_cache import MlxPrefixCache, PrefixCacheEntry
 from .predictor_latency import (
@@ -210,12 +210,14 @@ class MlxPredictorServerConfig:
     host: str = "127.0.0.1"
     port: int = 8767
     model: str = ""
-    max_tokens: int = 8
-    temperature: float = 0.15
-    top_p: float = 0.85
+    max_tokens: int = 0
+    temperature: float = -1.0
+    top_p: float = -1.0
     prompt_cache: bool = False
     prompt_cache_max_kv_size: int = 0
     profile_id: str = "qwen3_06b_ime_hot"
+    decode_strategy: str = ""
+    branch_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -312,15 +314,39 @@ class MlxLmEngine:
         enable_prompt_cache: bool = False,
         prompt_cache_max_kv_size: int = 0,
         profile_id: str = "qwen3_06b_ime_hot",
+        decode_strategy: str = "",
+        branch_count: int = 0,
     ):
         if not model_id:
             raise RuntimeError("MLX predictor requires --model or RAG_IME_MLX_MODEL")
         self.model_id = model_id
         self.profile = profile_by_id(profile_id)
+        artifact_errors = validate_profile_artifact(self.profile, model_id)
+        if artifact_errors:
+            raise RuntimeError("; ".join(artifact_errors))
+        self.decode_strategy = str(decode_strategy or self.profile.decode_strategy)
+        self.branch_count = int(branch_count or self.profile.branch_count)
+        if self.decode_strategy != self.profile.decode_strategy:
+            raise RuntimeError(
+                f"profile {self.profile.id} requires decodeStrategy={self.profile.decode_strategy}, "
+                f"got {self.decode_strategy}"
+            )
+        if self.branch_count != self.profile.branch_count:
+            raise RuntimeError(
+                f"profile {self.profile.id} requires branchCount={self.profile.branch_count}, "
+                f"got {self.branch_count}"
+            )
         self.model_info = _inspect_local_mlx_model(model_id)
         self.model, self.tokenizer = _load_mlx_model_and_tokenizer(model_id)
         self.model_fingerprint = _local_model_fingerprint(model_id)
-        self._base_completion_mode = _is_base_completion_model(model_id, self.model_info)
+        explicit_prompt_mode = os.environ.get("RAG_IME_MLX_PROMPT_MODE", "").strip()
+        if explicit_prompt_mode:
+            self._base_completion_mode = _is_base_completion_model(model_id, self.model_info)
+        else:
+            self._base_completion_mode = self.profile.prompt_mode == "base-completion" or _is_base_completion_model(
+                model_id,
+                self.model_info,
+            )
         self._prompt_cache = _PromptCacheState(
             enabled=bool(enable_prompt_cache) and not self._base_completion_mode,
             stable_prefix=self._stable_prompt_prefix(),
@@ -408,6 +434,17 @@ class MlxLmEngine:
             "model": self.model_id,
             "modelFingerprint": self.model_fingerprint,
             "modelProfile": self.profile.to_payload(),
+            "decodeContract": {
+                "strategy": self.decode_strategy,
+                "branchCount": self.branch_count,
+                "maxTokens": self.profile.max_tokens,
+                "streamFirst": self.profile.stream_first,
+                "sampling": {
+                    "temperature": self.profile.sampling_temperature,
+                    "topP": self.profile.sampling_top_p,
+                    "topK": self.profile.sampling_top_k,
+                },
+            },
             "modelLoaded": True,
             "modelInfo": self.model_info,
             "warmup": dict(self._warmup_status),
@@ -527,11 +564,31 @@ class MlxLmEngine:
                     "requestMeta": dict(metadata),
                 })
 
+            # The promoted MiniMind checkpoints were evaluated by sampling
+            # several complete BOS-aware continuations from the same prefix.
+            # Reproduce that contract directly. Picking the highest-logit
+            # first tokens and forcing each one into a branch changes the
+            # model distribution and produced visibly worse completions.
+            sampled_payload = self.predict_base_completion_samples(
+                current_input=current_input,
+                recent_context=recent_context,
+                prompt_tokens=prompt_tokens,
+                max_candidates=display_candidate_limit,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                started=started,
+                request_type=resolved_request_type,
+                request_metadata=metadata,
+            )
+            if sampled_payload is not None:
+                return finalize(sampled_payload)
+
             # This checkpoint is a bare next-token completion model. Top-k
             # logits are branch seeds, not complete user-facing candidates.
             # Decode each seed into its own short continuation so the three
             # rows are genuine alternatives rather than three isolated tokens.
-            probe_candidate_limit = max(16, min(32, display_candidate_limit * 8))
+            probe_candidate_limit = max(8, min(32, self.branch_count * 4))
             logits_payload = self.prefill_base_completion_logits(
                 prompt_tokens=prompt_tokens,
                 max_candidates=probe_candidate_limit,
@@ -794,6 +851,150 @@ class MlxLmEngine:
             )
         return finalize(json_payload)
 
+    def predict_base_completion_samples(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        prompt_tokens: list[int],
+        max_candidates: int,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        started: float,
+        request_type: str,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if self.decode_strategy not in {"bos-sampled-completion-v1", "bos-short-completion-v8"}:
+            return None
+        try:
+            from mlx_lm.generate import batch_generate  # type: ignore
+            from mlx_lm.sample_utils import make_sampler  # type: ignore
+        except (ImportError, AttributeError):
+            return None
+
+        sample_count = max(1, int(self.branch_count))
+        display_limit = max(1, min(3, int(max_candidates)))
+        token_budget = max(1, min(int(self.profile.max_tokens), int(max_tokens)))
+        sampling_temperature = max(0.0, float(temperature))
+        sampling_top_p = max(0.0, min(1.0, float(top_p)))
+        sampling_top_k = max(0, int(self.profile.sampling_top_k))
+        metadata = dict(request_metadata or {})
+        cancel_request_id = str(metadata.get("requestId") or "")
+        if cancel_request_id and self._scheduler.is_cancelled(cancel_request_id):
+            return None
+
+        batch_started = time.perf_counter()
+        try:
+            response = batch_generate(
+                self.model,
+                self.tokenizer,
+                [list(prompt_tokens) for _ in range(sample_count)],
+                max_tokens=token_budget,
+                sampler=make_sampler(
+                    temp=sampling_temperature,
+                    top_p=sampling_top_p,
+                    top_k=sampling_top_k,
+                ),
+            )
+        except Exception:
+            return None
+        texts = getattr(response, "texts", None)
+        if not isinstance(texts, list):
+            return None
+
+        ranked_candidates: list[tuple[int, int, str]] = []
+        seen: set[str] = set()
+        sample_rows: list[dict[str, Any]] = []
+        for index, raw in enumerate(texts):
+            candidate = _base_completion_sample_candidate(
+                str(raw),
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidate_chars=self.profile.max_candidate_chars,
+            )
+            accepted = bool(candidate and candidate not in seen)
+            boundary_quality = (
+                _base_completion_boundary_quality(str(raw), candidate)
+                if accepted
+                else 0
+            )
+            sample_rows.append(
+                {
+                    "sample": index + 1,
+                    "accepted": accepted,
+                    "candidate": candidate,
+                    "boundaryQuality": boundary_quality,
+                }
+            )
+            if accepted:
+                seen.add(candidate)
+                ranked_candidates.append((boundary_quality, index, candidate))
+
+        ranked_candidates.sort(key=lambda item: (-item[0], item[1]))
+        candidates = [item[2] for item in ranked_candidates]
+        selected = set(candidates[:display_limit])
+        for row in sample_rows:
+            row["selected"] = bool(
+                row["accepted"]
+                and row["candidate"]
+                and row["candidate"] in selected
+            )
+
+        stats = getattr(response, "stats", None)
+        stats_payload = {
+            key: getattr(stats, key)
+            for key in (
+                "prompt_tokens",
+                "prompt_time",
+                "generation_tokens",
+                "generation_time",
+                "peak_memory",
+            )
+            if stats is not None and isinstance(getattr(stats, key, None), (int, float))
+        }
+        displayed = candidates[:display_limit]
+        return {
+            "ok": True,
+            "model": self.model_id,
+            "rawText": "\n".join(str(item) for item in texts),
+            "candidates": displayed,
+            "candidateScores": [
+                {
+                    "text": candidate,
+                    "rank": index,
+                    "source": "independent-sample",
+                    "mode": "base-completion-samples",
+                    "confidence": max(0.0, 1.0 - (index - 1) * 0.12),
+                }
+                for index, candidate in enumerate(displayed, start=1)
+            ],
+            "candidateMode": "base-completion-samples",
+            "requestType": request_type,
+            "totalMs": int((time.perf_counter() - started) * 1000),
+            "promptCache": self.prompt_cache_status(),
+            "timing": {
+                "candidateMode": "base-completion-samples",
+                "fallbackJson": False,
+                "requestType": request_type,
+                "decodeStrategy": self.decode_strategy,
+                "decodeMode": "batch-independent-sampling",
+                "branchBudget": sample_count,
+                "branchCount": len(texts),
+                "displayCandidateLimit": display_limit,
+                "underfilled": len(displayed) < display_limit,
+                "batchMs": int((time.perf_counter() - batch_started) * 1000),
+                "sampling": {
+                    "temperature": sampling_temperature,
+                    "topP": sampling_top_p,
+                    "topK": sampling_top_k,
+                },
+                "stats": stats_payload,
+                "samples": sample_rows,
+            },
+            "requestMeta": metadata,
+        }
+
     def predict_realtime_post_commit_fast_path(
         self,
         *,
@@ -1036,16 +1237,18 @@ class MlxLmEngine:
             # consume more than half of MiniMind's top logits. Keep a wider
             # seed reserve so a request for three rows is not routinely
             # returned as only one or two candidates.
-            max_seeds=max(6, display_limit * 4),
+            max_seeds=max(display_limit, self.branch_count),
             allow_single_cjk=True,
         )
         if not seeds:
             return None
-        # Four tokens regularly cut MiniMind in the middle of a phrase (for
-        # example, `短候`). Six keeps the branch compact while giving the model
-        # enough room to finish the thought in the same batched decode.
-        per_seed_max_tokens = max(4, min(6, int(max_tokens)))
-        branch_temperature = max(0.0, min(float(temperature), 0.10))
+        # Token and sampling budgets belong to the checkpoint profile; the two
+        # MiniMind artifacts were trained for different completion lengths.
+        per_seed_max_tokens, branch_temperature = _base_completion_decode_parameters(
+            self.decode_strategy,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
         metadata = dict(request_metadata or {})
         cancel_request_id = str(metadata.get("requestId") or "")
         candidates: list[str] = []
@@ -1212,6 +1415,8 @@ class MlxLmEngine:
                 "fallbackJson": False,
                 "requestType": request_type,
                 "seedReplayReason": "top_logits_seed_continuation",
+                "decodeStrategy": self.decode_strategy,
+                "branchBudget": self.branch_count,
                 "branchCount": len(branch_timings),
                 "displayCandidateLimit": display_limit,
                 "underfilled": len(displayed) < display_limit,
@@ -2113,7 +2318,15 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
             except json.JSONDecodeError:
                 self.send_error(400, "invalid JSON")
                 return
-            request = _normalize_prediction_request(payload, default_model=engine.model_id)
+            request = _normalize_prediction_request(
+                payload,
+                default_model=engine.model_id,
+                default_max_tokens=int(getattr(getattr(engine, "profile", None), "max_tokens", 8)),
+                default_temperature=float(
+                    getattr(getattr(engine, "profile", None), "sampling_temperature", 0.15)
+                ),
+                default_top_p=float(getattr(getattr(engine, "profile", None), "sampling_top_p", 0.85)),
+            )
             if self.path == "/predict-stream":
                 self._send_stream(engine, request)
                 return
@@ -2234,11 +2447,18 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
         enable_prompt_cache=config.prompt_cache,
         prompt_cache_max_kv_size=config.prompt_cache_max_kv_size,
         profile_id=config.profile_id,
+        decode_strategy=config.decode_strategy,
+        branch_count=config.branch_count,
     )
+    effective_max_tokens = config.max_tokens if config.max_tokens > 0 else engine.profile.max_tokens
+    effective_temperature = (
+        config.temperature if config.temperature >= 0 else engine.profile.sampling_temperature
+    )
+    effective_top_p = config.top_p if config.top_p > 0 else engine.profile.sampling_top_p
     warmup = engine.warmup(
-        max_tokens=config.max_tokens,
-        temperature=config.temperature,
-        top_p=config.top_p,
+        max_tokens=effective_max_tokens,
+        temperature=effective_temperature,
+        top_p=effective_top_p,
     )
     server = ThreadingHTTPServer((config.host, config.port), make_mlx_predictor_handler(engine))
     print(
@@ -2248,7 +2468,14 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
                 "listening": f"http://{config.host}:{config.port}",
                 "model": config.model,
                 "profile": config.profile_id,
-                "maxTokens": config.max_tokens,
+                "decodeStrategy": engine.decode_strategy,
+                "branchCount": engine.branch_count,
+                "maxTokens": effective_max_tokens,
+                "sampling": {
+                    "temperature": effective_temperature,
+                    "topP": effective_top_p,
+                    "topK": engine.profile.sampling_top_k,
+                },
                 "warmup": warmup,
                 "promptCache": engine.prompt_cache_status(),
             },
@@ -2262,7 +2489,14 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
         server.server_close()
 
 
-def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str) -> dict[str, Any]:
+def _normalize_prediction_request(
+    payload: dict[str, Any],
+    *,
+    default_model: str,
+    default_max_tokens: int = 8,
+    default_temperature: float = 0.15,
+    default_top_p: float = 0.85,
+) -> dict[str, Any]:
     _ = str(payload.get("model") or default_model)
     current_input = collapse_repeated_tail(
         compact_whitespace(str(_payload_value(payload, "currentInput", "current_input", default="") or ""))
@@ -2274,9 +2508,18 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
         "current_input": current_input,
         "recent_context": recent_context,
         "max_candidates": max(1, min(10, _int_payload(_payload_value(payload, "maxCandidates", "max_candidates"), 3))),
-        "max_tokens": max(1, min(64, _int_payload(_payload_value(payload, "maxTokens", "max_tokens"), 8))),
-        "temperature": _float_payload(payload.get("temperature"), 0.15),
-        "top_p": _float_payload(_payload_value(payload, "topP", "top_p"), 0.85),
+        "max_tokens": max(
+            1,
+            min(
+                64,
+                _int_payload(
+                    _payload_value(payload, "maxTokens", "max_tokens"),
+                    max(1, int(default_max_tokens)),
+                ),
+            ),
+        ),
+        "temperature": _float_payload(payload.get("temperature"), default_temperature),
+        "top_p": _float_payload(_payload_value(payload, "topP", "top_p"), default_top_p),
         "request_type": normalize_prediction_request_type(_payload_value(payload, "requestType", "request_type")),
         "rime_candidates": normalized_rime_candidate_texts(_payload_value(payload, "rimeCandidates", "rime_candidates")),
         "stream_first_candidate": bool(_payload_value(payload, "streamFirstCandidate", "stream_first_candidate")),
@@ -2741,6 +2984,55 @@ def _normalize_base_candidate(text: str) -> str:
     if len(surface) > 24:
         surface = surface[:24]
     return surface
+
+
+def _base_completion_sample_candidate(
+    raw_text: str,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidate_chars: int,
+) -> str:
+    surface = _clean_base_completion_text(raw_text)
+    surface = re.sub(
+        r"(?<=[\u3400-\u9fff，。！？；：、])\s+(?=[\u3400-\u9fff，。！？；：、])",
+        "",
+        surface,
+    )
+    surface = _normalize_base_candidate(surface)
+    if not surface or len(surface) > max(1, int(max_candidate_chars)):
+        return ""
+    surface = _repair_base_completion_candidate(surface)
+    normalized = _repeat_norm(surface)
+    context_norm = _repeat_norm(recent_context)
+    input_norm = _repeat_norm(current_input)
+    if not normalized or normalized in {context_norm, input_norm}:
+        return ""
+    if context_norm and normalized in context_norm:
+        return ""
+    if input_norm and normalized in input_norm:
+        return ""
+    if _is_low_value_base_candidate(surface) or _looks_like_meta_completion_candidate(surface):
+        return ""
+    return surface
+
+
+def _base_completion_boundary_quality(raw_text: str, candidate: str) -> int:
+    """Prefer complete sampled clauses without changing the model distribution."""
+
+    raw = _clean_base_completion_text(raw_text).strip()
+    if not raw or not candidate:
+        return 0
+    if re.search(r"[。！？!?]$", raw):
+        return 3
+    if re.search(
+        r"(?:一[个份条件点些小]|几[个件次条]|想不|先把|再把|需要|可以|应该|可能|为了|因为|所以|但是|如果|然后)$",
+        candidate,
+    ):
+        return 1
+    if re.search(r"[,，、;；:：]$", raw):
+        return 1
+    return 2
 
 
 def _is_low_value_base_candidate(text: str) -> bool:
@@ -3301,6 +3593,21 @@ def _continuation_branch_specs(*, temperature: float, max_tokens: int) -> list[_
             max_candidate_chars=24,
         )
     ]
+
+
+def _base_completion_decode_parameters(
+    decode_strategy: str,
+    *,
+    max_tokens: int,
+    temperature: float,
+) -> tuple[int, float]:
+    requested_tokens = max(1, int(max_tokens))
+    requested_temperature = max(0.0, float(temperature))
+    if decode_strategy == "bos-sampled-completion-v1":
+        return max(6, min(16, requested_tokens)), min(requested_temperature, 0.42)
+    if decode_strategy == "bos-short-completion-v8":
+        return max(4, min(8, requested_tokens)), min(requested_temperature, 0.16)
+    return max(4, min(6, requested_tokens)), min(requested_temperature, 0.10)
 
 
 def _seed_replay_specs_from_logits(
@@ -3922,9 +4229,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--max-tokens", type=int, default=8)
-    parser.add_argument("--temperature", type=float, default=0.15)
-    parser.add_argument("--top-p", type=float, default=0.85)
+    parser.add_argument(
+        "--profile",
+        default=os.environ.get(
+            "RAG_IME_MLX_PROFILE",
+            os.environ.get("RAG_IME_PREDICTOR_PROFILE", "qwen3_06b_ime_hot"),
+        ),
+    )
+    parser.add_argument("--decode-strategy", default=os.environ.get("RAG_IME_MLX_DECODE_STRATEGY", ""))
+    parser.add_argument("--branch-count", type=int, default=int(os.environ.get("RAG_IME_MLX_BRANCH_COUNT") or "0"))
+    parser.add_argument("--max-tokens", type=int, default=int(os.environ.get("RAG_IME_MLX_MAX_TOKENS") or "0"))
+    parser.add_argument("--temperature", type=float, default=float(os.environ.get("RAG_IME_MLX_TEMPERATURE", "-1")))
+    parser.add_argument("--top-p", type=float, default=float(os.environ.get("RAG_IME_MLX_TOP_P", "-1")))
     parser.add_argument("--prompt-cache", action="store_true", help="Prepare the stable system-prompt cache at startup")
     parser.add_argument("--prompt-cache-max-kv-size", type=int, default=0)
     args = parser.parse_args(argv)
@@ -3933,6 +4249,9 @@ def main(argv: list[str] | None = None) -> int:
             host=args.host,
             port=args.port,
             model=args.model,
+            profile_id=args.profile,
+            decode_strategy=args.decode_strategy,
+            branch_count=args.branch_count,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,

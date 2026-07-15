@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.memory_tag_graph import propagate_tag_energy, recompute_tag_graph
+from rag_ime.memory_tag_graph import activate_tag_graph, propagate_tag_energy, recompute_tag_graph
 
 
 class MemoryTagGraphGovernanceTests(unittest.TestCase):
@@ -94,6 +94,58 @@ class MemoryTagGraphGovernanceTests(unittest.TestCase):
         self.assertIn(related, governed_energy)
         self.assertEqual(legacy_energy, {})
         self.assertEqual(legacy_edges, 0)
+
+    def test_shared_activation_reports_two_hop_path_and_blocks_cycle_amplification(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            tag_ids: dict[str, int] = {}
+            for tag, source, quality in (
+                ("输入法", "dsv4", 0.9),
+                ("大模型", "dsv4", 0.8),
+                ("本地模型", "user", 0.8),
+            ):
+                tag_ids[tag] = int(conn.execute(
+                    """
+                    INSERT INTO memory_tags(
+                        tag, normalized_tag, tag_type, quality_score,
+                        created_at_ms, updated_at_ms, source, status
+                    ) VALUES (?, ?, 'concept', ?, 1, 1, ?, 'active')
+                    """,
+                    (tag, tag, quality, source),
+                ).lastrowid)
+            for src, dst, weight, evidence_count in (
+                ("输入法", "大模型", 0.8, 2),
+                ("大模型", "本地模型", 0.75, 3),
+                ("本地模型", "输入法", 1.0, 10),
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO memory_tag_edges(
+                        src_tag_id, dst_tag_id, edge_type, weight, direction_bias,
+                        evidence_count, updated_at_ms, metadata_json
+                    ) VALUES (?, ?, 'related', ?, 0.0, ?, 1, '{}')
+                    """,
+                    (tag_ids[src], tag_ids[dst], weight, evidence_count),
+                )
+
+            activations = activate_tag_graph(
+                conn,
+                seed_energies={tag_ids["输入法"]: 0.9},
+                max_hops=2,
+            )
+            legacy_shape = propagate_tag_energy(conn, query_text="输入法", max_hops=2)
+
+        large_model = activations[tag_ids["大模型"]]
+        local_model = activations[tag_ids["本地模型"]]
+        self.assertAlmostEqual(large_model.energy, 0.9 * 0.8 * 0.55)
+        self.assertEqual(large_model.hop, 1)
+        self.assertEqual(large_model.path_tags, ("输入法", "大模型"))
+        self.assertAlmostEqual(local_model.energy, 0.9 * 0.8 * 0.55 * 0.75 * 0.55)
+        self.assertEqual(local_model.hop, 2)
+        self.assertEqual(local_model.path_tags, ("输入法", "大模型", "本地模型"))
+        self.assertEqual(local_model.evidence_count, 5)
+        self.assertEqual(activations[tag_ids["输入法"]].energy, 0.9)
+        self.assertAlmostEqual(legacy_shape[tag_ids["本地模型"]], local_model.energy)
 
 
 if __name__ == "__main__":

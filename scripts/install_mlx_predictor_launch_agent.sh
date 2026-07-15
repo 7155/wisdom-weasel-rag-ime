@@ -11,22 +11,28 @@ APP_CODE_DIR="$APP_SUPPORT_DIR/app"
 MODEL_REGISTRY_EXPLICIT="${RAG_IME_MODEL_REGISTRY+x}"
 MODEL_REGISTRY_ORIGIN="${RAG_IME_MODEL_REGISTRY_ORIGIN:-$([[ -n "$MODEL_REGISTRY_EXPLICIT" ]] && printf explicit || printf default)}"
 MODEL_REGISTRY_PATH="${RAG_IME_MODEL_REGISTRY:-$APP_SUPPORT_DIR/models.json}"
-PORTABLE_MODEL_DIR="${RAG_IME_MODELS_DIR:-$APP_SUPPORT_DIR/Models}/minimind-ime-v2"
+PORTABLE_MODELS_DIR="${RAG_IME_MODELS_DIR:-$APP_SUPPORT_DIR/Models}"
 LAUNCH_WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
 HOST="${RAG_IME_MLX_HOST:-127.0.0.1}"
 PORT="${RAG_IME_MLX_PORT:-8767}"
-MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-8}"
-TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-0.15}"
-TOP_P="${RAG_IME_MLX_TOP_P:-0.85}"
+REQUESTED_TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-}"
+REQUESTED_TOP_P="${RAG_IME_MLX_TOP_P:-}"
+REQUESTED_TOP_K="${RAG_IME_MLX_TOP_K:-}"
 PROMPT_CACHE="${RAG_IME_MLX_PROMPT_CACHE:-0}"
 PROMPT_CACHE_MAX_KV_SIZE="${RAG_IME_MLX_PROMPT_CACHE_MAX_KV_SIZE:-0}"
 PREFIX_CACHE="${RAG_IME_MLX_PREFIX_CACHE:-0}"
 PREFIX_CACHE_MAX_ENTRIES="${RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES:-8}"
 PREFIX_CACHE_MAX_MB="${RAG_IME_MLX_PREFIX_CACHE_MAX_MB:-32}"
-PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-}"
 MEMORY_PROFILE="${RAG_IME_MEMORY_PROFILE:-low}"
 HF_HOME_VALUE="${RAG_IME_HF_HOME:-}"
 DRY_RUN="${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}"
+REQUESTED_MODEL="${RAG_IME_MLX_MODEL:-}"
+REQUESTED_PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}"
+REQUESTED_PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-${RAG_IME_PREDICTOR_PROMPT_MODE:-}}"
+REQUESTED_MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-}"
+REQUESTED_STREAM_FIRST="${RAG_IME_PREDICTOR_STREAM_FIRST:-}"
+REQUESTED_DECODE_STRATEGY="${RAG_IME_MLX_DECODE_STRATEGY:-}"
+REQUESTED_BRANCH_COUNT="${RAG_IME_MLX_BRANCH_COUNT:-}"
 
 if [[ "$MODEL_REGISTRY_ORIGIN" == "explicit" && ! -f "$MODEL_REGISTRY_PATH" ]]; then
   echo "Explicit model registry does not exist: $MODEL_REGISTRY_PATH" >&2
@@ -61,13 +67,86 @@ PY
   return 1
 }
 
+is_low_memory_profile() {
+  local normalized
+  normalized="$(printf '%s' "$MEMORY_PROFILE" | tr '[:upper:]' '[:lower:]')"
+  case "$normalized" in
+    low|safe|memory|memory-safe|minimal) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+detect_portable_model() {
+  local candidate
+  local candidates=()
+  if is_low_memory_profile; then
+    candidates=(
+      "$PORTABLE_MODELS_DIR/minimind-ime-60m-daily-short-final-v8"
+      "$PORTABLE_MODELS_DIR/minimind-ime-100m-user-daily-core-v1"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2-q8"
+    )
+  else
+    candidates=(
+      "$PORTABLE_MODELS_DIR/minimind-ime-100m-user-daily-core-v1"
+      "$PORTABLE_MODELS_DIR/minimind-ime-60m-daily-short-final-v8"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2-fp16"
+    )
+  fi
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  # Keep dry-runs deterministic; the real launch still fails the directory check.
+  printf '%s\n' "${candidates[0]}"
+}
+
 detect_model_profile() {
   local model_dir="$1"
   case "$model_dir" in
+    *minimind-ime-100m-user-daily-core-v1*) printf '%s\n' "minimind_ime_100m_v1" ;;
+    *minimind-ime-60m-daily-short-final-v8*) printf '%s\n' "minimind_ime_60m_v8" ;;
     *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "minimind_ime_v2" ;;
     *Qwen3*|*qwen3*) printf '%s\n' "qwen3_06b_ime_hot" ;;
-    *) printf '%s\n' "qwen3_06b_ime_hot" ;;
+    *) return 1 ;;
   esac
+}
+
+resolve_profile_contract() {
+  local profile_id="$1"
+  local model_dir="$2"
+  PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_EXECUTABLE" - "$profile_id" "$model_dir" <<'PY'
+import shlex
+import sys
+from pathlib import Path
+
+from rag_ime.model_profiles import profile_by_id, validate_profile, validate_profile_artifact
+
+try:
+    profile = profile_by_id(sys.argv[1])
+except ValueError as exc:
+    raise SystemExit(str(exc)) from None
+artifact_errors = validate_profile_artifact(profile, sys.argv[2]) if Path(sys.argv[2]).expanduser().is_dir() else []
+errors = [*validate_profile(profile), *artifact_errors]
+if errors:
+    raise SystemExit("; ".join(errors))
+values = {
+    "RESOLVED_PROFILE": profile.id,
+    "PROFILE_DEFAULT_PROMPT_MODE": profile.prompt_mode,
+    "PROFILE_DEFAULT_MAX_TOKENS": str(profile.max_tokens),
+    "PROFILE_DEFAULT_STREAM_FIRST": "1" if profile.stream_first else "0",
+    "PROFILE_DEFAULT_DECODE_STRATEGY": profile.decode_strategy,
+    "PROFILE_DEFAULT_BRANCH_COUNT": str(profile.branch_count),
+    "PROFILE_DEFAULT_TEMPERATURE": str(profile.sampling_temperature),
+    "PROFILE_DEFAULT_TOP_P": str(profile.sampling_top_p),
+    "PROFILE_DEFAULT_TOP_K": str(profile.sampling_top_k),
+}
+for key, value in values.items():
+    print(f"{key}={shlex.quote(value)}")
+PY
 }
 
 PYTHON_EXECUTABLE="${RAG_IME_MLX_PYTHON:-${RAG_IME_PYTHON:-$(detect_python || true)}}"
@@ -97,6 +176,10 @@ REGISTERED_MODEL_PROMPT_MODE=""
 REGISTERED_MODEL_ID=""
 REGISTERED_MODEL_FINGERPRINT=""
 REGISTERED_MODEL_RUNTIME=""
+REGISTERED_MODEL_MAX_TOKENS=""
+REGISTERED_MODEL_STREAM_FIRST=""
+REGISTERED_MODEL_DECODE_STRATEGY=""
+REGISTERED_MODEL_BRANCH_COUNT=""
 if [[ -f "$MODEL_REGISTRY_PATH" ]]; then
   if ! REGISTERED_RUNTIME_ENV="$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_EXECUTABLE" -m rag_ime.model_runtime --registry "$MODEL_REGISTRY_PATH" --lane hot --format shell)"; then
     echo "Active hot model registry entry is invalid or its artifact is missing: $MODEL_REGISTRY_PATH" >&2
@@ -109,6 +192,10 @@ if [[ -f "$MODEL_REGISTRY_PATH" ]]; then
   REGISTERED_MODEL_ID="${RAG_IME_REGISTERED_MODEL_ID:-}"
   REGISTERED_MODEL_FINGERPRINT="${RAG_IME_REGISTERED_MODEL_FINGERPRINT:-}"
   REGISTERED_MODEL_RUNTIME="${RAG_IME_REGISTERED_MODEL_RUNTIME:-}"
+  REGISTERED_MODEL_MAX_TOKENS="${RAG_IME_REGISTERED_MODEL_MAX_TOKENS:-}"
+  REGISTERED_MODEL_STREAM_FIRST="${RAG_IME_REGISTERED_MODEL_STREAM_FIRST:-}"
+  REGISTERED_MODEL_DECODE_STRATEGY="${RAG_IME_REGISTERED_MODEL_DECODE_STRATEGY:-}"
+  REGISTERED_MODEL_BRANCH_COUNT="${RAG_IME_REGISTERED_MODEL_BRANCH_COUNT:-}"
   HOST="${RAG_IME_MLX_HOST:-$HOST}"
   PORT="${RAG_IME_MLX_PORT:-$PORT}"
 fi
@@ -118,17 +205,54 @@ if [[ -n "$REGISTERED_MODEL_RUNTIME" && "$REGISTERED_MODEL_RUNTIME" != "mlx" && 
   exit 1
 fi
 
-MODEL="${RAG_IME_MLX_MODEL:-${REGISTERED_MODEL_PATH:-$PORTABLE_MODEL_DIR}}"
-INFERRED_PROFILE="$(detect_model_profile "$MODEL")"
+MODEL="${REGISTERED_MODEL_PATH:-${REQUESTED_MODEL:-$(detect_portable_model)}}"
+INFERRED_PROFILE=""
+if ! INFERRED_PROFILE="$(detect_model_profile "$MODEL")" && [[ -z "$REGISTERED_MODEL_PROFILE" && -z "$REQUESTED_PROFILE" ]]; then
+  echo "Cannot infer a safe MLX profile for: $MODEL" >&2
+  echo "Register the model with an explicit supported profile." >&2
+  exit 1
+fi
 INFERRED_MODEL_ID="$(basename "${MODEL:-local-model}")"
-PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-${REGISTERED_MODEL_PROFILE:-$INFERRED_PROFILE}}}"
-PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-$REGISTERED_MODEL_PROMPT_MODE}"
+PROFILE="${REGISTERED_MODEL_PROFILE:-${REQUESTED_PROFILE:-$INFERRED_PROFILE}}"
+if ! PROFILE_CONTRACT_ENV="$(resolve_profile_contract "$PROFILE" "$MODEL")"; then
+  echo "MLX model/profile contract validation failed: $PROFILE ($MODEL)" >&2
+  exit 1
+fi
+eval "$PROFILE_CONTRACT_ENV"
+PROFILE="$RESOLVED_PROFILE"
+if [[ -n "$REQUESTED_DECODE_STRATEGY" && "$REQUESTED_DECODE_STRATEGY" != "$PROFILE_DEFAULT_DECODE_STRATEGY" ]]; then
+  echo "Profile $PROFILE requires decodeStrategy=$PROFILE_DEFAULT_DECODE_STRATEGY, got $REQUESTED_DECODE_STRATEGY" >&2
+  exit 1
+fi
+if [[ -n "$REQUESTED_BRANCH_COUNT" && "$REQUESTED_BRANCH_COUNT" != "$PROFILE_DEFAULT_BRANCH_COUNT" ]]; then
+  echo "Profile $PROFILE requires branchCount=$PROFILE_DEFAULT_BRANCH_COUNT, got $REQUESTED_BRANCH_COUNT" >&2
+  exit 1
+fi
+PROMPT_MODE="${REGISTERED_MODEL_PROMPT_MODE:-${REQUESTED_PROMPT_MODE:-$PROFILE_DEFAULT_PROMPT_MODE}}"
+if [[ "$PROMPT_MODE" != "$PROFILE_DEFAULT_PROMPT_MODE" ]]; then
+  echo "Profile $PROFILE requires promptMode=$PROFILE_DEFAULT_PROMPT_MODE, got $PROMPT_MODE" >&2
+  exit 1
+fi
+if [[ -n "$REGISTERED_MODEL_PROFILE" ]]; then
+  MAX_TOKENS="${REGISTERED_MODEL_MAX_TOKENS:-$PROFILE_DEFAULT_MAX_TOKENS}"
+  STREAM_FIRST="${REGISTERED_MODEL_STREAM_FIRST:-$PROFILE_DEFAULT_STREAM_FIRST}"
+  DECODE_STRATEGY="${REGISTERED_MODEL_DECODE_STRATEGY:-$PROFILE_DEFAULT_DECODE_STRATEGY}"
+  BRANCH_COUNT="${REGISTERED_MODEL_BRANCH_COUNT:-$PROFILE_DEFAULT_BRANCH_COUNT}"
+else
+  MAX_TOKENS="${REQUESTED_MAX_TOKENS:-$PROFILE_DEFAULT_MAX_TOKENS}"
+  STREAM_FIRST="${REQUESTED_STREAM_FIRST:-$PROFILE_DEFAULT_STREAM_FIRST}"
+  DECODE_STRATEGY="$PROFILE_DEFAULT_DECODE_STRATEGY"
+  BRANCH_COUNT="$PROFILE_DEFAULT_BRANCH_COUNT"
+fi
+TEMPERATURE="${REQUESTED_TEMPERATURE:-$PROFILE_DEFAULT_TEMPERATURE}"
+TOP_P="${REQUESTED_TOP_P:-$PROFILE_DEFAULT_TOP_P}"
+TOP_K="${REQUESTED_TOP_K:-$PROFILE_DEFAULT_TOP_K}"
 MODEL_ID="${RAG_IME_MODEL_ID:-${REGISTERED_MODEL_ID:-$INFERRED_MODEL_ID}}"
 MODEL_FINGERPRINT="${RAG_IME_MODEL_FINGERPRINT:-$REGISTERED_MODEL_FINGERPRINT}"
 
 if [[ ! -d "$MODEL" && "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
   echo "MLX model directory not found: $MODEL" >&2
-  echo "Register a model with: python3 -m rag_ime.model_registry register --model-id ID --path PATH --profile minimind_ime_v2 --prompt-mode base-completion" >&2
+  echo "Register a model with: python3 -m rag_ime.model_registry register --model-id ID --path PATH --profile minimind_ime_100m_v1 --prompt-mode base-completion" >&2
   exit 1
 fi
 
@@ -168,12 +292,16 @@ PROFILE="$PROFILE" \
 MAX_TOKENS="$MAX_TOKENS" \
 TEMPERATURE="$TEMPERATURE" \
 TOP_P="$TOP_P" \
+TOP_K="$TOP_K" \
 PROMPT_CACHE="$PROMPT_CACHE" \
 PROMPT_CACHE_MAX_KV_SIZE="$PROMPT_CACHE_MAX_KV_SIZE" \
 PREFIX_CACHE="$PREFIX_CACHE" \
 PREFIX_CACHE_MAX_ENTRIES="$PREFIX_CACHE_MAX_ENTRIES" \
 PREFIX_CACHE_MAX_MB="$PREFIX_CACHE_MAX_MB" \
 PROMPT_MODE="$PROMPT_MODE" \
+STREAM_FIRST="$STREAM_FIRST" \
+DECODE_STRATEGY="$DECODE_STRATEGY" \
+BRANCH_COUNT="$BRANCH_COUNT" \
 MEMORY_PROFILE="$MEMORY_PROFILE" \
 HF_HOME_VALUE="$HF_HOME_VALUE" \
 "$PYTHON_EXECUTABLE" - <<'PY'
@@ -220,11 +348,18 @@ env_vars = {
     "RAG_IME_MODEL_FINGERPRINT": os.environ["MODEL_FINGERPRINT"],
     "RAG_IME_MODEL_REGISTRY": os.environ["MODEL_REGISTRY_PATH"],
     "RAG_IME_MLX_PROFILE": os.environ["PROFILE"],
+    "RAG_IME_PREDICTOR_PROFILE": os.environ["PROFILE"],
     "RAG_IME_MLX_HOST": os.environ["HOST"],
     "RAG_IME_MLX_PORT": os.environ["PORT"],
     "RAG_IME_MLX_MAX_TOKENS": os.environ["MAX_TOKENS"],
+    "RAG_IME_PREDICTOR_MAX_TOKENS": os.environ["MAX_TOKENS"],
+    "RAG_IME_MLX_STREAM_FIRST": os.environ["STREAM_FIRST"],
+    "RAG_IME_PREDICTOR_STREAM_FIRST": os.environ["STREAM_FIRST"],
+    "RAG_IME_MLX_DECODE_STRATEGY": os.environ["DECODE_STRATEGY"],
+    "RAG_IME_MLX_BRANCH_COUNT": os.environ["BRANCH_COUNT"],
     "RAG_IME_MLX_TEMPERATURE": os.environ["TEMPERATURE"],
     "RAG_IME_MLX_TOP_P": os.environ["TOP_P"],
+    "RAG_IME_MLX_TOP_K": os.environ["TOP_K"],
     "RAG_IME_MLX_PROMPT_CACHE": os.environ["PROMPT_CACHE"],
     "RAG_IME_MLX_PROMPT_CACHE_MAX_KV_SIZE": os.environ["PROMPT_CACHE_MAX_KV_SIZE"],
     "RAG_IME_MLX_PREFIX_CACHE": os.environ["PREFIX_CACHE"],
@@ -241,6 +376,7 @@ env_vars = {
 prompt_mode = os.environ.get("PROMPT_MODE", "").strip()
 if prompt_mode:
     env_vars["RAG_IME_MLX_PROMPT_MODE"] = prompt_mode
+    env_vars["RAG_IME_PREDICTOR_PROMPT_MODE"] = prompt_mode
 hf_home = os.environ.get("HF_HOME_VALUE", "").strip()
 if hf_home:
     env_vars["HF_HOME"] = hf_home

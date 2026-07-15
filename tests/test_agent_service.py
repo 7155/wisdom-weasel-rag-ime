@@ -207,6 +207,37 @@ class AgentServiceTests(unittest.TestCase):
                 }
             )
 
+    def test_agent_identity_can_continue_through_a_trusted_session_not_raw_client_id(self) -> None:
+        first = self.service.create_session(
+            {"title": "Hermes 第一段", "roleId": "hermes-v1", "roleVersion": "1"}
+        )["session"]
+        continued = self.service.create_session(
+            {
+                "title": "Hermes 第二段",
+                "continueAgentFromSessionId": first["id"],
+            }
+        )["session"]
+        forged = self.service.create_session(
+            {
+                "title": "伪造身份",
+                "roleId": "hermes-v1",
+                "agentId": first["agentId"],
+            }
+        )["session"]
+
+        self.assertNotEqual(first["id"], continued["id"])
+        self.assertEqual(first["agentId"], continued["agentId"])
+        self.assertEqual(continued["roleId"], "hermes-v1")
+        self.assertNotEqual(forged["agentId"], first["agentId"])
+        with self.assertRaisesRegex(ValueError, "cannot change role"):
+            self.service.create_session(
+                {
+                    "title": "错误换角色",
+                    "continueAgentFromSessionId": first["id"],
+                    "roleId": "vcp-v1",
+                }
+            )
+
     def test_room_intercom_delivery_uses_pi_transcript_without_memory_checkpoint(self) -> None:
         room = self.service.create_room(
             {

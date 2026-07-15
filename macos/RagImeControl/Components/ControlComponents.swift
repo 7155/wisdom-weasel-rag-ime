@@ -6,6 +6,14 @@ enum ControlDesign {
     static let pageVerticalPadding: CGFloat = 28
     static let sectionSpacing: CGFloat = 26
     static let surfaceRadius: CGFloat = 8
+    static let controlHeight: CGFloat = 34
+    static let iconButtonSize: CGFloat = 32
+    static let valueColumnWidth: CGFloat = 260
+    static let pageTitleFont = Font.system(size: 29, weight: .semibold)
+    static let sectionTitleFont = Font.system(size: 18, weight: .semibold)
+    static let bodyFont = Font.system(size: 15)
+    static let detailFont = Font.system(size: 14)
+    static let metadataFont = Font.system(size: 13)
     static let brand = Color(red: 0.06, green: 0.55, blue: 0.58)
     static let quietSurface = Color(nsColor: .controlBackgroundColor)
     static let hairline = Color(nsColor: .separatorColor).opacity(0.58)
@@ -17,8 +25,8 @@ struct PageHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 29, weight: .semibold)).lineLimit(1)
-            Text(subtitle).font(.system(size: 14.5)).foregroundStyle(.secondary).lineLimit(2)
+            Text(title).font(ControlDesign.pageTitleFont).lineLimit(1)
+            Text(subtitle).font(ControlDesign.detailFont).foregroundStyle(.secondary).lineLimit(2)
         }
     }
 }
@@ -29,10 +37,10 @@ struct ControlSectionHeader: View {
 
     var body: some View {
         HStack {
-            Text(title).font(.system(size: 16, weight: .semibold))
+            Text(title).font(ControlDesign.sectionTitleFont)
             Spacer()
             if !trailing.isEmpty {
-                Text(trailing).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text(trailing).font(ControlDesign.metadataFont.monospacedDigit()).foregroundStyle(.secondary)
             }
         }
     }
@@ -56,6 +64,197 @@ struct ControlSurface<Content: View>: View {
     }
 }
 
+/// Stable two-column row for native management surfaces. The value column has
+/// one shared width so toggles, pickers, shortcut recorders, and buttons do not
+/// drift as labels change.
+struct ControlLabelValueRow<Value: View>: View {
+    let label: String
+    let detail: String
+    private let value: Value
+
+    init(
+        _ label: String,
+        detail: String = "",
+        @ViewBuilder value: () -> Value
+    ) {
+        self.label = label
+        self.detail = detail
+        self.value = value()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 24) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .font(ControlDesign.bodyFont.weight(.medium))
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(ControlDesign.metadataFont)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            value
+                .frame(width: ControlDesign.valueColumnWidth, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .padding(.vertical, 6)
+    }
+}
+
+struct ControlSettingsSection: View {
+    @EnvironmentObject private var model: AppModel
+    let section: SettingsSection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ControlSectionHeader(title: title)
+            ControlSurface {
+                VStack(spacing: 0) {
+                    ForEach(visibleFields) { field in
+                        ControlSettingsFieldRow(field: field)
+                            .padding(.horizontal, 16)
+                        if field.id != visibleFields.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var visibleFields: [SettingsField] {
+        section.fields.filter { model.expertMode || !$0.expert }
+    }
+
+    private var title: String {
+        [
+            "interaction": "基本行为与快捷键",
+            "display": "候选界面",
+            "pinyin": "拼音",
+            "rag": "RAG",
+            "models": "模型",
+            "activeRag": "显式生成",
+            "memory": "记忆",
+        ].first { $0.key == section.id }?.value ?? section.label
+    }
+}
+
+private struct ControlSettingsFieldRow: View {
+    @EnvironmentObject private var model: AppModel
+    let field: SettingsField
+
+    var body: some View {
+        ControlLabelValueRow(field.label, detail: field.description) {
+            control
+        }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        switch field.type {
+        case "boolean":
+            Toggle("", isOn: boolBinding)
+                .labelsHidden()
+                .frame(width: ControlDesign.valueColumnWidth, alignment: .trailing)
+        case "integer", "float":
+            Stepper(value: numberBinding, in: numberRange, step: field.step ?? 1) {
+                Text(numberLabel)
+                    .font(ControlDesign.bodyFont.monospacedDigit())
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .frame(width: ControlDesign.valueColumnWidth)
+        case "enum":
+            Picker("", selection: stringBinding) {
+                ForEach(field.options ?? [], id: \.self) { option in
+                    Text(optionLabel(option)).tag(option)
+                }
+            }
+            .labelsHidden()
+            .frame(width: ControlDesign.valueColumnWidth)
+        case "shortcut":
+            ShortcutRecorder(value: stringBinding)
+                .frame(width: ControlDesign.valueColumnWidth, height: ControlDesign.controlHeight)
+        default:
+            TextField("", text: stringBinding)
+                .textFieldStyle(.roundedBorder)
+                .font(ControlDesign.bodyFont)
+                .frame(width: ControlDesign.valueColumnWidth)
+        }
+    }
+
+    private var boolBinding: Binding<Bool> {
+        Binding(
+            get: { model.value(for: field).boolValue },
+            set: { value in Task { await model.update(field: field, value: .bool(value)) } }
+        )
+    }
+
+    private var numberBinding: Binding<Double> {
+        Binding(
+            get: { model.value(for: field).numberValue },
+            set: { value in Task { await model.update(field: field, value: .number(value)) } }
+        )
+    }
+
+    private var stringBinding: Binding<String> {
+        Binding(
+            get: { model.value(for: field).stringValue },
+            set: { value in Task { await model.update(field: field, value: .string(value)) } }
+        )
+    }
+
+    private var numberRange: ClosedRange<Double> {
+        (field.min ?? 0)...(field.max ?? 10_000)
+    }
+
+    private var numberLabel: String {
+        let value = model.value(for: field).numberValue
+        let number = field.type == "integer" ? String(Int(value)) : String(format: "%.2f", value)
+        return field.unit.isEmpty ? number : "\(number) \(field.unit)"
+    }
+
+    private func optionLabel(_ option: String) -> String {
+        let labels = [
+            "compact": "紧凑",
+            "expanded": "展开",
+            "pass_through": "输入数字",
+            "select_prediction": "选择预测",
+            "accept_top_prediction": "接受第一项",
+            "rime_default": "Rime 默认",
+            "disabled": "关闭",
+            "sichuan-mild": "四川轻度",
+            "none": "关闭",
+            "replace_selection": "替换选区",
+            "insert_after_selection": "选区后插入",
+            "show_only": "仅显示",
+        ]
+        return labels[option] ?? option
+    }
+}
+
+struct ControlDetailRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 18) {
+            Text(label)
+                .font(ControlDesign.metadataFont.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 104, alignment: .leading)
+            Text(value.isEmpty ? "未设置" : value)
+                .font(ControlDesign.bodyFont)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 struct ControlReadinessItem: View {
     let title: String
     let detail: String
@@ -72,7 +271,7 @@ struct ControlReadinessItem: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.callout.weight(.semibold)).lineLimit(1)
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(detail).font(ControlDesign.metadataFont).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 6)
             Circle()
@@ -107,7 +306,7 @@ struct ControlMetricItem: View {
                         .fixedSize(horizontal: true, vertical: false)
                     Text(title).font(.callout).foregroundStyle(.secondary)
                 }
-                Text(detail).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                Text(detail).font(ControlDesign.metadataFont).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer(minLength: 4)
         }
@@ -121,7 +320,7 @@ struct ControlShortcutKey: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.monospaced().weight(.semibold))
+            .font(ControlDesign.metadataFont.monospaced().weight(.semibold))
             .foregroundStyle(ControlDesign.brand)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -153,7 +352,7 @@ struct ControlNoticeBanner: View {
             Image(systemName: kind.symbol).foregroundStyle(kind.color)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.callout.weight(.semibold))
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(detail).font(ControlDesign.metadataFont).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer()
             Button(action: onDismiss) {
@@ -183,7 +382,7 @@ struct ControlMetricTile: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(tint)
                 Spacer()
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(detail).font(ControlDesign.metadataFont).foregroundStyle(.secondary).lineLimit(1)
             }
             Text(value)
                 .font(.system(size: 27, weight: .semibold, design: .rounded))
@@ -215,7 +414,7 @@ struct ControlReadinessTile: View {
             }
             Text(title).font(.headline)
             Text(detail)
-                .font(.caption)
+                .font(ControlDesign.metadataFont)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .frame(minHeight: 30, alignment: .topLeading)
@@ -242,7 +441,7 @@ struct StatusRow: View {
             Text(status.detail).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             Spacer()
             Text(degraded ? "降级" : (status.ok ? "就绪" : "检查"))
-                .font(.caption.weight(.medium))
+                .font(ControlDesign.metadataFont.weight(.medium))
                 .foregroundStyle(degraded ? Color.orange : (status.ok ? Color.secondary : Color.red))
         }
         .padding(.vertical, 7)
@@ -267,7 +466,7 @@ struct SourceLaneLabel: View {
 
     var body: some View {
         Label(title, systemImage: symbol)
-            .font(.caption.weight(.medium))
+            .font(ControlDesign.metadataFont.weight(.medium))
             .foregroundStyle(color)
             .help(helpText)
     }

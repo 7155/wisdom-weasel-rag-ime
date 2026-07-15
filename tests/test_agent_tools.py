@@ -295,6 +295,38 @@ class _Core:
         return {"hits": 3, "misses": 1}
 
 
+class _MemoryQueries:
+    def __init__(self):
+        self.calls = []
+
+    def search(self, session_id, **kwargs):
+        self.calls.append(("search", session_id, dict(kwargs)))
+        return {
+            "summary": "召回 1 条去重证据和 1 个图锚点",
+            "count": 1,
+            "items": [{"sourceType": "atom", "sourceId": "atom:1", "text": "统一检索"}],
+            "anchors": [{"entityId": "entity:1", "name": "记忆系统"}],
+            "lanes": {"bm25_raw": {"count": 1}},
+            "diagnostics": {"rawHitCount": 2, "deduplicatedHitCount": 1},
+        }
+
+    def expand(self, session_id, **kwargs):
+        self.calls.append(("expand", session_id, dict(kwargs)))
+        return {
+            "summary": "图扩展返回 1 条关系证据",
+            "count": 1,
+            "relations": [{"relationId": "relation:1", "fact": "记忆系统使用混合检索"}],
+        }
+
+    def get_sources(self, session_id, **kwargs):
+        self.calls.append(("get_sources", session_id, dict(kwargs)))
+        return {
+            "summary": "回源读取 1 条原始证据",
+            "count": 1,
+            "sources": [{"sourceType": "atom", "sourceId": "atom:1", "text": "统一检索"}],
+        }
+
+
 class _Facade:
     def __init__(self):
         self.memory_run_status = "draft"
@@ -473,12 +505,14 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.session = self.store.create(title="tool test", created_at_ms=1)
         self.management = _Management()
         self.facade = _Facade()
+        self.memory_queries = _MemoryQueries()
         self.gateway = ControlToolGateway(
             sessions=self.store,
             management=self.management,
             core=_Core(),
             project="wisdom-weasel-rag-ime",
             facade=self.facade,
+            memory_queries=self.memory_queries,
         )
 
     def tearDown(self) -> None:
@@ -505,6 +539,56 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(read["book"]["memories"][0]["text"], "普通生成不经过 Pi")
         self.assertEqual(recent["count"], 1)
         self.assertEqual(recent["items"][0]["text"], "把普通生成和深度检索分开")
+
+    def test_memory_search_expand_and_get_sources_use_trusted_session(self) -> None:
+        long_anchor_id = "entity:" + "a" * 180
+        long_relation_id = "relation:" + "r" * 180
+        search = self.gateway.execute(
+            self._call(
+                "search",
+                query="输入法记忆",
+                project="wisdom-weasel-rag-ime",
+                limit=9,
+                _sessionId="forged-session",
+            )
+        )
+        expanded = self.gateway.execute(
+            self._call(
+                "expand",
+                anchorIds=[long_anchor_id],
+                depth=3,
+                asOfMs=1234,
+                limit=30,
+            )
+        )
+        sources = self.gateway.execute(
+            self._call(
+                "get_sources",
+                relationIds=[long_relation_id],
+                sourceRefs=[{"sourceType": "atom", "sourceId": "atom:1"}],
+                limit=25,
+            )
+        )
+
+        self.assertEqual(search["operation"], "search")
+        self.assertEqual(search["result"]["anchors"][0]["entityId"], "entity:1")
+        self.assertEqual(expanded["operation"], "expand")
+        self.assertEqual(sources["operation"], "get_sources")
+        self.assertEqual(
+            [call[0] for call in self.memory_queries.calls],
+            ["search", "expand", "get_sources"],
+        )
+        self.assertTrue(
+            all(call[1] == self.session["id"] for call in self.memory_queries.calls)
+        )
+        self.assertEqual(self.memory_queries.calls[1][2]["max_depth"], 3)
+        self.assertEqual(self.memory_queries.calls[1][2]["as_of_ms"], 1234)
+        self.assertEqual(self.memory_queries.calls[1][2]["anchor_ids"], [long_anchor_id])
+        self.assertEqual(self.memory_queries.calls[2][2]["relation_ids"], [long_relation_id])
+        self.assertEqual(
+            self.memory_queries.calls[2][2]["source_refs"],
+            [{"sourceType": "atom", "sourceId": "atom:1"}],
+        )
 
     def test_memory_maintenance_status_exposes_review_only_drafts(self) -> None:
         result = self.gateway.execute(self._call("maintenance_status", limit=8))["result"]
@@ -552,6 +636,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(memory["operationRisks"]["maintenance_preview"], "R0")
         self.assertEqual(memory["operationRisks"]["maintenance_apply"], "R1")
         self.assertEqual(memory["operationRisks"]["maintenance_rollback"], "R1")
+        self.assertIn("search", memory["operations"])
+        self.assertIn("expand", memory["operations"])
+        self.assertIn("get_sources", memory["operations"])
         input_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_input")
         self.assertEqual(input_tool["riskLevel"], "R1")
         self.assertEqual(input_tool["operationRisks"]["preview_settings"], "R0")
@@ -1315,6 +1402,10 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("RAG_IME_AGENT_SESSION_MODE", extension)
         self.assertIn('sessionMode === "coordinator"', extension)
         self.assertIn("/tool/approval-result", extension)
+        self.assertIn('if (spec.name === "ime_planning")', extension)
+        self.assertIn('required: ["op", "taskId", "action"]', extension)
+        self.assertIn('required: ["op", "eventId"]', extension)
+        self.assertIn('enum: ["complete", "start", "reopen", "cancel"]', extension)
 
     def test_room_tool_uses_trusted_session_identity_and_drops_forged_source_fields(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []

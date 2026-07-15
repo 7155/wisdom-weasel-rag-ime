@@ -38,7 +38,9 @@ class SelectMacosInputSourceScriptTests(unittest.TestCase):
 
         self.assertIn("select_via_input_menu", source)
         self.assertIn("TextInputMenuAgent", source)
-        self.assertIn("鼠须管|Squirrel - Simplified|Squirrel", source)
+        self.assertIn("智鼬输入法|鼠须管|Squirrel - Simplified|Squirrel", source)
+        self.assertIn("set aliasNames to splitAliases", source)
+        self.assertNotIn("set aliases to splitAliases", source)
         self.assertIn('selection_phase="menu-fallback"', source)
 
 

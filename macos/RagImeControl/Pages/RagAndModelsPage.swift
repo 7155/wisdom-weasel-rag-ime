@@ -20,6 +20,9 @@ struct RagAndModelsPage: View {
     @State private var knowledgeHeaders = ""
     @State private var knowledgeKeyConfigured = false
     @State private var providerSaveMessage = ""
+    @State private var providerSaveBusy = false
+    @State private var unsupportedInstantProvider = ""
+    @State private var unsupportedKnowledgeProvider = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,8 +52,10 @@ struct RagAndModelsPage: View {
             }
         }
         .task {
+            async let route: Void = model.loadKnowledgeRoute()
+            async let providers: Void = model.loadProviderConfiguration()
+            _ = await (route, providers)
             loadProviderSlots()
-            await model.loadKnowledgeRoute()
         }
         .confirmationDialog(
             "应用这份数据库整理草案？",
@@ -136,12 +141,12 @@ struct RagAndModelsPage: View {
                 knowledgeProviderEditor
                 if !providerSaveMessage.isEmpty {
                     Text(providerSaveMessage)
-                        .font(.caption)
+                        .font(ControlDesign.metadataFont)
                         .foregroundStyle(.secondary)
                         .padding(.top, 10)
                 }
-                Text("保存后重启 Sidecar 生效。即时补全仅允许本机或局域网地址；知识整理只在用户显式触发时访问远程服务。")
-                    .font(.caption)
+                Text("即时补全适合本机或受信任网络的兼容服务；知识整理只在用户显式触发时访问远程服务。")
+                    .font(ControlDesign.metadataFont)
                     .foregroundStyle(.secondary)
                     .padding(.top, 8)
             }
@@ -159,7 +164,7 @@ struct RagAndModelsPage: View {
             Image(systemName: symbol).foregroundStyle(.blue).frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Text(subtitle).font(ControlDesign.metadataFont).foregroundStyle(.secondary)
             }
             Spacer()
             Button("设置", systemImage: "slider.horizontal.3", action: action)
@@ -171,7 +176,7 @@ struct RagAndModelsPage: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("即时补全", systemImage: "bolt.fill").font(.headline)
             Text("默认使用内置小模型，也可连接本机或局域网的兼容服务。")
-                .font(.caption)
+                .font(ControlDesign.metadataFont)
                 .foregroundStyle(.secondary)
             providerGrid {
                 GridRow {
@@ -189,10 +194,28 @@ struct RagAndModelsPage: View {
                 }
                 GridRow { Text("请求头"); TextField("JSON，可选", text: $instantHeaders).textFieldStyle(.roundedBorder) }
             }
+            unsupportedProviderNotice(
+                provider: unsupportedInstantProvider,
+                replacement: instantProvider.title
+            ) {
+                unsupportedInstantProvider = ""
+            }
             HStack {
                 Spacer()
-                Button("保存即时补全", systemImage: "internaldrive") { saveInstantSlot() }
-                    .disabled(instantEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || instantModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    Task { await saveInstantSlot() }
+                } label: {
+                    if providerSaveBusy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("保存并重启本地模型", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(
+                    providerSaveBusy || model.providerConfigurationBusy || !unsupportedInstantProvider.isEmpty ||
+                    instantEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    instantModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
             }
         }
         .padding(.vertical, 14)
@@ -202,7 +225,7 @@ struct RagAndModelsPage: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("知识整理", systemImage: "sparkles").font(.headline)
             Text("默认使用当前远程服务，也可切换到 OpenAI 兼容接口。")
-                .font(.caption)
+                .font(ControlDesign.metadataFont)
                 .foregroundStyle(.secondary)
             providerGrid {
                 GridRow {
@@ -220,10 +243,28 @@ struct RagAndModelsPage: View {
                 }
                 GridRow { Text("请求头"); TextField("JSON，可选", text: $knowledgeHeaders).textFieldStyle(.roundedBorder) }
             }
+            unsupportedProviderNotice(
+                provider: unsupportedKnowledgeProvider,
+                replacement: knowledgeProvider.title
+            ) {
+                unsupportedKnowledgeProvider = ""
+            }
             HStack {
                 Spacer()
-                Button("保存知识整理", systemImage: "key.fill") { saveKnowledgeSlot() }
-                    .disabled(knowledgeEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || knowledgeModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    Task { await saveKnowledgeSlot() }
+                } label: {
+                    if providerSaveBusy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("保存并重启知识服务", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(
+                    providerSaveBusy || model.providerConfigurationBusy || !unsupportedKnowledgeProvider.isEmpty ||
+                    knowledgeEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    knowledgeModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
             }
         }
         .padding(.vertical, 14)
@@ -238,23 +279,48 @@ struct RagAndModelsPage: View {
 
     private func loadProviderSlots() {
         let instant = ModelProviderConfigStore.loadInstant()
-        instantProvider = instant.provider
-        instantEndpoint = instant.endpoint
-        instantModel = instant.model
+        let managedInstant = model.providerConfiguration?.providers.instant
+        let managedInstantProvider = managedInstant?.provider ?? ""
+        if let provider = InstantCompletionProvider(rawValue: managedInstantProvider) {
+            instantProvider = provider
+            unsupportedInstantProvider = ""
+        } else {
+            instantProvider = instant.provider
+            unsupportedInstantProvider = managedInstantProvider
+        }
+        instantEndpoint = managedInstant?.endpoint?.isEmpty == false ? managedInstant?.endpoint ?? instant.endpoint : instant.endpoint
+        instantModel = managedInstant?.model?.isEmpty == false ? managedInstant?.model ?? instant.model : instant.model
         instantHeaders = instant.headersJSON
         instantKeyConfigured = !instant.apiKey.isEmpty
         instantAPIKey = ""
         let knowledge = ModelProviderConfigStore.loadKnowledge()
-        knowledgeProvider = knowledge.provider
-        knowledgeEndpoint = knowledge.endpoint
-        knowledgeModel = knowledge.model
+        let managedKnowledge = model.providerConfiguration?.providers.knowledge
+        let managedKnowledgeProvider = managedKnowledge?.provider ?? ""
+        if let provider = KnowledgeProviderPreset(rawValue: managedKnowledgeProvider) {
+            knowledgeProvider = provider
+            unsupportedKnowledgeProvider = ""
+        } else {
+            knowledgeProvider = knowledge.provider
+            unsupportedKnowledgeProvider = managedKnowledgeProvider
+        }
+        knowledgeEndpoint = managedKnowledge?.endpoint?.isEmpty == false ? managedKnowledge?.endpoint ?? knowledge.endpoint : knowledge.endpoint
+        knowledgeModel = managedKnowledge?.model?.isEmpty == false ? managedKnowledge?.model ?? knowledge.model : knowledge.model
         knowledgeHeaders = knowledge.headersJSON
         knowledgeKeyConfigured = !knowledge.apiKey.isEmpty
         knowledgeAPIKey = ""
     }
 
-    private func saveInstantSlot() {
+    private func saveInstantSlot() async {
+        guard !providerSaveBusy else { return }
+        providerSaveBusy = true
+        defer { providerSaveBusy = false }
         do {
+            guard let applied = await model.applyProviderConfiguration(
+                slot: "instant",
+                provider: instantProvider.rawValue,
+                endpoint: instantEndpoint,
+                model: instantModel
+            ) else { return }
             try ModelProviderConfigStore.saveInstant(.init(
                 provider: instantProvider,
                 endpoint: instantEndpoint,
@@ -264,14 +330,28 @@ struct RagAndModelsPage: View {
             ))
             instantAPIKey = ""
             instantKeyConfigured = ModelProviderConfigStore.loadInstant().apiKey.isEmpty == false
-            providerSaveMessage = "即时补全设置已保存；重启 Sidecar 后生效"
+            providerSaveMessage = applied.existingSecretPreserved
+                ? "即时补全设置已写入后端，原凭据已保留；正在重启本地模型"
+                : "即时补全设置已写入后端；正在重启本地模型"
+            providerSaveMessage = await model.run(action: "restart_predictor")
+                ? "即时补全设置已生效"
+                : "设置已保存，但本地模型重启失败；请查看顶部错误"
         } catch {
             providerSaveMessage = error.localizedDescription
         }
     }
 
-    private func saveKnowledgeSlot() {
+    private func saveKnowledgeSlot() async {
+        guard !providerSaveBusy else { return }
+        providerSaveBusy = true
+        defer { providerSaveBusy = false }
         do {
+            guard let applied = await model.applyProviderConfiguration(
+                slot: "knowledge",
+                provider: knowledgeProvider.rawValue,
+                endpoint: knowledgeEndpoint,
+                model: knowledgeModel
+            ) else { return }
             try ModelProviderConfigStore.saveKnowledge(.init(
                 provider: knowledgeProvider,
                 endpoint: knowledgeEndpoint,
@@ -281,9 +361,32 @@ struct RagAndModelsPage: View {
             ))
             knowledgeAPIKey = ""
             knowledgeKeyConfigured = ModelProviderConfigStore.loadKnowledge().apiKey.isEmpty == false
-            providerSaveMessage = "知识整理设置已保存；重启 Sidecar 后生效"
+            providerSaveMessage = applied.existingSecretPreserved
+                ? "知识整理设置已写入后端，原凭据已保留；正在重启知识服务"
+                : "知识整理设置已写入后端；正在重启知识服务"
+            providerSaveMessage = await model.run(action: "restart_sidecar")
+                ? "知识整理设置已生效"
+                : "设置已保存，但知识服务重启失败；请查看顶部错误"
         } catch {
             providerSaveMessage = error.localizedDescription
+        }
+    }
+
+    @ViewBuilder
+    private func unsupportedProviderNotice(
+        provider: String,
+        replacement: String,
+        replace: @escaping () -> Void
+    ) -> some View {
+        if !provider.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text("当前 Provider “\(provider)” 不受此版本控制中心支持，原配置尚未改动。")
+                    .font(ControlDesign.metadataFont)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("改用 \(replacement)", action: replace)
+            }
         }
     }
 

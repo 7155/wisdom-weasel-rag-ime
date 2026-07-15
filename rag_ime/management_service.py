@@ -33,6 +33,7 @@ from .daily_planner import (
 from .memory_actions import execute_memory_action
 from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_book_archive_status
 from .memory_ingest import normalize_text
+from .memory_graph import MemoryGraphPrincipal, MemoryGraphStore
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
 from .retrieval_docs import rebuild_retrieval_docs
@@ -389,6 +390,43 @@ class ManagementService:
             "limit": request.limit,
             "rawTextVisible": kind in {"books", "atoms", "phrases", "tags", "groups", "negative"},
         }
+
+    def memory_graph(
+        self,
+        *,
+        query: str = "",
+        owner_kinds: tuple[str, ...] = (),
+        entity_types: tuple[str, ...] = (),
+        as_of_ms: int | None = None,
+        limit: int = 60,
+    ) -> dict[str, object]:
+        graph = MemoryGraphStore(self.db_path)
+        result = graph.browse(
+            self._memory_graph_principal(),
+            query=query,
+            owner_kinds=owner_kinds,
+            entity_types=entity_types,
+            as_of_ms=as_of_ms,
+            node_limit=limit,
+            relation_limit=min(200, max(20, limit * 2)),
+        )
+        return {**self.revision().payload(), "ok": True, **result}
+
+    def memory_graph_sources(self, relation_id: str, *, limit: int = 20) -> dict[str, object]:
+        normalized_id = compact_whitespace(relation_id)
+        if not normalized_id:
+            raise ValueError("relationId is required")
+        result = MemoryGraphStore(self.db_path).get_sources(
+            self._memory_graph_principal(),
+            relation_ids=(normalized_id,),
+            limit=limit,
+        )
+        return {**self.revision().payload(), "ok": True, **result}
+
+    def _memory_graph_principal(self) -> MemoryGraphPrincipal:
+        # The native loopback control center is the user's administrative view.
+        # Agent tools never receive this principal and remain owner-scoped.
+        return MemoryGraphPrincipal(project=self.project, local_admin=True)
 
     def history_page(self, request: PageRequest) -> dict[str, object]:
         cursor = _cursor_int(request.cursor)

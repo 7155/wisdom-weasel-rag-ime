@@ -30,9 +30,14 @@ type ToolParams = {
   kind?: string;
   date?: string;
   project?: string;
+  app?: string;
   action?: string;
   limit?: number;
   topK?: number;
+  anchorIds?: string[];
+  relationIds?: string[];
+  sourceRefs?: Array<{ sourceType: string; sourceId: string }>;
+  asOfMs?: number;
   path?: string;
   depth?: number;
   offset?: number;
@@ -167,6 +172,8 @@ const toolSpecs: ToolSpec[] = [
       "maintenance_rollback",
       "list",
       "search",
+      "expand",
+      "get_sources",
     ],
     progress: {
       catalog: "正在查找相关工具书、Group 和 Tag",
@@ -179,11 +186,14 @@ const toolSpecs: ToolSpec[] = [
       maintenance_apply: "正在准备记忆草案应用预览",
       maintenance_rollback: "正在准备记忆回滚预览",
       list: "正在浏览记忆目录",
-      search: "正在检索记忆记录",
+      search: "正在执行统一混合检索并定位关系锚点",
+      expand: "正在从已命中的锚点扩展关系",
+      get_sources: "正在回查关系的原始证据",
     },
     guidelines: [
       "当前连续会话没有相关证据，或证据已过期、冲突、主题变化时，先用 catalog 查找相关 Book、Group 和 Tag；已有足够且仍有效的前文证据时直接复用，不要每轮机械重复检索。",
       "需要详细证据时再用 read；需要近期上下文时用 recent；不要在回答正文显示内部 ID 或 [L:...] 标签。",
+      "关系问题先 search，只有返回 anchors 后才调用 expand；确认事实前用 get_sources 回查来源。不要把 Graph 当成第二套全局搜索。",
       "maintenance_preview 只生成或复用草案，不会应用；先用 maintenance_review 逐项说明变更，再请求 maintenance_apply。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
       "应用或回滚只能使用 maintenance_status/maintenance_preview 返回的真实 runId，不能猜测内部 ID。",
     ],
@@ -412,6 +422,46 @@ async function callApprovalResult(approvalId: string, signal?: AbortSignal) {
 }
 
 function parametersFor(spec: ToolSpec) {
+  if (spec.name === "ime_planning") {
+    const planScopeProperties = {
+      date: { type: "string", maxLength: 24 },
+      project: { type: "string", maxLength: 160 },
+    };
+    return {
+      type: "object",
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: {
+            op: { type: "string", enum: ["dashboard"] },
+            ...planScopeProperties,
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op", "taskId", "action"],
+          properties: {
+            op: { type: "string", enum: ["task_action"] },
+            taskId: { type: "string", minLength: 1, maxLength: 240 },
+            action: { type: "string", enum: ["complete", "start", "reopen", "cancel"] },
+            ...planScopeProperties,
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op", "eventId"],
+          properties: {
+            op: { type: "string", enum: ["undo_task_event"] },
+            eventId: { type: "string", minLength: 1, maxLength: 240 },
+          },
+        },
+      ],
+    };
+  }
   const inputSettingKeys = [
     "interaction.postCommit.enabled",
     "interaction.postCommit.showPendingStatus",
@@ -482,9 +532,37 @@ function parametersFor(spec: ToolSpec) {
       kind: { type: "string", enum: ["books", "atoms", "tags", "phrases", "groups", "negative"] },
       date: { type: "string", maxLength: 24 },
       project: { type: "string", maxLength: 160 },
+      app: { type: "string", maxLength: 160 },
       action: { type: "string", enum: ["complete", "start", "reopen", "cancel"] },
       limit: { type: "integer", minimum: 1, maximum: 50 },
       topK: { type: "integer", minimum: 1, maximum: 10 },
+      anchorIds: {
+        type: "array",
+        minItems: 1,
+        maxItems: 40,
+        items: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      relationIds: {
+        type: "array",
+        minItems: 1,
+        maxItems: 50,
+        items: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      sourceRefs: {
+        type: "array",
+        minItems: 1,
+        maxItems: 50,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["sourceType", "sourceId"],
+          properties: {
+            sourceType: { type: "string", minLength: 1, maxLength: 80 },
+            sourceId: { type: "string", minLength: 1, maxLength: 240 },
+          },
+        },
+      },
+      asOfMs: { type: "integer", minimum: 0 },
       path: { type: "string", maxLength: 1024 },
       depth: { type: "integer", minimum: 1, maximum: 3 },
       offset: { type: "integer", minimum: 0, maximum: 50000000 },
@@ -538,7 +616,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
   }
   const allowed: Record<string, string[]> = {
     ime_overview: ["status", "capabilities", "recent_activity"],
-    ime_memory: ["catalog", "read", "recent", "trace", "maintenance_status", "list", "search"],
+    ime_memory: ["catalog", "read", "recent", "trace", "maintenance_status", "list", "search", "expand", "get_sources"],
     ime_knowledge: ["recall", "deep_recall", "route_status"],
     ime_models: ["status", "profiles", "probe", "cache_stats"],
     ime_runtime: ["health", "components", "diagnose"],

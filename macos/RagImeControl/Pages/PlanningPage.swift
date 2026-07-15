@@ -3,47 +3,32 @@ import SwiftUI
 
 struct PlanningPage: View {
     @EnvironmentObject private var model: AppModel
-    @State private var intention = ""
-    @State private var notes = ""
-    @State private var reflection = ""
+    @State private var dailyPlanEditorPresented = false
     @State private var taskEditor: PlanningTaskItem?
     @State private var newTaskPresented = false
+    @State private var taskDetail: PlanningTaskItem?
     @State private var goalEditor: PlanningGoalItem?
     @State private var newGoalPresented = false
+    @State private var goalDetail: PlanningGoalItem?
+    @State private var assistantPresented = false
+    @State private var completionReviewPresented = false
     @State private var taskGoalSeed = ""
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+
             if let dashboard = model.planning {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 20) {
                         assistantBand(dashboard)
-                        completionSuggestions(dashboard)
-                        ViewThatFits(in: .horizontal) {
-                            HStack(alignment: .top, spacing: 0) {
-                                dailyColumn(dashboard)
-                                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                                    .padding(.trailing, 28)
-                                Divider()
-                                goalColumn(dashboard)
-                                    .frame(width: 370, alignment: .topLeading)
-                                    .padding(.leading, 28)
-                            }
-                            .frame(minWidth: 980, alignment: .topLeading)
-
-                            VStack(alignment: .leading, spacing: 28) {
-                                dailyColumn(dashboard)
-                                Divider()
-                                goalColumn(dashboard)
-                            }
-                        }
-                        assistantConversation(dashboard)
+                        completionBanners(dashboard)
+                        planningColumns(dashboard)
                     }
                     .padding(.horizontal, ControlDesign.pageHorizontalPadding)
-                    .padding(.vertical, 24)
-                    .frame(maxWidth: 1360)
+                    .padding(.vertical, 22)
+                    .frame(maxWidth: 1280)
                     .frame(maxWidth: .infinity)
                 }
             } else {
@@ -51,7 +36,21 @@ struct PlanningPage: View {
             }
         }
         .task { await model.loadPlanning() }
-        .onChange(of: model.planning?.plan.updatedAtMsFallback) { _ in syncDrafts() }
+        .sheet(isPresented: $dailyPlanEditorPresented) {
+            if let plan = model.planning?.plan {
+                PlanningDailyPlanEditor(plan: plan) { draft in
+                    Task {
+                        if await model.saveDailyPlan(
+                            intention: draft.intention,
+                            notes: draft.notes,
+                            reflection: draft.reflection
+                        ) {
+                            dailyPlanEditorPresented = false
+                        }
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $newTaskPresented, onDismiss: { taskGoalSeed = "" }) {
             PlanningTaskEditor(
                 item: nil,
@@ -65,7 +64,9 @@ struct PlanningPage: View {
                         priority: draft.priority,
                         dueAtMs: draft.dueAtMs,
                         goalId: draft.goalId
-                    ) { newTaskPresented = false }
+                    ) {
+                        newTaskPresented = false
+                    }
                 }
             }
         }
@@ -80,9 +81,28 @@ struct PlanningPage: View {
                         status: item.status,
                         dueAtMs: draft.dueAtMs,
                         goalId: draft.goalId
-                    ) { taskEditor = nil }
+                    ) {
+                        taskEditor = nil
+                    }
                 }
             }
+        }
+        .sheet(item: $taskDetail) { item in
+            PlanningTaskDetailSheet(
+                item: item,
+                busy: model.planningBusy,
+                action: { action in
+                    Task {
+                        if await model.performPlanningTaskAction(id: item.id, action: action) {
+                            taskDetail = nil
+                        }
+                    }
+                },
+                edit: {
+                    taskDetail = nil
+                    DispatchQueue.main.async { taskEditor = item }
+                }
+            )
         }
         .sheet(isPresented: $newGoalPresented) {
             PlanningGoalEditor(item: nil) { draft in
@@ -92,7 +112,9 @@ struct PlanningPage: View {
                         detail: draft.detail,
                         priority: draft.priority,
                         targetDate: draft.targetDate
-                    ) { newGoalPresented = false }
+                    ) {
+                        newGoalPresented = false
+                    }
                 }
             }
         }
@@ -106,9 +128,36 @@ struct PlanningPage: View {
                         priority: draft.priority,
                         targetDate: draft.targetDate,
                         status: item.status
-                    ) { goalEditor = nil }
+                    ) {
+                        goalEditor = nil
+                    }
                 }
             }
+        }
+        .sheet(item: $goalDetail) { item in
+            PlanningGoalDetailSheet(
+                item: item,
+                busy: model.planningBusy,
+                edit: {
+                    goalDetail = nil
+                    DispatchQueue.main.async { goalEditor = item }
+                },
+                makeTask: {
+                    goalDetail = nil
+                    taskGoalSeed = item.id
+                    DispatchQueue.main.async { newTaskPresented = true }
+                },
+                updateStatus: { status in
+                    updateGoal(item, status: status)
+                    goalDetail = nil
+                }
+            )
+        }
+        .sheet(isPresented: $assistantPresented) {
+            PlanningAssistantSheet()
+        }
+        .sheet(isPresented: $completionReviewPresented) {
+            PlanningCompletionReviewSheet()
         }
     }
 
@@ -116,109 +165,124 @@ struct PlanningPage: View {
         HStack(spacing: 18) {
             PageHeader(title: "规划与任务", subtitle: "今天的方向、可完成任务与长期目标")
             Spacer()
+
             if model.planningLoading || model.planningBusy {
                 ProgressView()
                     .controlSize(.small)
                     .help(model.planningLoading ? "正在切换日期" : "正在保存")
             }
+
             HStack(spacing: 6) {
                 Button { Task { await model.changePlanningDay(by: -1) } } label: {
                     Image(systemName: "chevron.left")
                         .frame(width: 18, height: 20)
                 }
                 .help("前一天")
+
                 DatePicker("日期", selection: planningDateBinding, displayedComponents: .date)
                     .labelsHidden()
                     .datePickerStyle(.field)
                     .frame(width: 132)
                     .help("选择日期")
+
                 Button { Task { await model.changePlanningDay(by: 1) } } label: {
                     Image(systemName: "chevron.right")
                         .frame(width: 18, height: 20)
                 }
                 .help("后一天")
+
                 Button("今天") { Task { await model.loadTodayPlanning() } }
                     .help("回到今天")
                     .disabled(isShowingToday)
+
+                Button { Task { await model.loadPlanning() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 18, height: 20)
+                }
+                .help("刷新规划")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(model.planningLoading || model.planningBusy)
+
             if let summary = model.planning?.summary {
                 VStack(alignment: .trailing, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(summary.taskCount > 0 && summary.openTaskCount == 0 ? Color.green : ControlDesign.brand)
-                        Text("\(summary.completedTaskCount) / \(summary.taskCount) 已完成")
-                            .font(.caption.weight(.semibold))
-                            .monospacedDigit()
-                    }
+                    Text("\(summary.completedTaskCount) / \(summary.taskCount) 已完成")
+                        .font(ControlDesign.metadataFont.weight(.semibold).monospacedDigit())
                     ProgressView(value: summary.progress)
                         .tint(summary.taskCount > 0 && summary.openTaskCount == 0 ? .green : ControlDesign.brand)
-                        .frame(width: 128)
+                        .frame(width: 124)
                 }
             }
         }
         .padding(.horizontal, ControlDesign.pageHorizontalPadding)
-        .padding(.vertical, 20)
+        .padding(.vertical, 18)
+    }
+
+    private func planningColumns(_ dashboard: PlanningDashboardResponse) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 0) {
+                dailyColumn(dashboard)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.trailing, 28)
+                Divider()
+                goalColumn(dashboard)
+                    .frame(width: 390, alignment: .topLeading)
+                    .padding(.leading, 28)
+            }
+            .frame(minWidth: 980, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: 28) {
+                dailyColumn(dashboard)
+                Divider()
+                goalColumn(dashboard)
+            }
+        }
     }
 
     private func assistantBand(_ dashboard: PlanningDashboardResponse) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             RagImeAnimeCompanion(
                 state: model.planningBusy ? .thinking : (dashboard.assistant.tone == "celebrate" ? .done : .idle),
-                size: 66
+                size: 56
             )
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(isShowingToday ? "今日助手" : "当日回顾")
-                        .font(.headline)
+                        .font(ControlDesign.sectionTitleFont)
                     Text(dashboard.date)
-                        .font(.caption.monospacedDigit())
+                        .font(ControlDesign.metadataFont.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
                 Text(dashboard.assistant.message)
+                    .font(ControlDesign.bodyFont)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 18)
+            Spacer(minLength: 14)
             HStack(spacing: 8) {
-                PlanningMetricBadge(
-                    value: "\(dashboard.summary.openTaskCount)",
-                    label: "待办",
-                    symbol: "circle.dashed",
-                    tint: .orange
-                )
-                PlanningMetricBadge(
-                    value: "\(dashboard.summary.completedTaskCount)",
-                    label: "完成",
-                    symbol: "checkmark.circle.fill",
-                    tint: .green
-                )
-                PlanningMetricBadge(
-                    value: "\(dashboard.summary.goalCount)",
-                    label: "目标",
-                    symbol: "scope",
-                    tint: ControlDesign.brand
-                )
+                PlanningMetricBadge(value: "\(dashboard.summary.openTaskCount)", label: "待办", symbol: "circle.dashed", tint: .orange)
+                PlanningMetricBadge(value: "\(dashboard.summary.completedTaskCount)", label: "完成", symbol: "checkmark.circle.fill", tint: .green)
+                PlanningMetricBadge(value: "\(dashboard.summary.goalCount)", label: "目标", symbol: "scope", tint: ControlDesign.brand)
             }
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .frame(minHeight: 98)
-        .background(ControlDesign.brand.opacity(0.075))
+        .padding(.vertical, 12)
+        .frame(minHeight: 84)
+        .background(ControlDesign.brand.opacity(0.07))
         .overlay(alignment: .leading) { Rectangle().fill(ControlDesign.brand).frame(width: 4) }
         .overlay(alignment: .bottom) { Rectangle().fill(ControlDesign.brand.opacity(0.18)).frame(height: 1) }
     }
 
     @ViewBuilder
-    private func completionSuggestions(_ dashboard: PlanningDashboardResponse) -> some View {
+    private func completionBanners(_ dashboard: PlanningDashboardResponse) -> some View {
         if let completion = dashboard.recentDetectedCompletion, completion.undoAvailable {
             HStack(spacing: 12) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 Text(completion.message)
-                    .font(.callout.weight(.medium))
+                    .font(ControlDesign.bodyFont.weight(.medium))
+                    .lineLimit(2)
                 Spacer()
                 Button("撤销") {
                     Task { await model.undoPlanningTaskEvent(id: completion.eventId) }
@@ -231,28 +295,24 @@ struct PlanningPage: View {
             .background(Color.green.opacity(0.07))
             .overlay(alignment: .leading) { Rectangle().fill(Color.green).frame(width: 3) }
         }
+
         if !dashboard.pendingCompletionSuggestions.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("语音或输入中识别到可能完成的任务", systemImage: "checkmark.bubble")
-                    .font(.headline)
-                ForEach(dashboard.pendingCompletionSuggestions) { suggestion in
-                    HStack(spacing: 10) {
-                        ForEach(suggestion.candidateTasks) { task in
-                            Button(task.title) {
-                                Task { await model.resolvePlanningSuggestion(id: suggestion.id, taskId: task.id) }
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                        Spacer()
-                        Button("忽略") {
-                            Task { await model.resolvePlanningSuggestion(id: suggestion.id, dismiss: true) }
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .padding(.vertical, 6)
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.bubble.fill").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("识别到可能完成的任务")
+                        .font(ControlDesign.bodyFont.weight(.semibold))
+                    Text("\(dashboard.pendingCompletionSuggestions.count) 条待确认")
+                        .font(ControlDesign.metadataFont)
+                        .foregroundStyle(.secondary)
                 }
+                Spacer()
+                Button("查看并处理") { completionReviewPresented = true }
+                    .buttonStyle(.bordered)
+                    .disabled(model.planningBusy)
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .frame(minHeight: 56)
             .background(Color.orange.opacity(0.07))
             .overlay(alignment: .leading) { Rectangle().fill(Color.orange).frame(width: 3) }
         }
@@ -263,58 +323,26 @@ struct PlanningPage: View {
             HStack {
                 PlanningSectionTitle(
                     title: "今日计划",
-                    subtitle: hasUnsavedPlanChanges ? "有未保存的更改" : "内容已保存",
+                    subtitle: dashboard.plan.intention.isEmpty ? "尚未设置今日重点" : "今日重点已记录",
                     symbol: "sun.max.fill",
                     tint: .orange
                 )
                 Spacer()
                 Button {
-                    Task { _ = await model.saveDailyPlan(intention: intention, notes: notes, reflection: reflection) }
+                    dailyPlanEditorPresented = true
                 } label: {
-                    Label("保存计划", systemImage: "square.and.arrow.down")
+                    Label("编辑计划", systemImage: "square.and.pencil")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.planningBusy || !hasUnsavedPlanChanges)
+                .buttonStyle(.bordered)
+                .disabled(model.planningBusy)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Label("最重要的一件事", systemImage: "flag.fill")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(ControlDesign.brand)
-                HStack(spacing: 10) {
-                    Image(systemName: "target")
-                        .foregroundStyle(ControlDesign.brand)
-                    TextField("今天最值得完成的结果", text: $intention)
-                        .textFieldStyle(.plain)
-                        .font(.body.weight(.medium))
-                }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 42)
-                .background(ControlDesign.brand.opacity(0.055))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7)
-                        .stroke(ControlDesign.brand.opacity(0.28), lineWidth: 0.8)
-                )
-            }
-
-            HStack(alignment: .top, spacing: 14) {
-                PlanningTextArea(
-                    title: "日间笔记",
-                    symbol: "note.text",
-                    placeholder: "记录过程、阻塞和临时想法",
-                    text: $notes,
-                    minHeight: 112
-                )
-                PlanningTextArea(
-                    title: "复盘",
-                    symbol: "arrow.triangle.2.circlepath",
-                    placeholder: "完成了什么，下一步是什么",
-                    text: $reflection,
-                    minHeight: 112
-                )
+            PlanningPlanSummary(plan: dashboard.plan) {
+                dailyPlanEditorPresented = true
             }
 
             Divider()
+
             HStack {
                 PlanningSectionTitle(
                     title: "任务",
@@ -329,9 +357,10 @@ struct PlanningPage: View {
                 } label: {
                     Label("新建任务", systemImage: "plus")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .disabled(model.planningBusy)
             }
+
             if dashboard.tasks.isEmpty {
                 PlanningEmptyAction(
                     symbol: "checklist",
@@ -342,19 +371,32 @@ struct PlanningPage: View {
                     newTaskPresented = true
                 }
             } else {
-                VStack(spacing: 10) {
-                    ForEach(dashboard.tasks) { task in
-                        PlanningTaskRow(item: task, busy: model.planningBusy) {
-                            Task {
-                                _ = await model.performPlanningTaskAction(
-                                    id: task.id,
-                                    action: task.status == "done" ? "reopen" : "complete"
-                                )
+                ControlSurface {
+                    VStack(spacing: 0) {
+                        ForEach(dashboard.tasks) { task in
+                            PlanningTaskRow(
+                                item: task,
+                                busy: model.planningBusy,
+                                toggle: {
+                                    Task {
+                                        _ = await model.performPlanningTaskAction(
+                                            id: task.id,
+                                            action: task.status == "done" ? "reopen" : "complete"
+                                        )
+                                    }
+                                },
+                                detail: { taskDetail = task },
+                                edit: { taskEditor = task },
+                                start: {
+                                    Task { _ = await model.performPlanningTaskAction(id: task.id, action: "start") }
+                                },
+                                cancel: {
+                                    Task { _ = await model.performPlanningTaskAction(id: task.id, action: "cancel") }
+                                }
+                            )
+                            if task.id != dashboard.tasks.last?.id {
+                                Divider().padding(.leading, 58)
                             }
-                        } edit: {
-                            taskEditor = task
-                        } start: {
-                            Task { _ = await model.performPlanningTaskAction(id: task.id, action: "start") }
                         }
                     }
                 }
@@ -378,6 +420,7 @@ struct PlanningPage: View {
                 .buttonStyle(.bordered)
                 .disabled(model.planningBusy)
             }
+
             if dashboard.goals.isEmpty {
                 PlanningEmptyAction(
                     symbol: "scope",
@@ -387,94 +430,62 @@ struct PlanningPage: View {
                     newGoalPresented = true
                 }
             } else {
-                ForEach(dashboard.goals) { goal in
-                    PlanningGoalRow(
-                        item: goal,
-                        busy: model.planningBusy,
-                        edit: { goalEditor = goal },
-                        makeTask: {
-                            taskGoalSeed = goal.id
-                            newTaskPresented = true
-                        },
-                        complete: { updateGoal(goal, status: "completed") },
-                        archive: { updateGoal(goal, status: "archived") }
-                    )
-                }
-            }
-        }
-    }
-
-    private func assistantConversation(_ dashboard: PlanningDashboardResponse) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                PlanningSectionTitle(
-                    title: "规划助手",
-                    subtitle: "围绕当前日期的计划、任务和目标",
-                    symbol: "bubble.left.and.bubble.right.fill",
-                    tint: .blue
-                )
-                Spacer()
-                if model.planningBusy {
-                    Label("正在整理", systemImage: "sparkles")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if dashboard.conversation.isEmpty {
-                HStack(spacing: 8) {
-                    quickPrompt("梳理今天的重点", symbol: "wand.and.stars")
-                    quickPrompt("检查未完成任务", symbol: "checklist")
-                    quickPrompt("从目标拆一个任务", symbol: "arrow.turn.down.right")
-                    Spacer()
-                }
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(dashboard.conversation.suffix(8)) { message in
-                        PlanningConversationBubble(message: message)
+                ControlSurface {
+                    VStack(spacing: 0) {
+                        ForEach(dashboard.goals) { goal in
+                            PlanningGoalRow(
+                                item: goal,
+                                busy: model.planningBusy,
+                                detail: { goalDetail = goal },
+                                edit: { goalEditor = goal },
+                                makeTask: {
+                                    taskGoalSeed = goal.id
+                                    newTaskPresented = true
+                                },
+                                complete: { updateGoal(goal, status: "completed") },
+                                archive: { updateGoal(goal, status: "archived") }
+                            )
+                            if goal.id != dashboard.goals.last?.id {
+                                Divider().padding(.leading, 52)
+                            }
+                        }
                     }
                 }
             }
 
-            HStack(spacing: 10) {
-                TextField("询问今天的任务、进度或长期目标", text: $model.planningAssistantDraft)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .frame(height: 40)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(ControlDesign.hairline, lineWidth: 0.8)
-                    )
-                    .onSubmit { Task { await model.sendPlanningAssistantMessage() } }
-                Button { Task { await model.sendPlanningAssistantMessage() } } label: {
-                    Label("发送", systemImage: "arrow.up")
-                        .frame(minWidth: 62)
+            Divider().padding(.vertical, 4)
+            assistantLauncher(dashboard)
+        }
+    }
+
+    private func assistantLauncher(_ dashboard: PlanningDashboardResponse) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PlanningSectionTitle(
+                title: "规划助手",
+                subtitle: dashboard.conversation.isEmpty ? "尚无当日对话" : "\(dashboard.conversation.count) 条当日消息",
+                symbol: "bubble.left.and.bubble.right.fill",
+                tint: .blue
+            )
+            ControlSurface {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(dashboard.conversation.last?.content ?? dashboard.assistant.message)
+                        .font(ControlDesign.bodyFont)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button {
+                            assistantPresented = true
+                        } label: {
+                            Label("打开规划助手", systemImage: "bubble.left.and.text.bubble.right")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .help("发送")
-                .disabled(
-                    model.planningBusy ||
-                    model.planningAssistantDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
+                .padding(14)
             }
         }
-        .padding(.vertical, 20)
-        .padding(.horizontal, 18)
-        .background(Color.blue.opacity(0.035))
-        .overlay(alignment: .top) { Rectangle().fill(Color.blue.opacity(0.15)).frame(height: 1) }
-    }
-
-    private func syncDrafts() {
-        guard let plan = model.planning?.plan else { return }
-        intention = plan.intention
-        notes = plan.notes
-        reflection = plan.reflection
-    }
-
-    private var hasUnsavedPlanChanges: Bool {
-        guard let plan = model.planning?.plan else { return false }
-        return intention != plan.intention || notes != plan.notes || reflection != plan.reflection
     }
 
     private var planningDateBinding: Binding<Date> {
@@ -492,17 +503,6 @@ struct PlanningPage: View {
         model.planningDate == PlanningDateCodec.string(from: Date())
     }
 
-    private func quickPrompt(_ title: String, symbol: String) -> some View {
-        Button {
-            Task { await model.sendPlanningAssistantMessage(title) }
-        } label: {
-            Label(title, systemImage: symbol)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(model.planningBusy)
-    }
-
     private func updateGoal(_ goal: PlanningGoalItem, status: String) {
         Task {
             _ = await model.savePlanningGoal(
@@ -517,82 +517,142 @@ struct PlanningPage: View {
     }
 }
 
+private struct PlanningPlanSummary: View {
+    let plan: PlanningPlanItem
+    let edit: () -> Void
+
+    var body: some View {
+        ControlSurface {
+            VStack(spacing: 0) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "target")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(ControlDesign.brand)
+                        .frame(width: 32, height: 32)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("最重要的一件事")
+                            .font(ControlDesign.metadataFont.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(plan.intention.isEmpty ? "未设置" : plan.intention)
+                            .font(ControlDesign.bodyFont.weight(.semibold))
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Button(action: edit) {
+                        Image(systemName: "pencil")
+                            .frame(width: ControlDesign.iconButtonSize, height: ControlDesign.iconButtonSize)
+                    }
+                    .buttonStyle(.plain)
+                    .help("编辑今日计划")
+                }
+                .padding(14)
+
+                Divider().padding(.leading, 58)
+                PlanningPlanExcerptRow(label: "日间笔记", value: plan.notes, symbol: "note.text")
+                Divider().padding(.leading, 58)
+                PlanningPlanExcerptRow(label: "复盘", value: plan.reflection, symbol: "arrow.triangle.2.circlepath")
+            }
+        }
+    }
+}
+
+private struct PlanningPlanExcerptRow: View {
+    let label: String
+    let value: String
+    let symbol: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 32)
+            Text(label)
+                .font(ControlDesign.metadataFont.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            Text(value.isEmpty ? "未填写" : value)
+                .font(ControlDesign.detailFont)
+                .foregroundStyle(value.isEmpty ? .tertiary : .secondary)
+                .lineLimit(1)
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 42)
+    }
+}
+
 private struct PlanningTaskRow: View {
     let item: PlanningTaskItem
     let busy: Bool
     let toggle: () -> Void
+    let detail: () -> Void
     let edit: () -> Void
     let start: () -> Void
+    let cancel: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(spacing: 12) {
             Button(action: toggle) {
                 Image(systemName: statusSymbol)
-                    .font(.system(size: 19, weight: .medium))
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(statusColor)
-                    .frame(width: 28, height: 28)
+                    .frame(width: ControlDesign.iconButtonSize, height: ControlDesign.iconButtonSize)
             }
             .buttonStyle(.plain)
             .help(item.status == "done" ? "重新打开" : "标记完成")
             .disabled(busy || item.status == "cancelled")
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.headline)
+                    .font(ControlDesign.bodyFont.weight(.semibold))
                     .strikethrough(item.status == "done")
                     .foregroundStyle(item.status == "cancelled" ? .secondary : .primary)
-                if !item.detail.isEmpty {
-                    Text(item.detail).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                }
+                    .lineLimit(1)
                 HStack(spacing: 8) {
                     PlanningPriorityLabel(priority: item.priority)
+                    if !item.detail.isEmpty {
+                        Text(item.detail)
+                            .font(ControlDesign.metadataFont)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     if let due = item.dueAtMs {
-                        Text(Date(timeIntervalSince1970: Double(due) / 1000), style: .date)
-                            .font(.caption).foregroundStyle(.secondary)
+                        Label(planningDateLabel(due), systemImage: "calendar")
+                            .font(ControlDesign.metadataFont)
+                            .foregroundStyle(.secondary)
                     }
-                    if item.status == "in_progress" {
-                        Text("进行中").font(.caption).foregroundStyle(.teal)
-                    } else if item.status == "cancelled" {
-                        Text("已取消").font(.caption).foregroundStyle(.secondary)
-                    }
+                    PlanningStatusText(status: item.status)
                 }
             }
-            Spacer()
+            Spacer(minLength: 8)
 
-            if item.status == "todo" {
-                Button(action: start) {
-                    Label("开始", systemImage: "play.fill")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(busy)
-            }
-            Button(action: edit) {
-                Image(systemName: "pencil")
-                    .frame(width: 28, height: 28)
+            Button(action: detail) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .frame(width: ControlDesign.iconButtonSize, height: ControlDesign.iconButtonSize)
             }
             .buttonStyle(.plain)
-            .help("编辑任务")
-            .disabled(busy)
+            .help("查看任务详情")
+
             Menu {
                 if item.status == "todo" { Button("开始", action: start) }
+                Button("查看详情", action: detail)
                 Button("编辑", action: edit)
                 Button(item.status == "done" ? "重新打开" : "完成", action: toggle)
+                if item.status != "cancelled" && item.status != "done" {
+                    Divider()
+                    Button("取消任务", action: cancel)
+                }
             } label: {
                 Image(systemName: "ellipsis")
-                    .frame(width: 28, height: 28)
+                    .frame(width: ControlDesign.iconButtonSize, height: ControlDesign.iconButtonSize)
             }
             .menuStyle(.borderlessButton)
-            .frame(width: 30)
+            .frame(width: ControlDesign.iconButtonSize)
             .disabled(busy)
         }
-        .padding(13)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(ControlDesign.hairline, lineWidth: 0.7)
-        )
+        .padding(.horizontal, 14)
+        .frame(minHeight: 66)
+        .contentShape(Rectangle())
     }
 
     private var statusSymbol: String {
@@ -617,74 +677,71 @@ private struct PlanningTaskRow: View {
 private struct PlanningGoalRow: View {
     let item: PlanningGoalItem
     let busy: Bool
+    let detail: () -> Void
     let edit: () -> Void
     let makeTask: () -> Void
     let complete: () -> Void
     let archive: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "scope")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(ControlDesign.brand)
-                    .frame(width: 30, height: 30)
-                    .background(ControlDesign.brand.opacity(0.09))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+        HStack(spacing: 10) {
+            Image(systemName: "scope")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(ControlDesign.brand)
+                .frame(width: 32, height: 32)
+                .background(ControlDesign.brand.opacity(0.09))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.headline)
-                    .lineLimit(3)
-                Spacer(minLength: 6)
-                Button(action: edit) {
-                    Image(systemName: "pencil")
-                        .frame(width: 28, height: 28)
+                    .font(ControlDesign.bodyFont.weight(.semibold))
+                    .lineLimit(1)
+                HStack(spacing: 7) {
+                    PlanningPriorityLabel(priority: item.priority)
+                    if !item.targetDate.isEmpty {
+                        Label(item.targetDate, systemImage: "calendar")
+                            .font(ControlDesign.metadataFont)
+                            .foregroundStyle(.secondary)
+                    } else if !item.detail.isEmpty {
+                        Text(item.detail)
+                            .font(ControlDesign.metadataFont)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("编辑目标")
-                .disabled(busy)
-                Menu {
-                    Button("标记完成", action: complete)
-                    Button("归档", action: archive)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: 28, height: 28)
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 30)
-                .disabled(busy)
             }
+            Spacer(minLength: 6)
 
-            if !item.detail.isEmpty {
-                Text(item.detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
+            Button(action: makeTask) {
+                Label("拆成任务", systemImage: "arrow.turn.down.right")
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(busy)
 
-            HStack(spacing: 8) {
-                PlanningPriorityLabel(priority: item.priority)
-                if !item.targetDate.isEmpty {
-                    Label(item.targetDate, systemImage: "calendar")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button(action: makeTask) {
-                    Label("拆成任务", systemImage: "arrow.turn.down.right")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(busy)
+            Button(action: detail) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .frame(width: ControlDesign.iconButtonSize, height: ControlDesign.iconButtonSize)
             }
+            .buttonStyle(.plain)
+            .help("查看目标详情")
+
+            Menu {
+                Button("查看详情", action: detail)
+                Button("编辑", action: edit)
+                Button("标记完成", action: complete)
+                Button("归档", action: archive)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: ControlDesign.iconButtonSize, height: ControlDesign.iconButtonSize)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: ControlDesign.iconButtonSize)
+            .disabled(busy)
         }
-        .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(ControlDesign.hairline, lineWidth: 0.7)
-        )
+        .padding(.horizontal, 12)
+        .frame(minHeight: 66)
+        .contentShape(Rectangle())
     }
 }
 
@@ -699,12 +756,15 @@ private struct PlanningSectionTitle: View {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(width: 30, height: 30)
+                .frame(width: 32, height: 32)
                 .background(tint.opacity(0.09))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 17, weight: .semibold))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(title).font(ControlDesign.sectionTitleFont)
+                Text(subtitle)
+                    .font(ControlDesign.metadataFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
     }
@@ -718,22 +778,20 @@ private struct PlanningMetricBadge: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: symbol)
-                .foregroundStyle(tint)
+            Image(systemName: symbol).foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 0) {
                 Text(value)
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                Text(label).font(.caption2).foregroundStyle(.secondary)
+                Text(label)
+                    .font(ControlDesign.metadataFont)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: 46)
+        .frame(height: 44)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.72))
-        .overlay(
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(tint.opacity(0.18), lineWidth: 0.7)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(tint.opacity(0.18), lineWidth: 0.7))
         .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 }
@@ -748,28 +806,25 @@ private struct PlanningTextArea: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Label(title, systemImage: symbol)
-                .font(.callout.weight(.semibold))
+                .font(ControlDesign.bodyFont.weight(.semibold))
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(placeholder)
-                        .font(.body)
+                        .font(ControlDesign.bodyFont)
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 12)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $text)
-                    .font(.body)
+                    .font(ControlDesign.bodyFont)
                     .scrollContentBackground(.hidden)
                     .padding(7)
                     .frame(minHeight: minHeight)
             }
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 7))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(ControlDesign.hairline, lineWidth: 0.8)
-            )
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(ControlDesign.hairline, lineWidth: 0.8))
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -791,8 +846,8 @@ private struct PlanningEmptyAction: View {
                     .background(ControlDesign.brand.opacity(0.09))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.callout.weight(.semibold))
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                    Text(title).font(ControlDesign.bodyFont.weight(.semibold))
+                    Text(detail).font(ControlDesign.metadataFont).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Image(systemName: "plus.circle.fill")
@@ -807,43 +862,35 @@ private struct PlanningEmptyAction: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(
-                    ControlDesign.brand.opacity(0.28),
-                    style: StrokeStyle(lineWidth: 0.8, dash: [5, 4])
-                )
+                .stroke(ControlDesign.brand.opacity(0.28), style: StrokeStyle(lineWidth: 0.8, dash: [5, 4]))
         )
     }
 }
 
-private struct PlanningConversationBubble: View {
-    let message: PlanningConversationMessage
+private struct PlanningStatusText: View {
+    let status: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if message.role == "user" { Spacer(minLength: 90) }
-            if message.role != "user" {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(ControlDesign.brand)
-                    .frame(width: 26, height: 26)
-                    .background(ControlDesign.brand.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            Text(message.content)
-                .font(.callout)
-                .textSelection(.enabled)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(
-                    message.role == "user"
-                        ? Color.blue.opacity(0.11)
-                        : Color(nsColor: .controlBackgroundColor)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(ControlDesign.hairline, lineWidth: message.role == "user" ? 0 : 0.6)
-                )
-            if message.role != "user" { Spacer(minLength: 90) }
+        Text(label)
+            .font(ControlDesign.metadataFont.weight(.medium))
+            .foregroundStyle(color)
+    }
+
+    private var label: String {
+        switch status {
+        case "in_progress": return "进行中"
+        case "done": return "已完成"
+        case "cancelled": return "已取消"
+        default: return "待开始"
+        }
+    }
+
+    private var color: Color {
+        switch status {
+        case "in_progress": return ControlDesign.brand
+        case "done": return .green
+        case "cancelled": return .secondary
+        default: return .secondary
         }
     }
 }
@@ -857,28 +904,106 @@ private enum PlanningDateCodec {
         return formatter
     }()
 
-    static func string(from date: Date) -> String {
-        formatter.string(from: date)
-    }
-
-    static func date(from value: String) -> Date? {
-        formatter.date(from: value)
-    }
+    static func string(from date: Date) -> String { formatter.string(from: date) }
+    static func date(from value: String) -> Date? { formatter.date(from: value) }
 }
 
 private struct PlanningPriorityLabel: View {
     let priority: Int
+
     var body: some View {
         Text(label)
-            .font(.caption2.weight(.semibold))
+            .font(ControlDesign.metadataFont.weight(.semibold))
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .frame(height: 19)
+            .padding(.horizontal, 7)
+            .frame(height: 21)
             .background(color.opacity(0.09))
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
+
     private var label: String { ["低", "普通", "高", "紧急"][max(0, min(3, priority))] }
     private var color: Color { priority >= 3 ? .red : (priority == 2 ? .orange : .secondary) }
+}
+
+private struct PlanningDailyPlanDraft {
+    let intention: String
+    let notes: String
+    let reflection: String
+}
+
+private struct PlanningDailyPlanEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
+    let plan: PlanningPlanItem
+    let save: (PlanningDailyPlanDraft) -> Void
+    @State private var intention: String
+    @State private var notes: String
+    @State private var reflection: String
+
+    init(plan: PlanningPlanItem, save: @escaping (PlanningDailyPlanDraft) -> Void) {
+        self.plan = plan
+        self.save = save
+        _intention = State(initialValue: plan.intention)
+        _notes = State(initialValue: plan.notes)
+        _reflection = State(initialValue: plan.reflection)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            PlanningSheetHeader(title: "编辑今日计划", subtitle: plan.date, symbol: "sun.max.fill", tint: .orange)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("最重要的一件事").font(ControlDesign.bodyFont.weight(.semibold))
+                TextField("今天最值得完成的结果", text: $intention)
+                    .planningFieldChrome()
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                PlanningTextArea(
+                    title: "日间笔记",
+                    symbol: "note.text",
+                    placeholder: "记录过程、阻塞和临时想法",
+                    text: $notes,
+                    minHeight: 150
+                )
+                PlanningTextArea(
+                    title: "复盘",
+                    symbol: "arrow.triangle.2.circlepath",
+                    placeholder: "完成了什么，下一步是什么",
+                    text: $reflection,
+                    minHeight: 150
+                )
+            }
+
+            Divider()
+            HStack {
+                if model.planningBusy {
+                    ProgressView().controlSize(.small)
+                    Text("正在保存").font(ControlDesign.metadataFont).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("取消") { dismiss() }.disabled(model.planningBusy)
+                Button {
+                    save(.init(
+                        intention: intention.trimmingCharacters(in: .whitespacesAndNewlines),
+                        notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+                        reflection: reflection.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ))
+                } label: {
+                    Label("保存计划", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.planningBusy || !hasChanges)
+            }
+        }
+        .padding(26)
+        .frame(width: 650)
+        .interactiveDismissDisabled(model.planningBusy)
+    }
+
+    private var hasChanges: Bool {
+        intention != plan.intention || notes != plan.notes || reflection != plan.reflection
+    }
 }
 
 private struct PlanningTaskDraft {
@@ -921,24 +1046,15 @@ private struct PlanningTaskEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 12) {
-                Image(systemName: item == nil ? "plus.square.fill" : "square.and.pencil")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(.indigo)
-                    .frame(width: 40, height: 40)
-                    .background(Color.indigo.opacity(0.09))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item == nil ? "新增任务" : "编辑任务")
-                        .font(.title2.weight(.semibold))
-                    Text("定义一个明确、可以完成的动作")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            PlanningSheetHeader(
+                title: item == nil ? "新增任务" : "编辑任务",
+                subtitle: "明确下一步动作",
+                symbol: item == nil ? "plus.square.fill" : "square.and.pencil",
+                tint: .indigo
+            )
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("任务名称").font(.callout.weight(.semibold))
+                Text("任务名称").font(ControlDesign.bodyFont.weight(.semibold))
                 TextField("例如：完成输入法候选面板优化", text: $title)
                     .planningFieldChrome()
             }
@@ -948,45 +1064,39 @@ private struct PlanningTaskEditor: View {
                 symbol: "text.alignleft",
                 placeholder: "补充验收标准、上下文或阻塞项",
                 text: $detail,
-                minHeight: 92
+                minHeight: 110
             )
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("优先级").font(.callout.weight(.semibold))
-                Picker("优先级", selection: $priority) {
-                    Text("低").tag(0)
-                    Text("普通").tag(1)
-                    Text("高").tag(2)
-                    Text("紧急").tag(3)
+            PlanningPriorityPicker(priority: $priority)
+
+            ControlLabelValueRow("截止时间") {
+                HStack(spacing: 10) {
+                    Toggle("", isOn: $dueEnabled).labelsHidden()
+                    if dueEnabled {
+                        DatePicker("截止", selection: $dueDate).labelsHidden().datePickerStyle(.field)
+                    }
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
             }
 
-            HStack(spacing: 16) {
-                Toggle("设置截止时间", isOn: $dueEnabled)
-                if dueEnabled {
-                    DatePicker("截止", selection: $dueDate)
-                        .datePickerStyle(.field)
-                }
-            }
             if !goals.isEmpty {
-                Picker("关联目标", selection: $goalId) {
-                    Text("不关联").tag("")
-                    ForEach(goals) { Text($0.title).tag($0.id) }
+                ControlLabelValueRow("关联目标") {
+                    Picker("关联目标", selection: $goalId) {
+                        Text("不关联").tag("")
+                        ForEach(goals) { Text($0.title).tag($0.id) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
                 }
-                .pickerStyle(.menu)
             }
 
             Divider()
             HStack {
                 if model.planningBusy {
                     ProgressView().controlSize(.small)
-                    Text("正在保存").font(.caption).foregroundStyle(.secondary)
+                    Text("正在保存").font(ControlDesign.metadataFont).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("取消") { dismiss() }
-                    .disabled(model.planningBusy)
+                Button("取消") { dismiss() }.disabled(model.planningBusy)
                 Button(item == nil ? "添加任务" : "保存修改") {
                     save(.init(
                         title: title.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -997,14 +1107,11 @@ private struct PlanningTaskEditor: View {
                     ))
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(
-                    model.planningBusy ||
-                    title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
+                .disabled(model.planningBusy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(26)
-        .frame(width: 520)
+        .frame(width: 560)
         .interactiveDismissDisabled(model.planningBusy)
     }
 }
@@ -1040,24 +1147,15 @@ private struct PlanningGoalEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 12) {
-                Image(systemName: "scope")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(ControlDesign.brand)
-                    .frame(width: 40, height: 40)
-                    .background(ControlDesign.brand.opacity(0.09))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item == nil ? "新增长期目标" : "编辑长期目标")
-                        .font(.title2.weight(.semibold))
-                    Text("保留方向，再逐步拆成每天能完成的任务")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            PlanningSheetHeader(
+                title: item == nil ? "新增长期目标" : "编辑长期目标",
+                subtitle: "保留长期方向",
+                symbol: "scope",
+                tint: ControlDesign.brand
+            )
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("目标名称").font(.callout.weight(.semibold))
+                Text("目标名称").font(ControlDesign.bodyFont.weight(.semibold))
                 TextField("例如：完成 RAG-IME 稳定版", text: $title)
                     .planningFieldChrome()
             }
@@ -1065,28 +1163,21 @@ private struct PlanningGoalEditor: View {
             PlanningTextArea(
                 title: "目标说明",
                 symbol: "text.alignleft",
-                placeholder: "写下完成标准、范围和为什么要做",
+                placeholder: "写下完成标准和范围",
                 text: $detail,
-                minHeight: 104
+                minHeight: 120
             )
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("优先级").font(.callout.weight(.semibold))
-                Picker("优先级", selection: $priority) {
-                    Text("低").tag(0)
-                    Text("普通").tag(1)
-                    Text("高").tag(2)
-                    Text("紧急").tag(3)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-            }
+            PlanningPriorityPicker(priority: $priority)
 
-            HStack(spacing: 16) {
-                Toggle("设置目标日期", isOn: $targetDateEnabled)
-                if targetDateEnabled {
-                    DatePicker("目标日期", selection: $targetDate, displayedComponents: .date)
-                        .datePickerStyle(.field)
+            ControlLabelValueRow("目标日期") {
+                HStack(spacing: 10) {
+                    Toggle("", isOn: $targetDateEnabled).labelsHidden()
+                    if targetDateEnabled {
+                        DatePicker("目标日期", selection: $targetDate, displayedComponents: .date)
+                            .labelsHidden()
+                            .datePickerStyle(.field)
+                    }
                 }
             }
 
@@ -1094,11 +1185,10 @@ private struct PlanningGoalEditor: View {
             HStack {
                 if model.planningBusy {
                     ProgressView().controlSize(.small)
-                    Text("正在保存").font(.caption).foregroundStyle(.secondary)
+                    Text("正在保存").font(ControlDesign.metadataFont).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("取消") { dismiss() }
-                    .disabled(model.planningBusy)
+                Button("取消") { dismiss() }.disabled(model.planningBusy)
                 Button(item == nil ? "添加目标" : "保存修改") {
                     save(.init(
                         title: title.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1108,32 +1198,413 @@ private struct PlanningGoalEditor: View {
                     ))
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(
-                    model.planningBusy ||
-                    title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
+                .disabled(model.planningBusy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(26)
-        .frame(width: 520)
+        .frame(width: 560)
         .interactiveDismissDisabled(model.planningBusy)
+    }
+}
+
+private struct PlanningPriorityPicker: View {
+    @Binding var priority: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("优先级").font(ControlDesign.bodyFont.weight(.semibold))
+            Picker("优先级", selection: $priority) {
+                Text("低").tag(0)
+                Text("普通").tag(1)
+                Text("高").tag(2)
+                Text("紧急").tag(3)
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+        }
+    }
+}
+
+private struct PlanningTaskDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: PlanningTaskItem
+    let busy: Bool
+    let action: (String) -> Void
+    let edit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PlanningSheetHeader(title: item.title, subtitle: "任务详情", symbol: "checklist", tint: .indigo)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    detailBlock(title: "任务说明", text: item.detail)
+                    ControlSurface {
+                        VStack(spacing: 0) {
+                            ControlDetailRow(label: "状态", value: planningStatusLabel(item.status))
+                            Divider()
+                            ControlDetailRow(label: "优先级", value: planningPriorityLabel(item.priority))
+                            Divider()
+                            ControlDetailRow(label: "计划日期", value: item.date)
+                            Divider()
+                            ControlDetailRow(label: "截止时间", value: item.dueAtMs.map(planningDateLabel) ?? "")
+                            Divider()
+                            ControlDetailRow(label: "所属项目", value: item.project)
+                            Divider()
+                            ControlDetailRow(label: "来源", value: item.source)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+
+            Divider()
+            HStack(spacing: 10) {
+                if item.status == "todo" {
+                    Button("开始", systemImage: "play.fill") { action("start") }
+                }
+                Button(item.status == "done" ? "重新打开" : "标记完成", systemImage: "checkmark.circle") {
+                    action(item.status == "done" ? "reopen" : "complete")
+                }
+                .buttonStyle(.borderedProminent)
+                if item.status != "done" && item.status != "cancelled" {
+                    Button("取消任务", systemImage: "xmark.circle") { action("cancel") }
+                }
+                Spacer()
+                Button("编辑", systemImage: "pencil", action: edit)
+                Button("关闭") { dismiss() }
+            }
+            .disabled(busy)
+        }
+        .padding(24)
+        .frame(width: 600, height: 540)
+        .interactiveDismissDisabled(busy)
+    }
+}
+
+private struct PlanningGoalDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: PlanningGoalItem
+    let busy: Bool
+    let edit: () -> Void
+    let makeTask: () -> Void
+    let updateStatus: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PlanningSheetHeader(title: item.title, subtitle: "目标详情", symbol: "scope", tint: ControlDesign.brand)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    detailBlock(title: "目标说明", text: item.detail)
+                    ControlSurface {
+                        VStack(spacing: 0) {
+                            ControlDetailRow(label: "状态", value: planningGoalStatusLabel(item.status))
+                            Divider()
+                            ControlDetailRow(label: "优先级", value: planningPriorityLabel(item.priority))
+                            Divider()
+                            ControlDetailRow(label: "目标日期", value: item.targetDate)
+                            Divider()
+                            ControlDetailRow(label: "时间跨度", value: item.horizon)
+                            Divider()
+                            ControlDetailRow(label: "所属项目", value: item.project)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+
+            Divider()
+            HStack(spacing: 10) {
+                Button {
+                    makeTask()
+                } label: {
+                    Label("拆成任务", systemImage: "arrow.turn.down.right")
+                }
+                .buttonStyle(.borderedProminent)
+                Button("标记完成", systemImage: "checkmark.circle") { updateStatus("completed") }
+                Button("归档", systemImage: "archivebox") { updateStatus("archived") }
+                Spacer()
+                Button("编辑", systemImage: "pencil", action: edit)
+                Button("关闭") { dismiss() }
+            }
+            .disabled(busy)
+        }
+        .padding(24)
+        .frame(width: 600, height: 520)
+        .interactiveDismissDisabled(busy)
+    }
+}
+
+private struct PlanningAssistantSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            PlanningSheetHeader(
+                title: "规划助手",
+                subtitle: model.planning?.date ?? "",
+                symbol: "bubble.left.and.bubble.right.fill",
+                tint: .blue
+            )
+
+            if let dashboard = model.planning {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        if dashboard.conversation.isEmpty {
+                            EmptyState(symbol: "bubble.left", text: "还没有当日对话")
+                                .frame(height: 220)
+                        } else {
+                            ForEach(dashboard.conversation) { message in
+                                PlanningConversationBubble(message: message)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: .infinity)
+
+                HStack(spacing: 8) {
+                    quickPrompt("梳理今天的重点", symbol: "wand.and.stars")
+                    quickPrompt("检查未完成任务", symbol: "checklist")
+                    quickPrompt("从目标拆一个任务", symbol: "arrow.turn.down.right")
+                    Spacer()
+                }
+
+                HStack(spacing: 10) {
+                    TextField("询问今天的任务、进度或长期目标", text: $model.planningAssistantDraft)
+                        .textFieldStyle(.plain)
+                        .font(ControlDesign.bodyFont)
+                        .padding(.horizontal, 12)
+                        .frame(height: 40)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(ControlDesign.hairline, lineWidth: 0.8))
+                        .onSubmit { Task { await model.sendPlanningAssistantMessage() } }
+                    Button { Task { await model.sendPlanningAssistantMessage() } } label: {
+                        Label("发送", systemImage: "arrow.up").frame(minWidth: 62)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        model.planningBusy ||
+                        model.planningAssistantDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+                }
+            }
+
+            HStack {
+                if model.planningBusy {
+                    ProgressView().controlSize(.small)
+                    Text("正在整理").font(ControlDesign.metadataFont).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("关闭") { dismiss() }
+            }
+        }
+        .padding(24)
+        .frame(width: 700, height: 650)
+    }
+
+    private func quickPrompt(_ title: String, symbol: String) -> some View {
+        Button {
+            Task { await model.sendPlanningAssistantMessage(title) }
+        } label: {
+            Label(title, systemImage: symbol)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(model.planningBusy)
+    }
+}
+
+private struct PlanningCompletionReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PlanningSheetHeader(
+                title: "完成确认",
+                subtitle: "识别到的任务状态变更",
+                symbol: "checkmark.bubble.fill",
+                tint: .orange
+            )
+
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(model.planning?.pendingCompletionSuggestions ?? []) { suggestion in
+                        ControlSurface {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("选择实际完成的任务")
+                                    .font(ControlDesign.bodyFont.weight(.semibold))
+                                ForEach(suggestion.candidateTasks) { task in
+                                    Button {
+                                        Task {
+                                            await model.resolvePlanningSuggestion(id: suggestion.id, taskId: task.id)
+                                            closeWhenFinished()
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Text(task.title)
+                                                .font(ControlDesign.bodyFont)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            Image(systemName: "checkmark.circle")
+                                        }
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(model.planningBusy)
+                                }
+                                Divider()
+                                HStack {
+                                    Spacer()
+                                    Button("忽略") {
+                                        Task {
+                                            await model.resolvePlanningSuggestion(id: suggestion.id, dismiss: true)
+                                            closeWhenFinished()
+                                        }
+                                    }
+                                    .disabled(model.planningBusy)
+                                }
+                            }
+                            .padding(14)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+            HStack {
+                if model.planningBusy { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("关闭") { dismiss() }
+            }
+        }
+        .padding(24)
+        .frame(width: 620, height: 520)
+    }
+
+    private func closeWhenFinished() {
+        if model.planning?.pendingCompletionSuggestions.isEmpty != false {
+            dismiss()
+        }
+    }
+}
+
+private struct PlanningConversationBubble: View {
+    let message: PlanningConversationMessage
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if message.role == "user" { Spacer(minLength: 90) }
+            if message.role != "user" {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(ControlDesign.brand)
+                    .frame(width: 28, height: 28)
+                    .background(ControlDesign.brand.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            Text(message.content)
+                .font(ControlDesign.bodyFont)
+                .textSelection(.enabled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    message.role == "user"
+                        ? Color.blue.opacity(0.11)
+                        : Color(nsColor: .controlBackgroundColor)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(ControlDesign.hairline, lineWidth: message.role == "user" ? 0 : 0.6)
+                )
+            if message.role != "user" { Spacer(minLength: 90) }
+        }
+    }
+}
+
+private struct PlanningSheetHeader: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 40, height: 40)
+                .background(tint.opacity(0.09))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 21, weight: .semibold))
+                    .lineLimit(2)
+                Text(subtitle)
+                    .font(ControlDesign.metadataFont)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+@ViewBuilder
+private func detailBlock(title: String, text: String) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+        Text(title).font(ControlDesign.bodyFont.weight(.semibold))
+        Text(text.isEmpty ? "未填写" : text)
+            .font(ControlDesign.bodyFont)
+            .foregroundStyle(text.isEmpty ? .secondary : .primary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(ControlDesign.hairline, lineWidth: 0.8))
     }
 }
 
 private extension View {
     func planningFieldChrome() -> some View {
         textFieldStyle(.plain)
+            .font(ControlDesign.bodyFont)
             .padding(.horizontal, 11)
-            .frame(height: 38)
+            .frame(height: 40)
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 7))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(ControlDesign.hairline, lineWidth: 0.8)
-            )
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(ControlDesign.hairline, lineWidth: 0.8))
     }
 }
 
-private extension PlanningPlanItem {
-    var updatedAtMsFallback: String { "\(id)|\(intention)|\(notes)|\(reflection)" }
+private func planningDateLabel(_ milliseconds: Int) -> String {
+    DateFormatter.localizedString(
+        from: Date(timeIntervalSince1970: Double(milliseconds) / 1000),
+        dateStyle: .medium,
+        timeStyle: .short
+    )
+}
+
+private func planningStatusLabel(_ status: String) -> String {
+    switch status {
+    case "in_progress": return "进行中"
+    case "done": return "已完成"
+    case "cancelled": return "已取消"
+    default: return "待开始"
+    }
+}
+
+private func planningGoalStatusLabel(_ status: String) -> String {
+    switch status {
+    case "completed": return "已完成"
+    case "archived": return "已归档"
+    default: return "进行中"
+    }
+}
+
+private func planningPriorityLabel(_ priority: Int) -> String {
+    ["低", "普通", "高", "紧急"][max(0, min(3, priority))]
 }

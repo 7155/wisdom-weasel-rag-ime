@@ -49,6 +49,7 @@ class AgentSessionStore:
         *,
         title: str,
         mode: str = "assistant",
+        agent_id: str = "",
         role_id: str = "zhiyou-v1",
         role_version: str = "1",
         model_profile: str = "deepseek-v4",
@@ -67,6 +68,7 @@ class AgentSessionStore:
             raise ValueError("assistant sessions cannot carry workspace roots")
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         session_id = f"agent:{uuid.uuid4()}"
+        persistent_agent_id = " ".join(str(agent_id).split())[:240] or session_id
         shell_policy = shell_policy_version or (
             "coordinator-per-command-v1" if mode == "coordinator" else "assistant-no-shell-v1"
         )
@@ -74,13 +76,14 @@ class AgentSessionStore:
             conn.execute(
                 """
                 INSERT INTO agent_sessions(
-                    id, title, session_mode, role_id, role_version, model_profile,
+                    id, agent_id, title, session_mode, role_id, role_version, model_profile,
                     tool_profile_version, workspace_roots_json, shell_policy_version,
                     created_at_ms, updated_at_ms, last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
+                    persistent_agent_id,
                     normalized_title,
                     mode,
                     role_id,
@@ -725,6 +728,7 @@ def _session_payload(
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-session.v1",
         "id": str(row["id"]),
+        "agentId": str(row["agent_id"] or row["id"]),
         "piSessionId": str(row["pi_session_id"] or ""),
         "sessionFile": str(row["session_file"] or ""),
         "title": str(row["title"]),

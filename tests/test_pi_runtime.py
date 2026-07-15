@@ -261,9 +261,11 @@ class PiRuntimeTests(unittest.TestCase):
                                 "apiKey": "gpt-test-secret",
                             },
                             "models": {
-                                "gpt-5.6-luna": {
-                                    "name": "GPT-5.6 Luna",
+                                "gpt-5.4": {
+                                    "name": "GPT-5.4",
                                     "limit": {"context": 1_050_000, "output": 128_000},
+                                    "variants": {"high": {}, "max": {}},
+                                    "modalities": {"image": True},
                                 }
                             },
                         }
@@ -280,7 +282,7 @@ class PiRuntimeTests(unittest.TestCase):
                 "RAG_IME_PI_ENABLED": "1",
                 "RAG_IME_PI_PROVIDER_CONFIG": str(provider_path),
                 "RAG_IME_PI_PROVIDER": "gpt",
-                "RAG_IME_PI_MODEL": "gpt-5.6-luna",
+                "RAG_IME_PI_MODEL": "gpt-5.4",
             },
             clear=True,
         ), mock.patch(
@@ -295,7 +297,7 @@ class PiRuntimeTests(unittest.TestCase):
 
         self.assertTrue(config.model_configured)
         self.assertEqual(config.provider, "gpt")
-        self.assertEqual(config.model, "gpt-5.6-luna")
+        self.assertEqual(config.model, "gpt-5.4")
         self.assertEqual(config.child_environment()["RAG_IME_PI_GPT_API_KEY"], "gpt-test-secret")
         self.assertNotIn("gpt-test-secret", repr(config))
         config.prepare_agent_config()
@@ -304,11 +306,80 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertIn('"deepseek"', models_text)
         self.assertIn("$RAG_IME_PI_GPT_API_KEY", models_text)
         self.assertIn('"supportsDeveloperRole": false', models_text)
+        self.assertIn('"supportsReasoningEffort": false', models_text)
+        self.assertIn('"thinkingLevelMap"', models_text)
+        self.assertIn('"image"', models_text)
         self.assertNotIn("gpt-test-secret", models_text)
         self.assertNotIn("deepseek-test-secret", models_text)
         command = config.launch_command(session=self.session)
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
-        self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
+        self.assertEqual(command[command.index("--model") + 1], "gpt-5.4")
+
+    def test_imported_provider_omits_product_personas_and_uses_declared_capabilities(self) -> None:
+        provider_path = self.root / "provider-capabilities.json"
+        provider_path.write_text(
+            json.dumps(
+                {
+                    "provider": {
+                        "gpt": {
+                            "options": {
+                                "baseURL": "https://gpt.example/v1",
+                                "apiKey": "test-only",
+                            },
+                            "models": {
+                                "gpt-5.2": {"name": "GPT-5.2"},
+                                "gpt-5.4": {
+                                    "name": "GPT-5.4",
+                                    "variants": {"low": {}, "max": {}},
+                                    "input": ["text", "image"],
+                                },
+                                "gpt-5.6": {"name": "GPT-5.6"},
+                                "gpt-5.6-luna": {"name": "GPT-5.6 Luna"},
+                                "gpt-5.6-terra": {"name": "GPT-5.6 Terra"},
+                                "gpt-5.6-sol": {"name": "GPT-5.6 Sol"},
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        bundle = load_pi_provider_config(provider_path)
+        provider = bundle.providers["gpt"]
+        models = {str(model["id"]): model for model in provider["models"]}
+
+        self.assertEqual(set(models), {"gpt-5.2", "gpt-5.4"})
+        self.assertFalse(models["gpt-5.2"]["reasoning"])
+        self.assertEqual(models["gpt-5.2"]["input"], ["text"])
+        self.assertTrue(models["gpt-5.4"]["reasoning"])
+        self.assertEqual(models["gpt-5.4"]["thinkingLevelMap"], {"xhigh": "max"})
+        self.assertEqual(models["gpt-5.4"]["input"], ["text", "image"])
+        self.assertTrue(provider["compat"]["supportsReasoningEffort"])
+
+    def test_stale_custom_session_model_falls_back_inside_the_same_provider(self) -> None:
+        config = PiRuntimeConfig(
+            enabled=True,
+            executable=self.fake_pi,
+            agent_dir=self.root / "fallback-config",
+            session_dir=self.root / "fallback-sessions",
+            logs_dir=self.root / "fallback-logs",
+            provider="gpt",
+            model="gpt-5.2",
+            model_providers={
+                "gpt": {
+                    "models": [
+                        {"id": "gpt-5.2", "name": "GPT-5.2", "reasoning": False}
+                    ]
+                }
+            },
+        )
+        stale = {**self.session, "modelProfile": "gpt/gpt-5.6"}
+
+        command = config.launch_command(session=stale)
+
+        self.assertEqual(command[command.index("--provider") + 1], "gpt")
+        self.assertEqual(command[command.index("--model") + 1], "gpt-5.2")
 
     def test_imported_provider_rejects_credentials_and_query_parameters_in_url(self) -> None:
         for endpoint in (
@@ -408,6 +479,7 @@ class PiRuntimeTests(unittest.TestCase):
         session_id = str(self.session["id"])
         ensured = self.runtime.ensure(session_id)
         self.assertEqual(ensured["state"]["sessionId"], "pi-fake-1")
+        self.assertEqual(self.store.get(session_id)["modelProfile"], "deepseek/deepseek-v4")
         self.assertEqual(self.runtime.runtime_status()["status"], "ready")
 
         accepted = self.runtime.prompt(session_id, "今天做了什么")
@@ -506,6 +578,14 @@ class PiRuntimeTests(unittest.TestCase):
         thinking = self.runtime.set_thinking_level(session_id, level="xhigh")
         self.assertEqual(thinking["thinkingLevel"], "xhigh")
         self.assertEqual(self.runtime.model_catalog(session_id)["thinkingLevel"], "xhigh")
+
+        reset = self.runtime.set_model(session_id, provider="deepseek", model_id="deepseek-v4")
+        self.assertEqual(reset["selected"]["id"], "deepseek-v4")
+        self.assertEqual(self.runtime.model_catalog(session_id)["thinkingLevel"], "off")
+        with self.assertRaisesRegex(ValueError, "不支持这个思考强度"):
+            self.runtime.set_thinking_level(session_id, level="high")
+        with self.assertRaisesRegex(PiRuntimeError, "目录中没有这个模型"):
+            self.runtime.set_model(session_id, provider="gpt", model_id="gpt-5.6")
 
     def test_provider_error_becomes_failed_message_and_failed_turn(self) -> None:
         session_id = str(self.session["id"])

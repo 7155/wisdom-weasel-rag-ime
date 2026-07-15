@@ -26,6 +26,7 @@ from .active_rag_service import (
     ActiveRagStartRequest,
     active_rag_sensitive_text_blocked,
 )
+from .agent_memory_query import AgentMemoryQueryService
 from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
     agent_approval_route,
@@ -81,6 +82,8 @@ from .memory_generator import (
     generated_memory_dedupe_tag,
 )
 from .models import MemoryAction
+from .model_profiles import DEFAULT_MODEL_PROFILES, profile_by_id
+from .model_registry import ModelDeployment, ModelRegistry, default_model_registry_path, normalize_model_runtime
 from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
 from .payloads import action_response_payload, suggestions_response_payload
 from .prediction_anchors import build_prediction_anchors_from_snapshot
@@ -152,6 +155,47 @@ def _memory_book_operation_label(operation: str) -> str:
         "add_negative_phrase": "新增负向记忆",
         "supersede_memory": "替代旧记忆",
     }.get(operation, "整理记忆")
+
+
+def _model_profile_registry_item(
+    profile_payload: dict[str, Any],
+    deployments: list[ModelDeployment],
+) -> dict[str, object]:
+    payload = dict(profile_payload)
+    profile_id = str(payload.get("id") or "unknown")
+    configured_default_path = str(payload.pop("modelPath", "") or "")
+    ordered = sorted(
+        deployments,
+        key=lambda item: (item.active, item.updated_at_ms, item.model_id),
+        reverse=True,
+    )
+    selected = ordered[0] if ordered else None
+    active = next((item for item in ordered if item.active), None)
+    payload.update(
+        {
+            "id": profile_id,
+            "label": profile_id,
+            "provider": (
+                normalize_model_runtime(selected.runtime or selected.format)
+                if selected is not None
+                else ""
+            ),
+            "registered": bool(ordered),
+            "active": active is not None,
+            "enabled": active is not None,
+            "modelId": selected.model_id if selected is not None else "",
+            "modelPath": selected.path if selected is not None else "",
+            "modelFingerprint": selected.fingerprint if selected is not None else "",
+            "configuredDefaultModelPath": configured_default_path,
+            "promptMode": (
+                selected.prompt_mode
+                if selected is not None and selected.prompt_mode
+                else str(payload.get("promptMode") or "")
+            ),
+            "deployments": [item.payload() for item in ordered],
+        }
+    )
+    return payload
 
 
 @dataclass(frozen=True)
@@ -247,6 +291,11 @@ class DebugImeService:
         self._predictor_status_lock = RLock()
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
+        self.agent_memory_queries = AgentMemoryQueryService(
+            config.db_path,
+            project=config.project,
+            embedding_provider=getattr(self.core, "embedding_provider", None),
+        )
         self._embedding_warmup_report = self._warm_embedding_provider()
         self.runtime_config_resolver = RuntimeConfigResolver(self.settings_store, environ=os.environ)
         self.management = ManagementService(
@@ -269,6 +318,7 @@ class DebugImeService:
             facade=self,
             delegation=self.agent.delegation,
             collaboration=self.agent,
+            memory_queries=self.agent_memory_queries,
         )
         self.control_api = ControlApiFacade(
             agent=self.agent,
@@ -708,30 +758,63 @@ class DebugImeService:
 
     def model_profiles(self) -> dict[str, object]:
         active_rag_route = self.active_rag_route_status(local_only=False)
+        registry_path = Path(os.environ.get("RAG_IME_MODEL_REGISTRY") or default_model_registry_path()).expanduser()
+        registry_error = ""
+        try:
+            registry = ModelRegistry.load(registry_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            registry = ModelRegistry(registry_path)
+            registry_error = exc.__class__.__name__
+
+        deployments_by_profile: dict[str, list[ModelDeployment]] = {}
+        for deployment in registry.deployments:
+            try:
+                canonical_profile = profile_by_id(deployment.profile).id
+            except ValueError:
+                canonical_profile = deployment.profile or "unknown"
+            deployments_by_profile.setdefault(canonical_profile, []).append(deployment)
+
+        items: list[dict[str, object]] = []
+        known_profile_ids = {profile.id for profile in DEFAULT_MODEL_PROFILES}
+        for profile in DEFAULT_MODEL_PROFILES:
+            matches = deployments_by_profile.get(profile.id, [])
+            items.append(_model_profile_registry_item(profile.to_payload(), matches))
+
+        for profile_id, matches in deployments_by_profile.items():
+            if profile_id in known_profile_ids:
+                continue
+            items.append(
+                _model_profile_registry_item(
+                    {
+                        "id": profile_id,
+                        "lane": matches[0].lane if matches else "hot",
+                        "modelPath": "",
+                    },
+                    matches,
+                )
+            )
+
+        items.append(
+            {
+                "id": "knowledge_provider_active_rag",
+                "label": "Knowledge Provider Active RAG",
+                "provider": active_rag_route["provider"],
+                "lane": "active_rag",
+                "enabled": bool(active_rag_route["remoteReady"]),
+                "active": bool(active_rag_route["remoteReady"]),
+                "registered": True,
+                "requiresExplicitOptIn": True,
+                "skipReason": active_rag_route["skipReason"],
+                "gates": active_rag_route["gates"],
+            }
+        )
         return {
             "schemaVersion": "rag-ime.model-profiles.v3",
             "ok": True,
-            "items": [
-                {
-                    "id": "qwen3_06b_ime_hot",
-                    "label": "Qwen3 0.6B IME Hot",
-                    "provider": "mlx",
-                    "lane": "hot",
-                    "resident": True,
-                    "latencyBudgetMs": 500,
-                    "enabled": True,
-                },
-                {
-                    "id": "knowledge_provider_active_rag",
-                    "label": "Knowledge Provider Active RAG",
-                    "provider": active_rag_route["provider"],
-                    "lane": "active_rag",
-                    "enabled": bool(active_rag_route["remoteReady"]),
-                    "requiresExplicitOptIn": True,
-                    "skipReason": active_rag_route["skipReason"],
-                    "gates": active_rag_route["gates"],
-                },
-            ],
+            "registryPath": str(registry_path),
+            "registryRevision": registry.revision,
+            "registryError": registry_error,
+            "items": items,
         }
 
     def model_probe(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -4526,6 +4609,38 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/memory/summary":
             self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
             return
+        if parsed.path == "/api/memory/graph":
+            as_of_ms = _optional_int(_query_first(query, "asOfMs"))
+            owner_kinds = tuple(
+                item.strip()
+                for item in _query_first(query, "ownerKinds").split(",")
+                if item.strip()
+            )
+            entity_types = tuple(
+                item.strip()
+                for item in _query_first(query, "entityTypes").split(",")
+                if item.strip()
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.memory_graph(
+                    query=_query_first(query, "query"),
+                    owner_kinds=owner_kinds,
+                    entity_types=entity_types,
+                    as_of_ms=as_of_ms,
+                    limit=_optional_int(_query_first(query, "limit")) or 60,
+                ),
+            )
+            return
+        if parsed.path == "/api/memory/graph/sources":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.memory_graph_sources(
+                    _query_first(query, "relationId"),
+                    limit=_optional_int(_query_first(query, "limit")) or 20,
+                ),
+            )
+            return
         if parsed.path == "/api/planning/dashboard":
             self._write_json(
                 HTTPStatus.OK,
@@ -4613,6 +4728,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path in ("/api/models/profiles",):
             self._write_json(HTTPStatus.OK, self.service.model_profiles())
+            return
+        if parsed.path == "/api/providers/configuration":
+            self._write_json(HTTPStatus.OK, self.service.management.provider_configuration())
             return
         if parsed.path in ("/api/active-rag/settings",):
             self._write_json(HTTPStatus.OK, self.service.active_rag_settings())
@@ -5064,6 +5182,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.profile_save({**payload, "kind": "model_profile"}))
             elif path in ("/api/models/profile/activate-dry-run",):
                 self._write_json(HTTPStatus.OK, self.service.model_activate_dry_run(payload))
+            elif path == "/api/providers/configuration/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.provider_configuration_apply(payload),
+                )
             elif path in ("/api/active-rag/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_settings_update(payload))
             elif path in ("/api/active-rag/preview",):

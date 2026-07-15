@@ -6,6 +6,7 @@ import os
 import plistlib
 import shlex
 import shutil
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,7 @@ from .model_registry import (
     normalize_model_endpoint,
     normalize_model_runtime,
 )
+from .model_profiles import profile_by_id, validate_profile, validate_profile_artifact
 
 
 MODEL_RUNTIME_PLAN_SCHEMA_VERSION = "rag-ime.model-runtime-plan.v1"
@@ -85,6 +87,38 @@ def plan_model_runtime(deployment: ModelDeployment) -> ModelRuntimePlan:
         model_path = Path(deployment.path).expanduser()
         if not model_path.is_dir():
             errors.append(f"mlx model directory not found: {model_path}")
+        try:
+            profile = profile_by_id(deployment.profile)
+        except ValueError as exc:
+            profile = None
+            errors.append(str(exc))
+        if profile is not None:
+            errors.extend(validate_profile(profile))
+            if model_path.is_dir():
+                errors.extend(validate_profile_artifact(profile, model_path))
+            configured_prompt_mode = str(deployment.prompt_mode or "").strip()
+            if configured_prompt_mode and configured_prompt_mode != profile.prompt_mode:
+                errors.append(
+                    f"model profile {profile.id} requires promptMode={profile.prompt_mode}, "
+                    f"got {configured_prompt_mode}"
+                )
+            effective_prompt_mode = configured_prompt_mode or profile.prompt_mode
+            provider_env.update(
+                {
+                    "RAG_IME_PREDICTOR_PROFILE": profile.id,
+                    "RAG_IME_PREDICTOR_PROMPT_MODE": effective_prompt_mode,
+                    "RAG_IME_PREDICTOR_MAX_TOKENS": str(profile.max_tokens),
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "1" if profile.stream_first else "0",
+                    "RAG_IME_MLX_PROFILE": profile.id,
+                    "RAG_IME_MLX_PROMPT_MODE": effective_prompt_mode,
+                    "RAG_IME_MLX_MAX_TOKENS": str(profile.max_tokens),
+                    "RAG_IME_MLX_DECODE_STRATEGY": profile.decode_strategy,
+                    "RAG_IME_MLX_BRANCH_COUNT": str(profile.branch_count),
+                    "RAG_IME_MLX_TEMPERATURE": str(profile.sampling_temperature),
+                    "RAG_IME_MLX_TOP_P": str(profile.sampling_top_p),
+                    "RAG_IME_MLX_TOP_K": str(profile.sampling_top_k),
+                }
+            )
         mlx_endpoint = endpoint or "http://127.0.0.1:8767"
         mlx_bind = urllib.parse.urlsplit(mlx_endpoint)
         if not is_loopback_endpoint(mlx_endpoint):
@@ -102,8 +136,6 @@ def plan_model_runtime(deployment: ModelDeployment) -> ModelRuntimePlan:
                 "RAG_IME_PREDICTOR_BASE_URL": mlx_endpoint,
                 "RAG_IME_PREDICTOR_MODEL": str(model_path),
                 "RAG_IME_MLX_MODEL": str(model_path),
-                "RAG_IME_MLX_PROFILE": deployment.profile,
-                "RAG_IME_MLX_PROMPT_MODE": deployment.prompt_mode,
                 "RAG_IME_MLX_HOST": mlx_host,
                 "RAG_IME_MLX_PORT": str(mlx_port),
             }
@@ -397,8 +429,30 @@ def main(argv: list[str] | None = None) -> int:
             "RAG_IME_REGISTERED_MODEL_PATH": plan.deployment.path,
             "RAG_IME_REGISTERED_MODEL_FORMAT": plan.deployment.format,
             "RAG_IME_REGISTERED_MODEL_FINGERPRINT": plan.deployment.fingerprint,
-            "RAG_IME_REGISTERED_MODEL_PROFILE": plan.deployment.profile,
-            "RAG_IME_REGISTERED_MODEL_PROMPT_MODE": plan.deployment.prompt_mode,
+            "RAG_IME_REGISTERED_MODEL_PROFILE": plan.provider_env.get(
+                "RAG_IME_MLX_PROFILE",
+                plan.deployment.profile,
+            ),
+            "RAG_IME_REGISTERED_MODEL_PROMPT_MODE": plan.provider_env.get(
+                "RAG_IME_MLX_PROMPT_MODE",
+                plan.deployment.prompt_mode,
+            ),
+            "RAG_IME_REGISTERED_MODEL_MAX_TOKENS": plan.provider_env.get(
+                "RAG_IME_MLX_MAX_TOKENS",
+                "",
+            ),
+            "RAG_IME_REGISTERED_MODEL_STREAM_FIRST": plan.provider_env.get(
+                "RAG_IME_PREDICTOR_STREAM_FIRST",
+                "",
+            ),
+            "RAG_IME_REGISTERED_MODEL_DECODE_STRATEGY": plan.provider_env.get(
+                "RAG_IME_MLX_DECODE_STRATEGY",
+                "",
+            ),
+            "RAG_IME_REGISTERED_MODEL_BRANCH_COUNT": plan.provider_env.get(
+                "RAG_IME_MLX_BRANCH_COUNT",
+                "",
+            ),
             "RAG_IME_REGISTERED_MODEL_RUNTIME": plan.runtime,
             "RAG_IME_REGISTERED_MODEL_ENDPOINT": plan.provider_env.get("RAG_IME_PREDICTOR_BASE_URL", ""),
             "RAG_IME_REGISTERED_MODEL_NAME": plan.deployment.model_name or plan.deployment.path,
@@ -408,6 +462,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"RAG_IME_MODEL_RUNTIME={shlex.quote(plan.runtime)}")
         print(f"RAG_IME_MODEL_RUNTIME_LIFECYCLE={shlex.quote(plan.lifecycle)}")
         print(f"RAG_IME_MODEL_RUNTIME_READY={'1' if plan.ready else '0'}")
+        for error in plan.errors:
+            print(error, file=sys.stderr)
     else:
         payload = plan.payload()
         if probe is not None:

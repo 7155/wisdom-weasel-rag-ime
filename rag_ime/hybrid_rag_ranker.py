@@ -85,6 +85,7 @@ def rank_hybrid_hits(
                     "timeDecayFactor": round(decay_factor, 6),
                     "sourceUpdatedAtMs": int(best_hit.metadata.get("sourceUpdatedAtMs") or 0),
                     "archived": bool(best_hit.metadata.get("archived")),
+                    **_tag_activation_metadata(doc_hits),
                 },
             )
         )
@@ -139,6 +140,19 @@ def _source_type_for_doc(doc_type: str) -> str:
     if doc_type == "phrase":
         return "phrase"
     return "rag"
+
+
+def _tag_activation_metadata(hits: list[HybridRagHit]) -> dict[str, object]:
+    tagged = [hit for hit in hits if float(hit.metadata.get("tagActivationEnergy") or 0.0) > 0.0]
+    if not tagged:
+        return {}
+    best = max(tagged, key=lambda hit: float(hit.metadata.get("tagActivationEnergy") or 0.0))
+    return {
+        "tagActivationEnergy": float(best.metadata.get("tagActivationEnergy") or 0.0),
+        "tagActivationHop": int(best.metadata.get("tagActivationHop") or 0),
+        "tagActivationPath": list(best.metadata.get("tagActivationPath") or []),
+        "tagActivationEvidenceCount": int(best.metadata.get("tagActivationEvidenceCount") or 0),
+    }
 
 
 def _raw_echo_penalty(*, text: str, query_text: str, committed_tail: str) -> float:

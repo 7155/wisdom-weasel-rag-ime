@@ -480,7 +480,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_MLX_PREFIX_CACHE": "0",
                 "RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES": "8",
                 "RAG_IME_MLX_PREFIX_CACHE_MAX_MB": "32",
-                "RAG_IME_MLX_PROMPT_MODE": "base-completion",
+                "RAG_IME_MLX_PROMPT_MODE": "chat-json",
                 "RAG_IME_MEMORY_PROFILE": "low",
                 "RAG_IME_HF_HOME": str(Path(tmp) / "hf-cache"),
             }
@@ -513,7 +513,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_MLX_MODEL"], "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local")
         self.assertEqual(env_vars["RAG_IME_MLX_PROFILE"], "qwen3_06b_ime_hot")
         self.assertEqual(env_vars["RAG_IME_MLX_PORT"], "18767")
-        self.assertEqual(env_vars["RAG_IME_MLX_PROMPT_MODE"], "base-completion")
+        self.assertEqual(env_vars["RAG_IME_MLX_PROMPT_MODE"], "chat-json")
         self.assertEqual(env_vars["RAG_IME_MLX_PREFIX_CACHE"], "0")
         self.assertEqual(env_vars["RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES"], "8")
         self.assertEqual(env_vars["RAG_IME_MLX_PREFIX_CACHE_MAX_MB"], "32")

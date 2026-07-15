@@ -27,7 +27,9 @@ from rag_ime.memory_book_compiler import (
     memory_book_plan_from_compile_output,
     store_memory_book_plan,
 )
+from rag_ime.memory_graph import MemoryGraphStore
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
+from rag_ime.model_registry import ModelDeployment, ModelRegistry
 from rag_ime.predictor import OpenAICompatiblePredictionConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.rime_lexicon_review import CONFIRM_TEXT
@@ -156,6 +158,42 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             apply_memory_book_plan(conn, plan)
+
+    def test_model_profiles_are_derived_from_registry_instead_of_fake_qwen_state(self) -> None:
+        model = Path(self.tmp.name) / "minimind-ime-100m-user-daily-core-v1"
+        model.mkdir()
+        (model / "config.json").write_text("{}", encoding="utf-8")
+        registry_path = Path(self.tmp.name) / "models.json"
+        registry = ModelRegistry(registry_path)
+        registry.register(
+            ModelDeployment(
+                model_id="daily-core-100m",
+                path=str(model),
+                format="mlx",
+                fingerprint="sha256:test",
+                profile="minimind_ime_100m_v1",
+                runtime="mlx",
+                prompt_mode="base-completion",
+            )
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_MODEL_REGISTRY": str(registry_path)}):
+            payload = self.service.model_profiles()
+
+        profiles = {str(item["id"]): item for item in payload["items"]}
+        active = profiles["minimind_ime_100m_v1"]
+        qwen = profiles["qwen3_06b_ime_hot"]
+        self.assertEqual(payload["registryPath"], str(registry_path))
+        self.assertTrue(active["registered"])
+        self.assertTrue(active["active"])
+        self.assertTrue(active["enabled"])
+        self.assertEqual(active["modelId"], "daily-core-100m")
+        self.assertEqual(active["modelPath"], str(model.resolve()))
+        self.assertEqual(active["promptMode"], "base-completion")
+        self.assertFalse(qwen["registered"])
+        self.assertFalse(qwen["active"])
+        self.assertFalse(qwen["enabled"])
+        self.assertEqual(qwen["modelPath"], "")
 
     def test_candidate_explain_returns_ranking_reasons(self) -> None:
         event_ref = self.core.record_event(
@@ -1387,6 +1425,99 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.management-history.v1")
         self.assertFalse(payload["rawTextVisible"])
         self.assertNotIn("text", payload["items"][0])
+
+    def test_provider_and_memory_graph_http_routes_match_native_contracts(self) -> None:
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_700_000_100_041,
+                source="manual",
+                committed_text="八月考试准备让我感到压力",
+                privacy_disposition="allowed",
+                recent_context="记忆关系图",
+                app="com.apple.TextEdit",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        event_id = event_ref.split(":", 1)[1]
+        graph = MemoryGraphStore(self.db_path)
+        graph.upsert_entity(
+            entity_id="entity:http-exam",
+            entity_type="topic",
+            name="八月考试",
+            project="wisdom-weasel-rag-ime",
+            updated_at_ms=1_700_000_100_041,
+        )
+        graph.upsert_entity(
+            entity_id="entity:http-stress",
+            entity_type="concept",
+            name="压力",
+            project="wisdom-weasel-rag-ime",
+            updated_at_ms=1_700_000_100_041,
+        )
+        graph.upsert_relation(
+            relation_id="relation:http-exam-stress",
+            source_entity_id="entity:http-exam",
+            target_entity_id="entity:http-stress",
+            relation_type="causes",
+            fact="考试准备使用户感到压力",
+            idempotency_key="http-exam-stress-v1",
+            sources=[{"sourceType": "input_event", "sourceId": event_id}],
+            project="wisdom-weasel-rag-ime",
+            valid_from_ms=1_700_000_100_041,
+            updated_at_ms=1_700_000_100_041,
+        )
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        support = Path(self.tmp.name) / "provider-http"
+        support.mkdir()
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with patch.dict(os.environ, {"RAG_IME_APP_SUPPORT_DIR": str(support)}):
+                with urlopen(f"{base_url}/api/providers/configuration", timeout=5) as response:
+                    providers = json.loads(response.read().decode("utf-8"))
+                apply_request = Request(
+                    f"{base_url}/api/providers/configuration/apply",
+                    data=json.dumps(
+                        {
+                            "slot": "instant",
+                            "provider": "mlx",
+                            "endpoint": "http://127.0.0.1:8767",
+                            "model": "minimind_ime_100m_v1",
+                            "expectedConfigurationHash": providers["configurationHash"],
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(apply_request, timeout=5) as response:
+                    applied = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/api/memory/graph?query=%E8%80%83%E8%AF%95&limit=20", timeout=5) as response:
+                graph_payload = json.loads(response.read().decode("utf-8"))
+            relation_id = graph_payload["relations"][0]["relationId"]
+            with urlopen(f"{base_url}/api/memory/graph/sources?relationId={relation_id}", timeout=5) as response:
+                sources = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertTrue(providers["ok"])
+        self.assertFalse(providers["providers"]["secretsIncluded"])
+        self.assertTrue(applied["ok"])
+        self.assertEqual(applied["after"]["model"], "minimind_ime_100m_v1")
+        self.assertFalse(applied["secretsEchoed"])
+        self.assertEqual(graph_payload["schemaVersion"], "rag-ime.memory-graph-browser.v1")
+        self.assertEqual(graph_payload["summary"]["visibleRelationCount"], 1)
+        self.assertEqual(sources["schemaVersion"], "rag-ime.memory-graph-sources.v1")
+        self.assertIn("八月考试准备", sources["sources"][0]["text"])
 
     def test_agent_session_http_routes_are_operational(self) -> None:
         class Handler(DebugRequestHandler):

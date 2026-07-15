@@ -217,6 +217,21 @@ class LocalSqliteCoreClient:
         with self._initialize_lock:
             with self._connect() as conn:
                 conn.execute("PRAGMA foreign_keys = OFF")
+                # Agent source checkpoints point into the input-event ledger.
+                # Keep Agent sessions, but clear these derived links before the
+                # ledger is rebuilt. The trigger-owned graph indexes stay in
+                # place so no surviving trigger references a missing table.
+                for table in (
+                    "agent_memory_sources",
+                    "memory_graph_source_dirty",
+                    "memory_source_event_links",
+                    "memory_source_generations",
+                ):
+                    if conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        (table,),
+                    ).fetchone() is not None:
+                        conn.execute(f"DELETE FROM {table}")
                 for table in table_names:
                     conn.execute(f"DROP TABLE IF EXISTS {table}")
                 conn.execute("PRAGMA foreign_keys = ON")

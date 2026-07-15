@@ -7,8 +7,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+from rag_ime.agent_memory_sources import AgentMemorySourceStore
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.hybrid_rag_models import HybridRagQuery
-from rag_ime.hybrid_rag_retriever import retrieve_hybrid_rag_candidates
+from rag_ime.hybrid_rag_retriever import _active_docs, retrieve_hybrid_rag_candidates
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
 from rag_ime.models import InputEvent
@@ -72,6 +74,11 @@ class HybridRagRetrieverTests(unittest.TestCase):
             payload = retrieve_hybrid_rag_candidates(conn, HybridRagQuery(query_text="输入法", project="wisdom-weasel-rag-ime"))
 
         self.assertIn("大模型", payload["query"]["activatedTags"])
+        details = {item["tag"]: item for item in payload["query"]["activatedTagDetails"]}
+        self.assertEqual(details["大模型"]["hop"], 1)
+        self.assertEqual(details["大模型"]["path"], ["输入法", "大模型"])
+        self.assertEqual(details["本地模型"]["hop"], 2)
+        self.assertEqual(details["本地模型"]["path"], ["输入法", "大模型", "本地模型"])
         self.assertGreaterEqual(payload["lanes"]["tagmemo"]["count"], 1)
         self.assertEqual(payload["lanes"]["tagmemo"]["implementation"], "sqlite_fts5_bm25")
 
@@ -174,6 +181,211 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertLessEqual(payload["elapsedMs"], 1000)
         self.assertFalse(payload["overBudget"])
 
+    def test_private_agent_docs_are_filtered_before_lane_ranking(self) -> None:
+        sessions = AgentSessionStore(self.db_path)
+        owner = sessions.create(title="owner", role_id="agent-owner", created_at_ms=10)
+        # A role is only a reusable persona template; it must not grant another
+        # Agent instance access to the owner's private receipts.
+        reader = sessions.create(title="reader", role_id="agent-owner", created_at_ms=11)
+        sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        for index in range(120):
+            sources.checkpoint_tool_receipt(
+                {
+                    "state": "applied",
+                    "sessionId": str(owner["id"]),
+                    "approvalId": f"private-{index}",
+                    "receipt": {
+                        "mutationApplied": True,
+                        "summary": f"目标词 高分私有工具结果 {index}",
+                    },
+                },
+                created_at_ms=20 + index,
+            )
+        self._record_event("目标词公开内容")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET kind = 'stable_memory', status = 'approved', quality_score = 0.9
+                WHERE source_event_id IN (
+                    SELECT input_event_id FROM agent_memory_sources WHERE source_role = 'tool_receipt'
+                )
+                """
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            private_memory_ids = [
+                str(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT mi.memory_id
+                    FROM memory_items AS mi
+                    JOIN agent_memory_sources AS ams ON ams.input_event_id = mi.source_event_id
+                    WHERE ams.source_role = 'tool_receipt' AND mi.status = 'approved'
+                    """
+                ).fetchall()
+            ]
+            for index, memory_id in enumerate(private_memory_ids):
+                conn.executemany(
+                    """
+                    INSERT INTO candidate_feedback(
+                        created_at_ms, query_hash, candidate_text, source_type,
+                        memory_id, action, app, project, metadata_json
+                    ) VALUES (?, ?, '目标词', 'item', ?, 'accepted', '', 'wisdom-weasel-rag-ime', '{}')
+                    """,
+                    ((1000 + index * 3 + offset, f"private-{index}-{offset}", memory_id) for offset in range(3)),
+                )
+            conn.execute(
+                """
+                INSERT INTO candidate_feedback(
+                    created_at_ms, query_hash, candidate_text, source_type,
+                    memory_id, action, app, project, metadata_json
+                ) VALUES (9999, 'public', '目标词公开内容', 'phrase', 'phrase:目标词公开内容',
+                          'accepted', '', 'wisdom-weasel-rag-ime', '{}')
+                """
+            )
+            visible = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="目标词",
+                    project="wisdom-weasel-rag-ime",
+                    top_k=1,
+                    reader_session_id=str(reader["id"]),
+                    reader_agent_id=str(reader["agentId"]),
+                ),
+            )
+            owner_view = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="私有工具结果",
+                    project="wisdom-weasel-rag-ime",
+                    top_k=2,
+                    reader_session_id=str(owner["id"]),
+                    reader_agent_id=str(owner["agentId"]),
+                ),
+            )
+            conn.execute(
+                "UPDATE agent_memory_sources SET status = 'archived' WHERE source_role = 'tool_receipt'"
+            )
+            archived_owner_view = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="私有工具结果",
+                    project="wisdom-weasel-rag-ime",
+                    top_k=2,
+                    reader_session_id=str(owner["id"]),
+                    reader_agent_id=str(owner["agentId"]),
+                ),
+            )
+            conn.execute("DELETE FROM agent_memory_sources WHERE source_role = 'tool_receipt'")
+            orphaned_owner_view = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="私有工具结果",
+                    project="wisdom-weasel-rag-ime",
+                    top_k=2,
+                    reader_session_id=str(owner["id"]),
+                    reader_agent_id=str(owner["agentId"]),
+                ),
+            )
+
+        self.assertTrue(any("公开内容" in item["text"] for item in visible["hits"]))
+        self.assertFalse(any("私有工具结果" in item["text"] for item in visible["hits"]))
+        self.assertGreaterEqual(visible["lanes"]["feedback"]["count"], 1)
+        self.assertTrue(any("私有工具结果" in item["text"] for item in owner_view["hits"]))
+        self.assertFalse(any("私有工具结果" in item["text"] for item in archived_owner_view["hits"]))
+        self.assertFalse(any("私有工具结果" in item["text"] for item in orphaned_owner_view["hits"]))
+
+    def test_private_doc_cannot_seed_query_expansion_or_tag_diagnostics(self) -> None:
+        sessions = AgentSessionStore(self.db_path)
+        owner = sessions.create(title="owner", role_id="agent-owner", created_at_ms=10)
+        reader = sessions.create(title="reader", role_id="agent-reader", created_at_ms=11)
+        private = AgentMemorySourceStore(
+            self.db_path,
+            project="wisdom-weasel-rag-ime",
+        ).checkpoint_tool_receipt(
+            {
+                "state": "applied",
+                "sessionId": str(owner["id"]),
+                "approvalId": "private-expansion",
+                "receipt": {"mutationApplied": True, "summary": "触发词 私有工具内容"},
+            },
+            created_at_ms=20,
+        )
+        self._record_event("触发词公开内容")
+        private_event_id = int(private["source"]["inputEventId"])
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET kind = 'stable_memory', status = 'approved', quality_score = 0.9
+                WHERE source_event_id = ?
+                """,
+                (private_event_id,),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            private_doc = conn.execute(
+                "SELECT doc_id FROM memory_retrieval_docs WHERE json_extract(metadata_json, '$.sourceEventId') = ?",
+                (private_event_id,),
+            ).fetchone()
+            self.assertIsNotNone(private_doc)
+            conn.execute(
+                """
+                UPDATE memory_retrieval_docs
+                SET tags_text = '私有标签', query_expansions_text = '触发词 私有扩展'
+                WHERE doc_id = ?
+                """,
+                (str(private_doc["doc_id"]),),
+            )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="触发词",
+                    project="wisdom-weasel-rag-ime",
+                    reader_session_id=str(reader["id"]),
+                    reader_agent_id=str(reader["agentId"]),
+                ),
+            )
+
+        self.assertNotIn("私有标签", payload["query"]["activatedTags"])
+        self.assertNotIn("私有扩展", payload["query"]["expansionTerms"])
+        self.assertFalse(any("私有工具内容" in item["text"] for item in payload["hits"]))
+
+    def test_active_doc_acl_uses_constant_number_of_sql_queries(self) -> None:
+        event_id = self._record_event("批量 ACL 公共来源")
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_retrieval_docs(
+                    doc_id, doc_type, source_id, raw_text, tags_text, aliases_text,
+                    surface_hints_text, query_expansions_text, time_key, project, app,
+                    status, updated_at_ms, metadata_json
+                ) VALUES (?, 'synthetic', ?, '批量文档', '', '', '', '', '',
+                          'wisdom-weasel-rag-ime', '', 'active', 1, ?)
+                """,
+                (
+                    (
+                        f"synthetic:{index}",
+                        f"synthetic:{index}",
+                        '{"sourceEventId":' + str(event_id) + '}',
+                    )
+                    for index in range(1000)
+                ),
+            )
+            statements: list[str] = []
+            conn.set_trace_callback(statements.append)
+            docs = _active_docs(
+                conn,
+                query=HybridRagQuery(
+                    query_text="批量",
+                    project="wisdom-weasel-rag-ime",
+                ),
+            )
+            conn.set_trace_callback(None)
+
+        selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
+        self.assertGreaterEqual(len(docs), 1000)
+        self.assertLessEqual(len(selects), 4, selects)
+
     def test_disabled_lane_is_not_executed_and_vector_lanes_report_unavailable(self) -> None:
         self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG",))
         with self.connect() as conn:
@@ -224,6 +436,75 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertTrue(payload["lanes"]["vector_raw"]["available"])
         self.assertGreater(payload["lanes"]["vector_raw"]["count"], 0)
         self.assertEqual(payload["lanes"]["vector_tag_boost"]["implementation"], "precomputed_cosine")
+
+    def test_vector_tag_boost_uses_graph_activated_query_vector(self) -> None:
+        provider = TagBoostSemanticFakeProvider()
+        with self.connect() as conn:
+            pressure_id = int(conn.execute(
+                """
+                INSERT INTO memory_tags(
+                    tag, normalized_tag, tag_type, quality_score,
+                    created_at_ms, updated_at_ms, source, status
+                ) VALUES ('压力', '压力', 'concept', 0.9, 1, 1, 'dsv4', 'active')
+                """
+            ).lastrowid)
+            exam_id = int(conn.execute(
+                """
+                INSERT INTO memory_tags(
+                    tag, normalized_tag, tag_type, quality_score,
+                    created_at_ms, updated_at_ms, source, status
+                ) VALUES ('考试', '考试', 'concept', 0.8, 1, 1, 'dsv4', 'active')
+                """
+            ).lastrowid)
+            conn.execute(
+                """
+                INSERT INTO memory_tag_edges(
+                    src_tag_id, dst_tag_id, edge_type, weight, direction_bias,
+                    evidence_count, updated_at_ms, metadata_json
+                ) VALUES (?, ?, 'related', 0.9, 0.0, 2, 1, '{}')
+                """,
+                (pressure_id, exam_id),
+            )
+            item_id = int(conn.execute(
+                """
+                INSERT INTO memory_items(
+                    memory_id, kind, text, normalized_text, project, status,
+                    privacy_class, created_at_ms, updated_at_ms, metadata_json
+                ) VALUES (
+                    'phrase:复试提醒', 'phrase', '复试提醒', '复试提醒',
+                    'wisdom-weasel-rag-ime', 'approved', 'local', 1, 1,
+                    '{"direct_candidate_allowed":true}'
+                )
+                """
+            ).lastrowid)
+            conn.execute(
+                """
+                INSERT INTO memory_item_tags(memory_item_id, tag_id, weight, position, evidence)
+                VALUES (?, ?, 1.0, 0, 'test')
+                """,
+                (item_id, exam_id),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            stats = rebuild_retrieval_doc_vectors(conn, provider, project="wisdom-weasel-rag-ime")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(query_text="压力", project="wisdom-weasel-rag-ime"),
+                provider,
+            )
+
+        boost = payload["query"]["tagBoost"]
+        self.assertTrue(boost["applied"])
+        self.assertEqual(boost["tagVectorCount"], 2)
+        self.assertEqual(stats["tagVectors"], 2)
+        self.assertIn("考试", boost["usedTags"])
+        raw_doc_ids = {
+            item["doc_id"] for item in payload["hits"] if item["source_lane"] == "vector_raw"
+        }
+        boosted_doc_ids = {
+            item["doc_id"] for item in payload["hits"] if item["source_lane"] == "vector_tag_boost"
+        }
+        self.assertNotIn("phrase:phrase:复试提醒", raw_doc_ids)
+        self.assertIn("phrase:phrase:复试提醒", boosted_doc_ids)
 
     def test_vector_warmup_populates_provider_cache_for_first_query(self) -> None:
         self._record_event("苹果电脑输入方案", tags=("输入法", "本地模型"))
@@ -328,6 +609,20 @@ class SemanticFakeProvider:
 
     def embed_query(self, text: str) -> list[float]:
         return [1.0, 0.0] if "Mac" in text or "打字" in text else [0.0, 1.0]
+
+
+class TagBoostSemanticFakeProvider:
+    fingerprint = "test-tag-boost:v1"
+
+    def embed(self, text: str) -> list[float]:
+        if text.strip() == "压力":
+            return [1.0, 0.0]
+        if "考试" in text or "复试" in text:
+            return [0.0, 1.0]
+        return [0.0, 0.0]
+
+    def embed_query(self, text: str) -> list[float]:
+        return [1.0, 0.0] if "压力" in text else [0.0, 1.0]
 
 
 def qwen_compile_output(event_id: int) -> dict[str, object]:

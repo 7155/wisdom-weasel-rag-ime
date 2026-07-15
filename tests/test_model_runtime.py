@@ -51,6 +51,25 @@ class ModelRuntimePlanTests(unittest.TestCase):
             self.assertTrue(plan.expected_capabilities["batchCandidates"])
             self.assertEqual(plan.payload()["schemaVersion"], MODEL_RUNTIME_PLAN_SCHEMA_VERSION)
 
+    def test_mlx_plan_rejects_an_unknown_profile(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-unknown-profile-") as tmp:
+            model = Path(tmp) / "model"
+            model.mkdir()
+            deployment = ModelDeployment(
+                model_id="unknown-profile",
+                path=str(model),
+                format="mlx",
+                fingerprint="sha256:test",
+                profile="minimind_ime_future",
+                runtime="mlx",
+                prompt_mode="base-completion",
+            )
+
+            plan = plan_model_runtime(deployment)
+
+        self.assertFalse(plan.ready)
+        self.assertTrue(any("unknown model profile" in error for error in plan.errors))
+
     def test_ollama_plan_is_external_and_uses_model_name_not_artifact_path(self) -> None:
         deployment = ModelDeployment(
             model_id="qwen-ollama",
@@ -404,6 +423,33 @@ class ModelRuntimePlanTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("registry", result.stderr.lower())
 
+    def test_restart_fails_closed_when_registered_mlx_profile_is_unknown(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-unknown-profile-") as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            model = root / "model"
+            model.mkdir()
+            (model / "config.json").write_text("{}", encoding="utf-8")
+            registry_path = _write_registry(
+                home,
+                ModelDeployment(
+                    model_id="future-model",
+                    path=str(model),
+                    format="mlx",
+                    fingerprint="sha256:test",
+                    profile="minimind_ime_future",
+                    runtime="mlx",
+                    prompt_mode="base-completion",
+                ),
+            )
+            env = _restart_env(home)
+            env["RAG_IME_MODEL_REGISTRY"] = str(registry_path)
+
+            result = _run_restart(ROOT, env)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("unknown model profile", result.stderr.lower())
+
     def test_restart_keeps_mlx_launch_port_and_sidecar_route_consistent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-mlx-endpoint-") as tmp:
             root = Path(tmp)
@@ -435,6 +481,91 @@ class ModelRuntimePlanTests(unittest.TestCase):
         mlx_port = int(mlx["EnvironmentVariables"]["RAG_IME_MLX_PORT"])
         sidecar_port = urlsplit(sidecar["EnvironmentVariables"]["RAG_IME_PREDICTOR_BASE_URL"]).port
         self.assertEqual(mlx_port, sidecar_port)
+
+    def test_restart_uses_registered_minimind_contract_for_mlx_and_sidecar(self) -> None:
+        cases = (
+            (
+                "minimind_ime_100m_v1",
+                "minimind-ime-100m-user-daily-core-v1",
+                14,
+                12,
+                16384,
+                "16",
+                "bos-sampled-completion-v1",
+                "8",
+            ),
+            (
+                "minimind_ime_60m_v8",
+                "minimind-ime-60m-daily-short-final-v8",
+                8,
+                8,
+                6400,
+                "8",
+                "bos-short-completion-v8",
+                "8",
+            ),
+        )
+        for profile, dirname, layers, heads, vocab, max_tokens, decode_strategy, branch_count in cases:
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory(
+                prefix=f"rag-ime-runtime-{profile}-"
+            ) as tmp:
+                root = Path(tmp)
+                home = root / "home"
+                model = root / dirname
+                _write_minimind_config(model, layers=layers, heads=heads, vocab=vocab)
+                misleading_model = root / "mlx-community-Qwen3-0.6B-4bit-local"
+                misleading_model.mkdir()
+                registry_path = _write_registry(
+                    home,
+                    ModelDeployment(
+                        model_id=f"registered-{profile}",
+                        path=str(model),
+                        format="mlx",
+                        fingerprint="sha256:test",
+                        profile=profile,
+                        runtime="mlx",
+                        endpoint="http://127.0.0.1:18767",
+                        prompt_mode="base-completion",
+                    ),
+                )
+                env = _restart_env(home)
+                env.update(
+                    {
+                        "RAG_IME_MODEL_REGISTRY": str(registry_path),
+                        "RAG_IME_MLX_MODEL": str(misleading_model),
+                        "RAG_IME_MLX_PROFILE": "qwen3_06b_ime_hot",
+                        "RAG_IME_MLX_PROMPT_MODE": "chat-json",
+                        "RAG_IME_MLX_MAX_TOKENS": "99",
+                        "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                    }
+                )
+
+                result = _run_restart(ROOT, env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                mlx = _load_plist(home / "Library" / "LaunchAgents" / "com.rag-ime.mlx-predictor.plist")
+                sidecar = _load_plist(home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist")
+
+                mlx_env = mlx["EnvironmentVariables"]
+                sidecar_env = sidecar["EnvironmentVariables"]
+                self.assertEqual(mlx_env["RAG_IME_MLX_MODEL"], str(model))
+                self.assertEqual(mlx_env["RAG_IME_MLX_PROFILE"], profile)
+                self.assertEqual(mlx_env["RAG_IME_MLX_PROMPT_MODE"], "base-completion")
+                self.assertEqual(mlx_env["RAG_IME_MLX_MAX_TOKENS"], max_tokens)
+                self.assertEqual(mlx_env["RAG_IME_MLX_STREAM_FIRST"], "0")
+                self.assertEqual(mlx_env["RAG_IME_MLX_DECODE_STRATEGY"], decode_strategy)
+                self.assertEqual(mlx_env["RAG_IME_MLX_BRANCH_COUNT"], branch_count)
+                expected_temperature = "0.42" if profile == "minimind_ime_100m_v1" else "0.38"
+                expected_top_p = "0.92" if profile == "minimind_ime_100m_v1" else "0.9"
+                self.assertEqual(mlx_env["RAG_IME_MLX_TEMPERATURE"], expected_temperature)
+                self.assertEqual(mlx_env["RAG_IME_MLX_TOP_P"], expected_top_p)
+                self.assertEqual(mlx_env["RAG_IME_MLX_TOP_K"], "50")
+                self.assertEqual(sidecar_env["RAG_IME_PREDICTOR_MODEL"], str(model))
+                self.assertEqual(sidecar_env["RAG_IME_PREDICTOR_PROFILE"], profile)
+                self.assertEqual(sidecar_env["RAG_IME_PREDICTOR_PROMPT_MODE"], "base-completion")
+                self.assertEqual(sidecar_env["RAG_IME_PREDICTOR_MAX_TOKENS"], max_tokens)
+                self.assertEqual(sidecar_env["RAG_IME_PREDICTOR_STREAM_FIRST"], "0")
+                self.assertEqual(sidecar_env["RAG_IME_PREDICTOR_TEMPERATURE"], expected_temperature)
+                self.assertEqual(sidecar_env["RAG_IME_PREDICTOR_TOP_P"], expected_top_p)
 
     def test_legacy_explicit_qwen_model_keeps_qwen_profile_without_registry(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-legacy-qwen-") as tmp:
@@ -639,6 +770,20 @@ class ModelRuntimePlanTests(unittest.TestCase):
                 self.assertIn("com.rag-ime.sidecar", calls)
                 self.assertNotIn("com.rag-ime.mlx-predictor", calls)
                 self.assertIn("previous MLX runtime was left running", result.stderr)
+
+
+def _write_minimind_config(model: Path, *, layers: int, heads: int, vocab: int) -> None:
+    model.mkdir(parents=True)
+    (model / "config.json").write_text(
+        json.dumps(
+            {
+                "num_hidden_layers": layers,
+                "num_attention_heads": heads,
+                "vocab_size": vocab,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _external_deployment(

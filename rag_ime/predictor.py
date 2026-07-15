@@ -1067,7 +1067,13 @@ def prediction_provider_status(provider: PredictionProvider, *, probe_capabiliti
         "extraHeaderKeys": sorted(str(key) for key in extra_headers.keys()) if isinstance(extra_headers, dict) else [],
         "streamFirstCandidate": bool(getattr(config, "stream_first_candidate", False)),
     }
-    status["modelProfile"] = profile_by_id(str(status["providerProfile"])).to_payload()
+    try:
+        status["modelProfile"] = profile_by_id(str(status["providerProfile"])).to_payload()
+    except ValueError:
+        status["modelProfile"] = {
+            "id": str(status["providerProfile"]),
+            "registered": False,
+        }
     status["capabilities"] = _prediction_provider_capabilities(str(status["providerName"]))
     if probe_capabilities:
         capability_probe = getattr(provider, "capability_probe", None)
@@ -2932,15 +2938,37 @@ def _normalized_predictor_profile(profile: str) -> str:
         "prefix": "completion-instant",
         "completion": "completion-instant",
         "base-instant": "completion-instant",
+        "minimind-100m": "minimind_ime_100m_v1",
+        "minimind-60m": "minimind_ime_60m_v8",
     }
     normalized = aliases.get(normalized, normalized)
-    if normalized in {"custom", "instant", "completion-instant", "ime_hot", "ime_post_commit", "ime_quality"}:
+    if normalized in {
+        "custom",
+        "instant",
+        "completion-instant",
+        "ime_hot",
+        "ime_post_commit",
+        "ime_quality",
+        "minimind_ime_v2",
+        "minimind_ime_100m_v1",
+        "minimind_ime_60m_v8",
+    }:
         return normalized
     return "custom"
 
 
 def _prediction_profile_defaults(profile: str) -> PredictionProfileDefaults:
     normalized = _normalized_predictor_profile(profile)
+    if normalized in {"minimind_ime_v2", "minimind_ime_100m_v1", "minimind_ime_60m_v8"}:
+        model_profile = profile_by_id(normalized)
+        return PredictionProfileDefaults(
+            prompt_mode="mlx-service",
+            timeout_ms=max(500, model_profile.latency_budget_ms),
+            max_tokens=model_profile.max_tokens,
+            temperature=0.15,
+            top_p=0.9,
+            disable_thinking=True,
+        )
     if normalized == "ime_hot":
         return PredictionProfileDefaults(
             prompt_mode="mlx-service",

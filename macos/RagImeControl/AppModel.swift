@@ -15,6 +15,14 @@ final class AppModel: ObservableObject {
     @Published var memoryRows: [[String: JSONValue]] = []
     @Published var memoryNextCursor = ""
     @Published var memorySaving = false
+    @Published var memoryGraph: MemoryGraphResponse?
+    @Published var memoryGraphSources: MemoryGraphSourcesResponse?
+    @Published var memoryGraphLoading = false
+    @Published var memoryGraphSourcesLoading = false
+    @Published var memoryGraphSourcesRelationId = ""
+    @Published var memoryGraphQuery = ""
+    @Published var memoryGraphOwnerKind = ""
+    @Published var memoryGraphEntityType = ""
     @Published var planning: PlanningDashboardResponse?
     @Published var planningDate = ""
     @Published var planningBusy = false
@@ -44,6 +52,8 @@ final class AppModel: ObservableObject {
     @Published var knowledgeRoute: KnowledgeRouteResponse?
     @Published var knowledgeRunning = false
     @Published var knowledgeDatabaseActionStatus = ""
+    @Published var providerConfiguration: ProviderConfigurationResponse?
+    @Published var providerConfigurationBusy = false
     @Published var lastRuntimeActionReport = ""
     @Published var showingRuntimeActionReport = false
     @Published var errorMessage = ""
@@ -57,6 +67,7 @@ final class AppModel: ObservableObject {
     private var activeDestination: ControlDestination = .overview
     private var knowledgeGeneration = 0
     private var planningLoadGeneration = 0
+    private var memoryGraphSourcesGeneration = 0
 
     func start() async {
         guard eventTask == nil else { return }
@@ -168,7 +179,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func run(action: String) async {
+    @discardableResult
+    func run(action: String) async -> Bool {
         do {
             let response: MutationResponse = try await api.post("api/runtime/action", body: ["action": .string(action)])
             guard response.ok else { throw APIClientError.server(400, response.error ?? "操作未启动") }
@@ -178,9 +190,11 @@ final class AppModel: ObservableObject {
             try await waitForRuntimeJob(jobId, expectedAction: action)
             pendingApplyModes.removeAll()
             await refreshOverview()
+            return true
         } catch {
             await refreshOverview()
             present(error)
+            return false
         }
     }
 
@@ -242,6 +256,70 @@ final class AppModel: ObservableObject {
         } catch {
             present(error)
         }
+    }
+
+    func loadMemoryGraph() async {
+        memoryGraphLoading = true
+        defer { memoryGraphLoading = false }
+        do {
+            var query = [
+                URLQueryItem(name: "limit", value: "18"),
+                URLQueryItem(name: "query", value: memoryGraphQuery),
+            ]
+            if !memoryGraphOwnerKind.isEmpty {
+                query.append(URLQueryItem(name: "ownerKinds", value: memoryGraphOwnerKind))
+            }
+            if !memoryGraphEntityType.isEmpty {
+                query.append(URLQueryItem(name: "entityTypes", value: memoryGraphEntityType))
+            }
+            let response: MemoryGraphResponse = try await api.get("api/memory/graph", query: query)
+            memoryGraph = response
+            clearMemoryGraphSources()
+            connected = true
+            clearTransientConnectionError()
+        } catch {
+            present(error)
+        }
+    }
+
+    func loadMemoryGraphSources(relationId: String) async {
+        guard !relationId.isEmpty else {
+            clearMemoryGraphSources()
+            return
+        }
+        memoryGraphSourcesGeneration += 1
+        let generation = memoryGraphSourcesGeneration
+        memoryGraphSources = nil
+        memoryGraphSourcesRelationId = relationId
+        memoryGraphSourcesLoading = true
+        defer {
+            if generation == memoryGraphSourcesGeneration {
+                memoryGraphSourcesLoading = false
+            }
+        }
+        do {
+            let response: MemoryGraphSourcesResponse = try await api.get(
+                "api/memory/graph/sources",
+                query: [
+                    URLQueryItem(name: "relationId", value: relationId),
+                    URLQueryItem(name: "limit", value: "20"),
+                ]
+            )
+            guard generation == memoryGraphSourcesGeneration,
+                  memoryGraphSourcesRelationId == relationId else { return }
+            memoryGraphSources = response
+        } catch {
+            guard generation == memoryGraphSourcesGeneration else { return }
+            memoryGraphSources = nil
+            present(error)
+        }
+    }
+
+    func clearMemoryGraphSources() {
+        memoryGraphSourcesGeneration += 1
+        memoryGraphSources = nil
+        memoryGraphSourcesLoading = false
+        memoryGraphSourcesRelationId = ""
     }
 
     func editMemoryItem(
@@ -734,6 +812,61 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func loadProviderConfiguration() async {
+        do {
+            let response: ProviderConfigurationResponse = try await api.get("api/providers/configuration")
+            providerConfiguration = response
+            connected = true
+            clearTransientConnectionError()
+        } catch {
+            present(error)
+        }
+    }
+
+    func applyProviderConfiguration(
+        slot: String,
+        provider: String,
+        endpoint: String,
+        model modelName: String
+    ) async -> ProviderConfigurationApplyResponse? {
+        guard let current = providerConfiguration, !current.configurationHash.isEmpty else {
+            await loadProviderConfiguration()
+            guard providerConfiguration != nil else { return nil }
+            return await applyProviderConfiguration(
+                slot: slot,
+                provider: provider,
+                endpoint: endpoint,
+                model: modelName
+            )
+        }
+        providerConfigurationBusy = true
+        defer { providerConfigurationBusy = false }
+        do {
+            var body: [String: JSONValue] = [
+                "slot": .string(slot),
+                "provider": .string(provider),
+                "expectedConfigurationHash": .string(current.configurationHash),
+            ]
+            if slot != "voice" {
+                body["endpoint"] = .string(endpoint)
+                body["model"] = .string(modelName)
+            }
+            let response: ProviderConfigurationApplyResponse = try await api.post(
+                "api/providers/configuration/apply",
+                body: body
+            )
+            guard response.ok else {
+                throw APIClientError.server(400, "服务配置没有应用")
+            }
+            await loadProviderConfiguration()
+            await refreshOverview()
+            return response
+        } catch {
+            present(error)
+            return nil
+        }
+    }
+
     func runKnowledgeWorkbench() async {
         let questionSource = knowledgeMode == .organizeDatabase
             ? knowledgeOrganizationInstruction
@@ -875,9 +1008,15 @@ final class AppModel: ObservableObject {
         switch target {
         case .inputMethod: await loadRimeLexiconReview()
         case .planning: await loadPlanning()
-        case .memory: await loadMemory()
+        case .memory:
+            async let catalog: Void = loadMemory()
+            async let graph: Void = loadMemoryGraph()
+            _ = await (catalog, graph)
         case .history: await loadHistory()
-        case .ragAndModels: await loadKnowledgeRoute()
+        case .ragAndModels:
+            async let route: Void = loadKnowledgeRoute()
+            async let providers: Void = loadProviderConfiguration()
+            _ = await (route, providers)
         case .diagnostics:
             do { runtime = try await api.get("api/runtime/status") } catch { present(error) }
         case .configuration: break

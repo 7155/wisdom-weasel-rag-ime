@@ -241,11 +241,141 @@ struct MutationResponse: Decodable {
     let error: String?
 }
 
+struct ProviderConfigurationResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let configurationHash: String
+    let providers: ProviderConfigurationSlots
+}
+
+struct ProviderConfigurationSlots: Decodable {
+    let instant: ProviderConfigurationSlot
+    let knowledge: ProviderConfigurationSlot
+    let voice: ProviderConfigurationSlot
+    let secretsIncluded: Bool
+}
+
+struct ProviderConfigurationSlot: Decodable {
+    let provider: String
+    let endpoint: String?
+    let model: String?
+}
+
+struct ProviderConfigurationApplyResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let configurationHash: String
+    let slot: String
+    let after: ProviderConfigurationSlot
+    let requiresRestart: Bool
+    let restartComponent: String
+    let secretsEchoed: Bool
+    let existingSecretPreserved: Bool
+}
+
 struct PageResponse: Decodable {
     let ok: Bool
     let items: [[String: JSONValue]]
     let nextCursor: String
     let limit: Int
+}
+
+struct MemoryGraphResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let asOfMs: Int
+    let query: String
+    let entities: [MemoryGraphEntity]
+    let relations: [MemoryGraphRelation]
+    let summary: MemoryGraphSummary
+    let filters: MemoryGraphFilters
+}
+
+struct MemoryGraphEntity: Decodable, Identifiable, Equatable {
+    var id: String { entityId }
+    let entityId: String
+    let entityType: String
+    let canonicalName: String
+    let description: String
+    let aliases: [String]
+    let ownerKind: String
+    let ownerId: String
+    let project: String
+    let status: String
+    let revision: Int
+    let confidence: Double
+    let createdAtMs: Int
+    let updatedAtMs: Int
+    let sources: [MemoryGraphSourceRef]
+    let relationCount: Int
+}
+
+struct MemoryGraphRelation: Decodable, Identifiable, Equatable {
+    var id: String { relationId }
+    let relationId: String
+    let sourceEntityId: String
+    let targetEntityId: String
+    let sourceName: String
+    let targetName: String
+    let sourceType: String
+    let targetType: String
+    let relationType: String
+    let fact: String
+    let ownerKind: String
+    let ownerId: String
+    let project: String
+    let validFromMs: Int
+    let validToMs: Int?
+    let status: String
+    let revision: Int
+    let confidence: Double
+    let createdAtMs: Int
+    let updatedAtMs: Int
+    let sources: [MemoryGraphSourceRef]
+    let sourceCount: Int
+}
+
+struct MemoryGraphSourceRef: Decodable, Equatable {
+    let sourceType: String
+    let sourceId: String
+    let sourceRevision: Int
+}
+
+struct MemoryGraphSummary: Decodable {
+    let visibleEntityCount: Int
+    let visibleRelationCount: Int
+    let evidenceCount: Int
+    let projectionPendingCount: Int
+}
+
+struct MemoryGraphFilters: Decodable {
+    let entityTypes: [MemoryGraphFilterOption]
+    let ownerKinds: [String]
+}
+
+struct MemoryGraphFilterOption: Decodable, Identifiable {
+    var id: String { value }
+    let value: String
+    let count: Int
+}
+
+struct MemoryGraphSourcesResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let sources: [MemoryGraphEvidence]
+    let count: Int
+}
+
+struct MemoryGraphEvidence: Decodable, Identifiable {
+    var id: String { "\(sourceType):\(sourceId):\(sourceRevision)" }
+    let sourceType: String
+    let sourceId: String
+    let sourceRevision: Int
+    let text: String
+    let createdAtMs: Int
+    let project: String
+    let app: String
+    let relationIds: [String]
 }
 
 struct RimeLexiconReviewResponse: Decodable {
