@@ -120,6 +120,28 @@ class KnowledgeGraphTests(unittest.TestCase):
         self.assertEqual(2, partial["revision"])
         self.assertEqual(2, self.service.knowledge_graph(self.base["id"])["stats"]["documentCount"])
 
+    def test_hidden_chunks_do_not_exhaust_the_visible_graph_budget(self) -> None:
+        base = self.service.create_base(
+            "Large graph",
+            chunking_config={"strategy": "fixed", "size": 200, "overlap": 0},
+        )
+        source = self.root / "large.md"
+        source.write_text(
+            "# Large graph\n\n" + "RAG connects Agent Runtime with `VectorStore` evidence. " * 600,
+            encoding="utf-8",
+        )
+        document = self.service.import_document(base["id"], source)
+        self.assertGreater(document["chunkCount"], 10)
+        self.service.rebuild_knowledge_graph(base["id"], expected_revision=0)
+
+        graph = self.service.knowledge_graph(
+            base["id"], limit=10, depth=2, exclude_chunks=True
+        )
+
+        self.assertFalse(any(node["kind"] == "chunk" for node in graph["nodes"]))
+        self.assertTrue(any(node["kind"] in {"entity", "term"} for node in graph["nodes"]))
+        self.assertTrue(graph["edges"])
+
 
 if __name__ == "__main__":
     unittest.main()

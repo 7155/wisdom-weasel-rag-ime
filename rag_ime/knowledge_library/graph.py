@@ -128,26 +128,43 @@ class KnowledgeGraph:
                 if not frontier or len(visited) >= traversal_limit:
                     break
                 placeholders = ", ".join("?" for _ in frontier)
-                incident = connection.execute(
-                    f"SELECT * FROM knowledge_graph_edges WHERE base_id=? AND "
-                    f"(source_id IN ({placeholders}) OR target_id IN ({placeholders})) "
-                    "ORDER BY weight DESC, kind, id LIMIT ?",
-                    [base_id, *frontier, *frontier, traversal_limit * 6],
-                ).fetchall()
+                if exclude_chunks:
+                    incident = connection.execute(
+                        f"SELECT edge.* FROM knowledge_graph_edges edge "
+                        "JOIN knowledge_graph_nodes source ON source.id=edge.source_id "
+                        "JOIN knowledge_graph_nodes target ON target.id=edge.target_id "
+                        f"WHERE edge.base_id=? AND (edge.source_id IN ({placeholders}) "
+                        f"OR edge.target_id IN ({placeholders})) "
+                        "AND source.kind!='chunk' AND target.kind!='chunk' "
+                        "ORDER BY edge.weight DESC, edge.kind, edge.id LIMIT ?",
+                        [base_id, *frontier, *frontier, traversal_limit * 6],
+                    ).fetchall()
+                else:
+                    incident = connection.execute(
+                        f"SELECT * FROM knowledge_graph_edges WHERE base_id=? AND "
+                        f"(source_id IN ({placeholders}) OR target_id IN ({placeholders})) "
+                        "ORDER BY weight DESC, kind, id LIMIT ?",
+                        [base_id, *frontier, *frontier, traversal_limit * 6],
+                    ).fetchall()
                 neighbor_ids: list[str] = []
                 for edge in incident:
                     candidate_edges[str(edge["id"])] = edge
                     for node_id in (str(edge["source_id"]), str(edge["target_id"])):
                         if node_id not in visited:
                             neighbor_ids.append(node_id)
-                neighbor_ids = list(dict.fromkeys(neighbor_ids))[: max(0, traversal_limit - len(visited))]
+                neighbor_ids = list(dict.fromkeys(neighbor_ids))
                 if not neighbor_ids:
                     break
                 neighbor_placeholders = ", ".join("?" for _ in neighbor_ids)
+                neighbor_filters = list(scope_filters)
+                if exclude_chunks:
+                    # Hidden evidence nodes must not consume the traversal budget.
+                    # Document and topic mention edges keep the visible graph connected.
+                    neighbor_filters.append("kind!='chunk'")
                 neighbor_rows = connection.execute(
-                    f"SELECT * FROM knowledge_graph_nodes WHERE {' AND '.join(scope_filters)} "
-                    f"AND id IN ({neighbor_placeholders}) ORDER BY weight DESC, kind, label COLLATE NOCASE, id",
-                    [*scope_params, *neighbor_ids],
+                    f"SELECT * FROM knowledge_graph_nodes WHERE {' AND '.join(neighbor_filters)} "
+                    f"AND id IN ({neighbor_placeholders}) ORDER BY weight DESC, kind, label COLLATE NOCASE, id LIMIT ?",
+                    [*scope_params, *neighbor_ids, max(0, traversal_limit - len(visited))],
                 ).fetchall()
                 frontier = []
                 for row in neighbor_rows:
