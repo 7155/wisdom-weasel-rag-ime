@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { useControlTransport } from '@/app/control-transport';
+import type { VoiceProviderId } from '@/platform/transport';
 
 export const voiceQueryKeys = {
   root: ['voice'] as const,
   settings: () => [...voiceQueryKeys.root, 'settings'] as const,
   schema: () => [...voiceQueryKeys.root, 'schema'] as const,
   runtime: () => [...voiceQueryKeys.root, 'runtime'] as const,
-  tools: () => [...voiceQueryKeys.root, 'tools'] as const,
   capabilities: () => [...voiceQueryKeys.root, 'capabilities'] as const,
+  credentials: (provider: VoiceProviderId) => [...voiceQueryKeys.root, 'credentials', provider] as const,
 };
 
 export function useVoiceQueries() {
@@ -30,11 +31,22 @@ export function useVoiceQueries() {
     queryFn: () => transport.capabilities(),
     staleTime: Infinity,
   });
-  const tools = useQuery({
-    queryKey: voiceQueryKeys.tools(),
-    queryFn: ({ signal }) => transport.request({ pathId: 'agent.tools.list', signal }),
-    enabled: capabilities.data?.routeIds.includes('agent.tools.list') === true,
-    staleTime: 30_000,
+  return { capabilities, runtime, schema, settings, transport, transportKind: transport.kind };
+}
+
+export function useVoiceCredentialStatus(provider: VoiceProviderId) {
+  const transport = useControlTransport();
+  const capabilities = useQuery({
+    queryKey: voiceQueryKeys.capabilities(),
+    queryFn: () => transport.capabilities(),
+    staleTime: Infinity,
   });
-  return { capabilities, runtime, schema, settings, tools, transportKind: transport.kind };
+  const supported = capabilities.data?.native.keychain === true
+    && typeof transport.voiceCredentialStatus === 'function';
+  const status = useQuery({
+    queryKey: voiceQueryKeys.credentials(provider),
+    queryFn: () => transport.voiceCredentialStatus!(provider),
+    enabled: supported,
+  });
+  return { capabilities, status, supported, transport };
 }

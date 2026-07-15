@@ -116,6 +116,81 @@ struct NativeRoutePolicyTests {
         )
         expect(lexiconApply.request.url?.path == "/api/rime-lexicon/apply", "lexicon apply route")
 
+        let diagnosticsPreview = try policy.resolveRequest(
+            pathId: "diagnostics.action.preview",
+            parameters: [:],
+            query: [:],
+            body: ["action": "restart_sidecar", "expectedRuntimeRevision": 7]
+        )
+        expect(diagnosticsPreview.request.url?.path == "/api/runtime/action/preview", "diagnostics preview route")
+        expect(diagnosticsPreview.request.httpMethod == "POST", "diagnostics preview method")
+
+        let diagnosticsJob = try policy.resolveRequest(
+            pathId: "diagnostics.action.job",
+            parameters: ["jobId": "job-1"],
+            query: [:],
+            body: nil
+        )
+        expect(diagnosticsJob.request.url?.path == "/api/runtime/job/job-1", "diagnostics job route")
+        expectThrows("diagnostics action is local only") {
+            _ = try policy.resolveRequest(
+                pathId: "diagnostics.action.preview",
+                parameters: [:],
+                query: [:],
+                body: ["action": "restart_sidecar", "expectedRuntimeRevision": 7],
+                scope: .remote
+            )
+        }
+
+        let configurationImport = try policy.resolveRequest(
+            pathId: "configuration.import.apply",
+            parameters: [:],
+            query: [:],
+            body: [
+                "path": "/trusted/rag-ime.config.yaml",
+                "expectedRuntimeRevision": 4,
+                "previewToken": "sha256:preview",
+                "confirmText": "IMPORT RAG-IME CONFIGURATION",
+            ]
+        )
+        expect(configurationImport.request.url?.path == "/api/configuration/import-apply", "configuration import apply route")
+        expectThrows("configuration import is local only") {
+            _ = try policy.resolveRequest(
+                pathId: "configuration.import.preview",
+                parameters: [:],
+                query: [:],
+                body: ["path": "/trusted/rag-ime.config.yaml"],
+                scope: .remote
+            )
+        }
+
+        let configurationRestore = try policy.resolveRequest(
+            pathId: "configuration.restore.apply",
+            parameters: [:],
+            query: [:],
+            body: [
+                "path": "/trusted/backup.ragime-backup",
+                "restoreToken": String(repeating: "a", count: 64),
+                "confirmText": "RESTORE RAG-IME",
+                "expectedRuntimeRevision": 4,
+            ]
+        )
+        expect(configurationRestore.request.url?.path == "/api/configuration/restore-apply", "configuration restore apply route")
+        expectThrows("configuration restore rejects arbitrary fields") {
+            _ = try policy.resolveRequest(
+                pathId: "configuration.restore.apply",
+                parameters: [:],
+                query: [:],
+                body: [
+                    "path": "/trusted/backup.ragime-backup",
+                    "restoreToken": String(repeating: "a", count: 64),
+                    "confirmText": "RESTORE RAG-IME",
+                    "expectedRuntimeRevision": 4,
+                    "shell": "rm -rf",
+                ]
+            )
+        }
+
         let artifact = try policy.resolveRequest(
             pathId: "agent.artifact.get",
             parameters: ["artifactId": "artifact:alpha"],

@@ -135,6 +135,38 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         self.assertIn("knowledgeBases.list", route_ids)
         self.assertIn("knowledgeBases.document.import", route_ids)
 
+    def test_diagnostics_repair_uses_preview_start_and_poll_without_returning_a_command(self) -> None:
+        _, runtime = self._request("GET", "/api/runtime/status")
+        preview = self._ok(
+            "POST",
+            "/api/runtime/action/preview",
+            {
+                "action": "open_accessibility_settings",
+                "expectedRuntimeRevision": runtime["runtimeRevision"],
+            },
+        )
+        started_status, started = self._request(
+            "POST",
+            "/api/runtime/action/start",
+            {
+                "action": "open_accessibility_settings",
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "commandSha256": preview["commandSha256"],
+                "confirmText": "apply",
+            },
+        )
+        self.assertEqual(started_status, 202, started)
+        self.assertTrue(started["ok"])
+        job_id = str(started["result"]["jobId"])
+        job = self._ok("GET", f"/api/runtime/job/{quote(job_id, safe='')}")["job"]
+
+        self.assertEqual(job["status"], "external-supervisor-required")
+        self.assertEqual(job["result"]["externalAction"]["receiptId"], job_id)
+        self.assertNotIn("externalCommand", job["result"])
+        self.assertNotIn("path", job["result"]["externalAction"])
+
     def test_agent_rooms_and_roles_writes_persist_and_rejections_are_not_silent(self) -> None:
         status, created_role = self._request(
             "POST",
@@ -203,6 +235,91 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         self.assertEqual(denied_status, 400, denied)
         self.assertFalse(denied["ok"])
         self.assertTrue(str(denied.get("error") or "").strip())
+
+    def test_configuration_file_routes_bind_preview_to_file_and_runtime_revision(self) -> None:
+        root = Path(self.tmp.name)
+        config_path = root / "rag-ime.config.yaml"
+        config_path.write_text(
+            "schemaVersion: rag-ime.user-config.v1\n"
+            "settings:\n"
+            "  context:\n"
+            "    recentInputBaseline: 29\n",
+            encoding="utf-8",
+        )
+        preview = self._ok(
+            "POST",
+            "/api/configuration/import-preview",
+            {"path": str(config_path)},
+        )
+        self.assertTrue(preview["valid"])
+        self.assertRegex(str(preview["configurationHash"]), r"^sha256:[a-f0-9]{64}$")
+        self.assertEqual(preview["requiresConfirmation"], "IMPORT RAG-IME CONFIGURATION")
+
+        applied = self._ok(
+            "POST",
+            "/api/configuration/import-apply",
+            {
+                "path": str(config_path),
+                "expectedRuntimeRevision": preview["runtimeRevision"],
+                "previewToken": preview["configurationHash"],
+                "confirmText": preview["requiresConfirmation"],
+            },
+        )
+        self.assertIn("context.recentInputBaseline", applied["changedKeys"])
+        self.assertEqual(
+            self._ok("GET", "/api/settings")["settings"]["context"]["recentInputBaseline"],
+            29,
+        )
+
+        config_path.write_text(
+            "schemaVersion: rag-ime.user-config.v1\n"
+            "settings:\n"
+            "  context:\n"
+            "    recentInputBaseline: 30\n",
+            encoding="utf-8",
+        )
+        stale_status, stale = self._request(
+            "POST",
+            "/api/configuration/import-apply",
+            {
+                "path": str(config_path),
+                "expectedRuntimeRevision": applied["runtimeRevision"],
+                "previewToken": preview["configurationHash"],
+                "confirmText": preview["requiresConfirmation"],
+            },
+        )
+        self.assertEqual(stale_status, 400, stale)
+        self.assertIn("changed after preview", str(stale.get("error") or ""))
+
+        backup_directory = root / "Backups"
+        backup_directory.mkdir()
+        exported = self._ok(
+            "POST",
+            "/api/configuration/backup-export",
+            {"destination": str(backup_directory)},
+        )
+        self.assertEqual(
+            Path(str(exported["path"])),
+            backup_directory / "rag-ime-backup.ragime-backup",
+        )
+        restore_preview = self._ok(
+            "POST",
+            "/api/configuration/restore-preview",
+            {"path": str(exported["path"])},
+        )
+        self.assertTrue(restore_preview["valid"])
+        restore_status, restore_error = self._request(
+            "POST",
+            "/api/configuration/restore-apply",
+            {
+                "path": str(exported["path"]),
+                "restoreToken": restore_preview["restoreToken"],
+                "confirmText": restore_preview["requiresConfirmation"],
+                "expectedRuntimeRevision": restore_preview["runtimeRevision"] + 1,
+            },
+        )
+        self.assertEqual(restore_status, 400, restore_error)
+        self.assertIn("changed after restore preview", str(restore_error.get("error") or ""))
 
     def test_management_write_pages_cross_http_and_change_the_temporary_database(self) -> None:
         goal = {

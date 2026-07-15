@@ -1,4 +1,4 @@
-import { ArrowUpRight, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, BrainCircuit, CircleDashed, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/primitives';
@@ -12,12 +12,18 @@ import { publicAgentErrorText } from '../public-error';
 export function AgentTimeline({
   sessionId,
   persona,
+  modelSelectionAvailable,
   onSuggestion,
+  onRetryTurn,
+  onSwitchModel,
   onApprovalDecision,
 }: {
   sessionId: string;
   persona?: AgentPersonaV1;
+  modelSelectionAvailable: boolean;
   onSuggestion: (value: string) => void;
+  onRetryTurn: (turnId: string) => void;
+  onSwitchModel: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
 }) {
   const turnOrder = useAgentLiveStore(useShallow((state) => {
@@ -43,6 +49,9 @@ export function AgentTimeline({
             sessionId={sessionId}
             turnId={turnId}
             persona={persona}
+            modelSelectionAvailable={modelSelectionAvailable}
+            onRetryTurn={onRetryTurn}
+            onSwitchModel={onSwitchModel}
             onApprovalDecision={onApprovalDecision}
           />
         )}
@@ -55,11 +64,17 @@ export function AgentTurn({
   sessionId,
   turnId,
   persona,
+  modelSelectionAvailable = false,
+  onRetryTurn,
+  onSwitchModel,
   onApprovalDecision,
 }: {
   sessionId: string;
   turnId: string;
   persona?: AgentPersonaV1;
+  modelSelectionAvailable?: boolean;
+  onRetryTurn?: (turnId: string) => void;
+  onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
@@ -90,27 +105,46 @@ export function AgentTurn({
   if (!turn) return null;
   const rawFailure = turn.failure || blockFailure;
   const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
+  const showPending = (turn.status === 'queued' || turn.status === 'running')
+    && assistantIds.length === 0
+    && activities.length === 0;
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user />)}
-      {assistantIds.length > 0 || activities.length > 0 || failure ? (
+      {assistantIds.length > 0 || activities.length > 0 || failure || showPending ? (
         <div className="agent-assistant-turn">
-          <PersonaAvatar persona={persona} presence={presence} />
+          <PersonaAvatar persona={persona} presence={showPending ? 'thinking' : presence} />
           <div className="agent-assistant-turn__body">
-            <header><strong>{persona?.displayName ?? '智鼬'}</strong><span>{turnStatusLabel(turn.status)}</span></header>
+            <header><strong>{persona?.displayName ?? '智鼬'}</strong><span>{showPending ? '思考中' : turnStatusLabel(turn.status)}</span></header>
+            {showPending ? <AssistantPendingState /> : null}
             <ActivitySummary activities={activities} onApprovalDecision={onApprovalDecision} />
             {assistantIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} />)}
             {failure ? (
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
                 <span><strong>本轮未完成</strong><small>{failure}</small></span>
+                {onRetryTurn && onSwitchModel ? (
+                  <div className="agent-turn__failure-actions">
+                    <Button size="small" variant="primary" leadingIcon={<RefreshCcw size={14} />} onClick={() => onRetryTurn(turnId)}>重试本轮</Button>
+                    <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={!modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
         </div>
       ) : null}
     </article>
+  );
+}
+
+function AssistantPendingState() {
+  return (
+    <div className="agent-assistant-pending" role="status" aria-live="polite">
+      <CircleDashed aria-hidden="true" size={16} />
+      <span><strong>正在准备</strong><small>消息已收到，正在组织本轮响应。</small></span>
+    </div>
   );
 }
 

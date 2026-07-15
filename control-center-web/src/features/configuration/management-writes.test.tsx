@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
@@ -25,6 +26,8 @@ describe('Configuration settings WorkContract UI', () => {
     const transport = renderConfiguration(true);
     await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
     const input = await screen.findByRole('spinbutton', { name: '最大宽度' });
+    expect(document.querySelector('.configuration-editor')).not.toBeNull();
+    expect(document.querySelector('.configuration-portability')).not.toBeNull();
     await user.clear(input);
     await user.type(input, '620');
     const workflow = screen.getByText('应用设置差异', { selector: 'strong' }).closest('.mgmt-workflow');
@@ -210,13 +213,15 @@ function renderConfiguration(writesAvailable: boolean): ConfigurationTransport {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
-    <TooltipProvider delayDuration={0}>
-      <ControlTransportProvider transport={transport}>
-        <QueryClientProvider client={client}>
-          <ConfigurationFeature />
-        </QueryClientProvider>
-      </ControlTransportProvider>
-    </TooltipProvider>,
+    <MemoryRouter>
+      <TooltipProvider delayDuration={0}>
+        <ControlTransportProvider transport={transport}>
+          <QueryClientProvider client={client}>
+            <ConfigurationFeature />
+          </QueryClientProvider>
+        </ControlTransportProvider>
+      </TooltipProvider>
+    </MemoryRouter>,
   );
   return transport;
 }

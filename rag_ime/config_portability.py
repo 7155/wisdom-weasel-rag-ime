@@ -104,6 +104,8 @@ def preview_user_configuration(
         "settingCount": len(flat_settings),
         "providers": provider_preview,
         "requiresRemoteModelConfirmation": requires_remote_confirmation,
+        "configurationHash": _configuration_hash(config),
+        "requiresConfirmation": "IMPORT RAG-IME CONFIGURATION",
         "secretsEchoed": False,
         "source": source,
     }
@@ -401,6 +403,16 @@ def restore_portable_backup(
 def _configuration_payload(payload: Mapping[str, object]) -> dict[str, object]:
     config, _source = _configuration_payload_with_source(payload)
     return config
+
+
+def _configuration_hash(config: Mapping[str, object]) -> str:
+    encoded = json.dumps(
+        config,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _configuration_payload_with_source(

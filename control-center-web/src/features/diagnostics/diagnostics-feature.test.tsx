@@ -1,14 +1,22 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
-import { MockControlTransport } from '@/test/mock-transport';
+import type { ControlRequest } from '@/platform/transport';
+import { MockControlTransport, type MockControlTransportOptions } from '@/test/mock-transport';
 import { DiagnosticsFeature } from './index';
 
+const payloadSha256 = `sha256:${'a'.repeat(64)}`;
+const commandSha256 = `sha256:${'b'.repeat(64)}`;
 const routes = {
-  'diagnostics.runtime': { ok: true, components: { sidecar: { ok: true, status: 'ready' } } },
+  'diagnostics.runtime': {
+    ok: true,
+    runtimeRevision: 7,
+    runtimeConfig: { postCommit: { enabled: true } },
+    components: { sidecar: { ok: true, status: 'ready' } },
+  },
   'diagnostics.predictor': { ok: true, predictor: { status: 'ready', providerName: 'local-mlx' } },
   'diagnostics.models': { ok: true, schemaVersion: 'rag-ime.models-status.v3' },
   'input.source.get': { ok: true, typingReady: false, readinessState: 'not_selected' },
@@ -16,8 +24,8 @@ const routes = {
 
 afterEach(cleanup);
 
-describe('DiagnosticsFeature native actions', () => {
-  it('runs the allowlisted accessibility action and renders the native receipt', async () => {
+describe('DiagnosticsFeature runtime actions', () => {
+  it('runs the server-bound accessibility workflow and renders the terminal receipt', async () => {
     const user = userEvent.setup();
     const externalAction = vi.fn(async (request) => ({
       receiptId: request.receiptId,
@@ -26,29 +34,89 @@ describe('DiagnosticsFeature native actions', () => {
       completed: true,
       exitCode: 0,
     }));
-    renderFeature(new MockControlTransport({ routes, externalAction }));
+    const transport = runtimeTransport({ externalAction, terminalStatus: 'external-supervisor-required' });
+    renderFeature(transport);
 
-    await user.click(await screen.findByRole('button', { name: '预览操作' }));
-    expect(screen.getByText('仅打开系统设置，不自动修改权限。')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '继续确认' }));
-    await user.click(screen.getByRole('button', { name: '打开系统设置' }));
+    const workflow = await workflowFor('打开辅助功能设置');
+    await user.click(within(workflow).getByRole('button', { name: '预览操作' }));
+    expect(await within(workflow).findByText('不会自动授予或撤销任何权限。')).toBeInTheDocument();
+    await user.click(within(workflow).getByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow).getByRole('checkbox'));
+    await user.click(within(workflow).getByRole('button', { name: '确认并应用' }));
 
-    expect(await screen.findByText('macOS 辅助功能设置已打开。')).toBeInTheDocument();
-    expect(externalAction).toHaveBeenCalledWith(expect.objectContaining({
+    expect(await within(workflow).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(externalAction).toHaveBeenCalledWith({
       action: 'open_accessibility_settings',
-      payloadSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-      commandSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      receiptId: 'runtime-job-1',
+      payloadSha256: 'a'.repeat(64),
+      commandSha256: 'b'.repeat(64),
+    });
+    const previewCall = transport.requests.find((item) => item.request.pathId === 'diagnostics.action.preview');
+    const startCall = transport.requests.find((item) => item.request.pathId === 'diagnostics.action.start');
+    expect(previewCall?.request.body).toEqual({ action: 'open_accessibility_settings', expectedRuntimeRevision: 7 });
+    expect(startCall?.request.body).toEqual(expect.objectContaining({
+      action: 'open_accessibility_settings',
+      expectedRuntimeRevision: 7,
+      previewToken: 'preview-token',
+      payloadSha256,
+      commandSha256,
+      confirmText: 'apply',
     }));
-    expect(screen.getByRole('button', { name: '撤销' })).toBeDisabled();
-    expect(screen.queryByText('重启 Sidecar')).not.toBeInTheDocument();
   });
 
-  it('fails closed without the native action capability', async () => {
-    renderFeature(new MockControlTransport({ routes }));
+  it('polls a backend-only pause job without invoking the native bridge', async () => {
+    const user = userEvent.setup();
+    const externalAction = vi.fn();
+    const transport = runtimeTransport({ externalAction, terminalStatus: 'succeeded' });
+    renderFeature(transport);
 
-    expect(await screen.findByText('当前应用无法直接打开辅助功能设置，请从 macOS 系统设置中进入。')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '查看示例' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
+    const workflow = await workflowFor('暂停智能候选');
+    await user.click(within(workflow).getByRole('button', { name: '预览操作' }));
+    await user.click(await within(workflow).findByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow).getByRole('checkbox'));
+    await user.click(within(workflow).getByRole('button', { name: '确认并应用' }));
+
+    expect(await within(workflow).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(externalAction).not.toHaveBeenCalled();
+    expect(transport.requests.some((item) => item.request.pathId === 'diagnostics.action.job')).toBe(true);
+  });
+
+  it('exposes every migrated repair and fails closed for external actions without the native bridge', async () => {
+    renderFeature(runtimeTransport({ terminalStatus: 'succeeded', native: false }));
+
+    expect(await screen.findByText('需要桌面控制中心')).toBeInTheDocument();
+    const actionList = document.querySelector('.diagnostics-action-list');
+    expect(actionList).not.toBeNull();
+    expect(actionList?.querySelectorAll('.mgmt-workflow')).toHaveLength(6);
+
+    for (const title of [
+      '重新注册输入法',
+      '重启后台服务',
+      '重启本机模型',
+      '重新部署 Rime 配置',
+      '打开辅助功能设置',
+      '暂停智能候选',
+    ]) {
+      expect(await screen.findByText(title)).toBeInTheDocument();
+    }
+    const accessibility = await workflowFor('打开辅助功能设置');
+    expect(within(accessibility).getByRole('button', { name: '当前不可用' })).toBeDisabled();
+    const pause = await workflowFor('暂停智能候选');
+    expect(within(pause).getByRole('button', { name: '预览操作' })).toBeEnabled();
+  });
+
+  it('offers a fresh preview after a terminal job failure', async () => {
+    const user = userEvent.setup();
+    renderFeature(runtimeTransport({ terminalStatus: 'failed' }));
+    const workflow = await workflowFor('暂停智能候选');
+
+    await user.click(within(workflow).getByRole('button', { name: '预览操作' }));
+    await user.click(await within(workflow).findByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow).getByRole('checkbox'));
+    await user.click(within(workflow).getByRole('button', { name: '确认并应用' }));
+
+    expect(await within(workflow).findByText('修复任务失败')).toBeInTheDocument();
+    expect(within(workflow).getByRole('button', { name: '重新预览' })).toBeEnabled();
   });
 
   it('copies a support snapshot without internal contract metadata or local paths', async () => {
@@ -77,6 +145,82 @@ describe('DiagnosticsFeature native actions', () => {
     expect(report).toContain('"model": "已隐藏"');
   });
 });
+
+function runtimeTransport({
+  externalAction,
+  native = true,
+  terminalStatus,
+}: {
+  externalAction?: MockControlTransportOptions['externalAction'];
+  native?: boolean;
+  terminalStatus: 'succeeded' | 'failed' | 'external-supervisor-required';
+}) {
+  let action = 'open_accessibility_settings';
+  return new MockControlTransport({
+    routes: {
+      ...routes,
+      'diagnostics.action.preview': (request: ControlRequest) => {
+        action = String((request.body as Record<string, unknown>).action);
+        return {
+          ok: true,
+          pathId: 'diagnostics.action.start',
+          action,
+          commandSha256,
+          payloadSha256,
+          previewToken: 'preview-token',
+          expectedRevision: { runtimeRevision: 7 },
+          expiresAtMs: Date.now() + 60_000,
+          requiredConfirm: 'apply',
+          externalSupervisorRequired: !['stop_ai', 'resume_ai'].includes(action),
+          summary: {
+            title: action === 'open_accessibility_settings' ? '打开辅助功能设置' : '确认运行操作',
+            items: action === 'open_accessibility_settings'
+              ? ['打开 macOS 辅助功能页面。', '不会自动授予或撤销任何权限。']
+              : ['只执行已预览的运行操作。'],
+            risk: 'R1',
+          },
+        };
+      },
+      'diagnostics.action.start': {
+        ok: true,
+        receiptId: 'work-receipt-1',
+        pathId: 'diagnostics.action.start',
+        payloadSha256,
+        appliedAtMs: Date.now(),
+        rollbackAvailable: false,
+        rollbackToken: '',
+        result: { jobId: 'runtime-job-1' },
+      },
+      'diagnostics.action.job': () => ({
+        ok: true,
+        job: {
+          jobId: 'runtime-job-1',
+          action,
+          status: terminalStatus,
+          error: terminalStatus === 'failed' ? '修复任务失败' : '',
+          result: terminalStatus === 'external-supervisor-required'
+            ? {
+              externalAction: {
+                action,
+                receiptId: 'runtime-job-1',
+                payloadSha256,
+                commandSha256,
+              },
+            }
+            : {},
+        },
+      }),
+    },
+    ...(native && externalAction ? { externalAction } : {}),
+  });
+}
+
+async function workflowFor(title: string): Promise<HTMLElement> {
+  const heading = await screen.findByText(title);
+  const workflow = heading.closest<HTMLElement>('.mgmt-workflow');
+  if (!workflow) throw new Error(`workflow not found for ${title}`);
+  return workflow;
+}
 
 function renderFeature(transport: MockControlTransport) {
   const client = new QueryClient({

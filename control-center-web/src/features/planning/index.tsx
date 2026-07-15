@@ -1,7 +1,20 @@
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Flag, ListTodo, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, EmptyState, Field, IconButton, Input, TextArea } from '@/components/primitives';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  TextArea,
+} from '@/components/primitives';
 import type { JsonValue } from '@/platform/transport';
 import {
   ManagementMutationWorkflow,
@@ -14,7 +27,6 @@ import {
   InlineNotice,
   ManagementPage,
   ManagementSection,
-  MetricStrip,
   OperationalList,
   QueryState,
   StatusBadge,
@@ -41,6 +53,9 @@ export function PlanningFeature() {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDetail, setTaskDetail] = useState('');
   const [selectedTask, setSelectedTask] = useState('');
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [hintsDialogOpen, setHintsDialogOpen] = useState(false);
+  const [planDialogOpen, setPlanDialogOpen] = useState(false);
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDetail, setGoalDetail] = useState('');
   const [goalHorizon, setGoalHorizon] = useState('long_term');
@@ -48,6 +63,7 @@ export function PlanningFeature() {
   const [goalPriority, setGoalPriority] = useState(1);
   const [goalTargetDate, setGoalTargetDate] = useState('');
   const [selectedGoal, setSelectedGoal] = useState('');
+  const [goalDialogOpen, setGoalDialogOpen] = useState(false);
   const selectedTaskRecord = tasks.find((task) => stringValue(task.id) === selectedTask);
   const runtimeRevision = typeof payload.runtimeRevision === 'number' ? payload.runtimeRevision : null;
   const mutationBoundary = usePlanningMutationBoundary();
@@ -76,6 +92,16 @@ export function PlanningFeature() {
     ...(selectedGoal ? { goalId: selectedGoal } : {}),
   };
   const revisionBlock = runtimeRevision === null ? '当前规划状态尚未同步，请刷新后重试。' : '';
+  const taskEntryAvailability = mutationBoundary.availability([
+    planningMutationPathIds.preview,
+    planningMutationPathIds.taskSave,
+    planningMutationPathIds.rollback,
+  ]);
+  const goalEntryAvailability = mutationBoundary.availability([
+    planningMutationPathIds.preview,
+    planningMutationPathIds.goalSave,
+    planningMutationPathIds.rollback,
+  ]);
   const openTasks = tasks.filter((task) => !['done', 'cancelled'].includes(stringValue(task.status)));
   const inProgressTasks = openTasks.filter((task) => stringValue(task.status) === 'in_progress');
   const overdueTasks = openTasks.filter((task) => {
@@ -98,6 +124,7 @@ export function PlanningFeature() {
     setSelectedTask(stringValue(task.id));
     setTaskTitle(stringValue(task.title));
     setTaskDetail(stringValue(task.detail));
+    setTaskDialogOpen(true);
   };
 
   const selectGoal = (goal: Record<string, unknown>) => {
@@ -108,6 +135,7 @@ export function PlanningFeature() {
     setGoalStatus(stringValue(goal.status, 'active'));
     setGoalPriority(numberValue(goal.priority, 1));
     setGoalTargetDate(stringValue(goal.targetDate));
+    setGoalDialogOpen(true);
     requestAnimationFrame(() => document.getElementById('planning-goal-title')?.focus());
   };
 
@@ -121,6 +149,7 @@ export function PlanningFeature() {
     setSelectedTask('');
     setTaskTitle('');
     setTaskDetail('');
+    setTaskDialogOpen(true);
     requestAnimationFrame(() => document.getElementById('planning-task-title')?.focus());
   };
 
@@ -132,6 +161,7 @@ export function PlanningFeature() {
     setGoalStatus('active');
     setGoalPriority(1);
     setGoalTargetDate('');
+    setGoalDialogOpen(true);
     requestAnimationFrame(() => document.getElementById('planning-goal-title')?.focus());
   };
 
@@ -165,8 +195,8 @@ export function PlanningFeature() {
     >
       <QueryState error={dashboard.error as Error | null} isPending={dashboard.isPending} onRetry={() => void dashboard.refetch()}>
         <ManagementSection
-          title={`${timeGreeting(now)}，今天先照顾这一件事`}
-          description={stringValue(asRecord(payload.assistant).message, focus)}
+          title="今日工作台"
+          description={`${timeGreeting(now)}。${stringValue(asRecord(payload.assistant).message, focus)}`}
           trailing={<StatusBadge label={stringValue(payload.date, date)} tone="info" />}
         >
           <div className="planning-companion">
@@ -180,23 +210,22 @@ export function PlanningFeature() {
               <Button leadingIcon={<CheckCircle2 size={15} />} onClick={() => handoffToAgent('review')} size="small" variant="quiet">一起复盘</Button>
             </div>
           </div>
-          <MetricStrip items={[
-            { label: '待继续', value: openTasks.length, detail: `${inProgressTasks.length} 个进行中`, icon: ListTodo },
-            { label: '已逾期', value: overdueTasks.length, detail: overdueTasks.length ? stringValue(overdueTasks[0]?.title, '需要重新安排') : '节奏正常', icon: CalendarDays, tone: overdueTasks.length ? 'warning' : 'success' },
-            { label: '已完成', value: numberValue(summary.completedTaskCount), detail: `${Math.round(numberValue(summary.progress) * 100)}%`, icon: CheckCircle2, tone: 'success' },
-            { label: '陪伴提示', value: companionHints.length, detail: suggestions.length ? `${suggestions.length} 条待确认完成` : '来自今日真实计划', icon: Sparkles, tone: suggestions.length ? 'warning' : 'neutral' },
-          ]} />
-          <OperationalList items={companionHints.map((hint, index) => ({
-            id: `planning-hint-${index}`,
-            title: hint.title,
-            detail: hint.detail,
-            meta: hint.meta,
-            onClick: hint.task
-              ? () => selectTask(hint.task!)
-              : hint.action === 'new-task'
-                ? () => document.getElementById('planning-task-title')?.focus()
-                : () => handoffToAgent('organize'),
-          }))} />
+          <div aria-label="今日进度" className="planning-summary-strip">
+            <PlanningSummaryItem detail={`${inProgressTasks.length} 个进行中`} icon={ListTodo} label="待继续" value={openTasks.length} />
+            <PlanningSummaryItem
+              detail={overdueTasks.length ? stringValue(overdueTasks[0]?.title, '需要重新安排') : '节奏正常'}
+              icon={CalendarDays}
+              label="已逾期"
+              tone={overdueTasks.length ? 'warning' : 'success'}
+              value={overdueTasks.length}
+            />
+            <PlanningSummaryItem detail={`${Math.round(numberValue(summary.progress) * 100)}%`} icon={CheckCircle2} label="已完成" tone="success" value={numberValue(summary.completedTaskCount)} />
+            <PlanningSummaryItem detail={suggestions.length ? `${suggestions.length} 条待确认完成` : '来自今日计划'} icon={Sparkles} label="建议" value={companionHints.length} />
+          </div>
+          <div className="planning-secondary-actions">
+            <Button onClick={() => setHintsDialogOpen(true)} size="small">查看今日建议 · {companionHints.length}</Button>
+            <Button onClick={() => setPlanDialogOpen(true)} size="small" variant="quiet">查看日计划</Button>
+          </div>
         </ManagementSection>
 
         {Object.keys(completion).length ? (
@@ -213,275 +242,406 @@ export function PlanningFeature() {
           </ManagementSection>
         ) : null}
 
-        <div className="mgmt-grid-2">
+        <div className="planning-overview-grid">
           <ManagementSection title="日计划" description="意图、备注和复盘保持同一快照。">
-            <dl className="mgmt-kv">
-              <dt>今日意图</dt><dd>{stringValue(plan.intention, '尚未设置')}</dd>
-              <dt>备注</dt><dd>{stringValue(plan.notes, '暂无')}</dd>
-              <dt>复盘</dt><dd>{stringValue(plan.reflection, '暂无')}</dd>
-            </dl>
+            <div className="planning-plan-summary">
+              <span>今日意图</span>
+              <strong>{stringValue(plan.intention, '尚未设置')}</strong>
+              <Button onClick={() => setPlanDialogOpen(true)} size="small" variant="quiet">查看备注与复盘</Button>
+            </div>
           </ManagementSection>
           <ManagementSection
             title="活动目标"
-            trailing={<Button leadingIcon={<Plus size={14} />} onClick={beginNewGoal} size="small" variant="quiet">新建目标</Button>}
+            trailing={(
+              <Button
+                disabled={goalEntryAvailability.state !== 'available'}
+                leadingIcon={<Plus size={14} />}
+                onClick={beginNewGoal}
+                size="small"
+                variant="quiet"
+              >
+                {entryActionLabel(goalEntryAvailability.state, '新建目标')}
+              </Button>
+            )}
           >
-            {goals.length ? <OperationalList items={goals.map((goal) => ({
-              id: stringValue(goal.id),
-              title: stringValue(goal.title, '未命名目标'),
-              detail: stringValue(goal.detail, '无说明'),
-              meta: stringValue(goal.targetDate, goalHorizonLabel(stringValue(goal.horizon))),
-              status: <StatusBadge label={goalStatusLabel(stringValue(goal.status))} tone={stringValue(goal.status) === 'active' ? 'info' : 'success'} />,
-              onClick: () => selectGoal(goal),
-              selected: selectedGoal === stringValue(goal.id),
-            }))} /> : <EmptyState description="当前没有活动目标。" icon={Flag} title="暂无目标" />}
+            {goals.length ? (
+              <div className="planning-list planning-list--goals">
+                <OperationalList items={goals.map((goal) => ({
+                  id: stringValue(goal.id),
+                  title: stringValue(goal.title, '未命名目标'),
+                  detail: stringValue(goal.detail, '无说明'),
+                  meta: stringValue(goal.targetDate, goalHorizonLabel(stringValue(goal.horizon))),
+                  status: <StatusBadge label={goalStatusLabel(stringValue(goal.status))} tone={stringValue(goal.status) === 'active' ? 'info' : 'success'} />,
+                  onClick: () => selectGoal(goal),
+                  selected: selectedGoal === stringValue(goal.id),
+                }))} />
+              </div>
+            ) : <EmptyState description="当前没有活动目标。" icon={Flag} title="暂无目标" />}
           </ManagementSection>
         </div>
 
         <ManagementSection
           title="任务"
           description="选择一项任务以查看、完成或继续编辑。"
-          trailing={<Button leadingIcon={<Plus size={14} />} onClick={beginNewTask} size="small" variant="quiet">新建任务</Button>}
+          trailing={(
+            <Button
+              disabled={taskEntryAvailability.state !== 'available'}
+              leadingIcon={<Plus size={14} />}
+                onClick={beginNewTask}
+                size="small"
+                variant="primary"
+            >
+              {entryActionLabel(taskEntryAvailability.state, '新建任务')}
+            </Button>
+          )}
         >
-          {tasks.length ? <OperationalList items={tasks.map((task) => ({
-            id: stringValue(task.id),
-            title: stringValue(task.title, '未命名任务'),
-            detail: stringValue(task.detail, '无说明'),
-            meta: taskMeta(task),
-            status: <StatusBadge label={taskStatusLabel(stringValue(task.status))} tone={stringValue(task.status) === 'done' ? 'success' : stringValue(task.status) === 'in_progress' ? 'info' : 'neutral'} />,
-            onClick: () => selectTask(task),
-            selected: selectedTask === stringValue(task.id),
-          }))} /> : <EmptyState description="这一天还没有任务。" icon={CalendarDays} title="任务列表为空" />}
+          {tasks.length ? (
+            <div className="planning-list planning-list--tasks">
+              <OperationalList items={tasks.map((task) => ({
+                id: stringValue(task.id),
+                title: stringValue(task.title, '未命名任务'),
+                detail: stringValue(task.detail, '无说明'),
+                meta: taskMeta(task),
+                status: <StatusBadge label={taskStatusLabel(stringValue(task.status))} tone={stringValue(task.status) === 'done' ? 'success' : stringValue(task.status) === 'in_progress' ? 'info' : 'neutral'} />,
+                onClick: () => selectTask(task),
+                selected: selectedTask === stringValue(task.id),
+              }))} />
+            </div>
+          ) : <EmptyState description="这一天还没有任务。" icon={CalendarDays} title="任务列表为空" />}
         </ManagementSection>
 
-        <ManagementSection title={selectedTask ? '编辑任务' : '新建任务'} description="先预览将要保存的内容，确认后才会更新任务。">
-          <div className="mgmt-grid-2">
-            <div className="mgmt-stack">
-              <Field htmlFor="planning-task-title" label="任务标题" required>
-                <Input id="planning-task-title" onChange={(event) => setTaskTitle(event.target.value)} placeholder="例如：整理今天的工作清单" value={taskTitle} />
-              </Field>
-              <Field htmlFor="planning-task-detail" label="说明">
-                <TextArea id="planning-task-detail" onChange={(event) => setTaskDetail(event.target.value)} rows={4} value={taskDetail} />
-              </Field>
-              <ManagementMutationWorkflow
-                availability={mutationBoundary.availability(
-                  [planningMutationPathIds.preview, planningMutationPathIds.taskSave, planningMutationPathIds.rollback],
-                  revisionBlock || (!taskTitle.trim() ? '填写任务标题后才能生成服务端预览。' : ''),
-                )}
-                description="创建任务或更新标题、说明与日期。"
-                draftKey={JSON.stringify(taskSaveDraft)}
-                mutationKey={['planning', 'mutation', 'task-save']}
-                onApply={async (preview) => parseManagementWorkReceipt(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.taskSave,
-                    body: {
-                      ...preview.context,
-                      expectedRuntimeRevision: preview.expectedRuntimeRevision,
-                      previewToken: preview.previewToken,
-                      payloadSha256: preview.payloadSha256,
-                      confirmText: preview.requiredConfirm,
-                    },
-                  }),
-                  planningMutationPathIds.taskSave,
-                  preview.payloadSha256,
-                )}
-                onApplied={() => void dashboard.refetch()}
-                onPreview={async () => parseManagementWorkPreview(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.preview,
-                    body: {
-                      kind: 'task.save',
-                      payload: taskSaveDraft,
-                      expectedRuntimeRevision: runtimeRevision ?? 0,
-                    },
-                  }),
-                  planningMutationPathIds.taskSave,
-                  taskSaveDraft,
-                )}
-                onRollback={async (receipt, preview) => parseManagementWorkReceipt(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.rollback,
-                    body: {
-                      receiptId: receipt.receiptId,
-                      rollbackToken: receipt.rollbackToken,
-                      payloadSha256: receipt.payloadSha256,
-                      confirmText: 'rollback',
-                    },
-                  }),
-                  planningMutationPathIds.rollback,
-                  preview.payloadSha256,
-                )}
-                onRolledBack={() => void dashboard.refetch()}
-                risk="R1"
-                title={selectedTask ? '保存任务修改' : '创建任务'}
-              />
+        <Dialog onOpenChange={setHintsDialogOpen} open={hintsDialogOpen}>
+          <DialogContent className="planning-dialog planning-detail-dialog">
+            <DialogHeader>
+              <DialogTitle>今日建议</DialogTitle>
+              <DialogDescription>建议来自当前日计划、任务状态和待确认完成项；选择后再决定是否执行。</DialogDescription>
+            </DialogHeader>
+            <div className="planning-list planning-list--hints">
+              <OperationalList items={companionHints.map((hint, index) => ({
+                id: `planning-hint-${index}`,
+                title: hint.title,
+                detail: hint.detail,
+                meta: hint.meta,
+                onClick: hint.task
+                  ? () => {
+                    setHintsDialogOpen(false);
+                    selectTask(hint.task!);
+                  }
+                  : hint.action === 'new-task'
+                    ? () => {
+                      setHintsDialogOpen(false);
+                      beginNewTask();
+                    }
+                    : () => handoffToAgent('organize'),
+              }))} />
             </div>
-            <div className="mgmt-stack">
-              <ManagementMutationWorkflow
-                availability={mutationBoundary.availability(
-                  [planningMutationPathIds.preview, planningMutationPathIds.taskAction, planningMutationPathIds.taskEventUndo],
-                  revisionBlock || (!selectedTask ? '先从任务列表选择一项任务。' : ''),
-                )}
-                description={taskAction === 'reopen' ? '重新打开所选任务；完成后仍可撤销。' : '将所选任务标记完成；完成后仍可撤销。'}
-                draftKey={JSON.stringify(taskActionDraft)}
-                mutationKey={['planning', 'mutation', 'task-complete']}
-                onApply={async (preview) => parseManagementWorkReceipt(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.taskAction,
-                    body: {
-                      ...preview.context,
-                      expectedRuntimeRevision: preview.expectedRuntimeRevision,
-                      previewToken: preview.previewToken,
-                      payloadSha256: preview.payloadSha256,
-                      confirmText: preview.requiredConfirm,
-                    },
-                  }),
-                  planningMutationPathIds.taskAction,
-                  preview.payloadSha256,
-                )}
-                onApplied={() => void dashboard.refetch()}
-                onPreview={async () => parseManagementWorkPreview(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.preview,
-                    body: {
-                      kind: 'task.action',
-                      payload: taskActionDraft,
-                      expectedRuntimeRevision: runtimeRevision ?? 0,
-                    },
-                  }),
-                  planningMutationPathIds.taskAction,
-                  taskActionDraft,
-                )}
-                onRollback={async (receipt, preview) => {
-                  const eventId = stringValue(receipt.raw.eventId);
-                  if (!eventId) throw new Error('无法验证这次任务变更，不能安全撤销。');
-                  return parseManagementWorkReceipt(
+            <DialogFooter>
+              <Button onClick={() => setHintsDialogOpen(false)} size="small">完成查看</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog onOpenChange={setPlanDialogOpen} open={planDialogOpen}>
+          <DialogContent className="planning-dialog planning-detail-dialog">
+            <DialogHeader>
+              <DialogTitle>日计划详情</DialogTitle>
+              <DialogDescription>{date} 的意图、备注和复盘快照。</DialogDescription>
+            </DialogHeader>
+            <dl className="mgmt-kv planning-plan">
+              <dt>今日意图</dt><dd>{stringValue(plan.intention, '尚未设置')}</dd>
+              <dt>备注</dt><dd>{stringValue(plan.notes, '暂无')}</dd>
+              <dt>复盘</dt><dd>{stringValue(plan.reflection, '暂无')}</dd>
+            </dl>
+            <DialogFooter>
+              <Button onClick={() => setPlanDialogOpen(false)} size="small">完成查看</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog onOpenChange={setTaskDialogOpen} open={taskDialogOpen}>
+          <DialogContent className="planning-dialog">
+            <DialogHeader>
+              <DialogTitle>{selectedTask ? '编辑任务' : '新建任务'}</DialogTitle>
+              <DialogDescription>
+                {selectedTask ? '查看任务细节，修改内容或更新完成状态。' : '填写一个清晰、可以完成的下一步。'}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="planning-dialog__context">
+              <span><CalendarDays aria-hidden="true" size={15} />{date}</span>
+              {selectedTaskRecord ? (
+                <StatusBadge
+                  label={taskStatusLabel(stringValue(selectedTaskRecord.status))}
+                  tone={selectedStatus === 'done' ? 'success' : selectedStatus === 'in_progress' ? 'info' : 'neutral'}
+                />
+              ) : null}
+            </div>
+            <div className={selectedTask ? 'planning-dialog__grid' : 'planning-dialog__grid planning-dialog__grid--single'}>
+              <div className="mgmt-stack">
+                <Field htmlFor="planning-task-title" label="任务标题" required>
+                  <Input id="planning-task-title" onChange={(event) => setTaskTitle(event.target.value)} placeholder="例如：整理今天的工作清单" value={taskTitle} />
+                </Field>
+                <Field htmlFor="planning-task-detail" label="说明">
+                  <TextArea id="planning-task-detail" onChange={(event) => setTaskDetail(event.target.value)} rows={4} value={taskDetail} />
+                </Field>
+                <ManagementMutationWorkflow
+                  availability={mutationBoundary.availability(
+                    [planningMutationPathIds.preview, planningMutationPathIds.taskSave, planningMutationPathIds.rollback],
+                    revisionBlock || (!taskTitle.trim() ? '填写任务标题后才能生成服务端预览。' : ''),
+                  )}
+                  description="创建任务或更新标题、说明与日期。"
+                  draftKey={JSON.stringify(taskSaveDraft)}
+                  mutationKey={['planning', 'mutation', 'task-save']}
+                  onApply={async (preview) => parseManagementWorkReceipt(
                     await mutationBoundary.request({
-                      pathId: planningMutationPathIds.taskEventUndo,
+                      pathId: planningMutationPathIds.taskSave,
                       body: {
-                        eventId,
+                        ...preview.context,
+                        expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                        previewToken: preview.previewToken,
+                        payloadSha256: preview.payloadSha256,
+                        confirmText: preview.requiredConfirm,
+                      },
+                    }),
+                    planningMutationPathIds.taskSave,
+                    preview.payloadSha256,
+                  )}
+                  onApplied={() => void dashboard.refetch()}
+                  onPreview={async () => parseManagementWorkPreview(
+                    await mutationBoundary.request({
+                      pathId: planningMutationPathIds.preview,
+                      body: {
+                        kind: 'task.save',
+                        payload: taskSaveDraft,
+                        expectedRuntimeRevision: runtimeRevision ?? 0,
+                      },
+                    }),
+                    planningMutationPathIds.taskSave,
+                    taskSaveDraft,
+                  )}
+                  onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+                    await mutationBoundary.request({
+                      pathId: planningMutationPathIds.rollback,
+                      body: {
                         receiptId: receipt.receiptId,
                         rollbackToken: receipt.rollbackToken,
                         payloadSha256: receipt.payloadSha256,
-                        confirmText: 'undo',
+                        confirmText: 'rollback',
                       },
                     }),
-                    planningMutationPathIds.taskEventUndo,
+                    planningMutationPathIds.rollback,
                     preview.payloadSha256,
-                  );
-                }}
-                onRolledBack={() => void dashboard.refetch()}
-                risk="R1"
-                title={taskAction === 'reopen' ? '重新打开所选任务' : '完成所选任务'}
-              />
+                  )}
+                  onRolledBack={() => void dashboard.refetch()}
+                  risk="R1"
+                  title={selectedTask ? '保存任务修改' : '创建任务'}
+                />
+              </div>
+              {selectedTask ? (
+                <div className="mgmt-stack">
+                  <ManagementMutationWorkflow
+                    availability={mutationBoundary.availability(
+                      [planningMutationPathIds.preview, planningMutationPathIds.taskAction, planningMutationPathIds.taskEventUndo],
+                      revisionBlock || (!selectedTask ? '先从任务列表选择一项任务。' : ''),
+                    )}
+                    description={taskAction === 'reopen' ? '重新打开所选任务；完成后仍可撤销。' : '将所选任务标记完成；完成后仍可撤销。'}
+                    draftKey={JSON.stringify(taskActionDraft)}
+                    mutationKey={['planning', 'mutation', 'task-complete']}
+                    onApply={async (preview) => parseManagementWorkReceipt(
+                      await mutationBoundary.request({
+                        pathId: planningMutationPathIds.taskAction,
+                        body: {
+                          ...preview.context,
+                          expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                          previewToken: preview.previewToken,
+                          payloadSha256: preview.payloadSha256,
+                          confirmText: preview.requiredConfirm,
+                        },
+                      }),
+                      planningMutationPathIds.taskAction,
+                      preview.payloadSha256,
+                    )}
+                    onApplied={() => void dashboard.refetch()}
+                    onPreview={async () => parseManagementWorkPreview(
+                      await mutationBoundary.request({
+                        pathId: planningMutationPathIds.preview,
+                        body: {
+                          kind: 'task.action',
+                          payload: taskActionDraft,
+                          expectedRuntimeRevision: runtimeRevision ?? 0,
+                        },
+                      }),
+                      planningMutationPathIds.taskAction,
+                      taskActionDraft,
+                    )}
+                    onRollback={async (receipt, preview) => {
+                      const eventId = stringValue(receipt.raw.eventId);
+                      if (!eventId) throw new Error('无法验证这次任务变更，不能安全撤销。');
+                      return parseManagementWorkReceipt(
+                        await mutationBoundary.request({
+                          pathId: planningMutationPathIds.taskEventUndo,
+                          body: {
+                            eventId,
+                            receiptId: receipt.receiptId,
+                            rollbackToken: receipt.rollbackToken,
+                            payloadSha256: receipt.payloadSha256,
+                            confirmText: 'undo',
+                          },
+                        }),
+                        planningMutationPathIds.taskEventUndo,
+                        preview.payloadSha256,
+                      );
+                    }}
+                    onRolledBack={() => void dashboard.refetch()}
+                    risk="R1"
+                    title={taskAction === 'reopen' ? '重新打开所选任务' : '完成所选任务'}
+                  />
+                </div>
+              ) : null}
             </div>
-          </div>
-        </ManagementSection>
+          </DialogContent>
+        </Dialog>
 
-        <ManagementSection
-          title={selectedGoal ? '编辑目标' : '新建目标'}
-          description="目标可以独立保存，也可以在任务中关联；确认前不会改写规划。"
-          trailing={selectedGoal ? <Button onClick={beginNewGoal} size="small" variant="quiet">新建目标</Button> : undefined}
-        >
-          <div className="mgmt-grid-2">
-            <div className="mgmt-stack">
-              <Field htmlFor="planning-goal-title" label="目标标题" required>
-                <Input id="planning-goal-title" onChange={(event) => setGoalTitle(event.target.value)} placeholder="例如：完成控制中心迁移" value={goalTitle} />
-              </Field>
-              <Field htmlFor="planning-goal-detail" label="说明">
-                <TextArea id="planning-goal-detail" onChange={(event) => setGoalDetail(event.target.value)} rows={4} value={goalDetail} />
-              </Field>
-              <Field htmlFor="planning-goal-target-date" label="目标日期">
-                <Input id="planning-goal-target-date" onChange={(event) => setGoalTargetDate(event.target.value)} type="date" value={goalTargetDate} />
-              </Field>
+        <Dialog onOpenChange={setGoalDialogOpen} open={goalDialogOpen}>
+          <DialogContent className="planning-dialog planning-dialog--goal">
+            <DialogHeader>
+              <DialogTitle>{selectedGoal ? '编辑目标' : '新建目标'}</DialogTitle>
+              <DialogDescription>目标可以独立保存；服务端预览确认前不会改写规划。</DialogDescription>
+            </DialogHeader>
+            <div className="planning-dialog__context">
+              <span><Flag aria-hidden="true" size={15} />{goalHorizonLabel(goalHorizon)}</span>
+              {selectedGoal ? <StatusBadge label={goalStatusLabel(goalStatus)} tone={goalStatus === 'active' ? 'info' : 'success'} /> : null}
+              {selectedGoal ? <Button onClick={beginNewGoal} size="small" variant="quiet">改为新建目标</Button> : null}
             </div>
-            <div className="mgmt-stack">
-              <div className="mgmt-grid-2">
-                <Field htmlFor="planning-goal-horizon" label="时间范围">
-                  <select className="ui-input" id="planning-goal-horizon" onChange={(event) => setGoalHorizon(event.target.value)} value={goalHorizon}>
-                    <option value="today">今天</option>
-                    <option value="short_term">近期</option>
-                    <option value="medium_term">阶段目标</option>
-                    <option value="long_term">长期目标</option>
-                  </select>
+            <div className="planning-dialog__grid">
+              <div className="mgmt-stack">
+                <Field htmlFor="planning-goal-title" label="目标标题" required>
+                  <Input id="planning-goal-title" onChange={(event) => setGoalTitle(event.target.value)} placeholder="例如：完成控制中心迁移" value={goalTitle} />
                 </Field>
-                <Field htmlFor="planning-goal-status" label="状态">
-                  <select className="ui-input" id="planning-goal-status" onChange={(event) => setGoalStatus(event.target.value)} value={goalStatus}>
-                    <option value="active">进行中</option>
-                    <option value="completed">已完成</option>
-                    <option value="archived">已归档</option>
-                  </select>
+                <Field htmlFor="planning-goal-detail" label="说明">
+                  <TextArea id="planning-goal-detail" onChange={(event) => setGoalDetail(event.target.value)} rows={4} value={goalDetail} />
+                </Field>
+                <Field htmlFor="planning-goal-target-date" label="目标日期">
+                  <Input id="planning-goal-target-date" onChange={(event) => setGoalTargetDate(event.target.value)} type="date" value={goalTargetDate} />
                 </Field>
               </div>
-              <Field htmlFor="planning-goal-priority" label="优先级">
-                <select className="ui-input" id="planning-goal-priority" onChange={(event) => setGoalPriority(Number(event.target.value))} value={goalPriority}>
-                  <option value={0}>低</option>
-                  <option value={1}>普通</option>
-                  <option value={2}>高</option>
-                  <option value={3}>最高</option>
-                </select>
-              </Field>
-              <ManagementMutationWorkflow
-                availability={mutationBoundary.availability(
-                  [planningMutationPathIds.preview, planningMutationPathIds.goalSave, planningMutationPathIds.rollback],
-                  revisionBlock || (!goalTitle.trim() ? '填写目标标题后才能生成服务端预览。' : ''),
-                )}
-                description="创建目标或更新目标的周期、状态与优先级。"
-                draftKey={JSON.stringify(goalSaveDraft)}
-                mutationKey={['planning', 'mutation', 'goal-save']}
-                onApply={async (preview) => parseManagementWorkReceipt(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.goalSave,
-                    body: {
-                      ...preview.context,
-                      expectedRuntimeRevision: preview.expectedRuntimeRevision,
-                      previewToken: preview.previewToken,
-                      payloadSha256: preview.payloadSha256,
-                      confirmText: preview.requiredConfirm,
-                    },
-                  }),
-                  planningMutationPathIds.goalSave,
-                  preview.payloadSha256,
-                )}
-                onApplied={() => void dashboard.refetch()}
-                onPreview={async () => parseManagementWorkPreview(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.preview,
-                    body: {
-                      kind: 'goal.save',
-                      payload: goalSaveDraft,
-                      expectedRuntimeRevision: runtimeRevision ?? 0,
-                    },
-                  }),
-                  planningMutationPathIds.goalSave,
-                  goalSaveDraft,
-                )}
-                onRollback={async (receipt, preview) => parseManagementWorkReceipt(
-                  await mutationBoundary.request({
-                    pathId: planningMutationPathIds.rollback,
-                    body: {
-                      receiptId: receipt.receiptId,
-                      rollbackToken: receipt.rollbackToken,
-                      payloadSha256: receipt.payloadSha256,
-                      confirmText: 'rollback',
-                    },
-                  }),
-                  planningMutationPathIds.rollback,
-                  preview.payloadSha256,
-                )}
-                onRolledBack={() => void dashboard.refetch()}
-                risk="R1"
-                title={selectedGoal ? '保存目标修改' : '创建目标'}
-              />
+              <div className="mgmt-stack">
+                <div className="planning-dialog__selects">
+                  <Field htmlFor="planning-goal-horizon" label="时间范围">
+                    <select className="ui-input" id="planning-goal-horizon" onChange={(event) => setGoalHorizon(event.target.value)} value={goalHorizon}>
+                      <option value="today">今天</option>
+                      <option value="short_term">近期</option>
+                      <option value="medium_term">阶段目标</option>
+                      <option value="long_term">长期目标</option>
+                    </select>
+                  </Field>
+                  <Field htmlFor="planning-goal-status" label="状态">
+                    <select className="ui-input" id="planning-goal-status" onChange={(event) => setGoalStatus(event.target.value)} value={goalStatus}>
+                      <option value="active">进行中</option>
+                      <option value="completed">已完成</option>
+                      <option value="archived">已归档</option>
+                    </select>
+                  </Field>
+                </div>
+                <Field htmlFor="planning-goal-priority" label="优先级">
+                  <select className="ui-input" id="planning-goal-priority" onChange={(event) => setGoalPriority(Number(event.target.value))} value={goalPriority}>
+                    <option value={0}>低</option>
+                    <option value={1}>普通</option>
+                    <option value={2}>高</option>
+                    <option value={3}>最高</option>
+                  </select>
+                </Field>
+                <ManagementMutationWorkflow
+                  availability={mutationBoundary.availability(
+                    [planningMutationPathIds.preview, planningMutationPathIds.goalSave, planningMutationPathIds.rollback],
+                    revisionBlock || (!goalTitle.trim() ? '填写目标标题后才能生成服务端预览。' : ''),
+                  )}
+                  description="创建目标或更新目标的周期、状态与优先级。"
+                  draftKey={JSON.stringify(goalSaveDraft)}
+                  mutationKey={['planning', 'mutation', 'goal-save']}
+                  onApply={async (preview) => parseManagementWorkReceipt(
+                    await mutationBoundary.request({
+                      pathId: planningMutationPathIds.goalSave,
+                      body: {
+                        ...preview.context,
+                        expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                        previewToken: preview.previewToken,
+                        payloadSha256: preview.payloadSha256,
+                        confirmText: preview.requiredConfirm,
+                      },
+                    }),
+                    planningMutationPathIds.goalSave,
+                    preview.payloadSha256,
+                  )}
+                  onApplied={() => void dashboard.refetch()}
+                  onPreview={async () => parseManagementWorkPreview(
+                    await mutationBoundary.request({
+                      pathId: planningMutationPathIds.preview,
+                      body: {
+                        kind: 'goal.save',
+                        payload: goalSaveDraft,
+                        expectedRuntimeRevision: runtimeRevision ?? 0,
+                      },
+                    }),
+                    planningMutationPathIds.goalSave,
+                    goalSaveDraft,
+                  )}
+                  onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+                    await mutationBoundary.request({
+                      pathId: planningMutationPathIds.rollback,
+                      body: {
+                        receiptId: receipt.receiptId,
+                        rollbackToken: receipt.rollbackToken,
+                        payloadSha256: receipt.payloadSha256,
+                        confirmText: 'rollback',
+                      },
+                    }),
+                    planningMutationPathIds.rollback,
+                    preview.payloadSha256,
+                  )}
+                  onRolledBack={() => void dashboard.refetch()}
+                  risk="R1"
+                  title={selectedGoal ? '保存目标修改' : '创建目标'}
+                />
+              </div>
             </div>
-          </div>
-        </ManagementSection>
+          </DialogContent>
+        </Dialog>
       </QueryState>
     </ManagementPage>
   );
 }
 
+function PlanningSummaryItem({
+  detail,
+  icon: Icon,
+  label,
+  tone = 'neutral',
+  value,
+}: {
+  detail: string;
+  icon: typeof ListTodo;
+  label: string;
+  tone?: 'neutral' | 'success' | 'warning';
+  value: number;
+}) {
+  return (
+    <div className="planning-summary-item" data-tone={tone}>
+      <Icon aria-hidden="true" size={16} />
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small title={detail}>{detail}</small>
+    </div>
+  );
+}
+
 function today(): string {
   return localDate(new Date());
+}
+
+function entryActionLabel(state: 'checking' | 'available' | 'blocked' | 'unsupported', label: string): string {
+  if (state === 'available') return label;
+  if (state === 'checking') return '正在确认';
+  return '当前不可用';
 }
 
 function localDate(date: Date): string {

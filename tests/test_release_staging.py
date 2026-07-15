@@ -39,6 +39,7 @@ class ReleaseStagingTests(unittest.TestCase):
             "control": self._app("RagImeControl.app", "com.rag-ime.control"),
             "voice": self._app("RagImeVoice.app", "com.rag-ime.voice"),
         }
+        self._mark_web_control(self.apps["control"])
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -117,6 +118,20 @@ class ReleaseStagingTests(unittest.TestCase):
                 project_files=("README.md",),
             )
 
+    def test_rejects_legacy_native_control_app(self) -> None:
+        marker = self.apps["control"] / "Contents/Resources/rag-ime-control-web-build-marker.json"
+        marker.unlink()
+
+        with self.assertRaisesRegex(ValueError, "verified Web Control Center release"):
+            prepare_release_candidate(
+                self.root,
+                release_id="legacy-control",
+                output_root=self.root / "out-legacy-control",
+                squirrel_source=self.squirrel,
+                apps=self.apps,
+                project_files=("README.md",),
+            )
+
     def _app(self, name: str, bundle_id: str) -> Path:
         app = self.root / "apps" / name
         contents = app / "Contents"
@@ -127,6 +142,31 @@ class ReleaseStagingTests(unittest.TestCase):
         with (contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": bundle_id}, handle)
         return app
+
+    def _mark_web_control(self, app: Path) -> None:
+        resources = app / "Contents" / "Resources"
+        frontend = resources / "control-center-web"
+        frontend.mkdir(parents=True)
+        (resources / "rag-ime-control-web-build-marker.json").write_text(
+            json.dumps({
+                "bundleId": "com.rag-ime.control",
+                "ui": "control-center-web",
+                "channel": "release",
+                "frontendTransport": "native",
+                "frontendBuildChannel": "production",
+                "forbiddenTransportModulesExcluded": True,
+            }),
+            encoding="utf-8",
+        )
+        (frontend / "rag-ime-control-web-build.json").write_text(
+            json.dumps({
+                "buildChannel": "production",
+                "transport": "native",
+                "nativeOnly": True,
+                "previewFixturesExcluded": True,
+            }),
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

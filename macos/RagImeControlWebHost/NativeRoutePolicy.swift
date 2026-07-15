@@ -196,11 +196,19 @@ final class NativeRoutePolicy {
             "diagnostics.runtime": route("GET", "/api/runtime/status", "/control/v1/diagnostics/runtime", remoteSafe: true),
             "diagnostics.predictor": route("GET", "/api/predictor/status", "/control/v1/diagnostics/predictor", remoteSafe: true),
             "diagnostics.models": route("GET", "/api/models/status", "/control/v1/diagnostics/models", remoteSafe: true),
+            "diagnostics.action.preview": route("POST", "/api/runtime/action/preview", nil, bodyKeys: ["action", "expectedRuntimeRevision"], requiredBodyKeys: ["action", "expectedRuntimeRevision"]),
+            "diagnostics.action.start": route("POST", "/api/runtime/action/start", nil, bodyKeys: ["action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "commandSha256", "confirmText"], requiredBodyKeys: ["action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "commandSha256", "confirmText"]),
+            "diagnostics.action.job": route("GET", "/api/runtime/job/{jobId}", nil),
             "configuration.settings": route("GET", "/api/settings", "/control/v1/configuration/settings", remoteSafe: true),
             "configuration.schema": route("GET", "/api/settings/schema", "/control/v1/configuration/schema", remoteSafe: true),
             "configuration.settings.preview": route("POST", "/api/settings/preview", "/control/v1/configuration/settings/preview", bodyKeys: ["changes", "expectedRuntimeRevision"], requiredBodyKeys: ["changes", "expectedRuntimeRevision"]),
             "configuration.settings.apply": route("POST", "/api/settings/apply", "/control/v1/configuration/settings/apply", bodyKeys: ["changes", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["changes", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"]),
             "configuration.settings.rollback": route("POST", "/api/settings/rollback", "/control/v1/configuration/settings/rollback", bodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
+            "configuration.import.preview": route("POST", "/api/configuration/import-preview", nil, bodyKeys: ["path"], requiredBodyKeys: ["path"]),
+            "configuration.import.apply": route("POST", "/api/configuration/import-apply", nil, bodyKeys: ["path", "expectedRuntimeRevision", "previewToken", "confirmText", "confirmRemoteModel"], requiredBodyKeys: ["path", "expectedRuntimeRevision", "previewToken", "confirmText"]),
+            "configuration.backup.export": route("POST", "/api/configuration/backup-export", nil, bodyKeys: ["destination"], requiredBodyKeys: ["destination"]),
+            "configuration.restore.preview": route("POST", "/api/configuration/restore-preview", nil, bodyKeys: ["path"], requiredBodyKeys: ["path"]),
+            "configuration.restore.apply": route("POST", "/api/configuration/restore-apply", nil, bodyKeys: ["path", "restoreToken", "confirmText", "expectedRuntimeRevision"], requiredBodyKeys: ["path", "restoreToken", "confirmText", "expectedRuntimeRevision"]),
         ]
     }()
 

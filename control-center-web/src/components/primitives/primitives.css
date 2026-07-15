@@ -42,12 +42,12 @@
 .ui-button[data-size='small'] {
   min-height: var(--control-height-sm);
   padding-inline: 9px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .ui-button[data-size='medium'] {
   min-height: var(--control-height);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .ui-button[data-size='large'] {
@@ -335,7 +335,7 @@
   border-radius: var(--radius-1);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;

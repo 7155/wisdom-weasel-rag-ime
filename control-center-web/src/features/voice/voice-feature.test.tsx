@@ -14,38 +14,44 @@ const hash = 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 afterEach(cleanup);
 
 describe('VoiceFeature', () => {
-  it('hands a supported provider change to the real Agent approval flow without writing directly', async () => {
+  it('applies provider and hotkey through the settings WorkContract instead of Agent handoff', async () => {
     const user = userEvent.setup();
-    const transport = renderVoice(true);
+    const transport = renderVoiceWithHotwordWrites();
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
     expect(await screen.findByText('当前：原生流式')).toBeInTheDocument();
-    expect(screen.queryByText(/configured|not configured|voice\.provider|provider_apply|control-center/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /演练流程|真实写入尚未接入/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/让智鼬确认切换|provider_apply/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: '实时连接' }));
-    await user.click(screen.getByRole('button', { name: '让智鼬确认切换' }));
-
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/agent?'));
-    const location = screen.getByTestId('location').textContent ?? '';
-    const draft = new URLSearchParams(location.split('?')[1]).get('draft') ?? '';
-    expect(draft).toContain('实时连接');
-    expect(draft).toContain('等待我确认');
-    expect(draft).not.toMatch(/ime_voice|provider_apply|pathId|policy|version/i);
-    expect(transport.requests.some(({ request }) => request.pathId.startsWith('configuration.settings.'))).toBe(false);
-    expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.prompt')).toBe(false);
+    await user.click(screen.getByRole('radio', { name: 'Option + 空格' }));
+    const workflow = screen.getByText('保存语音服务与快捷键', { selector: 'strong' }).closest('.mgmt-workflow');
+    expect(workflow).not.toBeNull();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await waitFor(() => expect(configurationRequest(transport, 'configuration.settings.preview')).toMatchObject({
+      body: {
+        changes: {
+          'voice.provider': 'realtime_websocket',
+          'voice.hotkey': 'option_space',
+        },
+        expectedRuntimeRevision: 12,
+      },
+    }));
+    await user.click(await within(workflow as HTMLElement).findByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    expect(configurationRequest(transport, 'configuration.settings.apply')).toBeDefined();
   });
 
-  it('fails closed when the voice management tool is unavailable', async () => {
-    const user = userEvent.setup();
+  it('fails closed outside the native host for Keychain and system actions', async () => {
     renderVoice(false);
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
-    expect(await screen.findByText('当前没有可验证的语音管理能力。选择服务只会停留在本页，不会写入任何设置。')).toBeInTheDocument();
-    const action = screen.getByRole('button', { name: '当前不可切换' });
-    expect(action).toBeDisabled();
-    await user.click(screen.getByRole('radio', { name: 'HTTP 转写' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/voice');
+    expect(await screen.findByText('浏览器预览不能启动代理或触发系统授权；请在已安装的智鼬控制中心中操作。')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '语音代理' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '麦克风' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '辅助功能' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '停止语音代理' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存到 Keychain' })).toBeDisabled();
   });
 
   it('keeps suggestions local until preview and saves technical hotwords through WorkContract', async () => {
@@ -206,7 +212,7 @@ function renderVoiceWithHotwordWrites(): MockControlTransport {
         settings: {
           voice: {
             provider: 'native_streaming',
-            hotkey: 'Middle Mouse',
+            hotkey: 'middle_mouse',
             hotwords: [],
             hotwordsEnabled: false,
             tokenConfigured: true,

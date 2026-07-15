@@ -44,12 +44,26 @@ export function AgentFeature() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [modelChanging, setModelChanging] = useState(false);
+  const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [error, setError] = useState('');
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const ensure = useAgentLiveStore((state) => state.ensure);
-  const projectionStatus = useAgentLiveStore((state) => state.projections[selectedId]?.status ?? 'idle');
+  const hasActiveTurn = useAgentLiveStore((state) => {
+    const projection = state.projections[selectedId];
+    if (!projection) return false;
+    // Only the newest visible turn owns the composer stop action. Older
+    // streaming flags can survive a reconnect, but must not turn a later
+    // failed/completed turn back into a stoppable request.
+    for (let index = projection.turnOrder.length - 1; index >= 0; index -= 1) {
+      const turnId = projection.turnOrder[index];
+      const turn = turnId ? projection.turnsById[turnId] : undefined;
+      if (!turn || (turn.messageIds.length === 0 && turn.activityIds.length === 0)) continue;
+      return turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting';
+    }
+    return false;
+  });
 
   const loadSessions = useCallback(async (preferredId = '') => {
     setLoading(true);
@@ -186,7 +200,7 @@ export function AgentFeature() {
   const session = sessions.find((item) => item.id === selectedId);
   const defaultPersona = personas.find((item) => item.defaults.modelPolicy.toLowerCase().includes('luna')) ?? personas[0];
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
-  const busy = !['idle', 'ready', 'completed'].includes(projectionStatus);
+  const busy = hasActiveTurn;
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
 
   function selectSession(sessionId: string): void {
@@ -234,18 +248,73 @@ export function AgentFeature() {
         : '尚未确认当前模型的图片能力，请稍后再发送。');
       return;
     }
+    const message = value || '请查看附件。';
+    const selectedAttachments = attachments;
+    setDraft(''); setAttachments([]); setError('');
+    await promptSession(session.id, message, selectedAttachments.map((item) => item.id), () => {
+      setDraft(value);
+      setAttachments(selectedAttachments);
+    });
+  }
+
+  async function promptSession(
+    sessionId: string,
+    message: string,
+    attachmentIds: string[],
+    restoreInput?: () => void,
+  ): Promise<void> {
     const clientMessageId = `web-${crypto.randomUUID()}`;
-    useAgentLiveStore.getState().appendOptimistic(session.id, { clientMessageId, text: value || '请查看附件。', attachments: attachments.map((item) => item.id), nowMs: Date.now() });
-    setDraft(''); setAttachments([]); setSending(true); setError('');
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId,
+      text: message,
+      attachments: attachmentIds,
+      nowMs: Date.now(),
+    });
+    setSending(true);
+    setError('');
     try {
-      await transport.request({ pathId: 'agent.session.prompt', params: { sessionId: session.id }, body: { message: value || '请查看附件。', attachments: attachments.map((item) => item.id), clientMessageId } });
+      await transport.request({
+        pathId: 'agent.session.prompt',
+        params: { sessionId },
+        body: { message, attachments: attachmentIds, clientMessageId },
+      });
     } catch (requestError) {
       const failure = publicAgentErrorText(requestError);
-      const projection = agentProjection(session.id);
+      const projection = agentProjection(sessionId);
       const hasOptimisticTurn = Boolean(projection.optimisticByClientMessageId[clientMessageId]);
-      useAgentLiveStore.getState().failOptimistic(session.id, clientMessageId, failure, Date.now());
-      setDraft(value); setAttachments(attachments); setError(hasOptimisticTurn ? '' : failure);
-    } finally { setSending(false); }
+      useAgentLiveStore.getState().failOptimistic(sessionId, clientMessageId, failure, Date.now());
+      restoreInput?.();
+      setError(hasOptimisticTurn ? '' : failure);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function retryTurn(turnId: string): Promise<void> {
+    if (!session || sending) return;
+    const projection = agentProjection(session.id);
+    const turn = projection.turnsById[turnId];
+    const userMessage = turn?.messageIds
+      .map((messageId) => projection.messagesById[messageId])
+      .find((message) => message?.role === 'user');
+    const message = userMessage?.blocks
+      .map((block) => typeof block.data.text === 'string' ? block.data.text : '')
+      .filter(Boolean)
+      .join('\n')
+      .trim() ?? '';
+    if (!message && !userMessage?.attachments.length) {
+      setError('找不到这轮的原始输入，无法安全重试。');
+      return;
+    }
+    await promptSession(session.id, message || '请查看附件。', userMessage?.attachments ?? []);
+  }
+
+  function openModelPicker(): void {
+    if (!catalog) {
+      setError('模型目录暂时不可用，无法切换模型。');
+      return;
+    }
+    setModelPickerRequest((current) => current + 1);
   }
 
   async function stop(): Promise<void> {
@@ -388,10 +457,10 @@ export function AgentFeature() {
         <header className="agent-conversation__header">
           <IconButton className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={() => setRailOpen((value) => !value)} tooltip />
           <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${persona?.displayName ?? '智鼬'} · ${session.mode === 'coordinator' ? '运行协调' : '受控模式'}` : '选择一个对话'}</small></span>
-          {error ? <p role="alert"><AlertCircle size={14} />{error}</p> : null}
+          {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
         </header>
-        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} onSuggestion={setDraft} onApprovalDecision={(id, decision, hash) => void decideApproval(id, decision, hash)} /> : null}
-        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} sending={sending || modelChanging} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => void decideApproval(id, decision, hash)} /> : null}
+        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
     </main>
   );

@@ -202,8 +202,16 @@ class NativeControlBridgeContractTests(unittest.TestCase):
             r"private func sendKnowledgeBinaryToWeb\(.*?\n    \}",
             self.native_bridge,
         )
-        self.assertIn("new Blob", send_block)
+        self.assertIn("NativeBinaryTransferPlan.chunkRanges", send_block)
         self.assertNotIn('"path"', send_block)
+
+        finish_block = _required_match(
+            r"private func finishKnowledgeBinaryTransfer\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn("new Blob", finish_block)
+        self.assertIn("transfer.received !== transfer.metadata.byteSize", finish_block)
+        self.assertNotIn('"path"', finish_block)
 
         source_block = _required_match(
             r"private func readKnowledgeDocumentSource\(.*?\n    \}",
@@ -244,6 +252,11 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         self.assertNotIn('"actionId"', external_block)
         self.assertNotIn('"approval"', external_block)
         self.assertIn("^[a-fA-F0-9]{64}$", external_block)
+        self.assertIn('pathId: "diagnostics.action.job"', external_block)
+        self.assertIn("validateApprovedExternalActionJob", external_block)
+        self.assertIn("expectedRuntimeActionCommandSha256", external_block)
+        self.assertNotIn('requiredString("path"', external_block)
+        self.assertNotIn('requiredString("command"', external_block)
 
     def test_capabilities_keep_native_features_nested_and_route_ids_explicit(self) -> None:
         capability_block = _required_match(

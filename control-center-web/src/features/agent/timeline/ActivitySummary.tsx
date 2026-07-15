@@ -3,6 +3,7 @@ import {
   Bot,
   Brain,
   CheckCircle2,
+  ChevronRight,
   CircleDashed,
   Database,
   GitBranch,
@@ -13,10 +14,19 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { Button } from '@/components/primitives';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/primitives';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { SafeFieldList } from './BlockRenderer';
 import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
+import { publicAgentErrorText } from '../public-error';
 
 export function ActivitySummary({
   activities,
@@ -30,27 +40,66 @@ export function ActivitySummary({
   const waiting = activities.some((activity) => activity.status === 'waiting');
   const failed = activities.some((activity) => activity.status === 'failed');
   const summary = aggregateSummary(activities);
+  const title = running ? '正在处理' : waiting ? '等待你的确认' : failed ? '活动中有失败项' : '活动已完成';
+  const pendingApprovals = activities.flatMap((activity) => {
+    const approvalId = text(activity.payload.approvalId);
+    const hash = text(activity.payload.payloadSha256);
+    if (activity.status !== 'waiting' || !approvalId || !hash || !onApprovalDecision) return [];
+    const presentation = activityPresentation(activity);
+    return [{
+      approvalId,
+      hash,
+      title: presentation.title,
+      summary: publicActivitySummary(activity.summary, presentation.title),
+    }];
+  });
   return (
-    <details className="agent-activity" data-state={failed ? 'failed' : waiting ? 'waiting' : running ? 'running' : 'done'}>
-      <summary>
-        <span className="agent-activity__status" aria-hidden="true">
-          {failed ? <TriangleAlert size={15} /> : waiting ? <ShieldAlert size={15} /> : running ? <CircleDashed size={15} /> : <CheckCircle2 size={15} />}
-        </span>
-        <span>
-          <strong>{running ? '正在处理' : waiting ? '等待你的确认' : failed ? '活动中有失败项' : '活动已完成'}</strong>
-          <small>{summary}</small>
-        </span>
-      </summary>
-      <div className="agent-activity__timeline">
-        {activities.map((activity) => (
-          <ActivityRow
-            key={activity.id}
-            activity={activity}
-            onApprovalDecision={onApprovalDecision}
-          />
-        ))}
-      </div>
-    </details>
+    <div className="agent-activity-group">
+      <Dialog>
+        <DialogTrigger asChild>
+          <button
+            className="agent-activity"
+            data-state={failed ? 'failed' : waiting ? 'waiting' : running ? 'running' : 'done'}
+            type="button"
+            aria-label={`查看活动详情：${title}，${summary}`}
+          >
+            <span className="agent-activity__status" aria-hidden="true">
+              {failed ? <TriangleAlert size={15} /> : waiting ? <ShieldAlert size={15} /> : running ? <CircleDashed size={15} /> : <CheckCircle2 size={15} />}
+            </span>
+            <span className="agent-activity__copy">
+              <strong>{title}</strong>
+              <small>{summary}</small>
+            </span>
+            <ChevronRight aria-hidden="true" size={16} />
+          </button>
+        </DialogTrigger>
+        <DialogContent className="agent-activity-dialog">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{summary}。这里显示本轮真实活动与可公开的工具结果。</DialogDescription>
+          </DialogHeader>
+          <div className="agent-activity__timeline">
+            {activities.map((activity) => (
+              <ActivityRow
+                key={activity.id}
+                activity={activity}
+                onApprovalDecision={onApprovalDecision}
+              />
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+      {pendingApprovals.map((approval) => (
+        <div className="agent-activity-approval" key={approval.approvalId}>
+          <ShieldAlert aria-hidden="true" size={16} />
+          <span><strong>{approval.title}</strong><small>{approval.summary}</small></span>
+          <div>
+            <Button size="small" variant="quiet" onClick={() => onApprovalDecision?.(approval.approvalId, 'rejected', approval.hash)}>拒绝</Button>
+            <Button size="small" variant="primary" onClick={() => onApprovalDecision?.(approval.approvalId, 'approved', approval.hash)}>批准</Button>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -66,6 +115,9 @@ function ActivityRow({
   const payload = activity.payload;
   const isToolActivity = activity.kind === 'tool_started' || activity.kind === 'tool_progress' || activity.kind === 'tool_finished';
   const toolView = isToolActivity ? publicToolResultView(activity) : null;
+  const visibleSummary = activity.kind === 'turn_failed'
+    ? publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。')
+    : publicActivitySummary(activity.summary, presentation.title);
   const approvalId = text(payload.approvalId);
   const hash = text(payload.payloadSha256);
   const canDecide = activity.status === 'waiting' && approvalId && hash && onApprovalDecision;
@@ -75,7 +127,7 @@ function ActivityRow({
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
           <strong>{presentation.title}</strong>
-          <small>{activity.kind === 'reasoning_summary' ? '正在整理信息与下一步' : toolView?.summary ?? publicActivitySummary(activity.summary, presentation.title)}</small>
+          <small>{activity.kind === 'reasoning_summary' ? '正在整理信息与下一步' : toolView?.summary ?? visibleSummary}</small>
         </span>
         <i data-status={activity.status}>{statusLabel(activity.status)}</i>
       </summary>
@@ -123,6 +175,9 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   const toolView = activity.kind.startsWith('tool_') ? publicToolResultView(activity) : null;
   if (activity.kind === 'reasoning_summary') {
     return { title: '处理说明', kind: 'thinking', icon: Brain };
+  }
+  if (activity.kind === 'turn_failed') {
+    return { title: '模型服务请求失败', kind: 'runtime', icon: TriangleAlert, detail: '模型请求没有完成；可返回对话重试或切换模型。' };
   }
   if (activity.kind.includes('approval') || activity.kind === 'user_input_required') {
     return { title: '权限确认', kind: 'approval', icon: ShieldAlert, detail: '是否执行以你的本机确认结果为准。' };

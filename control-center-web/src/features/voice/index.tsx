@@ -1,8 +1,8 @@
-import { CheckCircle2, KeyRound, MessageCircle, Mic, Plus, RefreshCw, Shield, Sparkles, Waves } from 'lucide-react';
+import { CheckCircle2, KeyRound, Mic, Play, Plus, RefreshCw, Save, Shield, Sparkles, Square, Waves } from 'lucide-react';
+import { useMutation } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button, SegmentedControl, Switch, TextArea } from '@/components/primitives';
-import { useVoiceQueries } from './api';
+import { Button, Field, Input, SegmentedControl, Switch, TextArea } from '@/components/primitives';
+import { useVoiceCredentialStatus, useVoiceQueries } from './api';
 import {
   configurationMutationPathIds,
   useConfigurationMutationBoundary,
@@ -20,12 +20,17 @@ import {
   OperationalList,
   QueryState,
   StatusBadge,
-  arrayRecords,
   asRecord,
   booleanValue,
   stringValue,
   valueAt,
 } from '@/features/overview/management-ui';
+import type {
+  VoiceCredentialSaveRequest,
+  VoiceNativeActionId,
+  VoiceNativeActionReceipt,
+  VoiceProviderId,
+} from '@/platform/transport';
 import './voice.css';
 
 const providers = [
@@ -34,10 +39,15 @@ const providers = [
   { value: 'http_transcription', label: 'HTTP 转写' },
 ] as const;
 
+const hotkeys = [
+  { value: 'middle_mouse', label: '鼠标中键' },
+  { value: 'right_option', label: '右 Option' },
+  { value: 'option_space', label: 'Option + 空格' },
+] as const;
+
 const suggestedHotwords = ['Pi', 'API Key', 'SK', 'Skill', 'GPT-5.6', '智鼬'] as const;
 
 export function VoiceFeature() {
-  const navigate = useNavigate();
   const queries = useVoiceQueries();
   const mutationBoundary = useConfigurationMutationBoundary();
   const settingsEnvelope = asRecord(queries.settings.data);
@@ -58,31 +68,18 @@ export function VoiceFeature() {
     ...(stringValue(voiceControl.provider) ? { provider: stringValue(voiceControl.provider) } : {}),
   };
   const configuredProvider = providers.find((item) => item.value === stringValue(voiceSettings.provider))?.value ?? '';
-  const [providerDraft, setProviderDraft] = useState<(typeof providers)[number]['value'] | ''>('');
-  const provider = providerDraft || configuredProvider || providers[0].value;
-  const credentialState = credentialStatus(
-    valueAt(voiceControl, 'agent.credentialsConfigured')
-      ?? voiceSettings.tokenConfigured
-      ?? voiceSettings.accessTokenConfigured
-      ?? valueAt(settings, 'voice.credentials.configured'),
-  );
+  const configuredHotkey = hotkeys.find((item) => item.value === stringValue(voiceSettings.hotkey))?.value
+    ?? hotkeys.find((item) => item.value === stringValue(voiceControl.hotkey))?.value
+    ?? 'middle_mouse';
+  const [provider, setProvider] = useState<VoiceProviderId>(configuredProvider || 'native_streaming');
+  const [hotkey, setHotkey] = useState<(typeof hotkeys)[number]['value']>(configuredHotkey);
+  useEffect(() => setProvider(configuredProvider || 'native_streaming'), [configuredProvider]);
+  useEffect(() => setHotkey(configuredHotkey), [configuredHotkey]);
+  const credentials = useVoiceCredentialStatus(provider);
+  const credentialState = credentialStatus(credentials.status.data?.configured);
   const voiceAgent = asRecord(components.voiceAgent);
   const microphone = asRecord(components.microphone ?? components.voiceMicrophone);
   const accessibility = asRecord(components.accessibility ?? components.voiceAccessibility);
-  const toolItems = arrayRecords(asRecord(queries.tools.data).items);
-  const voiceTool = toolItems.find((item) => (
-    stringValue(item.id) === 'ime_voice' || stringValue(item.domain) === 'voice'
-  ));
-  const voiceOperations = new Set(
-    Array.isArray(voiceTool?.operations)
-      ? voiceTool.operations.filter((item): item is string => typeof item === 'string')
-      : [],
-  );
-  const voiceToolOnline = Boolean(
-    voiceTool
-    && ['online', 'available', 'ready'].includes(stringValue(voiceTool.availability).toLowerCase()),
-  );
-  const routeIds = new Set(queries.capabilities.data?.routeIds ?? []);
   const rawRuntimeRevision = settingsEnvelope.runtimeRevision ?? valueAt(settingsEnvelope, 'runtimeConfig.runtimeRevision');
   const runtimeRevision = typeof rawRuntimeRevision === 'number'
     && Number.isInteger(rawRuntimeRevision)
@@ -109,34 +106,52 @@ export function VoiceFeature() {
   );
   const hotwordDirty = hotwordsEnabled !== booleanValue(voiceSettings.hotwordsEnabled)
     || JSON.stringify(hotwordDraft.words) !== JSON.stringify(savedHotwords);
-  const toolChecking = routeIds.has('agent.tools.list') && queries.tools.isPending;
-  const providerHandoffAvailable = voiceToolOnline
-    && routeIds.has('agent.session.prompt')
-    && ['provider_status', 'provider_preview', 'provider_apply', 'provider_rollback'].every((operation) => voiceOperations.has(operation));
-  const privacyHandoffAvailable = voiceToolOnline
-    && routeIds.has('agent.session.prompt')
-    && voiceOperations.has('privacy_policy');
+  const serviceDirty = provider !== (configuredProvider || 'native_streaming') || hotkey !== configuredHotkey;
+  const nativeActionsAvailable = queries.capabilities.data?.native.tcc === true
+    && typeof queries.transport.runVoiceAction === 'function';
+  const agentRunning = booleanValue(voiceAgent.ok) || booleanValue(valueAt(voiceControl, 'agent.running'));
   const error = queries.capabilities.error as Error | null;
   const pending = queries.capabilities.isPending;
   const refreshing = queries.settings.isFetching
     || queries.schema.isFetching
     || queries.runtime.isFetching
-    || queries.tools.isFetching;
+    || credentials.status.isFetching;
   const refresh = () => void Promise.all([
     queries.capabilities.refetch(),
     queries.settings.refetch(),
     queries.schema.refetch(),
     queries.runtime.refetch(),
-    ...(queries.tools.isEnabled ? [queries.tools.refetch()] : []),
+    ...(credentials.status.isEnabled ? [credentials.status.refetch()] : []),
   ]);
 
-  const handoff = (kind: 'provider' | 'privacy') => {
-    const selected = providers.find((item) => item.value === provider)?.label ?? '所选语音服务';
-    const draft = kind === 'privacy'
-      ? '请告诉我当前语音输入会保存哪些内容、哪些内容不会保存，以及发送前需要我确认什么。只依据当前真实配置回答。'
-      : `把语音服务切换为“${selected}”。请先展示会发生的变化并等待我确认，确认前不要修改设置。`;
-    navigate({ pathname: '/agent', search: `?${new URLSearchParams({ draft })}` });
-  };
+  const [nativeReceipt, setNativeReceipt] = useState<VoiceNativeActionReceipt | null>(null);
+  const voiceAction = useMutation({
+    mutationKey: ['voice', 'native-action'],
+    mutationFn: async (action: VoiceNativeActionId) => {
+      if (!queries.transport.runVoiceAction) throw new Error('当前控制中心不支持本机语音操作。');
+      return queries.transport.runVoiceAction(action);
+    },
+    onSuccess: (receipt) => {
+      setNativeReceipt(receipt);
+      void Promise.all([queries.runtime.refetch(), queries.settings.refetch()]);
+    },
+  });
+
+  const [credentialDraft, setCredentialDraft] = useState(() => defaultCredentialDraft(provider));
+  useEffect(() => setCredentialDraft(defaultCredentialDraft(provider)), [provider]);
+  const credentialSave = useMutation({
+    mutationKey: ['voice', 'credentials', provider],
+    mutationFn: async () => {
+      if (!queries.transport.saveVoiceCredentials) throw new Error('当前控制中心没有可用的 Keychain 桥接。');
+      const request = validateCredentialDraft(provider, credentialDraft);
+      return queries.transport.saveVoiceCredentials(request);
+    },
+    onSuccess: () => {
+      setCredentialDraft((current) => ({ ...current, accessToken: '' }));
+      void credentials.status.refetch();
+      if (queries.transport.runVoiceAction) void queries.transport.runVoiceAction('reload_configuration');
+    },
+  });
 
   const addSuggestedHotword = (word: string) => {
     const current = normalizeHotwordDraft(hotwordsText, false);
@@ -146,10 +161,17 @@ export function VoiceFeature() {
     setHotwordsText([...current.words, word].join('\n'));
   };
 
+  const reloadVoice = () => {
+    void Promise.all([queries.settings.refetch(), queries.runtime.refetch()]);
+    if (queries.transport.runVoiceAction) {
+      void queries.transport.runVoiceAction('reload_configuration').then(setNativeReceipt).catch(() => undefined);
+    }
+  };
+
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={refresh} size="small">刷新</Button>}
-      description="查看语音输入是否就绪，并在确认后切换语音服务。"
+      description="管理语音代理、系统授权、识别服务、Keychain 凭据和请求级热词。"
       eyebrow="VOICE"
       routeId="voice"
       title="语音输入"
@@ -157,7 +179,7 @@ export function VoiceFeature() {
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection title="准备情况">
           <MetricStrip items={[
-            { label: '语音能力', value: toolChecking ? '正在检查' : providerHandoffAvailable ? '可用' : '暂不可用', detail: providerHandoffAvailable ? '可查看状态并切换服务' : '不会执行配置变更', icon: Waves, tone: providerHandoffAvailable ? 'success' : toolChecking ? 'neutral' : 'warning' },
+            { label: '语音代理', value: queries.runtime.isPending ? '正在检查' : agentRunning ? '运行中' : '未运行', detail: stringValue(valueAt(voiceControl, 'agent.statusText')) || '负责全局按住说话', icon: Waves, tone: agentRunning ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : permissionLabel(microphone), detail: '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : permissionLabel(accessibility), detail: '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '访问凭据', value: credentialState.label, detail: '保存内容不会在页面显示', icon: KeyRound, tone: credentialState.tone },
@@ -166,35 +188,126 @@ export function VoiceFeature() {
           {queries.runtime.error ? <InlineNotice title="权限状态读取失败" tone="warning">暂时无法确认麦克风和辅助功能权限，请刷新后重试。</InlineNotice> : null}
         </ManagementSection>
 
+        <ManagementSection title="运行与系统授权" description="这些操作只调用桌面宿主内固定白名单，不接受命令、路径或任意 URL。">
+          <div className="voice-native-actions">
+            <div aria-labelledby="voice-agent-actions-label" className="voice-native-action-group" role="group">
+              <span id="voice-agent-actions-label">语音代理</span>
+              <Button
+                aria-label={agentRunning ? '停止语音代理' : '启动语音代理'}
+                disabled={!nativeActionsAvailable}
+                leadingIcon={agentRunning ? <Square size={14} /> : <Play size={14} />}
+                loading={voiceAction.isPending && ['start_agent', 'stop_agent'].includes(voiceAction.variables ?? '')}
+                onClick={() => voiceAction.mutate(agentRunning ? 'stop_agent' : 'start_agent')}
+                size="small"
+                variant="primary"
+              >
+                {agentRunning ? '停止' : '启动'}
+              </Button>
+            </div>
+            <div aria-labelledby="voice-microphone-actions-label" className="voice-native-action-group" role="group">
+              <span id="voice-microphone-actions-label">麦克风</span>
+              <Button disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Mic size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_microphone_permission'} onClick={() => voiceAction.mutate('request_microphone_permission')} size="small">请求权限</Button>
+              <Button disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_microphone_settings'} onClick={() => voiceAction.mutate('open_microphone_settings')} size="small" variant="quiet">打开设置</Button>
+            </div>
+            <div aria-labelledby="voice-accessibility-actions-label" className="voice-native-action-group" role="group">
+              <span id="voice-accessibility-actions-label">辅助功能</span>
+              <Button disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Shield size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_accessibility_permission'} onClick={() => voiceAction.mutate('request_accessibility_permission')} size="small">请求权限</Button>
+              <Button disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_accessibility_settings'} onClick={() => voiceAction.mutate('open_accessibility_settings')} size="small" variant="quiet">打开设置</Button>
+            </div>
+          </div>
+          {!nativeActionsAvailable ? <InlineNotice title="需要桌面控制中心" tone="warning">浏览器预览不能启动代理或触发系统授权；请在已安装的智鼬控制中心中操作。</InlineNotice> : null}
+          {voiceAction.error ? <InlineNotice title="语音操作失败" tone="danger">{voiceAction.error instanceof Error ? voiceAction.error.message : '本机语音操作没有完成。'}</InlineNotice> : null}
+          {nativeReceipt && !nativeReceipt.accepted ? <InlineNotice title="语音操作未执行" tone="danger">{nativeReceipt.error || '桌面宿主拒绝了这次操作。'}</InlineNotice> : null}
+          {nativeReceipt?.accepted ? <InlineNotice title="语音状态已更新" tone="success">{nativeReceipt.status.statusText}</InlineNotice> : null}
+        </ManagementSection>
+
         <ManagementSection
-          title="语音服务"
-          description="选择想使用的服务；真正切换前会在对话中再次确认。"
+          title="语音服务与快捷键"
+          description="服务和快捷键通过同一套预览、确认、应用和撤销契约写入。"
           trailing={<StatusBadge label={currentProviderStatus(queries.settings.isPending, Boolean(queries.settings.error), configuredProvider)} tone={configuredProvider ? 'info' : 'warning'} />}
         >
           <div className="voice-service-layout">
             <div className="voice-service-choice">
-              <strong>希望使用的服务</strong>
-              <SegmentedControl aria-label="希望使用的语音服务" items={providers} onValueChange={setProviderDraft} value={provider} />
-              <Button
-                disabled={!providerHandoffAvailable}
-                leadingIcon={<MessageCircle size={15} />}
-                onClick={() => handoff('provider')}
-                size="small"
-                variant="primary"
-              >
-                {toolChecking ? '正在检查' : providerHandoffAvailable ? '让智鼬确认切换' : '当前不可切换'}
-              </Button>
+              <strong>识别服务</strong>
+              <SegmentedControl aria-label="语音识别服务" items={providers} onValueChange={setProvider} value={provider} />
+              <strong>按住说话</strong>
+              <SegmentedControl aria-label="语音快捷键" items={hotkeys} onValueChange={setHotkey} value={hotkey} />
             </div>
-            {toolChecking ? (
-              <InlineNotice title="正在确认可用能力" tone="info">检查完成前不会发送请求，也不会写入任何设置。</InlineNotice>
-            ) : providerHandoffAvailable ? (
-              <InlineNotice title="确认后才会切换" tone="success">点击后会打开对话，并把请求保留为待发送草稿。发送后仍需确认影响，页面不会直接改写设置。</InlineNotice>
-            ) : (
-              <InlineNotice title="语音管理暂不可用" tone="warning">当前没有可验证的语音管理能力。选择服务只会停留在本页，不会写入任何设置。</InlineNotice>
-            )}
+            <ManagementMutationWorkflow
+              availability={mutationBoundary.availability(
+                runtimeRevision === null
+                  ? '当前语音设置尚未同步，刷新后才能预览。'
+                  : !serviceDirty
+                    ? '选择不同的服务或快捷键后才能生成预览。'
+                    : '',
+              )}
+              description="写入 voice-provider.json 与 voice-hotkey.json，并通知语音代理重新载入。"
+              draftKey={JSON.stringify({ provider, hotkey, runtimeRevision })}
+              mutationKey={['voice', 'mutation', 'service']}
+              onApply={async (preview) => parseManagementWorkReceipt(
+                await mutationBoundary.request({
+                  pathId: configurationMutationPathIds.apply,
+                  body: {
+                    changes: preview.context.changes,
+                    expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                    previewToken: preview.previewToken,
+                    payloadSha256: preview.payloadSha256,
+                    confirmText: preview.requiredConfirm,
+                  },
+                }),
+                configurationMutationPathIds.apply,
+                preview.payloadSha256,
+              )}
+              onApplied={reloadVoice}
+              onPreview={async () => {
+                if (runtimeRevision === null || !serviceDirty) throw new Error('语音设置草案没有可应用的变化。');
+                const context = { changes: { 'voice.provider': provider, 'voice.hotkey': hotkey } };
+                return parseManagementWorkPreview(
+                  await mutationBoundary.request({ pathId: configurationMutationPathIds.preview, body: { ...context, expectedRuntimeRevision: runtimeRevision } }),
+                  configurationMutationPathIds.apply,
+                  context,
+                );
+              }}
+              onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+                await mutationBoundary.request({
+                  pathId: configurationMutationPathIds.rollback,
+                  body: { receiptId: receipt.receiptId, rollbackToken: receipt.rollbackToken, payloadSha256: receipt.payloadSha256, confirmText: 'rollback' },
+                }),
+                configurationMutationPathIds.rollback,
+                preview.payloadSha256,
+              )}
+              onRolledBack={reloadVoice}
+              risk="R1"
+              title="保存语音服务与快捷键"
+            />
           </div>
           {queries.settings.error ? <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的语音服务，请刷新后重试。</InlineNotice> : null}
-          {queries.tools.error ? <InlineNotice title="状态读取失败" tone="warning">暂时无法确认语音管理能力，请刷新后重试。</InlineNotice> : null}
+        </ManagementSection>
+
+        <ManagementSection title="安全凭据" description="密钥只从此表单写入 macOS Keychain；状态接口只返回是否已配置，绝不回显原值。">
+          <div className="voice-credential-grid">
+            <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有 Token。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="Access Token">
+              <Input autoComplete="new-password" id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入 Access Token'} type="password" value={credentialDraft.accessToken} />
+            </Field>
+            {provider === 'native_streaming' ? (
+              <>
+                <Field htmlFor="voice-app-id" label="App ID"><Input id="voice-app-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, appId: event.target.value }))} value={credentialDraft.appId} /></Field>
+                <Field htmlFor="voice-resource-id" label="Resource ID"><Input id="voice-resource-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, resourceId: event.target.value }))} value={credentialDraft.resourceId} /></Field>
+              </>
+            ) : (
+              <>
+                <Field htmlFor="voice-endpoint" label={provider === 'realtime_websocket' ? 'WebSocket 地址' : 'HTTP 地址'}><Input id="voice-endpoint" onChange={(event) => setCredentialDraft((current) => ({ ...current, endpoint: event.target.value }))} value={credentialDraft.endpoint} /></Field>
+                <Field htmlFor="voice-model" label="转写模型"><Input id="voice-model" onChange={(event) => setCredentialDraft((current) => ({ ...current, model: event.target.value }))} value={credentialDraft.model} /></Field>
+                <Field description="仅接受 JSON 字符串字典；不会在保存后重新显示。" htmlFor="voice-headers" label="请求头 JSON"><TextArea id="voice-headers" onChange={(event) => setCredentialDraft((current) => ({ ...current, headersJson: event.target.value }))} placeholder='{"X-Project":"..."}' rows={4} value={credentialDraft.headersJson} /></Field>
+              </>
+            )}
+          </div>
+          {serviceDirty ? <InlineNotice title="先保存服务选择" tone="warning">凭据按服务隔离保存。请先完成上方服务切换，再保存该服务的凭据。</InlineNotice> : null}
+          {!credentials.supported ? <InlineNotice title="Keychain 桥接不可用" tone="warning">当前页面运行环境不能访问 macOS Keychain，凭据不会发送或落盘。</InlineNotice> : null}
+          {credentials.status.error ? <InlineNotice title="凭据状态读取失败" tone="danger">无法确认 Keychain 中是否已有凭据，请刷新后重试。</InlineNotice> : null}
+          {credentialSave.error ? <InlineNotice title="凭据保存失败" tone="danger">{credentialSave.error instanceof Error ? credentialSave.error.message : 'Keychain 写入没有完成。'}</InlineNotice> : null}
+          {credentialSave.isSuccess ? <InlineNotice title="凭据已保存" tone="success">Token 已写入 Keychain，页面未读取或显示保存值。</InlineNotice> : null}
+          <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} size="small" variant="primary">保存到 Keychain</Button>
         </ManagementSection>
 
         <ManagementSection title="按住说话与热词" description="热词只在你预览并确认保存后发送给当前语音识别服务。">
@@ -257,7 +370,7 @@ export function VoiceFeature() {
                   configurationMutationPathIds.apply,
                   preview.payloadSha256,
                 )}
-                onApplied={() => void Promise.all([queries.settings.refetch(), queries.runtime.refetch()])}
+                onApplied={reloadVoice}
                 onPreview={async () => {
                   if (runtimeRevision === null || hotwordDraft.error || !hotwordDirty) {
                     throw new Error('热词草案或当前设置状态已失效，请刷新后重试。');
@@ -290,18 +403,10 @@ export function VoiceFeature() {
                   configurationMutationPathIds.rollback,
                   preview.payloadSha256,
                 )}
-                onRolledBack={() => void Promise.all([queries.settings.refetch(), queries.runtime.refetch()])}
+                onRolledBack={reloadVoice}
                 risk="R1"
                 title="保存热词词表"
               />
-              <Button
-                disabled={!privacyHandoffAvailable}
-                leadingIcon={<MessageCircle size={15} />}
-                onClick={() => handoff('privacy')}
-                size="small"
-              >
-                {toolChecking ? '正在检查' : privacyHandoffAvailable ? '查看语音处理说明' : '处理说明暂不可用'}
-              </Button>
             </div>
           </div>
         </ManagementSection>
@@ -318,6 +423,67 @@ export function VoiceFeature() {
       </QueryState>
     </ManagementPage>
   );
+}
+
+type VoiceCredentialDraft = Omit<VoiceCredentialSaveRequest, 'provider'> & {
+  accessToken: string;
+};
+
+function defaultCredentialDraft(provider: VoiceProviderId): VoiceCredentialDraft {
+  return {
+    accessToken: '',
+    appId: '',
+    resourceId: 'volc.seedasr.sauc.duration',
+    endpoint: provider === 'realtime_websocket'
+      ? 'wss://api.openai.com/v1/realtime?intent=transcription'
+      : provider === 'http_transcription'
+        ? 'https://api.openai.com/v1/audio/transcriptions'
+        : '',
+    model: provider === 'native_streaming' ? '' : 'gpt-4o-mini-transcribe',
+    headersJson: '',
+  };
+}
+
+function validateCredentialDraft(
+  provider: VoiceProviderId,
+  draft: VoiceCredentialDraft,
+): VoiceCredentialSaveRequest {
+  const normalized = Object.fromEntries(
+    Object.entries(draft).map(([key, value]) => [key, value.trim()]),
+  ) as unknown as VoiceCredentialDraft;
+  if (provider === 'native_streaming') {
+    if (!normalized.appId || !normalized.resourceId) {
+      throw new Error('原生流式服务需要 App ID 和 Resource ID。');
+    }
+  } else {
+    let endpoint: URL;
+    try {
+      endpoint = new URL(normalized.endpoint);
+    } catch {
+      throw new Error('请填写有效的语音服务地址。');
+    }
+    const acceptedSchemes = provider === 'realtime_websocket' ? ['ws:', 'wss:'] : ['http:', 'https:'];
+    if (!acceptedSchemes.includes(endpoint.protocol) || !normalized.model) {
+      throw new Error('语音服务地址协议或转写模型不完整。');
+    }
+  }
+  if (normalized.headersJson) {
+    let headers: unknown;
+    try {
+      headers = JSON.parse(normalized.headersJson);
+    } catch {
+      throw new Error('请求头必须是有效的 JSON。');
+    }
+    if (!isStringDictionary(headers)) throw new Error('请求头必须是字符串键值对象。');
+  }
+  return { provider, ...normalized };
+}
+
+function isStringDictionary(value: unknown): value is Record<string, string> {
+  return typeof value === 'object'
+    && value !== null
+    && !Array.isArray(value)
+    && Object.values(value).every((item) => typeof item === 'string');
 }
 
 function firstRecord(...values: unknown[]): Record<string, unknown> {

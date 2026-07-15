@@ -6,6 +6,8 @@ final class WebHostViewController: NSViewController, WKNavigationDelegate, WKUID
     private let navigationPolicy = NativeNavigationPolicy()
     private lazy var nativeBridge = NativeBridge(routePolicy: routePolicy)
     private var webView: WKWebView?
+    private var isReady = false
+    private var pendingAgentSessionId: String?
 
     override func loadView() {
         let configuration = WKWebViewConfiguration()
@@ -54,7 +56,34 @@ final class WebHostViewController: NSViewController, WKNavigationDelegate, WKUID
         webView.stopLoading()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: NativeBridge.handlerName)
         nativeBridge.shutdown()
+        isReady = false
+        pendingAgentSessionId = nil
         self.webView = nil
+    }
+
+    func openAgent(sessionId: String) {
+        guard sessionId.isEmpty || sessionId.range(
+            of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$",
+            options: .regularExpression
+        ) != nil else { return }
+        pendingAgentSessionId = sessionId
+        navigateToPendingAgentIfReady()
+    }
+
+    private func navigateToPendingAgentIfReady() {
+        guard isReady, let webView, let sessionId = pendingAgentSessionId else { return }
+        let route: String
+        if sessionId.isEmpty {
+            route = "#/agent"
+        } else {
+            var components = URLComponents()
+            components.queryItems = [URLQueryItem(name: "session", value: sessionId)]
+            route = "#/agent?\(components.percentEncodedQuery ?? "")"
+        }
+        guard let routeData = try? JSONSerialization.data(withJSONObject: route, options: .fragmentsAllowed),
+              let routeLiteral = String(data: routeData, encoding: .utf8) else { return }
+        pendingAgentSessionId = nil
+        webView.evaluateJavaScript("window.location.hash = \(routeLiteral)")
     }
 
     deinit {
@@ -89,7 +118,13 @@ final class WebHostViewController: NSViewController, WKNavigationDelegate, WKUID
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        isReady = false
         let entryURL = URL(string: "\(ControlCenterAssetSchemeHandler.scheme)://app/index.html")!
         webView.load(URLRequest(url: entryURL))
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        isReady = true
+        navigateToPendingAgentIfReady()
     }
 }

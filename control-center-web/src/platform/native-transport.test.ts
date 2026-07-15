@@ -291,6 +291,28 @@ describe('NativeControlTransport', () => {
     transport.dispose();
   });
 
+  it('accepts only an absolute native directory receipt for backup export', async () => {
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'backup-directory-1',
+          name: 'Backups',
+          mimeType: 'application/octet-stream',
+          byteSize: 0,
+          path: '/Users/undo/Backups',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow });
+    await expect(transport.pickFiles({
+      purpose: 'export-destination',
+      maxFiles: 1,
+    })).resolves.toEqual([expect.objectContaining({ path: '/Users/undo/Backups' })]);
+    transport.dispose();
+  });
+
   it('imports pasted clipboard images through the session-bound native media bridge', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     const bridgeWindow = fakeBridgeWindow((envelope) => {
@@ -501,6 +523,76 @@ describe('NativeControlTransport', () => {
       method: 'pasteImages',
       payload: { sessionId: 'agent:session-1', maxFiles: 4 },
     }]);
+    transport.dispose();
+  });
+
+  it('uses dedicated bounded voice methods and never receives credential values back', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    let nextId = 1;
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      const result = envelope.method === 'voiceAction'
+        ? {
+            action: 'request_microphone_permission',
+            accepted: true,
+            status: {
+              running: true,
+              state: 'idle',
+              statusText: '语音代理已待命',
+              microphoneAuthorization: 'authorized',
+              accessibilityTrusted: true,
+              hotkeyInstalled: true,
+              hotkeyMode: 'event_tap',
+              updatedAtMs: 42,
+            },
+          }
+        : { provider: 'native_streaming', configured: true };
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result,
+      }));
+    });
+    const transport = new NativeControlTransport({
+      bridgeWindow,
+      createId: () => `voice-${nextId++}`,
+    });
+
+    await expect(transport.voiceCredentialStatus('native_streaming')).resolves.toEqual({
+      provider: 'native_streaming',
+      configured: true,
+    });
+    await expect(transport.saveVoiceCredentials({
+      provider: 'native_streaming',
+      accessToken: 'secret-token',
+      appId: 'app-id',
+      resourceId: 'resource-id',
+      endpoint: '',
+      model: '',
+      headersJson: '',
+    })).resolves.toEqual({ provider: 'native_streaming', configured: true });
+    await expect(transport.runVoiceAction('request_microphone_permission')).resolves.toMatchObject({
+      accepted: true,
+      status: { microphoneAuthorization: 'authorized' },
+    });
+
+    expect(sent.map((item) => item.method)).toEqual([
+      'voiceCredentialStatus',
+      'voiceCredentialSave',
+      'voiceAction',
+    ]);
+    expect(sent[0].payload).toEqual({ provider: 'native_streaming' });
+    expect(sent[2].payload).toEqual({ action: 'request_microphone_permission' });
+    expect(JSON.stringify((await transport.voiceCredentialStatus('native_streaming')))).not.toContain('secret-token');
+    await expect(transport.saveVoiceCredentials({
+      provider: 'http_transcription',
+      accessToken: 'secret',
+      appId: '',
+      resourceId: '',
+      endpoint: 'https://example.test/v1/audio/transcriptions',
+      model: 'model',
+      headersJson: '{"Authorization":42}',
+    })).rejects.toThrow(/string dictionary/);
     transport.dispose();
   });
 });

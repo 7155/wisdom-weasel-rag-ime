@@ -63,19 +63,13 @@ class VoiceInputTests(unittest.TestCase):
         self.assertNotIn("NSStatusItem", delegate)
         self.assertNotIn("NSStatusBar", delegate)
 
-        page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
-        self.assertIn("com.rag-ime.voice.request-accessibility-permission", page)
-        self.assertIn("停止语音代理", page)
-        self.assertIn("启动语音代理", page)
-        self.assertIn("VoiceAgentStatusStore.read()", page)
+        page = (ROOT / "control-center-web/src/features/voice/index.tsx").read_text(encoding="utf-8")
+        self.assertIn("queries.runtime", page)
+        self.assertIn("麦克风", page)
+        self.assertIn("辅助功能", page)
+        self.assertIn("用于将文字写回当前应用", page)
         self.assertNotIn("AXIsProcessTrusted", page)
         self.assertNotIn("AVCaptureDevice.authorizationStatus", page)
-        self.assertIn('openPrivacyPane("Privacy_Accessibility")', page)
-        self.assertIn('openPrivacyPane("Privacy_Microphone")', page)
-        self.assertIn('Button("打开辅助功能设置"', page)
-        self.assertIn('Button("请求麦克风权限"', page)
-        self.assertIn('不需要单独的“光标”权限', page)
-        self.assertIn("com.rag-ime.voice.request-microphone-permission", page)
         self.assertIn("com.rag-ime.voice.request-microphone-permission", delegate)
         self.assertIn("VoiceAudioRecorder.requestPermission", delegate)
 
@@ -97,7 +91,7 @@ class VoiceInputTests(unittest.TestCase):
             "partialRevisionCount",
         ):
             self.assertIn(marker, status)
-        self.assertIn("仅记录状态、数量与时延，不保存音频或转写文本", page)
+        self.assertIn("页面不会显示已保存的密钥或请求头", page)
         self.assertIn("VoiceAgentStatusStore.write", delegate)
 
     def test_final_voice_commit_enters_recent_context_without_recording_partials(self) -> None:
@@ -127,7 +121,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("临时稿未记入历史", coordinator)
 
         delegate = (ROOT / "macos/RagImeVoice/VoiceApplicationDelegate.swift").read_text(encoding="utf-8")
-        page = (ROOT / "macos/RagImeControl/Pages/AgentConversationPage.swift").read_text(encoding="utf-8")
+        page = (ROOT / "control-center-web/src/features/agent/index.tsx").read_text(encoding="utf-8")
         for command in ("begin", "finish", "cancel"):
             notification = f"com.rag-ime.voice.agent-composer-{command}"
             self.assertIn(notification, delegate)
@@ -137,7 +131,7 @@ class VoiceInputTests(unittest.TestCase):
         keychain = (ROOT / "macos/Shared/VoiceKeychainStore.swift").read_text(encoding="utf-8")
         adapters = (ROOT / "macos/Shared/VoiceStreamingASR.swift").read_text(encoding="utf-8")
         coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
-        page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
+        page = (ROOT / "control-center-web/src/features/voice/index.tsx").read_text(encoding="utf-8")
 
         self.assertIn("enum VoiceASRProvider", keychain)
         self.assertIn('case nativeStreaming = "native_streaming"', keychain)
@@ -150,14 +144,26 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("RealtimeWebSocketASRClient", adapters)
         self.assertIn('"input_audio_buffer.append"', adapters)
         self.assertIn('"input_audio_buffer.commit"', adapters)
-        self.assertIn("ForEach(VoiceASRProvider.allCases)", page)
-        self.assertIn("provider.supportsHotwords", page)
+        self.assertIn("native_streaming", page)
+        self.assertIn("realtime_websocket", page)
+        self.assertIn("http_transcription", page)
+        self.assertIn("saveVoiceCredentials", page)
+        self.assertIn("useVoiceCredentialStatus", page)
+        self.assertNotIn("providerHandoffAvailable", page)
+
+        bridge = (ROOT / "macos/RagImeControlWebHost/NativeBridge.swift").read_text(encoding="utf-8")
+        self.assertIn('"voiceCredentialStatus"', bridge)
+        self.assertIn('"voiceCredentialSave"', bridge)
+        self.assertIn('"voiceAction"', bridge)
+        self.assertIn("VoiceKeychainStore.save", bridge)
+        self.assertIn("VoiceKeychainStore.hasCompleteKeychainCredentials", bridge)
+        self.assertNotIn("accessToken", bridge[bridge.index("private func voiceCredentialStatus"):bridge.index("private func voiceCredentialSave")])
 
     def test_middle_mouse_is_default_push_to_talk_and_keyboard_fallbacks_remain_configurable(self) -> None:
         config = (ROOT / "macos/Shared/VoiceHotkeyConfig.swift").read_text(encoding="utf-8")
         hotkey = (ROOT / "macos/RagImeVoice/GlobalVoiceHotkey.swift").read_text(encoding="utf-8")
         coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
-        page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
+        page = (ROOT / "control-center-web/src/features/voice/index.tsx").read_text(encoding="utf-8")
         configure = (ROOT / "scripts/configure_voice_hotkey.sh").read_text(encoding="utf-8")
 
         self.assertIn('case middleMouse = "middle_mouse"', config)
@@ -177,9 +183,9 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("passiveMiddleMouse", hotkey)
         self.assertIn("hotkey.reloadConfiguration()", coordinator)
         self.assertIn("restartHotkeyMonitor", coordinator)
-        self.assertIn("ForEach(VoiceHotkeyChoice.allCases)", page)
-        self.assertIn("按住鼠标滚轮中键", page)
-        self.assertIn("中键监听", page)
+        self.assertIn("middle_mouse", page)
+        self.assertIn("option_space", page)
+        self.assertIn("按住说话", page)
         self.assertIn("middle_mouse|right_option|option_space", configure)
 
         delegate = (ROOT / "macos/RagImeVoice/VoiceApplicationDelegate.swift").read_text(encoding="utf-8")
@@ -219,9 +225,8 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("Color(nsColor: .windowBackgroundColor).opacity(0.98)", overlay)
         self.assertIn("scheduleDismiss(after: 1.4)", overlay)
         self.assertIn("overlay.showRecording()", coordinator)
-        self.assertIn('credentialLabel("Access Token")', page)
-        self.assertIn("Grid(alignment: .leading", page)
-        self.assertIn('.help("打开辅助功能设置")', page)
+        self.assertIn("访问凭据", page)
+        self.assertIn("保存内容不会在页面显示", page)
 
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-hotkey-") as directory:
             result = subprocess.run(
@@ -242,7 +247,7 @@ class VoiceInputTests(unittest.TestCase):
     def test_hotwords_are_explicit_bounded_and_not_derived_from_rime(self) -> None:
         config = (ROOT / "macos/Shared/VoiceHotwordConfig.swift").read_text(encoding="utf-8")
         asr = (ROOT / "macos/Shared/VolcengineStreamingASR.swift").read_text(encoding="utf-8")
-        page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
+        page = (ROOT / "control-center-web/src/features/voice/index.tsx").read_text(encoding="utf-8")
         coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
 
         self.assertIn("maxWordCount = 32", config)
@@ -256,7 +261,8 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("VoiceHotwordConfigStore.read()", coordinator)
         self.assertIn("allowedTechnicalSeparators", config)
         self.assertIn('".-_+#/&"', config)
-        self.assertIn("仅发送此处显式保存的词，不读取 Rime 用户词典", page)
+        self.assertIn("热词只在你预览并确认保存后发送", page)
+        self.assertIn("每行一个词", page)
         self.assertNotIn("rime", config.lower())
 
         status = (ROOT / "macos/Shared/VoiceAgentStatus.swift").read_text(encoding="utf-8")

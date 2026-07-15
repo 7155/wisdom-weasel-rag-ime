@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/control-center-web"
 SRC="$ROOT/macos/RagImeControlWebHost"
+SHARED="$ROOT/macos/Shared"
 ACTION="${1:-build}"
 
 case "$ACTION" in
@@ -71,6 +72,10 @@ ditto "$WEB/dist" "$RESOURCES/control-center-web"
 
 swift_files=()
 while IFS= read -r file; do swift_files+=("$file"); done < <(find "$SRC" -type f -name '*.swift' | sort)
+swift_files+=(
+  "$SHARED/VoiceAgentStatus.swift"
+  "$SHARED/VoiceKeychainStore.swift"
+)
 
 CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-/tmp/rag-ime-control-web-clang-cache}" \
 SWIFT_MODULECACHE_PATH="${SWIFT_MODULECACHE_PATH:-/tmp/rag-ime-control-web-swift-cache}" \
@@ -79,6 +84,7 @@ xcrun swiftc \
   -swift-version 5 \
   -target arm64-apple-macosx13.0 \
   -framework AppKit \
+  -framework Security \
   -framework UniformTypeIdentifiers \
   -framework WebKit \
   "${swift_files[@]}" \
@@ -138,10 +144,49 @@ fi
 
 if [[ "$ACTION" == "install-preview" || "$ACTION" == "install-release" ]]; then
   DEST="$INSTALL_DEST"
+  LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  PROCESS_PATTERN="/Contents/MacOS/$EXECUTABLE([[:space:]]|$)"
+  osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    pgrep -f "$PROCESS_PATTERN" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  if pgrep -f "$PROCESS_PATTERN" >/dev/null 2>&1; then
+    pkill -TERM -f "$PROCESS_PATTERN" >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+      pgrep -f "$PROCESS_PATTERN" >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+  fi
+  if pgrep -f "$PROCESS_PATTERN" >/dev/null 2>&1; then
+    echo "unable to stop the existing $EXECUTABLE before installation" >&2
+    exit 1
+  fi
+  while IFS= read -r registered_app; do
+    [[ -n "$registered_app" && "$registered_app" != "$DEST" ]] || continue
+    "$LSREGISTER" -u "$registered_app" >/dev/null 2>&1 || true
+  done < <(mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true)
   mkdir -p "$HOME/Applications"
   rm -rf "$DEST"
   ditto "$APP" "$DEST"
   codesign --verify --deep --strict "$DEST"
+  otool -L "$DEST/Contents/MacOS/$EXECUTABLE" | grep -q '/WebKit.framework/'
+  "$ROOT/scripts/check_control_center_web_dist.sh" \
+    "$DEST/Contents/Resources/control-center-web" native "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" >/dev/null
+  python3 - "$DEST/Contents/Resources/rag-ime-control-web-build-marker.json" "$BUNDLE_ID" "$CHANNEL" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    marker = json.load(handle)
+if marker.get("bundleId") != sys.argv[2]:
+    raise SystemExit("installed Web control center has the wrong bundle id")
+if marker.get("ui") != "control-center-web" or marker.get("channel") != sys.argv[3]:
+    raise SystemExit("installed app is not the requested Web control center channel")
+if marker.get("frontendTransport") != "native":
+    raise SystemExit("installed Web control center is not using the native bridge")
+PY
+  "$LSREGISTER" -f "$DEST" >/dev/null
   echo "$DEST"
 else
   echo "$APP"

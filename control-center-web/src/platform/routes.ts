@@ -621,6 +621,23 @@ export const CONTROL_ROUTES = {
   'diagnostics.runtime': { method: 'GET', path: '/api/runtime/status' },
   'diagnostics.predictor': { method: 'GET', path: '/api/predictor/status' },
   'diagnostics.models': { method: 'GET', path: '/api/models/status' },
+  'diagnostics.action.preview': {
+    method: 'POST',
+    path: '/api/runtime/action/preview',
+    body: ['action', 'expectedRuntimeRevision'],
+    requiredBody: ['action', 'expectedRuntimeRevision'],
+  },
+  'diagnostics.action.start': {
+    method: 'POST',
+    path: '/api/runtime/action/start',
+    body: ['action', 'expectedRuntimeRevision', 'previewToken', 'payloadSha256', 'commandSha256', 'confirmText'],
+    requiredBody: ['action', 'expectedRuntimeRevision', 'previewToken', 'payloadSha256', 'commandSha256', 'confirmText'],
+  },
+  'diagnostics.action.job': {
+    method: 'GET',
+    path: '/api/runtime/job/:jobId',
+    params: { jobId: null },
+  },
   'configuration.settings': { method: 'GET', path: '/api/settings' },
   'configuration.schema': { method: 'GET', path: '/api/settings/schema' },
   'configuration.settings.preview': {
@@ -640,6 +657,36 @@ export const CONTROL_ROUTES = {
     path: '/api/settings/rollback',
     body: ['receiptId', 'rollbackToken', 'payloadSha256', 'confirmText'],
     requiredBody: ['receiptId', 'rollbackToken', 'payloadSha256', 'confirmText'],
+  },
+  'configuration.import.preview': {
+    method: 'POST',
+    path: '/api/configuration/import-preview',
+    body: ['path'],
+    requiredBody: ['path'],
+  },
+  'configuration.import.apply': {
+    method: 'POST',
+    path: '/api/configuration/import-apply',
+    body: ['path', 'expectedRuntimeRevision', 'previewToken', 'confirmText', 'confirmRemoteModel'],
+    requiredBody: ['path', 'expectedRuntimeRevision', 'previewToken', 'confirmText'],
+  },
+  'configuration.backup.export': {
+    method: 'POST',
+    path: '/api/configuration/backup-export',
+    body: ['destination'],
+    requiredBody: ['destination'],
+  },
+  'configuration.restore.preview': {
+    method: 'POST',
+    path: '/api/configuration/restore-preview',
+    body: ['path'],
+    requiredBody: ['path'],
+  },
+  'configuration.restore.apply': {
+    method: 'POST',
+    path: '/api/configuration/restore-apply',
+    body: ['path', 'restoreToken', 'confirmText', 'expectedRuntimeRevision'],
+    requiredBody: ['path', 'restoreToken', 'confirmText', 'expectedRuntimeRevision'],
   },
 } as const satisfies Record<string, ControlRouteDefinition>;
 

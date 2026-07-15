@@ -1,5 +1,5 @@
 body {
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
   letter-spacing: 0;
 }
@@ -27,18 +27,18 @@ h1 {
 }
 
 h2 {
-  font-size: 18px;
+  font-size: 19px;
   line-height: 1.35;
 }
 
 h3 {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.4;
 }
 
 small {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
 }
 

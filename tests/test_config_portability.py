@@ -44,6 +44,8 @@ class ConfigurationPortabilityTests(unittest.TestCase):
 
         self.assertTrue(valid["valid"])
         self.assertEqual(valid["settingCount"], 2)
+        self.assertRegex(str(valid["configurationHash"]), r"^sha256:[a-f0-9]{64}$")
+        self.assertEqual(valid["requiresConfirmation"], "IMPORT RAG-IME CONFIGURATION")
         self.assertFalse(invalid["valid"])
         self.assertIn("unknown configuration field: setings", invalid["errors"])
 

@@ -74,14 +74,14 @@
   --ease-press: cubic-bezier(.2, 1.25, .4, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
 
-  --sidebar-wide: 240px;
+  --sidebar-wide: 248px;
   --sidebar-compact: 72px;
   --topbar-height: 56px;
   --mobile-nav-height: 64px;
   --content-max: 1440px;
-  --control-height-sm: 30px;
-  --control-height: 34px;
-  --control-height-lg: 40px;
+  --control-height-sm: 32px;
+  --control-height: 36px;
+  --control-height-lg: 42px;
 }
 
 :root[data-theme='dark'] {

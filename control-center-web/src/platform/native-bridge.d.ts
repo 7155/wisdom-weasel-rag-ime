@@ -1,6 +1,9 @@
 import type {
   ExternalActionRequest,
   FilePickOptions,
+  VoiceCredentialSaveRequest,
+  VoiceNativeActionId,
+  VoiceProviderId,
 } from './transport';
 
 export type NativeBridgeMethod =
@@ -14,7 +17,10 @@ export type NativeBridgeMethod =
   | 'readKnowledgeAsset'
   | 'readKnowledgeDocumentSource'
   | 'revealPath'
-  | 'runApprovedExternalAction';
+  | 'runApprovedExternalAction'
+  | 'voiceCredentialStatus'
+  | 'voiceCredentialSave'
+  | 'voiceAction';
 
 export interface NativeBridgeRequestEnvelope {
   id: string;
@@ -86,6 +92,13 @@ export interface NativeRevealPathPayload {
   path: string;
 }
 export interface NativeExternalActionPayload extends ExternalActionRequest {}
+export interface NativeVoiceCredentialStatusPayload {
+  provider: VoiceProviderId;
+}
+export interface NativeVoiceCredentialSavePayload extends VoiceCredentialSaveRequest {}
+export interface NativeVoiceActionPayload {
+  action: VoiceNativeActionId;
+}
 
 declare global {
   interface Window {

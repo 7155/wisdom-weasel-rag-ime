@@ -51,6 +51,8 @@ def prepare_release_candidate(
         raise ValueError("squirrel_source must have a readable Git HEAD")
 
     normalized_apps = _validate_apps(apps)
+    if control_app := normalized_apps.get("control"):
+        _validate_web_control_app(control_app)
     files = sorted(set(project_files if project_files is not None else _candidate_files(repo_root)))
     source_files = [
         relative
@@ -176,6 +178,29 @@ def _validate_apps(apps: Mapping[str, str | Path]) -> dict[str, Path]:
         seen_names.add(path.name)
         result[label] = path
     return result
+
+
+def _validate_web_control_app(app: Path) -> None:
+    marker_path = app / "Contents" / "Resources" / "rag-ime-control-web-build-marker.json"
+    frontend_marker_path = app / "Contents" / "Resources" / "control-center-web" / "rag-ime-control-web-build.json"
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        frontend_marker = json.loads(frontend_marker_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        raise ValueError("control app must be a verified Web Control Center release") from exc
+    if (
+        marker.get("bundleId") != "com.rag-ime.control"
+        or marker.get("ui") != "control-center-web"
+        or marker.get("channel") != "release"
+        or marker.get("frontendTransport") != "native"
+        or marker.get("frontendBuildChannel") != "production"
+        or marker.get("forbiddenTransportModulesExcluded") is not True
+        or frontend_marker.get("buildChannel") != "production"
+        or frontend_marker.get("transport") != "native"
+        or frontend_marker.get("nativeOnly") is not True
+        or frontend_marker.get("previewFixturesExcluded") is not True
+    ):
+        raise ValueError("control app is not a verified Web Control Center release")
 
 
 def _deterministic_tar_gz(path: Path):

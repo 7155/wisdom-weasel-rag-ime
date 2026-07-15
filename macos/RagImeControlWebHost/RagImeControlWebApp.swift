@@ -4,6 +4,7 @@ import AppKit
 final class RagImeControlWebApp: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var webHost: WebHostViewController?
+    private var openAgentObserver: NSObjectProtocol?
 
     static func main() {
         let application = NSApplication.shared
@@ -33,9 +34,21 @@ final class RagImeControlWebApp: NSObject, NSApplicationDelegate {
 
         self.webHost = host
         self.window = window
+        openAgentObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.rag-ime.control.open-agent"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let sessionId = notification.userInfo?["sessionId"] as? String ?? ""
+            self?.webHost?.openAgent(sessionId: sessionId)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let openAgentObserver {
+            DistributedNotificationCenter.default().removeObserver(openAgentObserver)
+            self.openAgentObserver = nil
+        }
         webHost?.shutdown()
     }
 

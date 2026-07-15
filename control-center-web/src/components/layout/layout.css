@@ -53,7 +53,7 @@
 }
 
 .shell-brand__copy strong {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 760;
 }
 
@@ -61,7 +61,7 @@
   margin-top: 3px;
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .shell-nav {
@@ -84,7 +84,7 @@
   margin: 0;
   padding: 5px 9px 3px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -92,14 +92,14 @@
 .shell-nav__link {
   position: relative;
   display: flex;
-  min-height: 34px;
+  min-height: 38px;
   min-width: 0;
   align-items: center;
   gap: 10px;
   padding: 6px 9px;
   border-radius: var(--radius-2);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 560;
   text-decoration: none;
   transition:
@@ -156,7 +156,7 @@
   gap: 6px;
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -213,7 +213,7 @@
 
 .shell-topbar__title h1 {
   overflow: hidden;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -222,7 +222,7 @@
 .shell-topbar__title span {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .shell-topbar__actions {
@@ -387,7 +387,7 @@
     gap: 3px;
     border-radius: var(--radius-2);
     color: var(--color-text-tertiary);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 620;
     text-decoration: none;
     transition:
@@ -409,7 +409,7 @@
 
   .shell-mobile-nav > .ui-icon-button::after {
     content: '全部';
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .shell-mobile-menu__routes {
@@ -422,5 +422,5 @@
 @media (max-width: 380px) {
   .shell-topbar__actions { gap: 2px; }
   .shell-topbar__title h1 { font-size: 14px; }
-  .shell-mobile-nav__link span { font-size: 9px; }
+  .shell-mobile-nav__link span { font-size: 10px; }
 }

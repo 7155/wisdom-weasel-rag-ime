@@ -53,6 +53,7 @@ export function AgentComposer({
   onStop,
   onModeChange,
   onModelChange,
+  modelPickerRequest = 0,
   imageSupport = 'unknown',
 }: {
   draft: string;
@@ -75,6 +76,7 @@ export function AgentComposer({
   onStop: () => void;
   onModeChange: (mode: 'assistant' | 'coordinator') => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
+  modelPickerRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -208,18 +210,19 @@ export function AgentComposer({
           aria-label="消息"
         />
         <div className="agent-composer__toolbar">
-          <IconButton
-            className="agent-composer__attachment"
-            label={imageSupport === 'supported' ? '添加图片' : imageSupport === 'unsupported' ? '当前模型不支持图片' : '正在确认图片能力'}
-            icon={<Plus size={18} />}
-            onClick={onPickAttachments}
-            disabled={!session || busy || sending || imageSupport !== 'supported'}
-            tooltip
-          />
-          <PermissionPicker session={session} persona={persona} disabled={busy || sending} onChange={onModeChange} />
-          <ToolPicker tools={tools} status={toolCatalogStatus} mode={session?.mode ?? 'assistant'} disabled={!session || busy || sending} onSelect={onToolSelect} />
-          <ModelTree catalog={catalog} disabled={busy || sending} onChange={onModelChange} />
-          <span className="agent-composer__spacer" />
+          <div className="agent-composer__controls">
+            <IconButton
+              className="agent-composer__attachment"
+              label={imageSupport === 'supported' ? '添加图片' : imageSupport === 'unsupported' ? '当前模型不支持图片' : '正在确认图片能力'}
+              icon={<Plus size={18} />}
+              onClick={onPickAttachments}
+              disabled={!session || busy || sending || imageSupport !== 'supported'}
+              tooltip
+            />
+            <PermissionPicker session={session} persona={persona} disabled={busy || sending} onChange={onModeChange} />
+            <ToolPicker tools={tools} status={toolCatalogStatus} mode={session?.mode ?? 'assistant'} disabled={!session || busy || sending} onSelect={onToolSelect} />
+            <ModelTree catalog={catalog} disabled={busy || sending} requestOpen={modelPickerRequest} onChange={onModelChange} />
+          </div>
           <IconButton
             className="agent-composer__send"
             label={busy ? '停止本轮' : '发送'}
@@ -307,12 +310,18 @@ function PermissionPicker({
 function ModelTree({
   catalog,
   disabled,
+  requestOpen,
   onChange,
 }: {
   catalog?: ModelCatalog;
   disabled: boolean;
+  requestOpen: number;
   onChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (requestOpen > 0 && catalog && !disabled) setOpen(true);
+  }, [catalog, disabled, requestOpen]);
   const selected = record(catalog?.selected);
   const selectedProviderId = text(selected.provider);
   const selectedModelId = text(selected.id) || text(selected.modelId);
@@ -322,7 +331,7 @@ function ModelTree({
   const displayedModelId = selectedModel?.id ?? '';
   const thinking = catalog?.thinkingLevel ?? 'off';
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button aria-label={`模型：${selectedModel?.name ?? '未选择'}，思考强度：${thinkingLabel(thinking)}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!catalog || disabled} leadingIcon={<BrainCircuit size={15} />}>{selectedModel?.name ?? '选择模型'} · {thinkingLabel(thinking)}</Button>
       </PopoverTrigger>

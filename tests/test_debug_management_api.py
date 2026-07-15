@@ -1322,13 +1322,15 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertFalse(rolled_back_review["canRollback"])
         self.assertIn("retrieval", applied)
 
-    def test_legacy_browser_control_surface_is_removed(self) -> None:
+    def test_legacy_control_surfaces_are_removed_in_favor_of_the_web_host(self) -> None:
         root = Path(__file__).resolve().parents[1]
 
         self.assertFalse((root / "debug" / "index.html").exists())
         self.assertFalse((root / "debug" / "app.js").exists())
         self.assertFalse((root / "debug" / "styles.css").exists())
-        self.assertTrue((root / "macos" / "RagImeControl" / "RagImeControlApp.swift").is_file())
+        self.assertFalse((root / "macos" / "RagImeControl").exists())
+        self.assertTrue((root / "control-center-web" / "src" / "app" / "App.tsx").is_file())
+        self.assertTrue((root / "macos" / "RagImeControlWebHost" / "WebHostView.swift").is_file())
 
     def test_memory_book_preview_is_dry_run_and_redacted(self) -> None:
         self.core.record_event(

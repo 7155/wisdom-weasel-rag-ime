@@ -124,11 +124,19 @@ class ControlPathId(str, Enum):
     DIAGNOSTICS_RUNTIME = "diagnostics.runtime"
     DIAGNOSTICS_PREDICTOR = "diagnostics.predictor"
     DIAGNOSTICS_MODELS = "diagnostics.models"
+    DIAGNOSTICS_ACTION_PREVIEW = "diagnostics.action.preview"
+    DIAGNOSTICS_ACTION_START = "diagnostics.action.start"
+    DIAGNOSTICS_ACTION_JOB = "diagnostics.action.job"
     CONFIGURATION_SETTINGS = "configuration.settings"
     CONFIGURATION_SCHEMA = "configuration.schema"
     CONFIGURATION_SETTINGS_PREVIEW = "configuration.settings.preview"
     CONFIGURATION_SETTINGS_APPLY = "configuration.settings.apply"
     CONFIGURATION_SETTINGS_ROLLBACK = "configuration.settings.rollback"
+    CONFIGURATION_IMPORT_PREVIEW = "configuration.import.preview"
+    CONFIGURATION_IMPORT_APPLY = "configuration.import.apply"
+    CONFIGURATION_BACKUP_EXPORT = "configuration.backup.export"
+    CONFIGURATION_RESTORE_PREVIEW = "configuration.restore.preview"
+    CONFIGURATION_RESTORE_APPLY = "configuration.restore.apply"
 
 
 # Short integration name used by the generated TypeScript and Swift mirrors.
@@ -553,11 +561,19 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.DIAGNOSTICS_RUNTIME, ControlMethod.GET, "/api/runtime/status", "/control/v1/diagnostics/runtime", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),
         _route(ControlPathId.DIAGNOSTICS_PREDICTOR, ControlMethod.GET, "/api/predictor/status", "/control/v1/diagnostics/predictor", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),
         _route(ControlPathId.DIAGNOSTICS_MODELS, ControlMethod.GET, "/api/models/status", "/control/v1/diagnostics/models", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),
+        _route(ControlPathId.DIAGNOSTICS_ACTION_PREVIEW, ControlMethod.POST, "/api/runtime/action/preview", None, body={"action", "expectedRuntimeRevision"}, required_body={"action", "expectedRuntimeRevision"}),
+        _route(ControlPathId.DIAGNOSTICS_ACTION_START, ControlMethod.POST, "/api/runtime/action/start", None, body={"action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "commandSha256", "confirmText"}, required_body={"action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "commandSha256", "confirmText"}),
+        _route(ControlPathId.DIAGNOSTICS_ACTION_JOB, ControlMethod.GET, "/api/runtime/job/{jobId}", None, params=frozenset({"jobId"})),
         _route(ControlPathId.CONFIGURATION_SETTINGS, ControlMethod.GET, "/api/settings", "/control/v1/configuration/settings", scopes=[ControlScope.CONFIGURATION_READ], remote_safe=True),
         _route(ControlPathId.CONFIGURATION_SCHEMA, ControlMethod.GET, "/api/settings/schema", "/control/v1/configuration/schema", scopes=[ControlScope.CONFIGURATION_READ], remote_safe=True),
         _route(ControlPathId.CONFIGURATION_SETTINGS_PREVIEW, ControlMethod.POST, "/api/settings/preview", "/control/v1/configuration/settings/preview", body={"changes", "expectedRuntimeRevision"}, required_body={"changes", "expectedRuntimeRevision"}),
         _route(ControlPathId.CONFIGURATION_SETTINGS_APPLY, ControlMethod.POST, "/api/settings/apply", "/control/v1/configuration/settings/apply", body={"changes", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}, required_body={"changes", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.CONFIGURATION_SETTINGS_ROLLBACK, ControlMethod.POST, "/api/settings/rollback", "/control/v1/configuration/settings/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
+        _route(ControlPathId.CONFIGURATION_IMPORT_PREVIEW, ControlMethod.POST, "/api/configuration/import-preview", None, body={"path"}, required_body={"path"}),
+        _route(ControlPathId.CONFIGURATION_IMPORT_APPLY, ControlMethod.POST, "/api/configuration/import-apply", None, body={"path", "expectedRuntimeRevision", "previewToken", "confirmText", "confirmRemoteModel"}, required_body={"path", "expectedRuntimeRevision", "previewToken", "confirmText"}),
+        _route(ControlPathId.CONFIGURATION_BACKUP_EXPORT, ControlMethod.POST, "/api/configuration/backup-export", None, body={"destination"}, required_body={"destination"}),
+        _route(ControlPathId.CONFIGURATION_RESTORE_PREVIEW, ControlMethod.POST, "/api/configuration/restore-preview", None, body={"path"}, required_body={"path"}),
+        _route(ControlPathId.CONFIGURATION_RESTORE_APPLY, ControlMethod.POST, "/api/configuration/restore-apply", None, body={"path", "restoreToken", "confirmText", "expectedRuntimeRevision"}, required_body={"path", "restoreToken", "confirmText", "expectedRuntimeRevision"}),
     ]
     return ControlRoutePolicy(routes)
 

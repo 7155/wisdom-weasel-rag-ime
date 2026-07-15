@@ -1,5 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { useControlTransport } from '@/app/control-transport';
+import {
+  configurationMutationPathIds,
+  requestConfigurationMutation,
+  type ConfigurationMutationRequest,
+} from '@/features/configuration/api';
+import type { MutationAvailability } from '@/features/overview/management-mutation';
 import type { ControlTransport } from '@/platform/transport';
 
 export type LexiconReviewEntry = {
@@ -37,6 +43,8 @@ const lexiconPathIds = [
   'input.lexicon.apply',
   'input.lexicon.rollback',
 ] as const;
+
+export const inputSettingsMutationPathIds = configurationMutationPathIds;
 
 export const inputMethodQueryKeys = {
   root: ['input-method'] as const,
@@ -86,6 +94,29 @@ export function useInputMethodQueries() {
     })),
     staleTime: 10_000,
   });
+  const settingsMutationAvailability = (blockedReason = ''): MutationAvailability => {
+    if (capabilities.isPending) return { state: 'checking' };
+    if (capabilities.error) {
+      return {
+        state: 'blocked',
+        reason: '无法确认本机是否支持安全保存，请刷新后重试。',
+      };
+    }
+    const flags = capabilities.data?.features ?? {};
+    const routeIds = new Set(capabilities.data?.routeIds ?? []);
+    if (
+      !flags.managementWorkContract
+      || !flags.configurationSettingsWorkContract
+      || Object.values(inputSettingsMutationPathIds).some((pathId) => !routeIds.has(pathId))
+    ) {
+      return {
+        state: 'blocked',
+        reason: '当前版本没有提供完整的设置预览、应用与撤销能力，本次修改不会发送。',
+      };
+    }
+    if (blockedReason) return { state: 'blocked', reason: blockedReason };
+    return { state: 'available' };
+  };
   return {
     capabilities,
     lexiconAvailable,
@@ -93,6 +124,10 @@ export function useInputMethodQueries() {
     overview,
     schema,
     settings,
+    settingsMutationAvailability,
+    requestSettingsMutation: <Response,>(request: ConfigurationMutationRequest) => (
+      requestConfigurationMutation<Response>(transport, request)
+    ),
     source,
     transport,
     transportKind: transport.kind,

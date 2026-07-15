@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -13,6 +14,12 @@ import { SessionRail } from './sessions/SessionRail';
 import { useAgentLiveStore } from './state/live-store';
 import { AgentTurn } from './timeline/AgentTimeline';
 import type { ModelCatalog, ThinkingLevel } from './types';
+
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: ({ data, itemContent }: { data: string[]; itemContent: (index: number, item: string) => ReactNode }) => (
+    <div>{data.map((item, index) => <div key={item}>{itemContent(index, item)}</div>)}</div>
+  ),
+}));
 
 afterEach(() => {
   cleanup();
@@ -104,6 +111,35 @@ describe('Agent experience', () => {
     expect(prompt?.request.body).toMatchObject({ message: '检查 reducer 边界' });
   });
 
+  it('renders a bordered assistant placeholder immediately while the prompt request is pending', async () => {
+    const pendingPrompt = new Promise(() => {});
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => pendingPrompt,
+    );
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+
+    fireEvent.change(composer, { target: { value: '立刻显示处理状态' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    const queuedTurn = Object.values(useAgentLiveStore.getState().projections['session-preview'].turnsById)
+      .find((turn) => turn.id.startsWith('local-turn:'));
+    expect(queuedTurn?.status).toBe('queued');
+    const pending = await screen.findByRole('status');
+    expect(pending).toHaveClass('agent-assistant-pending');
+    expect(pending).toHaveTextContent('正在准备');
+    expect(pending).toHaveTextContent('消息已收到');
+    const assistantTurn = pending.closest('.agent-assistant-turn');
+    expect(assistantTurn).not.toBeNull();
+    expect(within(assistantTurn as HTMLElement).getByAltText('智鼬·此刻头像')).toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).getByText('智鼬·此刻')).toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).getByText('思考中')).toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true);
+  });
+
   it('renders a rejected Pi prompt once with a public recovery message', async () => {
     const transport = featureTransport(
       previewModelCatalog('session-preview'),
@@ -124,6 +160,130 @@ describe('Agent experience', () => {
     expect(failedTurn?.failure).toBe('当前模型不可用，请切换模型后重试。');
     expect(document.querySelector('.agent-conversation__header [role="alert"]')).not.toBeInTheDocument();
     expect(screen.queryByText(/not supported by any configured account/i)).not.toBeInTheDocument();
+  });
+
+  it('retries a failed turn through the real prompt route with the original input', async () => {
+    let attempt = 0;
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('model unavailable');
+        return new Promise(() => {});
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '重试时保留这句话');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await user.click(await screen.findByRole('button', { name: '重试本轮' }));
+
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')).toHaveLength(2));
+    const prompts = transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt');
+    expect(prompts[1]?.request.params).toEqual({ sessionId: 'session-preview' });
+    expect(prompts[1]?.request.body).toMatchObject({ message: '重试时保留这句话', attachments: [] });
+  });
+
+  it('opens the real model picker from a failed turn', async () => {
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => { throw new Error('model unavailable'); },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '切换模型后继续');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await user.click(await screen.findByRole('button', { name: '切换模型' }));
+
+    expect(await screen.findByText('模型与推理强度')).toBeInTheDocument();
+    expect(screen.getByText('GPT-5.4', { selector: 'summary' })).toBeInTheDocument();
+  });
+
+  it('unlocks send and retry when projection status is stale working but the latest turn failed', async () => {
+    const failedTurnId = 'turn-provider-failed';
+    const transport = productionTransport({
+      'agent.session.snapshot': {
+        lastSequence: 7,
+        resumeToken: 'provider-failed:7',
+        status: 'working',
+        items: [
+          {
+            ...historyMessage('session-preview', 'provider-user', 'user', '继续处理这个请求'),
+            turnId: failedTurnId,
+          },
+          {
+            ...historyMessage('session-preview', 'provider-assistant', 'assistant', ''),
+            turnId: failedTurnId,
+            status: 'failed',
+            blocks: [{
+              id: 'provider-assistant:error',
+              type: 'error',
+              status: 'failed',
+              presentationKind: 'error',
+              data: { message: '400 Error from provider (Console Go): Upstream request failed' },
+            }],
+          },
+        ],
+      },
+      'agent.session.prompt': { ok: true },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('working'));
+    expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById[failedTurnId]?.status).toBe('failed');
+    expect(await screen.findByRole('button', { name: '发送' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试本轮' })).toBeEnabled();
+    expect(screen.getByText('模型服务请求失败，请重试或切换模型。')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: '消息' }), '新的输入');
+    expect(screen.getByRole('button', { name: '发送' })).toBeEnabled();
+  });
+
+  it('submits approval decisions through the real approval route', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-approval';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'approval-pending-ui',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'approval_required',
+        payload: {
+          approvalId: 'approval-live-1',
+          payloadSha256: 'approval-live-hash',
+          summary: '应用这次输入法配置变更',
+        },
+        resumeToken: 'approval-pending-ui',
+      }]);
+    });
+
+    await user.click(await screen.findByRole('button', { name: '批准' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.approval.decide',
+        params: { approvalId: 'approval-live-1' },
+        body: { decision: 'approved', payloadSha256: 'approval-live-hash' },
+      }),
+    })));
   });
 
   it('uses the Pi RPC command catalog and supports keyboard and pointer selection', async () => {

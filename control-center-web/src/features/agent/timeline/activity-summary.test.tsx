@@ -1,9 +1,47 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { ActivitySummary } from './ActivitySummary';
 
+afterEach(cleanup);
+
 describe('Agent tool activity details', () => {
+  it('keeps the timeline compact and opens full activity details in a dialog', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-compact-dialog',
+      toolName: 'ime_overview',
+      result: { details: { ok: true, operation: 'status', result: { summary: '运行状态已读取' } } },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} />);
+
+    expect(container.querySelector('details.agent-activity')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /查看活动详情：活动已完成/ }));
+    expect(screen.getByRole('dialog', { name: '活动已完成' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveTextContent('控制中心概览');
+  });
+
+  it('labels provider turn failures as model service failures instead of tool operations', () => {
+    const activity: AgentActivityProjection = {
+      id: 'turn-provider-failed',
+      turnId: 'turn-provider-failed',
+      kind: 'turn_failed',
+      status: 'failed',
+      summary: '400 Error from provider (Console Go): Upstream request failed',
+      payload: { error: '400 Error from provider (Console Go): Upstream request failed' },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    const { container } = render(<ActivitySummary activities={[activity]} />);
+
+    expect(container).toHaveTextContent('模型服务请求失败');
+    expect(container).not.toHaveTextContent('工具操作');
+    openActivity(container);
+    expect(screen.getByRole('dialog')).toHaveTextContent('模型服务请求失败，请重试或切换模型。');
+    expect(screen.queryByText(/Console Go|Upstream request failed/)).not.toBeInTheDocument();
+  });
+
   it('renders the public ime_overview capability result without raw tool material', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-overview-capabilities',
@@ -95,7 +133,7 @@ describe('Agent tool activity details', () => {
     const { container } = render(<ActivitySummary activities={[completed, progress]} />);
     openActivity(container);
 
-    expect([...container.querySelectorAll('.agent-activity-row > summary strong')].map((node) => node.textContent)).toEqual([
+    expect([...document.querySelectorAll('.agent-activity-row > summary strong')].map((node) => node.textContent)).toEqual([
       '控制中心概览',
       '控制中心概览',
     ]);
@@ -168,10 +206,12 @@ function toolActivity(
 }
 
 function openActivity(container: HTMLElement): void {
-  const outer = container.querySelector<HTMLDetailsElement>('.agent-activity');
+  const outer = container.querySelector<HTMLButtonElement>('.agent-activity');
   expect(outer).not.toBeNull();
-  fireEvent.click(outer!.querySelector('summary')!);
-  for (const row of container.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')) {
+  fireEvent.click(outer!);
+  const dialog = document.querySelector<HTMLElement>('.agent-activity-dialog');
+  expect(dialog).not.toBeNull();
+  for (const row of dialog!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')) {
     fireEvent.click(row.querySelector('summary')!);
   }
 }

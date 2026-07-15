@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -151,12 +152,44 @@ class ManagementService:
         return {**revision.payload(), "runtimeConfig": snapshot.payload()}
 
     def configuration_import_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        _require_exact_keys(payload, required={"path"}, optional=set())
         return {
             **self.revision().payload(),
             **preview_user_configuration(payload, settings_store=self.settings_store),
         }
 
     def configuration_import_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
+        _require_exact_keys(
+            payload,
+            required={
+                "path",
+                "expectedRuntimeRevision",
+                "previewToken",
+                "confirmText",
+            },
+            optional={"confirmRemoteModel"},
+        )
+        current_revision = self.revision().runtime_revision
+        expected_revision = _strict_nonnegative_int(
+            payload.get("expectedRuntimeRevision"),
+            field="expectedRuntimeRevision",
+        )
+        if expected_revision != current_revision:
+            raise ValueError("configuration changed after preview; preview it again")
+        current_preview = preview_user_configuration(
+            {"path": payload.get("path")},
+            settings_store=self.settings_store,
+        )
+        if not _constant_time_text_equal(
+            payload.get("previewToken"),
+            current_preview.get("configurationHash"),
+        ):
+            raise ValueError("configuration file changed after preview; preview it again")
+        if not _constant_time_text_equal(
+            payload.get("confirmText"),
+            current_preview.get("requiresConfirmation"),
+        ):
+            raise ValueError("configuration import requires explicit confirmation")
         result = apply_user_configuration(payload, settings_store=self.settings_store)
         audit_id = int(result.get("auditId") or 0)
         changed_keys = [str(item) for item in result.get("changedKeys", [])]
@@ -266,9 +299,13 @@ class ManagementService:
         }
 
     def portable_backup_export(self, payload: Mapping[str, object]) -> dict[str, object]:
-        destination = compact_whitespace(str(payload.get("destination") or payload.get("path") or ""))
+        _require_exact_keys(payload, required={"destination"}, optional=set())
+        destination = compact_whitespace(str(payload.get("destination") or ""))
         if not destination:
             raise ValueError("backup destination is required")
+        selected_destination = Path(destination).expanduser()
+        if selected_destination.is_dir():
+            destination = str(selected_destination / "rag-ime-backup.ragime-backup")
         result = export_portable_backup(
             db_path=self.db_path,
             settings_store=self.settings_store,
@@ -285,15 +322,33 @@ class ManagementService:
         return Path.home() / "Library" / "Application Support" / "RagIme"
 
     def portable_restore_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
-        source = compact_whitespace(str(payload.get("path") or payload.get("archivePath") or ""))
+        _require_exact_keys(payload, required={"path"}, optional=set())
+        source = compact_whitespace(str(payload.get("path") or ""))
         if not source:
             raise ValueError("backup path is required")
         return {**self.revision().payload(), **preview_portable_restore(archive_path=source)}
 
     def portable_restore_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
-        source = compact_whitespace(str(payload.get("path") or payload.get("archivePath") or ""))
+        _require_exact_keys(
+            payload,
+            required={
+                "path",
+                "restoreToken",
+                "confirmText",
+                "expectedRuntimeRevision",
+            },
+            optional=set(),
+        )
+        source = compact_whitespace(str(payload.get("path") or ""))
         if not source:
             raise ValueError("backup path is required")
+        current_revision = self.revision().runtime_revision
+        expected_revision = _strict_nonnegative_int(
+            payload.get("expectedRuntimeRevision"),
+            field="expectedRuntimeRevision",
+        )
+        if expected_revision != current_revision:
+            raise ValueError("local data changed after restore preview; preview it again")
         result = restore_portable_backup(
             archive_path=source,
             db_path=self.db_path,
@@ -388,6 +443,126 @@ class ManagementService:
             "job": job.payload(),
             "jobId": job.job_id,
         }
+
+    def runtime_action_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={"action", "expectedRuntimeRevision"},
+                optional=set(),
+            )
+            action = compact_whitespace(str(payload.get("action") or ""))
+            if action not in _DIAGNOSTICS_RUNTIME_ACTIONS:
+                raise ManagementWorkError("invalid_request", f"unsupported diagnostics action: {action}")
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The diagnostics runtime snapshot is stale.",
+                    current_revision=current,
+                )
+            command_sha256 = _runtime_action_command_sha256(action)
+            domain = {"action": action, "commandSha256": command_sha256}
+            preview = self.work_contract.create_preview(
+                path_id="diagnostics.action.start",
+                payload=domain,
+                expected_revision=current,
+                required_confirm="apply",
+                summary=_runtime_action_preview_summary(action),
+            )
+            return {
+                **preview,
+                "action": action,
+                "commandSha256": command_sha256,
+                "externalSupervisorRequired": action in _DIAGNOSTICS_EXTERNAL_ACTIONS,
+            }
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
+
+    def runtime_action_start(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={
+                    "action",
+                    "expectedRuntimeRevision",
+                    "previewToken",
+                    "payloadSha256",
+                    "commandSha256",
+                    "confirmText",
+                },
+                optional=set(),
+            )
+            action = compact_whitespace(str(payload.get("action") or ""))
+            if action not in _DIAGNOSTICS_RUNTIME_ACTIONS:
+                raise ManagementWorkError("invalid_request", f"unsupported diagnostics action: {action}")
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The diagnostics action request revision is stale.",
+                    current_revision=current,
+                )
+            command_sha256 = _runtime_action_command_sha256(action)
+            if not _constant_time_text_equal(payload.get("commandSha256"), command_sha256):
+                raise ManagementWorkError(
+                    "command_hash_mismatch",
+                    "The approved diagnostics command no longer matches the allowlisted action.",
+                )
+            domain = {"action": action, "commandSha256": command_sha256}
+            job_id = str(uuid.uuid4())
+
+            def current_revision(_conn: sqlite3.Connection) -> Mapping[str, object]:
+                return {"runtimeRevision": self.revision().runtime_revision}
+
+            def execute(_conn: sqlite3.Connection) -> WorkExecution:
+                job = RuntimeJob(job_id=job_id, action=action, created_at_ms=_now_ms())
+                with self._jobs_lock:
+                    self._jobs[job_id] = job
+                return WorkExecution(
+                    result={
+                        "schemaVersion": "rag-ime.diagnostics-runtime-job.v1",
+                        "ok": True,
+                        "jobId": job_id,
+                        "action": action,
+                        "commandSha256": command_sha256,
+                        "externalSupervisorRequired": action in _DIAGNOSTICS_EXTERNAL_ACTIONS,
+                    },
+                    audit_action="runtime_action_queued",
+                    target_type="runtime",
+                    target_id=action,
+                )
+
+            response = self.work_contract.execute_apply(
+                path_id="diagnostics.action.start",
+                payload=domain,
+                preview_token=str(payload.get("previewToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            with self._jobs_lock:
+                job = self._jobs[job_id]
+            if action in _DIAGNOSTICS_EXTERNAL_ACTIONS:
+                self._mark_diagnostics_external_supervisor_required(
+                    job,
+                    payload_sha256=str(response.get("payloadSha256") or ""),
+                    command_sha256=command_sha256,
+                )
+            else:
+                self._executor.submit(self._run_runtime_action, job_id)
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
 
     def runtime_job(self, job_id: str) -> dict[str, object]:
         with self._jobs_lock:
@@ -2460,6 +2635,41 @@ class ManagementService:
             {"jobId": job.job_id, "status": job.status, "action": job.action, "error": job.error},
         )
 
+    def _mark_diagnostics_external_supervisor_required(
+        self,
+        job: RuntimeJob,
+        *,
+        payload_sha256: str,
+        command_sha256: str,
+    ) -> None:
+        now = _now_ms()
+        with self._jobs_lock:
+            job.status = "external-supervisor-required"
+            job.started_at_ms = now
+            job.finished_at_ms = now
+            job.result = {
+                "code": "external-supervisor-required",
+                "externalAction": {
+                    "action": job.action,
+                    "receiptId": job.job_id,
+                    "payloadSha256": payload_sha256,
+                    "commandSha256": command_sha256,
+                },
+            }
+            job.error = ""
+            terminal_payload = job.payload()
+        self._audit(
+            "runtime_action_external_supervisor_required",
+            "runtime",
+            job.action,
+            {"jobId": job.job_id},
+            terminal_payload,
+        )
+        self.events.publish(
+            "runtime_job_changed",
+            {"jobId": job.job_id, "status": job.status, "action": job.action, "error": ""},
+        )
+
     def _source_root(self) -> Path | None:
         candidates = [
             Path(value).expanduser()
@@ -2918,6 +3128,70 @@ _RUNTIME_ACTIONS = {
 
 _AI_TOGGLE_ACTIONS = {"stop_ai", "resume_ai"}
 _EXTERNAL_SUPERVISOR_ACTIONS = {"restart_sidecar", "repair_launch_agents"}
+
+_DIAGNOSTICS_RUNTIME_ACTIONS = {
+    "register_input_source",
+    "restart_sidecar",
+    "restart_predictor",
+    "redeploy_rime",
+    "open_accessibility_settings",
+    "stop_ai",
+    "resume_ai",
+}
+_DIAGNOSTICS_EXTERNAL_ACTIONS = _DIAGNOSTICS_RUNTIME_ACTIONS - _AI_TOGGLE_ACTIONS
+_RUNTIME_ACTION_PREVIEWS: dict[str, dict[str, object]] = {
+    "register_input_source": {
+        "title": "重新注册输入法",
+        "items": ["刷新当前用户的 Squirrel 输入源注册。", "不会删除用户词典或输入历史。"],
+        "risk": "R2",
+    },
+    "restart_sidecar": {
+        "title": "重启后台服务",
+        "items": ["重新启动当前用户的 RAG-IME Sidecar。", "正在进行的本机请求可能需要重试。"],
+        "risk": "R2",
+    },
+    "restart_predictor": {
+        "title": "重启本机模型",
+        "items": ["重新启动当前用户的 MLX 预测服务。", "模型重新载入期间会暂时没有智能候选。"],
+        "risk": "R2",
+    },
+    "redeploy_rime": {
+        "title": "重新部署 Rime 配置",
+        "items": ["运行受信任的 Rime 配置部署脚本。", "用户词典和输入历史不会被清空。"],
+        "risk": "R3",
+    },
+    "open_accessibility_settings": {
+        "title": "打开辅助功能设置",
+        "items": ["打开 macOS 隐私与安全性中的辅助功能页面。", "不会自动授予或撤销任何权限。"],
+        "risk": "R1",
+    },
+    "stop_ai": {
+        "title": "暂停智能候选",
+        "items": ["暂停提交后的智能候选调度。", "基础 Rime 输入和用户数据保持不变。"],
+        "risk": "R1",
+    },
+    "resume_ai": {
+        "title": "恢复智能候选",
+        "items": ["恢复提交后的智能候选调度。", "基础 Rime 输入和用户数据保持不变。"],
+        "risk": "R1",
+    },
+}
+
+
+def _runtime_action_command_sha256(action: str) -> str:
+    descriptor = f"rag-ime.runtime-action.v1:{action}".encode("utf-8")
+    return "sha256:" + hashlib.sha256(descriptor).hexdigest()
+
+
+def _runtime_action_preview_summary(action: str) -> dict[str, object]:
+    summary = _RUNTIME_ACTION_PREVIEWS.get(action)
+    if summary is None:
+        raise ManagementWorkError("invalid_request", f"unsupported diagnostics action: {action}")
+    return {**summary, "items": list(summary["items"])}
+
+
+def _constant_time_text_equal(value: object, expected: str) -> bool:
+    return hmac.compare_digest(str(value or "").strip(), expected)
 
 
 def page_request(payload: Mapping[str, object]) -> PageRequest:

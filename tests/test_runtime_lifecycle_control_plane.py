@@ -85,6 +85,62 @@ class RuntimeLifecycleControlPlaneTests(unittest.TestCase):
             "external-supervisor-required",
         )
 
+    def test_diagnostics_action_preview_binds_revision_payload_and_command_before_job_start(self) -> None:
+        revision = self.management.revision().runtime_revision
+        preview = self.management.runtime_action_preview(
+            {"action": "restart_sidecar", "expectedRuntimeRevision": revision}
+        )
+
+        self.assertTrue(preview["ok"])
+        self.assertEqual(preview["pathId"], "diagnostics.action.start")
+        self.assertTrue(str(preview["payloadSha256"]).startswith("sha256:"))
+        self.assertTrue(str(preview["commandSha256"]).startswith("sha256:"))
+        self.assertTrue(preview["externalSupervisorRequired"])
+
+        started = self.management.runtime_action_start(
+            {
+                "action": "restart_sidecar",
+                "expectedRuntimeRevision": revision,
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "commandSha256": preview["commandSha256"],
+                "confirmText": "apply",
+            }
+        )
+        job_id = str(started["result"]["jobId"])
+        job = self.management.runtime_job(job_id)["job"]
+
+        self.assertEqual(job["status"], "external-supervisor-required")
+        self.assertNotIn("externalCommand", job["result"])
+        self.assertEqual(job["result"]["externalAction"]["receiptId"], job_id)
+        self.assertEqual(job["result"]["externalAction"]["payloadSha256"], preview["payloadSha256"])
+        self.assertEqual(job["result"]["externalAction"]["commandSha256"], preview["commandSha256"])
+
+    def test_diagnostics_action_rejects_command_tampering_and_consumed_preview_replay(self) -> None:
+        revision = self.management.revision().runtime_revision
+        preview = self.management.runtime_action_preview(
+            {"action": "open_accessibility_settings", "expectedRuntimeRevision": revision}
+        )
+        request = {
+            "action": "open_accessibility_settings",
+            "expectedRuntimeRevision": revision,
+            "previewToken": preview["previewToken"],
+            "payloadSha256": preview["payloadSha256"],
+            "commandSha256": "sha256:" + "0" * 64,
+            "confirmText": "apply",
+        }
+
+        tampered = self.management.runtime_action_start(request)
+        self.assertFalse(tampered["ok"])
+        self.assertEqual(tampered["errorCode"], "command_hash_mismatch")
+
+        request["commandSha256"] = preview["commandSha256"]
+        applied = self.management.runtime_action_start(request)
+        replayed = self.management.runtime_action_start(request)
+        self.assertTrue(applied["ok"])
+        self.assertFalse(replayed["ok"])
+        self.assertEqual(replayed["errorCode"], "preview_already_used")
+
     def test_runtime_helpers_resolve_from_explicit_source_root(self) -> None:
         source_root = Path(self.tmp.name) / "source-checkout"
         scripts = source_root / "scripts"
@@ -311,19 +367,22 @@ class SettingsValidationTests(unittest.TestCase):
         self.assertEqual(sensitive["managementSecurity"]["token"], "local-secret")
 
 
-class NativeControlRuntimePollingTests(unittest.TestCase):
-    def test_app_model_polls_runtime_job_and_supervises_self_restart_outside_sidecar(self) -> None:
-        source = (ROOT / "macos" / "RagImeControl" / "AppModel.swift").read_text(encoding="utf-8")
+class WebControlRuntimeBoundaryTests(unittest.TestCase):
+    def test_web_control_center_uses_hash_bound_diagnostics_actions_not_raw_runtime_commands(self) -> None:
+        route_policy = (ROOT / "macos" / "RagImeControlWebHost" / "NativeRoutePolicy.swift").read_text(
+            encoding="utf-8"
+        )
+        diagnostics = (ROOT / "control-center-web" / "src" / "features" / "diagnostics" / "index.tsx").read_text(
+            encoding="utf-8"
+        )
 
-        self.assertIn("waitForRuntimeJob", source)
-        self.assertIn('api/runtime/job/\\(jobId)', source)
-        self.assertIn('case "succeeded"', source)
-        self.assertIn('case "external-supervisor-required"', source)
-        self.assertIn("ExternalRuntimeSupervisor.execute", source)
-        self.assertIn('api.get("api/health")', source)
-        self.assertIn("lastRuntimeActionReport", source)
-        self.assertIn("runtimeJobErrorMessage", source)
-        self.assertNotIn(".milliseconds(350)", source)
+        self.assertIn('"diagnostics.runtime": route("GET", "/api/runtime/status"', route_policy)
+        self.assertIn('"diagnostics.action.preview"', route_policy)
+        self.assertIn('"diagnostics.action.start"', route_policy)
+        self.assertIn('"diagnostics.action.job"', route_policy)
+        self.assertNotIn('"runtime.action"', route_policy)
+        self.assertNotIn("externalCommand", diagnostics)
+        self.assertIn("DiagnosticsRuntimeWorkflow", diagnostics)
 
 
 if __name__ == "__main__":

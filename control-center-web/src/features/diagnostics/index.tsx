@@ -2,8 +2,8 @@ import { Activity, Clipboard, Cpu, Keyboard, RefreshCw, ServerCog } from 'lucide
 import { useMemo, useState } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
 import { useDiagnosticsQueries } from './api';
+import { DiagnosticsRuntimeWorkflow, type DiagnosticsRuntimeAction } from './runtime-actions';
 import {
-  type ActionReceipt,
   InlineNotice,
   ManagementPage,
   ManagementSection,
@@ -11,16 +11,12 @@ import {
   OperationalList,
   QueryState,
   StatusBadge,
-  WorkflowAction,
   asRecord,
   booleanValue,
   numberValue,
   stringValue,
 } from '@/features/overview/management-ui';
-
-const accessibilityAction = 'open_accessibility_settings' as const;
-const accessibilityPayloadSha256 = 'a167f4745ab72a49c87c1bc8f91501d1936a762e738b04c25d970f75b7d5ee46';
-const accessibilityCommandSha256 = '7ad3fe3906a8de6bd55af7e36684a09df082fe43cf031277684ce09c605c1172';
+import './diagnostics.css';
 
 export function DiagnosticsFeature() {
   const queries = useDiagnosticsQueries();
@@ -44,6 +40,8 @@ export function DiagnosticsFeature() {
     id,
   } as Record<string, unknown>));
   const [copyStatus, setCopyStatus] = useState('');
+  const runtimeRevision = numberValue(runtime.runtimeRevision, -1);
+  const aiEnabled = booleanValue(asRecord(asRecord(runtime.runtimeConfig).postCommit).enabled, true);
   const canOpenAccessibilitySettings = Boolean(
     queries.capabilities.data?.native.approvedExternalActions
       && queries.transport.runApprovedExternalAction,
@@ -71,28 +69,6 @@ export function DiagnosticsFeature() {
     } catch {
       setCopyStatus('当前环境不支持复制');
     }
-  };
-
-  const openAccessibilitySettings = async (): Promise<ActionReceipt> => {
-    if (!queries.transport.runApprovedExternalAction) {
-      throw new Error('当前应用不支持打开系统设置。');
-    }
-    const receipt = await queries.transport.runApprovedExternalAction({
-      action: accessibilityAction,
-      receiptId: `diagnostics:${accessibilityAction}:${Date.now()}`,
-      payloadSha256: accessibilityPayloadSha256,
-      commandSha256: accessibilityCommandSha256,
-    });
-    if (!receipt.accepted || !receipt.completed || (receipt.exitCode ?? 0) !== 0) {
-      throw new Error(receipt.error || 'macOS 辅助功能设置未能打开。');
-    }
-    return {
-      receiptId: receipt.receiptId,
-      status: 'applied',
-      message: 'macOS 辅助功能设置已打开。',
-      at: new Date().toLocaleString('zh-CN'),
-      rollbackAvailable: false,
-    };
   };
 
   return (
@@ -147,34 +123,69 @@ export function DiagnosticsFeature() {
           </ManagementSection>
         </div>
 
-        <ManagementSection title="本机辅助修复" description="这里只显示当前应用确实可以执行的操作。">
-          {canOpenAccessibilitySettings ? (
-            <WorkflowAction
-              actionId="diagnostics.open-accessibility-settings"
-              applyLabel="打开系统设置"
-              description="打开 macOS 辅助功能权限页，不重启后台服务，也不修改输入法。"
-              mutationKey={['diagnostics', 'mutation', 'open-accessibility-settings']}
-              onApply={openAccessibilitySettings}
-              preview={[
-                '目标：macOS 隐私与安全性 > 辅助功能。',
-                '仅打开系统设置，不自动修改权限。',
-                '此动作不改变服务状态，因此不需要撤销。',
-              ]}
-              risk="R1"
-              title="打开辅助功能设置"
+        <ManagementSection
+          title="本机辅助修复"
+          description="先预览影响，再确认并追踪执行结果。"
+          trailing={(
+            <StatusBadge
+              label={runtimeRevision < 0 ? '等待后台状态' : canOpenAccessibilitySettings ? '宿主可用' : '仅桌面端可用'}
+              tone={runtimeRevision < 0 || !canOpenAccessibilitySettings ? 'warning' : 'success'}
             />
-          ) : (
-            <InlineNotice title="本机操作不可用" tone="warning">当前应用无法直接打开辅助功能设置，请从 macOS 系统设置中进入。</InlineNotice>
           )}
-          <InlineNotice title="其余修复暂不可执行" tone="info">后台服务重启、暂停智能候选、重新部署词表与注册输入法还不能从这里安全执行，因此暂不提供按钮。</InlineNotice>
+        >
+          {!canOpenAccessibilitySettings ? (
+            <InlineNotice title="需要桌面控制中心" tone="warning">
+              重启服务、重新部署和打开系统设置由桌面宿主的固定白名单执行；浏览器预览保持只读。
+            </InlineNotice>
+          ) : runtimeRevision < 0 ? (
+            <InlineNotice title="正在等待运行状态" tone="warning">
+              后台返回当前运行版本后，修复操作才会开放预览。
+            </InlineNotice>
+          ) : null}
+          <div className="diagnostics-action-list">
+            {runtimeActions(aiEnabled).map((item) => (
+              <DiagnosticsRuntimeWorkflow
+                action={item.action}
+                description={item.description}
+                key={item.action}
+                nativeExternalActions={canOpenAccessibilitySettings}
+                onApplied={refresh}
+                risk={item.risk}
+                runtimeRevision={runtimeRevision}
+                title={item.title}
+                transport={queries.transport}
+              />
+            ))}
+          </div>
         </ManagementSection>
 
-        <ManagementSection title="危险操作">
-          <InlineNotice title="高风险边界" tone="danger">清空历史、清空记忆、恢复默认与卸载必须先审阅影响范围并明确确认。</InlineNotice>
+        <ManagementSection title="高风险操作边界">
+          <details className="diagnostics-boundary">
+            <summary>查看受保护操作</summary>
+            <p>清空历史、清空记忆、恢复默认与卸载不属于快捷修复。执行前必须单独审阅影响范围并再次确认。</p>
+          </details>
         </ManagementSection>
       </QueryState>
     </ManagementPage>
   );
+}
+
+function runtimeActions(aiEnabled: boolean): readonly {
+  action: DiagnosticsRuntimeAction;
+  description: string;
+  risk: 'R1' | 'R2' | 'R3';
+  title: string;
+}[] {
+  return [
+    { action: 'register_input_source', title: '重新注册输入法', description: '刷新当前用户的 Squirrel 输入源注册，不清空用户数据。', risk: 'R2' },
+    { action: 'restart_sidecar', title: '重启后台服务', description: '由控制中心宿主重启 Sidecar，避免服务自行终止后丢失执行边界。', risk: 'R2' },
+    { action: 'restart_predictor', title: '重启本机模型', description: '重新启动 MLX 预测服务并等待系统返回执行回执。', risk: 'R2' },
+    { action: 'redeploy_rime', title: '重新部署 Rime 配置', description: '运行固定的受信任部署脚本，不接受页面提供的路径或命令。', risk: 'R3' },
+    { action: 'open_accessibility_settings', title: '打开辅助功能设置', description: '打开 macOS 辅助功能权限页，不自动修改权限。', risk: 'R1' },
+    aiEnabled
+      ? { action: 'stop_ai', title: '暂停智能候选', description: '暂停提交后的智能候选，基础 Rime 输入保持可用。', risk: 'R1' }
+      : { action: 'resume_ai', title: '恢复智能候选', description: '恢复提交后的智能候选，基础 Rime 输入保持可用。', risk: 'R1' },
+  ];
 }
 
 function componentLabel(id: string): string {

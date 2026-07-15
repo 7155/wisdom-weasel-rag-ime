@@ -163,9 +163,57 @@ export interface KnowledgeDocumentSourcePayload {
 
 export type ApprovedExternalActionId =
   | 'open_accessibility_settings'
+  | 'register_input_source'
   | 'restart_sidecar'
   | 'restart_predictor'
   | 'redeploy_rime';
+
+export type VoiceProviderId =
+  | 'native_streaming'
+  | 'realtime_websocket'
+  | 'http_transcription';
+
+export type VoiceNativeActionId =
+  | 'start_agent'
+  | 'stop_agent'
+  | 'reload_configuration'
+  | 'request_microphone_permission'
+  | 'request_accessibility_permission'
+  | 'open_microphone_settings'
+  | 'open_accessibility_settings';
+
+export interface VoiceCredentialSaveRequest {
+  provider: VoiceProviderId;
+  accessToken?: string;
+  appId: string;
+  resourceId: string;
+  endpoint: string;
+  model: string;
+  headersJson: string;
+}
+
+export interface VoiceCredentialStatus {
+  provider: VoiceProviderId;
+  configured: boolean;
+}
+
+export interface VoiceNativeStatus {
+  running: boolean;
+  state: string;
+  statusText: string;
+  microphoneAuthorization: string;
+  accessibilityTrusted: boolean;
+  hotkeyInstalled: boolean;
+  hotkeyMode: string;
+  updatedAtMs: number;
+}
+
+export interface VoiceNativeActionReceipt {
+  action: VoiceNativeActionId;
+  accepted: boolean;
+  status: VoiceNativeStatus;
+  error?: string;
+}
 
 export interface ExternalActionRequest {
   action: ApprovedExternalActionId;
@@ -202,6 +250,9 @@ export interface ControlTransport {
   ): Promise<KnowledgeDocumentSourcePayload>;
   revealPath?(path: string): Promise<void>;
   runApprovedExternalAction?(request: ExternalActionRequest): Promise<ExternalActionReceipt>;
+  voiceCredentialStatus?(provider: VoiceProviderId): Promise<VoiceCredentialStatus>;
+  saveVoiceCredentials?(request: VoiceCredentialSaveRequest): Promise<VoiceCredentialStatus>;
+  runVoiceAction?(action: VoiceNativeActionId): Promise<VoiceNativeActionReceipt>;
   dispose?(): void;
 }
 

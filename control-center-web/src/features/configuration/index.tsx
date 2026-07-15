@@ -28,6 +28,8 @@ import {
   valueAt,
 } from '@/features/overview/management-ui';
 import { PiProviderCredentials } from './PiProviderCredentials';
+import { PortabilityWorkflows } from './PortabilityWorkflows';
+import './configuration.css';
 
 type DraftValue = string | number | boolean;
 
@@ -80,11 +82,14 @@ export function ConfigurationFeature() {
   const rawError = queries.settings.error ?? queries.schema.error ?? queries.capabilities.error;
   const error = rawError ? new Error(publicErrorText(rawError, '无法读取本机设置，请刷新后重试。')) : null;
   const pending = queries.settings.isPending || queries.schema.isPending || queries.capabilities.isPending;
-  const refresh = () => void Promise.all([
-    queries.settings.refetch(),
-    queries.schema.refetch(),
-    queries.capabilities.refetch(),
-  ]);
+  const refresh = () => {
+    const refreshes = [
+      queries.settings.refetch(),
+      queries.schema.refetch(),
+      queries.capabilities.refetch(),
+    ];
+    void Promise.all(refreshes);
+  };
 
   return (
     <ManagementPage
@@ -113,8 +118,8 @@ export function ConfigurationFeature() {
 
         <ManagementSection title="设置表单" description="按分组逐项调整设置；开启高级设置可显示更多选项。">
           {sections.length ? (
-            <div className="mgmt-grid-2">
-              <div className="mgmt-stack">
+            <div className="configuration-editor">
+              <div className="configuration-editor__fields mgmt-stack">
                 <label className="ui-field">
                   <span className="ui-field__label">设置分组</span>
                   <select className="ui-input" onChange={(event) => setActiveSection(event.target.value)} value={stringValue(section?.id)}>
@@ -132,8 +137,8 @@ export function ConfigurationFeature() {
                   ))}
                 </div>
               </div>
-              <div className="mgmt-stack">
-                <h3 style={{ fontSize: 12, margin: 0 }}>待应用差异</h3>
+              <div className="configuration-editor__review mgmt-stack">
+                <h3 className="configuration-editor__title">待应用差异</h3>
                 {diffRows.length ? (
                   <DataTable caption="配置差异" columns={[
                     { key: 'key', label: '设置项', width: '32%' },
@@ -194,7 +199,7 @@ export function ConfigurationFeature() {
                       summary: {
                         ...parsed.summary,
                         title: '应用这些设置？',
-                        items: diffRows.map((row) => `${row.key}：${row.before} → ${row.after}（${row.applyMode}）`),
+                        items: previewDiffItems(diffRows),
                       },
                     };
                   }}
@@ -220,15 +225,15 @@ export function ConfigurationFeature() {
           ) : <EmptyState description="当前没有可显示的设置分组。" icon={Settings2} title="设置为空" />}
         </ManagementSection>
 
-        <ManagementSection title="配置导入" description="导入必须先经过校验与差异确认。">
-          <UnavailableAction description="从文件导入本机设置。" reason="安全导入功能尚未接入，因此不会读取或应用文件。" title="导入配置" />
-        </ManagementSection>
-
-        <ManagementSection title="备份与恢复" description="备份不含 API Key、模型权重、缓存与日志；恢复前自动生成回滚包。">
-          <div className="mgmt-grid-2">
-            <UnavailableAction description="导出本机数据、设置和输入法自定义内容。" reason="受控备份功能尚未接入。" title="导出可移植备份" />
-            <UnavailableAction description="校验备份包并在确认后恢复。" reason="受控恢复功能尚未接入，不会选择或写入备份包。" title="恢复可移植备份" />
-          </div>
+        <ManagementSection title="文件迁移" description="导入与恢复先校验和预览；备份只写入你在本机选择的目录。">
+          <PortabilityWorkflows
+            capabilities={queries.capabilities.data}
+            currentSettings={settings}
+            onConfigurationChanged={() => {
+              void Promise.all([queries.settings.refetch(), queries.schema.refetch()]);
+            }}
+            transport={queries.transport}
+          />
         </ManagementSection>
       </QueryState>
     </ManagementPage>
@@ -308,8 +313,11 @@ function applyModeLabel(value: string): string {
   return ({ live: '立即生效', reload: '需重新载入', restart: '需重启', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启后台服务', restart_predictor: '重启本机模型', next_voice_session: '下次语音使用' } as Record<string, string>)[value] ?? '应用后生效';
 }
 
-function UnavailableAction({ description, reason, title }: { description: string; reason: string; title: string }) {
-  return <div className="mgmt-workflow" data-availability="unsupported"><div className="mgmt-workflow__heading"><div><strong>{title}</strong><p>{description}</p></div><Button disabled size="small">暂不可用</Button></div><InlineNotice title="尚未开放" tone="warning">{reason}</InlineNotice></div>;
+function previewDiffItems(rows: readonly { key: string; before: string; after: string; applyMode: string }[]): string[] {
+  const visible = rows.slice(0, 6).map((row) => `${row.key}：${row.before} → ${row.after}（${row.applyMode}）`);
+  return rows.length > visible.length
+    ? [...visible, `另有 ${rows.length - visible.length} 项差异，请在上方差异表中核对。`]
+    : visible;
 }
 
 const sectionLabels: Record<string, string> = { interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '规划', agent: 'Agent', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };

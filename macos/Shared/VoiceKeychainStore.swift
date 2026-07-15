@@ -235,6 +235,26 @@ enum VoiceKeychainStore {
         return !(read(.accessToken, provider: provider) ?? "").isEmpty
     }
 
+    static func hasKeychainAccessToken(provider: VoiceASRProvider) -> Bool {
+        !(read(.accessToken, provider: provider) ?? "").isEmpty
+    }
+
+    static func hasCompleteKeychainCredentials(provider: VoiceASRProvider) -> Bool {
+        guard let accessToken = read(.accessToken, provider: provider) else { return false }
+        let defaultEndpoint = provider == .httpTranscription
+            ? defaultHTTPEndpoint
+            : defaultRealtimeEndpoint
+        return VoiceASRCredentials(
+            provider: provider,
+            appID: read(.appID, provider: provider) ?? "",
+            accessToken: accessToken,
+            resourceID: read(.resourceID, provider: provider) ?? defaultResourceID,
+            endpoint: read(.endpoint, provider: provider) ?? defaultEndpoint,
+            model: read(.model, provider: provider) ?? defaultRealtimeModel,
+            headersJSON: read(.headersJSON, provider: provider) ?? ""
+        ).isComplete
+    }
+
     private static func service(for provider: VoiceASRProvider) -> String {
         provider == .nativeStreaming ? service : "com.rag-ime.voice.\(provider.rawValue)"
     }

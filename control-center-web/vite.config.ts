@@ -109,7 +109,7 @@ export default defineConfig({
       ...(nativeOnlyBuild
         ? [{ find: /^@\/app\/control-transport$/, replacement: nativeTransportEntry }]
         : []),
-      ...(nativeOnlyBuild && buildChannel === 'production'
+      ...(nativeOnlyBuild
         ? [{ find: /^@\/features\/agent\/preview-data$/, replacement: productionDataEntry }]
         : []),
       { find: '@', replacement: path.resolve(rootDirectory, 'src') },

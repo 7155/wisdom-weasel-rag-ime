@@ -1,0 +1,89 @@
+main[data-route-id='configuration'] .configuration-editor {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-5);
+  grid-template-columns: minmax(300px, .9fr) minmax(420px, 1.35fr);
+}
+
+main[data-route-id='configuration'] .configuration-editor > * {
+  min-width: 0;
+}
+
+main[data-route-id='configuration'] .configuration-editor__title {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+main[data-route-id='configuration'] .configuration-editor__fields > .mgmt-list,
+main[data-route-id='configuration'] .configuration-editor__review > .mgmt-table-wrap {
+  max-height: 460px;
+  overflow: auto;
+}
+
+main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row {
+  display: block;
+  min-height: 0;
+  padding: 11px 8px;
+}
+
+main[data-route-id='configuration'] .configuration-editor__review .ui-empty-state {
+  padding-block: var(--space-6);
+}
+
+main[data-route-id='configuration'] .configuration-details {
+  border-block: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-details summary {
+  padding: 10px 2px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+main[data-route-id='configuration'] .configuration-details .mgmt-table-wrap {
+  margin-bottom: var(--space-3);
+}
+
+main[data-route-id='configuration'] .configuration-portability {
+  border-block: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-portability > .mgmt-workflow,
+main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+main[data-route-id='configuration'] .configuration-portability > .mgmt-workflow {
+  border-bottom: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 {
+  gap: 0;
+}
+
+main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
+  border-right: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-portability .mgmt-workflow + .mgmt-workflow {
+  margin-top: 0;
+}
+
+@media (max-width: 960px) {
+  main[data-route-id='configuration'] .configuration-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+}

@@ -272,10 +272,10 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('当前没有可验证的语音管理能力。选择服务只会停留在本页，不会写入任何设置。')).toBeInTheDocument();
+    expect(await screen.findByText('浏览器预览不能启动代理或触发系统授权；请在已安装的智鼬控制中心中操作。')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '原生流式' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '当前不可切换' })).toBeDisabled();
+    expect(screen.getAllByRole('button', { name: '尚不可预览' }).every((button) => button.hasAttribute('disabled'))).toBe(true);
     expect(screen.queryByText('unavailable')).not.toBeInTheDocument();
   });
 

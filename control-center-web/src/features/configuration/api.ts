@@ -42,7 +42,13 @@ export function useConfigurationQueries() {
     queryFn: () => transport.capabilities(),
     staleTime: Infinity,
   });
-  return { capabilities, schema, settings, transport, transportKind: transport.kind };
+  return {
+    capabilities,
+    schema,
+    settings,
+    transport,
+    transportKind: transport.kind,
+  };
 }
 
 export function usePiProviderCatalog() {

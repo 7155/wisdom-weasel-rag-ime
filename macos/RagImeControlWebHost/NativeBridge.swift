@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 import WebKit
@@ -41,6 +42,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         "readKnowledgeDocumentSource",
         "revealPath",
         "runApprovedExternalAction",
+        "voiceCredentialStatus",
+        "voiceCredentialSave",
+        "voiceAction",
     ]
 
     private weak var webView: WKWebView?
@@ -52,6 +56,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     private var filePanels: [String: NSOpenPanel] = [:]
     private var binaryTransferIds: [String: String] = [:]
     private var allowedRevealPaths: Set<String> = []
+    private var externalActionReceiptsInFlight: Set<String> = []
+    private var completedExternalActionReceipts: Set<String> = []
     private lazy var eventBridge = NativeEventBridge { [weak self] envelope in
         self?.sendToWeb(envelope)
     }
@@ -83,6 +89,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         filePanels.values.forEach { $0.cancel(nil) }
         filePanels.removeAll()
         binaryTransferIds.removeAll()
+        externalActionReceiptsInFlight.removeAll()
+        completedExternalActionReceipts.removeAll()
         eventBridge.cancelAll()
         requestSession.invalidateAndCancel()
         assetSession.invalidateAndCancel()
@@ -129,6 +137,12 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             revealPath(id: id, payload: payload)
         case "runApprovedExternalAction":
             runApprovedExternalAction(id: id, payload: payload)
+        case "voiceCredentialStatus":
+            voiceCredentialStatus(id: id, payload: payload)
+        case "voiceCredentialSave":
+            voiceCredentialSave(id: id, payload: payload)
+        case "voiceAction":
+            voiceAction(id: id, payload: payload)
         default:
             replyError(id: id, code: "unsupported_bridge_method", message: "Native bridge method is not allowlisted")
         }
@@ -173,7 +187,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 "knowledgeDocumentSourceRead": true,
                 "revealPath": true,
                 "approvedExternalActions": true,
-                "keychain": false,
+                "keychain": true,
                 "tcc": true,
             ],
             "security": [
@@ -471,7 +485,6 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             let task = assetSession.dataTask(with: resolved.request) { [weak self] data, response, error in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.requestTasks.removeValue(forKey: id)
                     do {
                         let asset = try self.validatedKnowledgeAssetResponse(
                             data: data,
@@ -488,6 +501,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                             asset: asset
                         )
                     } catch {
+                        self.requestTasks.removeValue(forKey: id)
                         self.replyError(
                             id: id,
                             code: "knowledge_asset_read_failed",
@@ -1368,34 +1382,306 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func runApprovedExternalAction(id: String, payload: [String: Any]) {
         do {
+            guard Set(payload.keys) == ["action", "receiptId", "payloadSha256", "commandSha256"] else {
+                throw NativeRoutePolicyError.invalidParameter("externalAction")
+            }
             let action = try requiredString("action", in: payload)
             let receiptId = try requiredString("receiptId", in: payload)
-            let payloadHash = try requiredString("payloadSha256", in: payload)
-            let commandHash = try requiredString("commandSha256", in: payload)
-            guard payloadHash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil,
-                  commandHash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else {
-                replyError(id: id, code: "approval_required", message: "External action requires approved payload and command hashes")
-                return
-            }
-            guard action == "open_accessibility_settings",
-                  let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            let payloadHash = try normalizedSha256(try requiredString("payloadSha256", in: payload))
+            let commandHash = try normalizedSha256(try requiredString("commandSha256", in: payload))
+            guard approvedDiagnosticsExternalActions.contains(action) else {
                 replyError(id: id, code: "external_action_not_allowed", message: "External action is not allowlisted")
                 return
             }
-            let opened = NSWorkspace.shared.open(settingsURL)
-            replySuccess(
-                id: id,
-                result: [
-                    "receiptId": receiptId,
-                    "action": action,
-                    "accepted": opened,
-                    "completed": opened,
-                    "exitCode": opened ? 0 : 1,
-                ]
+            guard !externalActionReceiptsInFlight.contains(receiptId),
+                  !completedExternalActionReceipts.contains(receiptId) else {
+                replyError(id: id, code: "external_action_replayed", message: "External action receipt was already used")
+                return
+            }
+            guard commandHash == expectedRuntimeActionCommandSha256(action) else {
+                replyError(id: id, code: "approval_required", message: "External action requires approved payload and command hashes")
+                return
+            }
+            let resolved = try routePolicy.resolveRequest(
+                pathId: "diagnostics.action.job",
+                parameters: ["jobId": receiptId],
+                query: [:],
+                body: nil
             )
+            externalActionReceiptsInFlight.insert(receiptId)
+            let task = requestSession.dataTask(with: resolved.request) { [weak self] data, response, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.requestTasks.removeValue(forKey: id)
+                    do {
+                        try self.validateApprovedExternalActionJob(
+                            data: data,
+                            response: response,
+                            error: error,
+                            action: action,
+                            receiptId: receiptId,
+                            payloadHash: payloadHash,
+                            commandHash: commandHash
+                        )
+                        self.executeApprovedExternalAction(
+                            id: id,
+                            action: action,
+                            receiptId: receiptId
+                        )
+                    } catch {
+                        self.externalActionReceiptsInFlight.remove(receiptId)
+                        self.replyError(
+                            id: id,
+                            code: "external_action_approval_rejected",
+                            message: error.localizedDescription,
+                            retryable: (error as NSError).code == NSURLErrorTimedOut
+                        )
+                    }
+                }
+            }
+            requestTasks[id] = task
+            task.resume()
         } catch {
             replyError(id: id, code: "invalid_external_action", message: error.localizedDescription)
         }
+    }
+
+    private var approvedDiagnosticsExternalActions: Set<String> {
+        [
+            "register_input_source",
+            "restart_sidecar",
+            "restart_predictor",
+            "redeploy_rime",
+            "open_accessibility_settings",
+        ]
+    }
+
+    private func normalizedSha256(_ value: String) throws -> String {
+        let digest = value.hasPrefix("sha256:") ? String(value.dropFirst(7)) : value
+        guard digest.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else {
+            throw NativeRoutePolicyError.invalidParameter("sha256")
+        }
+        return digest.lowercased()
+    }
+
+    private func expectedRuntimeActionCommandSha256(_ action: String) -> String {
+        SHA256.hash(data: Data("rag-ime.runtime-action.v1:\(action)".utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private func validateApprovedExternalActionJob(
+        data: Data?,
+        response: URLResponse?,
+        error: Error?,
+        action: String,
+        receiptId: String,
+        payloadHash: String,
+        commandHash: String
+    ) throws {
+        if let error { throw error }
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              let data,
+              data.count <= 1_048_576,
+              let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              envelope["ok"] as? Bool == true,
+              let job = envelope["job"] as? [String: Any],
+              job["jobId"] as? String == receiptId,
+              job["action"] as? String == action,
+              job["status"] as? String == "external-supervisor-required",
+              let result = job["result"] as? [String: Any],
+              let external = result["externalAction"] as? [String: Any],
+              external["receiptId"] as? String == receiptId,
+              external["action"] as? String == action,
+              let approvedPayloadHash = external["payloadSha256"] as? String,
+              let approvedCommandHash = external["commandSha256"] as? String,
+              try normalizedSha256(approvedPayloadHash) == payloadHash,
+              try normalizedSha256(approvedCommandHash) == commandHash,
+              commandHash == expectedRuntimeActionCommandSha256(action) else {
+            throw NativeMediaImportError.rejected("The local service did not confirm the approved external action receipt")
+        }
+        let createdAtMs = (job["createdAtMs"] as? NSNumber)?.doubleValue ?? 0
+        let nowMs = Date().timeIntervalSince1970 * 1_000
+        guard createdAtMs > 0, createdAtMs <= nowMs + 60_000, nowMs - createdAtMs <= 600_000 else {
+            throw NativeMediaImportError.rejected("The approved external action receipt has expired")
+        }
+    }
+
+    private func executeApprovedExternalAction(id: String, action: String, receiptId: String) {
+        if action == "open_accessibility_settings" {
+            guard let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+                finishApprovedExternalAction(
+                    id: id,
+                    action: action,
+                    receiptId: receiptId,
+                    exitCode: 1,
+                    error: "Unable to open Accessibility settings"
+                )
+                return
+            }
+            let opened = NSWorkspace.shared.open(settingsURL)
+            finishApprovedExternalAction(
+                id: id,
+                action: action,
+                receiptId: receiptId,
+                exitCode: opened ? 0 : 1,
+                error: opened ? nil : "Unable to open Accessibility settings"
+            )
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try self.runApprovedDiagnosticsProcess(action: action)
+                DispatchQueue.main.async {
+                    self.finishApprovedExternalAction(
+                        id: id,
+                        action: action,
+                        receiptId: receiptId,
+                        exitCode: result.exitCode,
+                        error: result.error
+                    )
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.finishApprovedExternalAction(
+                        id: id,
+                        action: action,
+                        receiptId: receiptId,
+                        exitCode: 1,
+                        error: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishApprovedExternalAction(
+        id: String,
+        action: String,
+        receiptId: String,
+        exitCode: Int32,
+        error: String?
+    ) {
+        requestTasks.removeValue(forKey: id)
+        externalActionReceiptsInFlight.remove(receiptId)
+        if exitCode == 0 {
+            completedExternalActionReceipts.insert(receiptId)
+        }
+        var result: [String: Any] = [
+            "receiptId": receiptId,
+            "action": action,
+            "accepted": true,
+            "completed": true,
+            "exitCode": Int(exitCode),
+        ]
+        if let error, !error.isEmpty { result["error"] = error }
+        replySuccess(id: id, result: result)
+    }
+
+    private func runApprovedDiagnosticsProcess(action: String) throws -> (exitCode: Int32, error: String?) {
+        let executable: URL
+        let arguments: [String]
+        switch action {
+        case "restart_sidecar":
+            executable = URL(fileURLWithPath: "/bin/launchctl")
+            arguments = ["kickstart", "-k", "gui/\(getuid())/com.rag-ime.sidecar"]
+        case "restart_predictor":
+            executable = URL(fileURLWithPath: "/bin/launchctl")
+            arguments = ["kickstart", "-k", "gui/\(getuid())/com.rag-ime.mlx-predictor"]
+        case "register_input_source":
+            executable = URL(fileURLWithPath: "/bin/bash")
+            arguments = [try trustedDiagnosticsHelper(named: "refresh_squirrel_input_source_registration.sh").path]
+        case "redeploy_rime":
+            executable = URL(fileURLWithPath: "/bin/bash")
+            arguments = [try trustedDiagnosticsHelper(named: "install_squirrel_rag_config.sh").path]
+        default:
+            throw NativeMediaImportError.rejected("External action is not allowlisted")
+        }
+
+        let outputRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rag-ime-diagnostics-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputRoot) }
+        let stdoutURL = outputRoot.appendingPathComponent("stdout.log")
+        let stderrURL = outputRoot.appendingPathComponent("stderr.log")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
+        let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+        defer {
+            try? stdoutHandle.close()
+            try? stderrHandle.close()
+        }
+
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        process.standardOutput = stdoutHandle
+        process.standardError = stderrHandle
+        let completed = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in completed.signal() }
+        try process.run()
+        if completed.wait(timeout: .now() + 90) == .timedOut {
+            process.terminate()
+            _ = completed.wait(timeout: .now() + 2)
+            return (124, "The approved external action timed out")
+        }
+        try? stdoutHandle.synchronize()
+        try? stderrHandle.synchronize()
+        let stderr = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
+        let stdout = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
+        let detail = String((stderr.isEmpty ? stdout : stderr).suffix(1_000))
+        return (process.terminationStatus, process.terminationStatus == 0 ? nil : (detail.isEmpty ? "External action failed" : detail))
+    }
+
+    private func trustedDiagnosticsHelper(named name: String) throws -> URL {
+        let allowedNames = Set([
+            "refresh_squirrel_input_source_registration.sh",
+            "install_squirrel_rag_config.sh",
+        ])
+        guard allowedNames.contains(name) else {
+            throw NativeMediaImportError.rejected("Diagnostics helper is not allowlisted")
+        }
+        var roots: [URL] = []
+        let environment = ProcessInfo.processInfo.environment
+        for key in ["RAG_IME_SOURCE_ROOT", "RAG_IME_REPO_ROOT"] {
+            if let value = environment[key], !value.isEmpty {
+                roots.append(URL(fileURLWithPath: value, isDirectory: true))
+            }
+        }
+        roots.append(
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/RagIme/app", isDirectory: true)
+        )
+        for label in ["com.rag-ime.sidecar", "com.rag-ime.mlx-predictor"] {
+            let plistURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+            guard let data = try? Data(contentsOf: plistURL),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
+                  let object = plist as? [String: Any],
+                  let variables = object["EnvironmentVariables"] as? [String: Any],
+                  let sourceRoot = variables["RAG_IME_SOURCE_ROOT"] as? String,
+                  !sourceRoot.isEmpty else { continue }
+            roots.append(URL(fileURLWithPath: sourceRoot, isDirectory: true))
+        }
+
+        for root in roots {
+            let candidate = root.standardizedFileURL
+                .appendingPathComponent("scripts", isDirectory: true)
+                .appendingPathComponent(name)
+            let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+            guard candidate.standardizedFileURL == resolved else { continue }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue,
+                  let attributes = try? FileManager.default.attributesOfItem(atPath: resolved.path),
+                  attributes[.type] as? FileAttributeType == .typeRegular else { continue }
+            return resolved
+        }
+        throw NativeMediaImportError.rejected("The trusted diagnostics helper is not installed")
     }
 
     private func requiredString(_ key: String, in payload: [String: Any]) throws -> String {
@@ -1421,6 +1707,205 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             result[key] = stringValue
         }
         return result
+    }
+
+    private func voiceCredentialStatus(id: String, payload: [String: Any]) {
+        do {
+            guard Set(payload.keys) == ["provider"] else {
+                throw NativeRoutePolicyError.invalidParameter("voiceCredentialStatus")
+            }
+            let provider = try voiceProvider(in: payload)
+            replySuccess(
+                id: id,
+                result: [
+                    "provider": provider.rawValue,
+                    "configured": VoiceKeychainStore.hasCompleteKeychainCredentials(provider: provider),
+                ]
+            )
+        } catch {
+            replyError(id: id, code: "voice_credential_status_rejected", message: error.localizedDescription)
+        }
+    }
+
+    private func voiceCredentialSave(id: String, payload: [String: Any]) {
+        let allowedKeys: Set<String> = [
+            "provider", "accessToken", "appId", "resourceId", "endpoint", "model", "headersJson",
+        ]
+        do {
+            guard Set(payload.keys).isSubset(of: allowedKeys) else {
+                throw NativeRoutePolicyError.invalidParameter("voiceCredentialSave")
+            }
+            let provider = try voiceProvider(in: payload)
+            let accessToken = try optionalVoiceString("accessToken", in: payload, maximumBytes: 16_384)
+            let appId = try optionalVoiceString("appId", in: payload, maximumBytes: 512) ?? ""
+            let resourceId = try optionalVoiceString("resourceId", in: payload, maximumBytes: 512) ?? ""
+            let endpoint = try optionalVoiceString("endpoint", in: payload, maximumBytes: 2_048) ?? ""
+            let model = try optionalVoiceString("model", in: payload, maximumBytes: 512) ?? ""
+            let headersJson = try optionalVoiceString("headersJson", in: payload, maximumBytes: 16_384) ?? ""
+            try validateVoiceHeaders(headersJson)
+            try VoiceKeychainStore.save(
+                provider: provider,
+                appID: appId,
+                accessToken: accessToken?.isEmpty == false ? accessToken : nil,
+                resourceID: resourceId,
+                endpoint: endpoint,
+                model: model,
+                headersJSON: headersJson
+            )
+            DistributedNotificationCenter.default().post(
+                name: Notification.Name("com.rag-ime.voice.configuration-changed"),
+                object: nil
+            )
+            replySuccess(
+                id: id,
+                result: [
+                    "provider": provider.rawValue,
+                    "configured": VoiceKeychainStore.hasCompleteKeychainCredentials(provider: provider),
+                ]
+            )
+        } catch {
+            replyError(id: id, code: "voice_credential_save_failed", message: error.localizedDescription)
+        }
+    }
+
+    private func voiceAction(id: String, payload: [String: Any]) {
+        do {
+            guard Set(payload.keys) == ["action"] else {
+                throw NativeRoutePolicyError.invalidParameter("voiceAction")
+            }
+            let action = try requiredString("action", in: payload)
+            switch action {
+            case "start_agent":
+                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.rag-ime.voice") else {
+                    voiceActionReply(id: id, action: action, accepted: false, error: "语音代理尚未安装")
+                    return
+                }
+                NSWorkspace.shared.openApplication(at: url, configuration: .init()) { [weak self] _, error in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        self?.voiceActionReply(
+                            id: id,
+                            action: action,
+                            accepted: error == nil,
+                            error: error?.localizedDescription
+                        )
+                    }
+                }
+            case "stop_agent":
+                let applications = NSRunningApplication.runningApplications(withBundleIdentifier: "com.rag-ime.voice")
+                applications.forEach { _ = $0.terminate() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    self?.voiceActionReply(id: id, action: action, accepted: !applications.isEmpty)
+                }
+            case "reload_configuration":
+                DistributedNotificationCenter.default().post(
+                    name: Notification.Name("com.rag-ime.voice.configuration-changed"),
+                    object: nil
+                )
+                voiceActionReply(id: id, action: action, accepted: true)
+            case "request_microphone_permission":
+                guard voiceAgentIsRunning else {
+                    voiceActionReply(id: id, action: action, accepted: false, error: "请先启动语音代理")
+                    return
+                }
+                DistributedNotificationCenter.default().post(
+                    name: Notification.Name("com.rag-ime.voice.request-microphone-permission"),
+                    object: nil
+                )
+                voiceActionReply(id: id, action: action, accepted: true)
+            case "request_accessibility_permission":
+                guard voiceAgentIsRunning else {
+                    voiceActionReply(id: id, action: action, accepted: false, error: "请先启动语音代理")
+                    return
+                }
+                DistributedNotificationCenter.default().post(
+                    name: Notification.Name("com.rag-ime.voice.request-accessibility-permission"),
+                    object: nil
+                )
+                let opened = openVoicePrivacySettings("Privacy_Accessibility")
+                voiceActionReply(id: id, action: action, accepted: opened)
+            case "open_microphone_settings":
+                let opened = openVoicePrivacySettings("Privacy_Microphone")
+                voiceActionReply(id: id, action: action, accepted: opened)
+            case "open_accessibility_settings":
+                let opened = openVoicePrivacySettings("Privacy_Accessibility")
+                voiceActionReply(id: id, action: action, accepted: opened)
+            default:
+                replyError(id: id, code: "voice_action_not_allowed", message: "Voice action is not allowlisted")
+            }
+        } catch {
+            replyError(id: id, code: "voice_action_rejected", message: error.localizedDescription)
+        }
+    }
+
+    private func voiceProvider(in payload: [String: Any]) throws -> VoiceASRProvider {
+        let rawValue = try requiredString("provider", in: payload)
+        guard let provider = VoiceASRProvider(rawValue: rawValue) else {
+            throw NativeRoutePolicyError.invalidParameter("provider")
+        }
+        return provider
+    }
+
+    private func optionalVoiceString(
+        _ key: String,
+        in payload: [String: Any],
+        maximumBytes: Int
+    ) throws -> String? {
+        guard let value = payload[key] else { return nil }
+        guard let string = value as? String,
+              string.utf8.count <= maximumBytes,
+              !string.contains("\0") else {
+            throw NativeRoutePolicyError.invalidParameter(key)
+        }
+        return string.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func validateVoiceHeaders(_ rawValue: String) throws {
+        guard !rawValue.isEmpty else { return }
+        guard let data = rawValue.data(using: .utf8),
+              let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              value.count <= 32,
+              value.allSatisfy({ item in
+                  !item.key.isEmpty && item.key.utf8.count <= 256 && item.value is String
+              }) else {
+            throw NativeRoutePolicyError.invalidParameter("headersJson")
+        }
+    }
+
+    private var voiceAgentIsRunning: Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: "com.rag-ime.voice").isEmpty
+    }
+
+    private func voiceNativeStatus() -> [String: Any] {
+        let running = voiceAgentIsRunning
+        let status = running ? VoiceAgentStatusStore.read() : nil
+        return [
+            "running": running,
+            "state": status?.state ?? (running ? "starting" : "stopped"),
+            "statusText": status?.statusText ?? (running ? "语音代理正在启动" : "语音代理未运行"),
+            "microphoneAuthorization": status?.microphoneAuthorization ?? "unknown",
+            "accessibilityTrusted": status?.accessibilityTrusted ?? false,
+            "hotkeyInstalled": status?.hotkeyInstalled ?? false,
+            "hotkeyMode": status?.hotkeyMode ?? "",
+            "updatedAtMs": status?.updatedAtMs ?? 0,
+        ]
+    }
+
+    private func voiceActionReply(id: String, action: String, accepted: Bool, error: String? = nil) {
+        var result: [String: Any] = [
+            "action": action,
+            "accepted": accepted,
+            "status": voiceNativeStatus(),
+        ]
+        if let error, !error.isEmpty { result["error"] = error }
+        replySuccess(id: id, result: result)
+    }
+
+    private func openVoicePrivacySettings(_ pane: String) -> Bool {
+        guard Set(["Privacy_Microphone", "Privacy_Accessibility"]).contains(pane),
+              let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else {
+            return false
+        }
+        return NSWorkspace.shared.open(url)
     }
 
     private func replySuccess(id: String, result: Any) {

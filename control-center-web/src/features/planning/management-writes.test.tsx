@@ -27,7 +27,7 @@ describe('Planning WorkContract UI', () => {
     const user = userEvent.setup();
     renderPlanning();
     expect(await screen.findByText('完成 Web 迁移', { selector: '.planning-companion__focus strong' })).toBeInTheDocument();
-    expect(screen.getByText('继续：完成管理页')).toBeInTheDocument();
+    expect(screen.queryByText('继续：完成管理页')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '交给智鼬整理' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '请智鼬拆解' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '一起复盘' })).toBeEnabled();
@@ -36,10 +36,19 @@ describe('Planning WorkContract UI', () => {
     expect(screen.queryByText('in_progress')).not.toBeInTheDocument();
     expect(screen.queryByText('manual')).not.toBeInTheDocument();
     expect(screen.queryByText('wisdom-weasel-rag-ime')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /^完成管理页/ }));
+    await user.click(screen.getByRole('button', { name: /^查看今日建议/ }));
+    expect(screen.getByRole('heading', { name: '今日建议', level: 2 })).toBeInTheDocument();
+    expect(screen.getByText('继续：完成管理页')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^继续：完成管理页/ }));
     expect(screen.getByRole('heading', { name: '编辑任务', level: 2 })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '新建任务' }));
+    expect(screen.getByRole('dialog')).toHaveClass('planning-dialog');
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+    await user.click(screen.getByRole('button', { name: '查看日计划' }));
+    expect(screen.getByRole('heading', { name: '日计划详情', level: 2 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '完成查看' }));
+    await user.click(await screen.findByRole('button', { name: '新建任务' }));
     expect(screen.getByRole('heading', { name: '新建任务', level: 2 })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('例如：整理今天的工作清单')).toHaveValue('');
   });
@@ -49,6 +58,7 @@ describe('Planning WorkContract UI', () => {
     const transport = renderPlanning();
     await screen.findByRole('heading', { name: '规划', level: 1 });
 
+    await user.click(await screen.findByRole('button', { name: '新建任务' }));
     await user.type(await screen.findByPlaceholderText('例如：整理今天的工作清单'), '验证真实 Planning 写入');
     const detail = document.getElementById('planning-task-detail');
     expect(detail).not.toBeNull();
@@ -197,6 +207,7 @@ describe('Planning WorkContract UI', () => {
   it('keeps a rejected apply visible and does not invent a receipt', async () => {
     const user = userEvent.setup();
     renderPlanning(true);
+    await user.click(await screen.findByRole('button', { name: '新建任务' }));
     await user.type(await screen.findByPlaceholderText('例如：整理今天的工作清单'), '触发版本冲突');
     const workflow = screen.getByText('创建任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();

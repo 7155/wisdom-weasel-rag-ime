@@ -18,7 +18,7 @@
 .mgmt-page__heading { min-width: 0; }
 .mgmt-page__heading h1 {
   margin: 2px 0 4px;
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1.25;
   letter-spacing: 0;
 }
@@ -28,14 +28,14 @@
 .mgmt-workflow p {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
 .mgmt-page__eyebrow {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -70,7 +70,7 @@
 
 .mgmt-section__header h2 {
   margin: 0 0 3px;
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1.35;
   letter-spacing: 0;
 }
@@ -83,7 +83,7 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 650;
   white-space: nowrap;
 }
@@ -120,13 +120,13 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 650;
 }
 
 .mgmt-metric dd {
   margin: 6px 0 0;
-  font-size: 22px;
+  font-size: 24px;
   font-variant-numeric: tabular-nums;
   font-weight: 720;
   line-height: 1.1;
@@ -136,7 +136,7 @@
   display: block;
   margin-top: 4px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .mgmt-list {
@@ -148,7 +148,7 @@
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 48px;
+  min-height: 56px;
   align-items: center;
   gap: var(--space-3);
   padding: 9px 10px;
@@ -165,12 +165,12 @@
 .mgmt-list__row--button:hover,
 .mgmt-list__row[data-selected='true'] { background: var(--color-surface-hover); }
 .mgmt-list__copy { display: grid; min-width: 0; gap: 3px; grid-column: 1; }
-.mgmt-list__copy strong { overflow-wrap: anywhere; font-size: 12px; }
+.mgmt-list__copy strong { overflow-wrap: anywhere; font-size: 14px; }
 .mgmt-list__copy span,
 .mgmt-list__meta,
 .mgmt-list__status {
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -198,7 +198,7 @@
   min-width: 680px;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mgmt-table caption {
@@ -238,7 +238,7 @@
   gap: var(--space-3);
   padding-top: var(--space-3);
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mgmt-notice {
@@ -248,7 +248,7 @@
   padding: 9px 11px;
   border-left: 3px solid var(--color-info);
   background: var(--color-info-soft);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -273,12 +273,12 @@
 }
 
 .mgmt-workflow__heading > div { min-width: 0; }
-.mgmt-workflow__heading strong { font-size: 12px; }
+.mgmt-workflow__heading strong { font-size: 14px; }
 .mgmt-workflow__risk {
   margin-right: 7px;
   color: var(--color-warning);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 760;
 }
 
@@ -298,7 +298,7 @@
   padding: 6px 8px;
   border-block: 1px solid var(--color-border);
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .mgmt-workflow__steps li[data-state='complete'] { color: var(--color-success); }
@@ -311,8 +311,8 @@
   background: var(--color-surface-subtle);
 }
 
-.mgmt-workflow__panel strong { font-size: 11px; }
-.mgmt-workflow__panel ul { margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.55; }
+.mgmt-workflow__panel strong { font-size: 13px; }
+.mgmt-workflow__panel ul { margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.55; }
 .mgmt-workflow__binding {
   display: flex;
   flex-wrap: wrap;
@@ -320,7 +320,7 @@
   gap: var(--space-2);
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
 }
 .mgmt-workflow__confirm {
   display: flex;
@@ -332,7 +332,7 @@
   background: var(--color-surface);
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
 }
 .mgmt-workflow__confirm input {
   width: 15px;
@@ -352,9 +352,9 @@
 }
 
 .mgmt-workflow__receipt > div { display: grid; min-width: 0; gap: 3px; }
-.mgmt-workflow__receipt strong { font-family: var(--font-mono); font-size: 10px; overflow-wrap: anywhere; }
+.mgmt-workflow__receipt strong { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .mgmt-workflow__receipt span,
-.mgmt-workflow__receipt time { color: var(--color-text-secondary); font-size: 10px; }
+.mgmt-workflow__receipt time { color: var(--color-text-secondary); font-size: 11px; }
 .mgmt-grid-2 { display: grid; gap: var(--space-5); grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .mgmt-grid-3 { display: grid; gap: var(--space-3); grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .mgmt-stack { display: grid; gap: var(--space-3); }
@@ -362,14 +362,14 @@
 .mgmt-muted { color: var(--color-text-tertiary); }
 .mgmt-kv { display: grid; margin: 0; grid-template-columns: minmax(130px, .7fr) minmax(0, 1.5fr); }
 .mgmt-kv dt,
-.mgmt-kv dd { margin: 0; padding: 8px 10px; border-bottom: 1px solid var(--color-border); font-size: 11px; overflow-wrap: anywhere; }
+.mgmt-kv dd { margin: 0; padding: 8px 10px; border-bottom: 1px solid var(--color-border); font-size: 13px; overflow-wrap: anywhere; }
 .mgmt-kv dt { color: var(--color-text-secondary); }
 .mgmt-code {
   margin: 0;
   padding: var(--space-3);
   background: var(--color-surface-subtle);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
   overflow: auto;
   white-space: pre-wrap;

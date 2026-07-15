@@ -118,17 +118,25 @@ const canonicalPathIds = [
   'diagnostics.runtime',
   'diagnostics.predictor',
   'diagnostics.models',
+  'diagnostics.action.preview',
+  'diagnostics.action.start',
+  'diagnostics.action.job',
   'configuration.settings',
   'configuration.schema',
   'configuration.settings.preview',
   'configuration.settings.apply',
   'configuration.settings.rollback',
+  'configuration.import.preview',
+  'configuration.import.apply',
+  'configuration.backup.export',
+  'configuration.restore.preview',
+  'configuration.restore.apply',
 ] as const;
 
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(115);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(canonicalPathIds.length);
   });
 
   it('keeps Pi credentials behind preview/apply and never accepts secrets on preview', () => {
@@ -150,6 +158,40 @@ describe('control route policy', () => {
         body: { previewToken: 'preview-token', confirmText: 'replace', refreshToken: 'secret' },
       } as never),
     ).toThrow(/body field/);
+  });
+
+  it('keeps configuration file paths behind the five local migration contracts', () => {
+    expect(() => assertControlRequest({
+      pathId: 'configuration.import.preview',
+      body: { path: '/trusted/from-native.yaml' },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'configuration.import.apply',
+      body: {
+        path: '/trusted/from-native.yaml',
+        expectedRuntimeRevision: 9,
+        previewToken: 'sha256:preview',
+        confirmText: 'IMPORT RAG-IME CONFIGURATION',
+      },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'configuration.import.apply',
+      body: {
+        path: '/trusted/from-native.yaml',
+        expectedRuntimeRevision: 9,
+        previewToken: 'sha256:preview',
+      },
+    } as never)).toThrow(/required body/);
+    expect(() => assertControlRequest({
+      pathId: 'configuration.restore.apply',
+      body: {
+        path: '/trusted/backup.ragime-backup',
+        restoreToken: 'a'.repeat(64),
+        confirmText: 'RESTORE RAG-IME',
+        expectedRuntimeRevision: 9,
+        arbitrary: true,
+      },
+    } as never)).toThrow(/body field/);
   });
 
   it('requires the typed binary transport for bounded knowledge assets', () => {

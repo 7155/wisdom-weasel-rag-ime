@@ -4836,14 +4836,13 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +        userInfo: ["sessionId": sessionId]
 +      )
 +    }
-+    if let appURL = workspace.urlForApplication(withBundleIdentifier: "com.rag-ime.control") {
-+      workspace.openApplication(at: appURL, configuration: configuration) { _, _ in
-+        DispatchQueue.main.async { notifyAgentDestination() }
-+      }
-+      return
-+    }
 +    let userApp = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/RagImeControl.app")
-+    if FileManager.default.fileExists(atPath: userApp.path) {
++    let markerURL = userApp.appendingPathComponent("Contents/Resources/rag-ime-control-web-build-marker.json")
++    let marker = (try? Data(contentsOf: markerURL))
++      .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
++    if FileManager.default.fileExists(atPath: userApp.path),
++       marker?["ui"] as? String == "control-center-web",
++       marker?["channel"] as? String == "release" {
 +      workspace.openApplication(at: userApp, configuration: configuration) { _, _ in
 +        DispatchQueue.main.async { notifyAgentDestination() }
 +      }

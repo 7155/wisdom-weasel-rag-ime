@@ -164,6 +164,63 @@ class VoiceHotwordWorkContractTests(unittest.TestCase):
         self.assertEqual(denied["errorCode"], "invalid_request")
         self.assertFalse((Path(self.tmp.name) / "voice-hotwords.json").exists())
 
+    def test_provider_and_hotkey_apply_incrementally_and_rollback(self) -> None:
+        changes = {
+            "voice.provider": "realtime_websocket",
+            "voice.hotkey": "option_space",
+        }
+        initial = self.service.settings()
+        preview = self.service.configuration_settings_preview(
+            {
+                "changes": changes,
+                "expectedRuntimeRevision": initial["runtimeConfig"]["runtimeRevision"],
+            }
+        )
+        applied = self.service.configuration_settings_apply(
+            {
+                "changes": changes,
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+
+        provider_path = Path(self.tmp.name) / "voice-provider.json"
+        hotkey_path = Path(self.tmp.name) / "voice-hotkey.json"
+        provider_payload = json.loads(provider_path.read_text(encoding="utf-8"))
+        hotkey_payload = json.loads(hotkey_path.read_text(encoding="utf-8"))
+        current = self.service.settings()
+
+        self.assertTrue(applied["ok"])
+        self.assertEqual(
+            set(applied["rollbackAuthority"]["settingKeys"]),
+            {"voice.provider", "voice.hotkey"},
+        )
+        self.assertEqual(provider_payload["provider"], "realtime_websocket")
+        self.assertEqual(hotkey_payload["choice"], "option_space")
+        self.assertEqual(provider_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(hotkey_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(current["settings"]["voice"]["provider"], "realtime_websocket")
+        self.assertEqual(current["settings"]["voice"]["hotkey"], "option_space")
+        self.assertEqual(current["voiceControl"]["provider"], "realtime_websocket")
+        self.assertEqual(current["voiceControl"]["hotkey"], "option_space")
+
+        rolled_back = self.service.configuration_settings_rollback(
+            {
+                "receiptId": applied["receiptId"],
+                "rollbackToken": applied["rollbackToken"],
+                "payloadSha256": applied["payloadSha256"],
+                "confirmText": "rollback",
+            }
+        )
+        restored_provider = json.loads(provider_path.read_text(encoding="utf-8"))
+        restored_hotkey = json.loads(hotkey_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(rolled_back["ok"])
+        self.assertEqual(restored_provider["provider"], "native_streaming")
+        self.assertEqual(restored_hotkey["choice"], "middle_mouse")
+
 
 if __name__ == "__main__":
     unittest.main()

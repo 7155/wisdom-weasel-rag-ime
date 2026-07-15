@@ -80,11 +80,19 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "diagnostics.runtime",
                 "diagnostics.predictor",
                 "diagnostics.models",
+                "diagnostics.action.preview",
+                "diagnostics.action.start",
+                "diagnostics.action.job",
                 "configuration.settings",
                 "configuration.schema",
                 "configuration.settings.preview",
                 "configuration.settings.apply",
                 "configuration.settings.rollback",
+                "configuration.import.preview",
+                "configuration.import.apply",
+                "configuration.backup.export",
+                "configuration.restore.preview",
+                "configuration.restore.apply",
                 "input.lexicon.review",
                 "input.lexicon.apply",
                 "input.lexicon.rollback",
@@ -144,6 +152,70 @@ class ControlRoutePolicyTests(unittest.TestCase):
                     request_id="request-lexicon-missing-confirm",
                     path_id=ControlPathId.INPUT_LEXICON_APPLY.value,
                     body={"reviewToken": "review-token", "selectedKeys": ["entry-1"]},
+                ),
+                ControlAccessContext.native(),
+            )
+
+    def test_configuration_file_migration_routes_are_strict_and_local_only(self) -> None:
+        requests = (
+            ControlRequest(
+                request_id="request-config-preview",
+                path_id=ControlPathId.CONFIGURATION_IMPORT_PREVIEW.value,
+                body={"path": "/trusted/rag-ime.config.yaml"},
+            ),
+            ControlRequest(
+                request_id="request-config-apply",
+                path_id=ControlPathId.CONFIGURATION_IMPORT_APPLY.value,
+                body={
+                    "path": "/trusted/rag-ime.config.yaml",
+                    "expectedRuntimeRevision": 4,
+                    "previewToken": "sha256:preview",
+                    "confirmText": "IMPORT RAG-IME CONFIGURATION",
+                },
+            ),
+            ControlRequest(
+                request_id="request-backup-export",
+                path_id=ControlPathId.CONFIGURATION_BACKUP_EXPORT.value,
+                body={"destination": "/trusted/Backups"},
+            ),
+            ControlRequest(
+                request_id="request-restore-preview",
+                path_id=ControlPathId.CONFIGURATION_RESTORE_PREVIEW.value,
+                body={"path": "/trusted/backup.ragime-backup"},
+            ),
+            ControlRequest(
+                request_id="request-restore-apply",
+                path_id=ControlPathId.CONFIGURATION_RESTORE_APPLY.value,
+                body={
+                    "path": "/trusted/backup.ragime-backup",
+                    "restoreToken": "a" * 64,
+                    "confirmText": "RESTORE RAG-IME",
+                    "expectedRuntimeRevision": 4,
+                },
+            ),
+        )
+
+        for request in requests:
+            self.policy.authorize(request, ControlAccessContext.native())
+            with self.assertRaises(ControlApiError) as raised:
+                self.policy.authorize(
+                    request,
+                    ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+                )
+            self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-restore-arbitrary",
+                    path_id=ControlPathId.CONFIGURATION_RESTORE_APPLY.value,
+                    body={
+                        "path": "/trusted/backup.ragime-backup",
+                        "restoreToken": "a" * 64,
+                        "confirmText": "RESTORE RAG-IME",
+                        "expectedRuntimeRevision": 4,
+                        "shell": "rm -rf",
+                    },
                 ),
                 ControlAccessContext.native(),
             )
@@ -716,7 +788,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
         for forbidden in ("shell", "keychain", "file.read", "file.write"):
             self.assertFalse(any(forbidden in path_id for path_id in path_ids))
         self.assertNotIn("/api/action", targets)
-        self.assertNotIn("/api/configuration/import-apply", targets)
+        self.assertIn("/api/configuration/import-apply", targets)
         self.assertNotIn("agent.media.import", path_ids)
         self.assertNotIn("agent.tool.execute", path_ids)
         self.assertNotIn("agent.session.get", path_ids)

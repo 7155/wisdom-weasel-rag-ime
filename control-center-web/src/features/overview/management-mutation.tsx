@@ -210,7 +210,12 @@ export function ManagementMutationWorkflow<Context>({
       ) : null}
 
       {applyMutation.error ? (
-        <InlineNotice title="应用失败" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice>
+        <div className="mgmt-workflow__panel">
+          <InlineNotice title="应用失败" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice>
+          <div className="mgmt-workflow__buttons">
+            <Button onClick={() => reset()} size="small" variant="quiet">重新预览</Button>
+          </div>
+        </div>
       ) : null}
 
       {stage === 'receipt' && receipt && preview ? (

@@ -210,7 +210,7 @@ project does not claim a Linux, Fcitx5, IBus, or second InputMethodKit runtime.
 - Model weights, local databases, personal input history, API keys, build
   artifacts, and machine-local configuration must never be committed.
 
-Review the source and the native Control Center privacy settings before using
+Review the source and the Web Control Center privacy settings before using
 the project with sensitive material.
 
 ## Quick Start
@@ -256,6 +256,14 @@ scripts/prepare_squirrel_workspace.sh
 scripts/build_patched_squirrel.sh build
 ```
 
+Build or install the only supported Control Center, the React app hosted by the
+minimal WebKit shell:
+
+```bash
+scripts/build_control_center.sh
+scripts/build_control_center.sh install
+```
+
 Installing an input method changes user-level macOS state. Use an attended
 foreground session and verify the actual UI rather than trusting an HTTP
 response:
@@ -266,7 +274,7 @@ scripts/verify_squirrel_foreground_trace.sh
 ```
 
 The optional voice lane, Active RAG provider, and Notion Worker each have
-separate setup in the native Control Center; none is required for the local
+separate setup in the Web Control Center; none is required for the local
 core.
 
 ## Validation And Release Gates
@@ -297,7 +305,8 @@ See the [release-manifest template](release/release-manifest.example.json).
 | --- | --- |
 | `rag_ime/` | Python sidecar, local RAG/memory core, model runtime adapters, management API, and release audit. |
 | `squirrel-patches/` | Pinned Squirrel patch, Swift overlay, and patch application checks. |
-| `macos/RagImeControl/` | Native settings, diagnostics, knowledge, and review UI. |
+| `control-center-web/` | React settings, diagnostics, knowledge, planning, and Agent UI. |
+| `macos/RagImeControlWebHost/` | Minimal AppKit/WebKit host and allowlisted native bridge for the Web Control Center. |
 | `macos/RagImeVoice/` | Headless push-to-talk agent, microphone pipeline, and cursor insertion. |
 | `macos/Shared/` | Shared native Keychain and streaming-ASR protocol code. |
 | `scripts/` | Build, install, runtime, evaluation, release, and foreground-verification commands. |

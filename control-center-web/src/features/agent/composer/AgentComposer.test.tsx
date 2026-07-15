@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/primitives';
@@ -60,5 +60,41 @@ describe('AgentComposer macOS input methods', () => {
 
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps responsive controls together while the send action stays fixed', () => {
+    const { container } = render(
+      <TooltipProvider>
+        <AgentComposer
+          draft="准备发送"
+          attachments={[]}
+          session={previewSessions[0]}
+          commands={[]}
+          tools={[]}
+          toolCatalogStatus="ready"
+          imageSupport="supported"
+          busy={false}
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={() => {}}
+          onToolSelect={() => {}}
+          onSend={() => {}}
+          onStop={() => {}}
+          onModeChange={() => {}}
+          onModelChange={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    const controls = container.querySelector('.agent-composer__controls');
+    const view = within(container);
+    const send = view.getByRole('button', { name: '发送' });
+    expect(controls).toContainElement(view.getByRole('button', { name: '添加图片' }));
+    expect(controls).toContainElement(view.getByRole('button', { name: /对话权限/ }));
+    expect(controls).toContainElement(view.getByRole('button', { name: /受控工具/ }));
+    expect(controls).not.toContainElement(send);
+    expect(send.closest('.agent-composer__toolbar')).not.toBeNull();
   });
 });

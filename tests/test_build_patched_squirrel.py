@@ -126,7 +126,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("post_commit_pending_overlay_disabled", patch_text)
         self.assertIn("assistant_overlay_local_placeholder_suppressed", patch_text)
         self.assertIn("打开 RAG-IME 控制中心...", patch_text)
-        self.assertIn('urlForApplication(withBundleIdentifier: "com.rag-ime.control")', patch_text)
+        self.assertNotIn('urlForApplication(withBundleIdentifier: "com.rag-ime.control")', patch_text)
+        self.assertIn('Applications/RagImeControl.app', patch_text)
+        self.assertIn('rag-ime-control-web-build-marker.json', patch_text)
+        self.assertIn('marker?["ui"] as? String == "control-center-web"', patch_text)
         self.assertIn('performRagImeControlAction("stop_ai")', patch_text)
         self.assertIn('performRagImeControlAction("restart_sidecar")', patch_text)
         overlay_sources = root / "squirrel-patches" / "sources"

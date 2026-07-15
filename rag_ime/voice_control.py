@@ -19,6 +19,12 @@ VOICE_AGENT_STATUS_SCHEMA_VERSIONS = {
 MAX_HOTWORD_COUNT = 32
 MIN_HOTWORD_CHARACTERS = 2
 MAX_HOTWORD_CHARACTERS = 9
+VOICE_PROVIDER_SCHEMA_VERSION = "rag-ime.voice-provider.v1"
+VOICE_HOTKEY_SCHEMA_VERSION = "rag-ime.voice-hotkey.v1"
+VOICE_PROVIDERS = frozenset(
+    {"native_streaming", "realtime_websocket", "http_transcription"}
+)
+VOICE_HOTKEYS = frozenset({"middle_mouse", "right_option", "option_space"})
 
 # Inline BigASR context accepts mixed Chinese/English words and numeric forms
 # such as CO2. Keep punctuation restricted to common technical-name
@@ -164,6 +170,52 @@ class VoiceHotwordConfigStore:
             temporary_path.unlink(missing_ok=True)
 
 
+def read_voice_preferences(support_directory: str | Path) -> dict[str, str]:
+    support = Path(support_directory).expanduser()
+    return {
+        "provider": _read_voice_provider(support / "voice-provider.json"),
+        "hotkey": _read_voice_hotkey(support / "voice-hotkey.json"),
+    }
+
+
+def write_voice_preferences_from_settings(
+    support_directory: str | Path,
+    settings: Mapping[str, object],
+) -> None:
+    voice = settings.get("voice") if isinstance(settings.get("voice"), Mapping) else {}
+    provider = _text(voice.get("provider"))
+    hotkey = _text(voice.get("hotkey"))
+    if provider not in VOICE_PROVIDERS:
+        raise VoiceHotwordValidationError("voice.provider is unsupported")
+    if hotkey not in VOICE_HOTKEYS:
+        raise VoiceHotwordValidationError("voice.hotkey is unsupported")
+    support = Path(support_directory).expanduser()
+    _write_private_json(
+        support / "voice-provider.json",
+        {"schemaVersion": VOICE_PROVIDER_SCHEMA_VERSION, "provider": provider},
+    )
+    _write_private_json(
+        support / "voice-hotkey.json",
+        {"schemaVersion": VOICE_HOTKEY_SCHEMA_VERSION, "choice": hotkey},
+    )
+
+
+def _write_private_json(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.stem}-", suffix=".json", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(dict(payload), handle, ensure_ascii=False, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, 0o600)
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def voice_hotword_config_from_settings(settings: Mapping[str, object]) -> VoiceHotwordConfig:
     voice = settings.get("voice") if isinstance(settings.get("voice"), Mapping) else {}
     enabled = voice.get("hotwordsEnabled")
@@ -191,7 +243,8 @@ def read_voice_control_status(
     support = Path(support_directory).expanduser()
     hotwords = VoiceHotwordConfigStore(support).read_status()
     agent = _read_agent_status(support / "voice-agent-status.json")
-    provider = _read_voice_provider(support / "voice-provider.json")
+    preferences = read_voice_preferences(support)
+    provider = preferences["provider"]
     deployed = _deployed_recognition_contract(
         _resolved_voice_binary(support, binary_path=binary_path),
         agent=agent,
@@ -213,6 +266,7 @@ def read_voice_control_status(
         "schemaVersion": "rag-ime.voice-control-status.v1",
         "ok": hotwords.get("ok") is True,
         "provider": provider,
+        "hotkey": preferences["hotkey"],
         "hotwords": {
             **hotwords,
             "agentRunning": agent_running,
@@ -270,7 +324,18 @@ def _read_voice_provider(path: Path) -> str:
     if not isinstance(payload, Mapping):
         return "native_streaming"
     provider = _text(payload.get("provider"))
-    return provider if provider in {"native_streaming", "realtime_websocket", "http_transcription"} else "native_streaming"
+    return provider if provider in VOICE_PROVIDERS else "native_streaming"
+
+
+def _read_voice_hotkey(path: Path) -> str:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return "middle_mouse"
+    if not isinstance(payload, Mapping):
+        return "middle_mouse"
+    hotkey = _text(payload.get("choice"))
+    return hotkey if hotkey in VOICE_HOTKEYS else "middle_mouse"
 
 
 def _resolved_voice_binary(

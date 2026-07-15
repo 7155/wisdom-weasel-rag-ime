@@ -13,13 +13,18 @@ def read_keychain_secret(service: str, account: str) -> str:
     security = shutil.which("security")
     if not security or not service or not account:
         return ""
-    result = subprocess.run(
-        [security, "find-generic-password", "-s", service, "-a", account, "-w"],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=5,
-    )
+    try:
+        result = subprocess.run(
+            [security, "find-generic-password", "-s", service, "-a", account, "-w"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        # A locked or busy login keychain must not prevent the local service
+        # from starting. The caller treats an empty value as not configured.
+        return ""
     return result.stdout.strip() if result.returncode == 0 else ""
 
 

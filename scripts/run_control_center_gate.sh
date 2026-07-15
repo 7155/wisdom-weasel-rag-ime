@@ -8,7 +8,7 @@ python3 -m unittest \
   tests.test_settings_schema \
   tests.test_settings_store \
   tests.test_debug_management_api \
-  tests.test_native_control_center \
+  tests.test_control_center_cutover \
   tests.test_runtime_lifecycle_control_plane
 
 for obsolete in debug/index.html debug/app.js debug/styles.css; do

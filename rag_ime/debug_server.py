@@ -136,9 +136,11 @@ from .temporal_query import TemporalQuery, parse_temporal_query
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
 from .voice_control import (
     VoiceHotwordConfigStore,
+    read_voice_preferences,
     read_voice_control_status,
     resolve_voice_support_directory,
     voice_hotword_config_from_settings,
+    write_voice_preferences_from_settings,
 )
 
 
@@ -579,7 +581,7 @@ class DebugImeService:
             updated_by=updated_by,
             confirm_text=_string(payload.get("confirmText")),
         )
-        if any(key.startswith("voice.hotwords") for key in result.changed_keys):
+        if any(key.startswith("voice.") for key in result.changed_keys):
             persisted = self.settings_store.get_settings(include_sensitive=True)
             self._write_voice_hotwords_from_settings(persisted)
             result = SettingsUpdateResult(
@@ -723,7 +725,7 @@ class DebugImeService:
                 missing_db_changes = set(changed_keys) - set(stored_result.changed_keys)
                 if (
                     not set(stored_result.changed_keys).issubset(changed_keys)
-                    or any(not key.startswith("voice.hotwords") for key in missing_db_changes)
+                    or any(not key.startswith("voice.") for key in missing_db_changes)
                 ):
                     raise ManagementWorkError(
                         "revision_mismatch",
@@ -733,7 +735,7 @@ class DebugImeService:
                     conn,
                     include_sensitive=True,
                 )
-                if any(key.startswith("voice.hotwords") for key in changed_keys):
+                if any(key.startswith("voice.") for key in changed_keys):
                     self._write_voice_hotwords_from_settings(persisted_after)
                 after = self._settings_with_voice_hotword_authority(persisted_after)
                 after_flat = flatten_settings(after)
@@ -861,7 +863,7 @@ class DebugImeService:
                     conn,
                     include_sensitive=True,
                 )
-                if any(key.startswith("voice.hotwords") for key in setting_keys):
+                if any(key.startswith("voice.") for key in setting_keys):
                     self._write_voice_hotwords_from_settings(persisted_after)
                 effective_after = self._settings_with_voice_hotword_authority(persisted_after)
                 rollback_result = SettingsUpdateResult(
@@ -1137,6 +1139,7 @@ class DebugImeService:
         voice["hotwordsEnabled"] = status.get("enabled") is True
         words = status.get("words")
         voice["hotwords"] = list(words) if isinstance(words, list) else []
+        voice.update(read_voice_preferences(self.voice_support_directory))
         return result
 
     def _write_voice_hotwords_from_settings(
@@ -1144,6 +1147,7 @@ class DebugImeService:
         settings: Mapping[str, object],
     ) -> None:
         self.voice_hotwords.write(voice_hotword_config_from_settings(settings))
+        write_voice_preferences_from_settings(self.voice_support_directory, settings)
 
     def _sync_agent_settings(
         self,
@@ -6100,6 +6104,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, response)
             elif path == "/api/runtime/action":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.management.start_runtime_action(payload))
+            elif path == "/api/runtime/action/preview":
+                self._write_json(HTTPStatus.OK, self.service.management.runtime_action_preview(payload))
+            elif path == "/api/runtime/action/start":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.management.runtime_action_start(payload))
             elif path == "/api/memory/action":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
             elif path == "/api/memory/edit":

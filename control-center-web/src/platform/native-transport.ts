@@ -35,6 +35,12 @@ import {
   type KnowledgeDocumentSourcePayload,
   type KnowledgeDocumentSourceReadInput,
   type PickedFile,
+  type VoiceCredentialSaveRequest,
+  type VoiceCredentialStatus,
+  type VoiceNativeActionId,
+  type VoiceNativeActionReceipt,
+  type VoiceNativeStatus,
+  type VoiceProviderId,
 } from './transport';
 
 export interface NativeControlTransportOptions {
@@ -234,6 +240,31 @@ export class NativeControlTransport implements ControlTransport {
       throw new NativeBridgeCallError('external action returned an invalid receipt');
     }
     return result as unknown as ExternalActionReceipt;
+  }
+
+  async voiceCredentialStatus(provider: VoiceProviderId): Promise<VoiceCredentialStatus> {
+    const result = await this.call('voiceCredentialStatus', { provider });
+    return parseVoiceCredentialStatus(result, provider);
+  }
+
+  async saveVoiceCredentials(request: VoiceCredentialSaveRequest): Promise<VoiceCredentialStatus> {
+    assertVoiceCredentialSaveRequest(request);
+    const result = await this.call('voiceCredentialSave', request);
+    return parseVoiceCredentialStatus(result, request.provider);
+  }
+
+  async runVoiceAction(action: VoiceNativeActionId): Promise<VoiceNativeActionReceipt> {
+    assertVoiceNativeAction(action);
+    const result = await this.call('voiceAction', { action });
+    if (!isRecord(result) || result.action !== action || typeof result.accepted !== 'boolean') {
+      throw new NativeBridgeCallError('voice action returned an invalid receipt');
+    }
+    return {
+      action,
+      accepted: result.accepted,
+      status: parseVoiceNativeStatus(result.status),
+      ...(typeof result.error === 'string' && result.error ? { error: result.error } : {}),
+    };
   }
 
   dispose(): void {
@@ -456,7 +487,11 @@ function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
   ) {
     throw new NativeBridgeCallError('pickFiles returned an invalid file receipt');
   }
-  if (value.byteSize <= 0 || !Number.isSafeInteger(value.byteSize)) {
+  if (
+    !Number.isSafeInteger(value.byteSize)
+    || value.byteSize < 0
+    || (value.byteSize === 0 && options.purpose !== 'export-destination')
+  ) {
     throw new NativeBridgeCallError('pickFiles returned an invalid byte size');
   }
   if (options.purpose === 'attachment') {
@@ -472,6 +507,12 @@ function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
     ) {
       throw new NativeBridgeCallError('pickFiles returned an invalid managed image receipt');
     }
+  } else if (
+    typeof value.path !== 'string'
+    || !value.path.startsWith('/')
+    || value.path.includes('\0')
+  ) {
+    throw new NativeBridgeCallError('pickFiles returned an invalid local path receipt');
   }
   return value as unknown as PickedFile;
 }
@@ -726,6 +767,97 @@ function assertNativeKnowledgeDocumentImportInput(
     throw new TypeError('Native knowledge import maxFiles must be between 1 and 20');
   }
   return maxFiles;
+}
+
+const VOICE_PROVIDERS = new Set<VoiceProviderId>([
+  'native_streaming',
+  'realtime_websocket',
+  'http_transcription',
+]);
+const VOICE_NATIVE_ACTIONS = new Set<VoiceNativeActionId>([
+  'start_agent',
+  'stop_agent',
+  'reload_configuration',
+  'request_microphone_permission',
+  'request_accessibility_permission',
+  'open_microphone_settings',
+  'open_accessibility_settings',
+]);
+
+function parseVoiceCredentialStatus(
+  value: unknown,
+  provider: VoiceProviderId,
+): VoiceCredentialStatus {
+  if (!isRecord(value) || value.provider !== provider || typeof value.configured !== 'boolean') {
+    throw new NativeBridgeCallError('voice credential status returned an invalid receipt');
+  }
+  return { provider, configured: value.configured };
+}
+
+function assertVoiceCredentialSaveRequest(request: VoiceCredentialSaveRequest): void {
+  if (!isRecord(request)) throw new TypeError('Voice credentials are required');
+  const allowedKeys = new Set([
+    'provider',
+    'accessToken',
+    'appId',
+    'resourceId',
+    'endpoint',
+    'model',
+    'headersJson',
+  ]);
+  if (Object.keys(request).some((key) => !allowedKeys.has(key))) {
+    throw new TypeError('Voice credentials contained an unsupported field');
+  }
+  if (!VOICE_PROVIDERS.has(request.provider)) {
+    throw new TypeError('Voice provider is not allowlisted');
+  }
+  for (const [key, value, limit] of [
+    ['accessToken', request.accessToken ?? '', 16_384],
+    ['appId', request.appId, 512],
+    ['resourceId', request.resourceId, 512],
+    ['endpoint', request.endpoint, 2_048],
+    ['model', request.model, 512],
+    ['headersJson', request.headersJson, 16_384],
+  ] as const) {
+    if (typeof value !== 'string' || value.length > limit || value.includes('\u0000')) {
+      throw new TypeError(`Voice credential field ${key} is invalid`);
+    }
+  }
+  if (request.headersJson.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(request.headersJson);
+    } catch {
+      throw new TypeError('Voice request headers must be valid JSON');
+    }
+    if (!isRecord(parsed) || Object.values(parsed).some((value) => typeof value !== 'string')) {
+      throw new TypeError('Voice request headers must be a string dictionary');
+    }
+  }
+}
+
+function assertVoiceNativeAction(action: VoiceNativeActionId): void {
+  if (!VOICE_NATIVE_ACTIONS.has(action)) {
+    throw new TypeError('Voice action is not allowlisted');
+  }
+}
+
+function parseVoiceNativeStatus(value: unknown): VoiceNativeStatus {
+  if (
+    !isRecord(value)
+    || typeof value.running !== 'boolean'
+    || typeof value.state !== 'string'
+    || typeof value.statusText !== 'string'
+    || typeof value.microphoneAuthorization !== 'string'
+    || typeof value.accessibilityTrusted !== 'boolean'
+    || typeof value.hotkeyInstalled !== 'boolean'
+    || typeof value.hotkeyMode !== 'string'
+    || typeof value.updatedAtMs !== 'number'
+    || !Number.isSafeInteger(value.updatedAtMs)
+  ) {
+    throw new NativeBridgeCallError('voice action returned an invalid status');
+  }
+  return value as unknown as VoiceNativeStatus;
 }
 
 function booleanRecord(value: Record<string, unknown>): Record<string, boolean> {
