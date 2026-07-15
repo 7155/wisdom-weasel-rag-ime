@@ -159,6 +159,33 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 ControlAccessContext.native(),
             )
 
+    def test_agent_permission_mode_accepts_profile_and_explicit_allowlists(self) -> None:
+        for body in (
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "toolAllowlistMode": "profile",
+                "workspaceRoots": [],
+            },
+            {
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-v1",
+                "toolAllowlistMode": "explicit",
+                "allowedTools": ["workspace_search"],
+                "workspaceRoots": ["/tmp/project"],
+            },
+        ):
+            with self.subTest(body=body):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-agent-permission",
+                        path_id=ControlPathId.AGENT_SESSION_MODE_UPDATE.value,
+                        params={"sessionId": "session-1"},
+                        body=body,
+                    ),
+                    ControlAccessContext.native(),
+                )
+
     def test_configuration_file_migration_routes_are_strict_and_local_only(self) -> None:
         requests = (
             ControlRequest(

@@ -61,6 +61,7 @@ export function AgentFeature() {
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(() => isWideStatusViewport());
   const [error, setError] = useState('');
+  const railToggleRef = useRef<HTMLButtonElement>(null);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const ensure = useAgentLiveStore((state) => state.ensure);
@@ -89,28 +90,16 @@ export function AgentFeature() {
 
   const loadSessions = useCallback(async (preferredId = '') => {
     setLoading(true);
-    setToolCatalogStatus('loading');
     try {
-      const [sessionResponse, roleResponse, toolResult] = await Promise.all([
+      const [sessionResponse, roleResponse] = await Promise.all([
         transport.request({ pathId: 'agent.sessions.list', query: { limit: 100 } }),
         transport.request({ pathId: 'agent.roles.list' }),
-        transport.request({ pathId: 'agent.tools.list' }).then(
-          (value) => ({ ok: true as const, value }),
-          (reason: unknown) => ({ ok: false as const, reason }),
-        ),
       ]);
       const nextSessions = sessionItems(sessionResponse);
       const nextRoles = roleItems(roleResponse);
       const usableSessions = __CONTROL_PREVIEW__ && transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
       setSessions(usableSessions);
       if (nextRoles.length) setPersonas(nextRoles);
-      if (toolResult.ok) {
-        setTools(toolItems(toolResult.value));
-        setToolCatalogStatus('ready');
-      } else {
-        setTools([]);
-        setToolCatalogStatus('failed');
-      }
       const preferredSessionId = usableSessions.some((item) => item.id === preferredId) ? preferredId : '';
       const backendActiveId = activeSessionId(sessionResponse);
       const activeId = usableSessions.some((item) => item.id === backendActiveId) ? backendActiveId : '';
@@ -132,7 +121,6 @@ export function AgentFeature() {
       } else {
         setError(errorText(loadError));
       }
-      setToolCatalogStatus('failed');
     } finally {
       setLoading(false);
     }
@@ -250,6 +238,37 @@ export function AgentFeature() {
     if (!busy) setStopping(false);
   }, [busy]);
   useEffect(() => setStopping(false), [selectedId]);
+  useEffect(() => {
+    if (!railOpen || !isMobileViewport()) return;
+    function closeOnEscape(event: globalThis.KeyboardEvent): void {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      closeMobileRail(true);
+    }
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [railOpen]);
+
+  function closeMobileRail(restoreFocus: boolean): void {
+    setRailOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => railToggleRef.current?.focus());
+  }
+
+  function toggleRail(): void {
+    setRailOpen((value) => {
+      const next = !value;
+      if (next && isMobileViewport()) setStatusOpen(false);
+      return next;
+    });
+  }
+
+  function toggleStatus(): void {
+    setStatusOpen((value) => {
+      const next = !value;
+      if (next && isMobileViewport()) setRailOpen(false);
+      return next;
+    });
+  }
 
   function selectSession(sessionId: string): void {
     setSelectedId(sessionId);
@@ -590,12 +609,18 @@ export function AgentFeature() {
       && session.toolAllowlistMode !== 'explicit'
     ) return;
     try {
+      let workspaceRoots = selection.mode === 'coordinator' ? session.workspaceRoots : [];
+      if (selection.mode === 'coordinator' && workspaceRoots.length === 0) {
+        const selectedRoots = await pickWorkspaceRoots();
+        if (selectedRoots === null) return;
+        workspaceRoots = selectedRoots;
+      }
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.session.mode.update',
         params: { sessionId: session.id },
         body: {
           mode: selection.mode,
-          workspaceRoots: session.workspaceRoots,
+          workspaceRoots,
           toolProfileVersion: selection.toolProfileVersion,
           toolAllowlistMode: 'profile',
         },
@@ -608,6 +633,7 @@ export function AgentFeature() {
           toolProfileVersion: selection.toolProfileVersion,
           toolAllowlistMode: 'profile' as const,
           allowedTools: [],
+          workspaceRoots,
         };
       setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
       setToolCatalogStatus('loading');
@@ -622,6 +648,58 @@ export function AgentFeature() {
         setError(`权限已更新，但工具目录刷新失败。${errorText(catalogError)}`);
       }
     } catch (requestError) { setError(errorText(requestError)); }
+  }
+
+  async function pickWorkspaceRoots(): Promise<string[] | null> {
+    if (!transport.pickFiles) {
+      setError('当前平台不能选择本地工作区；请在桌面控制中心中配置运行协调权限。');
+      return null;
+    }
+    try {
+      const picked = await transport.pickFiles({
+        purpose: 'workspace-root',
+        multiple: true,
+        maxFiles: 4,
+      });
+      const roots = picked
+        .map((item) => item.path?.trim() ?? '')
+        .filter((path, index, values) => path.startsWith('/') && values.indexOf(path) === index);
+      if (!roots.length) return null;
+      return roots;
+    } catch (pickError) {
+      setError(`工作区选择失败。${errorText(pickError)}`);
+      return null;
+    }
+  }
+
+  async function manageWorkspaceRoots(): Promise<void> {
+    if (!session || session.mode !== 'coordinator') return;
+    const workspaceRoots = await pickWorkspaceRoots();
+    if (workspaceRoots === null) return;
+    try {
+      const explicit = session.toolAllowlistMode === 'explicit';
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: session.id },
+        body: {
+          mode: session.mode,
+          workspaceRoots,
+          toolProfileVersion: session.toolProfileVersion ?? 'control-center-v1',
+          toolAllowlistMode: explicit ? 'explicit' : 'profile',
+          ...(explicit ? { allowedTools: session.allowedTools ?? [] } : {}),
+        },
+      });
+      const updated = isRecord(response.session)
+        ? response.session as unknown as SessionSummary
+        : { ...session, workspaceRoots };
+      setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
+      const toolResponse = await transport.request({ pathId: 'agent.tools.list', query: { sessionId: session.id } });
+      setTools(toolItems(toolResponse));
+      setToolCatalogStatus('ready');
+      setError('');
+    } catch (requestError) {
+      setError(`工作区权限没有更新。${errorText(requestError)}`);
+    }
   }
 
   async function changeModel(provider: string, modelId: string, level: ThinkingLevel): Promise<void> {
@@ -677,19 +755,20 @@ export function AgentFeature() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
-      <SessionRail sessions={sessions} selectedId={selectedId} loading={loading} onSelect={selectSession} onCreate={() => void createSession()} />
+      <SessionRail sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} onSelect={selectSession} onCreate={() => void createSession()} onClose={() => closeMobileRail(true)} />
+      <button className="agent-rail-backdrop" aria-label="关闭对话列表" onClick={() => closeMobileRail(true)} type="button" />
       <section className="agent-conversation">
         <header className="agent-conversation__header">
-          <IconButton className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={() => setRailOpen((value) => !value)} tooltip />
+          <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
           <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${persona?.displayName ?? '智鼬'} · ${sessionPermissionLabel(session)}` : '选择一个对话'}</small></span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label={conversationForkAvailable ? '创建对话分支' : '当前运行时不支持对话分支'} icon={<GitBranch size={17} />} onClick={openForkDialog} disabled={!session || busy || !conversationForkAvailable} tooltip />
-            <IconButton className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((value) => !value)} tooltip />
+            <IconButton className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable} forkingEntryId={forkingEntryId} onForkFromMessage={(entryId, message) => { void forkFromMessage(entryId, message); }} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} /> : null}
-        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
       <button className="agent-status-backdrop" aria-label="关闭状态面板" onClick={() => setStatusOpen(false)} type="button" />
       <AgentStatusPanel sessionId={selectedId} open={statusOpen} onClose={() => setStatusOpen(false)} />

@@ -241,6 +241,7 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
     lastSequence: 12,
     resumeToken: `${sessionId}:12`,
     status: 'idle',
+    liveEvents: [],
     messages: [
       message(sessionId, userTurn, 'user-architecture', 'user', [
         block('user-text', 'text', { text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。' }),

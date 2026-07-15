@@ -36,12 +36,50 @@ describe('AgentEventReducer', () => {
 
     const recovered = applyAgentSnapshot(gap.state, {
       messages: [serverMessage('server-user', 'user', 'turn-snapshot', '恢复后的问题')],
+      liveEvents: [],
       lastSequence: 8,
       resumeToken: 'session-1:8',
     });
     expect(recovered.needsSnapshot).toBe(false);
     expect(recovered.lastSequence).toBe(8);
     expect(recovered.messageOrder).toEqual(['server-user']);
+  });
+
+  it('restores live tool and approval state from a snapshot without moving the SSE cursor', () => {
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [serverMessage('server-user', 'user', 'history:server-user', '执行检查')],
+      liveEvents: [
+        rawAgentEvent(41, 'tool_started', {
+          toolCallId: 'tool-live-1',
+          toolName: 'workspace_search',
+          summary: '正在搜索工作区',
+        }),
+        {
+          ...rawAgentEvent(42, 'approval_required', {
+            approvalId: 'approval-live-1',
+            payloadSha256: 'a'.repeat(64),
+            operation: '写入文件',
+          }),
+          turnId: 'approval:approval-live-1',
+        },
+      ],
+      lastSequence: 42,
+      resumeToken: 'session-1:42',
+      status: 'busy',
+    });
+
+    expect(recovered.lastSequence).toBe(42);
+    expect(recovered.resumeToken).toBe('session-1:42');
+    expect(recovered.activitiesById['tool-live-1']).toMatchObject({
+      kind: 'tool_started',
+      status: 'running',
+    });
+    expect(recovered.activitiesById['approval-live-1']).toMatchObject({
+      kind: 'approval_required',
+      status: 'waiting',
+      turnId: 'approval:approval-live-1',
+    });
+    expect(recovered.status).toBe('waiting');
   });
 
   it('merges an optimistic user message only by clientMessageId', () => {

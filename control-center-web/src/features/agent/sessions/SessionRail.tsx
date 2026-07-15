@@ -1,5 +1,5 @@
-import { MessageSquarePlus, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { MessageSquarePlus, Search, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { IconButton } from '@/components/primitives';
 import type { SessionSummary } from '../types';
 
@@ -7,29 +7,42 @@ export function SessionRail({
   sessions,
   selectedId,
   loading,
+  open = true,
   onSelect,
   onCreate,
+  onClose,
 }: {
   sessions: SessionSummary[];
   selectedId: string;
   loading: boolean;
+  open?: boolean;
   onSelect: (sessionId: string) => void;
   onCreate: () => void;
+  onClose?: () => void;
 }) {
   const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
   const filtered = useMemo(() => sessions.filter((session) => {
     const value = `${session.title} ${session.lastMessagePreview ?? ''}`.toLowerCase();
     return value.includes(query.trim().toLowerCase());
   }), [query, sessions]);
+  useEffect(() => {
+    if (open && window.matchMedia?.('(max-width: 760px)').matches) {
+      requestAnimationFrame(() => searchRef.current?.focus());
+    }
+  }, [open]);
   return (
-    <aside className="agent-session-rail" aria-label="连续对话">
+    <aside className="agent-session-rail" aria-label="连续对话" aria-hidden={!open || undefined}>
       <header>
         <div><strong>对话</strong><small>{sessions.length} 个连续对话</small></div>
-        <IconButton label="新建对话" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
+        <span className="agent-session-rail__actions">
+          <IconButton label="新建对话" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
+          {onClose ? <IconButton className="agent-session-rail__close" label="关闭对话列表" icon={<X size={17} />} onClick={onClose} /> : null}
+        </span>
       </header>
       <label className="agent-session-search">
         <Search size={14} aria-hidden="true" />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话" />
+        <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话" />
       </label>
       <div className="agent-session-list" aria-busy={loading || undefined}>
         {filtered.map((session) => (

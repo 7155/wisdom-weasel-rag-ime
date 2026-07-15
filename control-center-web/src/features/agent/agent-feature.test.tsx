@@ -550,6 +550,36 @@ describe('Agent experience', () => {
     })));
   });
 
+  it('restores a pending approval dialog directly from the session snapshot', async () => {
+    const snapshot = previewAgentSnapshot('session-preview');
+    const transport = productionTransport({
+      'agent.session.snapshot': {
+        ...snapshot,
+        status: 'busy',
+        liveEvents: [{
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: 'session-preview:snapshot:approval-snapshot-1',
+          sessionId: 'session-preview',
+          turnId: 'approval:approval-snapshot-1',
+          sequence: 12,
+          createdAtMs: Date.now(),
+          eventType: 'approval_required',
+          payload: {
+            approvalId: 'approval-snapshot-1',
+            payloadSha256: 'c'.repeat(64),
+            summary: '恢复后继续审批',
+            preview: { title: '恢复待审批操作', changes: [] },
+          },
+          resumeToken: 'session-preview:snapshot:approval-snapshot-1',
+        }],
+      },
+    });
+    renderAgent(transport);
+
+    expect(await screen.findByRole('dialog', { name: '恢复待审批操作' })).toBeInTheDocument();
+    expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('waiting');
+  });
+
   it('keeps approval failures visible inside the forced review dialog', async () => {
     const transport = featureTransport(
       undefined,
@@ -719,6 +749,9 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.commands')).toBe(true));
+    expect(transport.requests
+      .filter((call) => call.request.pathId === 'agent.tools.list')
+      .every((call) => call.request.query?.sessionId === 'session-preview')).toBe(true);
 
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     await user.click(screen.getByRole('option', { name: /\/model/ }));
@@ -740,7 +773,7 @@ describe('Agent experience', () => {
         params: { sessionId: 'session-preview' },
         body: {
           mode: 'assistant',
-          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          workspaceRoots: [],
           toolProfileVersion: 'subagent-readonly-v1',
           toolAllowlistMode: 'profile',
         },
@@ -776,6 +809,51 @@ describe('Agent experience', () => {
 
     await user.click(screen.getByRole('option', { name: /\/status/ }));
     expect(screen.getByLabelText('当前对话状态')).toHaveAttribute('data-open', 'true');
+  });
+
+  it('requires a native workspace choice before enabling coordinator mode', async () => {
+    const assistantSession = {
+      ...previewSessions[0]!,
+      mode: 'assistant' as const,
+      workspaceRoots: [],
+      toolProfileVersion: 'control-center-v1',
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, items: [assistantSession] },
+    );
+    const pickFiles = vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-directory-1',
+      name: 'learnA',
+      mimeType: 'application/octet-stream',
+      byteSize: 0,
+      path: '/Volumes/undo 4t/git/learnA',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '对话权限：受控助手' }));
+    const permissionPicker = document.querySelector('.agent-picker-popover');
+    expect(permissionPicker).not.toBeNull();
+    await user.click(within(permissionPicker as HTMLElement).getByRole('button', { name: /运行协调/ }));
+
+    await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
+      purpose: 'workspace-root',
+      multiple: true,
+      maxFiles: 4,
+    }));
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        body: expect.objectContaining({
+          mode: 'coordinator',
+          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          toolAllowlistMode: 'profile',
+        }),
+      }),
+    })));
+    expect(await screen.findByRole('button', { name: '对话权限：运行协调' })).toBeInTheDocument();
   });
 
   it('sends an advertised Pi RPC command through the prompt route', async () => {
@@ -1132,15 +1210,29 @@ describe('Agent experience', () => {
     expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.models')).toHaveLength(2);
   });
 
-  it('starts with the session rail closed on mobile and closes it after selection', async () => {
+  it('treats the mobile session rail as a focus-managed drawer', async () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
     const user = userEvent.setup();
     renderAgent(featureTransport());
     const feature = document.querySelector('.agent-feature');
     expect(feature).toHaveAttribute('data-rail-open', 'false');
 
-    await user.click(screen.getByRole('button', { name: '展开对话列表' }));
+    const toggle = screen.getByRole('button', { name: '展开对话列表' });
+    await user.click(toggle);
     expect(feature).toHaveAttribute('data-rail-open', 'true');
+    await waitFor(() => expect(screen.getByPlaceholderText('搜索对话')).toHaveFocus());
+
+    await user.keyboard('{Escape}');
+    expect(feature).toHaveAttribute('data-rail-open', 'false');
+    await waitFor(() => expect(toggle).toHaveFocus());
+
+    await user.click(toggle);
+    expect(document.querySelector('.agent-rail-backdrop')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
     expect(feature).toHaveAttribute('data-rail-open', 'false');
   });

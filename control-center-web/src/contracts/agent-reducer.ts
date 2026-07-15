@@ -1,5 +1,5 @@
 import type { UiAgentEvent, UiAgentMessage } from './ui-events';
-import { tryParseAgentMessage } from './validators';
+import { parseAgentEvent, tryParseAgentMessage } from './validators';
 
 export type AgentTurnStatus =
   | 'queued'
@@ -77,6 +77,7 @@ export interface ProjectionReduction<State> {
 
 export interface AgentSnapshot {
   messages: unknown[];
+  liveEvents: unknown[];
   lastSequence: number;
   resumeToken: string;
   status?: string;
@@ -318,10 +319,7 @@ export function applyAgentSnapshot(
   state: AgentProjectionState,
   snapshot: AgentSnapshot,
 ): AgentProjectionState {
-  const next = createAgentProjection(state.sessionId);
-  next.lastSequence = Math.max(0, snapshot.lastSequence);
-  next.lastEventId = snapshot.resumeToken;
-  next.resumeToken = snapshot.resumeToken;
+  let next = createAgentProjection(state.sessionId);
   next.status = snapshot.status ?? state.status;
 
   const serverClientIds = new Set<string>();
@@ -342,6 +340,32 @@ export function applyAgentSnapshot(
     if (parsed.value.clientMessageId) serverClientIds.add(parsed.value.clientMessageId);
   }
 
+  // The transcript restores durable conversation text; the bounded live event
+  // projection restores current reasoning, tool and approval state. Snapshot
+  // events are normalized locally so their historical sequence gaps do not
+  // trigger another snapshot. The server cursor below remains authoritative
+  // for the following SSE subscription.
+  for (const rawEvent of snapshot.liveEvents) {
+    try {
+      const parsed = parseAgentEvent(rawEvent);
+      if (parsed.sessionId !== state.sessionId) throw new TypeError('foreign snapshot event');
+      const hydrated = {
+        ...parsed,
+        sequence: next.lastSequence + 1,
+      };
+      next = reduceAgentEvent(next, hydrated).state;
+    } catch {
+      appendDiagnostic(next, {
+        id: `snapshot-event-invalid:${next.diagnostics.length}`,
+        streamKind: 'agent',
+        eventType: 'snapshot_event_invalid',
+        summary: 'A malformed snapshot event was skipped.',
+        sequence: snapshot.lastSequence,
+        payload: {},
+      });
+    }
+  }
+
   for (const [clientMessageId, messageId] of Object.entries(
     state.optimisticByClientMessageId,
   )) {
@@ -354,6 +378,11 @@ export function applyAgentSnapshot(
     attachMessageToTurn(next, optimistic);
   }
   reconcileSnapshotTurnStatuses(next);
+  next.lastSequence = Math.max(0, snapshot.lastSequence);
+  next.lastEventId = snapshot.resumeToken;
+  next.resumeToken = snapshot.resumeToken;
+  next.needsSnapshot = false;
+  next.gap = undefined;
   return next;
 }
 
@@ -366,6 +395,7 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
       : [];
   return {
     messages,
+    liveEvents: Array.isArray(payload.liveEvents) ? payload.liveEvents : [],
     lastSequence: integer(payload.lastSequence ?? payload.lastEventSequence),
     resumeToken: text(payload.resumeToken ?? payload.lastEventId),
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
@@ -460,6 +490,8 @@ function upsertMessage(
   clientMessageId = message.clientMessageId ?? '',
 ): void {
   if (message.role !== 'user' && message.role !== 'assistant') return;
+  const previous = state.messagesById[message.id];
+  if (previous && previous.turnId !== message.turnId) detachMessageFromTurn(state, previous);
   const optimisticId = clientMessageId
     ? state.optimisticByClientMessageId[clientMessageId]
     : undefined;
@@ -489,6 +521,12 @@ function upsertActivity(
     text(payload.toolCallId ?? payload.approvalId ?? payload.requestId) ||
     `${event.turnId}:${event.eventType}`;
   const previous = state.activitiesById[id];
+  if (previous && previous.turnId !== event.turnId) {
+    const previousTurn = state.turnsById[previous.turnId];
+    if (previousTurn) {
+      previousTurn.activityIds = previousTurn.activityIds.filter((activityId) => activityId !== id);
+    }
+  }
   const activity: AgentActivityProjection = {
     id,
     turnId: event.turnId,

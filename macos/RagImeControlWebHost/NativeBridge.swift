@@ -343,7 +343,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 throw NativeMediaImportError.rejected("File picker payload contained an unsupported field")
             }
             let purpose = try requiredString("purpose", in: payload)
-            guard ["attachment", "configuration-import", "restore", "export-destination", "knowledge-import"].contains(purpose) else {
+            guard ["attachment", "configuration-import", "restore", "export-destination", "workspace-root", "knowledge-import"].contains(purpose) else {
                 throw NativeMediaImportError.rejected("File picker purpose is not allowlisted")
             }
             let multiple: Bool
@@ -883,8 +883,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         multiple: Bool
     ) {
         let panel = NSOpenPanel()
-        panel.canChooseFiles = purpose != "export-destination"
-        panel.canChooseDirectories = purpose == "export-destination"
+        let choosesDirectory = purpose == "export-destination" || purpose == "workspace-root"
+        panel.canChooseFiles = !choosesDirectory
+        panel.canChooseDirectories = choosesDirectory
         panel.allowsMultipleSelection = multiple && maxFiles > 1
         panel.resolvesAliases = true
         panel.prompt = "选择"

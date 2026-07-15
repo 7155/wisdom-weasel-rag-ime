@@ -2,6 +2,7 @@ import {
   BrainCircuit,
   Check,
   ChevronRight,
+  FolderOpen,
   LockKeyhole,
   LoaderCircle,
   Network,
@@ -65,6 +66,7 @@ export function AgentComposer({
   onSend,
   onStop,
   onPermissionChange,
+  onWorkspaceRootsChange,
   onModelChange,
   modelPickerRequest = 0,
   permissionPickerRequest = 0,
@@ -93,6 +95,7 @@ export function AgentComposer({
   onSend: () => void;
   onStop: () => void;
   onPermissionChange: (selection: AgentPermissionSelection) => void;
+  onWorkspaceRootsChange: () => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
   permissionPickerRequest?: number;
@@ -305,7 +308,7 @@ export function AgentComposer({
               disabled={!session || busy || sending || imageSupport !== 'supported'}
               tooltip
             />
-            <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} />
+            <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
             <ToolPicker tools={tools} status={toolCatalogStatus} session={session} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
             <ModelTree catalog={catalog} disabled={busy || sending} requestOpen={modelPickerRequest} onChange={onModelChange} />
           </div>
@@ -380,6 +383,7 @@ function PermissionPicker({
   disabled,
   requestOpen,
   onChange,
+  onWorkspaceRootsChange,
 }: {
   session?: SessionSummary;
   persona?: AgentPersonaV1;
@@ -387,6 +391,7 @@ function PermissionPicker({
   disabled: boolean;
   requestOpen: number;
   onChange: (selection: AgentPermissionSelection) => void;
+  onWorkspaceRootsChange: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const mode = session?.mode ?? 'assistant';
@@ -427,6 +432,22 @@ function PermissionPicker({
             </button>
           );
         })}
+        {session?.mode === 'coordinator' ? (
+          <section className="agent-picker-popover__workspace" aria-label="授权工作区">
+            <FolderOpen size={16} />
+            <span>
+              <strong>授权工作区</strong>
+              <small title={session.workspaceRoots.join('\n')}>
+                {session.workspaceRoots.length > 0
+                  ? `${session.workspaceRoots.length} 个目录 · ${session.workspaceRoots.map(shortPath).join('、')}`
+                  : '尚未授权目录，工作区工具无法运行'}
+              </small>
+            </span>
+            <Button size="small" variant="quiet" disabled={disabled} onClick={onWorkspaceRootsChange}>
+              {session.workspaceRoots.length > 0 ? '更改' : '选择'}
+            </Button>
+          </section>
+        ) : null}
         {session?.toolAllowlistMode === 'explicit' ? <p className="agent-picker-popover__note">当前会话还受 {session.allowedTools?.length ?? 0} 项自定义工具上限约束；选择预设后恢复该预设的完整工具范围。</p> : null}
       </PopoverContent>
     </Popover>
@@ -480,6 +501,11 @@ function permissionPreset(mode: SessionSummary['mode'], profile: string): Permis
     };
   }
   return mode === 'coordinator' ? PERMISSION_PRESETS[2]! : PERMISSION_PRESETS[0]!;
+}
+
+function shortPath(path: string): string {
+  const parts = path.split('/').filter(Boolean);
+  return parts.at(-1) || path;
 }
 
 function toolAvailableForPolicy(

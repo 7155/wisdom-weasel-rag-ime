@@ -74,6 +74,7 @@ export interface FilePickOptions {
     | 'configuration-import'
     | 'restore'
     | 'export-destination'
+    | 'workspace-root'
     | 'knowledge-import';
   /** Required for attachment imports; the native host binds every receipt to this Agent session. */
   sessionId?: string;

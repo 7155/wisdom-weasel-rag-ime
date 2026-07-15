@@ -112,6 +112,7 @@ class PortabilityTransport extends MockControlTransport {
         byteSize: 0,
         path: '/trusted/Backups',
       }],
+      'workspace-root': [],
       restore: [{
         id: 'backup-file-1',
         name: 'backup.ragime-backup',

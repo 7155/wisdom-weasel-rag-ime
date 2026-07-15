@@ -32,6 +32,7 @@ describe('AgentComposer macOS input methods', () => {
             onSend={onSend}
             onStop={() => {}}
             onPermissionChange={() => {}}
+            onWorkspaceRootsChange={() => {}}
             onModelChange={() => {}}
           />
         </TooltipProvider>
@@ -85,6 +86,7 @@ describe('AgentComposer macOS input methods', () => {
           onSend={() => {}}
           onStop={() => {}}
           onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
           onModelChange={() => {}}
         />
       </TooltipProvider>,

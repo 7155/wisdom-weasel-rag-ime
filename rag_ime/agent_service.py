@@ -945,12 +945,61 @@ class AgentService:
         # Capture the event cursor before asking Pi for its snapshot. Events that
         # arrive during the RPC are replayed; stable Pi message IDs deduplicate
         # any overlap without losing a live update.
+        session = self.sessions.get(session_id)
         last_sequence = self.sessions.max_event_sequence(session_id)
+        messages = self.runtime.messages(session_id)
+        replayed, _gap = self.events.replay(session_id)
+        live_events = [
+            event.to_payload()
+            for event in replayed
+            if event.sequence <= last_sequence
+        ]
+        visible_approval_ids = {
+            str(event.get("payload", {}).get("approvalId") or "")
+            for event in live_events
+            if event.get("eventType") == "approval_required"
+            and isinstance(event.get("payload"), Mapping)
+        }
+        for approval in reversed(
+            self.sessions.list_approvals(
+                session_id=session_id,
+                state="pending",
+                limit=100,
+            )
+        ):
+            approval_id = str(approval.get("approvalId") or "")
+            if not approval_id or approval_id in visible_approval_ids:
+                continue
+            # Approval rows are durable while the event replay buffer is not.
+            # Recreate only the public waiting-state projection; resolving the
+            # approval still goes through the authoritative approval endpoint.
+            event_id = f"{session_id}:snapshot:{approval_id}"
+            live_events.append(
+                AgentEventEnvelope(
+                    event_id=event_id,
+                    session_id=session_id,
+                    turn_id=f"approval:{approval_id}",
+                    sequence=max(1, last_sequence),
+                    created_at_ms=int(approval.get("requestedAtMs") or 0),
+                    event_type="approval_required",
+                    payload={
+                        **approval,
+                        "toolName": str(approval.get("toolId") or ""),
+                        "summary": str(approval.get("operation") or "需要批准的工具操作"),
+                    },
+                    resume_token=event_id,
+                ).to_payload()
+            )
+        # The runtime snapshot may have advanced the durable session status.
+        # Read it again so a refresh never paints an older idle/busy state.
+        session = self.sessions.get(session_id)
         return {
             "schemaVersion": "rag-ime.agent-message-list.v1",
             "ok": True,
             "sessionId": session_id,
-            "items": self.runtime.messages(session_id),
+            "items": messages,
+            "status": str(session.get("status") or "idle"),
+            "liveEvents": live_events,
             "lastSequence": last_sequence,
             "resumeToken": f"{session_id}:{last_sequence}" if last_sequence else "",
         }

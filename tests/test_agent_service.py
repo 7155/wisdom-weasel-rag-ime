@@ -467,6 +467,61 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(response["lastSequence"], event.sequence)
         self.assertEqual(response["resumeToken"], event.resume_token)
+        self.assertEqual(response["status"], "idle")
+        self.assertEqual(response["liveEvents"], [event.to_payload()])
+
+    def test_message_snapshot_reconstructs_durable_pending_approval(self) -> None:
+        session = self.service.create_session({"title": "待审批恢复"})["session"]
+        session_id = str(session["id"])
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_write_file",
+            operation="写入 README.md",
+            payload_sha256="a" * 64,
+            preview={"path": "README.md"},
+            risk_level="R2",
+            ttl_ms=120_000,
+        )
+        with patch.object(self.service.runtime, "messages", return_value=[]):
+            response = self.service.messages(session_id)
+
+        pending = [
+            event
+            for event in response["liveEvents"]
+            if event["eventType"] == "approval_required"
+        ]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["payload"]["approvalId"], approval["approvalId"])
+        self.assertEqual(pending[0]["payload"]["payloadSha256"], "a" * 64)
+        self.assertEqual(pending[0]["turnId"], f"approval:{approval['approvalId']}")
+
+    def test_message_snapshot_does_not_duplicate_replayed_pending_approval(self) -> None:
+        session = self.service.create_session({"title": "审批事件去重"})["session"]
+        session_id = str(session["id"])
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_write_file",
+            operation="写入 README.md",
+            payload_sha256="b" * 64,
+            preview={"path": "README.md"},
+            risk_level="R2",
+            ttl_ms=120_000,
+        )
+        event = self.service.events.publish(
+            session_id,
+            "approval_required",
+            approval,
+            turn_id="turn:approval",
+        )
+        with patch.object(self.service.runtime, "messages", return_value=[]):
+            response = self.service.messages(session_id)
+
+        pending = [
+            item
+            for item in response["liveEvents"]
+            if item["eventType"] == "approval_required"
+        ]
+        self.assertEqual(pending, [event.to_payload()])
 
     def test_model_catalog_and_selection_are_owned_by_pi_session(self) -> None:
         session = self.service.create_session({"title": "模型切换"})["session"]
