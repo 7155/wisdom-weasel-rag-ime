@@ -8,11 +8,13 @@ export type GraphSelection = { type: 'node'; id: string } | { type: 'edge'; id: 
 
 export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
   edges,
+  mode,
   nodes,
   onSelect,
   selection,
 }: {
   edges: readonly KnowledgeGraphEdge[];
+  mode: 'semantic' | 'structure';
   nodes: readonly KnowledgeGraphNode[];
   onSelect: (selection: GraphSelection) => void;
   selection: GraphSelection;
@@ -172,7 +174,7 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
   const ready = readyVersion > 0;
 
   return (
-    <div className="knowledge-graph__canvas" aria-label="交互式知识图谱画布" data-ready={readyVersion > 0 || undefined} data-renderer="g6">
+    <div className="knowledge-graph__canvas" aria-label="交互式知识图谱画布" data-edge-mode={mode} data-ready={readyVersion > 0 || undefined} data-renderer="g6">
       <div className="knowledge-graph__g6" ref={containerRef} />
       <div className="knowledge-graph__canvas-controls" aria-label="图谱视口控制">
         <Button disabled={!ready} leadingIcon={<ZoomIn size={14} />} onClick={() => invoke((graph) => graph.zoomBy(1.25, { duration: 120 }))} size="small" title={ready ? '放大图谱' : '图谱正在加载'} variant="quiet">放大</Button>

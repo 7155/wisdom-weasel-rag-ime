@@ -121,7 +121,7 @@ export function KnowledgeGraphPanel({
       {graphQuery.isPending ? <p className="knowledge-detail-loading">正在加载知识图谱…</p> : null}
       {graph && (graph.nodes.length || view === 'status') ? (
         <div className="knowledge-graph__workspace" data-has-selection={Boolean(selection) || undefined}>
-          {view === 'graph' ? <InteractiveGraphCanvas edges={canvasEdges} nodes={canvasNodes} onSelect={setSelection} selection={selection} /> : null}
+          {view === 'graph' ? <InteractiveGraphCanvas edges={canvasEdges} key={showStructure ? 'structure' : 'semantic'} mode={showStructure ? 'structure' : 'semantic'} nodes={canvasNodes} onSelect={setSelection} selection={selection} /> : null}
           {view === 'nodes' ? <GraphList mode="nodes" edges={graph.edges} nodes={graph.nodes} onSelect={setSelection} selection={selection} /> : null}
           {view === 'edges' ? <GraphList mode="edges" edges={graph.edges} nodes={graph.nodes} onSelect={setSelection} selection={selection} /> : null}
           {view === 'status' ? <GraphBuildStatus base={base} extractorMode={extractorMode} graph={graph} rebuilding={rebuilding} onRebuild={() => rebuild.mutate()} /> : null}
