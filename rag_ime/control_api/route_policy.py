@@ -62,6 +62,12 @@ class ControlPathId(str, Enum):
     AGENT_ROLES_LIST = "agent.roles.list"
     AGENT_ROLES_CREATE = "agent.roles.create"
     AGENT_TOOLS_LIST = "agent.tools.list"
+    AGENT_EXTENSIONS_LIST = "agent.extensions.list"
+    AGENT_EXTENSIONS_CREATE = "agent.extensions.create"
+    AGENT_EXTENSIONS_PROPOSALS = "agent.extensions.proposals"
+    AGENT_EXTENSIONS_VALIDATE = "agent.extensions.validate"
+    AGENT_EXTENSIONS_PREVIEW = "agent.extensions.preview"
+    AGENT_EXTENSIONS_APPLY = "agent.extensions.apply"
     AGENT_APPROVALS_LIST = "agent.approvals.list"
     AGENT_APPROVAL_GET = "agent.approval.get"
     AGENT_APPROVAL_DECIDE = "agent.approval.decide"
@@ -501,6 +507,12 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROLES_LIST, ControlMethod.GET, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_ROLES_CREATE, ControlMethod.POST, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, required_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body_values={"timelineModel": {"luna", "terra", "sol"}}),
         _route(ControlPathId.AGENT_TOOLS_LIST, ControlMethod.GET, "/api/agent/tools", "/control/v1/agent/tools", query={"sessionId"}),
+        _route(ControlPathId.AGENT_EXTENSIONS_LIST, ControlMethod.GET, "/api/agent/extensions", "/control/v1/agent/extensions"),
+        _route(ControlPathId.AGENT_EXTENSIONS_CREATE, ControlMethod.POST, "/api/agent/extensions/drafts", "/control/v1/agent/extensions/drafts", body={"draftId", "manifest", "files"}, required_body={"draftId", "manifest", "files"}),
+        _route(ControlPathId.AGENT_EXTENSIONS_PROPOSALS, ControlMethod.GET, "/api/agent/extensions/proposals", "/control/v1/agent/extensions/proposals"),
+        _route(ControlPathId.AGENT_EXTENSIONS_VALIDATE, ControlMethod.POST, "/api/agent/extensions/validate", "/control/v1/agent/extensions/validate", body={"sourcePath"}, required_body={"sourcePath"}),
+        _route(ControlPathId.AGENT_EXTENSIONS_PREVIEW, ControlMethod.POST, "/api/agent/extensions/preview", "/control/v1/agent/extensions/preview", body={"action", "validationToken", "pluginId", "enable"}, required_body={"action"}),
+        _route(ControlPathId.AGENT_EXTENSIONS_APPLY, ControlMethod.POST, "/api/agent/extensions/apply", "/control/v1/agent/extensions/apply", body={"previewToken", "payloadSha256", "confirmText"}, required_body={"previewToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.AGENT_APPROVALS_LIST, ControlMethod.GET, "/api/agent/approvals", "/control/v1/agent/approvals", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, query={"sessionId", "state", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_APPROVAL_GET, ControlMethod.GET, "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, params=_APPROVAL),
         _route(ControlPathId.AGENT_APPROVAL_DECIDE, ControlMethod.POST, "/api/agent/approvals/{approvalId}/decision", "/control/v1/agent/approvals/{approvalId}/decision", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, params=_APPROVAL, body={"decision", "payloadSha256"}, required_body={"decision", "payloadSha256"}, remote_body={"decision", "payloadSha256"}, remote_body_values={"decision": {"approve", "reject"}}),

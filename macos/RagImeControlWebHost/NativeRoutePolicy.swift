@@ -321,7 +321,9 @@ final class NativeRoutePolicy {
         }
 
         let useGateway = preferGateway && definition.gatewayPath != nil
-        let template = useGateway ? definition.gatewayPath! : definition.localPath
+        let template = useGateway && scope == .remote
+            ? definition.gatewayPath!
+            : definition.localPath
         let baseURL = useGateway ? gatewayBaseURL : sidecarBaseURL
         let parameterNames = Set(template.split(separator: "/").compactMap { component -> String? in
             guard component.hasPrefix("{"), component.hasSuffix("}") else { return nil }

@@ -346,6 +346,22 @@ struct NativeRoutePolicyTests {
             body: nil
         )
         expect(localKnowledgeHealth.request.url?.port == 8766, "local-only knowledge route falls back from gateway")
+        let localAgentTools = try gatewayPreferredPolicy.resolveRequest(
+            pathId: "agent.tools.list",
+            parameters: [:],
+            query: [:],
+            body: nil
+        )
+        expect(localAgentTools.request.url?.port == 8768, "local Agent route uses the dedicated gateway")
+        expect(localAgentTools.request.url?.path == "/api/agent/tools", "local Agent gateway uses the live HTTP surface")
+        let remoteHealth = try gatewayPreferredPolicy.resolveRequest(
+            pathId: "system.health",
+            parameters: [:],
+            query: [:],
+            body: nil,
+            scope: .remote
+        )
+        expect(remoteHealth.request.url?.path == "/control/v1/health", "remote gateway keeps the facade route")
 
         expectThrows("unknown pathId") {
             _ = try policy.resolveRequest(pathId: "debug.anything", parameters: [:], query: [:], body: nil)
