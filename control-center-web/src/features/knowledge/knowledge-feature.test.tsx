@@ -31,7 +31,8 @@ describe('document knowledge library', () => {
     const user = userEvent.setup();
     renderKnowledge(transport);
 
-    expect(await screen.findByRole('heading', { name: '知识库', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('complementary', { name: '文档知识库' })).toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveClass('knowledge-feature');
     expect(await screen.findByRole('heading', { name: 'Agent Runtime 资料', level: 2 })).toBeInTheDocument();
     expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
     expect(transport.requests.some((call) => call.request.pathId.startsWith('memory.'))).toBe(false);

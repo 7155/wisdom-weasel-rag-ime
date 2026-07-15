@@ -35,7 +35,6 @@ import {
 } from '@/components/primitives';
 import {
   InlineNotice,
-  ManagementPage,
   QueryState,
   StatusBadge,
   publicErrorText,
@@ -257,24 +256,16 @@ export function KnowledgeFeature() {
   const worker = workerState(queries.worker.data, queries.worker.error);
 
   return (
-    <ManagementPage
-      actions={(
-        <>
-          <Button leadingIcon={<FolderPlus size={15} />} onClick={() => setCreateOpen(true)} size="small" variant="primary">新建知识库</Button>
-          <IconButton icon={<RefreshCw size={15} />} label="刷新知识库" onClick={refresh} size="small" tooltip />
-        </>
-      )}
-      description="独立加载大型文档资料，跟踪解析和索引，并控制哪些知识可由 Agent 检索。"
-      eyebrow="外部文档"
-      routeId="knowledge"
-      title="知识库"
-    >
+    <main className="knowledge-feature" data-route-id="knowledge">
+      <h1 className="knowledge-feature__title">知识库</h1>
       <QueryState error={pageError} isPending={queries.bases.isPending} onRetry={refresh}>
         <div className="knowledge-library" data-empty={!bases.length || undefined}>
           <KnowledgeBaseRail
             bases={bases}
             onCreate={() => setCreateOpen(true)}
+            onRefresh={refresh}
             onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); setTab('materials'); }}
+            refreshing={queries.bases.isFetching || queries.worker.isFetching}
             selectedBaseId={selectedBaseId}
             worker={worker}
           />
@@ -442,20 +433,24 @@ export function KnowledgeFeature() {
         onConfirm={(parser) => { if (reparseDocument) retryMutation.mutate({ document: reparseDocument, parser }); }}
         onOpenChange={(open) => { if (!open) { setReparseDocument(null); retryMutation.reset(); } }}
       />
-    </ManagementPage>
+    </main>
   );
 }
 
 function KnowledgeBaseRail({
   bases,
   onCreate,
+  onRefresh,
   onSelect,
+  refreshing,
   selectedBaseId,
   worker,
 }: {
   bases: readonly DocumentKnowledgeBase[];
   onCreate: () => void;
+  onRefresh: () => void;
   onSelect: (baseId: string) => void;
+  refreshing: boolean;
   selectedBaseId: string;
   worker: WorkerState;
 }) {
@@ -463,7 +458,10 @@ function KnowledgeBaseRail({
     <aside className="knowledge-base-rail" aria-label="文档知识库">
       <header>
         <div><strong>知识库</strong><span>{bases.length} 个独立库</span></div>
-        <IconButton icon={<FolderPlus size={15} />} label="新建知识库" onClick={onCreate} size="small" tooltip />
+        <div className="knowledge-base-rail__actions">
+          <IconButton disabled={refreshing} icon={<RefreshCw size={14} />} label="刷新知识库" onClick={onRefresh} size="small" tooltip />
+          <IconButton icon={<FolderPlus size={15} />} label="新建知识库" onClick={onCreate} size="small" tooltip />
+        </div>
       </header>
       <div className="knowledge-base-rail__worker" data-state={worker.tone}>
         <i aria-hidden="true" />
@@ -476,6 +474,7 @@ function KnowledgeBaseRail({
           data={bases}
           itemContent={(_index, base) => (
             <button
+              aria-label={`${base.name}，${base.documentCount} 个文件，${base.chunkCount} 个片段`}
               aria-current={base.id === selectedBaseId ? 'page' : undefined}
               className="knowledge-base-row"
               data-selected={base.id === selectedBaseId || undefined}
