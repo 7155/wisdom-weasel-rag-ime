@@ -150,6 +150,33 @@ describe('Agent tool activity details', () => {
     expect(container).not.toHaveTextContent('raw progress content');
   });
 
+  it('renders retained tool checkpoints and the completed duration', () => {
+    const activity: AgentActivityProjection = {
+      ...toolActivity('tool_finished', 'completed', {
+        toolCallId: 'call-progress-history',
+        toolName: 'ime_knowledge',
+        result: { details: { result: { summary: '知识检索完成' } } },
+        progressHistory: [
+          { eventId: 'event-1', kind: 'tool_started', status: 'running', summary: '开始检索知识库', createdAtMs: 1_000 },
+          { eventId: 'event-2', kind: 'tool_progress', status: 'running', summary: '已找到候选来源', createdAtMs: 2_000 },
+          { eventId: 'event-3', kind: 'tool_finished', status: 'completed', summary: '知识检索完成', createdAtMs: 4_500 },
+        ],
+      }),
+      createdAtMs: 1_000,
+      updatedAtMs: 4_500,
+    };
+
+    const { container } = render(<ActivitySummary activities={[activity]} />);
+    openActivity(container);
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('完成 · 3秒');
+    expect(dialog).toHaveTextContent('过程记录');
+    expect(dialog).toHaveTextContent('+0秒 · 开始检索知识库 · 进行中');
+    expect(dialog).toHaveTextContent('+1秒 · 已找到候选来源 · 进行中');
+    expect(dialog).toHaveTextContent('+3秒 · 知识检索完成 · 完成');
+  });
+
   it('summarizes document knowledge citations without expanding raw chunks or paths', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-document-knowledge',

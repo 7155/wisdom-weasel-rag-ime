@@ -17,7 +17,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { forwardRef, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -34,15 +34,17 @@ import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-ru
 import { useAgentLiveStore } from '../state/live-store';
 import { publicToolResultView } from '../timeline/public-tool-result';
 
-export function AgentStatusPanel({
-  sessionId,
-  open,
-  onClose,
-}: {
+export const AgentStatusPanel = forwardRef<HTMLElement, {
   sessionId: string;
   open: boolean;
+  modal?: boolean;
   onClose: () => void;
-}) {
+}>(function AgentStatusPanel({
+  sessionId,
+  open,
+  modal = false,
+  onClose,
+}, ref) {
   const transport = useControlTransport();
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
@@ -62,7 +64,17 @@ export function AgentStatusPanel({
   const runs = useMemo(() => subagentRuns(subagents.data), [subagents.data]);
 
   return (
-    <aside className="agent-status-panel" data-open={open} aria-hidden={!open} inert={open ? undefined : true} aria-label="当前对话状态">
+    <aside
+      ref={ref}
+      className="agent-status-panel"
+      data-open={open}
+      aria-hidden={!open}
+      aria-label="当前对话状态"
+      aria-modal={modal || undefined}
+      inert={open ? undefined : true}
+      role={modal ? 'dialog' : undefined}
+      tabIndex={-1}
+    >
       <header>
         <span><strong>状态</strong><small>{view.turn ? turnStatusLabel(view.turn.status) : '等待新回合'}</small></span>
         <IconButton icon={<PanelRightClose size={17} />} label="收起状态面板" onClick={onClose} tooltip />
@@ -126,7 +138,7 @@ export function AgentStatusPanel({
       </div>
     </aside>
   );
-}
+});
 
 function StatusSection({
   icon: Icon,

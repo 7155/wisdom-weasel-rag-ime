@@ -299,11 +299,14 @@
 .agent-picker-popover > header span { display: grid; gap: 1px; }
 .agent-picker-popover > header strong { font-size: 13px; }
 .agent-picker-popover > header small { color: var(--color-text-tertiary); font-size: 11px; }
-.agent-picker-popover > button { display: grid; width: 100%; min-height: 48px; grid-template-columns: 20px minmax(0, 1fr) 16px; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: var(--radius-1); background: transparent; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
-.agent-picker-popover > button:active:not(:disabled) { box-shadow: var(--shadow-control-press); transform: scale(var(--scale-press)); }
-.agent-picker-popover > button span { display: grid; gap: 2px; }
-.agent-picker-popover > button strong { font-size: 12px; }
-.agent-picker-popover > button small { color: var(--color-text-tertiary); font-size: 11px; }
+.agent-picker-popover__options { display: grid; }
+.agent-picker-popover__option { display: grid; width: 100%; min-height: 48px; grid-template-columns: 20px minmax(0, 1fr) 16px; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: var(--radius-1); background: transparent; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
+.agent-picker-popover__option:active:not(:disabled) { box-shadow: var(--shadow-control-press); transform: scale(var(--scale-press)); }
+.agent-picker-popover__option:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.agent-picker-popover__option[data-state='checked'] { background: var(--color-surface-hover); }
+.agent-picker-popover__option span { display: grid; gap: 2px; }
+.agent-picker-popover__option strong { font-size: 12px; }
+.agent-picker-popover__option small { color: var(--color-text-tertiary); font-size: 11px; }
 .agent-picker-popover__workspace { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 4px; padding: 8px; border-top: 1px solid var(--color-border); }
 .agent-picker-popover__workspace > span { display: grid; min-width: 0; gap: 2px; }
 .agent-picker-popover__workspace strong { font-size: 12px; }
@@ -478,7 +481,7 @@
 @media (hover: hover) and (pointer: fine) {
   .agent-session-row:hover,
   .agent-command-palette > button:hover,
-  .agent-picker-popover > button:hover:not(:disabled),
+  .agent-picker-popover__option:hover:not(:disabled),
   .agent-tool-picker button:hover:not(:disabled),
   .agent-model-tree summary:hover,
   .agent-model-tree__levels button:hover:not(:disabled) {

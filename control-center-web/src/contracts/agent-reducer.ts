@@ -30,6 +30,14 @@ export interface AgentActivityProjection {
   updatedAtMs: number;
 }
 
+export interface AgentToolProgressEntry {
+  eventId: string;
+  kind: 'tool_started' | 'tool_progress' | 'tool_finished';
+  status: AgentActivityProjection['status'];
+  summary: string;
+  createdAtMs: number;
+}
+
 export interface ProjectionDiagnostic {
   id: string;
   streamKind: 'agent' | 'room';
@@ -527,13 +535,14 @@ function upsertActivity(
       previousTurn.activityIds = previousTurn.activityIds.filter((activityId) => activityId !== id);
     }
   }
+  const activityPayload = mergeActivityPayload(previous, event, payload, status);
   const activity: AgentActivityProjection = {
     id,
     turnId: event.turnId,
     kind: event.eventType,
     status,
     summary: activitySummary(payload, event.eventType),
-    payload,
+    payload: activityPayload,
     createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
     updatedAtMs: event.createdAtMs,
   };
@@ -541,6 +550,103 @@ function upsertActivity(
   state.activitiesById[id] = activity;
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
+}
+
+function mergeActivityPayload(
+  previous: AgentActivityProjection | undefined,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+  status: AgentActivityProjection['status'],
+): Record<string, unknown> {
+  if (!isToolActivityEvent(event.eventType)) return payload;
+
+  const previousPayload = previous && isToolActivityEvent(previous.kind)
+    ? previous.payload
+    : {};
+  const history = agentToolProgressHistory(previousPayload.progressHistory);
+  const nextEntry: AgentToolProgressEntry = {
+    eventId: event.eventId,
+    kind: event.eventType,
+    status,
+    summary: toolProgressSummary(payload, previousPayload, event.eventType, status),
+    createdAtMs: event.createdAtMs,
+  };
+  const progressHistory = history.some((entry) => entry.eventId === event.eventId)
+    ? history
+    : [...history, nextEntry].slice(-20);
+
+  // These events are updates for one logical tool call. Keep stable metadata
+  // and prior partial results while the latest event advances its status.
+  return {
+    ...previousPayload,
+    ...payload,
+    progressHistory,
+  };
+}
+
+export function agentToolProgressHistory(value: unknown): AgentToolProgressEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): AgentToolProgressEntry[] => {
+    const entry = record(item);
+    const kind = text(entry.kind);
+    const status = text(entry.status);
+    if (
+      !['tool_started', 'tool_progress', 'tool_finished'].includes(kind)
+      || !['running', 'waiting', 'completed', 'failed'].includes(status)
+    ) return [];
+    return [{
+      eventId: text(entry.eventId),
+      kind: kind as AgentToolProgressEntry['kind'],
+      status: status as AgentToolProgressEntry['status'],
+      summary: boundedToolProgressText(entry.summary),
+      createdAtMs: finiteTimestamp(entry.createdAtMs),
+    }];
+  }).filter((entry) => entry.eventId && entry.createdAtMs > 0);
+}
+
+function toolProgressSummary(
+  payload: Record<string, unknown>,
+  previousPayload: Record<string, unknown>,
+  eventType: AgentToolProgressEntry['kind'],
+  status: AgentActivityProjection['status'],
+): string {
+  const carrier = record(payload.result ?? payload.partialResult);
+  const details = record(carrier.details);
+  const domain = record(details.result ?? carrier.result);
+  const explicit = boundedToolProgressText(
+    domain.summary
+      ?? details.summary
+      ?? carrier.summary
+      ?? payload.summary
+      ?? payload.message
+      ?? payload.label,
+  );
+  if (explicit) return explicit;
+  const toolName = boundedToolProgressText(
+    payload.toolName ?? payload.toolId ?? previousPayload.toolName ?? previousPayload.toolId,
+  ) || '工具';
+  if (status === 'failed') return `${toolName}执行失败`;
+  if (eventType === 'tool_finished') return `${toolName}执行完成`;
+  if (eventType === 'tool_started') return `${toolName}已开始`;
+  return `${toolName}正在处理`;
+}
+
+function boundedToolProgressText(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return '';
+  const normalized = String(value)
+    .replace(/\s+/g, ' ')
+    .replace(/(?:\/Users|\/Volumes|\/private|\/tmp)\/[^\s,;，。]+/g, '本地资源')
+    .replace(/(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/gi, '敏感信息已隐藏')
+    .trim();
+  return normalized.length > 240 ? `${normalized.slice(0, 240)}…` : normalized;
+}
+
+function finiteTimestamp(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function isToolActivityEvent(value: string): value is AgentToolProgressEntry['kind'] {
+  return value === 'tool_started' || value === 'tool_progress' || value === 'tool_finished';
 }
 
 function activitySummary(payload: Record<string, unknown>, fallback: string): string {

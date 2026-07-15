@@ -82,6 +82,55 @@ describe('AgentEventReducer', () => {
     expect(recovered.status).toBe('waiting');
   });
 
+  it('keeps bounded progress checkpoints for one logical tool call', () => {
+    const started = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'tool_started', {
+        toolCallId: 'tool-progress-1',
+        toolName: 'ime_knowledge',
+        summary: '开始检索知识库',
+      }),
+    ).state;
+    const firstProgress = reduceAgentEvent(
+      started,
+      agentEvent(2, 'tool_progress', {
+        toolCallId: 'tool-progress-1',
+        partialResult: { details: { summary: '已找到候选来源' } },
+      }),
+    ).state;
+    const secondProgress = reduceAgentEvent(
+      firstProgress,
+      agentEvent(3, 'tool_progress', {
+        toolCallId: 'tool-progress-1',
+        partialResult: { details: { result: { summary: '正在重排 4 条证据' } } },
+      }),
+    ).state;
+    const finished = reduceAgentEvent(
+      secondProgress,
+      agentEvent(4, 'tool_finished', {
+        toolCallId: 'tool-progress-1',
+        result: { details: { result: { summary: '知识检索完成' } } },
+      }),
+    ).state;
+
+    expect(finished.activityOrder).toEqual(['tool-progress-1']);
+    expect(finished.activitiesById['tool-progress-1']).toMatchObject({
+      kind: 'tool_finished',
+      status: 'completed',
+      createdAtMs: 10,
+      updatedAtMs: 40,
+      payload: {
+        toolName: 'ime_knowledge',
+        progressHistory: [
+          { kind: 'tool_started', summary: '开始检索知识库', createdAtMs: 10 },
+          { kind: 'tool_progress', summary: '已找到候选来源', createdAtMs: 20 },
+          { kind: 'tool_progress', summary: '正在重排 4 条证据', createdAtMs: 30 },
+          { kind: 'tool_finished', summary: '知识检索完成', createdAtMs: 40 },
+        ],
+      },
+    });
+  });
+
   it('merges an optimistic user message only by clientMessageId', () => {
     const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
       clientMessageId: 'client-1',

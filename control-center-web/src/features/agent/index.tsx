@@ -10,6 +10,7 @@ import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewP
 import { SessionRail } from './sessions/SessionRail';
 import { ConversationForkDialog } from './sessions/ConversationForkDialog';
 import { AgentStatusPanel } from './status/AgentStatusPanel';
+import { useMediaQuery, useModalPanel } from './overlay-dialog';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
 import { AgentTimeline } from './timeline/AgentTimeline';
 import { publicAgentErrorText } from './public-error';
@@ -35,6 +36,8 @@ import './agent.css';
 
 export function AgentFeature() {
   const transport = useControlTransport();
+  const mobileViewport = useMediaQuery('(max-width: 760px)');
+  const statusOverlayViewport = useMediaQuery('(max-width: 1100px)');
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const requestedDraft = searchParams.get('draft')?.trim().slice(0, 4_000) ?? '';
@@ -62,6 +65,9 @@ export function AgentFeature() {
   const [statusOpen, setStatusOpen] = useState(() => isWideStatusViewport());
   const [error, setError] = useState('');
   const railToggleRef = useRef<HTMLButtonElement>(null);
+  const railRef = useRef<HTMLElement>(null);
+  const statusToggleRef = useRef<HTMLButtonElement>(null);
+  const statusRef = useRef<HTMLElement>(null);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const ensure = useAgentLiveStore((state) => state.ensure);
@@ -87,6 +93,21 @@ export function AgentFeature() {
     state.projections[selectedId],
     (activity) => activity.kind === 'approval_required',
   ));
+  const railModal = mobileViewport && railOpen;
+  const statusModal = statusOverlayViewport && statusOpen;
+  useModalPanel({
+    active: railModal,
+    panelRef: railRef,
+    returnFocusRef: railToggleRef,
+    onClose: closeMobileRail,
+    initialFocusSelector: '[data-drawer-autofocus]',
+  });
+  useModalPanel({
+    active: statusModal,
+    panelRef: statusRef,
+    returnFocusRef: statusToggleRef,
+    onClose: closeStatusPanel,
+  });
 
   const loadSessions = useCallback(async (preferredId = '') => {
     setLoading(true);
@@ -238,26 +259,18 @@ export function AgentFeature() {
     if (!busy) setStopping(false);
   }, [busy]);
   useEffect(() => setStopping(false), [selectedId]);
-  useEffect(() => {
-    if (!railOpen || !isMobileViewport()) return;
-    function closeOnEscape(event: globalThis.KeyboardEvent): void {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      event.preventDefault();
-      closeMobileRail(true);
-    }
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [railOpen]);
-
-  function closeMobileRail(restoreFocus: boolean): void {
+  function closeMobileRail(): void {
     setRailOpen(false);
-    if (restoreFocus) requestAnimationFrame(() => railToggleRef.current?.focus());
+  }
+
+  function closeStatusPanel(): void {
+    setStatusOpen(false);
   }
 
   function toggleRail(): void {
     setRailOpen((value) => {
       const next = !value;
-      if (next && isMobileViewport()) setStatusOpen(false);
+      if (next && mobileViewport) setStatusOpen(false);
       return next;
     });
   }
@@ -265,14 +278,14 @@ export function AgentFeature() {
   function toggleStatus(): void {
     setStatusOpen((value) => {
       const next = !value;
-      if (next && isMobileViewport()) setRailOpen(false);
+      if (next && mobileViewport) setRailOpen(false);
       return next;
     });
   }
 
   function selectSession(sessionId: string): void {
     setSelectedId(sessionId);
-    if (isMobileViewport()) setRailOpen(false);
+    if (mobileViewport) setRailOpen(false);
   }
 
   async function createSession(): Promise<void> {
@@ -300,6 +313,7 @@ export function AgentFeature() {
     if (!session || sending) return;
     const value = draft.trim();
     if (value === '/new') { setDraft(''); await createSession(); return; }
+    if (value === '/resume') { setDraft(''); setRailOpen(true); return; }
     if (value === '/branch') { setDraft(''); openForkDialog(); return; }
     if (isCommand(value, '/name')) {
       const title = normalizedSessionTitle(commandArgument(value, '/name'));
@@ -327,8 +341,9 @@ export function AgentFeature() {
     if (value === '/model' || value === '/thinking') { setDraft(''); openModelPicker(); return; }
     if (value === '/permissions') { setDraft(''); setPermissionPickerRequest((current) => current + 1); return; }
     if (value === '/tools') { setDraft(''); openToolPicker(); return; }
-    if (value === '/status') { setDraft(''); setStatusOpen(true); return; }
-    if (value === '/help') { setDraft(''); setHelpRequest((current) => current + 1); return; }
+    if (value === '/status' || value === '/session') { setDraft(''); setStatusOpen(true); return; }
+    if (value === '/settings') { setDraft(''); window.location.hash = '/configuration'; return; }
+    if (value === '/help' || value === '/hotkeys') { setDraft(''); setHelpRequest((current) => current + 1); return; }
     if (value === '/stop') { setDraft(''); await stop(); return; }
     if (!value && attachments.length === 0) return;
     if (value.startsWith('/') && !isAdvertisedPiCommand(value, commands)) {
@@ -429,11 +444,15 @@ export function AgentFeature() {
   }
 
   function runProductCommand(command: AgentProductCommandName): void {
-    if ((busy || sending) && command !== 'status' && command !== 'stop') return;
+    if ((busy || sending) && command !== 'resume' && command !== 'session' && command !== 'status' && command !== 'stop') return;
     switch (command) {
       case 'new':
         setDraft('');
         void createSession();
+        break;
+      case 'resume':
+        setDraft('');
+        setRailOpen(true);
         break;
       case 'branch':
         setDraft('');
@@ -449,13 +468,19 @@ export function AgentFeature() {
       case 'permissions':
         setPermissionPickerRequest((current) => current + 1);
         break;
+      case 'session':
       case 'status':
         setStatusOpen(true);
+        break;
+      case 'settings':
+        setDraft('');
+        window.location.hash = '/configuration';
         break;
       case 'stop':
         if (busy) void stop();
         break;
       case 'help':
+      case 'hotkeys':
         setHelpRequest((current) => current + 1);
         break;
       case 'name':
@@ -485,7 +510,7 @@ export function AgentFeature() {
     setDraft(selectedText);
     setAttachments([]);
     setError('');
-    if (isMobileViewport()) setRailOpen(false);
+    if (mobileViewport) setRailOpen(false);
   }
 
   async function forkFromMessage(entryId: string, selectedText: string): Promise<void> {
@@ -755,23 +780,23 @@ export function AgentFeature() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
-      <SessionRail sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} onSelect={selectSession} onCreate={() => void createSession()} onClose={() => closeMobileRail(true)} />
-      <button className="agent-rail-backdrop" aria-label="关闭对话列表" onClick={() => closeMobileRail(true)} type="button" />
-      <section className="agent-conversation">
+      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal} onSelect={selectSession} onCreate={() => void createSession()} onClose={closeMobileRail} />
+      <button className="agent-rail-backdrop" aria-hidden="true" tabIndex={-1} onClick={closeMobileRail} type="button" />
+      <section className="agent-conversation" aria-hidden={railModal || statusModal || undefined} inert={railModal || statusModal ? true : undefined}>
         <header className="agent-conversation__header">
           <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
           <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${persona?.displayName ?? '智鼬'} · ${sessionPermissionLabel(session)}` : '选择一个对话'}</small></span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label={conversationForkAvailable ? '创建对话分支' : '当前运行时不支持对话分支'} icon={<GitBranch size={17} />} onClick={openForkDialog} disabled={!session || busy || !conversationForkAvailable} tooltip />
-            <IconButton className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
+            <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable} forkingEntryId={forkingEntryId} onForkFromMessage={(entryId, message) => { void forkFromMessage(entryId, message); }} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} /> : null}
         <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
-      <button className="agent-status-backdrop" aria-label="关闭状态面板" onClick={() => setStatusOpen(false)} type="button" />
-      <AgentStatusPanel sessionId={selectedId} open={statusOpen} onClose={() => setStatusOpen(false)} />
+      <button className="agent-status-backdrop" aria-hidden="true" tabIndex={-1} onClick={closeStatusPanel} type="button" />
+      <AgentStatusPanel ref={statusRef} sessionId={selectedId} open={statusOpen} modal={statusModal} onClose={closeStatusPanel} />
       <MemoryReviewDialog activity={pendingApproval ? undefined : pendingMemoryReview} sessionId={selectedId} onError={setError} />
       <ApprovalReviewDialog activity={pendingApproval} onDecision={decideApproval} />
       <ConversationForkDialog

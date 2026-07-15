@@ -706,23 +706,27 @@ describe('Agent experience', () => {
 
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     expect(screen.getByRole('option', { name: /\/new/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/resume/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/name/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/model/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/thinking/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/permissions/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/tools/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/session/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/status/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/settings/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/hotkeys/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/help/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/review.*Pi 扩展/ })).toBeInTheDocument();
 
-    await user.type(composer, '/re');
+    await user.type(composer, '/rev');
     expect(screen.getByRole('option', { name: /\/review/ })).toBeInTheDocument();
     expect(screen.queryByText('/memory')).not.toBeInTheDocument();
     await user.keyboard('{Enter}');
     expect(composer).toHaveValue('/review ');
 
     await user.clear(composer);
-    await user.type(composer, '/');
+    await user.type(composer, '/n');
     await user.keyboard('{ArrowDown}{Enter}');
     expect(composer).toHaveValue('/name ');
 
@@ -737,7 +741,7 @@ describe('Agent experience', () => {
     expect(screen.queryByRole('listbox', { name: '命令面板' })).not.toBeInTheDocument();
 
     await user.clear(composer);
-    await user.type(composer, '/settings');
+    await user.type(composer, '/not-a-real-command');
     await user.click(screen.getByRole('button', { name: '发送' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('未发送给模型');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(false);
@@ -763,10 +767,13 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    expect(within(permissionPicker as HTMLElement).getByRole('button', { name: /受控助手/ })).toBeInTheDocument();
-    expect(within(permissionPicker as HTMLElement).getByRole('button', { name: /只读观察/ })).toBeInTheDocument();
-    expect(within(permissionPicker as HTMLElement).getByRole('button', { name: /运行协调/ })).toBeInTheDocument();
-    await user.click(within(permissionPicker as HTMLElement).getByRole('button', { name: /只读观察/ }));
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /受控助手/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ })).toBeInTheDocument();
+    const readonlyPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ });
+    const coordinatorPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /运行协调/ });
+    expect(coordinatorPermission).toHaveAttribute('aria-checked', 'true');
+    readonlyPermission.focus();
+    await user.keyboard(' ');
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.mode.update',
@@ -809,6 +816,10 @@ describe('Agent experience', () => {
 
     await user.click(screen.getByRole('option', { name: /\/status/ }));
     expect(screen.getByLabelText('当前对话状态')).toHaveAttribute('data-open', 'true');
+
+    await user.click(screen.getByRole('button', { name: '打开命令面板' }));
+    await user.click(screen.getByRole('option', { name: /\/settings/ }));
+    expect(window.location.hash).toBe('#/configuration');
   });
 
   it('requires a native workspace choice before enabling coordinator mode', async () => {
@@ -836,7 +847,7 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: '对话权限：受控助手' }));
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    await user.click(within(permissionPicker as HTMLElement).getByRole('button', { name: /运行协调/ }));
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /运行协调/ }));
 
     await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
       purpose: 'workspace-root',
@@ -906,7 +917,8 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     const newCommand = screen.getByRole('option', { name: /\/new/ });
     expect(newCommand).toBeDisabled();
-    expect(newCommand).toHaveAttribute('title', '当前处理中，仅可查看状态或停止');
+    expect(newCommand).toHaveAttribute('title', '当前处理中，仅可切换对话、查看状态或停止');
+    expect(screen.getByRole('option', { name: /\/resume/ })).toBeEnabled();
     expect(screen.getByRole('option', { name: /\/status/ })).toBeEnabled();
     const stopCommand = screen.getByRole('option', { name: /\/stop/ });
     expect(stopCommand).toBeEnabled();
@@ -1211,7 +1223,9 @@ describe('Agent experience', () => {
   });
 
   it('treats the mobile session rail as a focus-managed drawer', async () => {
-    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query.includes('max-width: 760px') || query.includes('max-width: 1100px'),
+    })));
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       unobserve() {}
@@ -1225,16 +1239,64 @@ describe('Agent experience', () => {
     const toggle = screen.getByRole('button', { name: '展开对话列表' });
     await user.click(toggle);
     expect(feature).toHaveAttribute('data-rail-open', 'true');
+    const rail = screen.getByRole('dialog', { name: '连续对话' });
+    const conversation = document.querySelector('.agent-conversation');
+    expect(rail).toHaveAttribute('aria-modal', 'true');
+    expect(conversation).toHaveAttribute('inert');
+    expect(conversation).toHaveAttribute('aria-hidden', 'true');
     await waitFor(() => expect(screen.getByPlaceholderText('搜索对话')).toHaveFocus());
+
+    const sessionRows = rail.querySelectorAll<HTMLButtonElement>('.agent-session-row');
+    const lastSession = sessionRows.item(sessionRows.length - 1);
+    lastSession.focus();
+    await user.tab();
+    expect(within(rail).getByRole('button', { name: '新建对话' })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(lastSession).toHaveFocus();
 
     await user.keyboard('{Escape}');
     expect(feature).toHaveAttribute('data-rail-open', 'false');
+    expect(conversation).not.toHaveAttribute('inert');
+    expect(conversation).not.toHaveAttribute('aria-hidden');
     await waitFor(() => expect(toggle).toHaveFocus());
 
     await user.click(toggle);
     expect(document.querySelector('.agent-rail-backdrop')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
     expect(feature).toHaveAttribute('data-rail-open', 'false');
+  });
+
+  it('treats the responsive status panel as a focus-managed dialog', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query.includes('max-width: 1100px'),
+    })));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const user = userEvent.setup();
+    renderAgent(featureTransport());
+
+    const toggle = await screen.findByRole('button', { name: '展开状态面板' });
+    await user.click(toggle);
+    const panel = screen.getByRole('dialog', { name: '当前对话状态' });
+    const conversation = document.querySelector('.agent-conversation');
+    const rail = document.querySelector('.agent-session-rail');
+    expect(panel).toHaveAttribute('aria-modal', 'true');
+    expect(conversation).toHaveAttribute('inert');
+    expect(rail).toHaveAttribute('inert');
+    await waitFor(() => expect(within(panel).getByRole('button', { name: '收起状态面板' })).toHaveFocus());
+
+    await user.tab({ shift: true });
+    expect(panel).toContainElement(document.activeElement as HTMLElement);
+    expect(conversation).not.toContainElement(document.activeElement as HTMLElement);
+
+    await user.keyboard('{Escape}');
+    expect(panel).toHaveAttribute('aria-hidden', 'true');
+    expect(conversation).not.toHaveAttribute('inert');
+    expect(rail).not.toHaveAttribute('inert');
+    await waitFor(() => expect(toggle).toHaveFocus());
   });
 
   it('releases the session rail grid column when collapsed on desktop', async () => {

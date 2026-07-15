@@ -25,6 +25,7 @@ import {
   type CompositionEvent,
   type KeyboardEvent,
 } from 'react';
+import * as RadioGroup from '@radix-ui/react-radio-group';
 import {
   Button,
   IconButton,
@@ -408,30 +409,38 @@ function PermissionPicker({
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-picker-popover">
         <header><LockKeyhole size={16} /><span><strong>对话权限</strong><small>模式、工具范围与审批共同生效</small></span></header>
-        {PERMISSION_PRESETS.map((preset) => {
-          const selected = current.id === preset.id;
-          const available = preset.mode !== 'coordinator' || canCoordinate;
-          const toolCount = tools.filter((tool) => toolAvailableForPolicy(tool, preset.mode, preset.toolProfileVersion)).length;
-          return (
-            <button
-              type="button"
-              key={preset.id}
-              disabled={!available}
-              aria-current={selected}
-              onClick={() => {
-                onChange({ mode: preset.mode, toolProfileVersion: preset.toolProfileVersion });
-                setOpen(false);
-              }}
-            >
-              {preset.icon === 'network' ? <Network size={17} /> : preset.icon === 'lock' ? <LockKeyhole size={17} /> : <ShieldCheck size={17} />}
-              <span>
-                <strong>{preset.label}</strong>
-                <small>{available ? `${preset.description} · ${toolCount} 个工具` : '当前角色未开放协调权限'}</small>
-              </span>
-              {selected ? <Check size={15} /> : null}
-            </button>
-          );
-        })}
+        <RadioGroup.Root
+          className="agent-picker-popover__options"
+          aria-label="对话权限模式"
+          value={current.id}
+          onValueChange={(presetId) => {
+            const preset = PERMISSION_PRESETS.find((item) => item.id === presetId);
+            if (!preset) return;
+            onChange({ mode: preset.mode, toolProfileVersion: preset.toolProfileVersion });
+            setOpen(false);
+          }}
+        >
+          {PERMISSION_PRESETS.map((preset) => {
+            const selected = current.id === preset.id;
+            const available = preset.mode !== 'coordinator' || canCoordinate;
+            const toolCount = tools.filter((tool) => toolAvailableForPolicy(tool, preset.mode, preset.toolProfileVersion)).length;
+            return (
+              <RadioGroup.Item
+                className="agent-picker-popover__option"
+                value={preset.id}
+                key={preset.id}
+                disabled={!available}
+              >
+                {preset.icon === 'network' ? <Network size={17} /> : preset.icon === 'lock' ? <LockKeyhole size={17} /> : <ShieldCheck size={17} />}
+                <span>
+                  <strong>{preset.label}</strong>
+                  <small>{available ? `${preset.description} · ${toolCount} 个工具` : '当前角色未开放协调权限'}</small>
+                </span>
+                {selected ? <Check size={15} /> : null}
+              </RadioGroup.Item>
+            );
+          })}
+        </RadioGroup.Root>
         {session?.mode === 'coordinator' ? (
           <section className="agent-picker-popover__workspace" aria-label="授权工作区">
             <FolderOpen size={16} />
@@ -598,6 +607,7 @@ interface ProductCommand extends CommandAvailability {
 
 const productCommandDefinitions: Omit<ProductCommand, keyof CommandAvailability>[] = [
   { name: 'new', invocation: '/new', description: '创建一段独立对话', source: 'product', behavior: 'execute' },
+  { name: 'resume', invocation: '/resume', description: '打开连续对话列表并恢复其他对话', source: 'product', behavior: 'execute' },
   { name: 'name', invocation: '/name', description: '重命名当前对话', source: 'product', behavior: 'insert' },
   { name: 'branch', invocation: '/branch', description: '从历史用户消息创建独立分支', source: 'product', behavior: 'execute' },
   { name: 'compact', invocation: '/compact', description: '保留连续会话并缩短上下文', source: 'product', behavior: 'insert' },
@@ -605,7 +615,10 @@ const productCommandDefinitions: Omit<ProductCommand, keyof CommandAvailability>
   { name: 'thinking', invocation: '/thinking', description: '调整当前模型的思考强度', source: 'product', behavior: 'execute' },
   { name: 'permissions', invocation: '/permissions', description: '查看或切换当前对话权限', source: 'product', behavior: 'execute' },
   { name: 'tools', invocation: '/tools', description: '查看当前权限可用的工具', source: 'product', behavior: 'execute' },
+  { name: 'session', invocation: '/session', description: '查看当前对话、计划与运行统计', source: 'product', behavior: 'execute' },
   { name: 'status', invocation: '/status', description: '打开当前对话状态', source: 'product', behavior: 'execute' },
+  { name: 'settings', invocation: '/settings', description: '打开控制中心配置', source: 'product', behavior: 'execute' },
+  { name: 'hotkeys', invocation: '/hotkeys', description: '查看 Web Agent 命令和键盘操作', source: 'product', behavior: 'execute' },
   { name: 'stop', invocation: '/stop', description: '停止当前处理', source: 'product', behavior: 'execute' },
   { name: 'help', invocation: '/help', description: '查看命令及其来源', source: 'product', behavior: 'execute' },
 ];
@@ -654,10 +667,10 @@ function productCommandAvailability(
   },
 ): CommandAvailability {
   const { session, catalog, tools, toolCatalogStatus, busy, sending } = context;
-  if ((busy || sending) && name !== 'status' && name !== 'stop') {
-    return { enabled: false, disabledReason: '当前处理中，仅可查看状态或停止' };
+  if ((busy || sending) && name !== 'resume' && name !== 'session' && name !== 'status' && name !== 'stop') {
+    return { enabled: false, disabledReason: '当前处理中，仅可切换对话、查看状态或停止' };
   }
-  if (name === 'new' || name === 'help') return { enabled: true };
+  if (name === 'new' || name === 'settings' || name === 'help' || name === 'hotkeys') return { enabled: true };
   if (!session) return { enabled: false, disabledReason: '请先选择对话' };
   if (name === 'stop') {
     return busy

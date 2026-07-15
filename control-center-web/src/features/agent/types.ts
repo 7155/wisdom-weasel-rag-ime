@@ -55,6 +55,7 @@ export type AgentCommandSource = 'extension' | 'prompt' | 'skill';
 
 export type AgentProductCommandName =
   | 'new'
+  | 'resume'
   | 'branch'
   | 'name'
   | 'compact'
@@ -62,7 +63,10 @@ export type AgentProductCommandName =
   | 'thinking'
   | 'permissions'
   | 'tools'
+  | 'session'
   | 'status'
+  | 'settings'
+  | 'hotkeys'
   | 'stop'
   | 'help';
 

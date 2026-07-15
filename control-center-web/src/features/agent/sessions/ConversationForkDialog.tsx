@@ -1,5 +1,6 @@
 import { GitBranch, LoaderCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -94,21 +95,18 @@ export function ConversationForkDialog({
         {loading ? (
           <div className="agent-fork-dialog__state"><LoaderCircle size={18} />正在读取可分支的用户消息</div>
         ) : items.length ? (
-          <div className="agent-fork-dialog__list" role="radiogroup" aria-label="对话分支点">
+          <RadioGroup.Root className="agent-fork-dialog__list" aria-label="对话分支点" value={selectedId} onValueChange={setSelectedId}>
             {[...items].reverse().map((item, index) => (
-              <button
+              <RadioGroup.Item
                 key={item.entryId}
-                type="button"
-                role="radio"
-                aria-checked={item.entryId === selectedId}
+                value={item.entryId}
                 data-selected={item.entryId === selectedId}
-                onClick={() => setSelectedId(item.entryId)}
               >
                 <span>{items.length - index}</span>
                 <strong>{item.text}</strong>
-              </button>
+              </RadioGroup.Item>
             ))}
-          </div>
+          </RadioGroup.Root>
         ) : !error ? (
           <div className="agent-fork-dialog__state">当前对话还没有可用的历史用户消息。</div>
         ) : null}
