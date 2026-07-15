@@ -1,4 +1,4 @@
-import type { Graph } from '@antv/g6';
+import type { Graph } from '@antv/g6/esm/runtime/graph.js';
 import { LocateFixed, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { IconButton } from '@/components/primitives';
@@ -34,7 +34,7 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
     const initialize = async () => {
       if (cancelled || initializing || graphRef.current || container.clientWidth < 2 || container.clientHeight < 2) return;
       initializing = true;
-      const { Graph: G6Graph } = await import('@antv/g6');
+      const { Graph: G6Graph } = await import('./g6-runtime');
       if (cancelled) return;
       const style = getComputedStyle(container);
       const graph = new G6Graph({
