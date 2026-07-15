@@ -239,6 +239,7 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
                 "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
                 "RAG_IME_EMBEDDING_API_KEY": "embedding-only-secret",
                 "RAG_IME_KNOWLEDGE_DENSE_BACKEND": "usearch",
+                "RAG_IME_DEEPSEEK_ENV": "/Users/test/Library/Application Support/RagIme/deepseek.env",
                 "RAG_IME_DEEPSEEK_API_KEY": "must-not-leak",
                 "RAG_IME_PREDICTOR_API_KEY": "must-not-leak",
                 "RAG_IME_AGENT_TOOL_TOKEN": "must-not-leak",
@@ -252,6 +253,10 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
         self.assertEqual("openai-compatible", environment["RAG_IME_EMBEDDING_PROVIDER"])
         self.assertEqual("embedding-only-secret", environment["RAG_IME_EMBEDDING_API_KEY"])
         self.assertEqual("usearch", environment["RAG_IME_KNOWLEDGE_DENSE_BACKEND"])
+        self.assertEqual(
+            "/Users/test/Library/Application Support/RagIme/deepseek.env",
+            environment["RAG_IME_DEEPSEEK_ENV"],
+        )
         self.assertEqual("1", environment["PYTHONUNBUFFERED"])
         for key in (
             "RAG_IME_DEEPSEEK_API_KEY",
