@@ -160,6 +160,42 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
             tail = path.removeprefix("/v1/knowledge/bases/")
             parts = tail.split("/")
             kb_id = urllib.parse.unquote(parts[0])
+            if len(parts) == 2 and parts[1] == "graph" and method == "GET":
+                kinds = tuple(
+                    item.strip().lower()
+                    for item in str((query.get("kinds") or [""])[0]).split(",")
+                    if item.strip()
+                )
+                return service.knowledge_graph(
+                    kb_id,
+                    document_id=str((query.get("documentId") or [""])[0]),
+                    query=str((query.get("query") or [""])[0]),
+                    kinds=kinds,
+                    limit=int(_first(query, "limit", default="200")),
+                    depth=int(_first(query, "depth", default="2")),
+                    exclude_chunks=_first(query, "excludeChunks", default="true").strip().lower() in {"1", "true", "yes"},
+                    focus_id=str((query.get("focusId") or [""])[0]),
+                ), HTTPStatus.OK
+            if len(parts) == 3 and parts[1:] == ["graph", "rebuild"] and method == "POST":
+                body = self._json_body()
+                raw_document_ids = body.get("documentIds")
+                document_ids = _string_list(raw_document_ids) if raw_document_ids is not None else ()
+                return service.rebuild_knowledge_graph(
+                    kb_id,
+                    expected_revision=(
+                        int(body["expectedRevision"])
+                        if body.get("expectedRevision") is not None
+                        else None
+                    ),
+                    document_ids=document_ids,
+                    extractor_mode=str(body.get("extractorMode") or "deterministic"),
+                    model_id=str(body.get("modelId") or ""),
+                    batch_size=int(body.get("batchSize") or 4),
+                    extraction_concurrency=int(body.get("extractionConcurrency") or 2),
+                    max_entities=int(body.get("maxEntitiesPerChunk") or 5),
+                    max_relations=int(body.get("maxRelationsPerChunk") or 4),
+                    max_topics=int(body.get("maxTopicsPerChunk") or 2),
+                ), HTTPStatus.OK
             if len(parts) == 2 and parts[1] == "reindex-preview" and method == "GET":
                 return service.reindex_preview(kb_id), HTTPStatus.OK
             if len(parts) == 2 and parts[1] == "rebuild" and method == "POST":

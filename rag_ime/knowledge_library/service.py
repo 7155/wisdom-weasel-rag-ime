@@ -15,8 +15,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Sequence
 
+from ..contracts.json_schema import validate_contract
 from ..embeddings import embedding_provider_from_env
 from .dense import DenseIndex, dense_index_from_env
+from .graph import GRAPH_NODE_KINDS, KnowledgeGraph
 from .models import (
     AssetBlob,
     KNOWLEDGE_SCHEMA_VERSION,
@@ -88,6 +90,7 @@ class KnowledgeLibraryService:
         secure_directory(self.config.assets_dir)
         secure_directory(self.config.artifacts_dir)
         self.store = KnowledgeStore(config.database_path)
+        self.graph = KnowledgeGraph(self.store)
         self.parsers = parser_router or ParserRouter(config)
         self.dense_index = dense_index or dense_index_from_env(
             config.database_path,
@@ -303,6 +306,105 @@ class KnowledgeLibraryService:
             raise KnowledgeNotFoundError(f"knowledge job {job_id!r} was not found")
         cancelled = self.store.cancel_job(job_id)
         return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "job": _job_to_dict(cancelled)}
+
+    def knowledge_graph(
+        self,
+        base_id: str,
+        *,
+        document_id: str = "",
+        query: str = "",
+        kinds: Sequence[str] = (),
+        limit: int = 200,
+        depth: int = 2,
+        exclude_chunks: bool = True,
+        focus_id: str = "",
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        document_id = _identifier(document_id, "document id") if document_id else ""
+        focus_id = _identifier(focus_id, "focus id") if focus_id else ""
+        normalized_kinds = tuple(str(item).strip().lower() for item in kinds if str(item).strip())
+        unknown = sorted(set(normalized_kinds) - GRAPH_NODE_KINDS)
+        if unknown:
+            raise KnowledgeLibraryError(
+                f"unsupported knowledge graph node kinds: {', '.join(unknown)}",
+                code="invalid_argument",
+            )
+        result = self.graph.read(
+            base_id,
+            document_id=document_id,
+            query=str(query or "")[:200],
+            kinds=normalized_kinds,
+            limit=limit,
+            depth=depth,
+            exclude_chunks=exclude_chunks,
+            focus_id=focus_id,
+        )
+        validate_contract(result, "knowledge-graph.v1.json")
+        return result
+
+    def rebuild_knowledge_graph(
+        self,
+        base_id: str,
+        *,
+        expected_revision: int | None,
+        document_ids: Sequence[str] = (),
+        extractor_mode: str = "deterministic",
+        model_id: str = "",
+        batch_size: int = 4,
+        extraction_concurrency: int = 2,
+        max_entities: int = 5,
+        max_relations: int = 4,
+        max_topics: int = 2,
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        normalized_ids = tuple(_identifier(item, "document id") for item in document_ids)
+        mode = str(extractor_mode or "deterministic").strip().lower()
+        if mode not in {"deterministic", "model"}:
+            raise KnowledgeLibraryError("extractorMode must be deterministic or model", code="invalid_argument")
+        options = {
+            "extractor_mode": mode,
+            "model_id": str(model_id or "").strip()[:160],
+            "batch_size": max(1, min(8, int(batch_size))),
+            "extraction_concurrency": max(1, min(4, int(extraction_concurrency))),
+            "max_entities": max(1, min(8, int(max_entities))),
+            "max_relations": max(0, min(8, int(max_relations))),
+            "max_topics": max(0, min(4, int(max_topics))),
+        }
+        if mode == "model" and self._job_executor is not None:
+            graph_job_id = f"kg-{uuid.uuid4().hex}"
+            current_revision = self.graph.reserve_rebuild(
+                base_id,
+                expected_revision=expected_revision,
+                job_id=graph_job_id,
+                document_ids=normalized_ids,
+                extractor_mode=mode,
+                extractor_model=str(options["model_id"]),
+            )
+            self._job_executor.submit(
+                self.graph.rebuild,
+                base_id,
+                expected_revision=expected_revision,
+                document_ids=normalized_ids,
+                job_id=graph_job_id,
+                **options,
+            )
+            return {
+                "ok": True,
+                "jobId": graph_job_id,
+                "status": "queued",
+                "revision": current_revision + 1,
+                "extractor": {
+                    "mode": mode,
+                    "model": options["model_id"],
+                    "extractionConcurrency": options["extraction_concurrency"],
+                },
+            }
+        return self.graph.rebuild(
+            base_id,
+            expected_revision=expected_revision,
+            document_ids=normalized_ids,
+            **options,
+        )
 
     def preview_chunking(
         self,

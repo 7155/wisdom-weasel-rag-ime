@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Virtuoso } from 'react-virtuoso';
 import remarkGfm from 'remark-gfm';
-import { Button, EmptyState, IconButton, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
+import { Button, EmptyState, IconButton, Select, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
 import type { ControlTransport } from '@/platform/transport';
 import type {
@@ -217,7 +217,7 @@ export function KnowledgeDocumentViewer({
   return (
     <div className="knowledge-panel knowledge-viewer">
       <div className="knowledge-viewer__bar">
-        <label><span>材料</span><select className="ui-input" onChange={(event) => onSelectDocument(event.target.value)} value={selectedDocumentId || documents[0]?.id}>{documents.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label><span>材料</span><Select aria-label="材料" onValueChange={onSelectDocument} options={documents.map((item) => ({ value: item.id, label: item.name }))} value={selectedDocumentId || documents[0]?.id} /></label>
         {detail ? <span>{detail.chunkTotal} 个片段 · {pageCount ? `${pageCount} 页` : '页码未提供'} · {detail.assets.length} 个产物</span> : null}
       </div>
       {loading ? <p className="knowledge-detail-loading">正在读取解析结果…</p> : null}

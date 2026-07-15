@@ -140,6 +140,73 @@ class KnowledgeStore:
                     original_name TEXT NOT NULL,
                     PRIMARY KEY (document_id, asset_sha256, original_name)
                 );
+                CREATE TABLE IF NOT EXISTS knowledge_graph_state (
+                    base_id TEXT PRIMARY KEY REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'stale',
+                    source_fingerprint TEXT NOT NULL DEFAULT '',
+                    document_ids_json TEXT NOT NULL DEFAULT '[]',
+                    job_id TEXT NOT NULL DEFAULT '',
+                    error_message TEXT NOT NULL DEFAULT '',
+                    updated_at_ms INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS knowledge_graph_jobs (
+                    id TEXT PRIMARY KEY,
+                    base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    revision INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    document_ids_json TEXT NOT NULL DEFAULT '[]',
+                    error_message TEXT NOT NULL DEFAULT '',
+                    created_at_ms INTEGER NOT NULL,
+                    finished_at_ms INTEGER,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_graph_jobs_base
+                    ON knowledge_graph_jobs(base_id, created_at_ms DESC);
+                CREATE TABLE IF NOT EXISTS knowledge_graph_extractions (
+                    chunk_id TEXT NOT NULL REFERENCES knowledge_chunks(id) ON DELETE CASCADE,
+                    content_hash TEXT NOT NULL,
+                    extractor_fingerprint TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error_message TEXT NOT NULL DEFAULT '',
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (chunk_id, extractor_fingerprint)
+                );
+                CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
+                    id TEXT PRIMARY KEY,
+                    base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    document_id TEXT REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+                    document_name TEXT NOT NULL DEFAULT '',
+                    chunk_id TEXT REFERENCES knowledge_chunks(id) ON DELETE CASCADE,
+                    heading TEXT NOT NULL DEFAULT '',
+                    excerpt TEXT NOT NULL DEFAULT '',
+                    page INTEGER,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_graph_nodes_base_kind
+                    ON knowledge_graph_nodes(base_id, kind, label COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_knowledge_graph_nodes_document
+                    ON knowledge_graph_nodes(document_id, kind);
+                CREATE TABLE IF NOT EXISTS knowledge_graph_edges (
+                    id TEXT PRIMARY KEY,
+                    base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    source_id TEXT NOT NULL REFERENCES knowledge_graph_nodes(id) ON DELETE CASCADE,
+                    target_id TEXT NOT NULL REFERENCES knowledge_graph_nodes(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    label TEXT NOT NULL DEFAULT '',
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    document_id TEXT REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+                    chunk_id TEXT REFERENCES knowledge_chunks(id) ON DELETE CASCADE,
+                    created_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_graph_edges_base
+                    ON knowledge_graph_edges(base_id, source_id, target_id);
                 """
             )
             try:
@@ -154,6 +221,11 @@ class KnowledgeStore:
             _ensure_column(connection, "knowledge_documents", "artifact_path", "TEXT NOT NULL DEFAULT ''")
             _ensure_column(connection, "knowledge_documents", "indexed_config_revision", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(connection, "knowledge_jobs", "parser_mode", "TEXT NOT NULL DEFAULT 'auto'")
+            _ensure_column(connection, "knowledge_graph_state", "extractor_mode", "TEXT NOT NULL DEFAULT 'deterministic'")
+            _ensure_column(connection, "knowledge_graph_state", "extractor_model", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(connection, "knowledge_graph_state", "extraction_stats_json", "TEXT NOT NULL DEFAULT '{}'")
+            _ensure_column(connection, "knowledge_graph_jobs", "extractor_mode", "TEXT NOT NULL DEFAULT 'deterministic'")
+            _ensure_column(connection, "knowledge_graph_jobs", "stats_json", "TEXT NOT NULL DEFAULT '{}'")
             connection.execute(
                 "INSERT INTO knowledge_meta(key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -319,6 +391,12 @@ class KnowledgeStore:
             chunk_ids = [item[0] for item in connection.execute("SELECT id FROM knowledge_chunks WHERE document_id=?", (document_id,))]
             connection.executemany("DELETE FROM knowledge_chunks_fts WHERE chunk_id=?", ((item,) for item in chunk_ids))
             connection.execute("DELETE FROM knowledge_documents WHERE id=?", (document_id,))
+            connection.execute(
+                "DELETE FROM knowledge_graph_nodes WHERE base_id=? AND kind IN ('entity', 'term') "
+                "AND NOT EXISTS (SELECT 1 FROM knowledge_graph_edges e WHERE e.base_id=knowledge_graph_nodes.base_id "
+                "AND e.kind='mentions' AND (e.source_id=knowledge_graph_nodes.id OR e.target_id=knowledge_graph_nodes.id))",
+                (str(row["base_id"]),),
+            )
         return row
 
     def insert_job(self, values: dict[str, Any]) -> None:
@@ -414,6 +492,13 @@ class KnowledgeStore:
             old_ids = [item[0] for item in connection.execute("SELECT id FROM knowledge_chunks WHERE document_id=?", (document_id,))]
             connection.executemany("DELETE FROM knowledge_chunks_fts WHERE chunk_id=?", ((item,) for item in old_ids))
             connection.execute("DELETE FROM knowledge_chunks WHERE document_id=?", (document_id,))
+            connection.execute(
+                "DELETE FROM knowledge_graph_nodes WHERE base_id=(SELECT base_id FROM knowledge_documents WHERE id=?) "
+                "AND kind IN ('entity', 'term') AND NOT EXISTS (SELECT 1 FROM knowledge_graph_edges e "
+                "WHERE e.base_id=knowledge_graph_nodes.base_id AND e.kind='mentions' "
+                "AND (e.source_id=knowledge_graph_nodes.id OR e.target_id=knowledge_graph_nodes.id))",
+                (document_id,),
+            )
             for chunk in chunks:
                 connection.execute(
                     "INSERT INTO knowledge_chunks "

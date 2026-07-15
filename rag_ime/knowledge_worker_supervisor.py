@@ -326,6 +326,10 @@ def _knowledge_worker_env(source: Mapping[str, str]) -> dict[str, str]:
         "HTTPS_PROXY",
         "ALL_PROXY",
         "NO_PROXY",
+        # The worker may read the owner-only provider file for explicit,
+        # offline graph rebuilds. Keep literal provider credentials out of the
+        # subprocess environment.
+        "RAG_IME_DEEPSEEK_ENV",
         "HF_HOME",
         "HF_HUB_CACHE",
         "TRANSFORMERS_CACHE",

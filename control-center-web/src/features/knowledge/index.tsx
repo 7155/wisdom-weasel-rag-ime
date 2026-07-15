@@ -25,6 +25,7 @@ import {
   Field,
   IconButton,
   Input,
+  Select,
   Switch,
   Tabs,
   TabsContent,
@@ -68,9 +69,10 @@ import {
   knowledgeIndexRuntimeStatus,
 } from './api';
 import { KnowledgeDocumentViewer, KnowledgeJobsPanel, KnowledgeMaterialsPanel, type KnowledgeUploadItem } from './document-workspace';
+import { KnowledgeGraphPanel } from './knowledge-graph';
 import './knowledge.css';
 
-type DetailTab = 'materials' | 'viewer' | 'search' | 'jobs' | 'settings';
+type DetailTab = 'materials' | 'viewer' | 'search' | 'graph' | 'jobs' | 'settings';
 
 export function KnowledgeFeature() {
   const [selectedBaseId, setSelectedBaseId] = useState('');
@@ -285,6 +287,7 @@ export function KnowledgeFeature() {
                     <TabsTrigger value="materials">资料</TabsTrigger>
                     <TabsTrigger value="viewer">材料查看</TabsTrigger>
                     <TabsTrigger value="search">检索测试</TabsTrigger>
+                    <TabsTrigger value="graph">知识图谱</TabsTrigger>
                     <TabsTrigger value="jobs">索引任务</TabsTrigger>
                     <TabsTrigger value="settings">设置</TabsTrigger>
                   </TabsList>
@@ -329,6 +332,31 @@ export function KnowledgeFeature() {
                   </TabsContent>
                   <TabsContent value="search">
                     <KnowledgeSearchPanel base={selectedBase} onOpenHit={(hit) => { setSelectedDocumentId(hit.documentId); setFocusedHit(hit); setTab('viewer'); }} transport={queries.transport} />
+                  </TabsContent>
+                  <TabsContent value="graph">
+                    <KnowledgeGraphPanel
+                      base={selectedBase}
+                      documents={documents}
+                      onOpenSource={(node) => {
+                        if (!node.documentId) return;
+                        const document = documents.find((item) => item.id === node.documentId);
+                        setSelectedDocumentId(node.documentId);
+                        setFocusedHit(node.chunkId ? {
+                          id: node.chunkId,
+                          documentId: node.documentId,
+                          documentName: node.documentName || document?.name || '',
+                          title: node.heading || node.label,
+                          excerpt: node.excerpt,
+                          score: node.weight,
+                          page: node.page,
+                          heading: node.heading,
+                          lineStart: null,
+                          lineEnd: null,
+                        } : null);
+                        setTab('viewer');
+                      }}
+                      transport={queries.transport}
+                    />
                   </TabsContent>
                   <TabsContent value="jobs">
                     <KnowledgeJobsPanel
@@ -664,9 +692,7 @@ function KnowledgeSettingsPanel({
         <section>
           <div className="knowledge-settings__heading"><Settings2 size={16} /><div><strong>解析器</strong><span>新导入与重试</span></div></div>
           <Field htmlFor="knowledge-parser" label="Provider">
-            <select className="ui-input" disabled={pending} id="knowledge-parser" onChange={(event) => onParser(asParserMode(event.target.value))} value={base.parser}>
-              <option value="auto">自动选择</option><option value="builtin">内置解析</option><option value="mineru">MinerU</option>
-            </select>
+            <Select disabled={pending} id="knowledge-parser" onValueChange={(value) => onParser(asParserMode(value))} options={[{ value: 'auto', label: '自动选择' }, { value: 'builtin', label: '内置解析' }, { value: 'mineru', label: 'MinerU' }]} value={base.parser} />
           </Field>
           <div className="knowledge-parser-health"><div><span>Worker</span><StatusBadge label={worker.label} tone={worker.tone} /></div><div><span>MinerU</span><StatusBadge label={mineru.label} tone={mineru.tone} /></div><IconButton icon={<RefreshCw size={14} />} label="检查解析服务" onClick={refreshParser} size="small" tooltip /></div>
           {base.parser === 'mineru' && !mineru.ready ? <InlineNotice title="MinerU 未连接" tone="warning">本机服务不可用。</InlineNotice> : null}
@@ -675,7 +701,7 @@ function KnowledgeSettingsPanel({
       <section>
         <div className="knowledge-settings__heading"><Settings2 size={16} /><div><strong>切分</strong><span>修改后材料进入待重建状态</span></div></div>
         <div className="knowledge-settings-fields knowledge-settings-fields--chunking">
-          <Field htmlFor="knowledge-chunk-strategy" label="策略"><select className="ui-input" id="knowledge-chunk-strategy" onChange={(event) => setChunking({ ...chunking, strategy: asChunkingStrategy(event.target.value) })} value={chunking.strategy}><option value="general">通用段落</option><option value="markdown">Markdown 标题</option><option value="book">书籍章节</option><option value="qa">问答</option><option value="laws">法律条款</option><option value="separator">自定义分隔符</option><option value="fixed">固定长度</option></select></Field>
+          <Field htmlFor="knowledge-chunk-strategy" label="策略"><Select id="knowledge-chunk-strategy" onValueChange={(value) => setChunking({ ...chunking, strategy: asChunkingStrategy(value) })} options={[{ value: 'general', label: '通用段落' }, { value: 'markdown', label: 'Markdown 标题' }, { value: 'book', label: '书籍章节' }, { value: 'qa', label: '问答' }, { value: 'laws', label: '法律条款' }, { value: 'separator', label: '自定义分隔符' }, { value: 'fixed', label: '固定长度' }]} value={chunking.strategy} /></Field>
           <Field htmlFor="knowledge-chunk-size" label="大小"><Input id="knowledge-chunk-size" max={8_000} min={200} onChange={(event) => setChunking({ ...chunking, size: Number(event.target.value) })} step={100} type="number" value={chunking.size} /></Field>
           <Field htmlFor="knowledge-chunk-overlap" label="重叠"><Input id="knowledge-chunk-overlap" max={2_000} min={0} onChange={(event) => setChunking({ ...chunking, overlap: Number(event.target.value) })} step={20} type="number" value={chunking.overlap} /></Field>
           {chunking.strategy === 'separator' ? <Field htmlFor="knowledge-chunk-separator" label="分隔符"><Input id="knowledge-chunk-separator" maxLength={100} onChange={(event) => setChunking({ ...chunking, separator: event.target.value })} value={chunking.separator} /></Field> : null}
@@ -684,7 +710,7 @@ function KnowledgeSettingsPanel({
         </div>
         {chunkingError ? <p className="knowledge-inline-error" role="alert">{chunkingError}</p> : null}
         <div className="knowledge-chunk-preview-controls">
-          <Field htmlFor="knowledge-preview-document" label="预览材料"><select className="ui-input" id="knowledge-preview-document" onChange={(event) => setPreviewDocumentId(event.target.value)} value={previewDocumentId}>{documents.map((document) => <option key={document.id} value={document.id}>{document.name}</option>)}</select></Field>
+          <Field htmlFor="knowledge-preview-document" label="预览材料"><Select id="knowledge-preview-document" onValueChange={setPreviewDocumentId} options={documents.map((document) => ({ value: document.id, label: document.name }))} value={previewDocumentId} /></Field>
           <Button disabled={!previewDocumentId || Boolean(chunkingError)} loading={chunkPreviewing} onClick={() => onPreviewChunking(previewDocumentId, chunking)} size="small">预览切分</Button>
         </div>
         {chunkPreviewError ? <InlineNotice title="切分预览失败" tone="warning">{publicErrorText(chunkPreviewError, '请确认材料已经完成解析。')}</InlineNotice> : null}
@@ -694,7 +720,7 @@ function KnowledgeSettingsPanel({
       <section>
         <div className="knowledge-settings__heading"><Search size={16} /><div><strong>检索</strong><span>页面测试与 Agent Tool</span></div></div>
         <div className="knowledge-settings-fields">
-          <Field htmlFor="knowledge-retrieval-mode" label="模式"><select className="ui-input" id="knowledge-retrieval-mode" onChange={(event) => setRetrieval({ ...retrieval, mode: asRetrievalMode(event.target.value) })} value={retrieval.mode}><option value="hybrid">混合</option><option value="dense">向量</option><option value="lexical">关键词</option></select></Field>
+          <Field htmlFor="knowledge-retrieval-mode" label="模式"><Select id="knowledge-retrieval-mode" onValueChange={(value) => setRetrieval({ ...retrieval, mode: asRetrievalMode(value) })} options={[{ value: 'hybrid', label: '混合' }, { value: 'dense', label: '向量' }, { value: 'lexical', label: '关键词' }]} value={retrieval.mode} /></Field>
           <Field htmlFor="knowledge-retrieval-topk" label="Top K"><Input id="knowledge-retrieval-topk" max={100} min={1} onChange={(event) => setRetrieval({ ...retrieval, topK: Number(event.target.value) })} type="number" value={retrieval.topK} /></Field>
           <Field htmlFor="knowledge-retrieval-threshold" label="阈值"><Input id="knowledge-retrieval-threshold" max={1} min={0} onChange={(event) => setRetrieval({ ...retrieval, threshold: Number(event.target.value) })} step={0.05} type="number" value={retrieval.threshold} /></Field>
         </div>
@@ -779,11 +805,7 @@ function ReparseDocumentDialog({ document, error, loading, onConfirm, onOpenChan
         <DialogHeader><DialogTitle>重新解析文档</DialogTitle><DialogDescription>{document ? `“${document.name}”将重新生成 Markdown、Chunks 和索引。` : ''}</DialogDescription></DialogHeader>
         <div className="knowledge-create-form">
           <Field htmlFor="knowledge-document-parser" label="解析方式">
-            <select className="ui-input" id="knowledge-document-parser" onChange={(event) => setParser(asParserMode(event.target.value))} value={parser}>
-              <option value="auto">自动选择</option>
-              <option value="builtin">内置文本解析</option>
-              <option value="mineru">MinerU OCR / 版面解析</option>
-            </select>
+            <Select id="knowledge-document-parser" onValueChange={(value) => setParser(asParserMode(value))} options={[{ value: 'auto', label: '自动选择' }, { value: 'builtin', label: '内置文本解析' }, { value: 'mineru', label: 'MinerU OCR / 版面解析' }]} value={parser} />
           </Field>
           {parser === 'mineru' ? <InlineNotice title="MinerU OCR" tone="info">适用于扫描 PDF、图片和需要保留版面的文档；任务会走本机 MinerU 服务。</InlineNotice> : null}
           {error ? <p className="knowledge-inline-error" role="alert">{publicErrorText(error, '重新解析失败，现有索引仍然保留。')}</p> : null}
@@ -833,7 +855,7 @@ function object(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function asDetailTab(value: string): DetailTab { return ['viewer', 'search', 'jobs', 'settings'].includes(value) ? value as DetailTab : 'materials'; }
+function asDetailTab(value: string): DetailTab { return ['viewer', 'search', 'graph', 'jobs', 'settings'].includes(value) ? value as DetailTab : 'materials'; }
 function asParserMode(value: string): KnowledgeParserMode { return value === 'builtin' ? value : value === 'mineru' || value === 'mineru_local_http' ? 'mineru' : 'auto'; }
 function asChunkingStrategy(value: string): KnowledgeChunkingConfig['strategy'] { return ['general', 'markdown', 'book', 'qa', 'laws', 'separator', 'fixed'].includes(value) ? value as KnowledgeChunkingConfig['strategy'] : 'markdown'; }
 function asRetrievalMode(value: string): KnowledgeRetrievalConfig['mode'] { return value === 'dense' || value === 'lexical' ? value : 'hybrid'; }

@@ -189,6 +189,8 @@ final class NativeRoutePolicy {
             "knowledgeBases.search": route("POST", "/api/knowledge-bases/{kbId}/search", nil, bodyKeys: ["query", "topK", "mode", "threshold", "fileIds", "fileName"], requiredBodyKeys: ["query"]),
             "knowledgeBases.find": route("POST", "/api/knowledge-bases/{kbId}/documents/{fileId}/find", nil, bodyKeys: ["query", "regex", "lineWindow"], requiredBodyKeys: ["query"]),
             "knowledgeBases.open": route("GET", "/api/knowledge-bases/{kbId}/documents/{fileId}/content", nil, query: ["chunkId", "page", "startLine", "lines"]),
+            "knowledgeBases.graph.get": route("GET", "/api/knowledge-bases/{kbId}/graph", nil, query: ["documentId", "query", "kinds", "limit", "depth", "excludeChunks", "focusId"]),
+            "knowledgeBases.graph.rebuild": route("POST", "/api/knowledge-bases/{kbId}/graph/rebuild", nil, bodyKeys: ["expectedRevision", "documentIds"], requiredBodyKeys: ["expectedRevision"]),
             "knowledgeBases.reindexPreview": route("GET", "/api/knowledge-bases/{kbId}/reindex-preview", nil),
             "knowledgeBases.rebuild": route("POST", "/api/knowledge-bases/{kbId}/rebuild", nil, bodyKeys: ["previewToken", "payloadSha256", "expectedRevision", "confirmText"], requiredBodyKeys: ["previewToken", "payloadSha256", "expectedRevision", "confirmText"]),
             "knowledgeWorker.health": route("GET", "/api/knowledge-bases/health", nil),

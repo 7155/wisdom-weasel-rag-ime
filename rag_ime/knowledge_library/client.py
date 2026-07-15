@@ -150,6 +150,68 @@ class HttpKnowledgeClient:
     def management_get_base(self, kb_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/knowledge/bases/{urllib.parse.quote(kb_id, safe='')}")
 
+    def management_knowledge_graph(
+        self,
+        kb_id: str,
+        *,
+        document_id: str = "",
+        query: str = "",
+        kinds: str = "",
+        limit: int = 200,
+        depth: int = 2,
+        exclude_chunks: bool = True,
+        focus_id: str = "",
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit, "depth": depth}
+        if document_id:
+            params["documentId"] = document_id
+        if query:
+            params["query"] = query
+        if kinds:
+            params["kinds"] = kinds
+        if exclude_chunks:
+            params["excludeChunks"] = "true"
+        if focus_id:
+            params["focusId"] = focus_id
+        path = (
+            f"/v1/knowledge/bases/{urllib.parse.quote(kb_id, safe='')}/graph?"
+            f"{urllib.parse.urlencode(params)}"
+        )
+        return self._request("GET", path)
+
+    def management_rebuild_knowledge_graph(
+        self,
+        kb_id: str,
+        *,
+        expected_revision: int | None,
+        document_ids: list[str] | None = None,
+        extractor_mode: str = "deterministic",
+        model_id: str = "",
+        batch_size: int = 4,
+        extraction_concurrency: int = 2,
+        max_entities: int = 5,
+        max_relations: int = 4,
+        max_topics: int = 2,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "documentIds": list(document_ids or []),
+            "extractorMode": extractor_mode,
+            "modelId": model_id,
+            "batchSize": batch_size,
+            "extractionConcurrency": extraction_concurrency,
+            "maxEntitiesPerChunk": max_entities,
+            "maxRelationsPerChunk": max_relations,
+            "maxTopicsPerChunk": max_topics,
+        }
+        if expected_revision is not None:
+            payload["expectedRevision"] = expected_revision
+        return self._request(
+            "POST",
+            f"/v1/knowledge/bases/{urllib.parse.quote(kb_id, safe='')}/graph/rebuild",
+            payload,
+            timeout_seconds=max(self.timeout_seconds, 1_800.0),
+        )
+
     def management_update_base(self, kb_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("PATCH", f"/v1/knowledge/bases/{urllib.parse.quote(kb_id, safe='')}", payload)
 

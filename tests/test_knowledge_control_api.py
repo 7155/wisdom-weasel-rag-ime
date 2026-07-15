@@ -223,6 +223,20 @@ class KnowledgeControlApiTests(unittest.TestCase):
         parser_ids = {item["id"] for item in self._json_request("GET", f"{self.base_url}/parsers")["items"]}
         self.assertEqual({"auto", "builtin", "mineru_local_http"}, parser_ids)
 
+        graph_job = self._json_request(
+            "POST",
+            f"{self.base_url}/{quote(kb_id)}/graph/rebuild",
+            {"expectedRevision": 0},
+        )
+        self.assertEqual("ready", graph_job["status"])
+        graph = self._json_request(
+            "GET",
+            f"{self.base_url}/{quote(kb_id)}/graph?query=grounding&limit=30&depth=2&excludeChunks=true",
+        )
+        self.assertEqual("rag-ime.knowledge-graph.v1", graph["schemaVersion"])
+        self.assertEqual(1, graph["stats"]["indexedDocumentCount"])
+        self.assertFalse(any(node["kind"] == "chunk" for node in graph["nodes"]))
+
         current_for_reindex = self._json_request("GET", f"{self.base_url}/{quote(kb_id)}")["base"]
         stale = self._json_request(
             "PATCH",

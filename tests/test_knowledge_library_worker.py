@@ -94,6 +94,28 @@ class KnowledgeWorkerTests(unittest.TestCase):
         status = self.client.management_status()
         self.assertEqual(1, status["readyDocumentCount"])
 
+    def test_management_knowledge_graph_round_trip(self) -> None:
+        imported = self.client.management_import_document(
+            self.base["id"],
+            b"# Graph\n\nRAG links Agent Runtime to `SQLite` evidence chunks.",
+            file_name="graph.md",
+            mime_type="text/markdown",
+        )
+        rebuilt = self.client.management_rebuild_knowledge_graph(
+            self.base["id"], expected_revision=0
+        )
+        self.assertEqual("ready", rebuilt["status"])
+        graph = self.client.management_knowledge_graph(
+            self.base["id"],
+            document_id=imported["receipt"]["documentId"],
+            query="SQLite",
+            depth=2,
+            limit=20,
+        )
+        self.assertEqual("rag-ime.knowledge-graph.v1", graph["schemaVersion"])
+        self.assertEqual("ready", graph["status"])
+        self.assertTrue(any("SQLite" in node["label"] for node in graph["nodes"]))
+
     def test_management_chunk_preview_and_job_cancel_round_trip(self) -> None:
         imported = self.client.management_import_document(
             self.base["id"],
@@ -217,6 +239,7 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
                 "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
                 "RAG_IME_EMBEDDING_API_KEY": "embedding-only-secret",
                 "RAG_IME_KNOWLEDGE_DENSE_BACKEND": "usearch",
+                "RAG_IME_DEEPSEEK_ENV": "/Users/test/Library/Application Support/RagIme/deepseek.env",
                 "RAG_IME_DEEPSEEK_API_KEY": "must-not-leak",
                 "RAG_IME_PREDICTOR_API_KEY": "must-not-leak",
                 "RAG_IME_AGENT_TOOL_TOKEN": "must-not-leak",
@@ -230,6 +253,10 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
         self.assertEqual("openai-compatible", environment["RAG_IME_EMBEDDING_PROVIDER"])
         self.assertEqual("embedding-only-secret", environment["RAG_IME_EMBEDDING_API_KEY"])
         self.assertEqual("usearch", environment["RAG_IME_KNOWLEDGE_DENSE_BACKEND"])
+        self.assertEqual(
+            "/Users/test/Library/Application Support/RagIme/deepseek.env",
+            environment["RAG_IME_DEEPSEEK_ENV"],
+        )
         self.assertEqual("1", environment["PYTHONUNBUFFERED"])
         for key in (
             "RAG_IME_DEEPSEEK_API_KEY",

@@ -81,6 +81,21 @@ function controlTransportBoundary(): Plugin {
   };
 }
 
+function browserDependencyBoundary(): Plugin {
+  return {
+    name: 'rag-ime-browser-dependency-boundary',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.replaceAll('\\', '/').endsWith('/lodash/_nodeUtil.js')) return null;
+      const browserCode = code.replace(
+        /freeModule\.require\((['"])util\1\)\.types/g,
+        'undefined',
+      );
+      return browserCode === code ? null : { code: browserCode, map: null };
+    },
+  };
+}
+
 function normalizeControlProxyTarget(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const url = new URL(value);
@@ -103,7 +118,7 @@ export default defineConfig({
   define: {
     __CONTROL_PREVIEW__: JSON.stringify(buildChannel !== 'production'),
   },
-  plugins: [react(), controlTransportBoundary()],
+  plugins: [react(), browserDependencyBoundary(), controlTransportBoundary()],
   resolve: {
     alias: [
       ...(nativeOnlyBuild

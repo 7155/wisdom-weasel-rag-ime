@@ -184,6 +184,85 @@ export interface KnowledgeSearchHit {
   lineEnd: number | null;
 }
 
+export type KnowledgeGraphNodeKind = 'document' | 'chunk' | 'topic' | 'entity' | 'term' | 'unknown';
+
+export interface KnowledgeGraphNode {
+  id: string;
+  label: string;
+  kind: KnowledgeGraphNodeKind;
+  documentId: string;
+  documentName: string;
+  chunkId: string;
+  heading: string;
+  excerpt: string;
+  page: number | null;
+  weight: number | null;
+}
+
+export interface KnowledgeGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: string;
+  label: string;
+  weight: number | null;
+}
+
+export interface KnowledgeGraph {
+  schemaVersion: string;
+  baseId: string;
+  revision: JsonValue;
+  status: 'ready' | 'building' | 'stale' | 'failed';
+  updatedAtMs: number;
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  stats: { nodeCount: number; edgeCount: number; documentCount: number; chunkCount: number; indexedDocumentCount: number; pendingDocumentCount: number };
+  sourceRevision: JsonValue;
+  truncated: boolean;
+  extractor: KnowledgeGraphExtractorStatus | null;
+}
+
+export type KnowledgeGraphExtractorMode = 'model' | 'deterministic';
+
+export interface KnowledgeGraphExtractorStatus {
+  mode: KnowledgeGraphExtractorMode;
+  model: string;
+  configured: boolean;
+  degraded: boolean;
+  processedChunkCount: number;
+  cachedChunkCount: number;
+  modelChunkCount: number;
+  fallbackChunkCount: number;
+  errorCount: number;
+  batchSize: number;
+  batchCount: number;
+  extractionConcurrency: number;
+  effectiveExtractionConcurrency: number;
+  entityCount: number;
+  topicCount: number;
+  relationCount: number;
+  lastError: string;
+}
+
+export interface KnowledgeGraphRebuildOptions {
+  extractorMode?: KnowledgeGraphExtractorMode;
+  modelId?: string;
+  batchSize?: number;
+  extractionConcurrency?: number;
+  maxEntitiesPerChunk?: number;
+  maxRelationsPerChunk?: number;
+  maxTopicsPerChunk?: number;
+}
+
+export interface KnowledgeGraphFilters {
+  documentId?: string;
+  query?: string;
+  kinds?: readonly KnowledgeGraphNodeKind[];
+  limit?: number;
+  depth?: number;
+  excludeChunks?: boolean;
+}
+
 export const knowledgeLibraryKeys = {
   root: ['knowledge-library'] as const,
   bases: () => [...knowledgeLibraryKeys.root, 'bases'] as const,
@@ -194,6 +273,17 @@ export const knowledgeLibraryKeys = {
   documentContent: (baseId: string, documentId: string) => [...knowledgeLibraryKeys.root, 'document-content', baseId, documentId] as const,
   worker: () => [...knowledgeLibraryKeys.root, 'worker'] as const,
   parsers: () => [...knowledgeLibraryKeys.root, 'parsers'] as const,
+  graph: (baseId: string, filters: KnowledgeGraphFilters = {}) => [
+    ...knowledgeLibraryKeys.root,
+    'graph',
+    baseId,
+    filters.documentId ?? '',
+    filters.query ?? '',
+    filters.limit ?? 100,
+    filters.depth ?? 2,
+    filters.excludeChunks ?? true,
+    ...(filters.kinds ?? []),
+  ] as const,
 };
 
 export function useKnowledgeLibraryQueries(baseId: string) {
@@ -255,6 +345,53 @@ export function useKnowledgeLibraryQueries(baseId: string) {
     staleTime: 30_000,
   });
   return { base, bases, documents, jobs, parsers, transport, worker };
+}
+
+export function useKnowledgeGraphQuery(baseId: string, filters: KnowledgeGraphFilters) {
+  const transport = useControlTransport();
+  return useQuery({
+    queryKey: knowledgeLibraryKeys.graph(baseId, filters),
+    enabled: Boolean(baseId),
+    queryFn: async ({ signal }) => normalizeKnowledgeGraph(await transport.request({
+      pathId: 'knowledgeBases.graph.get',
+      params: { kbId: baseId },
+      query: {
+        limit: filters.limit ?? 100,
+        depth: filters.depth ?? 2,
+        excludeChunks: filters.excludeChunks ?? true,
+        ...(filters.documentId ? { documentId: filters.documentId } : {}),
+        ...(filters.query ? { query: filters.query } : {}),
+        ...(filters.kinds?.length ? { kinds: filters.kinds.join(',') } : {}),
+      },
+      signal,
+    }), baseId),
+    staleTime: 10_000,
+    refetchInterval: (query) => query.state.data?.status === 'building' ? 1_500 : false,
+  });
+}
+
+export async function rebuildKnowledgeGraph(
+  transport: ControlTransport,
+  baseId: string,
+  expectedRevision: JsonValue,
+  options: KnowledgeGraphRebuildOptions = {},
+): Promise<{ jobId: string; status: string }> {
+  const extractorMode = options.extractorMode ?? 'model';
+  const payload = record(await transport.request({
+    pathId: 'knowledgeBases.graph.rebuild',
+    params: { kbId: baseId },
+    body: {
+      expectedRevision,
+      extractorMode,
+      ...(options.modelId ? { modelId: options.modelId } : {}),
+      batchSize: options.batchSize ?? 4,
+      extractionConcurrency: options.extractionConcurrency ?? 2,
+      maxEntitiesPerChunk: options.maxEntitiesPerChunk ?? 5,
+      maxRelationsPerChunk: options.maxRelationsPerChunk ?? 4,
+      maxTopicsPerChunk: options.maxTopicsPerChunk ?? 2,
+    },
+  }));
+  return { jobId: text(payload.jobId), status: text(payload.status, 'queued') };
 }
 
 export function useKnowledgeDocumentDetail(baseId: string, documentId: string, enabled = true) {
@@ -515,6 +652,85 @@ function normalizeBases(value: unknown): DocumentKnowledgeBase[] {
   const payload = record(value);
   const rows = Array.isArray(value) ? value : list(payload.items ?? payload.bases ?? payload.knowledgeBases);
   return rows.map(normalizeBase).filter((row) => Boolean(row.id));
+}
+
+export function normalizeKnowledgeGraph(value: unknown, baseId = ''): KnowledgeGraph {
+  const root = record(value);
+  const payload = record(root.graph ?? value);
+  const nodes = list(payload.nodes).map((item, index) => {
+    const row = record(item);
+    const rawKind = text(row.kind, text(row.type, 'unknown')).toLowerCase();
+    const kind: KnowledgeGraphNodeKind = rawKind === 'file' || rawKind === 'document'
+      ? 'document'
+      : rawKind === 'concept' || rawKind === 'topic'
+        ? 'topic'
+        : ['chunk', 'entity', 'term'].includes(rawKind) ? rawKind as KnowledgeGraphNodeKind : 'unknown';
+    return {
+      id: text(row.id, `node-${index + 1}`),
+      label: text(row.label, text(row.name, text(row.heading, '未命名节点'))),
+      kind,
+      documentId: text(row.documentId, text(row.document_id, text(row.fileId, text(row.file_id)))),
+      documentName: text(row.documentName, text(row.document_name, text(row.fileName))),
+      chunkId: text(row.chunkId, text(row.chunk_id)),
+      heading: text(row.heading),
+      excerpt: text(row.excerpt, text(row.summary, text(row.content, text(row.text)))),
+      page: nullableNumber(row.page),
+      weight: optionalNumber(row.weight ?? row.score),
+    } satisfies KnowledgeGraphNode;
+  }).filter((node) => Boolean(node.id));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = list(payload.edges).map((item, index) => {
+    const row = record(item);
+    const source = text(row.source, text(row.sourceId, text(row.source_id)));
+    const target = text(row.target, text(row.targetId, text(row.target_id)));
+    return {
+      id: text(row.id, `${source}:${target}:${index}`), source, target,
+      kind: text(row.kind, text(row.relation, text(row.type, 'related'))),
+      label: text(row.label), weight: optionalNumber(row.weight ?? row.score),
+    } satisfies KnowledgeGraphEdge;
+  }).filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+  const rawStats = record(payload.stats);
+  const rawStatus = record(payload.status);
+  const rawExtractor = record(payload.extractor);
+  const statusValue = typeof payload.status === 'string' ? payload.status : text(rawStatus.state, 'ready');
+  return {
+    schemaVersion: text(payload.schemaVersion, text(payload.schema_version, 'rag-ime.knowledge-graph.v1')),
+    baseId: text(payload.kbId, text(payload.baseId, baseId)),
+    revision: jsonValue(payload.revision ?? 0),
+    status: graphStatus(statusValue),
+    updatedAtMs: number(payload.updatedAtMs ?? payload.updated_at_ms ?? rawStatus.updatedAtMs ?? rawStatus.updated_at_ms),
+    nodes,
+    edges,
+    stats: {
+      nodeCount: number(rawStats.nodeCount ?? rawStats.node_count ?? rawStatus.nodeCount ?? rawStatus.node_count) || nodes.length,
+      edgeCount: number(rawStats.edgeCount ?? rawStats.edge_count ?? rawStatus.edgeCount ?? rawStatus.edge_count) || edges.length,
+      documentCount: number(rawStats.documentCount ?? rawStats.document_count) || nodes.filter((node) => node.kind === 'document').length,
+      chunkCount: number(rawStats.chunkCount ?? rawStats.chunk_count) || nodes.filter((node) => node.kind === 'chunk').length,
+      indexedDocumentCount: number(rawStats.indexedDocumentCount ?? rawStats.indexed_document_count ?? rawStatus.indexedDocumentCount ?? rawStatus.indexed_document_count),
+      pendingDocumentCount: number(rawStats.pendingDocumentCount ?? rawStats.pending_document_count ?? rawStatus.pendingDocumentCount ?? rawStatus.pending_document_count),
+    },
+    sourceRevision: jsonValue(rawStatus.sourceRevision ?? rawStatus.source_revision ?? payload.sourceRevision ?? payload.source_revision ?? 0),
+    truncated: bool(payload.truncated),
+    extractor: Object.keys(rawExtractor).length ? {
+      mode: text(rawExtractor.mode) === 'model' ? 'model' : 'deterministic',
+      model: text(rawExtractor.model),
+      configured: bool(rawExtractor.configured),
+      degraded: bool(rawExtractor.degraded),
+      processedChunkCount: number(rawExtractor.processedChunkCount),
+      cachedChunkCount: number(rawExtractor.cachedChunkCount),
+      modelChunkCount: number(rawExtractor.modelChunkCount),
+      fallbackChunkCount: number(rawExtractor.fallbackChunkCount),
+      errorCount: number(rawExtractor.errorCount),
+      batchSize: number(rawExtractor.batchSize),
+      batchCount: number(rawExtractor.batchCount),
+      extractionConcurrency: number(rawExtractor.extractionConcurrency),
+      effectiveExtractionConcurrency: number(rawExtractor.effectiveExtractionConcurrency),
+      entityCount: number(rawExtractor.entityCount),
+      topicCount: number(rawExtractor.topicCount),
+      relationCount: number(rawExtractor.relationCount),
+      lastError: text(rawExtractor.lastError),
+    } : null,
+  };
 }
 
 function normalizeBaseEnvelope(value: unknown): DocumentKnowledgeBase {
@@ -808,6 +1024,14 @@ function number(value: unknown): number {
 
 function nullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  return value === null || value === undefined || value === '' ? null : nullableNumber(value);
+}
+
+function graphStatus(value: string): KnowledgeGraph['status'] {
+  return value === 'building' || value === 'stale' || value === 'failed' ? value : 'ready';
 }
 
 function boundedNumber(value: unknown, min: number, max: number, fallback: number): number {

@@ -113,6 +113,8 @@ const canonicalPathIds = [
   'knowledgeBases.open',
   'knowledgeBases.reindexPreview',
   'knowledgeBases.rebuild',
+  'knowledgeBases.graph.get',
+  'knowledgeBases.graph.rebuild',
   'knowledgeWorker.health',
   'knowledgeParsers.list',
   'diagnostics.runtime',

@@ -81,7 +81,8 @@ describe('document knowledge library', () => {
       expectedRevision: 8,
     }));
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Provider' }), 'mineru');
+    await user.click(screen.getByRole('combobox', { name: 'Provider' }));
+    await user.click(await screen.findByRole('option', { name: 'MinerU' }));
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.update').at(-1)?.request.body).toMatchObject({
       parserProvider: 'mineru_local_http',
       expectedRevision: 8,
@@ -126,7 +127,8 @@ describe('document knowledge library', () => {
     expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
     await user.click(screen.getByRole('button', { name: '重新解析 runtime.pdf' }));
     const reparseDialog = screen.getByRole('dialog', { name: '重新解析文档' });
-    await user.selectOptions(within(reparseDialog).getByRole('combobox', { name: '解析方式' }), 'mineru');
+    await user.click(within(reparseDialog).getByRole('combobox', { name: '解析方式' }));
+    await user.click(await screen.findByRole('option', { name: 'MinerU OCR / 版面解析' }));
     await user.click(within(reparseDialog).getByRole('button', { name: '开始重新解析' }));
     await waitFor(() => expect(request(transport, 'knowledgeBases.document.retry')).toMatchObject({
       params: { kbId: 'kb-runtime', fileId: 'file-runtime' },
@@ -222,8 +224,9 @@ describe('document knowledge library', () => {
 
     await user.click(await screen.findByRole('tab', { name: '设置' }));
     const strategy = screen.getByRole('combobox', { name: '策略' });
-    expect(within(strategy).getAllByRole('option')).toHaveLength(7);
-    await user.selectOptions(strategy, 'laws');
+    await user.click(strategy);
+    expect(await screen.findAllByRole('option')).toHaveLength(7);
+    await user.click(screen.getByRole('option', { name: '法律条款' }));
     await user.click(screen.getByRole('button', { name: '预览切分' }));
 
     await waitFor(() => expect(request(transport, 'knowledgeBases.chunkPreview')).toMatchObject({
@@ -262,6 +265,75 @@ describe('document knowledge library', () => {
     expect(await screen.findByText('retry.pdf')).toBeInTheDocument();
     expect(screen.getByText('已进入解析')).toBeInTheDocument();
   });
+
+  it('manages an independent document graph with source navigation and rebuild state', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '知识图谱' }));
+    expect(await screen.findByText('4')).toBeInTheDocument();
+    expect(request(transport, 'knowledgeBases.graph.get')?.query).toMatchObject({ limit: 80, depth: 2, excludeChunks: true });
+    expect(screen.getByLabelText('交互式知识图谱画布')).toHaveClass('knowledge-graph__canvas');
+    expect(screen.getByLabelText('交互式知识图谱画布')).toHaveAttribute('data-renderer', 'g6');
+    expect(screen.getByRole('button', { name: '适应全部节点' })).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: '搜索图谱' }), 'DeepSeek');
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get' && call.request.query?.query === 'DeepSeek')).toHaveLength(1), { timeout: 1_500 });
+    expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get' && call.request.query?.query)).toHaveLength(1);
+    await user.click(screen.getByRole('radio', { name: '节点' }));
+    await user.click(screen.getByRole('button', { name: /按需检索与上下文注入/ }));
+    expect(screen.getByRole('heading', { name: '按需检索与上下文注入' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '打开材料来源' }));
+    expect(screen.getByRole('tab', { name: '材料查看' })).toHaveAttribute('data-state', 'active');
+
+    await user.click(screen.getByRole('tab', { name: '知识图谱' }));
+    await user.click(screen.getByRole('radio', { name: '关系' }));
+    await user.click(screen.getByRole('button', { name: /runtime.pdf → 工具注册/ }));
+    expect(screen.getByRole('heading', { name: '包含' })).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: '构建状态' }));
+    expect(screen.getByText('已索引材料')).toBeInTheDocument();
+    expect(screen.getByText('待处理材料')).toBeInTheDocument();
+    expect(screen.getByText('下次重建').nextElementSibling).toHaveTextContent('模型抽取（推荐）');
+    expect(screen.getByText('由 Worker 运行时配置')).toBeInTheDocument();
+    expect(screen.getByText('抽取上限').nextElementSibling).toHaveTextContent('5 实体 / 4 关系 / 2 主题');
+    await user.click(screen.getAllByRole('button', { name: '重建图谱' }).at(-1)!);
+    await waitFor(() => expect(request(transport, 'knowledgeBases.graph.rebuild')?.body).toEqual({
+      expectedRevision: 4,
+      extractorMode: 'model',
+      batchSize: 4,
+      extractionConcurrency: 2,
+      maxEntitiesPerChunk: 5,
+      maxRelationsPerChunk: 4,
+      maxTopicsPerChunk: 2,
+    }));
+  });
+
+  it('keeps build status reachable before the first graph has nodes', async () => {
+    const transport = createTransport({ emptyGraph: true });
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+    await user.click(await screen.findByRole('tab', { name: '知识图谱' }));
+    expect(await screen.findByRole('heading', { name: '当前范围没有图谱节点' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看构建状态' }));
+    expect(screen.getByText('图谱构建状态')).toBeInTheDocument();
+    expect(screen.getByText('待处理材料')).toBeInTheDocument();
+  });
+
+  it('polls a queued model graph until ready and prevents duplicate rebuilds', async () => {
+    const transport = createTransport({ pollingGraph: true });
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '知识图谱' }));
+    await user.click(screen.getByRole('radio', { name: '构建状态' }));
+    expect(screen.getByRole('heading', { name: '构建中' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '重建图谱' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: '重建图谱' }).every((button) => button.hasAttribute('disabled'))).toBe(true);
+
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get')).toHaveLength(2), { timeout: 2_500 });
+    await waitFor(() => expect(screen.getAllByRole('button', { name: '重建图谱' }).every((button) => !button.hasAttribute('disabled'))).toBe(true));
+    expect(screen.getByRole('heading', { name: '已就绪' })).toBeInTheDocument();
+  });
 });
 
 function renderKnowledge(transport: MockControlTransport) {
@@ -275,7 +347,8 @@ function renderKnowledge(transport: MockControlTransport) {
   );
 }
 
-function createTransport(options: { activeJob?: boolean; pagedDetail?: boolean } = {}): MockControlTransport {
+function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; pagedDetail?: boolean; pollingGraph?: boolean } = {}): MockControlTransport {
+  let graphRequestCount = 0;
   return new MockControlTransport({
     knowledgeAsset: (input) => ({ ...input, mimeType: 'image/png', byteSize: 3, sha256: input.assetId, blob: new Blob(['png'], { type: 'image/png' }) }),
     knowledgeDocumentSource: (input) => ({ ...input, mimeType: 'application/pdf', byteSize: 3, sha256: 'b'.repeat(64), blob: new Blob(['pdf'], { type: 'application/pdf' }) }),
@@ -305,6 +378,34 @@ function createTransport(options: { activeJob?: boolean; pagedDetail?: boolean }
       'knowledgeBases.rebuild': { ok: true },
       'knowledgeBases.job.cancel': { ok: true, job: { id: 'job-1', status: 'cancelled' } },
       'knowledgeBases.chunkPreview': { ok: true, fileId: 'file-runtime', total: 2, truncated: false, items: [{ chunkId: 'preview-1', ordinal: 0, content: '第一条预览', page: 1 }, { chunkId: 'preview-2', ordinal: 1, content: '第二条预览', page: 2 }] },
+      'knowledgeBases.graph.get': () => {
+        graphRequestCount += 1;
+        return {
+        schemaVersion: 'rag-ime.knowledge-graph.v1', kbId: 'kb-runtime', revision: 4,
+        sourceRevision: `sha256:${'b'.repeat(64)}`,
+        status: options.emptyGraph ? 'stale' : options.pollingGraph && graphRequestCount === 1 ? 'building' : 'ready', updatedAtMs: Date.now(),
+        nodes: options.emptyGraph ? [] : [
+          { id: 'doc-runtime', label: 'runtime.pdf', kind: 'document', documentId: 'file-runtime', documentName: 'runtime.pdf', weight: 1 },
+          { id: 'topic-tools', label: '工具注册', kind: 'topic', weight: .9 },
+          { id: 'entity-worker', label: 'Knowledge Worker', kind: 'entity', weight: .8 },
+          { id: 'chunk-tool', label: '按需检索与上下文注入', kind: 'chunk', documentId: 'file-runtime', documentName: 'runtime.pdf', chunkId: 'chunk-tool', heading: 'Agent Loop > Tools', excerpt: 'Agent 启动时注册 ime_knowledge。', page: 12, weight: .92 },
+        ],
+        edges: options.emptyGraph ? [] : [
+          { id: 'edge-1', source: 'doc-runtime', target: 'topic-tools', kind: 'contains', label: '包含', weight: .9 },
+          { id: 'edge-2', source: 'topic-tools', target: 'chunk-tool', kind: 'evidence', label: '证据', weight: .92 },
+          { id: 'edge-3', source: 'chunk-tool', target: 'entity-worker', kind: 'mentions', label: '提及', weight: .8 },
+        ],
+        stats: {
+          nodeCount: options.emptyGraph ? 0 : 4,
+          edgeCount: options.emptyGraph ? 0 : 3,
+          documentCount: options.emptyGraph ? 0 : 1,
+          chunkCount: options.emptyGraph ? 0 : 1,
+          indexedDocumentCount: options.emptyGraph ? 0 : 1,
+          pendingDocumentCount: options.emptyGraph ? 1 : 0,
+        },
+        truncated: false,
+      }; },
+      'knowledgeBases.graph.rebuild': { ok: true, jobId: 'graph-job-1', status: 'queued' },
     },
   });
 }

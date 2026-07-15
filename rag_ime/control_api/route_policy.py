@@ -117,6 +117,8 @@ class ControlPathId(str, Enum):
     KNOWLEDGE_BASES_SEARCH = "knowledgeBases.search"
     KNOWLEDGE_BASES_FIND = "knowledgeBases.find"
     KNOWLEDGE_BASES_OPEN = "knowledgeBases.open"
+    KNOWLEDGE_BASES_GRAPH_GET = "knowledgeBases.graph.get"
+    KNOWLEDGE_BASES_GRAPH_REBUILD = "knowledgeBases.graph.rebuild"
     KNOWLEDGE_BASES_REINDEX_PREVIEW = "knowledgeBases.reindexPreview"
     KNOWLEDGE_BASES_REBUILD = "knowledgeBases.rebuild"
     KNOWLEDGE_WORKER_HEALTH = "knowledgeWorker.health"
@@ -554,6 +556,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.KNOWLEDGE_BASES_SEARCH, ControlMethod.POST, "/api/knowledge-bases/{kbId}/search", None, params=_KNOWLEDGE_BASE, body={"query", "topK", "mode", "threshold", "fileIds", "fileName"}, required_body={"query"}),
         _route(ControlPathId.KNOWLEDGE_BASES_FIND, ControlMethod.POST, "/api/knowledge-bases/{kbId}/documents/{fileId}/find", None, params=_KNOWLEDGE_DOCUMENT, body={"query", "regex", "lineWindow"}, required_body={"query"}),
         _route(ControlPathId.KNOWLEDGE_BASES_OPEN, ControlMethod.GET, "/api/knowledge-bases/{kbId}/documents/{fileId}/content", None, params=_KNOWLEDGE_DOCUMENT, query={"chunkId", "page", "startLine", "lines"}),
+        _route(ControlPathId.KNOWLEDGE_BASES_GRAPH_GET, ControlMethod.GET, "/api/knowledge-bases/{kbId}/graph", None, params=_KNOWLEDGE_BASE, query={"documentId", "query", "kinds", "limit", "depth", "excludeChunks", "focusId"}),
+        _route(ControlPathId.KNOWLEDGE_BASES_GRAPH_REBUILD, ControlMethod.POST, "/api/knowledge-bases/{kbId}/graph/rebuild", None, params=_KNOWLEDGE_BASE, body={"expectedRevision", "documentIds", "extractorMode", "modelId", "batchSize", "extractionConcurrency", "maxEntitiesPerChunk", "maxRelationsPerChunk", "maxTopicsPerChunk"}, required_body={"expectedRevision"}),
         _route(ControlPathId.KNOWLEDGE_BASES_REINDEX_PREVIEW, ControlMethod.GET, "/api/knowledge-bases/{kbId}/reindex-preview", None, params=_KNOWLEDGE_BASE),
         _route(ControlPathId.KNOWLEDGE_BASES_REBUILD, ControlMethod.POST, "/api/knowledge-bases/{kbId}/rebuild", None, params=_KNOWLEDGE_BASE, body={"previewToken", "payloadSha256", "expectedRevision", "confirmText"}, required_body={"previewToken", "payloadSha256", "expectedRevision", "confirmText"}),
         _route(ControlPathId.KNOWLEDGE_WORKER_HEALTH, ControlMethod.GET, "/api/knowledge-bases/health", None),

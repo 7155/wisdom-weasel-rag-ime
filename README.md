@@ -102,6 +102,25 @@ generation. AI organization produces an editable draft first. Only an explicit
 review action applies selected changes to formal memory, indexes, or the Rime
 lexicon. It is not a background remote upload path.
 
+### Document Knowledge Libraries
+
+**Status: in development; document management, parsing, indexing, retrieval,
+source review, and an independent document graph are implemented.**
+
+Large external documents live in a separate Knowledge Worker domain rather
+than being mixed into personal memory. The Control Center manages libraries,
+imports, parser and chunking settings, retrieval settings, source/Markdown/
+chunk/asset review, index jobs, retrieval tests, and a document knowledge
+graph. Built-in parsing is always available; MinerU can be installed as an
+optional local parser for layout-heavy PDFs and OCR. The graph projects
+document structure, topics, entities, terms, and evidence-bearing chunks into
+its own SQLite tables, with source navigation and rebuild status, without
+touching the personal-memory relationship graph.
+
+Agent access remains one explicit, read-only `ime_knowledge` tool. The graph is
+currently a Knowledge Worker retrieval and control-plane feature, not a second
+agent tool, so graph expansion cannot silently increase the agent's authority.
+
 ### Memory And Knowledge Management
 
 **Status: in development; management APIs and native views are implemented.**
@@ -368,3 +387,7 @@ applicable notices and exact corresponding source; see
   [LazyTyper](https://github.com/oldcai/LazyTyper-releases) informed the voice
   interaction study. [Volcengine Doubao streaming ASR 2.0](https://docs.volcengine.com/docs/6561/1354869?lang=zh)
   is an optional configured provider.
+- [Yuxi](https://github.com/xerrors/Yuxi) informed the document knowledge-base
+  and knowledge-graph management workflow. This project adapts that workflow
+  to its existing local worker, SQLite storage, and Control Center design
+  rather than importing Yuxi's Neo4j/PostgreSQL/Milvus runtime stack.

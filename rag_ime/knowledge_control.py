@@ -197,6 +197,47 @@ class KnowledgeControlFacade:
             _identifier(asset_id, "assetId"),
         )  # type: ignore[return-value]
 
+    def graph(self, kb_id: str, query: Mapping[str, object]) -> dict[str, object]:
+        return dict(
+            self.worker.management_call(
+                "management_knowledge_graph",
+                _identifier(kb_id, "kbId"),
+                document_id=_text(query.get("documentId"), maximum=160),
+                query=_text(query.get("query"), maximum=200),
+                kinds=_text(query.get("kinds"), maximum=200),
+                limit=_bounded_int(query.get("limit"), default=200, minimum=10, maximum=1_000),
+                depth=_bounded_int(query.get("depth"), default=2, minimum=1, maximum=5),
+                exclude_chunks=str(query.get("excludeChunks") or "true").strip().lower() in {"1", "true", "yes"},
+                focus_id=_text(query.get("focusId"), maximum=160),
+            )
+        )
+
+    def rebuild_graph(self, kb_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        document_ids = payload.get("documentIds")
+        if document_ids is not None and not isinstance(document_ids, list):
+            raise KnowledgeLibraryError("documentIds must be an array", code="invalid_argument")
+        return dict(
+            self.worker.management_call(
+                "management_rebuild_knowledge_graph",
+                _identifier(kb_id, "kbId"),
+                expected_revision=(
+                    int(payload["expectedRevision"])
+                    if payload.get("expectedRevision") is not None
+                    else None
+                ),
+                document_ids=[_identifier(item, "documentId") for item in (document_ids or [])],
+                extractor_mode=str(payload.get("extractorMode") or "deterministic"),
+                model_id=_text(payload.get("modelId"), maximum=160),
+                batch_size=_bounded_int(payload.get("batchSize"), default=4, minimum=1, maximum=8),
+                extraction_concurrency=_bounded_int(
+                    payload.get("extractionConcurrency"), default=2, minimum=1, maximum=4
+                ),
+                max_entities=_bounded_int(payload.get("maxEntitiesPerChunk"), default=5, minimum=1, maximum=8),
+                max_relations=_bounded_int(payload.get("maxRelationsPerChunk"), default=4, minimum=0, maximum=8),
+                max_topics=_bounded_int(payload.get("maxTopicsPerChunk"), default=2, minimum=0, maximum=4),
+            )
+        )
+
     def reindex_preview(self, kb_id: str) -> dict[str, object]:
         kb_id = _identifier(kb_id, "kbId")
         result = dict(self.worker.management_call("management_reindex_preview", kb_id))
