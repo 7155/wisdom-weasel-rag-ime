@@ -360,9 +360,9 @@ export function WorkflowAction({
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
-        {stage === 'idle' ? (
-          <Button disabled={unavailable} leadingIcon={<ShieldCheck size={15} />} onClick={() => setStage('preview')} size="small">
-            {unavailable ? '当前不可用' : isRehearsal ? '查看示例' : '预览操作'}
+        {stage === 'idle' && !unavailable ? (
+          <Button leadingIcon={<ShieldCheck size={15} />} onClick={() => setStage('preview')} size="small">
+            {isRehearsal ? '查看示例' : '预览操作'}
           </Button>
         ) : null}
       </div>

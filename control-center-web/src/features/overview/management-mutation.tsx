@@ -137,7 +137,7 @@ export function ManagementMutationWorkflow<Context>({
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
-        {stage === 'idle' ? (
+        {stage === 'idle' && (availability.state === 'available' || availability.state === 'checking') ? (
           <Button
             disabled={!actionable}
             leadingIcon={<ShieldCheck size={15} />}
@@ -145,7 +145,7 @@ export function ManagementMutationWorkflow<Context>({
             onClick={() => previewMutation.mutate()}
             size="small"
           >
-            {availability.state === 'unsupported' ? '当前不可用' : availability.state === 'blocked' ? '尚不可预览' : '预览操作'}
+            预览操作
           </Button>
         ) : null}
       </div>
@@ -278,7 +278,6 @@ export function UnsupportedWorkflow({
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
-        <Button disabled size="small">当前不可用</Button>
       </div>
       <InlineNotice title="暂不可用" tone="warning">{reason}</InlineNotice>
     </div>

@@ -114,7 +114,7 @@ describe('VoiceFeature', () => {
     expect((await screen.findAllByText('“bad|word”包含当前语音服务不支持的符号。')).length).toBeGreaterThan(0);
     const workflow = screen.getByText('保存热词词表', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    expect(within(workflow as HTMLElement).getByRole('button', { name: '尚不可预览' })).toBeDisabled();
+    expect(within(workflow as HTMLElement).queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(configurationRequest(transport, 'configuration.settings.preview')).toBeUndefined();
   });
 });

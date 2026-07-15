@@ -49,7 +49,7 @@ class KnowledgeWorkerServer(ThreadingHTTPServer):
             mineru_enabled=service.config.mineru_enabled,
             mineru_port=service.config.mineru_port,
             idle_seconds=idle_seconds,
-            python_executable=sys.executable,
+            python_executable=os.environ.get("RAG_IME_KNOWLEDGE_PYTHON", "").strip() or sys.executable,
             python_version=platform.python_version(),
             embedding_provider=os.environ.get("RAG_IME_EMBEDDING_PROVIDER", "none"),
             embedding_model=os.environ.get("RAG_IME_EMBEDDING_MODEL", ""),
