@@ -198,14 +198,39 @@ class AgentRoomStore:
             if isinstance(item, Mapping) and item.get("status") == "active"
         ]
         lowered = str(text).casefold()
-        matched: list[dict[str, object]] = []
+        aliases: dict[str, list[dict[str, object]]] = {}
         for participant in participants:
-            aliases = {
-                f"@{str(participant['displayName']).casefold()}",
-                f"@{str(participant['roleId']).casefold()}",
-            }
-            if any(alias in lowered for alias in aliases):
-                matched.append(participant)
+            for alias in {
+                str(participant["displayName"]).casefold(),
+                str(participant["roleId"]).casefold(),
+            }:
+                aliases.setdefault(alias, []).append(participant)
+
+        matched_by_id: dict[str, dict[str, object]] = {}
+        for offset, character in enumerate(lowered):
+            if character != "@":
+                continue
+            candidates = [
+                (alias, owners)
+                for alias, owners in aliases.items()
+                if lowered.startswith(alias, offset + 1)
+                and _mention_ends_at_boundary(lowered, offset + 1 + len(alias))
+            ]
+            if not candidates:
+                continue
+            longest = max(len(alias) for alias, _owners in candidates)
+            owners_by_id: dict[str, dict[str, object]] = {}
+            for alias, owners in candidates:
+                if len(alias) != longest:
+                    continue
+                for owner in owners:
+                    owners_by_id[str(owner["id"])] = owner
+            if len(owners_by_id) != 1:
+                raise ValueError("first room version supports exactly one addressed participant")
+            participant = next(iter(owners_by_id.values()))
+            matched_by_id[str(participant["id"])] = participant
+
+        matched = list(matched_by_id.values())
         if len(matched) > 1:
             raise ValueError("first room version supports exactly one addressed participant")
         if matched:
@@ -578,6 +603,13 @@ def _room_event_sequence(room_id: str, event_id: str) -> int | None:
         return int(event_id[len(prefix) :])
     except ValueError:
         return None
+
+
+def _mention_ends_at_boundary(text: str, offset: int) -> bool:
+    if offset >= len(text):
+        return True
+    character = text[offset]
+    return character.isspace() or character in "@,!?;:，。！？；：、()[]{}<>（）《》\"'`"
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

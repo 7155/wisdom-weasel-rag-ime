@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/primitives';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { SafeFieldList } from './BlockRenderer';
+import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
 
 export function ActivitySummary({
   activities,
@@ -63,6 +64,8 @@ function ActivityRow({
   const presentation = activityPresentation(activity);
   const Icon = presentation.icon;
   const payload = activity.payload;
+  const isToolActivity = activity.kind === 'tool_started' || activity.kind === 'tool_progress' || activity.kind === 'tool_finished';
+  const toolView = isToolActivity ? publicToolResultView(activity) : null;
   const approvalId = text(payload.approvalId);
   const hash = text(payload.payloadSha256);
   const canDecide = activity.status === 'waiting' && approvalId && hash && onApprovalDecision;
@@ -72,14 +75,14 @@ function ActivityRow({
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
           <strong>{presentation.title}</strong>
-          <small>{activity.summary}</small>
+          <small>{activity.kind === 'reasoning_summary' ? '正在整理信息与下一步' : toolView?.summary ?? publicActivitySummary(activity.summary, presentation.title)}</small>
         </span>
         <i data-status={activity.status}>{statusLabel(activity.status)}</i>
       </summary>
       <div className="agent-activity-row__details">
         {presentation.detail ? <p>{presentation.detail}</p> : null}
-        <SafeFieldList data={payload} />
-        <SourceList value={payload.sources ?? payload.documents ?? payload.books} />
+        {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
+        <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
         {canDecide ? (
           <div className="agent-activity-row__approval-actions">
             <Button size="small" variant="quiet" onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}>拒绝</Button>
@@ -91,9 +94,18 @@ function ActivityRow({
   );
 }
 
-function SourceList({ value }: { value: unknown }) {
-  if (!Array.isArray(value)) return null;
-  const items = value.map((item) => text(item) || text(record(item).title ?? record(item).name)).filter(Boolean).slice(0, 8);
+function PublicToolFields({ view }: { view: PublicToolResultView }) {
+  if (view.fields.length === 0) return <p>工具没有返回可公开展示的结构化明细。</p>;
+  return (
+    <dl className="agent-safe-fields">
+      {view.fields.map((field) => (
+        <div key={field.id}><dt>{field.label}</dt><dd>{field.value}</dd></div>
+      ))}
+    </dl>
+  );
+}
+
+function SourceList({ items }: { items: string[] }) {
   if (items.length === 0) return null;
   return <ul className="agent-activity-row__sources">{items.map((item) => <li key={item}>{item}</li>)}</ul>;
 }
@@ -108,26 +120,36 @@ interface ActivityPresentation {
 function activityPresentation(activity: AgentActivityProjection): ActivityPresentation {
   const payload = activity.payload;
   const toolId = text(payload.toolId ?? payload.toolName).toLowerCase();
+  const toolView = activity.kind.startsWith('tool_') ? publicToolResultView(activity) : null;
   if (activity.kind === 'reasoning_summary') {
-    return { title: '思考摘要', kind: 'thinking', icon: Brain };
+    return { title: '处理说明', kind: 'thinking', icon: Brain };
   }
   if (activity.kind.includes('approval') || activity.kind === 'user_input_required') {
-    return { title: '权限确认', kind: 'approval', icon: ShieldAlert, detail: '批准状态以服务端回执为准。' };
+    return { title: '权限确认', kind: 'approval', icon: ShieldAlert, detail: '是否执行以你的本机确认结果为准。' };
   }
   if (activity.kind.includes('memory') || toolId.includes('memory')) {
     return { title: '记忆', kind: 'memory', icon: BookOpenText };
   }
   if (toolId.includes('knowledge') || toolId.includes('rag') || text(payload.operation) === 'search') {
-    return { title: 'RAG 检索', kind: 'rag', icon: Search };
+    return { title: toolId === 'ime_knowledge' ? '文档知识库' : '知识检索', kind: 'rag', icon: Search };
   }
   if (toolId.includes('subagent') || activity.kind.includes('subagent')) {
-    return { title: '子 Agent', kind: 'subagent', icon: GitBranch };
+    return { title: '协作 Agent', kind: 'subagent', icon: GitBranch };
   }
   if (toolId.includes('runtime') || toolId.includes('workspace')) {
-    return { title: '运行时', kind: 'runtime', icon: toolId.includes('workspace') ? TerminalSquare : Database };
+    return { title: '运行环境', kind: 'runtime', icon: toolId.includes('workspace') ? TerminalSquare : Database };
   }
   if (toolId.includes('planning')) return { title: '规划', kind: 'tool', icon: Bot };
-  return { title: text(payload.toolName ?? payload.label) || '工具', kind: 'tool', icon: Wrench };
+  return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
+}
+
+function publicActivitySummary(value: string, fallback: string): string {
+  const summary = value.trim();
+  if (!summary) return `${fallback}已更新`;
+  if (/^[a-z][a-z0-9_.:/-]*$/i.test(summary) || /(?:session|participant|activity|event|tool_call|tool_result)/i.test(summary)) {
+    return `${fallback}已更新`;
+  }
+  return summary;
 }
 
 function aggregateSummary(activities: AgentActivityProjection[]): string {
@@ -148,10 +170,6 @@ function statusLabel(status: AgentActivityProjection['status']): string {
     case 'failed': return '失败';
     case 'completed': return '完成';
   }
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function text(value: unknown): string {

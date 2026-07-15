@@ -136,11 +136,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     actionSeparator.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.42).cgColor
     actionContainer.wantsLayer = true
     actionContainer.layer?.cornerRadius = 6
-    actionContainer.layer?.borderWidth = 0
-    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
     actionContainer.layer?.masksToBounds = true
     actionDivider.wantsLayer = true
-    actionDivider.layer?.backgroundColor = NSColor.clear.cgColor
     deepSeekButton.isBordered = false
     deepSeekButton.focusRingType = .none
     deepSeekButton.font = RagImeAssistantTypography.action
@@ -149,8 +146,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     deepSeekButton.imagePosition = .imageLeading
     deepSeekButton.contentTintColor = .systemIndigo
     deepSeekButton.wantsLayer = true
-    deepSeekButton.layer?.cornerRadius = 6
-    deepSeekButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.08).cgColor
+    deepSeekButton.layer?.cornerRadius = 0
     deepSeekButton.target = self
     deepSeekButton.action = #selector(startActiveRag)
     deepSeekButton.toolTip = "快速生成：一次检索与一次模型调用（⌃.）"
@@ -163,12 +159,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     deepSearchButton.imagePosition = .imageLeading
     deepSearchButton.contentTintColor = .systemIndigo
     deepSearchButton.wantsLayer = true
-    deepSearchButton.layer?.cornerRadius = 6
-    deepSearchButton.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.09).cgColor
+    deepSearchButton.layer?.cornerRadius = 0
     deepSearchButton.target = self
     deepSearchButton.action = #selector(startAgentDeepSearch)
     deepSearchButton.toolTip = "深度查找：交给 Pi 连续会话和 Agent Loop"
     deepSearchButton.setAccessibilityLabel("使用 Pi 深度查找")
+    updateActionGroupChrome()
     actionContainer.addSubview(deepSeekButton)
     actionContainer.addSubview(actionDivider)
     actionContainer.addSubview(deepSearchButton)
@@ -232,10 +228,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     layer?.borderColor = NSColor.separatorColor.cgColor
     layer?.backgroundColor = NSColor.clear.cgColor
     resultShortcutPlate.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.42).cgColor
-    actionContainer.layer?.borderColor = NSColor.clear.cgColor
-    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
-    deepSeekButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.08).cgColor
-    deepSearchButton.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.09).cgColor
+    updateActionGroupChrome()
     updateThemeChrome(for: surfaceState)
   }
 
@@ -625,14 +618,40 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
 
   private func layoutActionBar(frame: NSRect, compact: Bool) {
     actionContainer.frame = frame
-    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
-    let gap: CGFloat = compact ? 4 : 7
-    let half = max(0, (frame.width - gap) / 2)
+    let dividerWidth: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
+    let half = max(0, floor((frame.width - dividerWidth) / 2))
+    let dividerInset: CGFloat = compact ? 5 : 4
     deepSeekButton.frame = NSRect(x: 0, y: 0, width: half, height: frame.height)
-    actionDivider.frame = .zero
-    deepSearchButton.frame = NSRect(x: half + gap, y: 0, width: half, height: frame.height)
+    actionDivider.frame = NSRect(
+      x: half,
+      y: dividerInset,
+      width: dividerWidth,
+      height: max(0, frame.height - dividerInset * 2)
+    )
+    deepSearchButton.frame = NSRect(
+      x: half + dividerWidth,
+      y: 0,
+      width: max(0, frame.width - half - dividerWidth),
+      height: frame.height
+    )
     deepSeekButton.alignment = .center
     deepSearchButton.alignment = .center
+  }
+
+  private func updateActionGroupChrome() {
+    let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    actionContainer.layer?.borderWidth = increaseContrast ? 1 : 0.5
+    actionContainer.layer?.borderColor = NSColor.separatorColor
+      .withAlphaComponent(increaseContrast ? 0.95 : 0.58)
+      .cgColor
+    actionContainer.layer?.backgroundColor = NSColor.controlBackgroundColor
+      .withAlphaComponent(increaseContrast ? 0.95 : 0.72)
+      .cgColor
+    actionDivider.layer?.backgroundColor = NSColor.separatorColor
+      .withAlphaComponent(increaseContrast ? 0.88 : 0.48)
+      .cgColor
+    deepSeekButton.layer?.backgroundColor = NSColor.clear.cgColor
+    deepSearchButton.layer?.backgroundColor = NSColor.clear.cgColor
   }
 
   private func configureActionButton(_ button: NSButton, action: Selector, symbol: String, toolTip: String) {

@@ -513,6 +513,7 @@ class ModelRuntimePlanTests(unittest.TestCase):
                 scripts = runtime_root / "scripts"
                 scripts.mkdir(parents=True)
                 shutil.copytree(ROOT / "rag_ime", runtime_root / "rag_ime")
+                shutil.copytree(ROOT / "integrations" / "pi", runtime_root / "integrations" / "pi")
                 for name in (
                     "restart_rag_ime_runtime.sh",
                     "install_sidecar_launch_agent.sh",

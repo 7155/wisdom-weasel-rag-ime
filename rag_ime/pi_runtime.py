@@ -13,9 +13,10 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from .agent_events import AgentEventHub
+from .agent_tool_ids import ASSISTANT_CONTROL_TOOL_IDS, CONTROL_TOOL_IDS, COORDINATOR_TOOL_IDS
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 from .agent_runtime_driver import (
     AgentRuntimeError,
@@ -24,7 +25,7 @@ from .agent_runtime_driver import (
     RuntimeDriverContext,
     SessionContextProvider,
 )
-from .agent_roles import agent_role
+from .agent_roles import PersonaManifest, agent_role
 from .agent_sessions import AgentSessionStore
 from .agent_templates import agent_template
 from .deepseek_config import load_deepseek_config
@@ -36,19 +37,8 @@ class PiRuntimeError(AgentRuntimeError):
     pass
 
 
-_READ_ONLY_CONTROL_TOOLS = (
-    "ime_overview",
-    "ime_input",
-    "ime_voice",
-    "ime_planning",
-    "ime_memory",
-    "ime_knowledge",
-    "ime_models",
-    "ime_runtime",
-    "ime_configuration",
-    "ime_agents",
-)
-_COORDINATOR_TOOLS = ("workspace_list", "workspace_read", "workspace_shell")
+_READ_ONLY_CONTROL_TOOLS = ASSISTANT_CONTROL_TOOL_IDS
+_COORDINATOR_TOOLS = COORDINATOR_TOOL_IDS
 _SUBAGENT_READ_ONLY_TOOLS = (
     "ime_overview",
     "ime_memory",
@@ -58,6 +48,9 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "ime_agents",
 )
 _APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
+_MAX_PERSISTED_TRANSCRIPT_BYTES = 64 * 1024 * 1024
+_MAX_PERSISTED_TRANSCRIPT_ENTRIES = 100_000
+_MAX_PERSISTED_TRANSCRIPT_LINE_BYTES = 4 * 1024 * 1024
 
 
 def _tools_for_session(
@@ -99,6 +92,11 @@ class PiRuntimeConfig:
     model_configuration_error: str = ""
     pi_version: str = "0.80.2"
     installation_error: str = ""
+    role_resolver: Callable[[object, object], PersonaManifest] = field(
+        default=agent_role,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def from_environment(
@@ -119,7 +117,7 @@ class PiRuntimeConfig:
             item.strip()
             for item in os.environ.get(
                 "RAG_IME_PI_TOOLS",
-                ",".join((*_READ_ONLY_CONTROL_TOOLS, *_COORDINATOR_TOOLS)),
+                ",".join(CONTROL_TOOL_IDS),
             ).split(",")
             if item.strip()
         )
@@ -250,7 +248,7 @@ class PiRuntimeConfig:
         title = " ".join(str(session.get("title") or "智鼬").split())[:120]
         if title:
             command.extend(["--name", title])
-        role = agent_role(
+        role = self.role_resolver(
             session.get("roleId") or "zhiyou-v1",
             session.get("roleVersion") or "1",
         )
@@ -267,14 +265,25 @@ class PiRuntimeConfig:
                 f"{template.prompt.strip()}\n"
             )
         command.extend(["--system-prompt", system_prompt])
-        session_provider, session_model = _split_model_reference(session.get("modelProfile"))
-        selected_provider = session_provider or self.provider
-        selected_model = session_model or self.model
+        selected_provider, selected_model = self.resolved_model_reference(session)
         if selected_provider:
             command.extend(["--provider", selected_provider])
         if selected_model:
             command.extend(["--model", selected_model])
         return command
+
+    def resolved_model_reference(self, session: Mapping[str, object]) -> tuple[str, str]:
+        session_provider, session_model = _split_model_reference(session.get("modelProfile"))
+        selected_provider = session_provider or self.provider
+        selected_model = session_model or self.model
+        return (
+            selected_provider,
+            _canonical_configured_model_id(
+                selected_provider,
+                selected_model,
+                self.model_providers,
+            ),
+        )
 
     def child_environment(self, *, session: Mapping[str, object] | None = None) -> dict[str, str]:
         allowed = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -308,7 +317,10 @@ class PiRuntimeConfig:
         providers = dict(self.model_providers)
         if not providers and self.provider == "deepseek" and self.model_base_url:
             providers = {
-                "deepseek": _deepseek_pi_provider(self.model_base_url),
+                "deepseek": _deepseek_pi_provider(
+                    self.model_base_url,
+                    model=self.model,
+                ),
             }
         if not providers:
             return
@@ -608,6 +620,7 @@ class PiRuntimeManager:
         self._client: PiRpcClient | None = None
         self._active_session_id = ""
         self._active_turn_id = ""
+        self._active_client_message_id = ""
         self._status = "stopped" if config.enabled else "disabled"
         self._last_error = ""
         self._idle_timer: threading.Timer | None = None
@@ -716,6 +729,36 @@ class PiRuntimeManager:
         try:
             response = client.start()
             state = _mapping(response.get("data"))
+            desired_provider, desired_model_id = self.config.resolved_model_reference(session)
+            started_model = _mapping(state.get("model"))
+            if (
+                desired_provider
+                and desired_model_id
+                and (
+                    str(started_model.get("provider") or "") != desired_provider
+                    or str(started_model.get("id") or "") != desired_model_id
+                )
+            ):
+                # A resumed Pi transcript can retain its previous model even
+                # when the launch arguments have changed. Reconcile the live
+                # RPC state before accepting a Web prompt so an old timeline
+                # alias cannot leak through to the upstream gateway.
+                client.send(
+                    {
+                        "type": "set_model",
+                        "provider": desired_provider,
+                        "modelId": desired_model_id,
+                    }
+                )
+                state = _mapping(client.send({"type": "get_state"}).get("data"))
+            selected_model = _mapping(state.get("model"))
+            selected_provider = str(selected_model.get("provider") or "").strip()
+            selected_model_id = str(selected_model.get("id") or "").strip()
+            if selected_provider and selected_model_id:
+                self.sessions.set_model_profile(
+                    session_id,
+                    f"{selected_provider}/{selected_model_id}",
+                )
             bound = self.sessions.bind_runtime_session(
                 session_id,
                 driver_id=self.driver_id,
@@ -737,6 +780,7 @@ class PiRuntimeManager:
                     self._client = None
                     self._active_session_id = ""
                     self._active_turn_id = ""
+                    self._active_client_message_id = ""
                 self._status = "faulted"
                 self._last_error = _redact_runtime_text(str(exc))
             client.stop()
@@ -750,6 +794,7 @@ class PiRuntimeManager:
         message: str,
         *,
         images: list[Mapping[str, str]] | None = None,
+        client_message_id: str = "",
     ) -> dict[str, object]:
         text = str(message).strip()
         if not text:
@@ -759,6 +804,7 @@ class PiRuntimeManager:
         with self._lock:
             client = self._require_client_locked(session_id)
             self._active_turn_id = turn_id
+            self._active_client_message_id = str(client_message_id).strip()
             self._stream_pi_message_id = ""
             self._status = "busy"
             self._cancel_idle_locked()
@@ -786,37 +832,202 @@ class PiRuntimeManager:
                 # Prompt acceptance remains authoritative when checkpoint lookup
                 # is unavailable in an older or interrupted Pi runtime.
                 pass
-            return {
+            result: dict[str, object] = {
                 "accepted": True,
                 "turnId": turn_id,
                 "piEntryId": pi_entry_id,
                 "response": response,
             }
+            if client_message_id:
+                result["clientMessageId"] = str(client_message_id).strip()
+            return result
         except Exception as exc:
             self._turn_failed(session_id, turn_id, exc)
             raise
 
     def messages(self, session_id: str) -> list[dict[str, object]]:
-        self.ensure(session_id)
+        # Reading a transcript is independent from model/provider readiness. In
+        # particular, switching Sessions must not blank persisted conversation
+        # history just because Pi cannot currently start.
+        with self._lock:
+            live = (
+                self._active_session_id == session_id
+                and self._client is not None
+                and self._client.running
+            )
+        if not live:
+            found, persisted = self._persisted_messages(session_id)
+            if found:
+                return persisted
+        try:
+            self.ensure(session_id)
+        except AgentRuntimeError:
+            found, persisted = self._persisted_messages(session_id)
+            return persisted if found else []
         with self._lock:
             client = self._require_client_locked(session_id)
-        response = client.send({"type": "get_messages"})
+        try:
+            response = client.send({"type": "get_messages"})
+        except AgentRuntimeError:
+            found, persisted = self._persisted_messages(session_id)
+            return persisted if found else []
         data = _mapping(response.get("data"))
         messages = data.get("messages")
         if not isinstance(messages, list):
             return []
-        return [
-            _pi_message_payload(
-                value,
-                session_id=session_id,
-                turn_id="history",
-                media_resolver=self._media_resolver,
-            ).to_payload()
-            for message in messages
-            if isinstance(message, Mapping)
-            for value in [_mapping(message)]
-            if _pi_message_is_public(value)
-        ]
+        result: list[dict[str, object]] = []
+        current_turn_id = ""
+        for raw_message in messages:
+            if not isinstance(raw_message, Mapping):
+                continue
+            value = _mapping(raw_message)
+            if not _pi_message_is_public(value):
+                continue
+            role = str(value.get("role") or "assistant").lower()
+            message_id = _pi_message_id(value, "history")
+            if role == "user" or not current_turn_id:
+                current_turn_id = f"history:{message_id}"
+            result.append(
+                _pi_message_payload(
+                    value,
+                    session_id=session_id,
+                    turn_id=current_turn_id,
+                    media_resolver=self._media_resolver,
+                    message_id=message_id,
+                ).to_payload()
+            )
+        return result
+
+    def _persisted_messages(self, session_id: str) -> tuple[bool, list[dict[str, object]]]:
+        session = self.sessions.get(session_id)
+        runtime_binding = self.sessions.runtime_binding(session_id)
+        transcript_ref = ""
+        if isinstance(runtime_binding, Mapping):
+            if (
+                runtime_binding.get("driverId") == self.driver_id
+                and runtime_binding.get("runtimeKind") == self.runtime_kind
+            ):
+                transcript_ref = str(runtime_binding.get("transcriptRef") or "").strip()
+        if not transcript_ref:
+            transcript_ref = str(session.get("sessionFile") or "").strip()
+        if not transcript_ref:
+            return False, []
+
+        transcript_candidate = Path(transcript_ref).expanduser()
+        if transcript_candidate.is_symlink():
+            raise PiRuntimeError("Pi session file must not be a symlink")
+        transcript = transcript_candidate.resolve(strict=False)
+        session_root = self.config.session_dir.expanduser().resolve(strict=False)
+        if not _is_within(transcript, session_root):
+            raise PiRuntimeError("Pi session file is outside the managed session directory")
+        try:
+            size = transcript.stat().st_size
+        except OSError:
+            return False, []
+        if size > _MAX_PERSISTED_TRANSCRIPT_BYTES:
+            raise PiRuntimeError("Pi session file is too large to read safely")
+
+        entries: list[dict[str, object]] = []
+        by_id: dict[str, dict[str, object]] = {}
+        try:
+            with transcript.open("rb") as handle:
+                for raw_line in handle:
+                    if len(raw_line) > _MAX_PERSISTED_TRANSCRIPT_LINE_BYTES:
+                        raise PiRuntimeError("Pi session entry is too large to read safely")
+                    if len(entries) >= _MAX_PERSISTED_TRANSCRIPT_ENTRIES:
+                        raise PiRuntimeError("Pi session contains too many entries to read safely")
+                    try:
+                        parsed = json.loads(raw_line)
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(parsed, Mapping):
+                        continue
+                    entry = dict(parsed)
+                    entry_id = str(entry.get("id") or "").strip()
+                    if not entry_id:
+                        continue
+                    entries.append(entry)
+                    by_id[entry_id] = entry
+        except OSError:
+            return False, []
+        if not entries or str(entries[0].get("type") or "") != "session":
+            return True, []
+
+        path: list[dict[str, object]] = []
+        current: dict[str, object] | None = entries[-1]
+        visited: set[str] = set()
+        while current is not None:
+            current_id = str(current.get("id") or "")
+            if not current_id or current_id in visited:
+                break
+            visited.add(current_id)
+            path.append(current)
+            parent_id = str(current.get("parentId") or "").strip()
+            current = by_id.get(parent_id) if parent_id else None
+        path.reverse()
+
+        public_messages: list[dict[str, object]] = []
+        current_turn_id = ""
+        for entry in path:
+            if str(entry.get("type") or "") != "message":
+                continue
+            raw_message = entry.get("message")
+            if not isinstance(raw_message, Mapping):
+                continue
+            value = dict(raw_message)
+            if not _pi_message_is_public(value):
+                continue
+            role = str(value.get("role") or "assistant").lower()
+            message_id = str(entry.get("id") or _pi_message_id(value, "history"))
+            if role == "user" or not current_turn_id:
+                current_turn_id = f"history:{message_id}"
+            public_messages.append(
+                _pi_message_payload(
+                    value,
+                    session_id=session_id,
+                    turn_id=current_turn_id,
+                    media_resolver=self._media_resolver,
+                    message_id=message_id,
+                ).to_payload()
+            )
+        return True, public_messages
+
+    def command_catalog(self, session_id: str) -> list[dict[str, object]]:
+        """Return only commands Pi says are invokable through an RPC prompt."""
+        self.ensure(session_id)
+        with self._lock:
+            client = self._require_client_locked(session_id)
+            self._schedule_idle_locked()
+        response = client.send({"type": "get_commands"})
+        data = _mapping(response.get("data"))
+        raw_commands = data.get("commands")
+        if not isinstance(raw_commands, list):
+            return []
+        commands: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for value in raw_commands[:200]:
+            if not isinstance(value, Mapping):
+                continue
+            source = str(value.get("source") or "").strip()
+            name = str(value.get("name") or "").strip()
+            if source not in {"extension", "prompt", "skill"}:
+                continue
+            if not re.fullmatch(r"[\w][\w.:-]{0,79}", name, flags=re.UNICODE):
+                continue
+            identity = name.casefold()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            description = " ".join(str(value.get("description") or "").split())[:240]
+            commands.append(
+                {
+                    "name": name,
+                    "invocation": f"/{name}",
+                    "description": description,
+                    "source": source,
+                }
+            )
+        return commands
 
     def model_catalog(self, session_id: str) -> dict[str, object]:
         self.ensure(session_id)
@@ -837,10 +1048,11 @@ class PiRuntimeManager:
             if model
         ]
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
+        thinking_level = _effective_thinking_level(state.get("thinkingLevel"), selected)
         return {
             "selected": selected or None,
             "models": models,
-            "thinkingLevel": str(state.get("thinkingLevel") or "off"),
+            "thinkingLevel": thinking_level,
         }
 
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
@@ -883,12 +1095,20 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             self._cancel_idle_locked()
         try:
+            before = _mapping(client.send({"type": "get_state"}).get("data"))
+            before_model = _public_pi_model(_mapping(before.get("model")))
+            supported = before_model.get("thinkingLevels") if before_model else ["off"]
+            if not isinstance(supported, list) or normalized not in supported:
+                raise ValueError("当前 Pi 模型不支持这个思考强度")
             client.send({"type": "set_thinking_level", "level": normalized})
             state_response = client.send({"type": "get_state"})
             state = _mapping(state_response.get("data"))
             selected = _public_pi_model(_mapping(state.get("model")))
             return {
-                "thinkingLevel": str(state.get("thinkingLevel") or normalized),
+                "thinkingLevel": _effective_thinking_level(
+                    state.get("thinkingLevel") or normalized,
+                    selected,
+                ),
                 "selected": selected or None,
             }
         finally:
@@ -931,6 +1151,7 @@ class PiRuntimeManager:
             self._intentional_stop = True
             self._client = None
             self._active_turn_id = ""
+            self._active_client_message_id = ""
             self._stream_pi_message_id = ""
             self._active_session_id = ""
             self._status = "stopped" if self.config.enabled else "disabled"
@@ -946,6 +1167,7 @@ class PiRuntimeManager:
             if self._client is not client or self._active_session_id != session_id:
                 return
             turn_id = self._active_turn_id
+            client_message_id = self._active_client_message_id
         event_type = str(raw.get("type") or "")
         if event_type == "message_update":
             update = _mapping(raw.get("assistantMessageEvent"))
@@ -981,6 +1203,12 @@ class PiRuntimeManager:
             if not _pi_message_is_public(raw_message):
                 return
             role = str(raw_message.get("role") or "assistant").lower()
+            # AgentService publishes the accepted user message immediately so
+            # it can attach managed-media receipts and reconcile the Web
+            # optimistic row. Pi echoes the same user message afterwards;
+            # forwarding that echo creates a second bubble for one send.
+            if role == "user":
+                return
             message = _pi_message_payload(
                 raw_message,
                 session_id=session_id,
@@ -988,13 +1216,16 @@ class PiRuntimeManager:
                 media_resolver=self._media_resolver,
                 message_id=f"{turn_id}:assistant" if role == "assistant" else None,
             )
+            event_payload: dict[str, object] = {
+                "message": message.to_payload(),
+                "usage": _public_usage(raw.get("message")),
+            }
+            if role == "user" and client_message_id:
+                event_payload["clientMessageId"] = client_message_id
             self.events.publish(
                 session_id,
                 "message_completed",
-                {
-                    "message": message.to_payload(),
-                    "usage": _public_usage(raw.get("message")),
-                },
+                event_payload,
                 turn_id=turn_id,
             )
             return
@@ -1062,6 +1293,7 @@ class PiRuntimeManager:
             with self._lock:
                 self._status = "ready"
                 self._active_turn_id = ""
+                self._active_client_message_id = ""
                 self._stream_pi_message_id = ""
                 self._pending_approval_requests.clear()
                 self._schedule_idle_locked()
@@ -1134,6 +1366,7 @@ class PiRuntimeManager:
             intentional = self._intentional_stop
             self._client = None
             self._active_turn_id = ""
+            self._active_client_message_id = ""
             self._stream_pi_message_id = ""
             self._cancel_idle_locked()
             if intentional:
@@ -1157,6 +1390,7 @@ class PiRuntimeManager:
         with self._lock:
             self._status = "ready" if self._client is not None and self._client.running else "faulted"
             self._active_turn_id = ""
+            self._active_client_message_id = ""
             self._stream_pi_message_id = ""
             self._last_error = safe_error
             self._pending_approval_requests.clear()
@@ -1241,6 +1475,7 @@ def _pi_message_payload(
                 )
                 if media_id:
                     attachments.append(media_id)
+                    receipt_url = _managed_media_content_url(session_id, media_id)
                     blocks.append(
                         normalize_agent_block(
                             {
@@ -1248,7 +1483,10 @@ def _pi_message_payload(
                                 "type": "image",
                                 "status": "completed",
                                 "presentationKind": "image",
-                                "data": {"mediaId": media_id},
+                                "data": {
+                                    "mediaId": media_id,
+                                    "receiptUrl": receipt_url,
+                                },
                             }
                         )
                     )
@@ -1329,6 +1567,13 @@ def _pi_message_is_public(raw: Mapping[str, object]) -> bool:
         str(_mapping(item).get("type") or "") in {"text", "image"}
         for item in content
     ) or bool(raw.get("errorMessage"))
+
+
+def _managed_media_content_url(session_id: str, media_id: str) -> str:
+    return (
+        f"/api/agent/media/{quote(str(media_id), safe='')}/content"
+        f"?sessionId={quote(str(session_id), safe='')}"
+    )
 
 
 def _pi_message_id(raw: Mapping[str, object], turn_id: str) -> str:
@@ -1495,6 +1740,31 @@ def _split_model_reference(value: object) -> tuple[str, str]:
     return provider, model
 
 
+def _canonical_configured_model_id(
+    provider: str,
+    model_id: str,
+    providers: Mapping[str, Mapping[str, object]],
+) -> str:
+    """Migrate product timeline aliases to a Pi/API model that really exists."""
+
+    match = re.fullmatch(r"(gpt-5\.6)-(?:luna|terra|sol)", model_id, flags=re.IGNORECASE)
+    if not match:
+        return model_id
+    provider_config = providers.get(provider)
+    if not isinstance(provider_config, Mapping):
+        return model_id
+    raw_models = provider_config.get("models")
+    if not isinstance(raw_models, list):
+        return model_id
+    base_id = match.group(1)
+    configured_ids = {
+        str(value.get("id") or "").strip()
+        for value in raw_models
+        if isinstance(value, Mapping)
+    }
+    return base_id if base_id in configured_ids else model_id
+
+
 def _model_reference_part(value: object, *, field: str, maximum: int) -> str:
     normalized = str(value or "").strip()
     if not normalized or len(normalized) > maximum:
@@ -1536,6 +1806,14 @@ def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
             continue
         levels.append(level)
     return levels or ["off"]
+
+
+def _effective_thinking_level(value: object, selected: Mapping[str, object]) -> str:
+    normalized = str(value or "off").strip().lower() or "off"
+    supported = selected.get("thinkingLevels")
+    if not isinstance(supported, list) or normalized not in supported:
+        return "off"
+    return normalized
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -1580,7 +1858,10 @@ def _pi_model_configuration_from_environment() -> tuple[
         elif knowledge.extra_headers:
             deepseek_error = "带自定义请求头的 DeepSeek 网关尚未接入 Pi 隔离配置"
         else:
-            providers["deepseek"] = _deepseek_pi_provider(model_base_url)
+            providers["deepseek"] = _deepseek_pi_provider(
+                model_base_url,
+                model=deepseek_model,
+            )
             provider_environment["DEEPSEEK_API_KEY"] = knowledge.api_key
             deepseek_error = ""
 
@@ -1604,6 +1885,7 @@ def _pi_model_configuration_from_environment() -> tuple[
         model = explicit_model or deepseek_model
     else:
         model = explicit_model or _first_provider_model(providers.get(provider)) or imported_first_model
+    model = _canonical_configured_model_id(provider, model, providers)
 
     if not providers:
         error = imported_error or deepseek_error or "尚未配置 Pi 对话模型"
@@ -1626,22 +1908,34 @@ def _pi_model_configuration_from_environment() -> tuple[
     return provider, model, model_base_url, provider_environment, providers, ""
 
 
-def _deepseek_pi_provider(base_url: str) -> dict[str, object]:
-    # The bundled Pi catalog may lag the source catalog. These explicit
-    # compatibility flags prevent OpenAI-only `developer` messages from being
-    # sent to DeepSeek-compatible gateways.
-    return {
+def _deepseek_pi_provider(base_url: str, *, model: str = "") -> dict[str, object]:
+    endpoint = urlsplit(base_url)
+    native_endpoint = (endpoint.hostname or "").lower() == "api.deepseek.com"
+    provider: dict[str, object] = {
         "baseUrl": base_url,
         "apiKey": "$DEEPSEEK_API_KEY",
         "compat": {
             "supportsStore": False,
             "supportsDeveloperRole": False,
-            "supportsReasoningEffort": True,
-            "supportsUsageInStreaming": True,
-            "requiresReasoningContentOnAssistantMessages": True,
-            "thinkingFormat": "deepseek",
+            "supportsReasoningEffort": native_endpoint,
+            "supportsUsageInStreaming": native_endpoint,
+            "requiresReasoningContentOnAssistantMessages": native_endpoint,
+            "thinkingFormat": "deepseek" if native_endpoint else "openai",
         },
     }
+    if not native_endpoint:
+        # Third-party OpenAI-compatible gateways commonly expose DeepSeek model
+        # names without implementing DeepSeek's proprietary thinking envelope.
+        # Keep their request shape to portable Chat Completions fields instead
+        # of advertising reasoning controls that Pi cannot truthfully provide.
+        model_ids = {"deepseek-v4-flash", "deepseek-v4-pro"}
+        if model.strip():
+            model_ids.add(model.strip())
+        provider["modelOverrides"] = {
+            model_id: {"reasoning": False}
+            for model_id in sorted(model_ids)
+        }
+    return provider
 
 
 def _first_provider_model(provider: Mapping[str, object] | None) -> str:

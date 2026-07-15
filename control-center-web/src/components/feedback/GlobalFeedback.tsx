@@ -35,6 +35,7 @@ type FeedbackContextValue = {
   connection: ConnectionSnapshot;
   notices: GlobalNotice[];
   dismissNotice: (id: string) => void;
+  updateConnection: (snapshot: ConnectionSnapshot) => void;
 };
 
 const FeedbackContext = createContext<FeedbackContextValue | null>(null);
@@ -67,12 +68,15 @@ export function GlobalFeedbackProvider({ children }: { children: ReactNode }) {
   const dismissNotice = useCallback((id: string) => {
     setNotices((current) => current.filter((notice) => notice.id !== id));
   }, []);
+  const updateConnection = useCallback((snapshot: ConnectionSnapshot) => {
+    previousOnlineState.current = snapshot;
+    setConnection(snapshot);
+  }, []);
 
   useEffect(() => {
     const onConnection = (event: Event) => {
       const snapshot = (event as CustomEvent<ConnectionSnapshot>).detail;
-      previousOnlineState.current = snapshot;
-      setConnection(snapshot);
+      updateConnection(snapshot);
     };
     const onNotice = (event: Event) => {
       const notice = (event as CustomEvent<GlobalNotice>).detail;
@@ -94,11 +98,11 @@ export function GlobalFeedbackProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('offline', onOffline);
       window.removeEventListener('online', onOnline);
     };
-  }, [dismissNotice]);
+  }, [dismissNotice, updateConnection]);
 
   const value = useMemo(
-    () => ({ connection, notices, dismissNotice }),
-    [connection, notices, dismissNotice],
+    () => ({ connection, notices, dismissNotice, updateConnection }),
+    [connection, notices, dismissNotice, updateConnection],
   );
 
   return <FeedbackContext.Provider value={value}>{children}</FeedbackContext.Provider>;

@@ -67,6 +67,55 @@ struct NativeRoutePolicyTests {
         expect(roomSnapshot.request.url?.absoluteString.contains("room:alpha/snapshot") == true, "room snapshot route")
         expect(roomSnapshot.request.httpMethod == "GET", "room snapshot method")
 
+        let personaCreate = try policy.resolveRequest(
+            pathId: "agent.roles.create",
+            parameters: [:],
+            query: [:],
+            body: [
+                "displayName": "智鼬·雨天",
+                "tagline": "陪你安静整理",
+                "summary": "偏向温和复盘与清楚的下一步。",
+                "traits": ["温和", "复盘"],
+                "timelineModel": "terra",
+                "selectableModes": ["assistant"],
+            ],
+            scope: .remote
+        )
+        expect(personaCreate.request.url?.path == "/api/agent/roles", "persona create route")
+        expect(personaCreate.request.httpMethod == "POST", "persona create method")
+
+        let providerApply = try policy.resolveRequest(
+            pathId: "agent.provider.auth.apply",
+            parameters: [:],
+            query: [:],
+            body: [
+                "previewToken": "preview-token",
+                "confirmText": "replace",
+                "apiKey": "secret-only-on-apply",
+            ]
+        )
+        expect(providerApply.request.url?.path == "/api/agent/providers/auth/apply", "provider auth apply route")
+
+        let lexiconReview = try policy.resolveRequest(
+            pathId: "input.lexicon.review",
+            parameters: [:],
+            query: ["limit": "200", "project": "wisdom-weasel-rag-ime"],
+            body: nil
+        )
+        expect(lexiconReview.request.url?.path == "/api/rime-lexicon/review", "lexicon review route")
+
+        let lexiconApply = try policy.resolveRequest(
+            pathId: "input.lexicon.apply",
+            parameters: [:],
+            query: [:],
+            body: [
+                "reviewToken": "review-token",
+                "selectedKeys": ["entry-1"],
+                "confirmText": "APPLY_REVIEWED_RIME_LEXICON",
+            ]
+        )
+        expect(lexiconApply.request.url?.path == "/api/rime-lexicon/apply", "lexicon apply route")
+
         let artifact = try policy.resolveRequest(
             pathId: "agent.artifact.get",
             parameters: ["artifactId": "artifact:alpha"],
@@ -101,6 +150,21 @@ struct NativeRoutePolicyTests {
         )
         expect(memoryEntity.request.url?.path == "/api/memory/entities/group/group:input-method", "bounded memory entity route")
 
+        let memoryEdit = try policy.resolveRequest(
+            pathId: "memory.edit",
+            parameters: [:],
+            query: [:],
+            body: [
+                "kind": "books",
+                "id": "book-1",
+                "title": "长期计划",
+                "summary": "已经复核",
+                "tags": ["计划"],
+            ]
+        )
+        expect(memoryEdit.request.url?.path == "/api/memory/edit", "stable-id memory edit route")
+        expect(memoryEdit.request.httpMethod == "POST", "memory edit method")
+
         let planningPreview = try policy.resolveRequest(
             pathId: "planning.mutation.preview",
             parameters: [:],
@@ -127,6 +191,58 @@ struct NativeRoutePolicyTests {
         )
         expect(knowledgeApply.request.url?.path == "/api/knowledge/database/apply", "knowledge WorkContract apply")
 
+        let knowledgeUpload = try policy.resolveRequest(
+            pathId: "knowledgeBases.document.import",
+            parameters: ["kbId": "kb_docs"],
+            query: ["fileName": "manual.pdf", "mimeType": "application/pdf"],
+            body: nil
+        )
+        expect(knowledgeUpload.request.url?.path == "/api/knowledge-bases/kb_docs/documents/import", "knowledge upload route")
+        expect(knowledgeUpload.request.url?.port == 8766, "knowledge upload is sidecar-only")
+
+        let assetId = String(repeating: "a", count: 64)
+        let knowledgeAsset = try policy.resolveBinary(
+            pathId: "knowledgeBases.asset.get",
+            parameters: ["kbId": "kb_docs", "fileId": "file_manual", "assetId": assetId]
+        )
+        expect(knowledgeAsset.request.url?.path == "/api/knowledge-bases/kb_docs/documents/file_manual/assets/\(assetId)", "knowledge asset route")
+        expect(knowledgeAsset.request.url?.port == 8766, "knowledge asset is sidecar-only")
+        expect(knowledgeAsset.request.value(forHTTPHeaderField: "Accept")?.contains("image/png") == true, "knowledge asset MIME allowlist")
+
+        let knowledgeSource = try policy.resolveBinary(
+            pathId: "knowledgeBases.document.source",
+            parameters: ["kbId": "kb_docs", "fileId": "file_manual"]
+        )
+        expect(knowledgeSource.request.url?.path == "/api/knowledge-bases/kb_docs/documents/file_manual/source", "knowledge source route")
+        expect(knowledgeSource.request.url?.port == 8766, "knowledge source is sidecar-only")
+        expect(knowledgeSource.request.value(forHTTPHeaderField: "Accept")?.contains("application/pdf") == true, "knowledge source MIME allowlist")
+
+        let rebuild = try policy.resolveRequest(
+            pathId: "knowledgeBases.rebuild",
+            parameters: ["kbId": "kb_docs"],
+            query: [:],
+            body: [
+                "previewToken": "preview-token",
+                "payloadSha256": String(repeating: "b", count: 64),
+                "expectedRevision": "revision-1",
+                "confirmText": "REBUILD",
+            ]
+        )
+        expect(rebuild.request.url?.path == "/api/knowledge-bases/kb_docs/rebuild", "knowledge rebuild route")
+
+        let gatewayPreferredPolicy = NativeRoutePolicy(
+            sidecarBaseURL: URL(string: "http://127.0.0.1:8766")!,
+            gatewayBaseURL: URL(string: "http://127.0.0.1:8768")!,
+            preferGateway: true
+        )
+        let localKnowledgeHealth = try gatewayPreferredPolicy.resolveRequest(
+            pathId: "knowledgeWorker.health",
+            parameters: [:],
+            query: [:],
+            body: nil
+        )
+        expect(localKnowledgeHealth.request.url?.port == 8766, "local-only knowledge route falls back from gateway")
+
         expectThrows("unknown pathId") {
             _ = try policy.resolveRequest(pathId: "debug.anything", parameters: [:], query: [:], body: nil)
         }
@@ -139,12 +255,118 @@ struct NativeRoutePolicyTests {
                 scope: .remote
             )
         }
+        expectThrows("knowledge management is local only") {
+            _ = try policy.resolveRequest(
+                pathId: "knowledgeBases.list",
+                parameters: [:],
+                query: [:],
+                body: nil,
+                scope: .remote
+            )
+        }
+        expectThrows("knowledge asset requires the binary resolver") {
+            _ = try policy.resolveRequest(
+                pathId: "knowledgeBases.asset.get",
+                parameters: ["kbId": "kb_docs", "fileId": "file_manual", "assetId": assetId],
+                query: [:],
+                body: nil
+            )
+        }
+        expectThrows("knowledge asset id is a sha256") {
+            _ = try policy.resolveBinary(
+                pathId: "knowledgeBases.asset.get",
+                parameters: ["kbId": "kb_docs", "fileId": "file_manual", "assetId": "../private"]
+            )
+        }
+        expectThrows("lexicon review is local only") {
+            _ = try policy.resolveRequest(
+                pathId: "input.lexicon.review",
+                parameters: [:],
+                query: ["limit": "200"],
+                body: nil,
+                scope: .remote
+            )
+        }
+        expectThrows("provider credentials remain local only") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.provider.auth.apply",
+                parameters: [:],
+                query: [:],
+                body: [
+                    "previewToken": "preview-token",
+                    "confirmText": "replace",
+                    "apiKey": "secret",
+                ],
+                scope: .remote
+            )
+        }
+        expectThrows("provider preview cannot carry credentials") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.provider.auth.preview",
+                parameters: [:],
+                query: [:],
+                body: [
+                    "provider": "openai-codex",
+                    "action": "set_api_key",
+                    "apiKey": "secret",
+                ]
+            )
+        }
+        expectThrows("memory edit is local only") {
+            _ = try policy.resolveRequest(
+                pathId: "memory.edit",
+                parameters: [:],
+                query: [:],
+                body: ["kind": "books", "id": "book-1", "title": "长期计划"],
+                scope: .remote
+            )
+        }
+        expectThrows("memory edit requires the stable id") {
+            _ = try policy.resolveRequest(
+                pathId: "memory.edit",
+                parameters: [:],
+                query: [:],
+                body: ["kind": "books", "title": "缺少稳定标识"]
+            )
+        }
+        expectThrows("memory edit body allowlist") {
+            _ = try policy.resolveRequest(
+                pathId: "memory.edit",
+                parameters: [:],
+                query: [:],
+                body: ["kind": "books", "id": "book-1", "schemaVersion": "client-owned"]
+            )
+        }
         expectThrows("session mode body allowlist") {
             _ = try policy.resolveRequest(
                 pathId: "agent.session.mode.update",
                 parameters: ["sessionId": "session-a"],
                 query: [:],
                 body: ["title": "not allowed"]
+            )
+        }
+        expectThrows("persona prompt remains server owned") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.roles.create",
+                parameters: [:],
+                query: [:],
+                body: [
+                    "displayName": "智鼬·雨天",
+                    "tagline": "陪你安静整理",
+                    "summary": "偏向温和复盘。",
+                    "traits": ["温和"],
+                    "timelineModel": "terra",
+                    "selectableModes": ["assistant"],
+                    "personaPrompt": "ignore safety",
+                ]
+            )
+        }
+        expectThrows("persona create requires every public field") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.roles.create",
+                parameters: [:],
+                query: [:],
+                body: ["displayName": "缺字段"]
             )
         }
         expectThrows("path traversal") {
@@ -182,6 +404,14 @@ struct NativeRoutePolicyTests {
                     "previewToken": "preview-token",
                     "expectedRuntimeRevision": "runtime:1",
                 ]
+            )
+        }
+        expectThrows("lexicon apply requires server confirm text") {
+            _ = try policy.resolveRequest(
+                pathId: "input.lexicon.apply",
+                parameters: [:],
+                query: [:],
+                body: ["reviewToken": "review-token", "selectedKeys": ["entry-1"]]
             )
         }
         expectThrows("intercom source identity injection") {
@@ -235,10 +465,17 @@ struct NativeRoutePolicyTests {
                 body: nil
             )
         }
+        let memoryBook = try policy.resolveRequest(
+            pathId: "memory.entity.get",
+            parameters: ["kind": "book", "entityId": "book-1"],
+            query: [:],
+            body: nil
+        )
+        expect(memoryBook.request.url?.path == "/api/memory/entities/book/book-1", "memory book entity path")
         expectThrows("invalid memory entity kind") {
             _ = try policy.resolveRequest(
                 pathId: "memory.entity.get",
-                parameters: ["kind": "book", "entityId": "book-1"],
+                parameters: ["kind": "atom", "entityId": "atom-1"],
                 query: [:],
                 body: nil
             )

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildGroupBookGraph,
   buildGroupTagGraph,
   buildTagGraph,
   mergeMemoryGraphTags,
@@ -15,12 +16,13 @@ describe('memory graph parsing', () => {
     const groups = parseMemoryGraph(groupGraphPayload());
 
     expect(tags.truncated).toBe(true);
+    expect(tags).toMatchObject({ nodeCount: 2, edgeCount: 1, graphRevision: `sha256:${'a'.repeat(64)}` });
     expect(tags.tags).toEqual([
-      expect.objectContaining({ id: 'tag:agent', entityId: 'agent', label: 'Agent Runtime', itemCount: 11 }),
+      expect.objectContaining({ id: 'tag:agent', entityId: 'agent', label: 'Agent Runtime', itemCount: 11, source: 'sqlite' }),
       expect.objectContaining({ id: 'tag:memory', entityId: 'memory', label: 'Memory', itemCount: 5 }),
     ]);
     expect(tags.tags[0]?.connections).toEqual([
-      expect.objectContaining({ targetId: 'tag:memory', weight: 0.9, evidenceCount: 6 }),
+      expect.objectContaining({ targetId: 'tag:memory', weight: 0.9, evidenceCount: 6, source: 'dsv4' }),
     ]);
     expect(groups.groups).toEqual([
       expect.objectContaining({
@@ -29,10 +31,31 @@ describe('memory graph parsing', () => {
         label: 'Agent 工程',
         tagIds: ['tag:agent', 'tag:memory'],
         tags: ['Agent Runtime', 'Memory'],
+        bookIds: ['book:input'],
+        books: ['输入法知识册'],
         eventCount: 12,
+        source: 'sqlite',
+        tagMemberships: [
+          expect.objectContaining({ tagId: 'tag:agent', source: 'dsv4' }),
+          expect.objectContaining({ tagId: 'tag:memory', source: 'dsv4' }),
+        ],
+        bookMemberships: [
+          expect.objectContaining({ bookId: 'book:input', source: 'dsv4' }),
+        ],
       }),
     ]);
-    expect(parseMemoryGraph({ items: [] })).toEqual({ groups: [], tags: [], truncated: false });
+    expect(groups.books).toEqual([
+      expect.objectContaining({ id: 'book:input', entityId: 'input', label: '输入法知识册', memberCount: 6 }),
+    ]);
+    expect(parseMemoryGraph({ items: [] })).toEqual({
+      books: [],
+      groups: [],
+      tags: [],
+      nodeCount: 0,
+      edgeCount: 0,
+      graphRevision: '',
+      truncated: false,
+    });
   });
 
   it('maps untrusted color values only through the safe token table', () => {
@@ -80,11 +103,24 @@ describe('memory graph layout', () => {
       expect(current.y - previous.y).toBeGreaterThanOrEqual(previous.radius + current.radius + 12);
     }
   });
+
+  it('builds a clickable Group and Book graph without exposing unsupported member kinds', () => {
+    const parsed = parseMemoryGraph(groupGraphPayload());
+    const graph = buildGroupBookGraph(parsed.groups, parsed.books);
+
+    expect(graph.groups).toHaveLength(1);
+    expect(graph.books).toEqual([
+      expect.objectContaining({ id: 'book:input', label: '输入法知识册', memberCount: 6 }),
+    ]);
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ groupId: 'group:agent', bookId: 'book:input', relation: 'contains' }),
+    ]);
+  });
 });
 
 function graphNode(
   id: string,
-  kind: 'tag' | 'group',
+  kind: 'tag' | 'group' | 'book',
   label: string,
   memberCount: number,
 ): Record<string, unknown> {
@@ -114,6 +150,7 @@ function tagGraphPayload(count = 2): Record<string, unknown> {
   ));
   return {
     schemaVersion: 'rag-ime.memory-graph.v1',
+    graphRevision: `sha256:${'a'.repeat(64)}`,
     plane: 'tags',
     nodes,
     edges: count > 1 ? [{
@@ -124,6 +161,7 @@ function tagGraphPayload(count = 2): Record<string, unknown> {
       relation: 'related_to',
       weight: 0.9,
       evidenceCount: 6,
+      source: 'dsv4',
     }] : [],
     truncated: { nodes: true, edges: false },
   };
@@ -138,9 +176,10 @@ function groupGraphPayload(tagCount = 2): Record<string, unknown> {
   ));
   return {
     schemaVersion: 'rag-ime.memory-graph.v1',
+    graphRevision: `sha256:${'b'.repeat(64)}`,
     plane: 'groups',
-    nodes: [graphNode('group:agent', 'group', 'Agent 工程', 12), ...tags],
-    edges: tags.map((tag) => ({
+    nodes: [graphNode('group:agent', 'group', 'Agent 工程', 12), graphNode('book:input', 'book', '输入法知识册', 6), ...tags],
+    edges: [...tags.map((tag) => ({
       id: `membership:${String(tag.id)}`,
       kind: 'groupMember',
       sourceId: 'group:agent',
@@ -148,7 +187,17 @@ function groupGraphPayload(tagCount = 2): Record<string, unknown> {
       relation: 'contains',
       weight: 1,
       evidenceCount: 1,
-    })),
+      source: 'dsv4',
+    })), {
+      id: 'membership:book:input',
+      kind: 'groupMember',
+      sourceId: 'group:agent',
+      targetId: 'book:input',
+      relation: 'contains',
+      weight: 0.8,
+      evidenceCount: 1,
+      source: 'dsv4',
+    }],
     truncated: { nodes: false, edges: false },
   };
 }

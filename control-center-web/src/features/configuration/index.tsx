@@ -1,7 +1,17 @@
-import { Archive, FileCheck2, FolderOpen, KeyRound, RefreshCw, RotateCcw, Settings2 } from 'lucide-react';
+import { FileCheck2, KeyRound, RefreshCw, Settings2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, EmptyState, Field, Input, Switch } from '@/components/primitives';
-import { useConfigurationQueries } from './api';
+import {
+  configurationMutationPathIds,
+  isSecretConfigurationKey,
+  useConfigurationMutationBoundary,
+  useConfigurationQueries,
+} from './api';
+import {
+  ManagementMutationWorkflow,
+  parseManagementWorkPreview,
+  parseManagementWorkReceipt,
+} from '@/features/overview/management-mutation';
 import {
   DataTable,
   InlineNotice,
@@ -10,38 +20,34 @@ import {
   MetricStrip,
   QueryState,
   StatusBadge,
-  WorkflowAction,
   arrayRecords,
   asRecord,
   configuredLabel,
-  numberValue,
+  publicErrorText,
   stringValue,
   valueAt,
 } from '@/features/overview/management-ui';
+import { PiProviderCredentials } from './PiProviderCredentials';
 
 type DraftValue = string | number | boolean;
 
 export function ConfigurationFeature() {
   const queries = useConfigurationQueries();
+  const mutationBoundary = useConfigurationMutationBoundary();
   const settingsEnvelope = asRecord(queries.settings.data);
   const settings = asRecord(settingsEnvelope.settings);
   const runtimeConfig = asRecord(settingsEnvelope.runtimeConfig);
-  const settingsRevision = stringValue(
-    settingsEnvelope.settingsRevision,
-    stringValue(settingsEnvelope.settingsHash, stringValue(runtimeConfig.settingsRevision, 'unknown')),
-  );
-  const runtimeRevision = numberValue(
-    settingsEnvelope.runtimeRevision,
-    numberValue(runtimeConfig.runtimeRevision),
-  );
+  const rawRuntimeRevision = settingsEnvelope.runtimeRevision ?? runtimeConfig.runtimeRevision;
+  const runtimeRevision = typeof rawRuntimeRevision === 'number'
+    && Number.isInteger(rawRuntimeRevision)
+    && rawRuntimeRevision >= 0
+    ? rawRuntimeRevision
+    : null;
   const schemaEnvelope = asRecord(queries.schema.data);
   const sections = arrayRecords(schemaEnvelope.sections);
   const [activeSection, setActiveSection] = useState('');
   const [expertMode, setExpertMode] = useState(false);
   const [changes, setChanges] = useState<Record<string, DraftValue>>({});
-  const [configurationFile, setConfigurationFile] = useState('');
-  const [restoreFile, setRestoreFile] = useState('');
-  const [backupDestination, setBackupDestination] = useState('');
 
   useEffect(() => {
     if (!activeSection && sections.length) setActiveSection(stringValue(sections[0]?.id));
@@ -49,30 +55,36 @@ export function ConfigurationFeature() {
 
   const section = sections.find((item) => stringValue(item.id) === activeSection) ?? sections[0];
   const fields = arrayRecords(section?.fields).filter((field) => expertMode || field.expert !== true);
-  const diffRows = useMemo(() => Object.entries(changes).map(([key, next]) => ({
-    id: key,
-    key,
-    before: isSecretKey(key) ? configuredLabel(valueAt(settings, key)) : displayDraftValue(valueAt(settings, key)),
-    after: isSecretKey(key) ? (String(next).trim() ? 'configured' : 'not configured') : displayDraftValue(next),
-    applyMode: stringValue(findField(sections, key).applyMode, 'live'),
-  })), [changes, sections, settings]);
-  const error = (queries.settings.error ?? queries.schema.error ?? queries.capabilities.error) as Error | null;
+  const pendingChanges = useMemo(() => Object.fromEntries(
+    Object.entries(changes).filter(([key, next]) => (
+      !isSecretConfigurationField(findField(sections, key), key)
+      && !Object.is(valueAt(settings, key), next)
+    )),
+  ) as Record<string, DraftValue>, [changes, sections, settings]);
+  const diffRows = useMemo(() => Object.entries(pendingChanges).map(([key, next]) => {
+    const field = findField(sections, key);
+    const applyMode = stringValue(field.applyMode, 'live');
+    return {
+      id: key,
+      key: publicFieldLabel(key, stringValue(field.label)),
+      before: displayDraftValue(valueAt(settings, key), field, key),
+      after: displayDraftValue(next, field, key),
+      applyMode: applyModeLabel(applyMode),
+      requiresReload: applyMode !== 'live',
+    };
+  }), [pendingChanges, sections, settings]);
+  const hasSensitiveChanges = Object.entries(changes).some(([key, next]) => (
+    isSecretConfigurationField(findField(sections, key), key)
+    && !Object.is(valueAt(settings, key), next)
+  ));
+  const rawError = queries.settings.error ?? queries.schema.error ?? queries.capabilities.error;
+  const error = rawError ? new Error(publicErrorText(rawError, '无法读取本机设置，请刷新后重试。')) : null;
   const pending = queries.settings.isPending || queries.schema.isPending || queries.capabilities.isPending;
-  const refresh = () => void Promise.all([queries.settings.refetch(), queries.schema.refetch()]);
-
-  const chooseFile = async (purpose: 'configuration-import' | 'restore' | 'export-destination') => {
-    if (!queries.transport.pickFiles) return;
-    const files = await queries.transport.pickFiles({
-      accepts: purpose === 'configuration-import' ? ['.json', '.yaml', '.yml'] : purpose === 'restore' ? ['.ragime-backup', '.zip'] : undefined,
-      multiple: false,
-      purpose,
-    });
-    const selected = files[0];
-    if (!selected) return;
-    if (purpose === 'configuration-import') setConfigurationFile(selected.name);
-    if (purpose === 'restore') setRestoreFile(selected.name);
-    if (purpose === 'export-destination') setBackupDestination(selected.name);
-  };
+  const refresh = () => void Promise.all([
+    queries.settings.refetch(),
+    queries.schema.refetch(),
+    queries.capabilities.refetch(),
+  ]);
 
   return (
     <ManagementPage
@@ -82,20 +94,21 @@ export function ConfigurationFeature() {
           <Button leadingIcon={<RefreshCw size={15} />} loading={queries.settings.isFetching} onClick={refresh} size="small">刷新</Button>
         </>
       }
-      description="按分组调整设置、查看差异、导入配置，并创建可回滚备份。"
-      eyebrow="SETTINGS"
+      description="管理本机设置与模型账号；变更会先预览，再由你确认。"
+      eyebrow="设置"
       routeId="configuration"
       title="配置与迁移"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
+        <PiProviderCredentials />
         <ManagementSection title="配置快照">
           <MetricStrip items={[
-            { label: 'Schema', value: stringValue(schemaEnvelope.schemaVersion, 'unknown'), detail: `${sections.length} 个分组`, icon: Settings2 },
-            { label: '设置版本', value: settingsRevision, detail: '当前版本', icon: FileCheck2 },
-            { label: '运行版本', value: runtimeRevision, detail: '已生效设置', icon: RefreshCw },
-            { label: '安全存储', value: queries.capabilities.data?.native.keychain ? 'available' : 'unavailable', detail: '秘密不会回显', icon: KeyRound, tone: queries.capabilities.data?.native.keychain ? 'success' : 'warning' },
+            { label: '设置分组', value: sections.length, detail: '可编辑范围', icon: Settings2 },
+            { label: '当前设置', value: settingsEnvelope.ok === true ? '已加载' : '需刷新', detail: '来自本机', icon: FileCheck2 },
+            { label: '生效状态', value: runtimeRevision === null ? '需刷新' : '已同步', detail: '运行中设置', icon: RefreshCw },
+            { label: '安全存储', value: queries.capabilities.data?.native.keychain ? '可用' : '不可用', detail: '秘密不会回显', icon: KeyRound, tone: queries.capabilities.data?.native.keychain ? 'success' : 'warning' },
           ]} />
-          <InlineNotice title="秘密字段" tone="success">已保存的秘密只显示 configured / not configured。新值不会出现在差异明文、收据或日志中。</InlineNotice>
+          <InlineNotice title="秘密字段" tone="success">已保存的秘密只显示是否配置。新值不会出现在差异、操作记录或日志中。</InlineNotice>
         </ManagementSection>
 
         <ManagementSection title="设置表单" description="按分组逐项调整设置；开启高级设置可显示更多选项。">
@@ -103,9 +116,9 @@ export function ConfigurationFeature() {
             <div className="mgmt-grid-2">
               <div className="mgmt-stack">
                 <label className="ui-field">
-                  <span className="ui-field__label">Section</span>
+                  <span className="ui-field__label">设置分组</span>
                   <select className="ui-input" onChange={(event) => setActiveSection(event.target.value)} value={stringValue(section?.id)}>
-                    {sections.map((item) => <option key={stringValue(item.id)} value={stringValue(item.id)}>{stringValue(item.label, stringValue(item.id))}</option>)}
+                    {sections.map((item) => <option key={stringValue(item.id)} value={stringValue(item.id)}>{publicSectionLabel(stringValue(item.id), stringValue(item.label))}</option>)}
                   </select>
                 </label>
                 <div className="mgmt-list">
@@ -123,18 +136,83 @@ export function ConfigurationFeature() {
                 <h3 style={{ fontSize: 12, margin: 0 }}>待应用差异</h3>
                 {diffRows.length ? (
                   <DataTable caption="配置差异" columns={[
-                    { key: 'key', label: 'Key', width: '32%' },
+                    { key: 'key', label: '设置项', width: '32%' },
                     { key: 'before', label: '当前' },
                     { key: 'after', label: '目标' },
                     { key: 'applyMode', label: '应用', width: '18%' },
                   ]} rows={diffRows} />
                 ) : <EmptyState description="修改字段后会在这里显示差异。" icon={Settings2} title="没有待应用变更" />}
-                <WorkflowAction
-                  actionId="configuration.settings.apply"
+                <ManagementMutationWorkflow
+                  availability={mutationBoundary.availability(
+                    runtimeRevision === null
+                      ? '当前设置状态尚未同步，刷新后才能预览。'
+                      : hasSensitiveChanges
+                        ? '秘密设置必须通过专用安全流程修改；当前差异不会发送。'
+                      : diffRows.length === 0
+                        ? '修改至少一个非敏感设置后才能生成服务端预览。'
+                        : '',
+                  )}
                   description="仅保存本次字段差异，并按应用方式刷新相关组件。"
+                  draftKey={JSON.stringify({ changes: pendingChanges, runtimeRevision })}
                   mutationKey={['configuration', 'mutation', 'settings']}
-                  preview={diffRows.length ? diffRows.map((row) => `${row.key}: ${row.before} -> ${row.after}`) : ['当前没有设置差异。']}
-                  risk={diffRows.some((row) => row.applyMode !== 'live') ? 'R2' : 'R1'}
+                  onApply={async (preview) => parseManagementWorkReceipt(
+                    await mutationBoundary.request({
+                      pathId: configurationMutationPathIds.apply,
+                      body: {
+                        changes: preview.context.changes,
+                        expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                        previewToken: preview.previewToken,
+                        payloadSha256: preview.payloadSha256,
+                        confirmText: preview.requiredConfirm,
+                      },
+                    }),
+                    configurationMutationPathIds.apply,
+                    preview.payloadSha256,
+                  )}
+                  onApplied={() => {
+                    setChanges({});
+                    void queries.settings.refetch();
+                  }}
+                  onPreview={async () => {
+                    if (runtimeRevision === null || diffRows.length === 0) {
+                      throw new Error('设置差异或当前状态已失效，请刷新后重试。');
+                    }
+                    const context = { changes: { ...pendingChanges } };
+                    const parsed = parseManagementWorkPreview(
+                      await mutationBoundary.request({
+                        pathId: configurationMutationPathIds.preview,
+                        body: {
+                          ...context,
+                          expectedRuntimeRevision: runtimeRevision,
+                        },
+                      }),
+                      configurationMutationPathIds.apply,
+                      context,
+                    );
+                    return {
+                      ...parsed,
+                      summary: {
+                        ...parsed.summary,
+                        title: '应用这些设置？',
+                        items: diffRows.map((row) => `${row.key}：${row.before} → ${row.after}（${row.applyMode}）`),
+                      },
+                    };
+                  }}
+                  onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+                    await mutationBoundary.request({
+                      pathId: configurationMutationPathIds.rollback,
+                      body: {
+                        receiptId: receipt.receiptId,
+                        rollbackToken: receipt.rollbackToken,
+                        payloadSha256: receipt.payloadSha256,
+                        confirmText: 'rollback',
+                      },
+                    }),
+                    configurationMutationPathIds.rollback,
+                    preview.payloadSha256,
+                  )}
+                  onRolledBack={() => void queries.settings.refetch()}
+                  risk={diffRows.some((row) => row.requiresReload) ? 'R2' : 'R1'}
                   title="应用设置差异"
                 />
               </div>
@@ -142,48 +220,14 @@ export function ConfigurationFeature() {
           ) : <EmptyState description="当前没有可显示的设置分组。" icon={Settings2} title="设置为空" />}
         </ManagementSection>
 
-        <ManagementSection title="配置导入" description="选择配置文件并预览差异；敏感字段不会显示。">
-          <div className="mgmt-toolbar">
-            <Button disabled={!queries.transport.pickFiles} leadingIcon={<FolderOpen size={15} />} onClick={() => void chooseFile('configuration-import')} size="small">选择配置</Button>
-            <span className="mgmt-muted">{configurationFile || '未选择文件'}</span>
-          </div>
-          <WorkflowAction
-            actionId="configuration.import"
-            description="校验 JSON/YAML 并预览设置差异；敏感字段单独确认。"
-            mutationKey={['configuration', 'mutation', 'import']}
-            preview={[`文件：${configurationFile || '尚未选择'}`, '文件类型：JSON/YAML。', '远程模型配置与敏感字段需要额外确认。']}
-            risk="R2"
-            title="导入配置"
-          />
+        <ManagementSection title="配置导入" description="导入必须先经过校验与差异确认。">
+          <UnavailableAction description="从文件导入本机设置。" reason="安全导入功能尚未接入，因此不会读取或应用文件。" title="导入配置" />
         </ManagementSection>
 
         <ManagementSection title="备份与恢复" description="备份不含 API Key、模型权重、缓存与日志；恢复前自动生成回滚包。">
           <div className="mgmt-grid-2">
-            <div className="mgmt-stack">
-              <Button disabled={!queries.transport.pickFiles} leadingIcon={<Archive size={15} />} onClick={() => void chooseFile('export-destination')} size="small">选择备份位置</Button>
-              <span className="mgmt-muted">{backupDestination || '未选择位置'}</span>
-              <WorkflowAction
-                actionId="configuration.backup-export"
-                description="导出本地数据库、管理设置和 Rime 自定义 YAML。"
-                mutationKey={['configuration', 'mutation', 'backup-export']}
-                preview={[`目标：${backupDestination || '尚未选择'}`, '备份不包含秘密。', '完成后显示文件数、大小与校验值。']}
-                risk="R1"
-                title="导出可移植备份"
-              />
-            </div>
-            <div className="mgmt-stack">
-              <Button disabled={!queries.transport.pickFiles} leadingIcon={<RotateCcw size={15} />} onClick={() => void chooseFile('restore')} size="small">选择恢复包</Button>
-              <span className="mgmt-muted">{restoreFile || '未选择恢复包'}</span>
-              <WorkflowAction
-                actionId="configuration.restore"
-                applyLabel="批准恢复"
-                description="校验恢复包与数据库版本，并先创建回滚包。"
-                mutationKey={['configuration', 'mutation', 'restore']}
-                preview={[`恢复包：${restoreFile || '尚未选择'}`, '恢复前需要再次确认。', '先创建回滚包；已保存的秘密不改变。']}
-                risk="R3"
-                title="恢复可移植备份"
-              />
-            </div>
+            <UnavailableAction description="导出本机数据、设置和输入法自定义内容。" reason="受控备份功能尚未接入。" title="导出可移植备份" />
+            <UnavailableAction description="校验备份包并在确认后恢复。" reason="受控恢复功能尚未接入，不会选择或写入备份包。" title="恢复可移植备份" />
           </div>
         </ManagementSection>
       </QueryState>
@@ -193,12 +237,11 @@ export function ConfigurationFeature() {
 
 function SettingField({ field, onChange, value }: { field: Record<string, unknown>; onChange: (value: DraftValue) => void; value: unknown }) {
   const key = stringValue(field.key);
-  const label = stringValue(field.label, key);
-  const description = stringValue(field.description);
+  const label = publicFieldLabel(key, stringValue(field.label));
+  const description = publicDescription(stringValue(field.description));
   const type = stringValue(field.type, 'string');
-  const secret = isSecretKey(key) || type === 'secret' || type === 'password';
+  const secret = isSecretConfigurationField(field, key);
   const id = `configuration-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
-  const [secretDraft, setSecretDraft] = useState('');
 
   if (type === 'boolean' && !secret) {
     return <div className="mgmt-list__row"><Switch checked={value === true} description={description} label={label} onCheckedChange={onChange} /></div>;
@@ -208,33 +251,35 @@ function SettingField({ field, onChange, value }: { field: Record<string, unknow
       <div className="mgmt-list__row">
         <Field description={description} htmlFor={id} label={label}>
           <select className="ui-input" id={id} onChange={(event) => onChange(event.target.value)} value={stringValue(value)}>
-            {field.options.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
+            {field.options.map((option) => <option key={String(option)} value={String(option)}>{optionLabel(key, String(option))}</option>)}
           </select>
         </Field>
       </div>
     );
   }
   if (['string', 'number', 'integer', 'secret', 'password'].includes(type) || secret) {
+    if (secret) {
+      return <div className="mgmt-list__row"><Field description="请使用上方模型账号或对应安全功能修改。" htmlFor={id} label={label}><Input disabled id={id} placeholder={configuredLabel(value)} type="password" value="" /></Field></div>;
+    }
     return (
       <div className="mgmt-list__row">
         <Field
-          description={secret ? `当前：${configuredLabel(valueAt({ value }, 'value'))}；留空表示不改变` : description}
+          description={description}
           htmlFor={id}
           label={label}
         >
           <Input
-            autoComplete={secret ? 'new-password' : undefined}
+            autoComplete={undefined}
             id={id}
             max={typeof field.max === 'number' ? field.max : undefined}
             min={typeof field.min === 'number' ? field.min : undefined}
             onChange={(event) => {
-              if (secret) setSecretDraft(event.target.value);
               onChange(type === 'number' || type === 'integer' ? Number(event.target.value) : event.target.value);
             }}
-            placeholder={secret ? '输入新值' : undefined}
+            placeholder={undefined}
             step={typeof field.step === 'number' ? field.step : undefined}
-            type={secret ? 'password' : type === 'number' || type === 'integer' ? 'number' : 'text'}
-            value={secret ? secretDraft : stringValue(value)}
+            type={type === 'number' || type === 'integer' ? 'number' : 'text'}
+            value={stringValue(value)}
           />
         </Field>
       </div>
@@ -247,13 +292,30 @@ function findField(sections: Record<string, unknown>[], key: string): Record<str
   return sections.flatMap((section) => arrayRecords(section.fields)).find((field) => stringValue(field.key) === key) ?? {};
 }
 
-function isSecretKey(key: string): boolean {
-  return /token|secret|password|api.?key|authorization|cookie/i.test(key);
+function isSecretConfigurationField(field: Record<string, unknown>, key: string): boolean {
+  const type = stringValue(field.type).toLowerCase();
+  return type === 'secret' || type === 'password' || isSecretConfigurationKey(key);
 }
 
-function displayDraftValue(value: unknown): string {
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
+function displayDraftValue(value: unknown, field: Record<string, unknown> = {}, key = ''): string {
+  if (typeof value === 'boolean') return value ? '开启' : '关闭';
   if (typeof value === 'number') return String(value);
-  if (typeof value === 'string') return value || '(empty)';
-  return value === undefined ? '(unset)' : '(structured)';
+  if (typeof value === 'string') return value ? optionLabel(key, value, field) : '空';
+  return value === undefined ? '未设置' : '结构化内容';
 }
+
+function applyModeLabel(value: string): string {
+  return ({ live: '立即生效', reload: '需重新载入', restart: '需重启', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启后台服务', restart_predictor: '重启本机模型', next_voice_session: '下次语音使用' } as Record<string, string>)[value] ?? '应用后生效';
+}
+
+function UnavailableAction({ description, reason, title }: { description: string; reason: string; title: string }) {
+  return <div className="mgmt-workflow" data-availability="unsupported"><div className="mgmt-workflow__heading"><div><strong>{title}</strong><p>{description}</p></div><Button disabled size="small">暂不可用</Button></div><InlineNotice title="尚未开放" tone="warning">{reason}</InlineNotice></div>;
+}
+
+const sectionLabels: Record<string, string> = { interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '规划', agent: 'Agent', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
+const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'models.activeRag': '深度生成模型', 'models.offlineCleanup': '离线整理模型', 'agent.ui.showReasoningSummary': '显示处理进度', 'managementSecurity.requireToken': '限制本机管理请求' };
+
+function publicSectionLabel(id: string, label: string): string { return sectionLabels[id] ?? (/[\u3400-\u9fff]/.test(label) ? label : '其他设置'); }
+function publicFieldLabel(key: string, label: string): string { return fieldLabels[key] ?? (label && !/pathId|schema|revision|hash|receipt|provider/i.test(label) ? publicDescription(label) : '设置项'); }
+function publicDescription(value: string): string { return value.replace(/Sidecar/gi, '后台服务').replace(/SQLite FTS5/gi, '本机索引').replace(/BM25/gi, '关键词检索').replace(/Hybrid RAG/gi, '多路知识检索').replace(/Active RAG/gi, '深度生成').replace(/RAG/gi, '知识检索').replace(/fallback/gi, '备用方式').replace(/TTL/gi, '保留时间').replace(/token/gi, '容量').replace(/POST/gi, '管理请求').replace(/patch/gi, '配置'); }
+function optionLabel(key: string, value: string, _field: Record<string, unknown> = {}): string { return ({ pass_through: '按原数字键处理', select_prediction: '选择对应候选', accept_top_prediction: '接受首个预测', rime_default: '保持输入法默认', disabled: '不使用', compact: '紧凑', expanded: '展开', replace_selection: '替换选中内容', insert_after_selection: '插入到选中内容后', show_only: '只显示不插入', lazy: '使用时启动', 'sichuan-mild': '四川轻度模糊音', none: '关闭' } as Record<string, string>)[value] ?? value; }

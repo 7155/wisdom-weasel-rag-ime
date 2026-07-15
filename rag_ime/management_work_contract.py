@@ -57,6 +57,7 @@ class WorkExecution:
     rollback_authority: Mapping[str, object] = field(default_factory=dict)
     rollback_data: Mapping[str, object] = field(default_factory=dict)
     restart_components: tuple[str, ...] = ()
+    audit_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -184,13 +185,10 @@ class ManagementWorkContract:
                 now=now,
             )
             execution = executor(conn)
-            audit_id = record_management_audit(
+            audit_id = _execution_audit_id(
                 conn,
-                action=execution.audit_action,
-                target_type=execution.target_type,
-                target_id=execution.target_id,
+                execution=execution,
                 payload=dict(payload),
-                result=dict(execution.result),
             )
             receipt_id = f"work-receipt:{uuid.uuid4().hex}"
             rollback_token = self._token_factory() if execution.rollback_available else ""
@@ -249,7 +247,7 @@ class ManagementWorkContract:
         rollback_token: str,
         payload_sha256: str,
         confirm_text: str,
-        expected_apply_path_id: str,
+        expected_apply_path_id: str | tuple[str, ...],
         executor: Callable[[sqlite3.Connection, StoredReceipt], WorkExecution],
     ) -> dict[str, object]:
         normalized_path_id = _required_text(path_id, "pathId")
@@ -271,7 +269,12 @@ class ManagementWorkContract:
             ).fetchone()
             if row is None:
                 raise ManagementWorkError("receipt_not_found", "The apply receipt was not found.")
-            if str(row["path_id"]) != expected_apply_path_id:
+            expected_apply_paths = (
+                {expected_apply_path_id}
+                if isinstance(expected_apply_path_id, str)
+                else set(expected_apply_path_id)
+            )
+            if str(row["path_id"]) not in expected_apply_paths:
                 raise ManagementWorkError("receipt_path_mismatch", "The receipt belongs to another mutation.")
             if int(row["rolled_back_at_ms"] or 0):
                 raise ManagementWorkError("receipt_already_rolled_back", "This receipt was already rolled back.")
@@ -304,17 +307,14 @@ class ManagementWorkContract:
                 rollback_data=_json_object(row["rollback_data_json"]),
             )
             execution = executor(conn, stored)
-            audit_id = record_management_audit(
+            audit_id = _execution_audit_id(
                 conn,
-                action=execution.audit_action,
-                target_type=execution.target_type,
-                target_id=execution.target_id,
+                execution=execution,
                 payload={
                     "receiptId": original_receipt_id,
                     "payloadSha256": provided_hash,
                     "rollbackAuthority": dict(stored.rollback_authority),
                 },
-                result=dict(execution.result),
             )
             rollback_receipt_id = f"work-receipt:{uuid.uuid4().hex}"
             conn.execute(
@@ -452,6 +452,47 @@ def canonical_json(payload: object) -> str:
 
 def canonical_payload_sha256(payload: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _execution_audit_id(
+    conn: sqlite3.Connection,
+    *,
+    execution: WorkExecution,
+    payload: Mapping[str, object],
+) -> int:
+    if execution.audit_id is None:
+        return record_management_audit(
+            conn,
+            action=execution.audit_action,
+            target_type=execution.target_type,
+            target_id=execution.target_id,
+            payload=payload,
+            result=dict(execution.result),
+        )
+    audit_id = int(execution.audit_id)
+    if audit_id < 1:
+        raise ManagementWorkError("stored_contract_invalid", "The execution audit id is invalid.")
+    row = conn.execute(
+        """
+        SELECT id, action, target_type, target_id
+        FROM management_audit_log
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (audit_id,),
+    ).fetchone()
+    if row is None:
+        raise ManagementWorkError("stored_contract_invalid", "The execution audit record is missing.")
+    if (
+        str(row["action"]) != execution.audit_action
+        or str(row["target_type"]) != execution.target_type
+        or str(row["target_id"]) != execution.target_id
+    ):
+        raise ManagementWorkError(
+            "stored_contract_invalid",
+            "The execution audit record does not match the mutation.",
+        )
+    return audit_id
 
 
 def _receipt_response(

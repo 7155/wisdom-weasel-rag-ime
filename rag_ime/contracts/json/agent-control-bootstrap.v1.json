@@ -52,7 +52,7 @@
             "required": ["8766", "8768"],
             "properties": {
               "8766": {"type": "string", "minLength": 1},
-              "8768": {"type": "string", "minLength": 1}
+              "8768": {"type": ["string", "null"], "minLength": 1}
             }
           }
         }

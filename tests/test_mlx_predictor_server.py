@@ -716,6 +716,20 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertTrue(health["modelProfile"]["appendOnly"])
         self.assertFalse(health["modelProfile"]["resident"])
 
+    def test_engine_caps_mlx_allocator_cache_and_reports_memory(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text='["稳定候选"]')
+        with patch.dict(os.environ, {"RAG_IME_MLX_CACHE_LIMIT_MB": "192"}), patch.dict(
+            sys.modules,
+            modules,
+        ):
+            health = MlxLmEngine("fake-qwen").health()
+
+        self.assertEqual(calls["cache_limits"], [192 * 1024 * 1024])
+        self.assertTrue(health["mlxMemory"]["configured"])
+        self.assertEqual(health["mlxMemory"]["limitBytes"], 192 * 1024 * 1024)
+        self.assertEqual(health["mlxMemory"]["cacheBytes"], 64 * 1024 * 1024)
+        self.assertTrue(health["capabilities"]["boundedAllocatorCache"])
+
     def test_engine_loads_local_tokenizers_backend_qwen_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             model_dir = Path(tmp)
@@ -1590,6 +1604,7 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
         "prompts": [],
         "sampler_max_tokens": [],
         "sampler_calls": 0,
+        "cache_limits": [],
     }
     generated_texts = generated_text if isinstance(generated_text, list) else [generated_text]
     logits_token_ids = {
@@ -1679,6 +1694,12 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
     mlx = types.ModuleType("mlx")
     core = types.ModuleType("mlx.core")
     core.array = lambda tokens: list(tokens)
+    core.set_cache_limit = (
+        lambda limit: calls["cache_limits"].append(limit) or 16 * 1024 * 1024 * 1024
+    )
+    core.get_active_memory = lambda: 48 * 1024 * 1024
+    core.get_cache_memory = lambda: 64 * 1024 * 1024
+    core.get_peak_memory = lambda: 96 * 1024 * 1024
     mlx.core = core
 
     return (

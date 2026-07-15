@@ -111,7 +111,7 @@ export function QueryState({
     return (
       <EmptyState
         action={<Button onClick={onRetry}>重试</Button>}
-        description={error.message}
+        description={publicErrorText(error, '暂时无法读取这部分内容，请稍后重试。')}
         icon={AlertTriangle}
         title="读取失败"
       />
@@ -321,7 +321,7 @@ export function WorkflowAction({
     mutationFn: async () => {
       if (onApply) return onApply();
       if (isRehearsal) return mockReceipt(actionId, 'applied');
-      throw new Error('真实写入合同尚未接入。');
+      throw new Error('当前版本暂不支持这项操作。');
     },
     onSuccess: (nextReceipt) => {
       setReceipt(nextReceipt);
@@ -333,7 +333,7 @@ export function WorkflowAction({
     mutationFn: async (appliedReceipt: ActionReceipt) => {
       if (onRollback) return onRollback(appliedReceipt);
       if (isRehearsal) return mockReceipt(actionId, 'rolled-back');
-      throw new Error('真实回滚合同尚未接入。');
+      throw new Error('当前版本暂不支持撤销这项操作。');
     },
     onSuccess: (nextReceipt) => {
       setRollbackReceipt(nextReceipt);
@@ -344,9 +344,9 @@ export function WorkflowAction({
   const steps = useMemo(
     () => [
       { id: 'preview', label: '预览' },
-      { id: 'approval', label: '审批' },
-      { id: 'receipt', label: '收据' },
-      { id: 'rolled-back', label: '回滚' },
+      { id: 'approval', label: '确认' },
+      { id: 'receipt', label: '结果' },
+      { id: 'rolled-back', label: '撤销' },
     ] as const,
     [],
   );
@@ -356,19 +356,19 @@ export function WorkflowAction({
     <div className="mgmt-workflow" data-stage={stage} data-unavailable={unavailable || undefined}>
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{risk}</span>
+          <span className="mgmt-workflow__risk">{workflowRiskLabel(risk)}</span>
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
         {stage === 'idle' ? (
           <Button disabled={unavailable} leadingIcon={<ShieldCheck size={15} />} onClick={() => setStage('preview')} size="small">
-            {unavailable ? '真实写入尚未接入' : isRehearsal ? '演练流程' : '预览操作'}
+            {unavailable ? '当前不可用' : isRehearsal ? '查看示例' : '预览操作'}
           </Button>
         ) : null}
       </div>
 
       {stage !== 'idle' ? (
-        <ol className="mgmt-workflow__steps" aria-label="写操作进度">
+        <ol className="mgmt-workflow__steps" aria-label="操作进度">
           {steps.map((step, index) => (
             <li data-state={index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'pending'} key={step.id}>
               {index < stageIndex ? <Check size={13} /> : index === stageIndex ? <CircleDashed size={13} /> : <i />}
@@ -380,12 +380,12 @@ export function WorkflowAction({
 
       {stage === 'preview' ? (
         <div className="mgmt-workflow__panel" id={`${instanceId}-preview`}>
-          <strong>{isRehearsal ? '演练预览' : '影响预览'}</strong>
+          <strong>{isRehearsal ? '示例预览' : '影响预览'}</strong>
           <ul>{preview.map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="mgmt-workflow__buttons">
             <Button onClick={() => setStage('idle')} size="small" variant="quiet">取消</Button>
             <Button onClick={() => setStage('approval')} size="small" variant="primary">
-              {isRehearsal ? '进入演练确认' : '进入审批'}
+              {isRehearsal ? '确认示例' : '继续确认'}
             </Button>
           </div>
         </div>
@@ -393,8 +393,8 @@ export function WorkflowAction({
 
       {stage === 'approval' ? (
         <div className="mgmt-workflow__panel">
-          <strong>{isRehearsal ? '演练确认' : '审批确认'}</strong>
-          <p>{isRehearsal ? '本次仅演练确认、收据与回滚流程，不会修改本机状态。' : '确认后将只执行上方列出的影响。'}</p>
+          <strong>{isRehearsal ? '示例确认' : '操作确认'}</strong>
+          <p>{isRehearsal ? '这是界面示例，不会修改本机状态。' : '确认后将只执行上方列出的影响。'}</p>
           <div className="mgmt-workflow__buttons">
             <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回预览</Button>
             <Button
@@ -403,14 +403,14 @@ export function WorkflowAction({
               size="small"
               variant={risk === 'R3' ? 'danger' : 'primary'}
             >
-              {isRehearsal ? '生成演练收据' : applyLabel}
+              {isRehearsal ? '查看示例结果' : applyLabel}
             </Button>
           </div>
         </div>
       ) : null}
 
       {applyMutation.error ? (
-        <InlineNotice title="应用失败" tone="danger">{asError(applyMutation.error).message}</InlineNotice>
+        <InlineNotice title="应用失败" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice>
       ) : null}
 
       {stage === 'receipt' && receipt ? (
@@ -422,13 +422,13 @@ export function WorkflowAction({
             onClick={() => rollbackMutation.mutate(receipt)}
             size="small"
           >
-            {receipt.status === 'mocked' ? '回滚演练' : '回滚'}
+            {receipt.status === 'mocked' ? '撤销示例' : '撤销'}
           </Button>
         </ReceiptView>
       ) : null}
 
       {rollbackMutation.error ? (
-        <InlineNotice title="回滚失败" tone="danger">{asError(rollbackMutation.error).message}</InlineNotice>
+        <InlineNotice title="撤销失败" tone="danger">{publicErrorText(rollbackMutation.error)}</InlineNotice>
       ) : null}
 
       {stage === 'rolled-back' && rollbackReceipt ? (
@@ -451,10 +451,10 @@ function ReceiptView({ children, receipt }: { children: ReactNode; receipt: Acti
     <div className="mgmt-workflow__receipt">
       <div>
         <StatusBadge
-          label={receipt.status === 'mocked' ? '演练 / 未执行' : receipt.status === 'rolled-back' ? '已回滚' : '已应用'}
+          label={receipt.status === 'mocked' ? '示例 / 未执行' : receipt.status === 'rolled-back' ? '已撤销' : '已完成'}
           tone={receipt.status === 'rolled-back' ? 'info' : 'success'}
         />
-        <strong>{receipt.receiptId}</strong>
+        <strong>{receipt.status === 'mocked' ? '示例结果' : receipt.status === 'rolled-back' ? '已恢复到操作前' : '本机操作已记录'}</strong>
         <span>{receipt.message}</span>
         <time>{receipt.at}</time>
       </div>
@@ -469,11 +469,20 @@ function mockReceipt(actionId: string, status: 'applied' | 'rolled-back'): Promi
     receiptId: `rehearsal:${actionId}:${now.getTime()}`,
     status: status === 'rolled-back' ? 'rolled-back' : 'mocked',
     message: status === 'rolled-back'
-      ? '演练状态已回滚；未修改本机状态。'
-      : '演练已完成；未执行操作，也未修改本机状态。',
+      ? '示例已恢复；未修改本机状态。'
+      : '示例已完成；未执行操作，也未修改本机状态。',
     at: now.toLocaleString('zh-CN'),
     rollbackAvailable: status !== 'rolled-back',
   });
+}
+
+function workflowRiskLabel(value: 'R0' | 'R1' | 'R2' | 'R3'): string {
+  return ({
+    R0: '无需确认',
+    R1: '确认后执行',
+    R2: '谨慎确认',
+    R3: '高风险',
+  } as const)[value];
 }
 
 export function asRecord(value: unknown): JsonRecord {
@@ -513,9 +522,9 @@ export function formatTime(value: unknown): string {
 }
 
 export function configuredLabel(value: unknown): string {
-  if (typeof value === 'boolean') return value ? 'configured' : 'not configured';
-  if (typeof value === 'string') return value.trim() ? 'configured' : 'not configured';
-  return value === null || value === undefined ? 'not configured' : 'configured';
+  if (typeof value === 'boolean') return value ? '已配置' : '未配置';
+  if (typeof value === 'string') return value.trim() ? '已配置' : '未配置';
+  return value === null || value === undefined ? '未配置' : '已配置';
 }
 
 function displayValue(value: unknown): ReactNode {
@@ -527,6 +536,15 @@ function displayValue(value: unknown): ReactNode {
   return <span className="mgmt-muted">结构化数据</span>;
 }
 
-function asError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value));
+export function publicErrorText(
+  value: unknown,
+  fallback = '操作未完成，请刷新状态后重试。',
+): string {
+  const message = (value instanceof Error ? value.message : String(value ?? '')).trim();
+  if (!message || message.length > 180 || !/[\u3400-\u9fff]/u.test(message)) return fallback;
+  if (/运行版本.*(?:变化|失效)|内容版本.*(?:变化|失效)/u.test(message)) return '页面内容已经变化，请重新预览。';
+  if (/pathId|operation(?:Id)?|receipt|rollbackToken|payloadSha|runtimeRevision|previewToken|work.?contract|schema|policy(?:Id)?|profile(?:Id|Version)?|运行版本|traceback|stack|sqlite|\b(?:GET|POST|PUT|PATCH|DELETE)\b|https?:\/\/|\/api\/|\bat\s+\S+[:(]\d+/i.test(message)) {
+    return fallback;
+  }
+  return message;
 }

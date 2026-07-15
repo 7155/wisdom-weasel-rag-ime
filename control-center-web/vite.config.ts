@@ -8,6 +8,7 @@ import { defineConfig } from 'vitest/config';
 const rootDirectory = path.dirname(fileURLToPath(import.meta.url));
 const controlTransport = process.env.VITE_CONTROL_TRANSPORT ?? 'auto';
 const buildChannel = process.env.VITE_BUILD_CHANNEL ?? 'preview';
+const controlProxyTarget = normalizeControlProxyTarget(process.env.VITE_CONTROL_PROXY_TARGET);
 const nativeOnlyBuild = controlTransport === 'native';
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
   cwd: path.resolve(rootDirectory, '..'),
@@ -80,6 +81,23 @@ function controlTransportBoundary(): Plugin {
   };
 }
 
+function normalizeControlProxyTarget(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const url = new URL(value);
+  if (
+    url.protocol !== 'http:' ||
+    !new Set(['127.0.0.1', 'localhost', '[::1]']).has(url.hostname) ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error('VITE_CONTROL_PROXY_TARGET must be a loopback HTTP origin');
+  }
+  return url.origin;
+}
+
 export default defineConfig({
   base: './',
   define: {
@@ -101,6 +119,15 @@ export default defineConfig({
     sourcemap: false,
     target: 'es2022',
   },
+  server: controlProxyTarget
+    ? {
+        proxy: {
+          '/api': {
+            target: controlProxyTarget,
+          },
+        },
+      }
+    : undefined,
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',

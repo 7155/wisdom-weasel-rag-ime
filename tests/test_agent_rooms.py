@@ -110,6 +110,34 @@ class AgentRoomTests(unittest.TestCase):
         self.assertIn(b"room_event_replay_gap", snapshot_required)
         gap.close()
 
+    def test_route_target_uses_exact_longest_mention_and_rejects_real_ambiguity(self) -> None:
+        room = self.store.create(
+            title="时间线讨论",
+            routing_policy="manual_mentions",
+            participants=[
+                self._participant("zhiyou-v1", "智鼬"),
+                self._participant("zhiyou-sol-v1", "智鼬·未来"),
+            ],
+        )
+        room_id = str(room["id"])
+
+        current = self.store.route_target(room_id, "@智鼬 检查当前状态")
+        future = self.store.route_target(room_id, "@智鼬·未来 做长期规划")
+
+        self.assertEqual(current["roleId"], "zhiyou-v1")
+        self.assertEqual(future["roleId"], "zhiyou-sol-v1")
+
+        ambiguous = self.store.create(
+            title="重名讨论",
+            routing_policy="manual_mentions",
+            participants=[
+                self._participant("custom-a", "同名角色"),
+                self._participant("custom-b", "同名角色"),
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            self.store.route_target(str(ambiguous["id"]), "@同名角色 请回答")
+
     def test_snapshot_returns_atomic_room_metadata_and_retained_event_window(self) -> None:
         room = self.store.create(
             title="快照房间",
@@ -257,14 +285,32 @@ class AgentRoomServiceTests(unittest.TestCase):
             turn_id="turn:hermes",
             created_at_ms=200,
         )
+        self.service.events.publish(
+            str(hermes["sessionId"]),
+            "turn_completed",
+            {"status": "completed"},
+            turn_id="turn:hermes",
+            created_at_ms=210,
+        )
         events = self.service.rooms.list_events(str(room["id"]))
         self.assertEqual(
             [item["eventType"] for item in events],
-            ["participant_status", "user_message", "route_decision", "participant_delta"],
+            [
+                "participant_status",
+                "user_message",
+                "route_decision",
+                "participant_delta",
+                "turn_completed",
+            ],
         )
-        self.assertEqual(events[-1]["participantId"], hermes["id"])
-        self.assertEqual(events[-1]["sourceSessionId"], hermes["sessionId"])
+        self.assertEqual(events[-2]["participantId"], hermes["id"])
+        self.assertEqual(events[-2]["sourceSessionId"], hermes["sessionId"])
         self.assertEqual(events[1]["payload"]["clientMessageId"], "room-client-1")
+        self.assertNotEqual(accepted["roomTurnId"], accepted["sessionTurnId"])
+        self.assertEqual(
+            {item["turnId"] for item in events[1:]},
+            {accepted["roomTurnId"]},
+        )
 
         snapshot = self.service.room_snapshot(str(room["id"]))
         self.assertEqual(snapshot["lastSequence"], events[-1]["sequence"])

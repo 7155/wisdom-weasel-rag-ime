@@ -358,13 +358,13 @@ class RuntimeConfigResolver:
             enabled=post_commit_enabled,
             idle_trigger_ms=_bounded_int(post_commit_settings.get("idleTriggerMs"), 180, 40, 3000),
             min_delta_chars=_bounded_int(post_commit_settings.get("minDeltaChars"), 1, 1, 32),
-            max_calls_per_10s=_bounded_int(post_commit_settings.get("maxCallsPer10s"), 10, 0, 10),
+            max_calls_per_10s=_bounded_int(post_commit_settings.get("maxCallsPer10s"), 6, 0, 10),
             cooldown_ms=_bounded_int(post_commit_settings.get("cooldownMs"), 0, 0, 10000),
             show_pending_status=show_pending,
             pending_status_delay_ms=_bounded_int(
                 post_commit_settings.get("pendingStatusDelayMs"), 150, 0, 3000
             ),
-            panel_ttl_ms=_bounded_int(post_commit_settings.get("panelTtlMs"), 8500, 500, 15000),
+            panel_ttl_ms=_bounded_int(post_commit_settings.get("panelTtlMs"), 5000, 500, 15000),
             max_candidates=max_candidates,
             completion_ttl_ms=profile.post_commit_completion_ttl_ms,
             model_budget_ms=profile.post_commit_model_budget_ms,

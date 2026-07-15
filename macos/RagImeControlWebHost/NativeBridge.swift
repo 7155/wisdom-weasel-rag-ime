@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import UniformTypeIdentifiers
 import WebKit
@@ -13,6 +14,18 @@ private enum NativeMediaImportError: LocalizedError {
     }
 }
 
+private final class NativeNoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
 final class NativeBridge: NSObject, WKScriptMessageHandler {
     static let handlerName = "ragImeNativeBridge"
 
@@ -23,6 +36,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         "cancelSubscription",
         "pickFiles",
         "pasteImages",
+        "readKnowledgeAsset",
+        "readKnowledgeDocumentSource",
         "revealPath",
         "runApprovedExternalAction",
     ]
@@ -30,6 +45,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     private weak var webView: WKWebView?
     private let routePolicy: NativeRoutePolicy
     private let requestSession: URLSession
+    private let assetSessionDelegate: NativeNoRedirectSessionDelegate
+    private let assetSession: URLSession
     private var requestTasks: [String: URLSessionTask] = [:]
     private var allowedRevealPaths: Set<String> = []
     private lazy var eventBridge = NativeEventBridge { [weak self] envelope in
@@ -43,6 +60,13 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         configuration.timeoutIntervalForResource = 120
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.requestSession = URLSession(configuration: configuration)
+        let assetDelegate = NativeNoRedirectSessionDelegate()
+        self.assetSessionDelegate = assetDelegate
+        self.assetSession = URLSession(
+            configuration: configuration,
+            delegate: assetDelegate,
+            delegateQueue: nil
+        )
         super.init()
     }
 
@@ -55,6 +79,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         requestTasks.removeAll()
         eventBridge.cancelAll()
         requestSession.invalidateAndCancel()
+        assetSession.invalidateAndCancel()
         webView = nil
     }
 
@@ -86,6 +111,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             pickFiles(id: id, payload: payload)
         case "pasteImages":
             pasteImages(id: id, payload: payload)
+        case "readKnowledgeAsset":
+            readKnowledgeAsset(id: id, payload: payload)
+        case "readKnowledgeDocumentSource":
+            readKnowledgeDocumentSource(id: id, payload: payload)
         case "revealPath":
             revealPath(id: id, payload: payload)
         case "runApprovedExternalAction":
@@ -107,15 +136,31 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 "roomStreaming": true,
                 "filePicker": true,
                 "managedAgentImageImport": true,
+                "agentPersonaCreate": true,
+                "piProviderCredentials": true,
                 "managementWorkContract": true,
+                "inputLexiconWorkContract": true,
                 "planningWorkContract": true,
                 "knowledgeDatabaseWorkContract": true,
+                "documentKnowledgeLibrary": true,
+                "knowledgeDocumentImport": true,
+                "knowledgeParserStatus": true,
+                "knowledgeAssetRead": true,
+                "knowledgeDocumentSourceRead": true,
+                "historyWorkContract": true,
+                "configurationSettingsWorkContract": true,
                 "memoryGraphRead": true,
                 "memoryEntityRead": true,
+                "memoryEdit": true,
+                "memoryBookArchiveWorkContract": true,
             ],
             "native": [
                 "pickFiles": true,
                 "managedAgentImageImport": true,
+                "knowledgeDocumentImport": true,
+                "knowledgeParserStatus": true,
+                "knowledgeAssetRead": true,
+                "knowledgeDocumentSourceRead": true,
                 "revealPath": true,
                 "approvedExternalActions": true,
                 "keychain": false,
@@ -242,12 +287,12 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func pickFiles(id: String, payload: [String: Any]) {
         do {
-            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "sessionId", "maxFiles"]
+            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "sessionId", "kbId", "parserProvider", "maxFiles"]
             guard Set(payload.keys).isSubset(of: allowedKeys) else {
                 throw NativeMediaImportError.rejected("File picker payload contained an unsupported field")
             }
             let purpose = try requiredString("purpose", in: payload)
-            guard ["attachment", "configuration-import", "restore", "export-destination"].contains(purpose) else {
+            guard ["attachment", "configuration-import", "restore", "export-destination", "knowledge-import"].contains(purpose) else {
                 throw NativeMediaImportError.rejected("File picker purpose is not allowlisted")
             }
             let multiple: Bool
@@ -277,8 +322,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             } else {
                 requestedCount = multiple ? 8 : 1
             }
-            guard (1...8).contains(requestedCount) else {
-                throw NativeMediaImportError.rejected("File picker maxFiles must be between 1 and 8")
+            let maximumCount = purpose == "knowledge-import" ? 20 : 8
+            guard (1...maximumCount).contains(requestedCount) else {
+                throw NativeMediaImportError.rejected("File picker maxFiles is outside the allowed range")
             }
             if purpose == "attachment" {
                 let sessionId = try requiredString("sessionId", in: payload)
@@ -293,8 +339,33 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 )
                 return
             }
+            if purpose == "knowledge-import" {
+                guard payload["sessionId"] == nil else {
+                    throw NativeMediaImportError.rejected("sessionId is only accepted for Agent attachments")
+                }
+                let kbId = try requiredString("kbId", in: payload)
+                guard kbId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$", options: .regularExpression) != nil else {
+                    throw NativeMediaImportError.rejected("Knowledge base id is invalid")
+                }
+                let parserProvider = payload["parserProvider"] as? String ?? "auto"
+                guard ["auto", "builtin", "mineru_local_http"].contains(parserProvider) else {
+                    throw NativeMediaImportError.rejected("Knowledge parser provider is not allowlisted")
+                }
+                presentKnowledgeDocumentPicker(
+                    id: id,
+                    kbId: kbId,
+                    parserProvider: parserProvider,
+                    accepts: accepts,
+                    maxFiles: requestedCount,
+                    multiple: multiple
+                )
+                return
+            }
             guard payload["sessionId"] == nil else {
                 throw NativeMediaImportError.rejected("sessionId is only accepted for Agent attachments")
+            }
+            guard payload["kbId"] == nil, payload["parserProvider"] == nil else {
+                throw NativeMediaImportError.rejected("Knowledge import fields require the knowledge-import purpose")
             }
             presentLocalPathPicker(
                 id: id,
@@ -332,6 +403,269 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         } catch {
             replyError(id: id, code: "agent_media_paste_rejected", message: error.localizedDescription)
         }
+    }
+
+    private struct NativeKnowledgeAsset {
+        let data: Data
+        let mimeType: String
+        let byteSize: Int
+        let sha256: String
+    }
+
+    private func readKnowledgeAsset(id: String, payload: [String: Any]) {
+        do {
+            let allowedKeys: Set<String> = ["kbId", "fileId", "assetId"]
+            guard Set(payload.keys).isSubset(of: allowedKeys) else {
+                throw NativeMediaImportError.rejected("Knowledge asset payload contained an unsupported field")
+            }
+            let kbId = try requiredString("kbId", in: payload)
+            let fileId = try requiredString("fileId", in: payload)
+            let assetId = try requiredString("assetId", in: payload)
+            guard kbId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil,
+                  fileId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil,
+                  assetId.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
+                throw NativeMediaImportError.rejected("Knowledge asset identifiers are invalid")
+            }
+            let resolved = try routePolicy.resolveBinary(
+                pathId: "knowledgeBases.asset.get",
+                parameters: ["kbId": kbId, "fileId": fileId, "assetId": assetId]
+            )
+            let expectedURL = resolved.request.url
+            let task = assetSession.dataTask(with: resolved.request) { [weak self] data, response, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.requestTasks.removeValue(forKey: id)
+                    do {
+                        let asset = try self.validatedKnowledgeAssetResponse(
+                            data: data,
+                            response: response,
+                            error: error,
+                            expectedURL: expectedURL,
+                            assetId: assetId
+                        )
+                        self.sendKnowledgeAssetToWeb(
+                            id: id,
+                            kbId: kbId,
+                            fileId: fileId,
+                            assetId: assetId,
+                            asset: asset
+                        )
+                    } catch {
+                        self.replyError(
+                            id: id,
+                            code: "knowledge_asset_read_failed",
+                            message: error.localizedDescription,
+                            retryable: (error as NSError).code == NSURLErrorTimedOut
+                        )
+                    }
+                }
+            }
+            requestTasks[id] = task
+            task.resume()
+        } catch {
+            replyError(id: id, code: "knowledge_asset_read_rejected", message: error.localizedDescription)
+        }
+    }
+
+    private func readKnowledgeDocumentSource(id: String, payload: [String: Any]) {
+        do {
+            let allowedKeys: Set<String> = ["kbId", "fileId"]
+            guard Set(payload.keys).isSubset(of: allowedKeys) else {
+                throw NativeMediaImportError.rejected("Knowledge source payload contained an unsupported field")
+            }
+            let kbId = try requiredString("kbId", in: payload)
+            let fileId = try requiredString("fileId", in: payload)
+            guard kbId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil,
+                  fileId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil else {
+                throw NativeMediaImportError.rejected("Knowledge source identifiers are invalid")
+            }
+            let resolved = try routePolicy.resolveBinary(
+                pathId: "knowledgeBases.document.source",
+                parameters: ["kbId": kbId, "fileId": fileId]
+            )
+            let expectedURL = resolved.request.url
+            let task = assetSession.dataTask(with: resolved.request) { [weak self] data, response, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.requestTasks.removeValue(forKey: id)
+                    do {
+                        let source = try self.validatedKnowledgeSourceResponse(
+                            data: data,
+                            response: response,
+                            error: error,
+                            expectedURL: expectedURL
+                        )
+                        self.sendKnowledgeBinaryToWeb(
+                            id: id,
+                            metadata: ["kbId": kbId, "fileId": fileId],
+                            binary: source
+                        )
+                    } catch {
+                        self.replyError(
+                            id: id,
+                            code: "knowledge_source_read_failed",
+                            message: error.localizedDescription,
+                            retryable: (error as NSError).code == NSURLErrorTimedOut
+                        )
+                    }
+                }
+            }
+            requestTasks[id] = task
+            task.resume()
+        } catch {
+            replyError(id: id, code: "knowledge_source_read_rejected", message: error.localizedDescription)
+        }
+    }
+
+    private func validatedKnowledgeAssetResponse(
+        data: Data?,
+        response: URLResponse?,
+        error: Error?,
+        expectedURL: URL?,
+        assetId: String
+    ) throws -> NativeKnowledgeAsset {
+        if let error { throw error }
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              http.url == expectedURL else {
+            throw NativeMediaImportError.rejected("Knowledge asset returned an invalid or redirected response")
+        }
+        guard let data, !data.isEmpty, data.count <= 25 * 1024 * 1024 else {
+            throw NativeMediaImportError.rejected("Knowledge asset exceeds the 25 MiB response limit")
+        }
+        let mimeType = http.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        let allowedMimeTypes: Set<String> = [
+            "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+        ]
+        guard allowedMimeTypes.contains(mimeType),
+              http.expectedContentLength == Int64(data.count),
+              http.value(forHTTPHeaderField: "X-Content-Type-Options")?.lowercased() == "nosniff",
+              http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased().hasPrefix("inline") == true else {
+            throw NativeMediaImportError.rejected("Knowledge asset returned invalid security headers")
+        }
+        let entityTag = (http.value(forHTTPHeaderField: "ETag") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "W/", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            .lowercased()
+        let actualSha256 = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard entityTag == assetId, actualSha256 == assetId else {
+            throw NativeMediaImportError.rejected("Knowledge asset content identity did not match assetId")
+        }
+        return NativeKnowledgeAsset(
+            data: data,
+            mimeType: mimeType,
+            byteSize: data.count,
+            sha256: actualSha256
+        )
+    }
+
+    private func validatedKnowledgeSourceResponse(
+        data: Data?,
+        response: URLResponse?,
+        error: Error?,
+        expectedURL: URL?
+    ) throws -> NativeKnowledgeAsset {
+        if let error { throw error }
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              http.url == expectedURL else {
+            throw NativeMediaImportError.rejected("Knowledge source returned an invalid or redirected response")
+        }
+        guard let data, !data.isEmpty, data.count <= 50 * 1024 * 1024 else {
+            throw NativeMediaImportError.rejected("Knowledge source exceeds the 50 MiB preview limit")
+        }
+        let mimeType = http.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        let allowedMimeTypes: Set<String> = [
+            "application/pdf",
+            "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff",
+            "text/plain", "text/markdown", "text/csv", "application/json",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ]
+        guard allowedMimeTypes.contains(mimeType),
+              http.expectedContentLength == Int64(data.count),
+              http.value(forHTTPHeaderField: "X-Content-Type-Options")?.lowercased() == "nosniff",
+              http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased().hasPrefix("inline") == true else {
+            throw NativeMediaImportError.rejected("Knowledge source returned invalid security headers")
+        }
+        let entityTag = (http.value(forHTTPHeaderField: "ETag") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "W/", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            .lowercased()
+        let actualSha256 = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard entityTag.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              actualSha256 == entityTag else {
+            throw NativeMediaImportError.rejected("Knowledge source content identity did not match ETag")
+        }
+        return NativeKnowledgeAsset(
+            data: data,
+            mimeType: mimeType,
+            byteSize: data.count,
+            sha256: actualSha256
+        )
+    }
+
+    private func sendKnowledgeAssetToWeb(
+        id: String,
+        kbId: String,
+        fileId: String,
+        assetId: String,
+        asset: NativeKnowledgeAsset
+    ) {
+        sendKnowledgeBinaryToWeb(
+            id: id,
+            metadata: [
+                "kbId": kbId,
+                "fileId": fileId,
+                "assetId": assetId,
+            ],
+            binary: asset
+        )
+    }
+
+    private func sendKnowledgeBinaryToWeb(
+        id: String,
+        metadata: [String: Any],
+        binary: NativeKnowledgeAsset
+    ) {
+        var resultMetadata = metadata
+        resultMetadata["id"] = id
+        resultMetadata["mimeType"] = binary.mimeType
+        resultMetadata["byteSize"] = binary.byteSize
+        resultMetadata["sha256"] = binary.sha256
+        guard JSONSerialization.isValidJSONObject(resultMetadata),
+              let metadataData = try? JSONSerialization.data(withJSONObject: resultMetadata) else {
+            replyError(id: id, code: "knowledge_binary_read_failed", message: "Knowledge binary metadata was invalid")
+            return
+        }
+        let metadataBase64 = metadataData.base64EncodedString()
+        let bytesBase64 = binary.data.base64EncodedString()
+        let script = """
+        (() => {
+          const decode = value => Uint8Array.from(atob(value), c => c.charCodeAt(0));
+          const metadata = JSON.parse(new TextDecoder().decode(decode('\(metadataBase64)')));
+          const blob = new Blob([decode('\(bytesBase64)')], { type: metadata.mimeType });
+          const id = metadata.id;
+          delete metadata.id;
+          window.__RAG_IME_NATIVE_BRIDGE__?.receive({
+            id,
+            ok: true,
+            result: { ...metadata, blob },
+          });
+        })();
+        """
+        webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     private func presentAgentImagePicker(
@@ -415,6 +749,216 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         let name: String
         let mimeType: String
         let byteSize: Int
+    }
+
+    private struct SelectedKnowledgeDocument {
+        let url: URL
+        let name: String
+        let mimeType: String
+        let byteSize: Int
+    }
+
+    private func presentKnowledgeDocumentPicker(
+        id: String,
+        kbId: String,
+        parserProvider: String,
+        accepts: [String],
+        maxFiles: Int,
+        multiple: Bool
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = multiple && maxFiles > 1
+        panel.resolvesAliases = false
+        panel.prompt = "导入"
+        let allowedTypes = accepts.compactMap { value -> UTType? in
+            if value.hasPrefix(".") {
+                return UTType(filenameExtension: String(value.dropFirst()))
+            }
+            return UTType(mimeType: value)
+        }
+        if !allowedTypes.isEmpty { panel.allowedContentTypes = allowedTypes }
+        panel.begin { [weak self] response in
+            guard let self else { return }
+            guard response == .OK else {
+                self.replySuccess(id: id, result: [])
+                return
+            }
+            do {
+                let selected = try panel.urls.prefix(maxFiles).map(self.validatedKnowledgeDocument)
+                guard !selected.isEmpty else {
+                    throw NativeMediaImportError.rejected("No knowledge document was selected")
+                }
+                self.uploadKnowledgeDocuments(
+                    id: id,
+                    kbId: kbId,
+                    parserProvider: parserProvider,
+                    files: Array(selected)
+                )
+            } catch {
+                self.replyError(id: id, code: "knowledge_document_selection_rejected", message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func validatedKnowledgeDocument(_ sourceURL: URL) throws -> SelectedKnowledgeDocument {
+        let url = sourceURL.standardizedFileURL
+        guard url.isFileURL else {
+            throw NativeMediaImportError.rejected("Knowledge documents must be local files")
+        }
+        let values = try url.resourceValues(
+            forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey, .contentTypeKey]
+        )
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw NativeMediaImportError.rejected("Knowledge documents must be regular non-symlink files")
+        }
+        guard let byteSize = values.fileSize, byteSize > 0, byteSize <= 200 * 1024 * 1024 else {
+            throw NativeMediaImportError.rejected("Knowledge documents must be non-empty and no larger than 200 MiB")
+        }
+        let name = url.lastPathComponent
+        guard !name.isEmpty, name.utf8.count <= 512, !name.contains("\0") else {
+            throw NativeMediaImportError.rejected("Knowledge document file name is invalid")
+        }
+        let mimeType = values.contentType?.preferredMIMEType?.lowercased() ?? "application/octet-stream"
+        guard mimeType.utf8.count <= 160, !mimeType.contains("\r"), !mimeType.contains("\n") else {
+            throw NativeMediaImportError.rejected("Knowledge document MIME type is invalid")
+        }
+        return SelectedKnowledgeDocument(url: url, name: name, mimeType: mimeType, byteSize: byteSize)
+    }
+
+    private func uploadKnowledgeDocuments(
+        id: String,
+        kbId: String,
+        parserProvider: String,
+        files: [SelectedKnowledgeDocument],
+        index: Int = 0,
+        receipts: [[String: Any]] = []
+    ) {
+        guard index < files.count else {
+            requestTasks.removeValue(forKey: id)
+            replySuccess(id: id, result: receipts)
+            return
+        }
+        let file = files[index]
+        guard let request = knowledgeDocumentImportRequest(
+            kbId: kbId,
+            parserProvider: parserProvider,
+            selected: file
+        ) else {
+            replyError(id: id, code: "knowledge_document_import_rejected", message: "Knowledge import URL could not be constructed")
+            return
+        }
+        let task = requestSession.uploadTask(with: request, fromFile: file.url) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.requestTasks.removeValue(forKey: id)
+                do {
+                    let receipt = try self.validatedKnowledgeDocumentResponse(
+                        data: data,
+                        response: response,
+                        error: error,
+                        kbId: kbId,
+                        selected: file
+                    )
+                    self.uploadKnowledgeDocuments(
+                        id: id,
+                        kbId: kbId,
+                        parserProvider: parserProvider,
+                        files: files,
+                        index: index + 1,
+                        receipts: receipts + [receipt]
+                    )
+                } catch {
+                    self.replyError(
+                        id: id,
+                        code: "knowledge_document_import_failed",
+                        message: error.localizedDescription,
+                        retryable: (error as NSError).code == NSURLErrorTimedOut
+                    )
+                }
+            }
+        }
+        requestTasks[id] = task
+        task.resume()
+    }
+
+    private func knowledgeDocumentImportRequest(
+        kbId: String,
+        parserProvider: String,
+        selected: SelectedKnowledgeDocument
+    ) -> URLRequest? {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = 8766
+        components.path = "/api/knowledge-bases/\(kbId)/documents/import"
+        components.queryItems = [
+            URLQueryItem(name: "fileName", value: selected.name),
+            URLQueryItem(name: "mimeType", value: selected.mimeType),
+            URLQueryItem(name: "parserProvider", value: parserProvider),
+        ]
+        guard let url = components.url,
+              url.scheme == "http",
+              url.host == "127.0.0.1",
+              url.port == 8766 else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(selected.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(selected.byteSize), forHTTPHeaderField: "Content-Length")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue(String(selected.byteSize), forHTTPHeaderField: "X-Rag-Ime-File-Size")
+        return request
+    }
+
+    private func validatedKnowledgeDocumentResponse(
+        data: Data?,
+        response: URLResponse?,
+        error: Error?,
+        kbId: String,
+        selected: SelectedKnowledgeDocument
+    ) throws -> [String: Any] {
+        if let error { throw error }
+        guard let http = response as? HTTPURLResponse else {
+            throw NativeMediaImportError.rejected("Knowledge document import returned no HTTP response")
+        }
+        guard let data, !data.isEmpty, data.count <= 1_048_576 else {
+            throw NativeMediaImportError.rejected("Knowledge document import returned an invalid response size")
+        }
+        guard let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NativeMediaImportError.rejected("Knowledge document import returned invalid JSON")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let message = decoded["error"] as? String ?? "Knowledge document import returned HTTP \(http.statusCode)"
+            throw NativeMediaImportError.rejected(message)
+        }
+        guard decoded["schemaVersion"] as? String == "rag-ime.knowledge-document-import.v1",
+              decoded["ok"] as? Bool == true,
+              let receipt = decoded["receipt"] as? [String: Any],
+              receipt["kbId"] as? String == kbId,
+              let documentId = receipt["documentId"] as? String,
+              documentId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil,
+              receipt["fileName"] as? String == selected.name,
+              receipt["mimeType"] as? String == selected.mimeType,
+              (receipt["byteSize"] as? NSNumber)?.intValue == selected.byteSize,
+              let sha256 = receipt["sha256"] as? String,
+              sha256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              let status = receipt["status"] as? String,
+              !status.isEmpty,
+              status.utf8.count <= 64 else {
+            throw NativeMediaImportError.rejected("Knowledge document import returned an invalid receipt")
+        }
+        return [
+            "kbId": kbId,
+            "documentId": documentId,
+            "fileName": selected.name,
+            "mimeType": selected.mimeType,
+            "byteSize": selected.byteSize,
+            "sha256": sha256,
+            "status": status,
+        ]
     }
 
     private func validatedAgentImage(_ sourceURL: URL) throws -> SelectedAgentImage {

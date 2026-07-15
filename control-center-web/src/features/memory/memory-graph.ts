@@ -23,10 +23,15 @@ const BIPARTITE_NODE_GAP = 12;
 const MAX_TAG_GRAPH_NODES = 24;
 const MAX_BIPARTITE_GROUPS = 10;
 const MAX_BIPARTITE_TAGS = 12;
+const MAX_BIPARTITE_BOOKS = 10;
 
 export interface ParsedMemoryGraph {
+  books: MemoryBookNode[];
   groups: MemoryGroupNode[];
   tags: MemoryTagNode[];
+  nodeCount: number;
+  edgeCount: number;
+  graphRevision: string;
   truncated: boolean;
 }
 
@@ -36,6 +41,7 @@ export interface MemoryTagConnection {
   type: string;
   weight: number;
   evidenceCount: number;
+  source: string;
 }
 
 export interface MemoryTagNode {
@@ -47,8 +53,46 @@ export interface MemoryTagNode {
   itemCount: number;
   edgeCount: number;
   color: string;
+  source: string;
+  status: string;
+  project: string;
+  qualityScore: number;
+  updatedAtMs: number;
   connections: MemoryTagConnection[];
   presentOnTagGraph: boolean;
+}
+
+export interface MemoryGroupTagMembership {
+  tagId: string;
+  tagLabel: string;
+  relation: string;
+  weight: number;
+  evidenceCount: number;
+  source: string;
+}
+
+export interface MemoryGroupBookMembership {
+  bookId: string;
+  bookLabel: string;
+  relation: string;
+  weight: number;
+  evidenceCount: number;
+  source: string;
+}
+
+export interface MemoryBookNode {
+  id: string;
+  entityId: string;
+  label: string;
+  description: string;
+  memberCount: number;
+  edgeCount: number;
+  color: string;
+  source: string;
+  status: string;
+  project: string;
+  qualityScore: number;
+  updatedAtMs: number;
 }
 
 export interface MemoryGroupNode {
@@ -58,8 +102,18 @@ export interface MemoryGroupNode {
   note: string;
   tagIds: string[];
   tags: string[];
+  bookIds: string[];
+  books: string[];
   eventCount: number;
+  edgeCount: number;
   color: string;
+  source: string;
+  status: string;
+  project: string;
+  qualityScore: number;
+  updatedAtMs: number;
+  tagMemberships: MemoryGroupTagMembership[];
+  bookMemberships: MemoryGroupBookMembership[];
 }
 
 export interface PositionedTagNode extends MemoryTagNode {
@@ -101,6 +155,10 @@ export interface PositionedBipartiteTagNode extends MemoryTagNode {
 export interface BipartiteGraphEdge {
   groupId: string;
   tagId: string;
+  relation: string;
+  weight: number;
+  evidenceCount: number;
+  source: string;
 }
 
 export interface BipartiteGraphLayout {
@@ -109,6 +167,31 @@ export interface BipartiteGraphLayout {
   groups: PositionedGroupNode[];
   tags: PositionedBipartiteTagNode[];
   edges: BipartiteGraphEdge[];
+  clipped: boolean;
+}
+
+export interface PositionedBipartiteBookNode extends MemoryBookNode {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BookBipartiteGraphEdge {
+  groupId: string;
+  bookId: string;
+  relation: string;
+  weight: number;
+  evidenceCount: number;
+  source: string;
+}
+
+export interface BookBipartiteGraphLayout {
+  width: number;
+  height: number;
+  groups: PositionedGroupNode[];
+  books: PositionedBipartiteBookNode[];
+  edges: BookBipartiteGraphEdge[];
   clipped: boolean;
 }
 
@@ -121,6 +204,11 @@ interface GraphNode {
   color: string;
   memberCount: number;
   edgeCount: number;
+  source: string;
+  status: string;
+  project: string;
+  qualityScore: number;
+  updatedAtMs: number;
 }
 
 interface GraphEdge {
@@ -131,13 +219,14 @@ interface GraphEdge {
   relation: string;
   weight: number;
   evidenceCount: number;
+  source: string;
 }
 
 export function parseMemoryGraph(payload: unknown): ParsedMemoryGraph {
-  if (!isRecord(payload)) return { groups: [], tags: [], truncated: false };
+  if (!isRecord(payload)) return emptyParsedMemoryGraph();
   const plane = payload.plane === 'tags' || payload.plane === 'groups' ? payload.plane : null;
   if (payload.schemaVersion !== 'rag-ime.memory-graph.v1' || !plane) {
-    return { groups: [], tags: [], truncated: false };
+    return emptyParsedMemoryGraph();
   }
 
   const rawNodes = Array.isArray(payload.nodes) ? payload.nodes : [];
@@ -155,10 +244,21 @@ export function parseMemoryGraph(payload: unknown): ParsedMemoryGraph {
   const groups = graphNodes
     .filter((node) => node.kind === 'group')
     .map((node) => toGroupNode(node, graphEdges, graphNodeById));
+  const books = graphNodes
+    .filter((node) => node.kind === 'book')
+    .map(toBookNode);
   const truncated = isRecord(payload.truncated)
     && (payload.truncated.nodes === true || payload.truncated.edges === true);
 
-  return { groups, tags, truncated };
+  return {
+    books,
+    groups,
+    tags,
+    nodeCount: graphNodes.length,
+    edgeCount: graphEdges.length,
+    graphRevision: optionalString(payload.graphRevision),
+    truncated,
+  };
 }
 
 export function mergeMemoryGraphTags(
@@ -280,7 +380,16 @@ export function buildGroupTagGraph(
   for (const group of positionedGroups) {
     for (const tagId of new Set(group.tagIds)) {
       if (!visibleTagIds.has(tagId)) continue;
-      edges.push({ groupId: group.id, tagId });
+      const membership = group.tagMemberships.find((item) => item.tagId === tagId);
+      if (!membership) continue;
+      edges.push({
+        groupId: group.id,
+        tagId,
+        relation: membership.relation,
+        weight: membership.weight,
+        evidenceCount: membership.evidenceCount,
+        source: membership.source,
+      });
     }
   }
   edges.sort((left, right) => compareText(`${left.groupId}\u0000${left.tagId}`, `${right.groupId}\u0000${right.tagId}`));
@@ -292,6 +401,77 @@ export function buildGroupTagGraph(
     tags: positionedTags,
     edges,
     clipped: groups.length > positionedGroups.length || tagCandidates.length > positionedTags.length,
+  };
+}
+
+export function buildGroupBookGraph(
+  groups: readonly MemoryGroupNode[],
+  books: readonly MemoryBookNode[],
+): BookBipartiteGraphLayout {
+  const selectedGroups = [...groups]
+    .sort((left, right) => right.eventCount - left.eventCount || compareText(left.label, right.label) || compareText(left.id, right.id))
+    .slice(0, MAX_BIPARTITE_GROUPS);
+  const bookById = new Map(books.map((book) => [book.id, book]));
+  const membership = new Map<string, number>();
+
+  for (const group of selectedGroups) {
+    for (const bookId of group.bookIds) {
+      if (!bookById.has(bookId)) continue;
+      membership.set(bookId, (membership.get(bookId) ?? 0) + 1);
+    }
+  }
+
+  const bookCandidates = [...membership.entries()].map(([bookId, membershipCount]) => ({
+    ...bookById.get(bookId)!,
+    membershipCount,
+  })).sort((left, right) =>
+    right.membershipCount - left.membershipCount
+      || right.memberCount - left.memberCount
+      || compareText(left.label, right.label)
+      || compareText(left.id, right.id));
+  const selectedBooks = bookCandidates.slice(0, MAX_BIPARTITE_BOOKS);
+  const visibleBookIds = new Set(selectedBooks.map((book) => book.id));
+  const groupDimensions = selectedGroups.map((group) => groupNodeDimensions(group.eventCount));
+  const bookDimensions = selectedBooks.map((book) => bookNodeDimensions(book.memberCount));
+  const graphHeight = bipartiteGraphHeight(groupDimensions, bookDimensions.map((book) => book.height / 2));
+  const positionedGroups = selectedGroups.map((group, index) => ({
+    ...group,
+    x: 210,
+    y: evenlySpacedY(index, selectedGroups.length, graphHeight),
+    ...groupDimensions[index]!,
+  }));
+  const positionedBooks = selectedBooks.map((book, index) => ({
+    ...book,
+    x: 790,
+    y: evenlySpacedY(index, selectedBooks.length, graphHeight),
+    ...bookDimensions[index]!,
+  }));
+  const edges: BookBipartiteGraphEdge[] = [];
+
+  for (const group of positionedGroups) {
+    for (const bookId of new Set(group.bookIds)) {
+      if (!visibleBookIds.has(bookId)) continue;
+      const bookMembership = group.bookMemberships.find((item) => item.bookId === bookId);
+      if (!bookMembership) continue;
+      edges.push({
+        groupId: group.id,
+        bookId,
+        relation: bookMembership.relation,
+        weight: bookMembership.weight,
+        evidenceCount: bookMembership.evidenceCount,
+        source: bookMembership.source,
+      });
+    }
+  }
+  edges.sort((left, right) => compareText(`${left.groupId}\u0000${left.bookId}`, `${right.groupId}\u0000${right.bookId}`));
+
+  return {
+    width: BIPARTITE_GRAPH_WIDTH,
+    height: graphHeight,
+    groups: positionedGroups,
+    books: positionedBooks,
+    edges,
+    clipped: groups.length > positionedGroups.length || bookCandidates.length > positionedBooks.length,
   };
 }
 
@@ -317,6 +497,11 @@ function parseGraphNode(value: unknown): GraphNode | null {
     color: optionalString(value.color) || 'blue',
     memberCount: nonNegative(value.memberCount, 1_000_000),
     edgeCount: nonNegative(value.edgeCount, 10_000),
+    source: optionalString(value.source),
+    status: optionalString(value.status),
+    project: optionalString(value.project),
+    qualityScore: clamp(finiteNumber(value.qualityScore), 0, 1),
+    updatedAtMs: nonNegative(value.updatedAtMs, Number.MAX_SAFE_INTEGER),
   };
 }
 
@@ -332,9 +517,10 @@ function parseGraphEdge(value: unknown): GraphEdge | null {
     kind,
     sourceId,
     targetId,
-    relation: optionalString(value.relation) || (kind === 'groupMember' ? 'member' : 'related_to'),
+    relation: optionalString(value.relation),
     weight: clamp(finiteNumber(value.weight), 0, 4),
     evidenceCount: nonNegative(value.evidenceCount, 10_000),
+    source: optionalString(value.source),
   };
 }
 
@@ -367,6 +553,7 @@ function pushConnection(
     type: edge.relation,
     weight: edge.weight,
     evidenceCount: edge.evidenceCount,
+    source: edge.source,
   });
   target.set(sourceId, connections);
 }
@@ -385,8 +572,30 @@ function toTagNode(
     itemCount: node.memberCount,
     edgeCount: node.edgeCount,
     color: safeGraphColor(node.color),
+    source: node.source,
+    status: node.status,
+    project: node.project,
+    qualityScore: node.qualityScore,
+    updatedAtMs: node.updatedAtMs,
     connections: [...connections].sort((left, right) => compareText(left.targetId, right.targetId)),
     presentOnTagGraph,
+  };
+}
+
+function toBookNode(node: GraphNode): MemoryBookNode {
+  return {
+    id: node.id,
+    entityId: node.entityId,
+    label: node.label,
+    description: node.description,
+    memberCount: node.memberCount,
+    edgeCount: node.edgeCount,
+    color: safeGraphColor(node.color),
+    source: node.source,
+    status: node.status,
+    project: node.project,
+    qualityScore: node.qualityScore,
+    updatedAtMs: node.updatedAtMs,
   };
 }
 
@@ -395,24 +604,60 @@ function toGroupNode(
   edges: readonly GraphEdge[],
   nodesById: ReadonlyMap<string, GraphNode>,
 ): MemoryGroupNode {
-  const tagNodes = edges.flatMap((edge) => {
+  const tagMemberships = edges.flatMap((edge): MemoryGroupTagMembership[] => {
     if (edge.kind !== 'groupMember') return [];
     const relatedId = edge.sourceId === node.id
       ? edge.targetId
       : edge.targetId === node.id ? edge.sourceId : '';
     const related = nodesById.get(relatedId);
-    return related?.kind === 'tag' ? [related] : [];
+    return related?.kind === 'tag' ? [{
+      tagId: related.id,
+      tagLabel: related.label,
+      relation: edge.relation,
+      weight: edge.weight,
+      evidenceCount: edge.evidenceCount,
+      source: edge.source,
+    }] : [];
+  });
+  const bookMemberships = edges.flatMap((edge): MemoryGroupBookMembership[] => {
+    if (edge.kind !== 'groupMember') return [];
+    const relatedId = edge.sourceId === node.id
+      ? edge.targetId
+      : edge.targetId === node.id ? edge.sourceId : '';
+    const related = nodesById.get(relatedId);
+    return related?.kind === 'book' ? [{
+      bookId: related.id,
+      bookLabel: related.label,
+      relation: edge.relation,
+      weight: edge.weight,
+      evidenceCount: edge.evidenceCount,
+      source: edge.source,
+    }] : [];
   });
   return {
     id: node.id,
     entityId: node.entityId,
     label: node.label,
     note: node.description,
-    tagIds: [...new Set(tagNodes.map((tag) => tag.id))],
-    tags: [...new Set(tagNodes.map((tag) => tag.label))],
+    tagIds: [...new Set(tagMemberships.map((membership) => membership.tagId))],
+    tags: [...new Set(tagMemberships.map((membership) => membership.tagLabel))],
+    bookIds: [...new Set(bookMemberships.map((membership) => membership.bookId))],
+    books: [...new Set(bookMemberships.map((membership) => membership.bookLabel))],
     eventCount: node.memberCount,
+    edgeCount: node.edgeCount,
     color: safeGraphColor(node.color),
+    source: node.source,
+    status: node.status,
+    project: node.project,
+    qualityScore: node.qualityScore,
+    updatedAtMs: node.updatedAtMs,
+    tagMemberships,
+    bookMemberships,
   };
+}
+
+function emptyParsedMemoryGraph(): ParsedMemoryGraph {
+  return { books: [], groups: [], tags: [], nodeCount: 0, edgeCount: 0, graphRevision: '', truncated: false };
 }
 
 function mergeConnections(
@@ -454,6 +699,14 @@ function groupNodeDimensions(eventCount: number): { width: number; height: numbe
   return {
     width: clamp(160 + scale * 4.5, 160, 230),
     height: clamp(31 + scale * 0.75, 31, 44),
+  };
+}
+
+function bookNodeDimensions(memberCount: number): { width: number; height: number } {
+  const scale = Math.sqrt(nonNegative(memberCount, 1_000_000));
+  return {
+    width: clamp(178 + scale * 4, 178, 232),
+    height: clamp(36 + scale * 0.6, 36, 46),
   };
 }
 

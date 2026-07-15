@@ -1,0 +1,407 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping
+from typing import Any
+
+from .knowledge_library import AssetBlob, KnowledgeLibraryError
+from .knowledge_worker_supervisor import KnowledgeWorkerSupervisor
+from .management_work_contract import ManagementWorkContract, ManagementWorkError, WorkExecution
+
+
+class KnowledgeControlFacade:
+    """Thin 8766 management facade over the isolated 8769 worker."""
+
+    def __init__(
+        self,
+        *,
+        worker: KnowledgeWorkerSupervisor,
+        work_contract: ManagementWorkContract,
+    ) -> None:
+        self.worker = worker
+        self.work_contract = work_contract
+
+    def list_bases(self) -> dict[str, object]:
+        result = self.worker.management_call("management_list_bases")
+        bases = [_public_base(item) for item in _items(result, "bases")]
+        return {"schemaVersion": "rag-ime.knowledge-bases.v1", "ok": True, "items": bases, "total": len(bases)}
+
+    def create_base(self, payload: Mapping[str, object]) -> dict[str, object]:
+        name = _required_text(payload.get("name"), "name", maximum=300)
+        result = self.worker.management_call(
+            "management_create_base",
+            {
+                "name": name,
+                "description": _text(payload.get("description"), maximum=4_000),
+                "agentEnabled": bool(payload.get("agentEnabled", False)),
+                "parserMode": _parser_mode(payload.get("parserProvider")),
+                "chunkingConfig": _object(payload.get("chunkingConfig"), "chunkingConfig"),
+                "retrievalConfig": _object(payload.get("retrievalConfig"), "retrievalConfig"),
+            },
+        )
+        return {"schemaVersion": "rag-ime.knowledge-base.v1", "ok": True, "base": _public_base(result)}
+
+    def get_base(self, kb_id: str) -> dict[str, object]:
+        result = self.worker.management_call("management_get_base", _identifier(kb_id, "kbId"))
+        return {"schemaVersion": "rag-ime.knowledge-base.v1", "ok": True, "base": _public_base(result)}
+
+    def update_base(self, kb_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        kb_id = _identifier(kb_id, "kbId")
+        current = self.worker.management_call("management_get_base", kb_id)
+        _require_revision(payload.get("expectedRevision"), _base_revision(current))
+        patch: dict[str, object] = {}
+        if "name" in payload:
+            patch["name"] = _required_text(payload.get("name"), "name", maximum=300)
+        if "description" in payload:
+            patch["description"] = _text(payload.get("description"), maximum=4_000)
+        if "agentEnabled" in payload:
+            patch["agentEnabled"] = bool(payload.get("agentEnabled"))
+        if "parserProvider" in payload:
+            patch["parserMode"] = _parser_mode(payload.get("parserProvider"))
+        if "chunkingConfig" in payload:
+            patch["chunkingConfig"] = _object(payload.get("chunkingConfig"), "chunkingConfig")
+        if "retrievalConfig" in payload:
+            patch["retrievalConfig"] = _object(payload.get("retrievalConfig"), "retrievalConfig")
+        patch["expectedRevision"] = _base_revision(current)
+        result = self.worker.management_call("management_update_base", kb_id, patch)
+        return {"schemaVersion": "rag-ime.knowledge-base.v1", "ok": True, "base": _public_base(result)}
+
+    def delete_preview(self, kb_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        kb_id = _identifier(kb_id, "kbId")
+        current = self.worker.management_call("management_get_base", kb_id)
+        revision = _base_revision(current)
+        _require_revision(payload.get("expectedRevision"), revision)
+        return self.work_contract.create_preview(
+            path_id="knowledgeBases.delete.apply",
+            payload={"kbId": kb_id},
+            expected_revision={"subjectRevision": revision},
+            required_confirm="delete",
+            summary={
+                "title": "删除文档知识库",
+                "items": [
+                    str(current.get("name") or "当前知识库"),
+                    f"删除 {int(current.get('documentCount') or 0)} 个文档及其可重建索引。",
+                ],
+                "risk": "R2",
+            },
+        )
+
+    def delete_apply(self, kb_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        kb_id = _identifier(kb_id, "kbId")
+
+        def current_revision(_connection: object) -> Mapping[str, object]:
+            current = self.worker.management_call("management_get_base", kb_id)
+            return {"subjectRevision": _base_revision(current)}
+
+        def execute(_connection: object) -> WorkExecution:
+            result = self.worker.management_call("management_delete_base", kb_id)
+            return WorkExecution(
+                result={"ok": True, **result},
+                audit_action="knowledge_base_delete",
+                target_type="document_knowledge_base",
+                target_id=kb_id,
+            )
+
+        try:
+            return self.work_contract.execute_apply(
+                path_id="knowledgeBases.delete.apply",
+                payload={"kbId": kb_id},
+                preview_token=str(payload.get("previewToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                current_revision=current_revision,
+                executor=execute,
+            )
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current_revision(None))
+
+    def list_documents(self, kb_id: str) -> dict[str, object]:
+        result = self.worker.management_call("management_list_documents", _identifier(kb_id, "kbId"))
+        documents = [_public_document(item) for item in _items(result, "documents")]
+        return {"schemaVersion": "rag-ime.knowledge-documents.v1", "ok": True, "items": documents, "total": len(documents)}
+
+    def import_document(
+        self,
+        kb_id: str,
+        *,
+        data: bytes,
+        file_name: str,
+        mime_type: str,
+        parser_provider: str = "auto",
+    ) -> dict[str, object]:
+        return self.worker.management_call(
+            "management_import_document",
+            _identifier(kb_id, "kbId"),
+            data,
+            file_name=_required_text(file_name, "fileName", maximum=512),
+            mime_type=_required_text(mime_type, "mimeType", maximum=200),
+            parser_mode=_parser_mode(parser_provider),
+        )
+
+    def retry_document(
+        self,
+        kb_id: str,
+        file_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        kb_id = _identifier(kb_id, "kbId")
+        file_id = _identifier(file_id, "fileId")
+        result = self.worker.management_call(
+            "management_retry_document",
+            file_id,
+            parser_mode=_parser_mode(payload.get("parserProvider")) if payload.get("parserProvider") else None,
+        )
+        if str(result.get("kbId") or result.get("baseId") or "") != kb_id:
+            raise KnowledgeLibraryError("document is outside the selected knowledge base", code="scope_mismatch")
+        return {"schemaVersion": "rag-ime.knowledge-document.v1", "ok": True, "document": _public_document(result)}
+
+    def delete_document(self, kb_id: str, file_id: str) -> dict[str, object]:
+        result = self.worker.management_call(
+            "management_delete_document",
+            _identifier(file_id, "fileId"),
+        )
+        if str(result.get("baseId") or result.get("kbId") or "") != _identifier(kb_id, "kbId"):
+            raise KnowledgeLibraryError("document is outside the selected knowledge base", code="scope_mismatch")
+        return {"schemaVersion": "rag-ime.knowledge-document-delete.v1", "ok": True, **result}
+
+    def document_detail(
+        self,
+        kb_id: str,
+        file_id: str,
+        query: Mapping[str, object],
+    ) -> dict[str, object]:
+        result = self.worker.management_call(
+            "management_document_detail",
+            _identifier(kb_id, "kbId"),
+            _identifier(file_id, "fileId"),
+            offset=_bounded_int(query.get("offset"), default=0, minimum=0, maximum=50_000_000),
+            limit=_bounded_int(query.get("limit"), default=100, minimum=1, maximum=500),
+        )
+        return {"ok": True, **result}
+
+    def document_source(self, kb_id: str, file_id: str) -> AssetBlob:
+        return self.worker.management_call(
+            "management_read_source",
+            _identifier(kb_id, "kbId"),
+            _identifier(file_id, "fileId"),
+        )  # type: ignore[return-value]
+
+    def document_asset(self, kb_id: str, file_id: str, asset_id: str) -> AssetBlob:
+        return self.worker.management_call(
+            "management_read_asset",
+            _identifier(kb_id, "kbId"),
+            _identifier(file_id, "fileId"),
+            _identifier(asset_id, "assetId"),
+        )  # type: ignore[return-value]
+
+    def reindex_preview(self, kb_id: str) -> dict[str, object]:
+        kb_id = _identifier(kb_id, "kbId")
+        result = dict(self.worker.management_call("management_reindex_preview", kb_id))
+        binding = {
+            "kbId": kb_id,
+            "previewToken": str(result.get("previewToken") or ""),
+            "expectedRevision": result.get("configRevision"),
+        }
+        result["payloadSha256"] = _payload_sha256(binding)
+        return {"ok": True, **result}
+
+    def rebuild(self, kb_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        kb_id = _identifier(kb_id, "kbId")
+        preview = dict(self.worker.management_call("management_reindex_preview", kb_id))
+        expected_revision = preview.get("configRevision")
+        _require_revision(payload.get("expectedRevision"), expected_revision)
+        preview_token = _required_text(payload.get("previewToken"), "previewToken", maximum=128)
+        if preview_token != str(preview.get("previewToken") or ""):
+            raise KnowledgeLibraryError("reindex preview is stale", code="stale_preview")
+        binding = {"kbId": kb_id, "previewToken": preview_token, "expectedRevision": expected_revision}
+        if str(payload.get("payloadSha256") or "") != _payload_sha256(binding):
+            raise KnowledgeLibraryError("reindex payload hash does not match preview", code="payload_hash_mismatch")
+        result = self.worker.management_call(
+            "management_rebuild",
+            kb_id,
+            {
+                "previewToken": preview_token,
+                "expectedRevision": expected_revision,
+                "confirmText": str(payload.get("confirmText") or ""),
+                "payloadSha256": str(payload.get("payloadSha256") or ""),
+            },
+        )
+        return {"ok": True, **result}
+
+    def jobs(self, kb_id: str) -> dict[str, object]:
+        result = self.worker.management_call("management_jobs", _identifier(kb_id, "kbId"), limit=100)
+        return {"schemaVersion": "rag-ime.knowledge-jobs.v1", "ok": True, "items": _items(result, "jobs")}
+
+    def search(self, kb_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        request: dict[str, object] = {
+            "kbId": _identifier(kb_id, "kbId"),
+            "query": _required_text(payload.get("query"), "query", maximum=2_000),
+        }
+        if payload.get("topK") is not None:
+            request["limit"] = _bounded_int(payload.get("topK"), default=20, minimum=1, maximum=100)
+        if payload.get("mode") is not None:
+            request["mode"] = _optional_retrieval_mode(payload.get("mode"))
+        if payload.get("threshold") is not None:
+            request["threshold"] = _bounded_float(payload.get("threshold"), default=0.0, minimum=0.0, maximum=1.0)
+        result = self.worker.management_call("management_search", request)
+        return {"schemaVersion": "rag-ime.knowledge-search.v1", "ok": True, "items": _items(result, "hits"), **{key: value for key, value in result.items() if key in {"query", "retrieval", "total"}}}
+
+    def find(self, kb_id: str, file_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        result = self.worker.management_call(
+            "management_find",
+            {
+                "kbId": _identifier(kb_id, "kbId"),
+                "fileId": _identifier(file_id, "fileId"),
+                "patterns": [_required_text(payload.get("query"), "query", maximum=500)],
+                "useRegex": payload.get("regex") is True,
+                "maxWindows": 20,
+                "windowSize": _bounded_int(payload.get("lineWindow"), default=20, minimum=4, maximum=100),
+            },
+        )
+        return {"schemaVersion": "rag-ime.knowledge-find.v1", "ok": True, **result}
+
+    def open(self, kb_id: str, file_id: str, query: Mapping[str, object]) -> dict[str, object]:
+        result = self.worker.management_call(
+            "management_open",
+            {
+                "kbId": _identifier(kb_id, "kbId"),
+                "fileId": _identifier(file_id, "fileId"),
+                "chunkId": _text(query.get("chunkId"), maximum=128),
+                "offset": _bounded_int(query.get("startLine"), default=0, minimum=0, maximum=50_000_000),
+                "limit": _bounded_int(query.get("lines"), default=80, minimum=1, maximum=300),
+            },
+        )
+        return {"schemaVersion": "rag-ime.knowledge-content.v1", "ok": True, **result}
+
+    def health(self) -> dict[str, object]:
+        result = dict(self.worker.management_call("management_status"))
+        result.pop("database", None)
+        result.pop("storage", None)
+        return {"ok": True, "available": True, **result}
+
+    def parsers(self) -> dict[str, object]:
+        mineru = self.worker.management_call("mineru_health")
+        items = [
+            {"id": "auto", "name": "自动", "available": True},
+            {"id": "builtin", "name": "内置解析", "available": True},
+            {
+                "id": "mineru_local_http",
+                "name": "MinerU",
+                "available": str(mineru.get("status") or "").lower() in {"ok", "ready", "healthy"},
+                "status": str(mineru.get("status") or "disabled"),
+            },
+        ]
+        return {"schemaVersion": "rag-ime.knowledge-parsers.v1", "ok": True, "items": items}
+
+
+def _public_base(value: Mapping[str, object]) -> dict[str, object]:
+    parser = str(value.get("parserMode") or value.get("parser") or "auto")
+    return {
+        **dict(value),
+        "id": str(value.get("id") or value.get("baseId") or ""),
+        "parser": "mineru" if parser in {"mineru", "mineru_local_http"} else parser,
+        "revision": _base_revision(value),
+        "status": str(value.get("status") or "ready"),
+    }
+
+
+def _public_document(value: Mapping[str, object]) -> dict[str, object]:
+    error = value.get("error")
+    return {
+        **dict(value),
+        "id": str(value.get("id") or value.get("documentId") or ""),
+        "name": str(value.get("fileName") or value.get("name") or ""),
+        "baseId": str(value.get("baseId") or value.get("kbId") or ""),
+        "errorMessage": str(error.get("message") or "") if isinstance(error, Mapping) else "",
+    }
+
+
+def _items(value: Mapping[str, object], key: str) -> list[dict[str, object]]:
+    raw = value.get("items") if isinstance(value.get("items"), list) else value.get(key)
+    return [dict(item) for item in raw or [] if isinstance(item, Mapping)]
+
+
+def _base_revision(value: Mapping[str, object]) -> object:
+    return value.get("revision") if value.get("revision") is not None else int(value.get("updatedAtMs") or 0)
+
+
+def _require_revision(provided: object, current: object) -> None:
+    if isinstance(provided, Mapping):
+        provided = provided.get("subjectRevision")
+    if provided != current:
+        raise ManagementWorkError(
+            "revision_mismatch",
+            "The document knowledge snapshot is stale.",
+            current_revision={"subjectRevision": current},
+        )
+
+
+def _parser_mode(value: object) -> str:
+    raw = str(value or "auto").strip().lower()
+    if raw == "mineru_local_http":
+        return "mineru"
+    if raw not in {"auto", "builtin", "mineru"}:
+        raise KnowledgeLibraryError("parserProvider is not allowlisted", code="invalid_argument")
+    return raw
+
+
+def _identifier(value: object, field: str) -> str:
+    result = _required_text(value, field, maximum=160)
+    if not all(char.isalnum() or char in "._:-" for char in result):
+        raise KnowledgeLibraryError(f"invalid {field}", code="invalid_argument")
+    return result
+
+
+def _required_text(value: object, field: str, *, maximum: int) -> str:
+    result = _text(value, maximum=maximum)
+    if not result:
+        raise KnowledgeLibraryError(f"{field} is required", code="invalid_argument")
+    return result
+
+
+def _text(value: object, *, maximum: int) -> str:
+    return " ".join(str(value or "").replace("\x00", " ").split()).strip()[:maximum]
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _bounded_float(value: object, *, default: float, minimum: float, maximum: float) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _object(value: object, field: str) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise KnowledgeLibraryError(f"{field} must be an object", code="invalid_argument")
+    return {str(key): item for key, item in value.items()}
+
+
+def _optional_retrieval_mode(value: object) -> str | None:
+    if value is None or str(value).strip() == "":
+        return None
+    mode = str(value).strip().lower()
+    if mode not in {"lexical", "hybrid", "dense"}:
+        raise KnowledgeLibraryError("retrieval mode is not allowlisted", code="invalid_argument")
+    return mode
+
+
+def _payload_sha256(value: Mapping[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(dict(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()

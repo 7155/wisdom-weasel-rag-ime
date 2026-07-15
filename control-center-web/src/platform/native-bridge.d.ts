@@ -10,6 +10,8 @@ export type NativeBridgeMethod =
   | 'cancelSubscription'
   | 'pickFiles'
   | 'pasteImages'
+  | 'readKnowledgeAsset'
+  | 'readKnowledgeDocumentSource'
   | 'revealPath'
   | 'runApprovedExternalAction';
 
@@ -69,6 +71,15 @@ export interface NativePickFilesPayload extends FilePickOptions {}
 export interface NativePasteImagesPayload {
   sessionId: string;
   maxFiles: number;
+}
+export interface NativeKnowledgeAssetPayload {
+  kbId: string;
+  fileId: string;
+  assetId: string;
+}
+export interface NativeKnowledgeDocumentSourcePayload {
+  kbId: string;
+  fileId: string;
 }
 export interface NativeRevealPathPayload {
   path: string;

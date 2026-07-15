@@ -127,7 +127,7 @@ export function reduceRoomEvent(
   next.lastSequence = event.sequence;
   next.lastEventId = event.eventId;
   next.resumeToken = event.resumeToken;
-  const payload = record(event.payload);
+  const payload = publicRoomPayload(event.payload);
 
   switch (event.eventType) {
     case 'user_message':
@@ -581,6 +581,20 @@ function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function publicRoomPayload(value: unknown): Record<string, unknown> {
+  const envelope = record(value);
+  if (
+    typeof envelope.sourceEventId === 'string' &&
+    typeof envelope.sourceEventType === 'string' &&
+    typeof envelope.data === 'object' &&
+    envelope.data !== null &&
+    !Array.isArray(envelope.data)
+  ) {
+    return record(envelope.data);
+  }
+  return envelope;
 }
 
 function text(value: unknown): string {

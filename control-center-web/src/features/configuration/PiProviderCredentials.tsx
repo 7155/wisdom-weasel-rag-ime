@@ -1,0 +1,484 @@
+import { ExternalLink, KeyRound, LogOut, RefreshCw, Unplug, UserRoundCheck } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Field,
+  Input,
+} from '@/components/primitives';
+import { InlineNotice, ManagementSection, StatusBadge, arrayRecords, asRecord, stringValue } from '@/features/overview/management-ui';
+import { usePiProviderCatalog } from './api';
+
+type ProviderAction = 'set_api_key' | 'logout' | 'oauth_device_code';
+
+export function PiProviderCredentials() {
+  const {
+    authChangesSupported,
+    capabilities,
+    catalog,
+    oauthCancelSupported,
+    oauthStatusSupported,
+    supported,
+    transport,
+  } = usePiProviderCatalog();
+  const envelope = asRecord(catalog.data);
+  const providers = useMemo(() => arrayRecords(envelope.providers).sort(providerOrder), [envelope.providers]);
+  const [providerId, setProviderId] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [previewAction, setPreviewAction] = useState<ProviderAction>('set_api_key');
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState('');
+  const [receipt, setReceipt] = useState<Record<string, unknown> | null>(null);
+  const [login, setLogin] = useState<Record<string, unknown> | null>(null);
+  const [loginStatusError, setLoginStatusError] = useState('');
+  const [statusChecking, setStatusChecking] = useState(false);
+  const loginEpochRef = useRef(0);
+  const loginId = stringValue(login?.loginId);
+  const loginState = stringValue(login?.state);
+  const loginWaiting = isPendingLoginState(loginState);
+  const refetchCatalog = catalog.refetch;
+
+  useEffect(() => {
+    if (!providers.length || providers.some((item) => stringValue(item.id) === providerId)) return;
+    loginEpochRef.current += 1;
+    setProviderId(stringValue(providers.find((item) => asRecord(item.auth).configured === true)?.id, stringValue(providers[0]?.id)));
+    setApiKey('');
+    setPreview(null);
+    setReceipt(null);
+    setLogin(null);
+    setError('');
+    setLoginStatusError('');
+  }, [providerId, providers]);
+
+  useEffect(() => {
+    if (!oauthStatusSupported || !loginId || !loginWaiting || loginStatusError) return;
+    let active = true;
+    let inFlight = false;
+    const epoch = loginEpochRef.current;
+    const timer = window.setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      void transport.request({ pathId: 'agent.provider.oauth.status', query: { loginId } })
+        .then((value) => {
+          if (!active || epoch !== loginEpochRef.current) return;
+          const next = parseOAuthStatus(value, loginId);
+          setLogin(next);
+          setLoginStatusError('');
+          if (stringValue(next.state) === 'completed') void refetchCatalog();
+        })
+        .catch((statusError) => {
+          if (active && epoch === loginEpochRef.current) setLoginStatusError(errorText(statusError));
+        })
+        .finally(() => { inFlight = false; });
+    }, 1_500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [loginId, loginStatusError, loginWaiting, oauthStatusSupported, refetchCatalog, transport]);
+
+  const selected = providers.find((item) => stringValue(item.id) === providerId) ?? providers[0] ?? {};
+  const auth = asRecord(selected.auth);
+  const models = arrayRecords(selected.availableModels);
+  const canUseOAuth = auth.oauthDeviceCodeSupported === true
+    && authChangesSupported
+    && oauthStatusSupported;
+  const refresh = () => void refetchCatalog();
+  const receiptNotice = providerReceiptNotice(receipt, loginState);
+
+  function selectProvider(nextProviderId: string): void {
+    if (nextProviderId === providerId) return;
+    loginEpochRef.current += 1;
+    setProviderId(nextProviderId);
+    setApiKey('');
+    setPreview(null);
+    setReceipt(null);
+    setLogin(null);
+    setError('');
+    setLoginStatusError('');
+  }
+
+  async function openPreview(action: ProviderAction): Promise<void> {
+    if (!providerId || !authChangesSupported || loginWaiting) return;
+    setWorking(true);
+    setError('');
+    try {
+      const value = await transport.request({
+        pathId: 'agent.provider.auth.preview',
+        body: { provider: providerId, action },
+      });
+      setPreviewAction(action);
+      setPreview(parseProviderPreview(value, providerId, action));
+    } catch (nextError) {
+      setError(errorText(nextError, apiKey));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function applyPreview(): Promise<void> {
+    if (!preview) return;
+    setWorking(true);
+    setError('');
+    try {
+      const value = parseProviderApplyResult(await transport.request({
+        pathId: 'agent.provider.auth.apply',
+        body: {
+          previewToken: stringValue(preview.previewToken),
+          confirmText: stringValue(preview.requiredConfirm),
+          ...(previewAction === 'set_api_key' ? { apiKey: apiKey.trim() } : {}),
+        },
+      }), providerId, previewAction);
+      setReceipt(value);
+      setPreview(null);
+      const nextLogin = asRecord(value.login);
+      loginEpochRef.current += 1;
+      setLogin(stringValue(nextLogin.loginId) ? nextLogin : null);
+      setLoginStatusError('');
+      void refetchCatalog();
+    } catch (nextError) {
+      setPreview(null);
+      setError(errorText(nextError, apiKey));
+    } finally {
+      if (previewAction === 'set_api_key') setApiKey('');
+      setWorking(false);
+    }
+  }
+
+  async function cancelLogin(): Promise<void> {
+    const loginId = stringValue(login?.loginId);
+    if (!loginId || !oauthCancelSupported) return;
+    loginEpochRef.current += 1;
+    setWorking(true);
+    setError('');
+    setLoginStatusError('');
+    try {
+      setLogin(parseOAuthStatus(await transport.request({
+        pathId: 'agent.provider.oauth.cancel',
+        body: { loginId },
+      }), loginId));
+    } catch (nextError) {
+      setLoginStatusError(errorText(nextError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function refreshLoginStatus(): Promise<void> {
+    const currentLoginId = stringValue(login?.loginId);
+    if (!currentLoginId || !oauthStatusSupported) return;
+    const epoch = loginEpochRef.current;
+    setStatusChecking(true);
+    setLoginStatusError('');
+    try {
+      const next = parseOAuthStatus(await transport.request({
+        pathId: 'agent.provider.oauth.status',
+        query: { loginId: currentLoginId },
+      }), currentLoginId);
+      if (epoch !== loginEpochRef.current) return;
+      setLogin(next);
+      if (stringValue(next.state) === 'completed') void refetchCatalog();
+    } catch (nextError) {
+      if (epoch === loginEpochRef.current) setLoginStatusError(errorText(nextError));
+    } finally {
+      if (epoch === loginEpochRef.current) setStatusChecking(false);
+    }
+  }
+
+  async function retryLogin(): Promise<void> {
+    loginEpochRef.current += 1;
+    setLogin(null);
+    setReceipt(null);
+    setLoginStatusError('');
+    setError('');
+    await openPreview('oauth_device_code');
+  }
+
+  if (capabilities.isPending) {
+    return <ManagementSection title="模型账号"><InlineNotice title="正在检查">正在确认本机是否支持安全登录。</InlineNotice></ManagementSection>;
+  }
+  if (capabilities.error) {
+    return <ManagementSection title="模型账号"><InlineNotice title="无法检查" tone="danger">无法读取本机登录能力，请刷新页面后重试。</InlineNotice></ManagementSection>;
+  }
+  if (!supported) {
+    return <ManagementSection title="模型账号"><InlineNotice title="当前版本暂不支持" tone="warning">更新本机控制服务后，才能在这里管理模型账号。</InlineNotice></ManagementSection>;
+  }
+  if (catalog.isPending) {
+    return <ManagementSection title="模型账号"><InlineNotice title="正在读取">正在从 Pi 读取模型服务与可用模型。</InlineNotice></ManagementSection>;
+  }
+  if (catalog.error || envelope.ok === false) {
+    return <ManagementSection title="模型账号"><InlineNotice title="读取失败" tone="danger">{errorText(catalog.error ?? envelope.error)}</InlineNotice></ManagementSection>;
+  }
+  if (envelope.available === false) {
+    return <ManagementSection title="模型账号"><InlineNotice title="当前不可用" tone="warning">{catalogUnavailableText(envelope.unavailableReason)}</InlineNotice></ManagementSection>;
+  }
+  if (!providers.length) {
+    return <ManagementSection title="模型账号"><InlineNotice title="尚无模型服务" tone="warning">请先在 Pi 中添加模型服务，再回到这里刷新。</InlineNotice></ManagementSection>;
+  }
+
+  return (
+    <ManagementSection title="模型账号" description="登录状态与模型目录直接来自 Pi；密钥和令牌不会显示在网页中。">
+      <div className="mgmt-grid-2">
+        <div className="mgmt-stack">
+          <Field htmlFor="pi-provider" label="模型服务">
+            <select className="ui-input" disabled={working || loginWaiting} id="pi-provider" onChange={(event) => selectProvider(event.target.value)} value={providerId}>
+              {providers.map((item) => <option key={stringValue(item.id)} value={stringValue(item.id)}>{providerDisplayName(item)}</option>)}
+            </select>
+          </Field>
+          <div className="mgmt-toolbar">
+            <StatusBadge label={auth.configured === true ? '已连接' : '未连接'} tone={auth.configured === true ? 'success' : 'neutral'} />
+            {stringValue(auth.type) ? <StatusBadge label={stringValue(auth.type) === 'oauth' ? 'ChatGPT 登录' : 'API Key'} tone="info" /> : null}
+          </div>
+          <Field description="输入内容仅在确认时发往本机 Pi，页面不会读回现有密钥。" htmlFor="pi-api-key" label="API Key">
+            <Input autoComplete="new-password" disabled={!authChangesSupported || loginWaiting} id="pi-api-key" onChange={(event) => setApiKey(event.target.value)} placeholder={authChangesSupported ? '输入新的 API Key' : '当前版本仅支持查看状态'} type="password" value={apiKey} />
+          </Field>
+          <div className="mgmt-toolbar">
+            <Button disabled={!authChangesSupported || !apiKey.trim() || loginWaiting} leadingIcon={<KeyRound size={15} />} loading={working} onClick={() => void openPreview('set_api_key')} size="small" variant="primary">{auth.configured === true ? '替换密钥' : '保存密钥'}</Button>
+            {canUseOAuth ? <Button disabled={loginWaiting} leadingIcon={<UserRoundCheck size={15} />} loading={working} onClick={() => void openPreview('oauth_device_code')} size="small">{auth.configured === true && stringValue(auth.type) === 'oauth' ? '重新连接 ChatGPT' : '连接 ChatGPT'}</Button> : null}
+            {auth.configured === true ? <Button disabled={!authChangesSupported || loginWaiting} leadingIcon={<LogOut size={15} />} loading={working} onClick={() => void openPreview('logout')} size="small" variant="quiet">断开账号</Button> : null}
+            <Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={refresh} size="small" variant="quiet">刷新</Button>
+          </div>
+          {!authChangesSupported ? <InlineNotice title="当前仅能查看" tone="warning">安全保存与退出功能尚未接入，所以不会发送凭据。</InlineNotice> : null}
+        </div>
+        <div className="mgmt-stack">
+          <div className="mgmt-toolbar">
+            <strong>{providerDisplayName(selected)}</strong>
+            <span className="mgmt-muted">{Number(selected.availableModelCount || 0)} 个可用模型</span>
+          </div>
+          {models.length ? (
+            <div className="mgmt-list">
+              {models.slice(0, 8).map((model) => (
+                <div className="mgmt-list__row" key={stringValue(model.id)}>
+                  <span>{modelDisplayName(model)}</span>
+                  {model.reasoning === true ? <StatusBadge label="推理" tone="info" /> : null}
+                  {model.imageInput === true ? <StatusBadge label="图片" tone="neutral" /> : null}
+                </div>
+              ))}
+            </div>
+          ) : <InlineNotice title="尚无可用模型">连接这个模型服务后刷新，即可看到 Pi 实际可用的模型。</InlineNotice>}
+          {selected.modelsTruncated === true || models.length > 8 ? <span className="mgmt-muted">这里只展示前 8 个；Agent 对话中的模型菜单会读取完整可用目录。</span> : null}
+        </div>
+      </div>
+      {error ? <InlineNotice title="操作没有完成" tone="danger">{error}</InlineNotice> : null}
+      {receiptNotice ? (
+        <InlineNotice title={receiptNotice.title} tone={receiptNotice.tone}>
+          {receiptNotice.body}
+        </InlineNotice>
+      ) : null}
+      {login ? (
+        <OAuthStatus
+          canCancel={oauthCancelSupported}
+          canRefresh={oauthStatusSupported}
+          error={loginStatusError}
+          login={login}
+          onCancel={cancelLogin}
+          onRefresh={refreshLoginStatus}
+          onRetry={retryLogin}
+          working={working || statusChecking}
+        />
+      ) : null}
+
+      <Dialog open={preview !== null} onOpenChange={(open) => { if (!open && !working) setPreview(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{previewTitle(previewAction)}</DialogTitle>
+            <DialogDescription>{previewDescription(previewAction)}</DialogDescription>
+          </DialogHeader>
+          <div className="mgmt-stack">
+            {previewLines(previewAction).map((item) => <p className="mgmt-muted" key={item}>{item}</p>)}
+            <InlineNotice title="生效时机">为了不打断当前对话，新设置会在当前回复结束后统一生效。</InlineNotice>
+          </div>
+          <DialogFooter>
+            <Button disabled={working} onClick={() => setPreview(null)} variant="quiet">取消</Button>
+            <Button disabled={previewAction === 'set_api_key' && !apiKey.trim()} loading={working} onClick={() => void applyPreview()} variant={previewAction === 'logout' ? 'danger' : 'primary'}>{previewAction === 'logout' ? '确认断开' : '确认继续'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </ManagementSection>
+  );
+}
+
+function OAuthStatus({
+  canCancel,
+  canRefresh,
+  error,
+  login,
+  onCancel,
+  onRefresh,
+  onRetry,
+  working,
+}: {
+  canCancel: boolean;
+  canRefresh: boolean;
+  error: string;
+  login: Record<string, unknown>;
+  onCancel: () => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onRetry: () => Promise<void>;
+  working: boolean;
+}) {
+  const state = stringValue(login.state);
+  const waiting = isPendingLoginState(state);
+  const canRetry = state === 'failed' || state === 'cancelled';
+  return (
+    <InlineNotice title={state === 'completed' ? 'ChatGPT 已连接' : state === 'failed' ? '登录失败' : state === 'cancelled' ? '登录已取消' : '等待完成 ChatGPT 登录'} tone={state === 'completed' ? 'success' : state === 'failed' ? 'danger' : state === 'cancelled' ? 'warning' : 'info'}>
+      <div className="mgmt-stack">
+        {stringValue(login.userCode) ? <strong>设备码：{stringValue(login.userCode)}</strong> : null}
+        {safeLoginUrl(login.verificationUri) ? <a href={safeLoginUrl(login.verificationUri)} rel="noreferrer" target="_blank">在浏览器中继续 <ExternalLink aria-hidden="true" size={14} /></a> : null}
+        {stringValue(login.error) ? <span>{errorText(login.error)}</span> : null}
+        {error ? <span role="alert">{error}</span> : null}
+        <div className="mgmt-toolbar">
+          {waiting && canRefresh ? <Button leadingIcon={<RefreshCw size={15} />} loading={working} onClick={() => void onRefresh()} size="small" variant="quiet">检查状态</Button> : null}
+          {waiting && canCancel ? <Button leadingIcon={<Unplug size={15} />} loading={working} onClick={() => void onCancel()} size="small" variant="quiet">取消登录</Button> : null}
+          {canRetry ? <Button leadingIcon={<UserRoundCheck size={15} />} loading={working} onClick={() => void onRetry()} size="small">重新登录</Button> : null}
+        </div>
+      </div>
+    </InlineNotice>
+  );
+}
+
+function providerReceiptNotice(
+  receipt: Record<string, unknown> | null,
+  loginState: string,
+): { title: string; body: string; tone: 'success' | 'info' } | null {
+  if (!receipt) return null;
+  const action = stringValue(receipt.action);
+  if (action === 'oauth_device_code') {
+    if (!isPendingLoginState(loginState)) return null;
+    return {
+      title: '登录流程已启动',
+      body: '在浏览器完成登录后，再重新打开 Agent。当前回复不会被打断。',
+      tone: 'info',
+    };
+  }
+  if (action === 'logout') {
+    return {
+      title: '账号已断开',
+      body: '本机 Pi 已移除这个账号的授权。已有对话和角色不会被删除。',
+      tone: 'success',
+    };
+  }
+  return {
+    title: 'API Key 已保存',
+    body: '密钥没有回显。结束当前回复后重新打开 Agent，新凭据会统一生效。',
+    tone: 'success',
+  };
+}
+
+function isPendingLoginState(state: string): boolean {
+  return state === 'starting' || state === 'waiting_for_user';
+}
+
+function providerOrder(left: Record<string, unknown>, right: Record<string, unknown>): number {
+  const score = (item: Record<string, unknown>) => Number(asRecord(item.auth).configured === true) * 4 + Number(item.configuredInCatalog === true) * 2 + Number(asRecord(item.auth).oauthSupported === true);
+  return score(right) - score(left) || stringValue(left.name).localeCompare(stringValue(right.name));
+}
+
+function previewTitle(action: ProviderAction): string {
+  if (action === 'logout') return '断开这个模型账号？';
+  if (action === 'oauth_device_code') return '连接 ChatGPT？';
+  return '替换 API Key？';
+}
+
+function previewDescription(action: ProviderAction): string {
+  if (action === 'logout') return '确认后会移除本机 Pi 保存的账号授权，不会删除对话。';
+  if (action === 'oauth_device_code') return '确认后会打开安全登录流程，网页不会读取你的密码。';
+  return '新密钥仅发往本机 Pi 安全保存，不会在确认页中回显。';
+}
+
+function previewLines(action: ProviderAction): string[] {
+  if (action === 'logout') return ['这个模型服务的本机授权将被移除。', '已有对话和角色保持不变。'];
+  if (action === 'oauth_device_code') return ['需要在浏览器中完成一次授权。', '未完成授权前，登录状态不会改变。'];
+  return ['现有密钥不会被读取或显示。', '仅在确认后替换这个模型服务的密钥。'];
+}
+
+function parseProviderPreview(value: unknown, providerId: string, action: ProviderAction): Record<string, unknown> {
+  const payload = asRecord(value);
+  if (
+    payload.ok !== true
+    || !stringValue(payload.previewToken)
+    || !stringValue(payload.requiredConfirm)
+    || stringValue(payload.provider) !== providerId
+    || stringValue(payload.action) !== action
+  ) throw new Error('无法验证这次操作，请刷新后重试。');
+  return payload;
+}
+
+function parseProviderApplyResult(value: unknown, providerId: string, action: ProviderAction): Record<string, unknown> {
+  const payload = asRecord(value);
+  const receiptState = stringValue(payload.receiptState);
+  if (
+    payload.ok !== true
+    || !stringValue(payload.receiptId)
+    || stringValue(payload.provider) !== providerId
+    || stringValue(payload.action) !== action
+    || (action === 'oauth_device_code' ? receiptState !== 'login_started' : receiptState !== 'applied')
+  ) throw new Error('模型账号设置没有完成，请刷新后重试。');
+  if (action === 'oauth_device_code') {
+    const login = asRecord(payload.login);
+    if (!stringValue(login.loginId) || !isValidLoginState(stringValue(login.state))) {
+      throw new Error('登录流程没有正确启动，请重新连接。');
+    }
+  }
+  return payload;
+}
+
+function parseOAuthStatus(value: unknown, loginId: string): Record<string, unknown> {
+  const payload = asRecord(value);
+  if (
+    stringValue(payload.loginId) !== loginId
+    || !isValidLoginState(stringValue(payload.state))
+  ) throw new Error('登录状态无法验证，请重新发起登录。');
+  return payload;
+}
+
+function isValidLoginState(state: string): boolean {
+  return ['starting', 'waiting_for_user', 'completed', 'failed', 'cancelled'].includes(state);
+}
+
+function providerDisplayName(provider: Record<string, unknown>): string {
+  return stringValue(provider.name).trim() || '未命名模型服务';
+}
+
+function modelDisplayName(model: Record<string, unknown>): string {
+  return stringValue(model.name).trim() || '未命名模型';
+}
+
+function catalogUnavailableText(value: unknown): string {
+  const message = stringValue(value);
+  return /path|runtime|provider|schema|token|credential|component/i.test(message)
+    ? '当前版本还不能在网页中管理模型账号。'
+    : message || '当前版本还不能在网页中管理模型账号。';
+}
+
+function safeLoginUrl(value: unknown): string {
+  const raw = stringValue(value).trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:'
+      && url.hostname === 'auth.openai.com'
+      && url.pathname === '/codex/device'
+      ? url.toString()
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+function errorText(error: unknown, secret = ''): string {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (
+    (secret && message.includes(secret))
+    || /(?:sk|key|token|bearer)[-_A-Za-z0-9.]{8,}/i.test(message)
+    || /(?:api.?key|authorization|token|secret|cookie)\s*[:=：]\s*\S+/i.test(message)
+  ) return '操作没有完成，请检查输入后重试。';
+  if (/pathId|receipt|sha|hash|schema|runtimeRevision|previewToken|providerId|loginId|work.?contract/i.test(message)) {
+    return '操作没有完成，请刷新后重试。';
+  }
+  if (message && /[\u3400-\u9fff]/.test(message)) return message;
+  return '操作失败，请刷新后重试。';
+}

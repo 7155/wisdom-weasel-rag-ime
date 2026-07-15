@@ -15,6 +15,7 @@ enum NativeRoutePolicyError: LocalizedError {
     case invalidBody
     case subscriptionRequired(String)
     case requestRequired(String)
+    case binaryTransportRequired(String)
     case invalidURL
 
     var errorDescription: String? {
@@ -28,6 +29,7 @@ enum NativeRoutePolicyError: LocalizedError {
         case .invalidBody: return "Request body is not valid JSON"
         case .subscriptionRequired(let value): return "Route requires subscribe(): \(value)"
         case .requestRequired(let value): return "Route does not support subscribe(): \(value)"
+        case .binaryTransportRequired(let value): return "Route requires the typed binary transport: \(value)"
         case .invalidURL: return "Unable to build allowlisted route URL"
         }
     }
@@ -38,18 +40,20 @@ struct NativeResolvedRoute {
     var request: URLRequest
     let isSubscription: Bool
     let remoteSafe: Bool
+    let isBinary: Bool
 }
 
 private struct NativeRouteDefinition {
     let method: String
     let localPath: String
-    let gatewayPath: String
+    let gatewayPath: String?
     let allowedQuery: Set<String>
     let requiredQuery: Set<String>
     let remoteSafe: Bool
     let subscription: Bool
     let allowedBodyKeys: Set<String>
     let requiredBodyKeys: Set<String>
+    let binary: Bool
 }
 
 final class NativeRoutePolicy {
@@ -60,13 +64,14 @@ final class NativeRoutePolicy {
         func route(
             _ method: String,
             _ localPath: String,
-            _ gatewayPath: String,
+            _ gatewayPath: String?,
             query: Set<String> = [],
             requiredQuery: Set<String> = [],
             remoteSafe: Bool = false,
             subscription: Bool = false,
             bodyKeys: Set<String> = [],
-            requiredBodyKeys: Set<String> = []
+            requiredBodyKeys: Set<String> = [],
+            binary: Bool = false
         ) -> NativeRouteDefinition {
             NativeRouteDefinition(
                 method: method,
@@ -77,7 +82,8 @@ final class NativeRoutePolicy {
                 remoteSafe: remoteSafe,
                 subscription: subscription,
                 allowedBodyKeys: bodyKeys,
-                requiredBodyKeys: requiredBodyKeys
+                requiredBodyKeys: requiredBodyKeys,
+                binary: binary
             )
         }
 
@@ -86,8 +92,16 @@ final class NativeRoutePolicy {
             "system.health": route("GET", "/api/health", "/control/v1/health", remoteSafe: true),
             "overview.get": route("GET", "/api/overview", "/control/v1/overview", remoteSafe: true),
             "input.source.get": route("GET", "/api/input-source", "/control/v1/input/source", remoteSafe: true),
+            "input.lexicon.review": route("GET", "/api/rime-lexicon/review", "/control/v1/input/lexicon/review", query: ["limit", "project"]),
+            "input.lexicon.apply": route("POST", "/api/rime-lexicon/apply", "/control/v1/input/lexicon/apply", bodyKeys: ["reviewToken", "selectedKeys", "confirmText", "project", "limit"], requiredBodyKeys: ["reviewToken", "selectedKeys", "confirmText"]),
+            "input.lexicon.rollback": route("POST", "/api/rime-lexicon/rollback", "/control/v1/input/lexicon/rollback", bodyKeys: ["rollbackId"], requiredBodyKeys: ["rollbackId"]),
             "agent.runtime.get": route("GET", "/api/agent/runtime", "/control/v1/agent/runtime", remoteSafe: true),
             "agent.runtime.ensure": route("POST", "/api/agent/runtime/ensure", "/control/v1/agent/runtime/ensure", bodyKeys: ["sessionId"], requiredBodyKeys: ["sessionId"]),
+            "agent.providers.get": route("GET", "/api/agent/providers", "/control/v1/agent/providers"),
+            "agent.provider.auth.preview": route("POST", "/api/agent/providers/auth/preview", "/control/v1/agent/providers/auth/preview", bodyKeys: ["provider", "action"], requiredBodyKeys: ["provider", "action"]),
+            "agent.provider.auth.apply": route("POST", "/api/agent/providers/auth/apply", "/control/v1/agent/providers/auth/apply", bodyKeys: ["previewToken", "confirmText", "apiKey"], requiredBodyKeys: ["previewToken", "confirmText"]),
+            "agent.provider.oauth.status": route("GET", "/api/agent/providers/oauth/status", "/control/v1/agent/providers/oauth/status", query: ["loginId"], requiredQuery: ["loginId"]),
+            "agent.provider.oauth.cancel": route("POST", "/api/agent/providers/oauth/cancel", "/control/v1/agent/providers/oauth/cancel", bodyKeys: ["loginId"], requiredBodyKeys: ["loginId"]),
             "agent.configuration.get": route("GET", "/api/agent/configuration", "/control/v1/agent/configuration", remoteSafe: true),
             "agent.configuration.update": route("POST", "/api/agent/configuration", "/control/v1/agent/configuration", remoteSafe: true, bodyKeys: ["expectedRevision", "changes", "updatedBy"], requiredBodyKeys: ["expectedRevision", "changes"]),
             "agent.sessions.list": route("GET", "/api/agent/sessions", "/control/v1/agent/sessions", query: ["includeArchived", "includeInternal", "limit"], remoteSafe: true),
@@ -100,6 +114,7 @@ final class NativeRoutePolicy {
             "agent.session.prompt": route("POST", "/api/agent/sessions/{sessionId}/prompt", "/control/v1/agent/sessions/{sessionId}/prompt", remoteSafe: true, bodyKeys: ["message", "attachments", "clientMessageId"], requiredBodyKeys: ["message"]),
             "agent.session.abort": route("POST", "/api/agent/sessions/{sessionId}/abort", "/control/v1/agent/sessions/{sessionId}/abort", remoteSafe: true),
             "agent.session.compact": route("POST", "/api/agent/sessions/{sessionId}/compact", "/control/v1/agent/sessions/{sessionId}/compact", bodyKeys: ["instructions"]),
+            "agent.session.commands": route("GET", "/api/agent/sessions/{sessionId}/commands", "/control/v1/agent/sessions/{sessionId}/commands", remoteSafe: true),
             "agent.session.models": route("GET", "/api/agent/sessions/{sessionId}/models", "/control/v1/agent/sessions/{sessionId}/models", remoteSafe: true),
             "agent.session.model.select": route("POST", "/api/agent/sessions/{sessionId}/model", "/control/v1/agent/sessions/{sessionId}/model", remoteSafe: true, bodyKeys: ["provider", "modelId"], requiredBodyKeys: ["provider", "modelId"]),
             "agent.session.thinking.select": route("POST", "/api/agent/sessions/{sessionId}/thinking", "/control/v1/agent/sessions/{sessionId}/thinking", remoteSafe: true, bodyKeys: ["level"], requiredBodyKeys: ["level"]),
@@ -117,6 +132,7 @@ final class NativeRoutePolicy {
             "agent.room.message": route("POST", "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", remoteSafe: true, bodyKeys: ["message", "clientMessageId"], requiredBodyKeys: ["message"]),
             "agent.room.events": route("GET", "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", remoteSafe: true, subscription: true),
             "agent.roles.list": route("GET", "/api/agent/roles", "/control/v1/agent/roles", remoteSafe: true),
+            "agent.roles.create": route("POST", "/api/agent/roles", "/control/v1/agent/roles", remoteSafe: true, bodyKeys: ["displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"], requiredBodyKeys: ["displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"]),
             "agent.tools.list": route("GET", "/api/agent/tools", "/control/v1/agent/tools"),
             "agent.approvals.list": route("GET", "/api/agent/approvals", "/control/v1/agent/approvals", query: ["sessionId", "state", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.approval.get": route("GET", "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", remoteSafe: true),
@@ -130,6 +146,7 @@ final class NativeRoutePolicy {
             "planning.dashboard": route("GET", "/api/planning/dashboard", "/control/v1/planning/dashboard", query: ["date", "project"], remoteSafe: true),
             "planning.mutation.preview": route("POST", "/api/planning/mutation/preview", "/control/v1/planning/mutation/preview", bodyKeys: ["kind", "payload", "expectedRuntimeRevision"], requiredBodyKeys: ["kind", "payload", "expectedRuntimeRevision"]),
             "planning.task.save": route("POST", "/api/planning/task/save", "/control/v1/planning/task/save", bodyKeys: ["taskId", "date", "title", "detail", "priority", "status", "dueAtMs", "goalId", "project", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["date", "title", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"]),
+            "planning.goal.save": route("POST", "/api/planning/goal/save", "/control/v1/planning/goal/save", bodyKeys: ["goalId", "title", "detail", "horizon", "status", "priority", "targetDate", "project", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["title", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"]),
             "planning.task.action": route("POST", "/api/planning/task/action", "/control/v1/planning/task/action", bodyKeys: ["taskId", "action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["taskId", "action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"]),
             "planning.taskEvent.undo": route("POST", "/api/planning/task-event/undo", "/control/v1/planning/task-event/undo", bodyKeys: ["eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
             "planning.mutation.rollback": route("POST", "/api/planning/mutation/rollback", "/control/v1/planning/mutation/rollback", bodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
@@ -137,7 +154,15 @@ final class NativeRoutePolicy {
             "memory.pages": route("GET", "/api/memory/{kind}", "/control/v1/memory/{kind}", query: ["limit", "cursor", "query", "status"], remoteSafe: true),
             "memory.graph.get": route("GET", "/api/memory/graph", "/control/v1/memory/graph", query: ["plane", "project", "status", "query", "focusId", "depth", "nodeLimit", "edgeLimit", "minWeight"], requiredQuery: ["plane"], remoteSafe: true),
             "memory.entity.get": route("GET", "/api/memory/entities/{kind}/{entityId}", "/control/v1/memory/entities/{kind}/{entityId}", query: ["project", "connectionsLimit", "connectionsCursor", "membersLimit", "membersCursor"], remoteSafe: true),
+            "memory.edit": route("POST", "/api/memory/edit", "/control/v1/memory/edit", bodyKeys: ["kind", "id", "title", "text", "summary", "note", "description", "tags", "aliases", "type", "color", "reason", "active"], requiredBodyKeys: ["kind", "id"]),
+            "memory.book.archive.preview": route("POST", "/api/memory/book/archive/preview", "/control/v1/memory/book/archive/preview", bodyKeys: ["bookId", "archived", "reason", "expectedRuntimeRevision"], requiredBodyKeys: ["bookId", "archived", "expectedRuntimeRevision"]),
+            "memory.book.archive.apply": route("POST", "/api/memory/book/archive/apply", "/control/v1/memory/book/archive/apply", bodyKeys: ["bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"]),
+            "memory.book.archive.rollback": route("POST", "/api/memory/book/archive/rollback", "/control/v1/memory/book/archive/rollback", bodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
             "history.page": route("GET", "/api/history/page", "/control/v1/history/page", query: ["limit", "cursor", "query", "filter"], remoteSafe: true),
+            "history.detail": route("GET", "/api/history/detail", "/control/v1/history/detail", query: ["eventId"], requiredQuery: ["eventId"], remoteSafe: true),
+            "history.tombstone.preview": route("POST", "/api/history/tombstone/preview", "/control/v1/history/tombstone/preview", bodyKeys: ["eventId", "reason", "expectedRuntimeRevision"], requiredBodyKeys: ["eventId", "expectedRuntimeRevision"]),
+            "history.tombstone.apply": route("POST", "/api/history/tombstone/apply", "/control/v1/history/tombstone/apply", bodyKeys: ["eventId", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["eventId", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"]),
+            "history.tombstone.rollback": route("POST", "/api/history/tombstone/rollback", "/control/v1/history/tombstone/rollback", bodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
             "knowledge.start": route("POST", "/api/knowledge/start", "/control/v1/knowledge/start", bodyKeys: ["question", "context", "mode", "includeNotion", "generation", "contextHash", "clientId", "project", "app", "maxChars", "latencyBudgetMs"], requiredBodyKeys: ["question"]),
             "knowledge.cancel": route("POST", "/api/knowledge/cancel", "/control/v1/knowledge/cancel", bodyKeys: ["sessionId", "id"]),
             "knowledge.status": route("GET", "/api/knowledge/status", "/control/v1/knowledge/status", query: ["sessionId", "id"], remoteSafe: true),
@@ -145,11 +170,35 @@ final class NativeRoutePolicy {
             "knowledge.database.apply.preview": route("POST", "/api/knowledge/database/apply-preview", "/control/v1/knowledge/database/apply-preview", bodyKeys: ["runId", "expectedRuntimeRevision"], requiredBodyKeys: ["runId"]),
             "knowledge.database.apply": route("POST", "/api/knowledge/database/apply", "/control/v1/knowledge/database/apply", bodyKeys: ["runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"], requiredBodyKeys: ["runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"]),
             "knowledge.database.rollback": route("POST", "/api/knowledge/database/rollback", "/control/v1/knowledge/database/rollback", bodyKeys: ["runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"], requiredBodyKeys: ["runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"]),
+            "knowledgeBases.list": route("GET", "/api/knowledge-bases", nil, query: ["limit", "cursor", "query", "status"]),
+            "knowledgeBases.create": route("POST", "/api/knowledge-bases", nil, bodyKeys: ["name", "description", "agentEnabled", "parserProvider", "chunkingConfig", "retrievalConfig"], requiredBodyKeys: ["name"]),
+            "knowledgeBases.get": route("GET", "/api/knowledge-bases/{kbId}", nil),
+            "knowledgeBases.update": route("PATCH", "/api/knowledge-bases/{kbId}", nil, bodyKeys: ["name", "description", "agentEnabled", "parserProvider", "chunkingConfig", "retrievalConfig", "expectedRevision"], requiredBodyKeys: ["expectedRevision"]),
+            "knowledgeBases.delete.preview": route("POST", "/api/knowledge-bases/{kbId}/delete/preview", nil, bodyKeys: ["expectedRevision"], requiredBodyKeys: ["expectedRevision"]),
+            "knowledgeBases.delete.apply": route("POST", "/api/knowledge-bases/{kbId}/delete/apply", nil, bodyKeys: ["expectedRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["expectedRevision", "previewToken", "payloadSha256", "confirmText"]),
+            "knowledgeBases.documents.list": route("GET", "/api/knowledge-bases/{kbId}/documents", nil, query: ["limit", "cursor", "query", "status"]),
+            "knowledgeBases.document.import": route("POST", "/api/knowledge-bases/{kbId}/documents/import", nil, query: ["fileName", "mimeType", "parserProvider"], requiredQuery: ["fileName", "mimeType"]),
+            "knowledgeBases.document.retry": route("POST", "/api/knowledge-bases/{kbId}/documents/{fileId}/retry", nil, bodyKeys: ["stage", "parserProvider", "expectedRevision"], requiredBodyKeys: ["stage", "expectedRevision"]),
+            "knowledgeBases.document.delete": route("DELETE", "/api/knowledge-bases/{kbId}/documents/{fileId}", nil),
+            "knowledgeBases.document.get": route("GET", "/api/knowledge-bases/{kbId}/documents/{fileId}", nil, query: ["offset", "limit"]),
+            "knowledgeBases.document.source": route("GET", "/api/knowledge-bases/{kbId}/documents/{fileId}/source", nil, binary: true),
+            "knowledgeBases.asset.get": route("GET", "/api/knowledge-bases/{kbId}/documents/{fileId}/assets/{assetId}", nil, binary: true),
+            "knowledgeBases.jobs.list": route("GET", "/api/knowledge-bases/{kbId}/jobs", nil, query: ["limit", "cursor", "status"]),
+            "knowledgeBases.search": route("POST", "/api/knowledge-bases/{kbId}/search", nil, bodyKeys: ["query", "topK", "mode", "threshold", "fileIds"], requiredBodyKeys: ["query"]),
+            "knowledgeBases.find": route("POST", "/api/knowledge-bases/{kbId}/documents/{fileId}/find", nil, bodyKeys: ["query", "regex", "lineWindow"], requiredBodyKeys: ["query"]),
+            "knowledgeBases.open": route("GET", "/api/knowledge-bases/{kbId}/documents/{fileId}/content", nil, query: ["chunkId", "page", "startLine", "lines"]),
+            "knowledgeBases.reindexPreview": route("GET", "/api/knowledge-bases/{kbId}/reindex-preview", nil),
+            "knowledgeBases.rebuild": route("POST", "/api/knowledge-bases/{kbId}/rebuild", nil, bodyKeys: ["previewToken", "payloadSha256", "expectedRevision", "confirmText"], requiredBodyKeys: ["previewToken", "payloadSha256", "expectedRevision", "confirmText"]),
+            "knowledgeWorker.health": route("GET", "/api/knowledge-bases/health", nil),
+            "knowledgeParsers.list": route("GET", "/api/knowledge-bases/parsers", nil),
             "diagnostics.runtime": route("GET", "/api/runtime/status", "/control/v1/diagnostics/runtime", remoteSafe: true),
             "diagnostics.predictor": route("GET", "/api/predictor/status", "/control/v1/diagnostics/predictor", remoteSafe: true),
             "diagnostics.models": route("GET", "/api/models/status", "/control/v1/diagnostics/models", remoteSafe: true),
             "configuration.settings": route("GET", "/api/settings", "/control/v1/configuration/settings", remoteSafe: true),
             "configuration.schema": route("GET", "/api/settings/schema", "/control/v1/configuration/schema", remoteSafe: true),
+            "configuration.settings.preview": route("POST", "/api/settings/preview", "/control/v1/configuration/settings/preview", bodyKeys: ["changes", "expectedRuntimeRevision"], requiredBodyKeys: ["changes", "expectedRuntimeRevision"]),
+            "configuration.settings.apply": route("POST", "/api/settings/apply", "/control/v1/configuration/settings/apply", bodyKeys: ["changes", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["changes", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"]),
+            "configuration.settings.rollback": route("POST", "/api/settings/rollback", "/control/v1/configuration/settings/rollback", bodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
         ]
     }()
 
@@ -183,6 +232,27 @@ final class NativeRoutePolicy {
         )
         guard !resolved.isSubscription else {
             throw NativeRoutePolicyError.subscriptionRequired(pathId)
+        }
+        guard !resolved.isBinary else {
+            throw NativeRoutePolicyError.binaryTransportRequired(pathId)
+        }
+        return resolved
+    }
+
+    func resolveBinary(
+        pathId: String,
+        parameters: [String: String],
+        scope: NativeTransportScope = .local
+    ) throws -> NativeResolvedRoute {
+        let resolved = try resolve(
+            pathId: pathId,
+            parameters: parameters,
+            query: [:],
+            body: nil,
+            scope: scope
+        )
+        guard resolved.isBinary else {
+            throw NativeRoutePolicyError.requestRequired(pathId)
         }
         return resolved
     }
@@ -229,8 +299,9 @@ final class NativeRoutePolicy {
             throw NativeRoutePolicyError.routeNotRemoteSafe(pathId)
         }
 
-        let template = preferGateway ? definition.gatewayPath : definition.localPath
-        let baseURL = preferGateway ? gatewayBaseURL : sidecarBaseURL
+        let useGateway = preferGateway && definition.gatewayPath != nil
+        let template = useGateway ? definition.gatewayPath! : definition.localPath
+        let baseURL = useGateway ? gatewayBaseURL : sidecarBaseURL
         let parameterNames = Set(template.split(separator: "/").compactMap { component -> String? in
             guard component.hasPrefix("{"), component.hasSuffix("}") else { return nil }
             return String(component.dropFirst().dropLast())
@@ -248,8 +319,13 @@ final class NativeRoutePolicy {
         }
         if pathId == "memory.entity.get",
            let kind = parameters["kind"],
-           !Set(["tag", "group"]).contains(kind) {
+           !Set(["tag", "group", "book"]).contains(kind) {
             throw NativeRoutePolicyError.invalidParameter("kind")
+        }
+        if pathId == "knowledgeBases.asset.get",
+           let assetId = parameters["assetId"],
+           assetId.range(of: "^[a-f0-9]{64}$", options: .regularExpression) == nil {
+            throw NativeRoutePolicyError.invalidParameter("assetId")
         }
 
         let pathSegments = try template.split(separator: "/").map { component -> String in
@@ -291,7 +367,17 @@ final class NativeRoutePolicy {
         var request = URLRequest(url: url)
         request.httpMethod = definition.method
         request.timeoutInterval = definition.subscription ? 24 * 60 * 60 : 30
-        request.setValue(definition.subscription ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
+        let accept: String
+        if definition.subscription {
+            accept = "text/event-stream"
+        } else if pathId == "knowledgeBases.document.source" {
+            accept = "application/pdf, image/png, image/jpeg, image/gif, image/webp, image/bmp, image/tiff, text/plain, text/markdown, text/csv, application/json, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.presentationml.presentation, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        } else if definition.binary {
+            accept = "image/png, image/jpeg, image/gif, image/webp, image/bmp"
+        } else {
+            accept = "application/json"
+        }
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         if let body {
             guard definition.method != "GET",
                   JSONSerialization.isValidJSONObject(body),
@@ -314,7 +400,8 @@ final class NativeRoutePolicy {
             pathId: pathId,
             request: request,
             isSubscription: definition.subscription,
-            remoteSafe: definition.remoteSafe
+            remoteSafe: definition.remoteSafe,
+            isBinary: definition.binary
         )
     }
 

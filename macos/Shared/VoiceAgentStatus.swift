@@ -16,8 +16,21 @@ struct VoiceAgentStatus: Codable, Equatable {
     let state: String
     let interactionSource: String
     let statusText: String
+    let recognition: VoiceRecognitionContract?
     let telemetry: VoiceSessionTelemetry
     let updatedAtMs: Int
+}
+
+struct VoiceRecognitionContract: Codable, Equatable {
+    let finalSecondPass: Bool
+    let semanticSmoothing: Bool
+    let fullResultReplacement: Bool
+
+    static let current = VoiceRecognitionContract(
+        finalSecondPass: true,
+        semanticSmoothing: true,
+        fullResultReplacement: true
+    )
 }
 
 struct VoiceSessionTelemetry: Codable, Equatable {
@@ -76,6 +89,7 @@ enum VoiceAgentStatusStore {
                 state: state,
                 interactionSource: state == "idle" ? "none" : "hotkey",
                 statusText: statusText,
+                recognition: nil,
                 telemetry: telemetry,
                 updatedAtMs: updatedAtMs
             )
@@ -110,6 +124,7 @@ enum VoiceAgentStatusStore {
                 state: state,
                 interactionSource: state == "idle" ? "none" : "hotkey",
                 statusText: statusText,
+                recognition: nil,
                 telemetry: telemetry,
                 updatedAtMs: updatedAtMs
             )

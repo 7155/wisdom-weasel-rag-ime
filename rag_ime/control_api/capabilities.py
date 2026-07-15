@@ -67,14 +67,35 @@ def build_capabilities(
             "agentSessions": ControlPathId.AGENT_SESSIONS_LIST.value in route_ids,
             "agentRooms": ControlPathId.AGENT_ROOMS_LIST.value in route_ids,
             "agentRoles": ControlPathId.AGENT_ROLES_LIST.value in route_ids,
+            "agentPersonaCreate": ControlPathId.AGENT_ROLES_CREATE.value in route_ids,
+            "piProviderCredentials": ControlPathId.AGENT_PROVIDER_AUTH_PREVIEW.value in route_ids,
             "agentApprovals": ControlPathId.AGENT_APPROVALS_LIST.value in route_ids,
             "agentDelegation": ControlPathId.AGENT_SUBAGENTS_LIST.value in route_ids,
             "managementReads": ControlPathId.OVERVIEW_GET.value in route_ids,
             "managementWorkContract": ControlPathId.PLANNING_MUTATION_PREVIEW.value in route_ids,
+            "inputLexiconWorkContract": all(
+                path_id.value in route_ids
+                for path_id in (
+                    ControlPathId.INPUT_LEXICON_REVIEW,
+                    ControlPathId.INPUT_LEXICON_APPLY,
+                    ControlPathId.INPUT_LEXICON_ROLLBACK,
+                )
+            ),
             "planningWorkContract": ControlPathId.PLANNING_TASK_SAVE.value in route_ids,
             "knowledgeDatabaseWorkContract": ControlPathId.KNOWLEDGE_DATABASE_APPLY_PREVIEW.value in route_ids,
+            "historyWorkContract": ControlPathId.HISTORY_TOMBSTONE_PREVIEW.value in route_ids,
+            "configurationSettingsWorkContract": ControlPathId.CONFIGURATION_SETTINGS_PREVIEW.value in route_ids,
             "memoryGraphRead": ControlPathId.MEMORY_GRAPH_GET.value in route_ids,
             "memoryEntityRead": ControlPathId.MEMORY_ENTITY_GET.value in route_ids,
+            "memoryEdit": ControlPathId.MEMORY_EDIT.value in route_ids,
+            "memoryBookArchiveWorkContract": all(
+                path_id.value in route_ids
+                for path_id in (
+                    ControlPathId.MEMORY_BOOK_ARCHIVE_PREVIEW,
+                    ControlPathId.MEMORY_BOOK_ARCHIVE_APPLY,
+                    ControlPathId.MEMORY_BOOK_ARCHIVE_ROLLBACK,
+                )
+            ),
             "subscriptions": bool(subscriptions),
             "sessionSnapshot": ControlPathId.AGENT_SESSION_SNAPSHOT.value in route_ids,
             "roomSnapshot": ControlPathId.AGENT_ROOM_SNAPSHOT.value in route_ids,

@@ -3,6 +3,7 @@ import { RouterProvider } from 'react-router-dom';
 import { queryClient } from '@/app/query-client';
 import { router } from '@/app/router';
 import { ControlTransportProvider } from '@/app/control-transport';
+import { ControlConnectionMonitor } from '@/app/control-connection-monitor';
 import { GlobalFeedbackProvider } from '@/components/feedback';
 import { AppShell } from '@/components/layout';
 import { ToastProvider, TooltipProvider } from '@/components/primitives';
@@ -23,6 +24,7 @@ export function App() {
           <ToastProvider>
             <GlobalFeedbackProvider>
               <ControlTransportProvider>
+                <ControlConnectionMonitor />
                 <QueryClientProvider client={queryClient}>
                   <AppShell>
                     <RouterProvider router={router} />

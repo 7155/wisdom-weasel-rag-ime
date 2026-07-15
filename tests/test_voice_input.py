@@ -83,6 +83,9 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("rag-ime.voice-agent-status.v4", status)
         self.assertIn("LegacyVoiceAgentStatusV3", status)
         self.assertIn("let interactionSource: String", status)
+        self.assertIn("let recognition: VoiceRecognitionContract?", status)
+        self.assertIn("semanticSmoothing: true", status)
+        self.assertIn("fullResultReplacement: true", status)
         self.assertIn("voice-agent-status.json", status)
         self.assertIn(".posixPermissions: 0o600", status)
         for marker in (
@@ -248,8 +251,11 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("voice-hotwords.json", config)
         self.assertIn(".posixPermissions: 0o600", config)
         self.assertIn('request["context"] = context', asr)
+        self.assertIn('"enable_ddc": true', asr)
         self.assertIn('"hotwords": effectiveWords.map', config)
         self.assertIn("VoiceHotwordConfigStore.read()", coordinator)
+        self.assertIn("allowedTechnicalSeparators", config)
+        self.assertIn('".-_+#/&"', config)
         self.assertIn("仅发送此处显式保存的词，不读取 Rime 用户词典", page)
         self.assertNotIn("rime", config.lower())
 
@@ -262,6 +268,7 @@ class VoiceInputTests(unittest.TestCase):
         coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
         insertion = (ROOT / "macos/RagImeVoice/VoiceTextInsertion.swift").read_text(encoding="utf-8")
         policy = (ROOT / "macos/RagImeVoice/VoicePrivacyPolicy.swift").read_text(encoding="utf-8")
+        target_policy = (ROOT / "macos/Shared/VoiceInsertionTargetPolicy.swift").read_text(encoding="utf-8")
         asr = (ROOT / "macos/Shared/VolcengineStreamingASR.swift").read_text(encoding="utf-8")
 
         forward_start = coordinator.index("private func forwardPCMIfSafe")
@@ -286,9 +293,11 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("AXUIElementGetPid", insertion)
         self.assertIn("VoicePrivacyPolicy.denies", insertion)
         self.assertIn("case .attributeUnsupported, .noValue", insertion)
-        self.assertIn("case finalPaste", insertion)
-        self.assertIn('"com.openai.codex"', insertion)
-        self.assertIn("prefersFinalPaste", insertion)
+        self.assertIn("case finalPaste", target_policy)
+        self.assertIn('"com.openai.codex"', target_policy)
+        self.assertIn("prefersFinalPaste", target_policy)
+        self.assertIn("applicationIdentity(for: focused)", insertion)
+        self.assertIn("resolveApplication", insertion)
         self.assertIn("guard let focused = focusedElement() else", insertion)
         self.assertIn("guard revision.isFinal, !revision.text.isEmpty else", insertion)
         self.assertIn("pasteFinalText", insertion)
@@ -379,6 +388,7 @@ enum Harness {
             hotwordConfig: hotwords
         )
         let request = requestPayload["request"] as! [String: Any]
+        precondition(request["enable_ddc"] as? Bool == true)
         precondition(request["enable_nonstream"] as? Bool == true)
         precondition(request["result_type"] as? String == "full")
         let context = request["context"] as! String
@@ -393,8 +403,61 @@ enum Harness {
         )
         let disabledRequest = disabledPayload["request"] as! [String: Any]
         precondition(disabledRequest["context"] == nil)
-        precondition((try? VoiceASRHotwordConfig.validated(enabled: true, rawLines: "RAG-IME")) == nil)
+        let technicalHotwords = try! VoiceASRHotwordConfig.validated(
+            enabled: true,
+            rawLines: "GPT-5.6\nAPI Key\nSK\nC++"
+        )
+        precondition(technicalHotwords.words == ["GPT-5.6", "API Key", "SK", "C++"])
+        precondition((try? VoiceASRHotwordConfig.validated(enabled: true, rawLines: "bad|word")) == nil)
+        precondition((try? VoiceASRHotwordConfig.validated(enabled: true, rawLines: "bad{json")) == nil)
         precondition((try? VoiceASRHotwordConfig.validated(enabled: true, rawLines: "用")) == nil)
+
+        let codex = VoiceInsertionApplicationIdentity(
+            bundleIdentifier: "com.openai.codex",
+            name: "Codex"
+        )
+        let transientFrontmost = VoiceInsertionApplicationIdentity(
+            bundleIdentifier: "com.rag-ime.voice",
+            name: "RagImeVoice"
+        )
+        let resolved = VoiceInsertionTargetPolicy.resolveApplication(
+            focused: codex,
+            frontmost: transientFrontmost
+        )
+        precondition(resolved == codex)
+        precondition(VoiceInsertionTargetPolicy.mode(for: resolved, accessibilityWritable: true) == .finalPaste)
+        precondition(VoiceInsertionTargetPolicy.isSameApplication(
+            captured: codex,
+            focused: codex,
+            frontmost: transientFrontmost
+        ))
+        precondition(!VoiceInsertionTargetPolicy.isSameApplication(
+            captured: codex,
+            focused: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.apple.TextEdit", name: "TextEdit"),
+            frontmost: transientFrontmost
+        ))
+        precondition(!VoiceInsertionTargetPolicy.isSameApplication(
+            captured: codex,
+            focused: codex,
+            frontmost: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.apple.TextEdit", name: "TextEdit")
+        ))
+        precondition(VoiceInsertionTargetPolicy.isSameApplication(
+            captured: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.openai.codex.helper", name: "Codex Helper"),
+            focused: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.openai.codex.helper", name: "Codex Helper"),
+            frontmost: codex
+        ))
+        precondition(VoiceInsertionTargetPolicy.selectionMatchesOwnRevision(
+            origin: 4,
+            insertedUTF16Length: 5,
+            currentLocation: 9,
+            currentLength: 0
+        ))
+        precondition(!VoiceInsertionTargetPolicy.selectionMatchesOwnRevision(
+            origin: 4,
+            insertedUTF16Length: 5,
+            currentLocation: 8,
+            currentLength: 0
+        ))
 
         precondition(VoicePrivacyPolicy.denies(
             bundleIdentifier: "com.1Password.1Password",
@@ -457,6 +520,7 @@ enum Harness {
                     str(ROOT / "macos/Shared/VoiceKeychainStore.swift"),
                     str(ROOT / "macos/Shared/VoiceAgentStatus.swift"),
                     str(ROOT / "macos/Shared/VoiceHotwordConfig.swift"),
+                    str(ROOT / "macos/Shared/VoiceInsertionTargetPolicy.swift"),
                     str(ROOT / "macos/Shared/VoiceStreamingASR.swift"),
                     str(ROOT / "macos/Shared/VolcengineStreamingASR.swift"),
                     str(ROOT / "macos/RagImeVoice/VoicePrivacyPolicy.swift"),

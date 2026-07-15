@@ -12,6 +12,12 @@ import {
   type ExternalActionRequest,
   type FilePickOptions,
   type FrontendCapabilities,
+  type KnowledgeDocumentImportInput,
+  type KnowledgeDocumentImportReceipt,
+  type KnowledgeAssetPayload,
+  type KnowledgeAssetReadInput,
+  type KnowledgeDocumentSourcePayload,
+  type KnowledgeDocumentSourceReadInput,
   type PickedFile,
 } from '@/platform/transport';
 
@@ -35,6 +41,13 @@ export interface MockControlTransportOptions {
   routes?: Partial<Record<ControlPathId, MockRouteHandler>>;
   pickedFiles?: PickedFile[];
   importedFiles?: PickedFile[];
+  knowledgeImportReceipts?: KnowledgeDocumentImportReceipt[];
+  knowledgeAsset?: (
+    input: KnowledgeAssetReadInput,
+  ) => KnowledgeAssetPayload | Promise<KnowledgeAssetPayload>;
+  knowledgeDocumentSource?: (
+    input: KnowledgeDocumentSourceReadInput,
+  ) => KnowledgeDocumentSourcePayload | Promise<KnowledgeDocumentSourcePayload>;
   externalAction?: (
     request: ExternalActionRequest,
   ) => ExternalActionReceipt | Promise<ExternalActionReceipt>;
@@ -53,12 +66,18 @@ export class MockControlTransport implements ControlTransport {
   readonly subscriptionCalls: MockSubscriptionCall[] = [];
   readonly filePickCalls: FilePickOptions[] = [];
   readonly imagePasteCalls: AgentImagePasteOptions[] = [];
+  readonly knowledgeImportCalls: KnowledgeDocumentImportInput[] = [];
+  readonly knowledgeAssetCalls: KnowledgeAssetReadInput[] = [];
+  readonly knowledgeDocumentSourceCalls: KnowledgeDocumentSourceReadInput[] = [];
 
   private readonly routeHandlers = new Map<ControlPathId, MockRouteHandler>();
   private readonly subscriptions = new Map<string, ActiveSubscription>();
   private readonly capabilityValue: FrontendCapabilities;
   private readonly pickedFiles: PickedFile[];
   private readonly importedFiles: PickedFile[];
+  private readonly knowledgeImportReceipts: KnowledgeDocumentImportReceipt[];
+  private readonly knowledgeAsset?: MockControlTransportOptions['knowledgeAsset'];
+  private readonly knowledgeDocumentSource?: MockControlTransportOptions['knowledgeDocumentSource'];
   private readonly externalAction?: MockControlTransportOptions['externalAction'];
   private readonly now: () => number;
   private nextSubscriptionId = 1;
@@ -77,6 +96,10 @@ export class MockControlTransport implements ControlTransport {
       native: {
         pickFiles: Boolean(options.pickedFiles),
         managedAgentImageImport: Boolean(options.pickedFiles || options.importedFiles),
+        knowledgeDocumentImport: true,
+        knowledgeParserStatus: true,
+        knowledgeAssetRead: Boolean(options.knowledgeAsset),
+        knowledgeDocumentSourceRead: Boolean(options.knowledgeDocumentSource),
         revealPath: false,
         approvedExternalActions: Boolean(options.externalAction),
         keychain: false,
@@ -87,6 +110,9 @@ export class MockControlTransport implements ControlTransport {
     };
     this.pickedFiles = [...(options.pickedFiles ?? [])];
     this.importedFiles = [...(options.importedFiles ?? [])];
+    this.knowledgeImportReceipts = [...(options.knowledgeImportReceipts ?? [])];
+    this.knowledgeAsset = options.knowledgeAsset;
+    this.knowledgeDocumentSource = options.knowledgeDocumentSource;
     this.externalAction = options.externalAction;
     this.now = options.now ?? Date.now;
   }
@@ -172,8 +198,37 @@ export class MockControlTransport implements ControlTransport {
   }
 
   async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
-    this.imagePasteCalls.push({ sessionId: options.sessionId, files: [...options.files] });
+    this.imagePasteCalls.push({
+      sessionId: options.sessionId,
+      ...(options.files ? { files: [...options.files] } : {}),
+      ...(options.maxFiles !== undefined ? { maxFiles: options.maxFiles } : {}),
+    });
     return [...this.importedFiles];
+  }
+
+  async importKnowledgeDocuments(
+    input: KnowledgeDocumentImportInput,
+  ): Promise<KnowledgeDocumentImportReceipt[]> {
+    this.knowledgeImportCalls.push({
+      ...input,
+      ...(input.accepts ? { accepts: [...input.accepts] } : {}),
+      ...(input.files ? { files: [...input.files] } : {}),
+    });
+    return [...this.knowledgeImportReceipts];
+  }
+
+  async readKnowledgeAsset(input: KnowledgeAssetReadInput): Promise<KnowledgeAssetPayload> {
+    this.knowledgeAssetCalls.push({ ...input });
+    if (!this.knowledgeAsset) throw new Error('No knowledge asset mock is registered');
+    return this.knowledgeAsset(input);
+  }
+
+  async readKnowledgeDocumentSource(
+    input: KnowledgeDocumentSourceReadInput,
+  ): Promise<KnowledgeDocumentSourcePayload> {
+    this.knowledgeDocumentSourceCalls.push({ ...input });
+    if (!this.knowledgeDocumentSource) throw new Error('No knowledge document source mock is registered');
+    return this.knowledgeDocumentSource(input);
   }
 
   async revealPath(_path: string): Promise<void> {}

@@ -28,10 +28,10 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertFalse(defaults["interaction"]["postCommit"]["showPendingStatus"])
         self.assertEqual(defaults["interaction"]["postCommit"]["idleTriggerMs"], 420)
         self.assertEqual(defaults["interaction"]["postCommit"]["minDeltaChars"], 2)
-        self.assertEqual(defaults["interaction"]["postCommit"]["maxCallsPer10s"], 2)
+        self.assertEqual(defaults["interaction"]["postCommit"]["maxCallsPer10s"], 6)
         self.assertEqual(defaults["interaction"]["postCommit"]["cooldownMs"], 1500)
         self.assertEqual(defaults["interaction"]["postCommit"]["pendingStatusDelayMs"], 600)
-        self.assertEqual(defaults["interaction"]["postCommit"]["panelTtlMs"], 8500)
+        self.assertEqual(defaults["interaction"]["postCommit"]["panelTtlMs"], 5000)
         self.assertEqual(defaults["display"]["badges"]["model"], "模")
         self.assertEqual(defaults["display"]["badges"]["action"], "生成")
         self.assertEqual(defaults["display"]["colors"]["action"], "blue")
@@ -59,6 +59,8 @@ class SettingsSchemaTests(unittest.TestCase):
         fields = {field["key"]: field for section in settings_schema()["sections"] for field in section["fields"]}
         self.assertFalse(fields["interaction.composition.showPrediction"]["default"])
         self.assertTrue(fields["interaction.composition.showOnlyRime"]["default"])
+        self.assertEqual(fields["interaction.postCommit.maxCallsPer10s"]["default"], 6)
+        self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["default"], 5000)
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
 

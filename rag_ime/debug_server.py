@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, RLock
 from typing import Any, Mapping
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .active_rag_service import (
     ACTIVE_RAG_DEFAULT_MAX_CHARS,
@@ -59,6 +59,9 @@ from .knowledge_workbench import (
     KnowledgeWorkbenchRequest,
     KnowledgeWorkbenchService,
 )
+from .knowledge_control import KnowledgeControlFacade
+from .knowledge_library import AssetBlob
+from .knowledge_worker_supervisor import KnowledgeWorkerSupervisor
 from .management_service import ManagementService, page_request
 from .management_work_contract import (
     ManagementWorkError,
@@ -89,6 +92,8 @@ from .memory_generator import (
 from .models import MemoryAction
 from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
 from .payloads import action_response_payload, suggestions_response_payload
+from .pi_provider_auth import PiProviderAuthError, PiProviderAuthService
+from .pi_runtime import PiRuntimeConfig
 from .prediction_anchors import build_prediction_anchors_from_snapshot
 from .predictor import (
     PredictionBenchmarkCase,
@@ -123,10 +128,17 @@ from .rime_lexicon_review import (
 )
 from .runtime_config import RuntimeConfigResolver, RuntimeConfigSnapshot
 from .runtime_flags import load_hybrid_rag_runtime_flags
-from .settings_models import UserProfile, UserVocabularyItem
+from .settings_models import SettingsUpdateResult, UserProfile, UserVocabularyItem
+from .settings_schema import SENSITIVE_SETTING_SUFFIXES, flatten_settings, stable_settings_hash
 from .settings_store import ManagementSettingsStore, ensure_management_tables, settings_response
 from .temporal_query import TemporalQuery, parse_temporal_query
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
+from .voice_control import (
+    VoiceHotwordConfigStore,
+    read_voice_control_status,
+    resolve_voice_support_directory,
+    voice_hotword_config_from_settings,
+)
 
 
 def _host_is_loopback(host: str) -> bool:
@@ -267,6 +279,9 @@ class DebugServerConfig:
     rime_lexicon_backup_root: Path = Path.home() / "Library" / "Application Support" / "RagIme" / "LexiconBackups"
     active_rag_trace_path: Path | None = None
     agent_service: AgentService | None = None
+    pi_provider_auth_service: PiProviderAuthService | None = None
+    knowledge_client: object | None = None
+    knowledge_control: object | None = None
 
 
 @dataclass
@@ -297,6 +312,8 @@ class DebugImeService:
         self.config = config
         self.settings_store = ManagementSettingsStore(config.db_path)
         self.settings_store.initialize()
+        self.voice_support_directory = resolve_voice_support_directory(config.db_path)
+        self.voice_hotwords = VoiceHotwordConfigStore(self.voice_support_directory)
         self.core = config.core or LocalSqliteCoreClient(
             config.db_path,
             embedding_provider=embedding_provider_from_env(),
@@ -319,11 +336,26 @@ class DebugImeService:
             database_organizer=self._knowledge_workbench_database_organizer,
             notion_client=NotionAsyncKnowledgeClient(load_notion_knowledge_config()),
         )
+        self.knowledge_worker = None
+        if config.knowledge_client is None:
+            self.knowledge_worker = KnowledgeWorkerSupervisor(
+                settings_provider=lambda: self.settings_store.get_settings(include_sensitive=True)
+            )
+            self.knowledge_client = self.knowledge_worker
+        else:
+            self.knowledge_client = config.knowledge_client
         self._agent_managed_by_settings = config.agent_service is None
         self.agent = config.agent_service or agent_service_from_settings(
             config.db_path,
             self.settings_store.get_settings(include_sensitive=True),
             project=config.project,
+        )
+        runtime_factory_config = getattr(self.agent.runtime_factory, "config", None)
+        self.pi_provider_auth = config.pi_provider_auth_service or PiProviderAuthService.from_runtime(
+            runtime_factory_config
+            if isinstance(runtime_factory_config, PiRuntimeConfig)
+            else PiRuntimeConfig.from_environment(),
+            repo_root=Path(__file__).resolve().parents[1],
         )
         self._runtime_command_runner = config.runtime_command_runner or subprocess.run
         self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
@@ -351,13 +383,21 @@ class DebugImeService:
             runtime_config_provider=self.runtime_config_snapshot,
             last_prediction_provider=self._last_management_prediction,
             cache_invalidator=self._clear_rime_cache,
+            voice_support_directory=self.voice_support_directory,
         )
+        self.knowledge_control = config.knowledge_control
+        if self.knowledge_control is None and isinstance(self.knowledge_worker, KnowledgeWorkerSupervisor):
+            self.knowledge_control = KnowledgeControlFacade(
+                worker=self.knowledge_worker,
+                work_contract=self.management.work_contract,
+            )
         self.agent_tools = ControlToolGateway(
             sessions=self.agent.sessions,
             management=self.management,
             core=self.core,
             project=config.project,
             facade=self,
+            knowledge_client=self.knowledge_client,
             delegation=self.agent.delegation,
             collaboration=self.agent,
         )
@@ -476,6 +516,16 @@ class DebugImeService:
     def frontend_capabilities(self) -> dict[str, object]:
         return self.frontend_gateway.capabilities()
 
+    def control_capabilities(self) -> dict[str, object]:
+        bootstrap = self.control_api.bootstrap()
+        return {
+            "schemaVersion": "rag-ime.control-capabilities.v1",
+            "apiVersion": bootstrap["apiVersion"],
+            "features": {},
+            "platform": bootstrap["platform"],
+            "routes": bootstrap["routes"],
+        }
+
     def frontend_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
         return self.frontend_gateway.suggest(payload)
 
@@ -490,12 +540,17 @@ class DebugImeService:
         }
 
     def settings(self) -> dict[str, object]:
-        settings = self._settings_with_agent_authority(self.settings_store.get_settings())
+        settings = self._settings_with_agent_authority(
+            self._settings_with_voice_hotword_authority(
+                self.settings_store.get_settings()
+            )
+        )
         snapshot = self.runtime_config_snapshot()
         return {
             **settings_response(settings),
             "effectiveSettings": snapshot.effective_settings(settings),
             "runtimeConfig": snapshot.payload(),
+            "voiceControl": read_voice_control_status(self.voice_support_directory),
         }
 
     def runtime_config_snapshot(
@@ -517,23 +572,429 @@ class DebugImeService:
         return {"ok": True, **self.settings_store.schema_payload()}
 
     def settings_update(self, payload: dict[str, Any]) -> dict[str, object]:
+        updated_by = _string(payload.get("updatedBy")) or "local-console"
         result = self.settings_store.update_settings(
             payload,
-            updated_by=_string(payload.get("updatedBy")) or "local-console",
+            updated_by=updated_by,
             confirm_text=_string(payload.get("confirmText")),
         )
-        persisted = self.settings_store.get_settings(include_sensitive=True)
+        if any(key.startswith("voice.hotwords") for key in result.changed_keys):
+            persisted = self.settings_store.get_settings(include_sensitive=True)
+            self._write_voice_hotwords_from_settings(persisted)
+            result = SettingsUpdateResult(
+                settings=self._settings_with_voice_hotword_authority(result.settings),
+                audit_id=result.audit_id,
+                changed_keys=result.changed_keys,
+            )
+        return self._settings_update_response(result, updated_by=updated_by)
+
+    def configuration_settings_preview(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={"changes", "expectedRuntimeRevision"},
+                optional=set(),
+            )
+            expected_runtime = _strict_management_revision(
+                payload.get("expectedRuntimeRevision")
+            )
+            if expected_runtime != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The configuration snapshot revision is stale.",
+                    current_revision=current,
+                )
+            changes = self._configuration_settings_changes(payload.get("changes"))
+            with self.settings_store.connection() as conn:
+                settings = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(conn)
+                )
+                current_flat = flatten_settings(settings)
+                changed_keys = [
+                    key for key, value in changes.items() if current_flat.get(key) != value
+                ]
+                revision = self.management.management_work_revision(
+                    conn,
+                    subject_revision=stable_settings_hash(settings),
+                )
+            if not changed_keys:
+                raise ManagementWorkError(
+                    "domain_not_applicable",
+                    "The requested settings already have these values.",
+                    current_revision=revision,
+                )
+            restart_components = self._configuration_restart_components(changed_keys)
+            return self.management.work_contract.create_preview(
+                path_id="configuration.settings.apply",
+                payload={"changes": changes},
+                expected_revision=revision,
+                required_confirm="apply",
+                summary={
+                    "title": "应用控制中心设置",
+                    "items": [
+                        *(f"更新 {key}" for key in changed_keys[:8]),
+                        *(
+                            [f"另有 {len(changed_keys) - 8} 项设置"]
+                            if len(changed_keys) > 8
+                            else []
+                        ),
+                        *(
+                            [f"需要重载: {', '.join(restart_components)}"]
+                            if restart_components
+                            else []
+                        ),
+                    ],
+                    "risk": "R2" if restart_components else "R1",
+                },
+            )
+        except Exception as exc:
+            return self.management.work_contract.error_payload(
+                exc,
+                current_revision=current,
+            )
+
+    def configuration_settings_apply(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={
+                    "changes",
+                    "expectedRuntimeRevision",
+                    "previewToken",
+                    "payloadSha256",
+                    "confirmText",
+                },
+                optional=set(),
+            )
+            expected_runtime = _strict_management_revision(
+                payload.get("expectedRuntimeRevision")
+            )
+            if expected_runtime != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The configuration apply request revision is stale.",
+                    current_revision=current,
+                )
+            changes = self._configuration_settings_changes(payload.get("changes"))
+            applied_result: SettingsUpdateResult | None = None
+
+            def current_revision(conn: sqlite3.Connection) -> dict[str, object]:
+                settings = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(conn)
+                )
+                return self.management.management_work_revision(
+                    conn,
+                    subject_revision=stable_settings_hash(settings),
+                )
+
+            def execute(conn: sqlite3.Connection) -> WorkExecution:
+                nonlocal applied_result
+                before = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(
+                        conn,
+                        include_sensitive=True,
+                    )
+                )
+                before_flat = flatten_settings(before)
+                changed_keys = [
+                    key for key, value in changes.items() if before_flat.get(key) != value
+                ]
+                if not changed_keys:
+                    raise ManagementWorkError(
+                        "domain_not_applicable",
+                        "The requested settings already have these values.",
+                    )
+                before_values = {key: before_flat[key] for key in changed_keys}
+                stored_result = self.settings_store.update_settings_in_connection(
+                    conn,
+                    changes,
+                    updated_by="control-center-web",
+                    audit_action="configuration_settings_apply",
+                )
+                missing_db_changes = set(changed_keys) - set(stored_result.changed_keys)
+                if (
+                    not set(stored_result.changed_keys).issubset(changed_keys)
+                    or any(not key.startswith("voice.hotwords") for key in missing_db_changes)
+                ):
+                    raise ManagementWorkError(
+                        "revision_mismatch",
+                        "The settings changed after this preview was created.",
+                    )
+                persisted_after = self.settings_store.get_settings_from_connection(
+                    conn,
+                    include_sensitive=True,
+                )
+                if any(key.startswith("voice.hotwords") for key in changed_keys):
+                    self._write_voice_hotwords_from_settings(persisted_after)
+                after = self._settings_with_voice_hotword_authority(persisted_after)
+                after_flat = flatten_settings(after)
+                after_values = {key: after_flat[key] for key in changed_keys}
+                applied_result = SettingsUpdateResult(
+                    settings=after,
+                    audit_id=stored_result.audit_id,
+                    changed_keys=tuple(changed_keys),
+                )
+                after_revision = stable_settings_hash(after)
+                return WorkExecution(
+                    result={
+                        "schemaVersion": "rag-ime.configuration-settings-mutation.v1",
+                        "ok": True,
+                        "changedKeys": list(applied_result.changed_keys),
+                        "settingsHash": after_revision,
+                    },
+                    audit_action="configuration_settings_apply",
+                    target_type="settings",
+                    target_id=",".join(changed_keys),
+                    rollback_available=True,
+                    rollback_path_id="configuration.settings.rollback",
+                    rollback_confirm="rollback",
+                    rollback_authority={"settingKeys": changed_keys},
+                    rollback_data={
+                        "beforeValues": before_values,
+                        "afterValues": after_values,
+                        "afterRevision": after_revision,
+                    },
+                    restart_components=self._configuration_restart_components(changed_keys),
+                    audit_id=applied_result.audit_id,
+                )
+
+            response = self.management.work_contract.execute_apply(
+                path_id="configuration.settings.apply",
+                payload={"changes": changes},
+                preview_token=_string(payload.get("previewToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirmText")),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            if applied_result is not None:
+                self._attach_settings_update_effects(
+                    response,
+                    applied_result,
+                    updated_by="control-center-web",
+                )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(
+                exc,
+                current_revision=current,
+            )
+
+    def configuration_settings_rollback(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={"receiptId", "rollbackToken", "payloadSha256", "confirmText"},
+                optional=set(),
+            )
+            rollback_result: SettingsUpdateResult | None = None
+
+            def execute(
+                conn: sqlite3.Connection,
+                receipt: StoredReceipt,
+            ) -> WorkExecution:
+                nonlocal rollback_result
+                raw_keys = receipt.rollback_authority.get("settingKeys")
+                if not isinstance(raw_keys, list) or not raw_keys:
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback authority is invalid.",
+                    )
+                setting_keys = [str(key) for key in raw_keys]
+                if setting_keys != sorted(set(setting_keys)):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback authority is invalid.",
+                    )
+                before_values = receipt.rollback_data.get("beforeValues")
+                after_values = receipt.rollback_data.get("afterValues")
+                if not isinstance(before_values, Mapping) or not isinstance(after_values, Mapping):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback snapshot is invalid.",
+                    )
+                if set(before_values) != set(setting_keys) or set(after_values) != set(setting_keys):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback snapshot does not match its authority.",
+                    )
+                current_settings = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(
+                        conn,
+                        include_sensitive=True,
+                    )
+                )
+                current_flat = flatten_settings(current_settings)
+                current_revision = stable_settings_hash(current_settings)
+                if (
+                    current_revision != receipt.rollback_data.get("afterRevision")
+                    or any(current_flat.get(key) != after_values[key] for key in setting_keys)
+                ):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The settings changed after the apply receipt was issued.",
+                        current_revision=self.management.management_work_revision(
+                            conn,
+                            subject_revision=current_revision,
+                        ),
+                    )
+                stored_result = self.settings_store.update_settings_in_connection(
+                    conn,
+                    dict(before_values),
+                    updated_by="control-center-web",
+                    audit_action="configuration_settings_rollback",
+                )
+                persisted_after = self.settings_store.get_settings_from_connection(
+                    conn,
+                    include_sensitive=True,
+                )
+                if any(key.startswith("voice.hotwords") for key in setting_keys):
+                    self._write_voice_hotwords_from_settings(persisted_after)
+                effective_after = self._settings_with_voice_hotword_authority(persisted_after)
+                rollback_result = SettingsUpdateResult(
+                    settings=effective_after,
+                    audit_id=stored_result.audit_id,
+                    changed_keys=tuple(setting_keys),
+                )
+                return WorkExecution(
+                    result={
+                        "schemaVersion": "rag-ime.configuration-settings-mutation.v1",
+                        "ok": True,
+                        "changedKeys": list(rollback_result.changed_keys),
+                        "settingsHash": stable_settings_hash(effective_after),
+                    },
+                    audit_action="configuration_settings_rollback",
+                    target_type="settings",
+                    target_id=",".join(setting_keys),
+                    restart_components=self._configuration_restart_components(setting_keys),
+                    audit_id=rollback_result.audit_id,
+                )
+
+            response = self.management.work_contract.execute_rollback(
+                path_id="configuration.settings.rollback",
+                receipt_id=_string(payload.get("receiptId")),
+                rollback_token=_string(payload.get("rollbackToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirmText")),
+                expected_apply_path_id="configuration.settings.apply",
+                executor=execute,
+            )
+            if rollback_result is not None:
+                self._attach_settings_update_effects(
+                    response,
+                    rollback_result,
+                    updated_by="control-center-web",
+                )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(
+                exc,
+                current_revision=current,
+            )
+
+    def _configuration_settings_changes(self, value: object) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            raise ManagementWorkError("invalid_request", "changes must be an object.")
+        transport_fields = {
+            "auditId",
+            "confirmText",
+            "previewToken",
+            "runtimeRevision",
+            "schemaVersion",
+            "settings",
+            "settingsRevision",
+            "updatedBy",
+        }
+        unsupported = sorted(transport_fields.intersection(str(key) for key in value))
+        if unsupported:
+            raise ManagementWorkError(
+                "invalid_request",
+                f"Unsupported changes fields: {', '.join(unsupported)}.",
+            )
+        try:
+            normalized = self.settings_store.normalize_updates(value)
+        except ValueError as exc:
+            raise ManagementWorkError("invalid_request", str(exc)) from exc
+        changes = {
+            key: item
+            for key, item in sorted(flatten_settings(normalized).items())
+        }
+        if not changes:
+            raise ManagementWorkError("invalid_request", "changes must not be empty.")
+        if len(changes) > 32:
+            raise ManagementWorkError(
+                "invalid_request",
+                "A settings mutation may contain at most 32 fields.",
+            )
+        for key in changes:
+            normalized_key = key.lower()
+            if normalized_key.startswith("managementsecurity.") or any(
+                normalized_key.endswith(suffix.lower())
+                for suffix in SENSITIVE_SETTING_SUFFIXES
+            ):
+                raise ManagementWorkError(
+                    "unsupported_mutation",
+                    f"Setting {key} must be changed through its dedicated secure flow.",
+                )
+        return changes
+
+    def _configuration_restart_components(
+        self,
+        changed_keys: list[str],
+    ) -> tuple[str, ...]:
+        fields = {
+            str(field.get("key")): field
+            for section in self.settings_store.schema_payload().get("sections", [])
+            if isinstance(section, Mapping)
+            for field in section.get("fields", [])
+            if isinstance(field, Mapping)
+        }
+        return tuple(
+            sorted(
+                {
+                    str(fields[key].get("restartComponent"))
+                    for key in changed_keys
+                    if key in fields and fields[key].get("restartComponent")
+                }
+            )
+        )
+
+    def _settings_update_response(
+        self,
+        result: SettingsUpdateResult,
+        *,
+        updated_by: str,
+    ) -> dict[str, object]:
+        persisted = self._settings_with_voice_hotword_authority(
+            self.settings_store.get_settings(include_sensitive=True)
+        )
         agent_sync = None
         if self._agent_managed_by_settings and any(key.startswith("agent.pi.") for key in result.changed_keys):
             agent_sync = self._sync_agent_settings(
                 persisted,
-                updated_by=_string(payload.get("updatedBy")) or "local-console",
+                updated_by=updated_by,
             )
         snapshot = self.runtime_config_snapshot(settings=persisted)
         _apply_pinyin_settings_to_process_env(snapshot.effective_settings(persisted))
         self._clear_rime_cache()
         response = {
-            **settings_response(self._settings_with_agent_authority(result.settings)),
+            **settings_response(
+                self._settings_with_agent_authority(
+                    self._settings_with_voice_hotword_authority(result.settings)
+                )
+            ),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
             **self.management.settings_changed(
@@ -553,11 +1014,49 @@ class DebugImeService:
         )
         if agent_sync is not None:
             response["agentSync"] = agent_sync
+        response["voiceControl"] = read_voice_control_status(self.voice_support_directory)
         return response
+
+    def _attach_settings_update_effects(
+        self,
+        receipt: dict[str, object],
+        result: SettingsUpdateResult,
+        *,
+        updated_by: str,
+    ) -> None:
+        try:
+            effects = self._settings_update_response(result, updated_by=updated_by)
+        except Exception as exc:  # pragma: no cover - defensive post-commit boundary
+            receipt["runtimeSync"] = {
+                "attempted": True,
+                "applied": False,
+                "error": type(exc).__name__,
+            }
+            return
+        receipt["runtimeRevision"] = effects.get("runtimeRevision", 0)
+        receipt["settingsRevision"] = effects.get("settingsRevision", "")
+        receipt["runtimeConfig"] = effects.get("runtimeConfig", {})
+        receipt["runtimeSync"] = effects.get("runtimeSync", {})
+        receipt["voiceControl"] = effects.get("voiceControl", {})
+        if "agentSync" in effects:
+            receipt["agentSync"] = effects["agentSync"]
+        domain = receipt.get("result")
+        if isinstance(domain, dict):
+            domain["runtimeRevision"] = effects.get("runtimeRevision", 0)
+            domain["settingsRevision"] = effects.get("settingsRevision", "")
 
     def settings_reset_section(self, payload: dict[str, Any]) -> dict[str, object]:
         section = _string(payload.get("section"))
         result = self.settings_store.reset_section(section, updated_by=_string(payload.get("updatedBy")) or "local-console")
+        if section == "voice":
+            self._write_voice_hotwords_from_settings(
+                self.settings_store.get_settings(include_sensitive=True)
+            )
+            result = SettingsUpdateResult(
+                settings=self._settings_with_voice_hotword_authority(result.settings),
+                audit_id=result.audit_id,
+                changed_keys=result.changed_keys,
+            )
         persisted = self.settings_store.get_settings(include_sensitive=True)
         agent_sync = None
         if self._agent_managed_by_settings and section == "agent":
@@ -590,6 +1089,7 @@ class DebugImeService:
         )
         if agent_sync is not None:
             response["agentSync"] = agent_sync
+        response["voiceControl"] = read_voice_control_status(self.voice_support_directory)
         return response
 
     def _settings_with_agent_authority(
@@ -622,6 +1122,27 @@ class DebugImeService:
             }
         )
         return result
+
+    def _settings_with_voice_hotword_authority(
+        self,
+        settings: dict[str, object],
+    ) -> dict[str, object]:
+        result = copy.deepcopy(settings)
+        status = self.voice_hotwords.read_status()
+        voice = result.setdefault("voice", {})
+        if not isinstance(voice, dict):
+            voice = {}
+            result["voice"] = voice
+        voice["hotwordsEnabled"] = status.get("enabled") is True
+        words = status.get("words")
+        voice["hotwords"] = list(words) if isinstance(words, list) else []
+        return result
+
+    def _write_voice_hotwords_from_settings(
+        self,
+        settings: Mapping[str, object],
+    ) -> None:
+        self.voice_hotwords.write(voice_hotword_config_from_settings(settings))
 
     def _sync_agent_settings(
         self,
@@ -4615,6 +5136,8 @@ class DebugImeService:
 
 
 _MEMORY_ENTITY_PATH_PREFIX = "/api/memory/entities/"
+_KNOWLEDGE_BASES_PATH = "/api/knowledge-bases"
+_MAX_KNOWLEDGE_IMPORT_BYTES = 200 * 1024 * 1024
 _MEMORY_GRAPH_QUERY_FIELDS = frozenset(
     {
         "plane",
@@ -4637,6 +5160,16 @@ _MEMORY_ENTITY_QUERY_FIELDS = frozenset(
         "membersCursor",
     }
 )
+
+
+def _knowledge_route_parts(path: str) -> tuple[str, ...] | None:
+    normalized = path.rstrip("/") or "/"
+    if normalized == _KNOWLEDGE_BASES_PATH:
+        return ()
+    prefix = f"{_KNOWLEDGE_BASES_PATH}/"
+    if not normalized.startswith(prefix):
+        return None
+    return tuple(unquote(part) for part in normalized[len(prefix) :].split("/") if part)
 
 
 class DebugRequestHandler(BaseHTTPRequestHandler):
@@ -4692,15 +5225,90 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             validate_contract(response, "frontend-capabilities.v1.json")
             self._write_json(HTTPStatus.OK, response)
             return
-        if parsed.path == "/api/control/v1/bootstrap":
+        if parsed.path in ("/api/control/v1/bootstrap", "/api/agent/control/bootstrap"):
             self._write_json(HTTPStatus.OK, self.service.control_api.bootstrap())
+            return
+        if parsed.path == "/api/agent/control/capabilities":
+            self._write_json(HTTPStatus.OK, self.service.control_capabilities())
             return
         if parsed.path in ("/api/input-source", "/input-source"):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        knowledge_parts = _knowledge_route_parts(parsed.path)
+        if knowledge_parts is not None:
+            try:
+                control = self._knowledge_control()
+                if knowledge_parts == ():
+                    response = control.list_bases()
+                elif knowledge_parts == ("health",):
+                    response = control.health()
+                elif knowledge_parts == ("parsers",):
+                    response = control.parsers()
+                elif len(knowledge_parts) == 1:
+                    response = control.get_base(knowledge_parts[0])
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "documents":
+                    response = control.list_documents(knowledge_parts[0])
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "jobs":
+                    response = control.jobs(knowledge_parts[0])
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "reindex-preview":
+                    response = control.reindex_preview(knowledge_parts[0])
+                elif len(knowledge_parts) == 3 and knowledge_parts[1] == "documents":
+                    response = control.document_detail(
+                        knowledge_parts[0],
+                        knowledge_parts[2],
+                        {
+                            "offset": _query_first(query, "offset"),
+                            "limit": _query_first(query, "limit"),
+                        },
+                    )
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "source":
+                    self._write_knowledge_binary(control.document_source(knowledge_parts[0], knowledge_parts[2]))
+                    return
+                elif len(knowledge_parts) == 5 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "assets":
+                    self._write_knowledge_binary(
+                        control.document_asset(knowledge_parts[0], knowledge_parts[2], knowledge_parts[4])
+                    )
+                    return
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "content":
+                    response = control.open(
+                        knowledge_parts[0],
+                        knowledge_parts[2],
+                        {
+                            "chunkId": _query_first(query, "chunkId"),
+                            "startLine": _query_first(query, "startLine"),
+                            "lines": _query_first(query, "lines"),
+                        },
+                    )
+                else:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(HTTPStatus.OK, response)
+            except Exception as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, self._knowledge_error(exc))
+            return
         if parsed.path == "/api/agent/runtime":
             self._write_json(HTTPStatus.OK, self.service.agent.runtime_status())
+            return
+        if parsed.path == "/api/agent/providers":
+            self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.catalog())
+            return
+        if parsed.path == "/api/agent/providers/oauth/status":
+            try:
+                response = self.service.pi_provider_auth.oauth_status(
+                    _query_first(query, "loginId")
+                )
+            except PiProviderAuthError as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.pi-provider-oauth-status.v1",
+                        "ok": False,
+                        "error": str(exc),
+                    },
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
             return
         if parsed.path == "/api/agent/sessions":
             self._write_json(
@@ -4850,6 +5458,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if agent_session_id and agent_action == "messages":
             self._write_json(HTTPStatus.OK, self.service.agent.messages(agent_session_id))
             return
+        if agent_session_id and agent_action == "commands":
+            self._write_json(HTTPStatus.OK, self.service.agent.command_catalog(agent_session_id))
+            return
         if agent_session_id and agent_action == "models":
             self._write_json(HTTPStatus.OK, self.service.agent.model_catalog(agent_session_id))
             return
@@ -4966,6 +5577,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         }
                     )
                 ),
+            )
+            return
+        if parsed.path == "/api/history/detail":
+            try:
+                response = self.service.management.history_detail(
+                    _query_first(query, "eventId")
+                )
+            except ManagementWorkError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, exc.payload())
+                return
+            self._write_json(
+                HTTPStatus.OK if response.get("ok") is True else HTTPStatus.NOT_FOUND,
+                response,
             )
             return
         if parsed.path in ("/api/predictor/status",):
@@ -5260,6 +5884,42 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+            knowledge_parts = _knowledge_route_parts(path)
+            if (
+                knowledge_parts is not None
+                and len(knowledge_parts) == 3
+                and knowledge_parts[1:] == ("documents", "import")
+            ):
+                security_error = self._management_post_security_error(path, require_json=False)
+                if security_error is not None:
+                    self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                    return
+                if self.headers.get("Content-Encoding", "").strip():
+                    raise ValueError("compressed knowledge uploads are not accepted")
+                length = int(self.headers.get("Content-Length") or "0")
+                if length <= 0:
+                    raise ValueError("knowledge import requires a non-empty Content-Length")
+                if length > _MAX_KNOWLEDGE_IMPORT_BYTES:
+                    raise ValueError("knowledge document exceeds the 200 MiB limit")
+                data = self.rfile.read(length)
+                if len(data) != length:
+                    raise ValueError("knowledge upload ended before Content-Length")
+                query = parse_qs(parsed.query or "")
+                file_name = Path(unquote(_query_first(query, "fileName"))).name
+                mime_type = (
+                    _query_first(query, "mimeType")
+                    or self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                    or "application/octet-stream"
+                )
+                response = self._knowledge_control().import_document(
+                    knowledge_parts[0],
+                    data=data,
+                    file_name=file_name,
+                    mime_type=mime_type,
+                    parser_provider=_query_first(query, "parserProvider") or "auto",
+                )
+                self._write_json(HTTPStatus.CREATED, response)
+                return
             if path == "/api/agent/media/import":
                 security_error = self._management_post_security_error(path, require_json=False)
                 if security_error is not None:
@@ -5323,18 +5983,54 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             payload = self._read_json()
+            if knowledge_parts is not None:
+                control = self._knowledge_control()
+                if knowledge_parts == ():
+                    response = control.create_base(payload)
+                    status = HTTPStatus.CREATED
+                elif len(knowledge_parts) == 3 and knowledge_parts[1:] == ("delete", "preview"):
+                    response = control.delete_preview(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 3 and knowledge_parts[1:] == ("delete", "apply"):
+                    response = control.delete_apply(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "retry":
+                    response = control.retry_document(knowledge_parts[0], knowledge_parts[2], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "search":
+                    response = control.search(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "rebuild":
+                    response = control.rebuild(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "find":
+                    response = control.find(knowledge_parts[0], knowledge_parts[2], payload)
+                    status = HTTPStatus.OK
+                else:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(status, response)
+                return
             agent_session_id, agent_action = agent_session_route(path)
             agent_room_id, room_action = agent_room_route(path)
             subagent_run_id, subagent_action = agent_subagent_route(path)
             approval_id, approval_action = agent_approval_route(path)
             if path == "/api/agent/runtime/ensure":
                 self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
+            elif path == "/api/agent/providers/auth/preview":
+                self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.preview(payload))
+            elif path == "/api/agent/providers/auth/apply":
+                self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.apply(payload))
+            elif path == "/api/agent/providers/oauth/cancel":
+                self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.oauth_cancel(payload))
             elif path == "/api/agent/configuration":
                 self._write_json(HTTPStatus.OK, self.service.agent.update_configuration(payload))
             elif path == "/api/agent/deep-search":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
             elif path == "/api/agent/sessions":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
+            elif path == "/api/agent/roles":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_role(payload))
             elif path == "/api/agent/rooms":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_room(payload))
             elif path == "/api/agent/subagents/runs":
@@ -5401,6 +6097,21 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management.memory_edit(payload))
             elif path == "/api/memory/book/archive-status":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
+            elif path == "/api/memory/book/archive/preview":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.memory_book_archive_preview(payload),
+                )
+            elif path == "/api/memory/book/archive/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.memory_book_archive_apply(payload),
+                )
+            elif path == "/api/memory/book/archive/rollback":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.memory_book_archive_rollback(payload),
+                )
             elif path == "/api/memory/book/archive-maintenance":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_maintenance(payload))
             elif path == "/api/planning/mutation/preview":
@@ -5410,7 +6121,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/planning/plan/save":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_save_plan(payload))
             elif path == "/api/planning/goal/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_save_goal(payload))
+                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_goal_save(payload))
             elif path == "/api/planning/task/save":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_save(payload))
             elif path == "/api/planning/task/action":
@@ -5420,10 +6131,40 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.management.planning_undo_task_event_contract(payload),
                 )
+            elif path == "/api/history/tombstone/preview":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.history_tombstone_preview(payload),
+                )
+            elif path == "/api/history/tombstone/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.history_tombstone_apply(payload),
+                )
+            elif path == "/api/history/tombstone/rollback":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.history_tombstone_rollback(payload),
+                )
             elif path == "/api/planning/completion/resolve":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_resolve_completion(payload))
             elif path == "/api/planning/assistant":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_assistant(payload))
+            elif path == "/api/settings/preview":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.configuration_settings_preview(payload),
+                )
+            elif path == "/api/settings/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.configuration_settings_apply(payload),
+                )
+            elif path == "/api/settings/rollback":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.configuration_settings_rollback(payload),
+                )
             elif path in ("/api/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.settings_update(payload))
             elif path in ("/api/settings/reset-section",):
@@ -5599,6 +6340,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
+            knowledge_parts = _knowledge_route_parts(path)
+            if knowledge_parts is not None:
+                if len(knowledge_parts) != 1:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(
+                    HTTPStatus.OK,
+                    self._knowledge_control().update_base(knowledge_parts[0], self._read_json()),
+                )
+                return
             session_id, action = agent_session_route(path)
             room_id, room_action = agent_room_route(path)
             if room_id and not room_action:
@@ -5617,6 +6368,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                return
+            knowledge_parts = _knowledge_route_parts(path)
+            if knowledge_parts is not None:
+                if len(knowledge_parts) != 3 or knowledge_parts[1] != "documents":
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(
+                    HTTPStatus.OK,
+                    self._knowledge_control().delete_document(knowledge_parts[0], knowledge_parts[2]),
+                )
                 return
             session_id, action = agent_session_route(path)
             if not session_id or action:
@@ -5719,6 +6480,22 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "management token required"}
         return None
 
+    def _knowledge_control(self) -> Any:
+        control = self.service.knowledge_control
+        if control is None:
+            raise RuntimeError("document knowledge management is unavailable")
+        return control
+
+    @staticmethod
+    def _knowledge_error(exc: Exception) -> dict[str, object]:
+        code = str(getattr(exc, "code", "invalid_request") or "invalid_request")
+        return {
+            "schemaVersion": "rag-ime.knowledge-library.v1",
+            "ok": False,
+            "error": str(exc),
+            "errorCode": code,
+        }
+
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or "0")
         raw = self.rfile.read(length) if length else b"{}"
@@ -5738,6 +6515,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _write_knowledge_binary(self, blob: AssetBlob) -> None:
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", blob.media_type)
+            self.send_header("Content-Length", str(blob.byte_size))
+            self.send_header("ETag", f'"{blob.asset_id}"')
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{quote(blob.file_name, safe='')}")
+            self.end_headers()
+            self.wfile.write(blob.data)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
@@ -5788,6 +6579,7 @@ def run_debug_server(config: DebugServerConfig) -> None:
         server.serve_forever()
     finally:
         server.server_close()
+        service.pi_provider_auth.close()
         service.agent.close()
 
 

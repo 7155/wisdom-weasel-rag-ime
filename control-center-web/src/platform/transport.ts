@@ -54,6 +54,10 @@ export interface FrontendCapabilities {
   native: {
     pickFiles: boolean;
     managedAgentImageImport: boolean;
+    knowledgeDocumentImport?: boolean;
+    knowledgeParserStatus?: boolean;
+    knowledgeAssetRead?: boolean;
+    knowledgeDocumentSourceRead?: boolean;
     revealPath: boolean;
     approvedExternalActions: boolean;
     keychain: boolean;
@@ -65,9 +69,17 @@ export interface FrontendCapabilities {
 export interface FilePickOptions {
   accepts?: readonly string[];
   multiple?: boolean;
-  purpose: 'attachment' | 'configuration-import' | 'restore' | 'export-destination';
+  purpose:
+    | 'attachment'
+    | 'configuration-import'
+    | 'restore'
+    | 'export-destination'
+    | 'knowledge-import';
   /** Required for attachment imports; the native host binds every receipt to this Agent session. */
   sessionId?: string;
+  /** Required only for a native knowledge-import picker. */
+  kbId?: string;
+  parserProvider?: 'auto' | 'builtin' | 'mineru_local_http';
   maxFiles?: number;
 }
 
@@ -85,7 +97,67 @@ export interface PickedFile {
 export interface AgentImagePasteOptions {
   /** The native host imports the current clipboard images into this Agent session. */
   sessionId: string;
-  files: readonly File[];
+  /**
+   * Browser-visible image files, when WebKit exposes them. The native host still
+   * reads the trusted system pasteboard rather than accepting browser file bytes.
+   */
+  files?: readonly File[];
+  /** Required when WebKit reports an image item without exposing a File. */
+  maxFiles?: number;
+}
+
+export interface KnowledgeDocumentImportInput {
+  kbId: string;
+  accepts?: readonly string[];
+  maxFiles?: number;
+  /** Browser transport streams these File objects; native transport always opens its own picker. */
+  files?: readonly File[];
+  parserProvider?: 'auto' | 'builtin' | 'mineru_local_http';
+  /** UI-facing parser alias; native transport maps mineru to the local HTTP provider. */
+  parser?: 'auto' | 'builtin' | 'mineru';
+  signal?: AbortSignal;
+}
+
+export interface KnowledgeDocumentImportReceipt {
+  kbId: string;
+  documentId: string;
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  status: string;
+}
+
+export interface KnowledgeAssetReadInput {
+  kbId: string;
+  fileId: string;
+  assetId: string;
+  signal?: AbortSignal;
+}
+
+export interface KnowledgeAssetPayload {
+  kbId: string;
+  fileId: string;
+  assetId: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  blob: Blob;
+}
+
+export interface KnowledgeDocumentSourceReadInput {
+  kbId: string;
+  fileId: string;
+  signal?: AbortSignal;
+}
+
+export interface KnowledgeDocumentSourcePayload {
+  kbId: string;
+  fileId: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  blob: Blob;
 }
 
 export type ApprovedExternalActionId =
@@ -120,6 +192,13 @@ export interface ControlTransport {
   ): () => void;
   pickFiles?(options: FilePickOptions): Promise<PickedFile[]>;
   pasteImages?(options: AgentImagePasteOptions): Promise<PickedFile[]>;
+  importKnowledgeDocuments?(
+    input: KnowledgeDocumentImportInput,
+  ): Promise<KnowledgeDocumentImportReceipt[]>;
+  readKnowledgeAsset?(input: KnowledgeAssetReadInput): Promise<KnowledgeAssetPayload>;
+  readKnowledgeDocumentSource?(
+    input: KnowledgeDocumentSourceReadInput,
+  ): Promise<KnowledgeDocumentSourcePayload>;
   revealPath?(path: string): Promise<void>;
   runApprovedExternalAction?(request: ExternalActionRequest): Promise<ExternalActionReceipt>;
   dispose?(): void;
@@ -140,7 +219,10 @@ export function assertControlRequest(request: ControlRequest): void {
       throw new TypeError(`ControlRequest field is not allowed: ${key}`);
     }
   }
-  controlRoute(request.pathId);
+  const route = controlRoute(request.pathId);
+  if (route.binary) {
+    throw new TypeError(`Use the typed binary transport method for ${request.pathId}`);
+  }
   resolveControlPath(request.pathId, request.params);
   assertAllowedQuery(request.pathId, request.query);
   assertAllowedBody(request.pathId, request.body);
@@ -208,6 +290,10 @@ export function browserCapabilities(raw?: unknown): FrontendCapabilities {
     native: {
       pickFiles: false,
       managedAgentImageImport: false,
+      knowledgeDocumentImport: true,
+      knowledgeParserStatus: true,
+      knowledgeAssetRead: true,
+      knowledgeDocumentSourceRead: true,
       revealPath: false,
       approvedExternalActions: false,
       keychain: false,

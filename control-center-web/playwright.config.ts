@@ -11,7 +11,8 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   preserveOutput: 'always',
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  // Route-latency assertions measure the app, not five contending browser contexts.
+  workers: 2,
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }],

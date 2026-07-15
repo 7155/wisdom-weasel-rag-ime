@@ -11,7 +11,7 @@ export interface MemoryEntityV1 {
   ok: true;
   settingsRevision: string;
   runtimeRevision: number;
-  kind: 'tag' | 'group';
+  kind: 'tag' | 'group' | 'book';
   entityId: string;
   entityRevision: string;
   project: string;

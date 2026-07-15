@@ -1,5 +1,5 @@
 diff --git a/Squirrel.xcodeproj/project.pbxproj b/Squirrel.xcodeproj/project.pbxproj
-index 813deae..bd1032b 100644
+index 813deaeb0b6fe9bb147f6e7c9327271ab40a5a3a..bd1032bb06d9b794374421d3c5759bd60c36d8e9 100644
 --- a/Squirrel.xcodeproj/project.pbxproj
 +++ b/Squirrel.xcodeproj/project.pbxproj
 @@ -86,6 +86,14 @@
@@ -64,14 +64,17 @@ index 813deae..bd1032b 100644
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000..5c4a6cb
+index 0000000000000000000000000000000000000000..48487387bc7892aafab140b913f5916f079c7fb3
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,15 @@
 +# Copy this rag_ime block into squirrel.yaml while testing RAG-IME.
 +rag_ime:
 +  enabled: true
 +  sidecar_url: http://127.0.0.1:8766/api
++  python: /usr/local/bin/python3
++  repo_root: /Volumes/undo 4t/git/learnA/wisdom-weasel-rag-ime-control-web
++  db_path: /Users/undo/Library/Application Support/RagIme/rag-ime.sqlite
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 5
@@ -79,9 +82,9 @@ index 0000000..5c4a6cb
 +  debounce_ms: 80
 +  post_commit_idle_ms: 420
 +  timeout_ms: 1200
-+  frontend_trace: true
++  frontend_trace: false
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
-index 89c1214..a240173 100644
+index 89c1214de346037260da112802e22bc1af71e94f..a240173ab54846e5e35bb3198d77f057a45f6b56 100644
 --- a/sources/InputSource.swift
 +++ b/sources/InputSource.swift
 @@ -9,10 +9,45 @@ import Foundation
@@ -134,7 +137,7 @@ index 89c1214..a240173 100644
    private lazy var inputSources: [String: TISInputSource] = {
      var inputSources = [String: TISInputSource]()
 diff --git a/sources/Main.swift b/sources/Main.swift
-index f998248..a56500e 100644
+index f998248d94a4ce09ada9850edbff104a9ef9611f..a56500e18f044ce567db38c66da0cd7f539a5aeb 100644
 --- a/sources/Main.swift
 +++ b/sources/Main.swift
 @@ -15,11 +15,42 @@ struct SquirrelApp {
@@ -209,10 +212,10 @@ index f998248..a56500e 100644
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..54c239a4e5a0d8ad9a1b8b7d93a7c985d436a4bf
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,688 @@
+@@ -0,0 +1,703 @@
 +import AppKit
 +import QuartzCore
 +
@@ -230,6 +233,7 @@ index 0000000..1111111
 +  private var renderedContentSignature = ""
 +  private var expandedSnapshotId = ""
 +  private var pendingUpdate: DispatchWorkItem?
++  private var pendingSnapshotId = ""
 +  private var ttlDismissWorkItem: DispatchWorkItem?
 +  private var lastReliableCaretAnchor: NSPoint?
 +  private var lastPositionedAnchor: NSPoint?
@@ -268,6 +272,17 @@ index 0000000..1111111
 +
 +  var isVisible: Bool { panel.isVisible }
 +
++  func dismissPendingPrediction(snapshotId: String, reason: String) {
++    if pendingSnapshotId == snapshotId {
++      pendingUpdate?.cancel()
++      pendingUpdate = nil
++      pendingSnapshotId = ""
++    }
++    guard currentState == .pendingPrediction,
++      currentPayload?.snapshotId == snapshotId else { return }
++    dismiss(reason: reason)
++  }
++
 +  deinit {
 +    pendingUpdate?.cancel()
 +    ttlDismissWorkItem?.cancel()
@@ -291,7 +306,9 @@ index 0000000..1111111
 +    self.onTrace = onTrace
 +    traceCreationIfNeeded()
 +    pendingUpdate?.cancel()
++    pendingSnapshotId = payload?.snapshotId ?? ""
 +    let work = DispatchWorkItem { [weak self] in
++      self?.pendingSnapshotId = ""
 +      self?.apply(payload, anchor: anchor, incomingRestore: onRestore)
 +    }
 +    pendingUpdate = work
@@ -345,6 +362,7 @@ index 0000000..1111111
 +    let fadeAnimation = currentPayload.map(fadeAnimationEnabled(for:)) ?? true
 +    pendingUpdate?.cancel()
 +    pendingUpdate = nil
++    pendingSnapshotId = ""
 +    ttlDismissWorkItem?.cancel()
 +    ttlDismissWorkItem = nil
 +    let duration = visibleSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
@@ -903,7 +921,7 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeAssistantSurfaceState.swift b/sources/RagImeAssistantSurfaceState.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..f22911a39e68ddcbbd94c044b0848fe41a87cab1
 --- /dev/null
 +++ b/sources/RagImeAssistantSurfaceState.swift
 @@ -0,0 +1,45 @@
@@ -954,7 +972,7 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeNonActivatingPanel.swift b/sources/RagImeNonActivatingPanel.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..1d811116c4275314dd07a1a1e0576b49e55ffbb1
 --- /dev/null
 +++ b/sources/RagImeNonActivatingPanel.swift
 @@ -0,0 +1,6 @@
@@ -966,10 +984,10 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
 new file mode 100644
-index 0000000..3595710
+index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c205e9e799
 --- /dev/null
 +++ b/sources/RagImeSelectedTextProvider.swift
-@@ -0,0 +1,645 @@
+@@ -0,0 +1,701 @@
 +//
 +//  RagImeSelectedTextProvider.swift
 +//  Squirrel
@@ -1004,13 +1022,51 @@ index 0000000..3595710
 +  let reason: String
 +
 +  var privacyDisposition: String {
-+    guard isSensitive else { return "allowed" }
-+    return reason.hasPrefix("privacy_unknown_") ? "unknown" : "sensitive"
++    if reason.hasPrefix("privacy_unknown_") { return "unknown" }
++    return isSensitive ? "sensitive" : "allowed"
 +  }
 +}
 +
 +final class RagImeForegroundContextResolver {
 +  private let accessibilityProvider = RagImeSelectedTextProvider()
++
++  func captureSelectedTextFromInputClient(
++    _ client: IMKTextInput?,
++    captureEpoch: Int,
++    beforeLimit: Int = 300,
++    afterLimit: Int = 80
++  ) -> RagImeSelectedTextCapture? {
++    guard let client else { return nil }
++    let selectedRange = client.selectedRange()
++    guard selectedRange.location != NSNotFound,
++          selectedRange.location >= 0,
++          selectedRange.length > 0,
++          let selectedText = client.attributedSubstring(from: selectedRange)?.string else {
++      return nil
++    }
++    let selected = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
++    guard !selected.isEmpty else { return nil }
++    let beforeLength = min(max(0, selectedRange.location), max(0, beforeLimit))
++    let beforeRange = NSRange(
++      location: max(0, selectedRange.location - beforeLength),
++      length: beforeLength
++    )
++    let afterRange = NSRange(
++      location: selectedRange.location + selectedRange.length,
++      length: max(0, afterLimit)
++    )
++    return RagImeSelectedTextCapture(
++      selectedText: selected,
++      selectedTextHash: ragImeStableTextHash(selected),
++      selectedTextChars: selected.count,
++      selectedTextPreview: String(selected.prefix(80)),
++      surroundingBefore: client.attributedSubstring(from: beforeRange)?.string ?? "",
++      surroundingAfter: client.attributedSubstring(from: afterRange)?.string ?? "",
++      canReplaceSelection: true,
++      captureEpoch: captureEpoch,
++      captureSource: "text_input_client_selected_text"
++    )
++  }
 +
 +  func captureFromTextInputClient(
 +    _ client: IMKTextInput?,
@@ -1020,10 +1076,6 @@ index 0000000..3595710
 +    beforeLimit: Int = 300,
 +    afterLimit: Int = 80
 +  ) -> RagImeForegroundTextCaptureResult {
-+    let sensitiveStatus = accessibilityProvider.sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId)
-+    guard !sensitiveStatus.isSensitive else {
-+      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: sensitiveStatus.reason)
-+    }
 +    guard let client else {
 +      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "text_input_client_missing")
 +    }
@@ -1048,7 +1100,10 @@ index 0000000..3595710
 +      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "attributed_substring_empty")
 +    }
 +    let capturedAtMs = Int(Date().timeIntervalSince1970 * 1000)
-+    let group = accessibilityProvider.resolveContextGroupIdentity(sourceAppBundleId: sourceAppBundleId)
++    // IMKTextInput is owned by the input-method thread. Keep this path strictly
++    // IMK-only; Accessibility enrichment is resolved later on the dedicated
++    // foreground-context queue.
++    let groupId = ragImeContextGroupId(prefix: "app", values: [sourceAppBundleId])
 +    return RagImeForegroundTextCaptureResult(
 +      snapshot: RagImeForegroundTextSnapshot(
 +        available: true,
@@ -1070,9 +1125,9 @@ index 0000000..3595710
 +        captureFailureReason: "",
 +        warnings: ["text_input_client_ok"],
 +        snapshotId: "ctx_\(UUID().uuidString)",
-+        contextGroupId: group.id,
-+        contextGroupLevel: group.level,
-+        contextGroupConfidence: group.confidence,
++        contextGroupId: groupId,
++        contextGroupLevel: "app",
++        contextGroupConfidence: 0.5,
 +        commitTextMatched: false
 +      ),
 +      failureReason: ""
@@ -1084,7 +1139,8 @@ index 0000000..3595710
 +    sourceAppBundleId: String,
 +    inputSourceId: String,
 +    beforeLimit: Int = 300,
-+    afterLimit: Int = 80
++    afterLimit: Int = 80,
++    privacyPrevalidated: Bool = false
 +  ) -> RagImeForegroundTextCaptureResult {
 +    accessibilityProvider.resolveForegroundTextForSidecar(
 +      captureEpoch: captureEpoch,
@@ -1092,7 +1148,8 @@ index 0000000..3595710
 +      inputSourceId: inputSourceId,
 +      beforeLimit: beforeLimit,
 +      afterLimit: afterLimit,
-+      allowAccessibility: true
++      allowAccessibility: true,
++      privacyPrevalidated: privacyPrevalidated
 +    )
 +  }
 +}
@@ -1115,7 +1172,7 @@ index 0000000..3595710
 +    "bank", "banking", "privatebrowser", "torbrowser",
 +  ]
 +
-+  func sensitiveFieldStatus(sourceAppBundleId: String = "") -> RagImeSensitiveFieldStatus {
++  func fastSensitiveFieldStatus(sourceAppBundleId: String = "") -> RagImeSensitiveFieldStatus {
 +    if IsSecureEventInputEnabled() {
 +      return RagImeSensitiveFieldStatus(isSensitive: true, reason: "secure_event_input")
 +    }
@@ -1126,12 +1183,14 @@ index 0000000..3595710
 +    if sensitiveApplicationReason(bundleIdentifier: appBundleId) != nil {
 +      return RagImeSensitiveFieldStatus(isSensitive: true, reason: "sensitive_application_bundle")
 +    }
-+    // InputMethodKit already owns the active text client. Accessibility metadata is
-+    // optional enrichment for field classification, not a prerequisite for local
-+    // completion. Ad-hoc development builds change code identity frequently, so
-+    // failing closed here would silently disable every ordinary text field after
-+    // each reinstall. Secure Event Input and known sensitive apps above still
-+    // remain hard stops; readable AX metadata below adds field-level protection.
++    return RagImeSensitiveFieldStatus(isSensitive: false, reason: "")
++  }
++
++  func sensitiveFieldStatus(sourceAppBundleId: String = "") -> RagImeSensitiveFieldStatus {
++    let fastStatus = fastSensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId)
++    guard fastStatus.privacyDisposition == "allowed" else { return fastStatus }
++    // A sidecar request needs a positive field-level decision. Missing AX trust,
++    // focus, or metadata stays unknown and therefore fails closed.
 +    guard AXIsProcessTrusted() else {
 +      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_ax_not_trusted")
 +    }
@@ -1210,11 +1269,14 @@ index 0000000..3595710
 +    inputSourceId: String,
 +    beforeLimit: Int = 300,
 +    afterLimit: Int = 80,
-+    allowAccessibility: Bool = true
++    allowAccessibility: Bool = true,
++    privacyPrevalidated: Bool = false
 +  ) -> RagImeForegroundTextCaptureResult {
-+    let sensitiveStatus = sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId)
-+    guard !sensitiveStatus.isSensitive else {
-+      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: sensitiveStatus.reason)
++    if !privacyPrevalidated {
++      let sensitiveStatus = sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId)
++      guard sensitiveStatus.privacyDisposition == "allowed" else {
++        return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: sensitiveStatus.reason)
++      }
 +    }
 +    guard allowAccessibility else {
 +      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "accessibility_disabled")
@@ -1257,7 +1319,9 @@ index 0000000..3595710
 +    allowAccessibility: Bool = true,
 +    allowClipboardFallback: Bool = true
 +  ) -> RagImeSelectedTextCapture? {
-+    guard !sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId).isSensitive else { return nil }
++    guard sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId).privacyDisposition == "allowed" else {
++      return nil
++    }
 +    if allowAccessibility, let axCapture = captureSelectedTextViaAccessibility(captureEpoch: captureEpoch) {
 +      return axCapture
 +    }
@@ -1288,6 +1352,9 @@ index 0000000..3595710
 +
 +  private func focusedTextElement() -> AXUIElement? {
 +    let systemWide = AXUIElementCreateSystemWide()
++    // AX requests are cross-process IPC. Bound each message so a wedged target
++    // cannot monopolize the serial privacy/capture queue indefinitely.
++    _ = AXUIElementSetMessagingTimeout(systemWide, 0.05)
 +    var focusedObject: AnyObject?
 +    let focusedResult = AXUIElementCopyAttributeValue(
 +      systemWide,
@@ -1297,7 +1364,9 @@ index 0000000..3595710
 +    guard focusedResult == .success, let focused = focusedObject else {
 +      return nil
 +    }
-+    return (focused as! AXUIElement)
++    let focusedElement = focused as! AXUIElement
++    _ = AXUIElementSetMessagingTimeout(focusedElement, 0.05)
++    return focusedElement
 +  }
 +
 +  private func selectedTextRange(in focused: AXUIElement) -> CFRange? {
@@ -1622,10 +1691,10 @@ index 0000000..3595710
 +}
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..644f693
+index 0000000000000000000000000000000000000000..aec4fe5622dc1ae734b8c77abcd283c191928bb3
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,558 @@
+@@ -0,0 +1,658 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -2286,10 +2355,10 @@ index 0000000..644f693
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000..acea5cc
+index 0000000000000000000000000000000000000000..7bc0284af41c0d230a481cb84a5c473ac71037c4
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,718 @@
+@@ -0,0 +1,725 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -2425,7 +2494,8 @@ index 0000000..acea5cc
 +    foregroundText: RagImeForegroundTextSnapshot,
 +    committedContext: String,
 +    committedContextHash: String,
-+    captureFailureReason: String = ""
++    captureFailureReason: String = "",
++    privacyDisposition: String? = nil
 +  ) -> RagImeSidecarRequest {
 +    RagImeSidecarRequest(
 +      frontendBuild: frontendBuild,
@@ -2446,7 +2516,7 @@ index 0000000..acea5cc
 +      sourceAppBundleId: foregroundText.sourceAppBundleId,
 +      captureEpoch: foregroundText.captureEpoch,
 +      captureFailureReason: captureFailureReason,
-+      privacyDisposition: privacyDisposition,
++      privacyDisposition: privacyDisposition ?? self.privacyDisposition,
 +      rawInput: rawInput,
 +      preedit: preedit,
 +      commitTextPreview: commitTextPreview,
@@ -3016,10 +3086,10 @@ index 0000000..acea5cc
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8dc5f9f878
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
-@@ -0,0 +1,666 @@
+@@ -0,0 +1,685 @@
 +import AppKit
 +import QuartzCore
 +
@@ -3158,11 +3228,8 @@ index 0000000..1111111
 +    actionSeparator.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.42).cgColor
 +    actionContainer.wantsLayer = true
 +    actionContainer.layer?.cornerRadius = 6
-+    actionContainer.layer?.borderWidth = 0
-+    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
 +    actionContainer.layer?.masksToBounds = true
 +    actionDivider.wantsLayer = true
-+    actionDivider.layer?.backgroundColor = NSColor.clear.cgColor
 +    deepSeekButton.isBordered = false
 +    deepSeekButton.focusRingType = .none
 +    deepSeekButton.font = RagImeAssistantTypography.action
@@ -3171,8 +3238,7 @@ index 0000000..1111111
 +    deepSeekButton.imagePosition = .imageLeading
 +    deepSeekButton.contentTintColor = .systemIndigo
 +    deepSeekButton.wantsLayer = true
-+    deepSeekButton.layer?.cornerRadius = 6
-+    deepSeekButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.08).cgColor
++    deepSeekButton.layer?.cornerRadius = 0
 +    deepSeekButton.target = self
 +    deepSeekButton.action = #selector(startActiveRag)
 +    deepSeekButton.toolTip = "快速生成：一次检索与一次模型调用（⌃.）"
@@ -3185,12 +3251,12 @@ index 0000000..1111111
 +    deepSearchButton.imagePosition = .imageLeading
 +    deepSearchButton.contentTintColor = .systemIndigo
 +    deepSearchButton.wantsLayer = true
-+    deepSearchButton.layer?.cornerRadius = 6
-+    deepSearchButton.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.09).cgColor
++    deepSearchButton.layer?.cornerRadius = 0
 +    deepSearchButton.target = self
 +    deepSearchButton.action = #selector(startAgentDeepSearch)
 +    deepSearchButton.toolTip = "深度查找：交给 Pi 连续会话和 Agent Loop"
 +    deepSearchButton.setAccessibilityLabel("使用 Pi 深度查找")
++    updateActionGroupChrome()
 +    actionContainer.addSubview(deepSeekButton)
 +    actionContainer.addSubview(actionDivider)
 +    actionContainer.addSubview(deepSearchButton)
@@ -3254,10 +3320,7 @@ index 0000000..1111111
 +    layer?.borderColor = NSColor.separatorColor.cgColor
 +    layer?.backgroundColor = NSColor.clear.cgColor
 +    resultShortcutPlate.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.42).cgColor
-+    actionContainer.layer?.borderColor = NSColor.clear.cgColor
-+    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
-+    deepSeekButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.08).cgColor
-+    deepSearchButton.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.09).cgColor
++    updateActionGroupChrome()
 +    updateThemeChrome(for: surfaceState)
 +  }
 +
@@ -3647,14 +3710,40 @@ index 0000000..1111111
 +
 +  private func layoutActionBar(frame: NSRect, compact: Bool) {
 +    actionContainer.frame = frame
-+    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
-+    let gap: CGFloat = compact ? 4 : 7
-+    let half = max(0, (frame.width - gap) / 2)
++    let dividerWidth: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
++    let half = max(0, floor((frame.width - dividerWidth) / 2))
++    let dividerInset: CGFloat = compact ? 5 : 4
 +    deepSeekButton.frame = NSRect(x: 0, y: 0, width: half, height: frame.height)
-+    actionDivider.frame = .zero
-+    deepSearchButton.frame = NSRect(x: half + gap, y: 0, width: half, height: frame.height)
++    actionDivider.frame = NSRect(
++      x: half,
++      y: dividerInset,
++      width: dividerWidth,
++      height: max(0, frame.height - dividerInset * 2)
++    )
++    deepSearchButton.frame = NSRect(
++      x: half + dividerWidth,
++      y: 0,
++      width: max(0, frame.width - half - dividerWidth),
++      height: frame.height
++    )
 +    deepSeekButton.alignment = .center
 +    deepSearchButton.alignment = .center
++  }
++
++  private func updateActionGroupChrome() {
++    let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
++    actionContainer.layer?.borderWidth = increaseContrast ? 1 : 0.5
++    actionContainer.layer?.borderColor = NSColor.separatorColor
++      .withAlphaComponent(increaseContrast ? 0.95 : 0.58)
++      .cgColor
++    actionContainer.layer?.backgroundColor = NSColor.controlBackgroundColor
++      .withAlphaComponent(increaseContrast ? 0.95 : 0.72)
++      .cgColor
++    actionDivider.layer?.backgroundColor = NSColor.separatorColor
++      .withAlphaComponent(increaseContrast ? 0.88 : 0.48)
++      .cgColor
++    deepSeekButton.layer?.backgroundColor = NSColor.clear.cgColor
++    deepSearchButton.layer?.backgroundColor = NSColor.clear.cgColor
 +  }
 +
 +  private func configureActionButton(_ button: NSButton, action: Selector, symbol: String, toolTip: String) {
@@ -3688,7 +3777,7 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeSuggestionRowView.swift b/sources/RagImeSuggestionRowView.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..8d958e988d31f254664e122da3643ed5e1708b2c
 --- /dev/null
 +++ b/sources/RagImeSuggestionRowView.swift
 @@ -0,0 +1,227 @@
@@ -3920,7 +4009,7 @@ index 0000000..1111111
 +  }
 +}
 diff --git a/sources/SquirrelApplicationDelegate.swift b/sources/SquirrelApplicationDelegate.swift
-index 124ef7b..52c6983 100644
+index 124ef7b2ec9a7c2e7bb898295704682f5131b314..52c6983d9ff6adeba2589879c679ae1366e02882 100644
 --- a/sources/SquirrelApplicationDelegate.swift
 +++ b/sources/SquirrelApplicationDelegate.swift
 @@ -364,7 +364,7 @@ private extension SquirrelApplicationDelegate {
@@ -3942,10 +4031,10 @@ index 124ef7b..52c6983 100644
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..b6e3973 100644
+index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a5f864bb2 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
-@@ -27,6 +27,85 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +27,95 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
@@ -4041,7 +4130,9 @@ index c2adf74..b6e3973 100644
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -46,9 +125,12 @@ final class SquirrelInputController: IMKInputController {
+@@ -44,11 +133,9 @@ final class SquirrelInputController: IMKInputController {
+       }
+     }
  
 -    self.client ?= sender as? IMKTextInput
 -    if let app = client?.bundleIdentifier(), currentApp != app {
@@ -4054,10 +4145,22 @@ index c2adf74..b6e3973 100644
  
      switch event.type {
      case .flagsChanged:
-@@ -99,207 +181,4207 @@ final class SquirrelInputController: IMKInputController {
+@@ -89,217 +176,5018 @@ final class SquirrelInputController: IMKInputController {
+         _ = processKey(keycode, modifiers: modifier)
        }
  
-       let keyCode = event.keyCode
+-      lastModifiers = modifiers
+-      rimeUpdate()
++      lastModifiers = modifiers
++      rimeUpdate()
++
++    case .keyDown:
++      // Let client apps handle Command shortcuts.
++      if modifiers.contains(.command) {
++        break
++      }
++
++      let keyCode = event.keyCode
 +      if keyCode == 53
 +        && !ragImeNativeCompositionActive()
 +        && ragImeAssistantOverlayController.isVisible {
@@ -4095,20 +4198,12 @@ index c2adf74..b6e3973 100644
 +          "reason": "no_ready_candidate",
 +        ])
 +      }
-       var keyChars = event.charactersIgnoringModifiers
-       let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
-       if let code = keyChars?.first,
-          (capitalModifiers && !code.isLetter) || (!capitalModifiers && !code.isASCII) {
-         keyChars = event.characters
-       }
--      if let char = keyChars?.first {
--        let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
--                                                           shift: modifiers.contains(.shift),
--                                                           caps: modifiers.contains(.capsLock))
--        if rimeKeycode != 0 {
--          let rimeModifiers = SquirrelKeycode.osxModifiersToRime(modifiers: modifiers)
--          handled = processKey(rimeKeycode, modifiers: rimeModifiers)
--          rimeUpdate()
++      var keyChars = event.charactersIgnoringModifiers
++      let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
++      if let code = keyChars?.first,
++         (capitalModifiers && !code.isLetter) || (!capitalModifiers && !code.isASCII) {
++        keyChars = event.characters
++      }
 +      if let char = keyChars?.first {
 +        if modifiers.contains(.option)
 +          && !modifiers.contains(.command)
@@ -4184,7 +4279,7 @@ index c2adf74..b6e3973 100644
 +        let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
 +        guard !insertText.isEmpty else { return false }
 +        let query = ragImeDisplaySemanticQuery.isEmpty ? ragImeDisplayRawInput : ragImeDisplaySemanticQuery
-+        let recentContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
++        let recentContext = boundedRagImeCommittedContext(ragImeCommittedContext)
 +        let sourcePreedit = ragImeDisplayPreedit
 +        traceRagImeFrontendEvent("candidate_snapshot_selection_accepted", fields: [
 +          "index": index,
@@ -4298,7 +4393,7 @@ index c2adf74..b6e3973 100644
 +  func recordRagImeNativeSelection(
 +    _ selection: (preedit: String, acceptedText: String, rejectedText: String, rank: Int, shownCount: Int)
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return }
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return }
 +    guard let sidecarClient = ragImeSidecarClient else { return }
 +    let selectionId = UUID().uuidString
 +    let app = currentApp
@@ -4379,15 +4474,13 @@ index c2adf74..b6e3973 100644
 +    guard !ragImeNativeCompositionIsActive() else { return }
 +    guard !ragImeAcceptedEditText.isEmpty,
 +          Date().timeIntervalSince(ragImeAcceptedEditAt) <= 10,
-+          !enforceRagImeSensitiveFieldGuard(),
++          !enforceRagImeFastPrivacyGuard(),
 +          ragImePrivacyDisposition == "allowed",
 +          let sidecarClient = ragImeSidecarClient else {
 +      clearRagImeAcceptedEditFeedback()
 +      return
 +    }
-+    let currentContext = ragImeCompactWhitespace(
-+      syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
-+    )
++    let currentContext = ragImeCompactWhitespace(ragImeCommittedContext)
 +    guard currentContext.hasSuffix(ragImeAcceptedEditText) else {
 +      clearRagImeAcceptedEditFeedback()
 +      return
@@ -4812,29 +4905,45 @@ index c2adf74..b6e3973 100644
 +private extension SquirrelInputController {
 +
 +  @discardableResult
-+  func enforceRagImeSensitiveFieldGuard() -> Bool {
-+    let status = ragImeSelectedTextProvider.sensitiveFieldStatus(sourceAppBundleId: currentApp)
-+    ragImePrivacyDisposition = status.privacyDisposition
-+    if status.isSensitive {
++  func enforceRagImeFastPrivacyGuard() -> Bool {
++    let fastStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(sourceAppBundleId: currentApp)
++    if fastStatus.privacyDisposition != "allowed" {
++      return applyRagImePrivacyStatus(fastStatus, source: "fast_guard")
++    }
++    // Field-level Accessibility classification is asynchronous. Until a live
++    // full probe has allowed this field, local insertion continues but no text
++    // may enter feedback, context, or sidecar lanes.
++    return ragImePrivacyDisposition != "allowed"
++  }
++
++  @discardableResult
++  func applyRagImePrivacyStatus(_ status: RagImeSensitiveFieldStatus, source: String) -> Bool {
++    let disposition = status.privacyDisposition
++    if disposition != "allowed" {
 +      let changed = !ragImeSensitiveFieldActive || ragImeSensitiveFieldReason != status.reason
 +      ragImeSensitiveFieldActive = true
 +      ragImeSensitiveFieldReason = status.reason
 +      if changed {
 +        clearRagImeSensitiveRuntimeState()
++        ragImePrivacyDisposition = disposition
 +        traceRagImeFrontendEvent("sensitive_field_suppressed", fields: [
-+          "sensitiveField": true,
++          "sensitiveField": status.isSensitive,
++          "privacyDisposition": disposition,
 +          "reason": status.reason,
++          "source": source,
 +          "frontAppBundleId": currentApp,
 +        ])
++      } else {
++        ragImePrivacyDisposition = disposition
 +      }
 +      return true
 +    }
 +    if ragImeSensitiveFieldActive {
 +      let previousReason = ragImeSensitiveFieldReason
-+      clearRagImeSensitiveRuntimeState()
 +      traceRagImeFrontendEvent("sensitive_field_exited", fields: [
-+        "sensitiveField": true,
++        "sensitiveField": false,
 +        "reason": previousReason,
++        "source": source,
 +        "frontAppBundleId": currentApp,
 +      ])
 +      ragImeSensitiveFieldActive = false
@@ -5117,7 +5226,7 @@ index c2adf74..b6e3973 100644
 +    index: Int,
 +    replaceSelection: Bool = false
 +  ) -> Bool {
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return false }
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }
 +    if candidate.selectionAction == "start_agent_deep_search_from_context" {
 +      return startRagImeAgentDeepSearchFromContext(actionCandidate: candidate)
 +    }
@@ -5127,7 +5236,7 @@ index c2adf74..b6e3973 100644
 +    guard candidate.selectionAction == "commit_side_candidate" else { return false }
 +    let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
 +    guard !insertText.isEmpty else { return false }
-+    let recentContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeOverlayPreedit)
++    let recentContext = boundedRagImeCommittedContext(ragImeCommittedContext)
 +    traceRagImeFrontendEvent("assistant_overlay_candidate_accepted", fields: [
 +      "route": route,
 +      "index": index,
@@ -5223,7 +5332,7 @@ index c2adf74..b6e3973 100644
 +  }
 +
 +  func recordRagImeAssistantCandidateAction(_ action: String) {
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return }
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return }
 +    guard let sidecarClient = ragImeSidecarClient,
 +      let candidate = ragImeOverlayCandidates.first(where: { RagImeSuggestionCardView.isRealCandidate($0) }) else { return }
 +    let candidateSummary = ragImeTraceCandidateSummary(candidate, index: 0)
@@ -5339,7 +5448,7 @@ index c2adf74..b6e3973 100644
 +    preedit: String,
 +    traceEvent: String = "assistant_overlay_updated"
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard() else { return }
++    guard !enforceRagImeFastPrivacyGuard() else { return }
 +    guard let incomingPayload, incomingPayload.visible else {
 +      dismissRagImeAssistantOverlay(reason: incomingPayload?.dismissReason ?? "hidden")
 +      return
@@ -5804,21 +5913,18 @@ index c2adf74..b6e3973 100644
 +
 +  func startRagImeActiveRagAssistFromSelection() -> Bool {
 +    guard requireRagImeActiveRagEnabled(trigger: "selection") else { return false }
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return false }
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }
 +    guard let sidecarClient = ragImeSidecarClient else { return false }
-+    let provider = ragImeSelectedTextProvider
 +    ragImeFrontendRevision += 1
 +    ragImeSelectionEpoch += 1
 +    let frontendRevision = ragImeFrontendRevision
 +    let selectionEpoch = ragImeSelectionEpoch
 +    let panelSessionId = UUID().uuidString
-+    let allowAccessibility = ragImeActiveRagAccessibilityCaptureEnabled()
-+    let allowClipboardFallback = ragImeActiveRagClipboardFallbackEnabled()
-+    guard let capture = provider.captureSelectedTextForActiveRag(
-+      captureEpoch: selectionEpoch,
-+      sourceAppBundleId: currentApp,
-+      allowAccessibility: allowAccessibility,
-+      allowClipboardFallback: allowClipboardFallback
++    let allowAccessibility = false
++    let allowClipboardFallback = false
++    guard let capture = ragImeForegroundContextResolver.captureSelectedTextFromInputClient(
++      client,
++      captureEpoch: selectionEpoch
 +    ) else {
 +      traceRagImeFrontendEvent("active_rag_selected_text_capture_failed", fields: [
 +        "frontendRevision": frontendRevision,
@@ -5888,7 +5994,7 @@ index c2adf74..b6e3973 100644
 +
 +  func startRagImeActiveRagAssistFromContext(actionCandidate: RagImeDisplayCandidate? = nil) -> Bool {
 +    guard requireRagImeActiveRagEnabled(trigger: "context") else { return false }
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return false }
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }
 +    guard let sidecarClient = ragImeSidecarClient else { return false }
 +    ragImeFrontendRevision += 1
 +    ragImeSelectionEpoch += 1
@@ -5896,14 +6002,7 @@ index c2adf74..b6e3973 100644
 +    let selectionEpoch = ragImeSelectionEpoch
 +    let panelSessionId = UUID().uuidString
 +    let inputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
-+    let accessibilityForeground = ragImeSelectedTextProvider.captureForegroundTextForSidecar(
-+      captureEpoch: selectionEpoch,
-+      sourceAppBundleId: currentApp,
-+      inputSourceId: inputSourceId,
-+      beforeLimit: 1200,
-+      afterLimit: 120,
-+      allowAccessibility: ragImeActiveRagAccessibilityCaptureEnabled()
-+    )
++    let accessibilityForeground: RagImeForegroundTextSnapshot? = nil
 +    let imkForeground = ragImeForegroundContextResolver.captureFromTextInputClient(
 +      client,
 +      captureEpoch: selectionEpoch,
@@ -6003,7 +6102,7 @@ index c2adf74..b6e3973 100644
 +  func startRagImeAgentDeepSearchFromContext(
 +    actionCandidate: RagImeDisplayCandidate? = nil
 +  ) -> Bool {
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return false }
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }
 +    guard let sidecarClient = ragImeSidecarClient else { return false }
 +    let committedContext = ragImeCompactWhitespace(
 +      syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeOverlayPreedit)
@@ -6120,7 +6219,7 @@ index c2adf74..b6e3973 100644
 +    sidecarClient: RagImeSidecarClient,
 +    generation: Int
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard(),
++    guard !enforceRagImeFastPrivacyGuard(),
 +      ragImePrivacyDisposition == "allowed",
 +      request.privacyDisposition == "allowed",
 +      request.frontAppBundleId == currentApp else { return }
@@ -6135,7 +6234,7 @@ index c2adf74..b6e3973 100644
 +    ])
 +    sidecarClient.postActiveRagStart(request) { [weak self] response in
 +      guard let self else { return }
-+      guard !self.enforceRagImeSensitiveFieldGuard(),
++      guard !self.enforceRagImeFastPrivacyGuard(),
 +        self.ragImePrivacyDisposition == "allowed",
 +        request.privacyDisposition == "allowed",
 +        request.frontAppBundleId == self.currentApp else {
@@ -6170,7 +6269,7 @@ index c2adf74..b6e3973 100644
 +    request: RagImeActiveRagRequest,
 +    generation: Int
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard(),
++    guard !enforceRagImeFastPrivacyGuard(),
 +      ragImePrivacyDisposition == "allowed",
 +      request.privacyDisposition == "allowed" else { return }
 +    guard response.selectedTextHash == request.selectedTextHash
@@ -6380,7 +6479,7 @@ index c2adf74..b6e3973 100644
 +    ragImeActiveRagPollWorkItem?.cancel()
 +    let workItem = DispatchWorkItem { [weak self] in
 +      guard let self else { return }
-+      guard !self.enforceRagImeSensitiveFieldGuard(),
++      guard !self.enforceRagImeFastPrivacyGuard(),
 +        self.ragImePrivacyDisposition == "allowed",
 +        request.privacyDisposition == "allowed",
 +        request.frontAppBundleId == self.currentApp else {
@@ -6451,7 +6550,6 @@ index c2adf74..b6e3973 100644
 +    commitBurstTexts: [String] = []
 +  ) {
 +    guard requestSidecar else { return }
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return }
 +    if !rawInput.isEmpty || !preedit.isEmpty {
 +      ragImeCommitBurstWorkItem?.cancel()
 +      ragImeCommitBurstWorkItem = nil
@@ -6493,11 +6591,21 @@ index c2adf74..b6e3973 100644
 +    guard commitBurstReady || acceptedCandidateContinuation else {
 +      return
 +    }
++    // Composition and ordinary empty Rime updates never send foreground data.
++    // This admitted post-commit draft is local-only until the queued full probe
++    // returns an explicit field-level allow decision.
++    let fastPrivacyStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(
++      sourceAppBundleId: currentApp
++    )
++    if fastPrivacyStatus.privacyDisposition != "allowed" {
++      _ = applyRagImePrivacyStatus(fastPrivacyStatus, source: "post_commit_fast_guard")
++      return
++    }
++    guard ragImePrivacyDisposition != "sensitive" else { return }
 +    guard let sidecarClient = ragImeSidecarClient else {
 +      clearRagImeDisplayCandidates()
 +      return
 +    }
-+    syncRagImeCommittedContextFromClient(excludingMarkedText: preedit)
 +    pruneRagImeCommittedContext()
 +    let hasPostCommitCaptureSeed = commitBurstReady && !ragImeCompactWhitespace(commitTextPreview).isEmpty
 +    guard !rawInput.isEmpty
@@ -6524,32 +6632,18 @@ index c2adf74..b6e3973 100644
 +    let scheduledInputGeneration = ragImeInputGeneration + 1
 +    let scheduledAtMs = Int(Date().timeIntervalSince1970 * 1000)
 +    let inputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
-+    let cachedForegroundText: RagImeForegroundTextSnapshot? = {
-+      guard let snapshot = ragImeLastForegroundTextSnapshot,
-+            snapshot.sourceAppBundleId == currentApp,
-+            snapshot.inputSourceId == inputSourceId else { return nil }
-+      let ageMs = max(0, scheduledAtMs - snapshot.capturedAtMs)
-+      guard ageMs <= 1600 else { return nil }
-+      return snapshot.withFreshness(ageMs)
-+    }()
-+    let textInputClientContext = (!rawInput.isEmpty || !preedit.isEmpty)
-+      ? ""
-+      : actualRagImeCommittedContextFromClient(fallback: "", excludingMarkedText: "")
-+    let capturedClientContext = textInputClientContext.isEmpty
-+      ? (cachedForegroundText?.surroundingBefore ?? "")
-+      : textInputClientContext
 +    let fallbackForegroundSource = (!rawInput.isEmpty || !preedit.isEmpty)
 +      ? "rime_composition"
-+      : (capturedClientContext.isEmpty ? "ime_commit_ledger" : "text_input_client")
++      : "ime_commit_ledger"
 +    let fallbackForegroundBefore = (!rawInput.isEmpty || !preedit.isEmpty)
 +      ? compositionText
-+      : boundedRagImeCommittedContext(capturedClientContext.isEmpty ? ragImeCommittedContext : capturedClientContext)
++      : boundedRagImeCommittedContext(ragImeCommittedContext)
 +    let fallbackCommitText = ragImeCompactWhitespace(commitTextPreview)
 +    let fallbackCommitMatched = fallbackCommitText.isEmpty || fallbackForegroundBefore.contains(fallbackCommitText)
 +    let fallbackForegroundText = RagImeForegroundTextSnapshot(
 +      available: !rawInput.isEmpty || !preedit.isEmpty || !ragImeCommittedContext.isEmpty,
 +      source: fallbackForegroundSource,
-+      confidence: (!rawInput.isEmpty || !preedit.isEmpty) ? 1.0 : (textInputClientContext.isEmpty ? 0.65 : 0.78),
++      confidence: (!rawInput.isEmpty || !preedit.isEmpty) ? 1.0 : 0.65,
 +      freshnessMs: 0,
 +      selectedTextHash: "",
 +      selectedTextChars: 0,
@@ -6564,14 +6658,14 @@ index c2adf74..b6e3973 100644
 +      sourceAppBundleId: currentApp,
 +      inputSourceId: inputSourceId,
 +      captureFailureReason: "",
-+      warnings: textInputClientContext.isEmpty ? ["ime_commit_ledger_same_app"] : ["text_input_client_context"],
++      warnings: ["ime_commit_ledger_same_app"],
 +      snapshotId: "ctx_\(UUID().uuidString)",
 +      contextGroupId: "app:\(ragImeStableTextHash(currentApp).replacingOccurrences(of: "sha256:", with: "").prefix(16))",
 +      contextGroupLevel: "app",
 +      contextGroupConfidence: 0.5,
 +      commitTextMatched: fallbackCommitMatched
 +    )
-+    let foregroundText = cachedForegroundText ?? fallbackForegroundText
++    let foregroundText = fallbackForegroundText
 +    let fingerprint = ragImeRequestFingerprint(
 +      rawInput: rawInput,
 +      preedit: preedit,
@@ -6708,7 +6802,9 @@ index c2adf74..b6e3973 100644
 +  }
 +
 +  func scheduleRagImeCommitBurstPrediction(committedText: String, acceptedCandidate: Bool = false) {
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return }
++    // The physical commit already ran its privacy guard. Do not repeat the
++    // cross-process Accessibility probe while merely scheduling delayed work;
++    // refreshRagImeSidecar revalidates privacy before any data can leave IMK.
 +    guard let sidecarClient = ragImeSidecarClient else { return }
 +    let normalizedCommittedText = ragImeCompactWhitespace(committedText)
 +    guard acceptedCandidate || !normalizedCommittedText.isEmpty else {
@@ -6790,7 +6886,7 @@ index c2adf74..b6e3973 100644
 +    ragImeCommitBurstWorkItem = nil
 +    ragImeCommitBurstDeltaChars = 0
 +    ragImeCommitBurstTexts = []
-+    let previousContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
++    let previousContext = boundedRagImeCommittedContext(ragImeCommittedContext)
 +    ragImePendingContinuationCandidate = sourceCandidate
 +    ragImePendingContinuationCommittedText = committedText
 +    ragImePendingContinuationPreviousContextHash = ragImeStableTextHash(previousContext)
@@ -6845,9 +6941,7 @@ index c2adf74..b6e3973 100644
 +      cancelRagImePendingContinuation(reason: "commit_observe_timeout", keyCode: nil)
 +      return
 +    }
-+    let committedContext = ragImeCommittedContext.isEmpty
-+      ? syncRagImeCommittedContextFromClient(excludingMarkedText: "")
-+      : ragImeCommittedContext
++    let committedContext = boundedRagImeCommittedContext(ragImeCommittedContext)
 +    let committedContextHash = ragImeStableTextHash(committedContext)
 +    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
 +      scheduleRagImePendingContinuationObservation(attempt: attempt + 1)
@@ -6937,9 +7031,6 @@ index c2adf74..b6e3973 100644
 +    sidecarClient: RagImeSidecarClient,
 +    captureAttempt: Int = 0
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard(),
-+      ragImePrivacyDisposition == "allowed",
-+      request.privacyDisposition == "allowed" else { return }
 +    traceRagImeFrontendEvent("foreground_context_capture_started", fields: [
 +      "requestSeq": request.requestSeq,
 +      "captureEpoch": inputGeneration,
@@ -6955,69 +7046,185 @@ index c2adf74..b6e3973 100644
 +      return
 +    }
 +    let liveInputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
-+    guard currentApp == request.frontAppBundleId, liveInputSourceId == request.inputSourceId else {
++    guard request.inputGeneration == inputGeneration,
++          inputGeneration == ragImeInputGeneration,
++          request.frontendRevision == ragImeFrontendRevision,
++          request.selectionEpoch == ragImeSelectionEpoch,
++          currentApp == request.frontAppBundleId,
++          liveInputSourceId == request.inputSourceId else {
 +      failRagImeForegroundContextCapture(
 +        request,
 +        fingerprint: preliminaryFingerprint,
-+        reason: currentApp == request.frontAppBundleId ? "capture_input_source_mismatch" : "capture_app_mismatch",
++        reason: "capture_stale",
 +        imkReason: "",
 +        inputGeneration: inputGeneration
 +      )
 +      return
 +    }
-+    let imkResult = ragImeForegroundContextResolver.captureFromTextInputClient(
-+      client,
-+      captureEpoch: inputGeneration,
-+      sourceAppBundleId: currentApp,
-+      inputSourceId: liveInputSourceId
++    let fastStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(
++      sourceAppBundleId: request.frontAppBundleId
 +    )
-+    if let snapshot = imkResult.snapshot {
-+      finishRagImeForegroundContextCapture(
++    guard fastStatus.privacyDisposition == "allowed" else {
++      _ = applyRagImePrivacyStatus(fastStatus, source: "foreground_fast_guard")
++      failRagImeForegroundContextCapture(
 +        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "privacy_probe_unknown",
++        imkReason: fastStatus.reason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    guard ragImePrivacyDisposition != "sensitive" else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "privacy_probe_sensitive",
++        imkReason: ragImeSensitiveFieldReason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    probeRagImeForegroundPrivacyAndContext(
++      request,
++      preliminaryFingerprint: preliminaryFingerprint,
++      inputGeneration: inputGeneration,
++      sidecarClient: sidecarClient,
++      captureAttempt: captureAttempt
++    )
++  }
++
++  func probeRagImeForegroundPrivacyAndContext(
++    _ request: RagImeSidecarRequest,
++    preliminaryFingerprint: String,
++    inputGeneration: Int,
++    sidecarClient: RagImeSidecarClient,
++    captureAttempt: Int
++  ) {
++    let captureToken = UUID()
++    ragImeForegroundCaptureToken = captureToken
++    ragImeForegroundContextQueue.async { [weak self] in
++      guard let self else { return }
++      let privacyStatus = self.ragImeSelectedTextProvider.sensitiveFieldStatus(
++        sourceAppBundleId: request.frontAppBundleId
++      )
++      let axResult: RagImeForegroundTextCaptureResult
++      if privacyStatus.privacyDisposition == "allowed" {
++        axResult = self.ragImeForegroundContextResolver.captureFromAccessibility(
++          captureEpoch: inputGeneration,
++          sourceAppBundleId: request.frontAppBundleId,
++          inputSourceId: request.inputSourceId,
++          privacyPrevalidated: true
++        )
++      } else {
++        axResult = RagImeForegroundTextCaptureResult(
++          snapshot: nil,
++          failureReason: privacyStatus.reason
++        )
++      }
++      DispatchQueue.main.async { [weak self] in
++        self?.applyRagImeForegroundPrivacyProbe(
++          request,
++          preliminaryFingerprint: preliminaryFingerprint,
++          inputGeneration: inputGeneration,
++          sidecarClient: sidecarClient,
++          captureAttempt: captureAttempt,
++          captureToken: captureToken,
++          privacyStatus: privacyStatus,
++          accessibilityResult: axResult
++        )
++      }
++    }
++    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ragImeForegroundCaptureTimeoutMs)) { [weak self] in
++      guard let self, self.ragImeForegroundCaptureToken == captureToken else { return }
++      self.ragImeForegroundCaptureToken = nil
++      let anchorsAreLive = preliminaryFingerprint == self.ragImeLastRequestFingerprint
++        && request.inputGeneration == inputGeneration
++        && inputGeneration == self.ragImeInputGeneration
++        && request.frontendRevision == self.ragImeFrontendRevision
++        && request.selectionEpoch == self.ragImeSelectionEpoch
++        && request.frontAppBundleId == self.currentApp
++        && request.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? "")
++      guard anchorsAreLive else { return }
++      _ = self.applyRagImePrivacyStatus(
++        RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_probe_timeout"),
++        source: "privacy_probe_timeout"
++      )
++      self.failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "privacy_probe_timeout",
++        imkReason: "privacy_unknown_probe_timeout",
++        inputGeneration: inputGeneration
++      )
++    }
++  }
++
++  func applyRagImeForegroundPrivacyProbe(
++    _ request: RagImeSidecarRequest,
++    preliminaryFingerprint: String,
++    inputGeneration: Int,
++    sidecarClient: RagImeSidecarClient,
++    captureAttempt: Int,
++    captureToken: UUID,
++    privacyStatus: RagImeSensitiveFieldStatus,
++    accessibilityResult: RagImeForegroundTextCaptureResult
++  ) {
++    guard ragImeForegroundCaptureToken == captureToken else { return }
++    ragImeForegroundCaptureToken = nil
++    let anchorsAreLive = preliminaryFingerprint == ragImeLastRequestFingerprint
++      && request.inputGeneration == inputGeneration
++      && inputGeneration == ragImeInputGeneration
++      && request.frontendRevision == ragImeFrontendRevision
++      && request.selectionEpoch == ragImeSelectionEpoch
++      && request.frontAppBundleId == currentApp
++      && request.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? "")
++    guard anchorsAreLive else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "capture_stale",
++        imkReason: privacyStatus.reason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    guard privacyStatus.reason.isEmpty, !privacyStatus.isSensitive else {
++      _ = applyRagImePrivacyStatus(privacyStatus, source: "privacy_probe")
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: privacyStatus.isSensitive ? "privacy_probe_sensitive" : "privacy_probe_unknown",
++        imkReason: privacyStatus.reason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    guard !applyRagImePrivacyStatus(privacyStatus, source: "privacy_probe"),
++          ragImePrivacyDisposition == "allowed" else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "privacy_probe_unknown",
++        imkReason: privacyStatus.reason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++
++    let allowedRequest = request.withForegroundTransaction(
++      foregroundText: request.foregroundText,
++      committedContext: request.committedContext,
++      committedContextHash: request.committedContextHash,
++      captureFailureReason: request.captureFailureReason,
++      privacyDisposition: "allowed"
++    )
++    if let snapshot = accessibilityResult.snapshot {
++      finishRagImeForegroundContextCapture(
++        allowedRequest,
 +        preliminaryFingerprint: preliminaryFingerprint,
 +        snapshot: snapshot,
-+        captureReason: "text_input_client_ok",
-+        inputGeneration: inputGeneration,
-+        sidecarClient: sidecarClient,
-+        captureAttempt: captureAttempt
-+      )
-+      return
-+    }
-+    // The IMK client can disappear immediately after a composition commits.
-+    // request.foregroundText was captured synchronously from that same client
-+    // before the debounce, so keep it as the first fallback while it is fresh.
-+    let fallbackAgeMs = max(0, Int(Date().timeIntervalSince1970 * 1000) - request.foregroundText.capturedAtMs)
-+    if request.foregroundText.available,
-+       request.foregroundText.source == "text_input_client",
-+       !request.foregroundText.surroundingBefore.isEmpty,
-+       fallbackAgeMs <= 700 {
-+      finishRagImeForegroundContextCapture(
-+        request,
-+        preliminaryFingerprint: preliminaryFingerprint,
-+        snapshot: request.foregroundText.withFreshness(fallbackAgeMs),
-+        captureReason: "text_input_client_synchronous_fallback_after_\(imkResult.failureReason)",
-+        inputGeneration: inputGeneration,
-+        sidecarClient: sidecarClient,
-+        captureAttempt: captureAttempt
-+      )
-+      return
-+    }
-+    // Terminal-style clients often expose neither attributed text nor AX text.
-+    // The same-app IME ledger only contains text committed through this input
-+    // method, so it is a bounded and privacy-preserving fallback when the just
-+    // committed text is visibly present in that ledger.
-+    if request.foregroundText.available,
-+       request.foregroundText.source == "ime_commit_ledger",
-+       request.foregroundText.commitTextMatched,
-+       request.foregroundText.sourceAppBundleId == currentApp,
-+       request.foregroundText.inputSourceId == liveInputSourceId,
-+       !request.foregroundText.surroundingBefore.isEmpty,
-+       fallbackAgeMs <= 700 {
-+      finishRagImeForegroundContextCapture(
-+        request,
-+        preliminaryFingerprint: preliminaryFingerprint,
-+        snapshot: request.foregroundText.withFreshness(fallbackAgeMs),
-+        captureReason: "same_app_commit_ledger_after_\(imkResult.failureReason)",
++        captureReason: "accessibility_after_privacy_probe",
 +        inputGeneration: inputGeneration,
 +        sidecarClient: sidecarClient,
 +        captureAttempt: captureAttempt
@@ -7025,63 +7232,27 @@ index c2adf74..b6e3973 100644
 +      return
 +    }
 +
-+    let captureToken = UUID()
-+    ragImeForegroundCaptureToken = captureToken
-+    ragImeForegroundContextQueue.async { [weak self] in
-+      guard let self else { return }
-+      let axResult = self.ragImeForegroundContextResolver.captureFromAccessibility(
-+        captureEpoch: inputGeneration,
-+        sourceAppBundleId: request.frontAppBundleId,
-+        inputSourceId: request.inputSourceId
++    if let fallback = liveRagImeCommitLedgerFallback(for: allowedRequest) {
++      finishRagImeForegroundContextCapture(
++        allowedRequest,
++        preliminaryFingerprint: preliminaryFingerprint,
++        snapshot: fallback,
++        captureReason: "same_app_commit_ledger_after_\(accessibilityResult.failureReason)",
++        inputGeneration: inputGeneration,
++        sidecarClient: sidecarClient,
++        captureAttempt: captureAttempt
 +      )
-+      DispatchQueue.main.async { [weak self] in
-+        guard let self, self.ragImeForegroundCaptureToken == captureToken else { return }
-+        self.ragImeForegroundCaptureToken = nil
-+        guard request.frontendRevision == self.ragImeFrontendRevision,
-+              request.selectionEpoch == self.ragImeSelectionEpoch,
-+              request.frontAppBundleId == self.currentApp,
-+              request.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? "") else {
-+          self.failRagImeForegroundContextCapture(
-+            request,
-+            fingerprint: preliminaryFingerprint,
-+            reason: "capture_stale",
-+            imkReason: imkResult.failureReason,
-+            inputGeneration: inputGeneration
-+          )
-+          return
-+        }
-+        if let snapshot = axResult.snapshot {
-+          self.finishRagImeForegroundContextCapture(
-+            request,
-+            preliminaryFingerprint: preliminaryFingerprint,
-+            snapshot: snapshot,
-+            captureReason: "accessibility_fallback_after_\(imkResult.failureReason)",
-+            inputGeneration: inputGeneration,
-+            sidecarClient: sidecarClient,
-+            captureAttempt: captureAttempt
-+          )
-+        } else {
-+          self.failRagImeForegroundContextCapture(
-+            request,
-+            fingerprint: preliminaryFingerprint,
-+            reason: axResult.failureReason,
-+            imkReason: imkResult.failureReason,
-+            inputGeneration: inputGeneration
-+          )
-+        }
-+      }
++      return
 +    }
-+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ragImeForegroundCaptureTimeoutMs)) { [weak self] in
-+      guard let self, self.ragImeForegroundCaptureToken == captureToken else { return }
-+      self.ragImeForegroundCaptureToken = nil
-+      self.failRagImeForegroundContextCapture(
-+        request,
-+        fingerprint: preliminaryFingerprint,
-+        reason: "accessibility_capture_timeout",
-+        imkReason: imkResult.failureReason,
-+        inputGeneration: inputGeneration
-+      )
-+    }
++    failRagImeForegroundContextCapture(
++      allowedRequest,
++      fingerprint: preliminaryFingerprint,
++      reason: accessibilityResult.failureReason.isEmpty
++        ? "foreground_context_empty"
++        : accessibilityResult.failureReason,
++      imkReason: "",
++      inputGeneration: inputGeneration
++    )
 +  }
 +
 +  func finishRagImeForegroundContextCapture(
@@ -7108,7 +7279,9 @@ index c2adf74..b6e3973 100644
 +    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
 +    let freshnessMs = max(0, nowMs - snapshot.capturedAtMs)
 +    let commitPreview = request.commitTextPreview.trimmingCharacters(in: .whitespacesAndNewlines)
-+    let commitMatched = commitPreview.isEmpty || snapshot.surroundingBefore.contains(commitPreview)
++    let commitMatched = snapshot.source == "ime_commit_ledger"
++      || commitPreview.isEmpty
++      || snapshot.surroundingBefore.contains(commitPreview)
 +    if !commitMatched && captureAttempt == 0 {
 +      traceRagImeFrontendEvent("foreground_context_capture_retry", fields: [
 +        "requestSeq": request.requestSeq,
@@ -7125,6 +7298,29 @@ index c2adf74..b6e3973 100644
 +          captureAttempt: 1
 +        )
 +      }
++      return
++    }
++    if !commitMatched,
++      snapshot.source != "ime_commit_ledger",
++      let fallback = liveRagImeCommitLedgerFallback(for: request) {
++      traceRagImeFrontendEvent("foreground_context_commit_ledger_fallback", fields: [
++        "requestSeq": request.requestSeq,
++        "captureEpoch": inputGeneration,
++        "captureAttempt": captureAttempt,
++        "staleSource": snapshot.source,
++        "staleSnapshotId": snapshot.snapshotId,
++        "fallbackSnapshotId": fallback.snapshotId,
++        "reason": "commit_text_not_observed",
++      ])
++      finishRagImeForegroundContextCapture(
++        request,
++        preliminaryFingerprint: preliminaryFingerprint,
++        snapshot: fallback,
++        captureReason: "same_app_commit_ledger_after_commit_text_not_observed",
++        inputGeneration: inputGeneration,
++        sidecarClient: sidecarClient,
++        captureAttempt: captureAttempt
++      )
 +      return
 +    }
 +    guard commitMatched else {
@@ -7228,6 +7424,30 @@ index c2adf74..b6e3973 100644
 +    )
 +  }
 +
++  func liveRagImeCommitLedgerFallback(
++    for request: RagImeSidecarRequest,
++    maximumAgeMs: Int = 700
++  ) -> RagImeForegroundTextSnapshot? {
++    let snapshot = request.foregroundText
++    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++    let ageMs = max(0, nowMs - snapshot.capturedAtMs)
++    let commitPreview = ragImeCompactWhitespace(request.commitTextPreview)
++    let commitTextStillMatches = snapshot.source == "ime_commit_ledger"
++      || commitPreview.isEmpty
++      || snapshot.surroundingBefore.contains(commitPreview)
++    guard snapshot.available,
++      snapshot.source == "ime_commit_ledger",
++      commitTextStillMatches,
++      snapshot.captureEpoch == request.inputGeneration,
++      snapshot.sourceAppBundleId == request.frontAppBundleId,
++      snapshot.sourceAppBundleId == currentApp,
++      snapshot.inputSourceId == request.inputSourceId,
++      snapshot.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? ""),
++      !snapshot.surroundingBefore.isEmpty,
++      ageMs <= maximumAgeMs else { return nil }
++    return snapshot.withFreshness(ageMs)
++  }
++
 +  func failRagImeForegroundContextCapture(
 +    _ request: RagImeSidecarRequest,
 +    fingerprint: String,
@@ -7247,6 +7467,10 @@ index c2adf74..b6e3973 100644
 +      "reason": reason,
 +      "imkReason": imkReason,
 +    ])
++    ragImeAssistantOverlayController.dismissPendingPrediction(
++      snapshotId: request.panelSessionId,
++      reason: "foreground_context_\(reason)"
++    )
 +    completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: true)
 +  }
 +
@@ -7257,10 +7481,22 @@ index c2adf74..b6e3973 100644
 +    sentAt: Date,
 +    sidecarClient: RagImeSidecarClient
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard(),
++    let privacyBlocked = enforceRagImeFastPrivacyGuard()
++    guard !privacyBlocked,
 +      ragImePrivacyDisposition == "allowed",
 +      request.privacyDisposition == "allowed",
-+      request.frontAppBundleId == currentApp else { return }
++      request.frontAppBundleId == currentApp else {
++      traceRagImeFrontendEvent("sidecar_request_not_sent", fields: [
++        "requestSeq": request.requestSeq,
++        "reason": "send_guard_rejected",
++      ])
++      ragImeAssistantOverlayController.dismissPendingPrediction(
++        snapshotId: request.panelSessionId,
++        reason: "sidecar_send_guard_rejected"
++      )
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
 +    guard fingerprint == ragImeLastRequestFingerprint else {
 +      traceRagImeFrontendEvent("sidecar_response_dropped_stale", fields: [
 +        "requestSeq": request.requestSeq,
@@ -7268,6 +7504,11 @@ index c2adf74..b6e3973 100644
 +        "requestRawInput": request.rawInput,
 +        "requestPreedit": request.preedit,
 +      ])
++      ragImeAssistantOverlayController.dismissPendingPrediction(
++        snapshotId: request.panelSessionId,
++        reason: "sidecar_stale_before_send"
++      )
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +      return
 +    }
 +    DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -7286,16 +7527,19 @@ index c2adf74..b6e3973 100644
 +        print("RAG IME sidecar request failed: \(error)")
 +        DispatchQueue.main.async {
 +          guard let self else { return }
-+          guard !self.enforceRagImeSensitiveFieldGuard() else {
-+            self.completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
-+            return
++          let privacyBlocked = self.enforceRagImeFastPrivacyGuard()
++          self.ragImeAssistantOverlayController.dismissPendingPrediction(
++            snapshotId: request.panelSessionId,
++            reason: "sidecar_transport_failed"
++          )
++          if !privacyBlocked {
++            self.traceRagImeFrontendEvent("sidecar_request_failed", fields: [
++              "requestSeq": request.requestSeq,
++              "rawInput": request.rawInput,
++              "preedit": request.preedit,
++              "error": String(describing: error),
++            ])
 +          }
-+          self.traceRagImeFrontendEvent("sidecar_request_failed", fields: [
-+            "requestSeq": request.requestSeq,
-+            "rawInput": request.rawInput,
-+            "preedit": request.preedit,
-+            "error": String(describing: error),
-+          ])
 +          self.completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +        }
 +      }
@@ -7309,7 +7553,11 @@ index c2adf74..b6e3973 100644
 +    inputGeneration: Int,
 +    sentAt: Date
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard() else {
++    guard !enforceRagImeFastPrivacyGuard() else {
++      ragImeAssistantOverlayController.dismissPendingPrediction(
++        snapshotId: request.panelSessionId,
++        reason: "sidecar_response_privacy_rejected"
++      )
 +      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +      return
 +    }
@@ -7838,6 +8086,10 @@ index c2adf74..b6e3973 100644
 +      "displayCount": response.displayCandidates.count,
 +      "cleared": clearDisplay,
 +    ])
++    ragImeAssistantOverlayController.dismissPendingPrediction(
++      snapshotId: request.panelSessionId,
++      reason: "sidecar_response_\(reason)"
++    )
 +    completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +  }
 +
@@ -8165,14 +8417,15 @@ index c2adf74..b6e3973 100644
 +    ragImePendingRequestFingerprint = ""
 +    ragImeLastRequestFingerprint = ""
 +    cancelRagImePendingContinuation(reason: reason, keyCode: keyCode)
++    ragImeCommitBurstWorkItem?.cancel()
++    ragImeCommitBurstWorkItem = nil
++    ragImeCommitBurstGeneration += 1
++    ragImeCommitBurstDeltaChars = 0
++    ragImeCommitBurstTexts = []
 +    if reason == "front_app_changed" {
 +      ragImeCommittedContext = ""
 +      ragImeCommittedContextUpdatedAt = .distantPast
 +      ragImeLastForegroundTextSnapshot = nil
-+      ragImeCommitBurstWorkItem?.cancel()
-+      ragImeCommitBurstWorkItem = nil
-+      ragImeCommitBurstDeltaChars = 0
-+      ragImeCommitBurstTexts = []
 +    }
 +    traceRagImeFrontendEvent("foreground_transaction_invalidated", fields: [
 +      "reason": reason,
@@ -8320,7 +8573,11 @@ index c2adf74..b6e3973 100644
 +    }
 +    return fields
 +  }
-+
+ 
+-    case .keyDown:
+-      // Let client apps handle Command shortcuts.
+-      if modifiers.contains(.command) {
+-        break
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {
 +    let visibleCandidates = ragImeDisplayCandidates.filter { !ragImeDisplayCandidateIsShortcutOnlyAction($0) }
 +    let candidates = visibleCandidates.map { ragImeDisplayText(for: $0) }
@@ -8328,12 +8585,27 @@ index c2adf74..b6e3973 100644
 +    let labels = visibleCandidates.enumerated().map { index, candidate in
 +      if candidate.sourceType == "status" || candidate.isStatus == true || candidate.selectionAction == "none" {
 +        return ""
-+      }
+       }
 +      return candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
 +    }
 +    return (candidates, comments, labels)
 +  }
-+
+ 
+-      let keyCode = event.keyCode
+-      var keyChars = event.charactersIgnoringModifiers
+-      let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
+-      if let code = keyChars?.first,
+-         (capitalModifiers && !code.isLetter) || (!capitalModifiers && !code.isASCII) {
+-        keyChars = event.characters
+-      }
+-      if let char = keyChars?.first {
+-        let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
+-                                                           shift: modifiers.contains(.shift),
+-                                                           caps: modifiers.contains(.capsLock))
+-        if rimeKeycode != 0 {
+-          let rimeModifiers = SquirrelKeycode.osxModifiersToRime(modifiers: modifiers)
+-          handled = processKey(rimeKeycode, modifiers: rimeModifiers)
+-          rimeUpdate()
 +  func ragImeDisplayCandidateIsShortcutOnlyAction(_ candidate: RagImeDisplayCandidate) -> Bool {
 +    return candidate.selectionAction == "start_active_rag_from_context" || candidate.sourceType == "action"
 +  }
@@ -8402,13 +8674,13 @@ index c2adf74..b6e3973 100644
 +    guard let client else { return nil }
 +    if ragImeUsesChromiumCaretCompatibility(), let anchor = ragImeChromiumAssistantAnchor {
 +      return anchor
-+    }
+     }
+-    return handled
 +    var inputPos = NSRect()
 +    client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputPos)
 +    guard inputPos.width.isFinite, inputPos.height.isFinite, inputPos.origin.x.isFinite, inputPos.origin.y.isFinite else {
 +      return nil
-     }
--    return handled
++    }
 +    guard inputPos.width > 0 || inputPos.height > 0 else {
 +      return nil
 +    }
@@ -8418,12 +8690,6 @@ index c2adf74..b6e3973 100644
 +    }
 +    return anchor
    }
-+
-+  func ragImeUsesChromiumCaretCompatibility() -> Bool {
-+    currentApp == "com.google.Chrome"
-+      || currentApp == "com.microsoft.edgemac"
-+      || currentApp == "com.openai.codex"
-+  }
  
 -  func moveCaret(forward: Bool) -> Bool {
 -    let currentCaretPos = rimeAPI.get_caret_pos(session)
@@ -8439,6 +8705,12 @@ index c2adf74..b6e3973 100644
 -        return false
 -      }
 -      rimeAPI.set_caret_pos(session, currentCaretPos + 1)
++  func ragImeUsesChromiumCaretCompatibility() -> Bool {
++    currentApp == "com.google.Chrome"
++      || currentApp == "com.microsoft.edgemac"
++      || currentApp == "com.openai.codex"
++  }
++
 +  func ragImeCandidateSourceBadgesEnabled() -> Bool {
 +    ragImeBoolEnvEnabled("RAG_IME_CANDIDATE_SOURCE_BADGES", default: true)
 +  }
@@ -8651,13 +8923,13 @@ index c2adf74..b6e3973 100644
 +        }
 +        try manager.moveItem(at: logFile, to: rotatedFile)
 +        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rotatedFile.path)
-       }
-     }
++      }
++    }
 +    if !manager.fileExists(atPath: logFile.path) {
 +      guard manager.createFile(atPath: logFile.path, contents: nil) else {
 +        throw NSError(domain: "RagImeFrontendTrace", code: 1)
-+      }
-+    }
+       }
+     }
 +    try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logFile.path)
    }
  
@@ -8899,7 +9171,7 @@ index c2adf74..b6e3973 100644
 +    contextGroupLevel: String,
 +    completion: @escaping (Bool) -> Void
 +  ) {
-+    guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else {
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else {
 +      completion(false)
 +      return
 +    }
@@ -9041,7 +9313,7 @@ index c2adf74..b6e3973 100644
  
    func onChordTimer(_: Timer) {
      var processedKeys = false
-@@ -359,7 +4441,12 @@ private extension SquirrelInputController {
+@@ -359,7 +5247,12 @@ private extension SquirrelInputController {
      schemaId = ""
  
      if session != 0 {
@@ -9054,11 +9326,11 @@ index c2adf74..b6e3973 100644
      }
    }
  
-@@ -426,15 +4513,39 @@ private extension SquirrelInputController {
+@@ -426,15 +5319,39 @@ private extension SquirrelInputController {
    func rimeConsumeCommittedText() {
      var commitText = RimeCommit.rimeStructInit()
      if rimeAPI.get_commit(session, &commitText) {
-+      let privacyRestricted = enforceRagImeSensitiveFieldGuard()
++      let privacyRestricted = enforceRagImeFastPrivacyGuard()
 +      if privacyRestricted {
 +        _ = discardRagImeSensitiveNativeLearningTransaction()
 +      }
@@ -9096,7 +9368,7 @@ index c2adf74..b6e3973 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +4557,7 @@ private extension SquirrelInputController {
+@@ -446,6 +5363,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -9104,7 +9376,7 @@ index c2adf74..b6e3973 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +4570,14 @@ private extension SquirrelInputController {
+@@ -458,13 +5376,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -9120,7 +9392,7 @@ index c2adf74..b6e3973 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -525,11 +4638,11 @@ private extension SquirrelInputController {
+@@ -525,11 +5444,11 @@ private extension SquirrelInputController {
          comments.append(candidate.comment.map { String(cString: $0) } ?? "")
        }
        var labels = [String]()
@@ -9133,7 +9405,7 @@ index c2adf74..b6e3973 100644
          for i in 0..<pageSize {
            labels.append(select_labels[i].map { String(cString: $0) } ?? "")
          }
-@@ -537,22 +4650,86 @@ private extension SquirrelInputController {
+@@ -537,22 +5456,78 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -9201,47 +9473,23 @@ index c2adf74..b6e3973 100644
 -    guard let client = client else { return }
 +  @discardableResult
 +  func commit(string: String, privacyRestricted: Bool? = nil) -> Bool {
-+    let isPrivacyRestricted = privacyRestricted ?? enforceRagImeSensitiveFieldGuard()
++    let isPrivacyRestricted = privacyRestricted ?? enforceRagImeFastPrivacyGuard()
 +    guard let client = client else { return isPrivacyRestricted }
-+    if isPrivacyRestricted {
-+      client.insertText(string, replacementRange: .empty)
-+      preedit = ""
-+      hidePalettes()
-+      return true
-+    }
-+    let previousContext = syncRagImeCommittedContextFromClient(excludingMarkedText: preedit)
      client.insertText(string, replacementRange: .empty)
-+    ragImeCommittedContext = actualRagImeCommittedContextFromClient(fallback: [previousContext, string].filter { !$0.isEmpty }.joined(separator: " "))
-+    ragImeCommittedContextUpdatedAt = ragImeCommittedContext.isEmpty ? .distantPast : Date()
-+    let captureEpoch = ragImeInputGeneration + 1
-+    let captureApp = currentApp
-+    let captureInputSource = SquirrelInstaller.currentInputSourceID() ?? ""
-+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(40)) { [weak self] in
-+      guard let self else { return }
-+      let result = self.ragImeForegroundContextResolver.captureFromTextInputClient(
-+        client,
-+        captureEpoch: captureEpoch,
-+        sourceAppBundleId: captureApp,
-+        inputSourceId: captureInputSource
-+      )
-+      if let snapshot = result.snapshot {
-+        self.ragImeLastForegroundTextSnapshot = snapshot
-+        self.traceRagImeFrontendEvent("foreground_context_captured_after_commit", fields: [
-+          "captureEpoch": captureEpoch,
-+          "source": snapshot.source,
-+          "surroundingBeforeChars": snapshot.surroundingBefore.count,
-+        ])
-+      }
++    if ragImePrivacyDisposition != "sensitive" {
++      // The physical commit path only mutates local state. IMK selectedRange /
++      // attributedSubstring and all Accessibility IPC are deferred or omitted.
++      rememberRagImeCommittedContext(string)
++      scheduleRagImeCommitBurstPrediction(committedText: string)
++      observeRagImePostCommitContinuationIfReady()
 +    }
-+    scheduleRagImeCommitBurstPrediction(committedText: string)
-+    observeRagImePostCommitContinuationIfReady()
      preedit = ""
      hidePalettes()
-+    return false
++    return isPrivacyRestricted
    }
  
    func show(preedit: String, selRange: NSRange, caretPos: Int) {
-@@ -578,15 +4755,38 @@ private extension SquirrelInputController {
+@@ -578,15 +5553,35 @@ private extension SquirrelInputController {
    }
  
    // swiftlint:disable:next function_parameter_count
@@ -9276,19 +9524,18 @@ index c2adf74..b6e3973 100644
 +        let mouse = NSEvent.mouseLocation
 +        panel.position = NSRect(x: mouse.x, y: mouse.y, width: 0, height: 20)
 +      }
-     }
++    }
 +    panel.inputController = self
 +    panel.update(preedit: preedit, selRange: selRange, caretPos: caretPos, candidates: candidates, comments: comments, labels: labels,
 +                 highlighted: highlighted, page: page, lastPage: lastPage, update: true)
 +    if preedit.isEmpty && candidates.isEmpty {
 +      ragImeReuseChromiumPanelPosition = false
 +      ragImeChromiumAssistantAnchor = nil
-+    }
+     }
    }
  
-   private func handleASCIIModeToggle(_ notification: Notification) {
 diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
-index a9e2dae..5c3a32c 100644
+index a9e2dae29a1029bb1659f89ba97b888fc34f7183..5c3a32c6fc0307b7346b9a7718bc0a2eb9fb3779 100644
 --- a/sources/SquirrelPanel.swift
 +++ b/sources/SquirrelPanel.swift
 @@ -57,6 +57,21 @@ final class SquirrelPanel: NSPanel {

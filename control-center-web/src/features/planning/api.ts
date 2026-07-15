@@ -12,6 +12,7 @@ export const planningQueryKeys = {
 export const planningMutationPathIds = {
   preview: 'planning.mutation.preview',
   taskSave: 'planning.task.save',
+  goalSave: 'planning.goal.save',
   taskAction: 'planning.task.action',
   taskEventUndo: 'planning.taskEvent.undo',
   rollback: 'planning.mutation.rollback',
@@ -50,11 +51,11 @@ export function usePlanningMutationBoundary() {
     blockedReason = '',
   ): MutationAvailability => {
     if (capabilities.isPending) return { state: 'checking' };
-    if (capabilities.error) return { state: 'unsupported', reason: '无法读取 Control API 能力，请刷新后重试。' };
+    if (capabilities.error) return { state: 'unsupported', reason: '无法确认当前操作是否可用，请刷新后重试。' };
     const flags = capabilities.data?.features ?? {};
     const routeIds = new Set((capabilities.data?.routeIds ?? []) as readonly string[]);
     if (!flags.managementWorkContract || !flags.planningWorkContract || pathIds.some((pathId) => !routeIds.has(pathId))) {
-      return { state: 'unsupported', reason: '当前 Control API 未提供 Planning WorkContract；没有请求被发送。' };
+      return { state: 'unsupported', reason: '当前版本还不能安全保存规划内容；没有请求被发送。' };
     }
     if (blockedReason) return { state: 'blocked', reason: blockedReason };
     return { state: 'available' };

@@ -141,6 +141,88 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         )
         self.assertNotIn('"path"', receipt_block)
 
+    def test_knowledge_picker_streams_only_validated_files_to_the_fixed_loopback_route(self) -> None:
+        pick_files_block = _required_match(
+            r"private func pickFiles\(.*?\n    \}\n\n    private func pasteImages",
+            self.native_bridge,
+        )
+        self.assertIn('"knowledge-import"', pick_files_block)
+        self.assertIn('requiredString("kbId", in: payload)', pick_files_block)
+        self.assertNotIn('requiredString("path", in: payload)', pick_files_block)
+
+        validate_block = _required_match(
+            r"private func validatedKnowledgeDocument\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn(".isRegularFileKey", validate_block)
+        self.assertIn(".isSymbolicLinkKey", validate_block)
+        self.assertIn("200 * 1024 * 1024", validate_block)
+
+        request_block = _required_match(
+            r"private func knowledgeDocumentImportRequest\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn('components.host = "127.0.0.1"', request_block)
+        self.assertIn("components.port = 8766", request_block)
+        self.assertIn('components.path = "/api/knowledge-bases/\\(kbId)/documents/import"', request_block)
+        self.assertIn('forHTTPHeaderField: "Content-Type"', request_block)
+        self.assertIn('forHTTPHeaderField: "Content-Length"', request_block)
+
+        response_block = _required_match(
+            r"private func validatedKnowledgeDocumentResponse\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn('"rag-ime.knowledge-document-import.v1"', response_block)
+        for key in ("kbId", "documentId", "fileName", "byteSize", "sha256", "status"):
+            self.assertIn(f'"{key}"', response_block)
+        self.assertNotIn('"path"', response_block)
+
+    def test_knowledge_asset_reader_is_id_bound_bounded_and_returns_a_blob(self) -> None:
+        read_block = _required_match(
+            r"private func readKnowledgeAsset\(.*?\n    \}",
+            self.native_bridge,
+        )
+        for key in ("kbId", "fileId", "assetId"):
+            self.assertIn(f'"{key}"', read_block)
+        self.assertIn('pathId: "knowledgeBases.asset.get"', read_block)
+        self.assertNotIn('requiredString("path"', read_block)
+        self.assertNotIn('requiredString("url"', read_block)
+
+        validate_block = _required_match(
+            r"private func validatedKnowledgeAssetResponse\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn("25 * 1024 * 1024", validate_block)
+        for mime_type in ("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"):
+            self.assertIn(f'"{mime_type}"', validate_block)
+        self.assertIn('forHTTPHeaderField: "ETag"', validate_block)
+        self.assertIn("SHA256.hash(data: data)", validate_block)
+
+        send_block = _required_match(
+            r"private func sendKnowledgeBinaryToWeb\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn("new Blob", send_block)
+        self.assertNotIn('"path"', send_block)
+
+        source_block = _required_match(
+            r"private func readKnowledgeDocumentSource\(.*?\n    \}",
+            self.native_bridge,
+        )
+        for key in ("kbId", "fileId"):
+            self.assertIn(f'"{key}"', source_block)
+        self.assertIn('pathId: "knowledgeBases.document.source"', source_block)
+        self.assertNotIn('requiredString("path"', source_block)
+        self.assertNotIn('requiredString("url"', source_block)
+
+        source_validate_block = _required_match(
+            r"private func validatedKnowledgeSourceResponse\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn("50 * 1024 * 1024", source_validate_block)
+        self.assertIn('"application/pdf"', source_validate_block)
+        self.assertIn("SHA256.hash(data: data)", source_validate_block)
+
     def test_external_action_request_and_receipt_share_hash_bound_fields(self) -> None:
         self.assertEqual(
             _typescript_interface_fields(self.transport, "ExternalActionRequest"),
@@ -175,11 +257,23 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         self.assertIn('"routeIds": NativeRoutePolicy.knownPathIds.sorted()', capability_block)
         self.assertIn('"native": [', capability_block)
         for key in (
+            "agentPersonaCreate",
+            "piProviderCredentials",
             "managementWorkContract",
+            "inputLexiconWorkContract",
             "planningWorkContract",
             "knowledgeDatabaseWorkContract",
+            "documentKnowledgeLibrary",
+            "knowledgeDocumentImport",
+            "knowledgeParserStatus",
+            "knowledgeAssetRead",
+            "knowledgeDocumentSourceRead",
+            "historyWorkContract",
+            "configurationSettingsWorkContract",
             "memoryGraphRead",
             "memoryEntityRead",
+            "memoryEdit",
+            "memoryBookArchiveWorkContract",
         ):
             self.assertIn(f'"{key}": true', capability_block)
 

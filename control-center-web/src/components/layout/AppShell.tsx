@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { ConnectionIndicator, GlobalNoticeRegion } from '@/components/feedback';
 import { DesktopNavigation, MobileBottomNavigation, MobileRouteMenu } from './Navigation';
 import { ThemeMenu } from './ThemeMenu';
@@ -14,6 +14,10 @@ function getInitialCollapsed(): boolean {
 export function AppShell({ children }: { children: ReactNode }) {
   const activeRoute = useHashRoute();
   const [collapsed, setCollapsedState] = useState(getInitialCollapsed);
+
+  useLayoutEffect(() => {
+    window.scrollTo({ left: 0, top: 0, behavior: 'auto' });
+  }, [activeRoute.id]);
 
   const setCollapsed = (next: boolean) => {
     setCollapsedState(next);
@@ -40,7 +44,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div className="shell-topbar__title" key={activeRoute.id}>
             <h1>{activeRoute.label}</h1>
-            <span>{activeRoute.group === 'system' ? 'SYSTEM' : activeRoute.group === 'knowledge' ? 'KNOWLEDGE' : 'WORKSPACE'}</span>
+            <span>{activeRoute.group === 'system' ? '系统' : activeRoute.group === 'knowledge' ? '知识与记录' : '工作台'}</span>
           </div>
           <div className="shell-topbar__actions">
             <ConnectionIndicator />

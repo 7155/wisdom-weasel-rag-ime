@@ -5,6 +5,7 @@ struct VoiceASRHotwordConfig: Codable, Equatable {
     static let maxWordCount = 32
     static let minCharactersPerWord = 2
     static let maxCharactersPerWord = 9
+    static let allowedTechnicalSeparators = CharacterSet(charactersIn: ".-_+#/&")
     static let disabled = VoiceASRHotwordConfig(
         schemaVersion: schemaVersion,
         enabled: false,
@@ -32,7 +33,9 @@ struct VoiceASRHotwordConfig: Codable, Equatable {
                 throw VoiceHotwordError.invalidLength(word)
             }
             guard word.unicodeScalars.allSatisfy({ scalar in
-                CharacterSet.letters.contains(scalar) || CharacterSet.whitespaces.contains(scalar)
+                CharacterSet.alphanumerics.contains(scalar)
+                    || CharacterSet.whitespaces.contains(scalar)
+                    || allowedTechnicalSeparators.contains(scalar)
             }) else {
                 throw VoiceHotwordError.invalidCharacters(word)
             }
@@ -109,7 +112,7 @@ enum VoiceHotwordError: LocalizedError, Equatable {
         case .invalidLength(let word):
             return "热词“\(word)”需为 2 至 9 个字符"
         case .invalidCharacters(let word):
-            return "热词“\(word)”只能包含中英文字母与空格"
+            return "热词“\(word)”仅支持中英文、数字、空格及常用技术分隔符"
         case .tooManyWords(let limit):
             return "一次最多启用 \(limit) 个热词"
         }

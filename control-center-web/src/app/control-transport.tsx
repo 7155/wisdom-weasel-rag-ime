@@ -150,7 +150,7 @@ function previewResponse(pathId: ControlPathId): unknown {
           previewTool('voice.input', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply', 'provider_rollback']),
           previewTool('planning.tasks', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
           previewTool('ime.memory', '记忆与工具书', '渐进查询 Memory Book，并通过可审阅草案维护长期记忆', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
-          previewTool('ime.knowledge', '知识检索', '执行有来源的本地 RAG 召回并检查深度检索路由', 'knowledge', 'R0', ['recall', 'deep_recall', 'route_status']),
+          previewTool('ime_knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
         ],
       };
     case 'planning.dashboard':
@@ -160,6 +160,61 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'memory.pages':
     case 'history.page':
       return { ok: true, items: [], nextCursor: '' };
+    case 'knowledgeBases.list':
+      return { ok: true, items: [previewKnowledgeBase()] };
+    case 'knowledgeBases.get':
+    case 'knowledgeBases.create':
+    case 'knowledgeBases.update':
+      return { ok: true, base: previewKnowledgeBase() };
+    case 'knowledgeBases.documents.list':
+      return {
+        ok: true,
+        items: [
+          {
+            id: 'file:preview-yuxi',
+            baseId: 'kb:preview-project-docs',
+            fileName: 'agent-runtime-notes.md',
+            mimeType: 'text/markdown',
+            byteSize: 48_320,
+            status: 'ready',
+            stage: 'ready',
+            chunkCount: 36,
+            parserProvider: 'builtin',
+            revision: 1,
+            updatedAtMs: Date.now() - 180_000,
+          },
+        ],
+      };
+    case 'knowledgeBases.jobs.list':
+      return { ok: true, items: [] };
+    case 'knowledgeBases.search':
+      return {
+        ok: true,
+        items: [
+          {
+            chunkId: 'chunk:preview-agent-loop',
+            documentId: 'file:preview-yuxi',
+            documentName: 'agent-runtime-notes.md',
+            heading: 'Agent Tool 边界',
+            content: '文档知识库通过只读 Tool 按需检索，不会进入输入法候选热路径。',
+            score: 0.92,
+            citation: { page: 3, heading: 'Agent Tool 边界' },
+          },
+        ],
+      };
+    case 'knowledgeBases.open':
+      return { ok: true, items: [] };
+    case 'knowledgeWorker.health':
+      return { ok: true, available: true, status: 'ready', readyDocumentCount: 1 };
+    case 'knowledgeParsers.list':
+      return {
+        ok: true,
+        items: [
+          { id: 'auto', name: '自动', available: true },
+          { id: 'builtin', name: '内置解析', available: true },
+          { id: 'mineru_local_http', name: 'MinerU', available: false, status: 'disabled' },
+        ],
+      };
     case 'configuration.settings':
       return { ok: true, configured: true, settings: {} };
     case 'configuration.schema':
@@ -167,6 +222,21 @@ function previewResponse(pathId: ControlPathId): unknown {
     default:
       return { ok: true, schemaVersion: 'rag-ime.control-preview.v1' };
   }
+}
+
+function previewKnowledgeBase(): Record<string, unknown> {
+  return {
+    id: 'kb:preview-project-docs',
+    name: 'Agent Runtime 资料',
+    description: '独立加载的项目文档与上游源码笔记。',
+    documentCount: 1,
+    chunkCount: 36,
+    status: 'ready',
+    agentEnabled: true,
+    parserMode: 'auto',
+    revision: 1,
+    updatedAtMs: Date.now() - 120_000,
+  };
 }
 
 function previewSession(

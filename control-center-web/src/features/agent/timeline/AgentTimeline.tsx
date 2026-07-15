@@ -1,4 +1,4 @@
-import { ArrowUpRight, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Sparkles, TriangleAlert } from 'lucide-react';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/primitives';
@@ -7,6 +7,7 @@ import { ActivitySummary } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
 import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
 import { useAgentLiveStore } from '../state/live-store';
+import { publicAgentErrorText } from '../public-error';
 
 export function AgentTimeline({
   sessionId,
@@ -19,13 +20,22 @@ export function AgentTimeline({
   onSuggestion: (value: string) => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
 }) {
-  const turnOrder = useAgentLiveStore((state) => state.projections[sessionId]?.turnOrder ?? emptyIds);
+  const turnOrder = useAgentLiveStore(useShallow((state) => {
+    const projection = state.projections[sessionId];
+    if (!projection) return emptyIds;
+    return projection.turnOrder.filter((turnId) => {
+      const turn = projection.turnsById[turnId];
+      return Boolean(turn && (turn.messageIds.length > 0 || turn.activityIds.length > 0));
+    });
+  }));
   if (turnOrder.length === 0) return <AgentWelcome persona={persona} onSuggestion={onSuggestion} />;
   return (
     <div className="agent-timeline" aria-label="对话时间线">
       <Virtuoso
+        key={sessionId}
         data={turnOrder}
         followOutput="smooth"
+        initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         increaseViewportBy={{ top: 500, bottom: 500 }}
         itemContent={(_index, turnId) => (
           <AgentTurn
@@ -65,19 +75,38 @@ export function AgentTurn({
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.activityIds ?? []).map((id) => projection?.activitiesById[id]).filter(Boolean);
   }));
+  const blockFailure = useAgentLiveStore((state) => {
+    const projection = state.projections[sessionId];
+    const messageIds = projection?.turnsById[turnId]?.messageIds ?? [];
+    for (const messageId of messageIds) {
+      const message = projection?.messagesById[messageId];
+      if (message?.role !== 'assistant') continue;
+      const errorBlock = message.blocks.find((block) => block.type === 'error');
+      const messageText = text(errorBlock?.data.message ?? errorBlock?.data.summary);
+      if (messageText) return messageText;
+    }
+    return '';
+  });
   if (!turn) return null;
+  const rawFailure = turn.failure || blockFailure;
+  const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user />)}
-      {assistantIds.length > 0 || activities.length > 0 ? (
+      {assistantIds.length > 0 || activities.length > 0 || failure ? (
         <div className="agent-assistant-turn">
           <PersonaAvatar persona={persona} presence={presence} />
           <div className="agent-assistant-turn__body">
             <header><strong>{persona?.displayName ?? '智鼬'}</strong><span>{turnStatusLabel(turn.status)}</span></header>
             <ActivitySummary activities={activities} onApprovalDecision={onApprovalDecision} />
             {assistantIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} />)}
-            {turn.failure ? <p className="agent-turn__failure">{turn.failure}</p> : null}
+            {failure ? (
+              <div className="agent-turn__failure" role="alert">
+                <TriangleAlert size={17} />
+                <span><strong>本轮未完成</strong><small>{failure}</small></span>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -88,14 +117,15 @@ export function AgentTurn({
 function MessageView({ sessionId, messageId, user = false }: { sessionId: string; messageId: string; user?: boolean }) {
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
+  const visibleBlocks = user ? message.blocks : message.blocks.filter((block) => block.type !== 'error');
   return user ? (
     <div className="agent-user-message" data-status={message.status}>
-      <AgentBlocks blocks={message.blocks} />
+      <AgentBlocks blocks={visibleBlocks} />
       {message.attachments.length ? <small>{message.attachments.length} 个附件</small> : null}
     </div>
   ) : (
     <div className="agent-assistant-message" data-status={message.status}>
-      <AgentBlocks blocks={message.blocks} />
+      <AgentBlocks blocks={visibleBlocks} />
       {message.status === 'streaming' ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
     </div>
   );
@@ -130,3 +160,7 @@ function turnStatusLabel(status: string): string {
 }
 
 const emptyIds: string[] = [];
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}

@@ -2,7 +2,15 @@ import { useMutation } from '@tanstack/react-query';
 import { Check, CircleDashed, RotateCcw, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/primitives';
-import { InlineNotice, StatusBadge, asRecord, booleanValue, numberValue, stringValue } from './management-ui';
+import {
+  InlineNotice,
+  StatusBadge,
+  asRecord,
+  booleanValue,
+  numberValue,
+  publicErrorText,
+  stringValue,
+} from './management-ui';
 
 export type MutationAvailability = {
   state: 'checking' | 'available' | 'blocked' | 'unsupported';
@@ -92,7 +100,7 @@ export function ManagementMutationWorkflow<Context>({
       applied: ManagementWorkReceipt;
       boundPreview: ManagementWorkPreview<Context>;
     }) => {
-      if (!onRollback) throw new Error('此收据没有可用的回滚边界。');
+      if (!onRollback) throw new Error('这次操作当前不能撤销。');
       return onRollback(applied, boundPreview);
     },
     onSuccess: (nextReceipt) => {
@@ -114,8 +122,8 @@ export function ManagementMutationWorkflow<Context>({
   const steps = useMemo(() => [
     { id: 'preview', label: '预览' },
     { id: 'approval', label: '确认' },
-    { id: 'receipt', label: '收据' },
-    { id: 'rolled-back', label: '回滚' },
+    { id: 'receipt', label: '完成' },
+    { id: 'rolled-back', label: '撤销' },
   ] as const, []);
   const stageIndex = stage === 'idle' ? -1 : steps.findIndex((step) => step.id === stage);
   const actionable = availability.state === 'available';
@@ -125,7 +133,7 @@ export function ManagementMutationWorkflow<Context>({
     <div className="mgmt-workflow" data-availability={availability.state} data-stage={stage}>
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{risk}</span>
+          <span className="mgmt-workflow__risk">{riskLabel(risk)}</span>
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
@@ -137,23 +145,23 @@ export function ManagementMutationWorkflow<Context>({
             onClick={() => previewMutation.mutate()}
             size="small"
           >
-            {availability.state === 'unsupported' ? '后端暂不支持' : availability.state === 'blocked' ? '尚不可预览' : '预览操作'}
+            {availability.state === 'unsupported' ? '当前不可用' : availability.state === 'blocked' ? '尚不可预览' : '预览操作'}
           </Button>
         ) : null}
       </div>
 
       {availability.state !== 'available' && availability.state !== 'checking' && availability.reason ? (
-        <InlineNotice title={availability.state === 'unsupported' ? '能力未开放' : '等待必要信息'} tone="warning">
+        <InlineNotice title={availability.state === 'unsupported' ? '暂不可用' : '等待必要信息'} tone="warning">
           {availability.reason}
         </InlineNotice>
       ) : null}
 
       {previewMutation.error ? (
-        <InlineNotice title="预览失败" tone="danger">{asError(previewMutation.error).message}</InlineNotice>
+        <InlineNotice title="预览失败" tone="danger">{publicErrorText(previewMutation.error)}</InlineNotice>
       ) : null}
 
       {stage !== 'idle' ? (
-        <ol className="mgmt-workflow__steps" aria-label="写操作进度">
+        <ol className="mgmt-workflow__steps" aria-label="操作进度">
           {steps.map((step, index) => (
             <li data-state={index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'pending'} key={step.id}>
               {index < stageIndex ? <Check size={13} /> : index === stageIndex ? <CircleDashed size={13} /> : <i />}
@@ -168,10 +176,10 @@ export function ManagementMutationWorkflow<Context>({
           <strong>{preview.summary.title}</strong>
           <ul>{preview.summary.items.map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="mgmt-workflow__binding">
-            <span>绑定 {shortHash(preview.payloadSha256)}</span>
+            <span>预览已校验</span>
             <span>{previewExpired ? '预览已过期' : `有效至 ${formatTimestamp(preview.expiresAtMs)}`}</span>
           </div>
-          {previewExpired ? <InlineNotice title="需要重新预览" tone="warning">这份绑定已过期，不会进入确认。</InlineNotice> : null}
+          {previewExpired ? <InlineNotice title="需要重新预览" tone="warning">这份预览已过期，不会进入确认。</InlineNotice> : null}
           <div className="mgmt-workflow__buttons">
             <Button onClick={() => reset()} size="small" variant="quiet">取消</Button>
             <Button disabled={previewExpired} onClick={() => setStage('approval')} size="small" variant="primary">进入确认</Button>
@@ -181,7 +189,7 @@ export function ManagementMutationWorkflow<Context>({
 
       {stage === 'approval' && preview ? (
         <div className="mgmt-workflow__panel">
-          <strong>确认已核对服务端预览</strong>
+          <strong>确认已核对操作预览</strong>
           <label className="mgmt-workflow__confirm">
             <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />
             <span>只执行上方已绑定的变更</span>
@@ -202,7 +210,7 @@ export function ManagementMutationWorkflow<Context>({
       ) : null}
 
       {applyMutation.error ? (
-        <InlineNotice title="应用失败" tone="danger">{asError(applyMutation.error).message}</InlineNotice>
+        <InlineNotice title="应用失败" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice>
       ) : null}
 
       {stage === 'receipt' && receipt && preview ? (
@@ -214,7 +222,7 @@ export function ManagementMutationWorkflow<Context>({
               onClick={() => rollbackMutation.mutate({ applied: receipt, boundPreview: preview })}
               size="small"
             >
-              回滚
+              撤销这次操作
             </Button>
           ) : (
             <Button onClick={() => reset()} size="small" variant="quiet">完成</Button>
@@ -223,7 +231,7 @@ export function ManagementMutationWorkflow<Context>({
       ) : null}
 
       {rollbackMutation.error ? (
-        <InlineNotice title="回滚失败" tone="danger">{asError(rollbackMutation.error).message}</InlineNotice>
+        <InlineNotice title="撤销失败" tone="danger">{publicErrorText(rollbackMutation.error)}</InlineNotice>
       ) : null}
 
       {stage === 'rolled-back' && rollbackReceipt ? (
@@ -261,13 +269,13 @@ export function UnsupportedWorkflow({
     <div className="mgmt-workflow" data-availability="unsupported" data-stage="idle">
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{risk}</span>
+          <span className="mgmt-workflow__risk">{riskLabel(risk)}</span>
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
-        <Button disabled size="small">后端暂不支持</Button>
+        <Button disabled size="small">当前不可用</Button>
       </div>
-      <InlineNotice title="能力未开放" tone="warning">{reason}</InlineNotice>
+      <InlineNotice title="暂不可用" tone="warning">{reason}</InlineNotice>
     </div>
   );
 }
@@ -292,13 +300,13 @@ export function parseManagementWorkPreview<Context>(
   const risk = stringValue(summary.risk);
   if (payload.ok !== true) throw new Error(stringValue(payload.message, stringValue(payload.error, '服务端拒绝生成预览。')));
   if (!previewToken || !payloadSha256 || pathId !== expectedPathId || requiredConfirm !== 'apply' || !expiresAtMs) {
-    throw new Error('服务端返回了不完整的写操作预览。');
+    throw new Error('这份操作预览暂时无法确认，请刷新后重试。');
   }
   if (!Number.isInteger(expectedRuntimeRevision) || expectedRuntimeRevision < 0) {
-    throw new Error('服务端预览缺少绑定的运行版本。');
+    throw new Error('这份操作预览已经失效，请刷新后重试。');
   }
   if (!stringValue(summary.title) || items.length === 0 || !['R1', 'R2', 'R3'].includes(risk)) {
-    throw new Error('服务端预览缺少可核对的影响摘要。');
+    throw new Error('这份操作预览没有可核对的影响，请重试。');
   }
   return {
     context,
@@ -309,11 +317,26 @@ export function parseManagementWorkPreview<Context>(
     previewToken,
     requiredConfirm,
     summary: {
-      title: stringValue(summary.title),
-      items,
+      title: publicWorkflowText(stringValue(summary.title), '确认本次变更'),
+      items: publicWorkflowItems(items),
       risk: risk as 'R1' | 'R2' | 'R3',
     },
   };
+}
+
+const internalWorkflowText = /(?:pathId|operation(?:Id)?|receipt(?:Id)?|rollbackToken|payloadSha|runtimeRevision|previewToken|expectedRevision|schema|policy(?:Id)?|profile(?:Id|Version)?|\bID\b|sha256:|https?:\/\/|\/api\/)/i;
+
+function publicWorkflowText(value: string, fallback: string): string {
+  const text = value.trim();
+  if (!text || text.length > 220 || internalWorkflowText.test(text)) return fallback;
+  return text;
+}
+
+function publicWorkflowItems(items: readonly string[]): string[] {
+  const visible = items
+    .map((item) => publicWorkflowText(item, ''))
+    .filter(Boolean);
+  return visible.length ? visible : ['只会应用你在页面中确认的内容。'];
 }
 
 export function parseManagementWorkReceipt(
@@ -328,11 +351,11 @@ export function parseManagementWorkReceipt(
   const rollbackAvailable = booleanValue(payload.rollbackAvailable);
   const rollbackToken = stringValue(payload.rollbackToken);
   const appliedAtMs = numberValue(payload.appliedAtMs);
-  if (payload.ok !== true) throw new Error(stringValue(payload.message, stringValue(payload.error, '服务端拒绝写操作。')));
+  if (payload.ok !== true) throw new Error(stringValue(payload.message, stringValue(payload.error, '服务拒绝了这次操作。')));
   if (!receiptId || pathId !== expectedPathId || payloadSha256 !== expectedPayloadSha256 || !appliedAtMs) {
-    throw new Error('服务端返回了无法验证的写操作收据。');
+    throw new Error('这次操作结果暂时无法确认，请刷新后重试。');
   }
-  if (rollbackAvailable && !rollbackToken) throw new Error('可回滚收据缺少 rollbackToken。');
+  if (rollbackAvailable && !rollbackToken) throw new Error('这次操作暂时无法安全撤销，请刷新后重试。');
   return {
     appliedAtMs,
     pathId,
@@ -356,9 +379,9 @@ function WorkReceipt({
   return (
     <div className="mgmt-workflow__receipt">
       <div>
-        <StatusBadge label={rolledBack ? '已回滚' : '已应用'} tone={rolledBack ? 'info' : 'success'} />
-        <strong>{receipt.receiptId}</strong>
-        <span>{receipt.pathId} · {shortHash(receipt.payloadSha256)}</span>
+        <StatusBadge label={rolledBack ? '已撤销' : '已应用'} tone={rolledBack ? 'info' : 'success'} />
+        <strong>{rolledBack ? '已恢复到操作前' : '本机操作已记录'}</strong>
+        <span>{rolledBack ? '原操作不再生效' : receipt.rollbackAvailable ? '可以撤销' : '此操作不可撤销'}</span>
         <time>{formatTimestamp(receipt.appliedAtMs)}</time>
       </div>
       {children}
@@ -366,15 +389,10 @@ function WorkReceipt({
   );
 }
 
-function shortHash(value: string): string {
-  const normalized = value.startsWith('sha256:') ? value.slice(7) : value;
-  return `sha256:${normalized.slice(0, 10)}`;
-}
-
 function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString('zh-CN', { hour12: false });
 }
 
-function asError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value));
+function riskLabel(value: 'R1' | 'R2' | 'R3'): string {
+  return ({ R1: '需确认', R2: '较高风险', R3: '高风险' } as const)[value];
 }

@@ -9,28 +9,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .agent_tool_ids import CONTROL_TOOL_IDS
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
 from .contracts.json_schema import validate_contract
 from .management_service import ManagementService, page_request
 from .settings_schema import default_settings, flatten_settings, settings_schema
 
-
-CONTROL_TOOL_IDS = (
-    "ime_overview",
-    "ime_input",
-    "ime_voice",
-    "ime_planning",
-    "ime_memory",
-    "ime_knowledge",
-    "ime_models",
-    "ime_runtime",
-    "ime_configuration",
-    "ime_agents",
-    "workspace_list",
-    "workspace_read",
-    "workspace_shell",
-)
 
 _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
@@ -117,9 +102,9 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "ime_knowledge",
         "domain": "knowledge",
-        "displayName": "知识检索",
-        "description": "执行有来源的本地 RAG 召回并检查深度检索路由",
-        "operations": ("recall", "deep_recall", "route_status"),
+        "displayName": "文档知识库",
+        "description": "渐进检索用户明确加载并授权给 Agent 的文档知识库",
+        "operations": ("list_bases", "search", "find", "open", "status"),
         "resultPresentation": "citation",
     },
     {
@@ -308,6 +293,7 @@ class ControlToolGateway:
         core: object,
         project: str,
         facade: object | None = None,
+        knowledge_client: object | None = None,
         workspace_harness: WorkspaceHarness | None = None,
         delegation: object | None = None,
         collaboration: object | None = None,
@@ -317,6 +303,7 @@ class ControlToolGateway:
         self.core = core
         self.project = project
         self.facade = facade
+        self.knowledge_client = knowledge_client
         self.workspace_harness = workspace_harness or WorkspaceHarness()
         self.delegation = delegation
         self.collaboration = collaboration
@@ -2933,38 +2920,105 @@ class ControlToolGateway:
         }
 
     def _knowledge(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
-        if operation == "route_status":
-            payload = self._facade_call("knowledge_workbench_route_status")
-            return {"summary": "已读取知识检索路由状态", "route": _safe_payload(payload)}
-        query = _bounded_text(args.get("query"), maximum=500)
-        if not query:
-            raise ValueError("query is required for knowledge recall")
-        requested_project = _bounded_text(args.get("project"), maximum=160)
-        if requested_project and requested_project != self.project:
+        if operation == "status" and self.knowledge_client is None:
             return {
-                "summary": "当前 Session 未授权跨项目检索",
-                "query": query,
-                "count": 0,
-                "items": [],
+                "summary": "文档知识库当前不可用",
+                "available": False,
+                "state": "unavailable",
+                "reason": "knowledge_client_not_configured",
             }
-        limit = _bounded_int(
-            args.get("limit"),
-            default=12 if operation == "deep_recall" else 6,
-            minimum=1,
-            maximum=16,
-        )
-        retriever = getattr(self.core, "retrieve_memories", None)
-        if not callable(retriever):
-            raise ValueError("knowledge recall is unavailable for this core")
-        memories = retriever(current_input=query, project=self.project, top_k=limit)
-        items = [_memory_evidence(item) for item in list(memories)[:limit]]
-        return {
-            "summary": f"本地检索召回 {len(items)} 条证据",
-            "query": query,
-            "depth": "deep" if operation == "deep_recall" else "standard",
-            "count": len(items),
-            "items": items,
-        }
+        client = self.knowledge_client
+        if client is None:
+            raise ValueError("document knowledge library is unavailable")
+
+        payload: dict[str, object] = {}
+        if operation in {"search", "find", "open"}:
+            base_id = _bounded_text(args.get("kbId") or args.get("baseId"), maximum=240)
+            if not base_id:
+                raise ValueError(f"kbId is required for ime_knowledge.{operation}")
+            payload["kbId"] = base_id
+        if operation == "search":
+            query = _bounded_text(args.get("query"), maximum=500)
+            if not query:
+                raise ValueError("query is required for ime_knowledge.search")
+            search_mode = _bounded_text(args.get("searchMode"), maximum=24) or "hybrid"
+            if search_mode not in {"hybrid", "lexical", "dense"}:
+                raise ValueError("searchMode must be hybrid, lexical, or dense")
+            payload.update(
+                {
+                    "query": query,
+                    "topK": _bounded_int(args.get("topK"), default=6, minimum=1, maximum=12),
+                    "searchMode": search_mode,
+                }
+            )
+            file_name = _bounded_text(args.get("fileName"), maximum=240)
+            if file_name:
+                payload["fileName"] = file_name
+        elif operation == "find":
+            file_id = _bounded_text(args.get("fileId"), maximum=240)
+            raw_patterns = args.get("patterns")
+            if isinstance(raw_patterns, str):
+                patterns = [_bounded_text(raw_patterns, maximum=240)]
+            elif isinstance(raw_patterns, (list, tuple)):
+                patterns = [_bounded_text(item, maximum=240) for item in raw_patterns[:10]]
+            else:
+                patterns = []
+            patterns = [item for item in patterns if item]
+            if not file_id:
+                raise ValueError("fileId is required for ime_knowledge.find")
+            if not patterns:
+                raise ValueError("patterns are required for ime_knowledge.find")
+            payload.update(
+                {
+                    "fileId": file_id,
+                    "patterns": patterns,
+                    "useRegex": args.get("useRegex") is True,
+                    "caseSensitive": args.get("caseSensitive") is True,
+                    "maxWindows": _bounded_int(
+                        args.get("maxWindows"), default=8, minimum=1, maximum=20
+                    ),
+                    "windowSize": _bounded_int(
+                        args.get("windowSize"), default=24, minimum=4, maximum=120
+                    ),
+                }
+            )
+        elif operation == "open":
+            file_id = _bounded_text(args.get("fileId"), maximum=240)
+            if not file_id:
+                raise ValueError("fileId is required for ime_knowledge.open")
+            payload.update(
+                {
+                    "fileId": file_id,
+                    "line": _bounded_int(args.get("line"), default=1, minimum=1, maximum=50_000_000),
+                    "offset": _bounded_int(
+                        args.get("offset"), default=0, minimum=0, maximum=50_000_000
+                    ),
+                    "windowSize": _bounded_int(
+                        args.get("windowSize"), default=180, minimum=1, maximum=300
+                    ),
+                }
+            )
+
+        handler = getattr(client, operation, None)
+        if not callable(handler):
+            raise ValueError(f"document knowledge operation {operation} is unavailable")
+        result = handler(payload)
+        if not isinstance(result, Mapping):
+            raise ValueError("document knowledge client returned an invalid result")
+        safe_result = _safe_knowledge_payload(result)
+        if "summary" not in safe_result:
+            counts = safe_result.get("items")
+            count = len(counts) if isinstance(counts, list) else 0
+            summaries = {
+                "list_bases": f"已列出 {count} 个可供 Agent 使用的文档知识库",
+                "search": f"文档知识库返回 {count} 条引用证据",
+                "find": f"在文档内找到 {count} 个匹配窗口",
+                "open": "已读取文档引用窗口",
+                "status": "已读取文档知识库状态",
+            }
+            safe_result["summary"] = summaries[operation]
+        safe_result.setdefault("untrustedData", True)
+        return safe_result
 
     def _models(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation == "status":
@@ -3416,6 +3470,43 @@ def _safe_payload(value: object, *, depth: int = 0) -> object:
     return _bounded_text(value, maximum=500)
 
 
+def _safe_knowledge_payload(value: Mapping[str, object]) -> dict[str, object]:
+    """Bound document evidence without exposing worker or filesystem details."""
+
+    blocked_keys = {
+        "absolutepath",
+        "localpath",
+        "sourcepath",
+        "storedpath",
+        "workertoken",
+        "workerurl",
+        "endpoint",
+    }
+
+    def visit(item: object, *, depth: int = 0) -> object:
+        if depth > 6:
+            return "[truncated]"
+        if isinstance(item, Mapping):
+            result: dict[str, object] = {}
+            for raw_key, child in list(item.items())[:100]:
+                key = _bounded_text(raw_key, maximum=120)
+                normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+                if not key or normalized in blocked_keys or _secret_key(key):
+                    continue
+                result[key] = visit(child, depth=depth + 1)
+            return result
+        if isinstance(item, (list, tuple)):
+            return [visit(child, depth=depth + 1) for child in item[:100]]
+        if isinstance(item, str):
+            return _bounded_text(item, maximum=2000)
+        if item is None or isinstance(item, (bool, int, float)):
+            return item
+        return _bounded_text(item, maximum=500)
+
+    safe = visit(value)
+    return safe if isinstance(safe, dict) else {}
+
+
 def _secret_key(key: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", key.lower())
     return any(
@@ -3439,7 +3530,7 @@ def _tool_profile_allows(
     allowed: dict[str, frozenset[str]] = {
         "ime_overview": frozenset({"status", "capabilities", "recent_activity"}),
         "ime_memory": frozenset({"catalog", "read", "recent", "trace", "maintenance_status", "list", "search"}),
-        "ime_knowledge": frozenset({"recall", "deep_recall", "route_status"}),
+        "ime_knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),
         "ime_agents": frozenset({"catalog", "delegate", "status", "artifact", "abort"}),

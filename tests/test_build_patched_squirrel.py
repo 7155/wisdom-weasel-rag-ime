@@ -96,6 +96,18 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertNotIn("enforceRagImeSensitiveFieldGuard()", handle_text)
         self.assertIn("ragImeNativeCompositionActive()", handle_text)
         self.assertIn('"assistant_overlay_tab_passed_through"', handle_text)
+        refresh_start = patch_text.index("func refreshRagImeSidecar(")
+        refresh_end = patch_text.index("func scheduleRagImeCommitBurstPrediction(", refresh_start)
+        refresh_text = patch_text[refresh_start:refresh_end]
+        composition_branch = refresh_text.index("if !rawInput.isEmpty || !preedit.isEmpty")
+        post_commit_gate = refresh_text.index("guard commitBurstReady || acceptedCandidateContinuation")
+        privacy_probe = refresh_text.index("let fastPrivacyStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(")
+        self.assertLess(composition_branch, post_commit_gate)
+        self.assertLess(post_commit_gate, privacy_probe)
+        schedule_start = patch_text.index("func scheduleRagImeCommitBurstPrediction(")
+        schedule_end = patch_text.index("func cancelRagImeCommitBurstAfterDelete()", schedule_start)
+        self.assertNotIn("enforceRagImeSensitiveFieldGuard()", patch_text[schedule_start:schedule_end])
+        self.assertNotIn("sensitiveFieldStatus(", patch_text[schedule_start:schedule_end])
         self.assertNotIn("\n+    self.client ?= sender as? IMKTextInput", patch_text)
         self.assertIn("private var ragImePanelUpdateGeneration: UInt = 0", patch_text)
         self.assertIn("ragImePanelUpdateGeneration &+= 1", patch_text)
@@ -260,7 +272,15 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"', card_text)
         self.assertIn("layoutActionBar(frame: NSRect(x: 12, y: 5", card_text)
         self.assertIn("deepSeekButton.frame = NSRect(x: 0, y: 0, width: half", card_text)
-        self.assertIn("deepSearchButton.frame = NSRect(x: half + gap", card_text)
+        self.assertIn("private func updateActionGroupChrome()", card_text)
+        self.assertIn("actionContainer.layer?.borderWidth = increaseContrast ? 1 : 0.5", card_text)
+        self.assertIn("actionContainer.layer?.backgroundColor = NSColor.controlBackgroundColor", card_text)
+        self.assertIn("actionDivider.layer?.backgroundColor = NSColor.separatorColor", card_text)
+        self.assertIn("let dividerWidth: CGFloat", card_text)
+        self.assertIn("x: half + dividerWidth", card_text)
+        self.assertNotIn("let gap: CGFloat = compact", card_text)
+        self.assertNotIn("deepSeekButton.layer?.backgroundColor = NSColor.systemBlue", card_text)
+        self.assertNotIn("deepSearchButton.layer?.backgroundColor = NSColor.systemIndigo", card_text)
         self.assertIn('keys: ["timelineRecentInputChars"]', card_text)
         self.assertIn('"历史补充 \\(recentInputChars) 字"', card_text)
         self.assertIn('"历史已记录，本次未引用"', card_text)
@@ -314,8 +334,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertNotIn('"selectedTextPreview": request.selectedTextPreview', patch_text)
         self.assertIn('let postCommitIdleMs: Int', patch_text)
         self.assertIn('"rag_ime/post_commit_idle_ms", fallback: 420, range: 40...1000', patch_text)
-        self.assertIn('request.foregroundText.source == "ime_commit_ledger"', patch_text)
-        self.assertIn('request.foregroundText.commitTextMatched', patch_text)
+        self.assertIn('snapshot.source == "ime_commit_ledger"', patch_text)
+        self.assertIn("freshSnapshot.commitTextMatched", patch_text)
         self.assertIn('["text_input_client", "accessibility", "ime_commit_ledger"]', patch_text)
         self.assertIn('if reason == "front_app_changed"', patch_text)
         self.assertIn("let idleMs = acceptedCandidate ? 0 : sidecarClient.postCommitIdleMs", patch_text)
@@ -337,7 +357,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"password", "passcode", "密码", "口令"', patch_text)
         self.assertNotIn('"username", "user name"', patch_text)
         self.assertNotIn('"one-time", "one time", "otp"', patch_text)
-        self.assertIn("func enforceRagImeSensitiveFieldGuard() -> Bool", patch_text)
+        self.assertIn("func enforceRagImeFastPrivacyGuard() -> Bool", patch_text)
         self.assertIn(
             'RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_ax_not_trusted")',
             patch_text,
@@ -428,10 +448,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let warnings: [String]", patch_text)
         self.assertIn("foregroundText: foregroundText", patch_text)
         self.assertIn("foregroundText: request.foregroundText", patch_text)
-        self.assertIn('let textInputClientContext = (!rawInput.isEmpty || !preedit.isEmpty)', patch_text)
+        self.assertIn('let fallbackForegroundSource = (!rawInput.isEmpty || !preedit.isEmpty)', patch_text)
         self.assertIn('"text_input_client"', patch_text)
         self.assertIn('"ime_commit_ledger"', patch_text)
-        self.assertIn('"text_input_client_context"', patch_text)
+        self.assertIn('"ime_commit_ledger_same_app"', patch_text)
         self.assertNotIn("allowAccessibility: false", patch_text)
         self.assertIn("RagImeForegroundContextResolver", patch_text)
         self.assertIn("foreground_context_capture_scheduled", patch_text)
@@ -496,8 +516,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImeTraceProgressive(_ progressive: RagImeProgressivePayload?) -> [String: Any]", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_scheduled"', patch_text)
         self.assertIn("ragImeLastRequestFingerprint = fingerprint\n+    ragImePendingRequestFingerprint = fingerprint", patch_text)
-        self.assertIn("text_input_client_synchronous_fallback_after_", patch_text)
-        self.assertIn('traceRagImeFrontendEvent("foreground_context_captured_after_commit"', patch_text)
+        self.assertNotIn("text_input_client_synchronous_fallback_after_", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("foreground_context_capture_retry"', patch_text)
+        self.assertIn('reason: "privacy_probe_timeout"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_sent"', patch_text)
         self.assertIn("progressiveFollowUp: true", patch_text)
         self.assertIn('"progressive": ragImeTraceProgressive(response.progressive)', patch_text)
@@ -687,7 +708,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('endpoint("rime-rank-feedback", base: sidecarURL)', patch_text)
         self.assertIn('sourceType: "rime"', patch_text)
         self.assertIn('selectionSource: "patched_squirrel"', patch_text)
-        self.assertIn("guard !enforceRagImeSensitiveFieldGuard() else { return }", patch_text)
+        self.assertIn("guard !enforceRagImeFastPrivacyGuard() else { return }", patch_text)
 
         consume_start = patch_text.index("func rimeConsumeCommittedText()")
         consume_body = patch_text[consume_start : consume_start + 1800]
@@ -708,7 +729,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"forwardedToClient": false', patch_text)
         self.assertIn('"traceIncludesText": false', patch_text)
         self.assertIn("func commit(string: String, privacyRestricted: Bool? = nil) -> Bool", patch_text)
-        self.assertIn("let isPrivacyRestricted = privacyRestricted ?? enforceRagImeSensitiveFieldGuard()", patch_text)
+        self.assertIn("let isPrivacyRestricted = privacyRestricted ?? enforceRagImeFastPrivacyGuard()", patch_text)
         self.assertIn("func rimeConsumeCommittedText()", patch_text)
         ordinary_key_route_start = patch_text.index("handled = processKey(rimeKeycode, modifiers: rimeModifiers)")
         self.assertIn("rimeUpdate()", patch_text[ordinary_key_route_start : ordinary_key_route_start + 200])
@@ -718,13 +739,261 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             self.assertIn('"rime-rank-feedback"', script_text)
             self.assertIn('"ragImeNativeSelectionSnapshot"', script_text)
             self.assertIn('"native_rime_rank_feedback_recorded"', script_text)
-            self.assertIn('"guard !enforceRagImeSensitiveFieldGuard() else { return }"', script_text)
+            self.assertIn('"guard !enforceRagImeFastPrivacyGuard()"', script_text)
         normal_start = patch_text.index("let nativeSelection = ragImeNativeSelectionSnapshot(at: index)")
         normal_selection = patch_text[normal_start : normal_start + 900]
         self.assertLess(
             normal_selection.index("let success = rimeAPI.select_candidate_on_current_page(session, index)"),
             normal_selection.index("recordRagImeNativeSelection(nativeSelection)"),
         )
+
+    def test_physical_key_and_post_commit_paths_never_run_full_accessibility_privacy_inline(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+
+        def section(start: str, end: str) -> str:
+            start_index = patch_text.index(start)
+            return patch_text[start_index : patch_text.index(end, start_index)]
+
+        # These functions execute on the InputMethodKit/main-queue path. The fast
+        # guard may inspect Secure Event Input and the local app denylist, but a
+        # full field probe would synchronously cross into the foreground process.
+        main_queue_sections = {
+            "text_input_client_capture": section("func captureFromTextInputClient(", "func captureFromAccessibility("),
+            "native_selection_feedback": section("func recordRagImeNativeSelection(", "func rememberRagImeAcceptedEditFeedback("),
+            "accepted_edit_feedback": section("func recordRagImeAcceptedEditFeedbackIfNeeded()", "func ragImeDisplayLayout("),
+            "assistant_overlay_apply": section("func applyRagImeAssistantOverlay(", "func dismissRagImeAssistantOverlay("),
+            "post_commit_refresh": section("func refreshRagImeSidecar(", "func scheduleRagImeCommitBurstPrediction("),
+            "post_commit_scheduler": section("func scheduleRagImeCommitBurstPrediction(", "func cancelRagImeCommitBurstAfterDelete("),
+            "foreground_resolve": section(
+                "func resolveRagImeForegroundContextAndSend(",
+                "func probeRagImeForegroundPrivacyAndContext(",
+            ),
+            "sidecar_send": section("func sendRagImeSidecarRequest(", "func applyRagImeSidecarResponse("),
+            "sidecar_apply": section("func applyRagImeSidecarResponse(", "func dropRagImeSidecarResponse("),
+            "native_commit_consume": section("func rimeConsumeCommittedText()", "func discardRagImeSensitiveNativeLearningTransaction("),
+            "native_commit_insert": section(
+                "func commit(string: String, privacyRestricted: Bool? = nil) -> Bool",
+                "func show(preedit: String, selRange: NSRange, caretPos: Int)",
+            ),
+        }
+        forbidden_inline_full_probe_tokens = (
+            "enforceRagImeSensitiveFieldGuard()",
+            ".sensitiveFieldStatus(",
+            "AXUIElementCopyAttributeValue(",
+            "AXUIElementCopyParameterizedAttributeValue(",
+            "captureFromAccessibility(",
+        )
+        for label, source in main_queue_sections.items():
+            for token in forbidden_inline_full_probe_tokens:
+                self.assertNotIn(token, source, f"{label} synchronously invokes full Accessibility privacy via {token}")
+
+        self.assertIn("func fastSensitiveFieldStatus(sourceAppBundleId: String = \"\")", patch_text)
+        fast_status = section(
+            "func fastSensitiveFieldStatus(sourceAppBundleId: String = \"\")",
+            "func sensitiveFieldStatus(sourceAppBundleId: String = \"\")",
+        )
+        for ax_token in (
+            "AXIsProcessTrusted",
+            "focusedTextElement(",
+            "AXUIElementCopyAttributeValue(",
+            "privacyStringAttribute(",
+            "privacyWindowTitle(",
+        ):
+            self.assertNotIn(ax_token, fast_status)
+        self.assertIn("IsSecureEventInputEnabled()", fast_status)
+        self.assertIn("sensitiveApplicationReason", fast_status)
+        self.assertIn("func enforceRagImeFastPrivacyGuard() -> Bool", patch_text)
+        status_model = section("struct RagImeSensitiveFieldStatus", "final class RagImeForegroundContextResolver")
+        self.assertLess(
+            status_model.index('reason.hasPrefix("privacy_unknown_")'),
+            status_model.index('return isSensitive ? "sensitive" : "allowed"'),
+        )
+
+        # Every request, including post-commit prediction, must pass the full
+        # field-level probe. The IME ledger is only a text fallback after that
+        # probe allows the field. Full AX work remains off the IMK main thread.
+        probe = section(
+            "func probeRagImeForegroundPrivacyAndContext(",
+            "func applyRagImeForegroundPrivacyProbe",
+        )
+        self.assertIn("ragImeForegroundContextQueue.async", probe)
+        self.assertIn("ragImeSelectedTextProvider.sensitiveFieldStatus(", probe)
+        self.assertIn("DispatchQueue.main.async", probe)
+        self.assertLess(
+            probe.index("ragImeForegroundContextQueue.async"),
+            probe.index("ragImeSelectedTextProvider.sensitiveFieldStatus("),
+        )
+        probe_after_full_status = probe[probe.index("ragImeSelectedTextProvider.sensitiveFieldStatus(") :]
+        self.assertIn("DispatchQueue.main.async", probe_after_full_status)
+
+        controller_start = patch_text.index("diff --git a/sources/SquirrelInputController.swift")
+        controller_text = patch_text[controller_start:]
+        full_status_calls = [
+            line
+            for line in controller_text.splitlines()
+            if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line
+        ]
+        self.assertEqual(
+            full_status_calls,
+            [next(line for line in probe.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line)],
+        )
+        for full_ax_entrypoint in (
+            "ragImeSelectedTextProvider.captureForegroundTextForSidecar(",
+            "ragImeSelectedTextProvider.captureSelectedTextForActiveRag(",
+            "ragImeForegroundContextResolver.captureFromAccessibility(",
+        ):
+            controller_calls = [
+                line for line in controller_text.splitlines() if full_ax_entrypoint in line
+            ]
+            probe_calls = [line for line in probe.splitlines() if full_ax_entrypoint in line]
+            self.assertEqual(
+                controller_calls,
+                probe_calls,
+                f"{full_ax_entrypoint} must only be invoked by the dedicated background probe",
+            )
+
+        apply_probe_start = patch_text.index("func applyRagImeForegroundPrivacyProbe")
+        apply_probe_end = patch_text.index("func finishRagImeForegroundContextCapture(", apply_probe_start)
+        apply_probe = patch_text[apply_probe_start:apply_probe_end]
+        self.assertIn("privacyStatus.reason.isEmpty", apply_probe)
+        self.assertIn("privacyStatus.isSensitive", apply_probe)
+        self.assertIn("failRagImeForegroundContextCapture(", apply_probe)
+        self.assertIn("privacy_probe_unknown", apply_probe)
+
+        timeout = section(
+            "func probeRagImeForegroundPrivacyAndContext(",
+            "func finishRagImeForegroundContextCapture(",
+        )
+        self.assertIn("ragImeForegroundCaptureTimeoutMs", timeout)
+        self.assertIn("privacy_probe_timeout", timeout)
+        timeout_branch = timeout[timeout.index("privacy_probe_timeout") - 600 : timeout.index("privacy_probe_timeout") + 600]
+        self.assertIn("failRagImeForegroundContextCapture(", timeout_branch)
+        self.assertNotIn("sendRagImeSidecarRequest(", timeout_branch)
+
+    def test_stale_accessibility_snapshot_falls_back_to_fresh_commit_ledger(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+        panel_text = (
+            root / "squirrel-patches" / "sources" / "RagImeAssistantPanelController.swift"
+        ).read_text(encoding="utf-8")
+
+        finish_start = patch_text.index("func finishRagImeForegroundContextCapture(")
+        finish_end = patch_text.index("func liveRagImeCommitLedgerFallback(", finish_start)
+        finish = patch_text[finish_start:finish_end]
+        self.assertIn('reason: "commit_text_not_observed"', finish)
+        self.assertIn('snapshot.source != "ime_commit_ledger"', finish)
+        self.assertIn("let fallback = liveRagImeCommitLedgerFallback(for: request)", finish)
+        self.assertIn('traceRagImeFrontendEvent("foreground_context_commit_ledger_fallback"', finish)
+        self.assertIn('captureReason: "same_app_commit_ledger_after_commit_text_not_observed"', finish)
+        self.assertLess(
+            finish.index("captureAttempt == 0"),
+            finish.index('snapshot.source != "ime_commit_ledger"'),
+        )
+
+        fallback_start = patch_text.index("func liveRagImeCommitLedgerFallback(")
+        fallback_end = patch_text.index("func failRagImeForegroundContextCapture(", fallback_start)
+        fallback = patch_text[fallback_start:fallback_end]
+        for guard in (
+            'snapshot.source == "ime_commit_ledger"',
+            "commitTextStillMatches",
+            "snapshot.captureEpoch == request.inputGeneration",
+            "snapshot.sourceAppBundleId == request.frontAppBundleId",
+            "snapshot.sourceAppBundleId == currentApp",
+            "snapshot.inputSourceId == request.inputSourceId",
+            'snapshot.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? "")',
+            "ageMs <= maximumAgeMs",
+        ):
+            self.assertIn(guard, fallback)
+        self.assertIn("maximumAgeMs: Int = 700", fallback)
+
+        resolve_start = patch_text.index("func resolveRagImeForegroundContextAndSend(")
+        resolve_end = patch_text.index("func probeRagImeForegroundPrivacyAndContext(", resolve_start)
+        resolve = patch_text[resolve_start:resolve_end]
+        self.assertIn("fastSensitiveFieldStatus", resolve)
+        self.assertIn("ragImePrivacyDisposition != \"sensitive\"", resolve)
+        self.assertIn("probeRagImeForegroundPrivacyAndContext(", resolve)
+        self.assertNotIn("liveRagImeCommitLedgerFallback", resolve)
+        self.assertNotIn("foreground_context_commit_ledger_direct", resolve)
+        self.assertNotIn('privacyDisposition: "allowed"', resolve)
+        self.assertLess(resolve.index("fastSensitiveFieldStatus"), resolve.index("probeRagImeForegroundPrivacyAndContext("))
+
+        probe_start = patch_text.index("func probeRagImeForegroundPrivacyAndContext(")
+        probe_end = patch_text.index("func finishRagImeForegroundContextCapture(", probe_start)
+        probe = patch_text[probe_start:probe_end]
+        self.assertLess(
+            probe.index("ragImeSelectedTextProvider.sensitiveFieldStatus("),
+            probe.index("liveRagImeCommitLedgerFallback(for: allowedRequest)"),
+        )
+
+        fail_start = patch_text.index("func failRagImeForegroundContextCapture(")
+        fail_end = patch_text.index("func sendRagImeSidecarRequest(", fail_start)
+        fail = patch_text[fail_start:fail_end]
+        self.assertIn("ragImeAssistantOverlayController.dismissPendingPrediction(", fail)
+        self.assertIn("snapshotId: request.panelSessionId", fail)
+        self.assertIn("func dismissPendingPrediction(snapshotId: String, reason: String)", panel_text)
+        self.assertIn('private var pendingSnapshotId = ""', panel_text)
+        self.assertIn("if pendingSnapshotId == snapshotId", panel_text)
+        self.assertIn("pendingUpdate?.cancel()", panel_text)
+        self.assertIn("guard currentState == .pendingPrediction", panel_text)
+        self.assertIn("currentPayload?.snapshotId == snapshotId", panel_text)
+
+    def test_transaction_invalidation_cancels_commit_burst_for_every_reason(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+
+        invalidate_start = patch_text.index("func invalidateRagImeForegroundTransaction(")
+        invalidate_end = patch_text.index("func ragImeDisplaySessionStillLive", invalidate_start)
+        invalidate = patch_text[invalidate_start:invalidate_end]
+        front_app_branch = invalidate.index('if reason == "front_app_changed"')
+        for token in (
+            "ragImeCommitBurstWorkItem?.cancel()",
+            "ragImeCommitBurstWorkItem = nil",
+            "ragImeCommitBurstGeneration += 1",
+            "ragImeCommitBurstDeltaChars = 0",
+            "ragImeCommitBurstTexts = []",
+        ):
+            self.assertIn(token, invalidate)
+            self.assertLess(invalidate.index(token), front_app_branch)
+        self.assertGreater(invalidate.index('ragImeCommittedContext = ""'), front_app_branch)
+
+        deactivate_start = patch_text.index("override func deactivateServer(_ sender: Any!)")
+        deactivate_end = patch_text.index("override func hidePalettes()", deactivate_start)
+        deactivate = patch_text[deactivate_start:deactivate_end]
+        self.assertLess(
+            deactivate.index("commitComposition(sender)"),
+            deactivate.index('invalidateRagImeForegroundTransaction(reason: "deactivate_server")'),
+        )
+
+    def test_terminal_sidecar_paths_target_pending_overlay_by_panel_session(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+
+        send_start = patch_text.index("func sendRagImeSidecarRequest(")
+        send_end = patch_text.index("func applyRagImeSidecarResponse(", send_start)
+        send = patch_text[send_start:send_end]
+        for reason in (
+            "sidecar_send_guard_rejected",
+            "sidecar_stale_before_send",
+            "sidecar_transport_failed",
+        ):
+            self.assertIn(f'reason: "{reason}"', send)
+        self.assertGreaterEqual(send.count("snapshotId: request.panelSessionId"), 3)
+        self.assertGreaterEqual(send.count("keepLastFingerprint: false"), 3)
+
+        apply_start = patch_text.index("func applyRagImeSidecarResponse(")
+        apply_end = patch_text.index("func dropRagImeSidecarResponse(", apply_start)
+        apply_response = patch_text[apply_start:apply_end]
+        self.assertIn('reason: "sidecar_response_privacy_rejected"', apply_response)
+        self.assertIn("snapshotId: request.panelSessionId", apply_response)
+        self.assertIn('dropRagImeSidecarResponse("session_missing"', apply_response)
+
+        drop_start = patch_text.index("func dropRagImeSidecarResponse(")
+        drop_end = patch_text.index("func completeRagImeSidecarRequest(", drop_start)
+        drop = patch_text[drop_start:drop_end]
+        self.assertIn("dismissPendingPrediction(", drop)
+        self.assertIn("snapshotId: request.panelSessionId", drop)
+        self.assertIn('reason: "sidecar_response_\\(reason)"', drop)
 
     def test_post_accept_backspace_feedback_is_suffix_guarded_and_source_isolated(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -745,14 +1014,18 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         prepare_script = (root / "scripts" / "prepare_squirrel_workspace.sh").read_text(encoding="utf-8")
         build_script = (root / "scripts" / "build_patched_squirrel.sh").read_text(encoding="utf-8")
 
+        fast_status_start = patch_text.index("func fastSensitiveFieldStatus(sourceAppBundleId: String = \"\")")
         status_start = patch_text.index("func sensitiveFieldStatus(sourceAppBundleId: String = \"\")")
+        fast_status_body = patch_text[fast_status_start:status_start]
         status_body = patch_text[status_start : status_start + 5000]
-        self.assertLess(status_body.index("sensitiveApplicationReason"), status_body.index("AXIsProcessTrusted"))
-        self.assertIn("sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId)", patch_text)
-        self.assertIn("sensitiveFieldStatus(sourceAppBundleId: currentApp)", patch_text)
+        self.assertIn("sensitiveApplicationReason", fast_status_body)
+        self.assertNotIn("AXIsProcessTrusted", fast_status_body)
+        self.assertIn("AXIsProcessTrusted", status_body)
+        self.assertIn("fastSensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId)", patch_text)
+        self.assertIn("ragImeSelectedTextProvider.sensitiveFieldStatus(", patch_text)
         self.assertIn("sourceAppBundleId: currentApp", patch_text)
-        self.assertIn('guard !enforceRagImeSensitiveFieldGuard(), ragImePrivacyDisposition == "allowed" else { return false }', patch_text)
-        self.assertIn("guard !enforceRagImeSensitiveFieldGuard() else { return }", patch_text)
+        self.assertIn('guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }', patch_text)
+        self.assertIn("guard !enforceRagImeFastPrivacyGuard() else { return }", patch_text)
 
         trace_start = patch_text.index("func traceRagImeFrontendEvent(_ event: String, fields: [String: Any])")
         trace_body = patch_text[trace_start : trace_start + 1400]
@@ -896,7 +1169,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('candidateOrdinal: 0', patch_text)
         self.assertIn('"active_rag_shortcut_action_button_route"', patch_text)
         self.assertIn("active_rag_context_button_triggered", patch_text)
-        self.assertIn("let accessibilityForeground =", patch_text)
+        self.assertIn("let accessibilityForeground: RagImeForegroundTextSnapshot? = nil", patch_text)
         self.assertIn("let imkForeground = ragImeForegroundContextResolver.captureFromTextInputClient", patch_text)
         self.assertIn("let useClientContext = clientContext.count > capturedBefore.count", patch_text)
         self.assertIn("context.isEmpty ? semanticQuery : context", patch_text)
@@ -1235,12 +1508,14 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func controlCenterMenu() { _ = "打开 RAG-IME 控制中心..."; _ = "com.rag-ime.control" }; '
             'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
+            'func queuedForegroundSnapshot() { _ = "ragImeForegroundContextResolver.captureFromAccessibility(" }; '
+            'func probeRagImeForegroundPrivacyAndContext() { _ = "privacy_probe_timeout" }; '
             'func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }; '
             'func foregroundCaptureFailed() { _ = "foreground_context_capture_failed" }; '
             'func sideCandidateFeedbackRecorded() { _ = "side_candidate_feedback_recorded" }; '
             'func nativeRimeFeedback() { _ = "ragImeNativeSelectionSnapshot"; '
             '_ = "native_rime_rank_feedback_recorded"; '
-            'guard !enforceRagImeSensitiveFieldGuard() else { return } }; '
+            'guard !enforceRagImeFastPrivacyGuard() else { return } }; '
             '// discardRagImeSensitiveNativeLearningTransaction; '
             '// guard rimeAPI.get_status(session, &status) else { return false }; '
             '// guard !isComposing else { return false }; return !backspaceHandled; '

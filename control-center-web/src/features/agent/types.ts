@@ -38,6 +38,15 @@ export type ThinkingLevel = AgentModelCatalogV1['thinkingLevel'];
 export type ModelCatalog = AgentModelCatalogV1;
 export type ToolManifest = ControlToolManifestV1;
 
+export type AgentCommandSource = 'extension' | 'prompt' | 'skill';
+
+export interface AgentCommand {
+  name: string;
+  invocation: string;
+  description: string;
+  source: AgentCommandSource;
+}
+
 export function sessionItems(value: unknown): SessionSummary[] {
   if (!isRecord(value)) return [];
   const source = Array.isArray(value.items)
@@ -46,6 +55,11 @@ export function sessionItems(value: unknown): SessionSummary[] {
       ? value.sessions
       : [];
   return source.filter(isSessionSummary);
+}
+
+export function activeSessionId(value: unknown): string {
+  if (!isRecord(value)) return '';
+  return typeof value.activeSessionId === 'string' ? value.activeSessionId : '';
 }
 
 export function roleItems(value: unknown): AgentPersonaV1[] {
@@ -64,6 +78,12 @@ export function toolItems(value: unknown): ToolManifest[] {
   return source.filter(isToolManifest);
 }
 
+export function commandItems(value: unknown): AgentCommand[] {
+  if (!isRecord(value) || value.schemaVersion !== 'rag-ime.agent-command-catalog.v1') return [];
+  const source = Array.isArray(value.items) ? value.items : [];
+  return source.filter(isAgentCommand).slice(0, 200);
+}
+
 export function isModelCatalog(value: unknown): value is ModelCatalog {
   return (
     isRecord(value) &&
@@ -78,6 +98,21 @@ function isSessionSummary(value: unknown): value is SessionSummary {
     typeof value.id === 'string' &&
     typeof value.title === 'string' &&
     typeof value.updatedAtMs === 'number'
+  );
+}
+
+function isAgentCommand(value: unknown): value is AgentCommand {
+  if (!isRecord(value)) return false;
+  const source = value.source;
+  const name = typeof value.name === 'string' ? value.name : '';
+  return (
+    (source === 'extension' || source === 'prompt' || source === 'skill')
+    && typeof value.description === 'string'
+    && typeof value.invocation === 'string'
+    && value.invocation === `/${name}`
+    && name.length > 0
+    && name.length <= 80
+    && !/[\s/\\]/u.test(name)
   );
 }
 

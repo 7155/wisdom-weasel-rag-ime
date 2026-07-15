@@ -28,6 +28,12 @@ import {
   type ExternalActionRequest,
   type FilePickOptions,
   type FrontendCapabilities,
+  type KnowledgeDocumentImportInput,
+  type KnowledgeDocumentImportReceipt,
+  type KnowledgeAssetPayload,
+  type KnowledgeAssetReadInput,
+  type KnowledgeDocumentSourcePayload,
+  type KnowledgeDocumentSourceReadInput,
   type PickedFile,
 } from './transport';
 
@@ -148,19 +154,64 @@ export class NativeControlTransport implements ControlTransport {
   }
 
   async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
-    assertAgentImagePasteOptions(options);
+    const maxFiles = assertAgentImagePasteOptions(options);
     const result = await this.call('pasteImages', {
       sessionId: options.sessionId,
-      maxFiles: options.files.length,
+      maxFiles,
     });
-    if (!Array.isArray(result) || result.length > options.files.length) {
+    if (!Array.isArray(result) || result.length > maxFiles) {
       throw new NativeBridgeCallError('pasteImages returned an invalid receipt list');
     }
     return result.map((value) => parsePickedFile(value, {
       purpose: 'attachment',
       sessionId: options.sessionId,
-      maxFiles: options.files.length,
+      maxFiles,
     }));
+  }
+
+  async importKnowledgeDocuments(
+    input: KnowledgeDocumentImportInput,
+  ): Promise<KnowledgeDocumentImportReceipt[]> {
+    const maxFiles = assertNativeKnowledgeDocumentImportInput(input);
+    const parserProvider = input.parserProvider ?? (input.parser === 'mineru' ? 'mineru_local_http' : input.parser);
+    const result = await this.call(
+      'pickFiles',
+      {
+        purpose: 'knowledge-import',
+        kbId: input.kbId,
+        accepts: input.accepts ?? [],
+        multiple: maxFiles > 1,
+        maxFiles,
+        ...(parserProvider ? { parserProvider } : {}),
+      },
+      input.signal,
+    );
+    if (!Array.isArray(result) || result.length > maxFiles) {
+      throw new NativeBridgeCallError('knowledge import returned an invalid receipt list');
+    }
+    return result.map((value) => parseKnowledgeDocumentImportReceipt(value, input.kbId));
+  }
+
+  async readKnowledgeAsset(input: KnowledgeAssetReadInput): Promise<KnowledgeAssetPayload> {
+    assertNativeKnowledgeAssetReadInput(input);
+    const result = await this.call(
+      'readKnowledgeAsset',
+      { kbId: input.kbId, fileId: input.fileId, assetId: input.assetId },
+      input.signal,
+    );
+    return parseNativeKnowledgeAsset(result, input);
+  }
+
+  async readKnowledgeDocumentSource(
+    input: KnowledgeDocumentSourceReadInput,
+  ): Promise<KnowledgeDocumentSourcePayload> {
+    assertNativeKnowledgeDocumentSourceReadInput(input);
+    const result = await this.call(
+      'readKnowledgeDocumentSource',
+      { kbId: input.kbId, fileId: input.fileId },
+      input.signal,
+    );
+    return parseNativeKnowledgeDocumentSource(result, input);
   }
 
   async revealPath(path: string): Promise<void> {
@@ -356,6 +407,10 @@ function normalizeNativeCapabilities(value: unknown): FrontendCapabilities {
     native: {
       pickFiles: rawNative.pickFiles === true || rawNative.filePicker === true,
       managedAgentImageImport: rawNative.managedAgentImageImport === true,
+      knowledgeDocumentImport: rawNative.knowledgeDocumentImport === true,
+      knowledgeParserStatus: rawNative.knowledgeParserStatus === true,
+      knowledgeAssetRead: rawNative.knowledgeAssetRead === true,
+      knowledgeDocumentSourceRead: rawNative.knowledgeDocumentSourceRead === true,
       revealPath: rawNative.revealPath === true,
       approvedExternalActions: rawNative.approvedExternalActions === true,
       keychain: rawNative.keychain === true || rawNative.keychainStatus === true,
@@ -395,6 +450,137 @@ function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
   return value as unknown as PickedFile;
 }
 
+function parseKnowledgeDocumentImportReceipt(
+  value: unknown,
+  kbId: string,
+): KnowledgeDocumentImportReceipt {
+  if (
+    !isRecord(value) ||
+    value.kbId !== kbId ||
+    typeof value.documentId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value.documentId) ||
+    typeof value.fileName !== 'string' ||
+    !value.fileName ||
+    value.fileName.length > 512 ||
+    typeof value.mimeType !== 'string' ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize <= 0 ||
+    value.byteSize > 200 * 1024 * 1024 ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.status !== 'string' ||
+    value.status.length === 0 ||
+    'path' in value
+  ) {
+    throw new NativeBridgeCallError('knowledge import returned an invalid receipt');
+  }
+  return value as unknown as KnowledgeDocumentImportReceipt;
+}
+
+const KNOWLEDGE_ASSET_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+]);
+const MAX_KNOWLEDGE_ASSET_BYTES = 25 * 1024 * 1024;
+const KNOWLEDGE_SOURCE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/tiff',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+const MAX_KNOWLEDGE_SOURCE_BYTES = 50 * 1024 * 1024;
+
+function assertNativeKnowledgeAssetReadInput(input: KnowledgeAssetReadInput): void {
+  if (!isRecord(input) || Object.keys(input).some((key) => !['kbId', 'fileId', 'assetId', 'signal'].includes(key))) {
+    throw new TypeError('Knowledge asset read input contained an unsupported field');
+  }
+  if (!isSafeKnowledgeId(input.kbId) || !isSafeKnowledgeId(input.fileId)) {
+    throw new TypeError('Knowledge asset read requires bounded kbId and fileId values');
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.assetId)) {
+    throw new TypeError('Knowledge asset read requires a sha256 assetId');
+  }
+}
+
+function parseNativeKnowledgeAsset(
+  value: unknown,
+  input: KnowledgeAssetReadInput,
+): KnowledgeAssetPayload {
+  if (
+    !isRecord(value) ||
+    value.kbId !== input.kbId ||
+    value.fileId !== input.fileId ||
+    value.assetId !== input.assetId ||
+    value.sha256 !== input.assetId ||
+    typeof value.mimeType !== 'string' ||
+    !KNOWLEDGE_ASSET_MIME_TYPES.has(value.mimeType) ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize <= 0 ||
+    value.byteSize > MAX_KNOWLEDGE_ASSET_BYTES ||
+    !(value.blob instanceof Blob) ||
+    value.blob.size !== value.byteSize ||
+    value.blob.type !== value.mimeType
+  ) {
+    throw new NativeBridgeCallError('knowledge asset returned an invalid binary receipt');
+  }
+  return value as unknown as KnowledgeAssetPayload;
+}
+
+function assertNativeKnowledgeDocumentSourceReadInput(
+  input: KnowledgeDocumentSourceReadInput,
+): void {
+  if (!isRecord(input) || Object.keys(input).some((key) => !['kbId', 'fileId', 'signal'].includes(key))) {
+    throw new TypeError('Knowledge document source input contained an unsupported field');
+  }
+  if (!isSafeKnowledgeId(input.kbId) || !isSafeKnowledgeId(input.fileId)) {
+    throw new TypeError('Knowledge document source requires bounded kbId and fileId values');
+  }
+}
+
+function parseNativeKnowledgeDocumentSource(
+  value: unknown,
+  input: KnowledgeDocumentSourceReadInput,
+): KnowledgeDocumentSourcePayload {
+  if (
+    !isRecord(value) ||
+    value.kbId !== input.kbId ||
+    value.fileId !== input.fileId ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.mimeType !== 'string' ||
+    !KNOWLEDGE_SOURCE_MIME_TYPES.has(value.mimeType) ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize <= 0 ||
+    value.byteSize > MAX_KNOWLEDGE_SOURCE_BYTES ||
+    !(value.blob instanceof Blob) ||
+    value.blob.size !== value.byteSize ||
+    value.blob.type !== value.mimeType
+  ) {
+    throw new NativeBridgeCallError('knowledge document source returned an invalid binary receipt');
+  }
+  return value as unknown as KnowledgeDocumentSourcePayload;
+}
+
+function isSafeKnowledgeId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value);
+}
+
 const MANAGED_AGENT_IMAGE_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -403,17 +589,25 @@ const MANAGED_AGENT_IMAGE_MIME_TYPES = new Set([
 ]);
 const MAX_MANAGED_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
 
-function assertAgentImagePasteOptions(options: AgentImagePasteOptions): void {
-  if (!isRecord(options) || Object.keys(options).some((key) => !['sessionId', 'files'].includes(key))) {
+function assertAgentImagePasteOptions(options: AgentImagePasteOptions): number {
+  if (!isRecord(options) || Object.keys(options).some((key) => !['sessionId', 'files', 'maxFiles'].includes(key))) {
     throw new TypeError('Agent image paste options contained an unsupported field');
   }
   if (typeof options.sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(options.sessionId)) {
     throw new TypeError('Agent image paste requires a bounded sessionId');
   }
-  if (!Array.isArray(options.files) || options.files.length < 1 || options.files.length > 8) {
-    throw new TypeError('Agent image paste requires between 1 and 8 files');
+  const files = options.files;
+  if (files !== undefined && (!Array.isArray(files) || files.length < 1 || files.length > 8)) {
+    throw new TypeError('Agent image paste files must contain between 1 and 8 images');
   }
-  for (const file of options.files) {
+  const maxFiles = options.maxFiles ?? files?.length;
+  if (!Number.isSafeInteger(maxFiles) || !maxFiles || maxFiles < 1 || maxFiles > 8) {
+    throw new TypeError('Agent image paste requires maxFiles between 1 and 8');
+  }
+  if (files && files.length > maxFiles) {
+    throw new TypeError('Agent image paste files exceed maxFiles');
+  }
+  for (const file of files ?? []) {
     if (
       typeof file?.name !== 'string' ||
       !file.name ||
@@ -427,14 +621,23 @@ function assertAgentImagePasteOptions(options: AgentImagePasteOptions): void {
       throw new TypeError('Agent image paste received an invalid image file');
     }
   }
+  return maxFiles;
 }
 
 function assertFilePickOptions(options: FilePickOptions): void {
-  const allowedKeys = new Set(['accepts', 'multiple', 'purpose', 'sessionId', 'maxFiles']);
+  const allowedKeys = new Set([
+    'accepts',
+    'multiple',
+    'purpose',
+    'sessionId',
+    'kbId',
+    'parserProvider',
+    'maxFiles',
+  ]);
   for (const key of Object.keys(options)) {
     if (!allowedKeys.has(key)) throw new TypeError(`FilePickOptions field is not allowed: ${key}`);
   }
-  if (!['attachment', 'configuration-import', 'restore', 'export-destination'].includes(options.purpose)) {
+  if (!['attachment', 'configuration-import', 'restore', 'export-destination', 'knowledge-import'].includes(options.purpose)) {
     throw new TypeError('FilePickOptions purpose is not allowlisted');
   }
   if (options.accepts !== undefined && (!Array.isArray(options.accepts) || options.accepts.some((value) => typeof value !== 'string'))) {
@@ -456,6 +659,46 @@ function assertFilePickOptions(options: FilePickOptions): void {
   } else if (options.sessionId !== undefined) {
     throw new TypeError('sessionId is only accepted for Agent attachments');
   }
+  if (options.purpose === 'knowledge-import') {
+    if (typeof options.kbId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(options.kbId)) {
+      throw new TypeError('knowledge-import file selection requires a bounded kbId');
+    }
+  } else if (options.kbId !== undefined || options.parserProvider !== undefined) {
+    throw new TypeError('kbId and parserProvider are only accepted for knowledge imports');
+  }
+}
+
+function assertNativeKnowledgeDocumentImportInput(
+  input: KnowledgeDocumentImportInput,
+): number {
+  if (!isRecord(input)) throw new TypeError('Knowledge import input is required');
+  const allowedKeys = new Set(['kbId', 'accepts', 'maxFiles', 'files', 'parserProvider', 'parser', 'signal']);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+    throw new TypeError('Knowledge import input contained an unsupported field');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(input.kbId)) {
+    throw new TypeError('Knowledge import requires a valid kbId');
+  }
+  if (input.files !== undefined) {
+    throw new TypeError('Native knowledge import does not accept browser paths or File objects');
+  }
+  if (input.accepts !== undefined && (!Array.isArray(input.accepts) || input.accepts.length > 32 || input.accepts.some((value) => typeof value !== 'string'))) {
+    throw new TypeError('Knowledge import accepts must be a bounded string array');
+  }
+  if (input.parserProvider !== undefined && !['auto', 'builtin', 'mineru_local_http'].includes(input.parserProvider)) {
+    throw new TypeError('Knowledge import parserProvider is not allowlisted');
+  }
+  if (input.parser !== undefined && !['auto', 'builtin', 'mineru'].includes(input.parser)) {
+    throw new TypeError('Knowledge import parser is not allowlisted');
+  }
+  if (input.parserProvider !== undefined && input.parser !== undefined) {
+    throw new TypeError('Knowledge import accepts only one parser selector');
+  }
+  const maxFiles = input.maxFiles ?? 8;
+  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 20) {
+    throw new TypeError('Native knowledge import maxFiles must be between 1 and 20');
+  }
+  return maxFiles;
 }
 
 function booleanRecord(value: Record<string, unknown>): Record<string, boolean> {

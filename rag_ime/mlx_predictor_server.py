@@ -235,6 +235,59 @@ def _mlx_warmup_enabled() -> bool:
     }
 
 
+def _mlx_cache_limit_bytes() -> int:
+    raw_limit = os.environ.get("RAG_IME_MLX_CACHE_LIMIT_MB", "256").strip()
+    try:
+        limit_mb = int(raw_limit)
+    except ValueError:
+        limit_mb = 256
+    return min(max(0, limit_mb), 4096) * 1024 * 1024
+
+
+def _configure_mlx_allocator_cache() -> tuple[dict[str, Any], Any | None]:
+    limit_bytes = _mlx_cache_limit_bytes()
+    status: dict[str, Any] = {
+        "enabled": limit_bytes > 0,
+        "configured": False,
+        "limitBytes": limit_bytes,
+    }
+    if limit_bytes <= 0:
+        return status, None
+    try:
+        import mlx.core as mx  # type: ignore
+
+        set_cache_limit = getattr(mx, "set_cache_limit", None)
+        if not callable(set_cache_limit):
+            status["unsupported"] = True
+            return status, mx
+        previous_limit = set_cache_limit(limit_bytes)
+        status["configured"] = True
+        if previous_limit is not None:
+            status["previousLimitBytes"] = int(previous_limit)
+    except Exception as exc:  # pragma: no cover - depends on the installed MLX runtime
+        status["error"] = type(exc).__name__
+        return status, None
+    return status, mx
+
+
+def _mlx_memory_status(cache_status: dict[str, Any], mx: Any | None) -> dict[str, Any]:
+    status = dict(cache_status)
+    if mx is None:
+        return status
+    try:
+        for field, getter_name in (
+            ("activeBytes", "get_active_memory"),
+            ("cacheBytes", "get_cache_memory"),
+            ("peakBytes", "get_peak_memory"),
+        ):
+            getter = getattr(mx, getter_name, None)
+            if callable(getter):
+                status[field] = int(getter())
+    except Exception as exc:  # pragma: no cover - depends on the installed MLX runtime
+        status.setdefault("error", type(exc).__name__)
+    return status
+
+
 class _LocalTokenizersBackendWrapper:
     def __init__(self, tokenizer: Any, *, eos_token_id: int | None = None) -> None:
         self._tokenizer = tokenizer
@@ -318,6 +371,9 @@ class MlxLmEngine:
         self.model_id = model_id
         self.profile = profile_by_id(profile_id)
         self.model_info = _inspect_local_mlx_model(model_id)
+        # MLX otherwise defaults to a multi-gigabyte Metal allocator cache. Cap
+        # it before model loading so varied IME requests cannot grow indefinitely.
+        self._mlx_allocator_cache, self._mlx_core = _configure_mlx_allocator_cache()
         self.model, self.tokenizer = _load_mlx_model_and_tokenizer(model_id)
         self.model_fingerprint = _local_model_fingerprint(model_id)
         self._base_completion_mode = _is_base_completion_model(model_id, self.model_info)
@@ -413,9 +469,11 @@ class MlxLmEngine:
             "warmup": dict(self._warmup_status),
             "promptCache": prompt_cache,
             "prefixCache": self.prefix_cache_status(),
+            "mlxMemory": _mlx_memory_status(self._mlx_allocator_cache, self._mlx_core),
             "capabilities": {
                 "streaming": True,
                 "residentModel": True,
+                "boundedAllocatorCache": bool(self._mlx_allocator_cache.get("configured")),
                 "promptCache": _prompt_cache_used_for_generation(prompt_cache),
                 "prefixCache": bool(self._prefix_cache_enabled),
                 "textOnlyModel": bool(self.model_info.get("textOnly")),

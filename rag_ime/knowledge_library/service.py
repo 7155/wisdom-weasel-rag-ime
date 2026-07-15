@@ -1,0 +1,1307 @@
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import mimetypes
+import os
+import re
+import shutil
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Sequence
+
+from ..embeddings import HashingEmbeddingProvider
+from .dense import DenseIndex, SqliteDenseIndex, reciprocal_rank_fusion
+from .models import (
+    AssetBlob,
+    KNOWLEDGE_SCHEMA_VERSION,
+    PARSER_MODES,
+    DocumentParseError,
+    KnowledgeLibraryConfig,
+    KnowledgeLibraryError,
+    KnowledgeNotFoundError,
+    ParsedDocument,
+)
+from .parsers import ParserRouter
+from .store import KnowledgeStore, decode_metadata, now_ms
+
+
+DEFAULT_CHUNKING_CONFIG: dict[str, Any] = {
+    "strategy": "markdown",
+    "size": 1_200,
+    "overlap": 160,
+    "respectHeadings": True,
+    "respectPageBoundaries": True,
+}
+DEFAULT_RETRIEVAL_CONFIG: dict[str, Any] = {
+    "mode": "hybrid",
+    "topK": 10,
+    "threshold": 0.0,
+}
+_IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"})
+_SOURCE_PREVIEW_MIME_TYPES = _IMAGE_MIME_TYPES | frozenset(
+    {
+        "image/tiff",
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+)
+
+
+class KnowledgeLibraryService:
+    def __init__(
+        self,
+        config: KnowledgeLibraryConfig,
+        *,
+        parser_router: ParserRouter | None = None,
+        dense_index: DenseIndex | None = None,
+        background_jobs: bool = False,
+    ):
+        self.config = config
+        self.config.root_dir.mkdir(parents=True, exist_ok=True)
+        self.config.files_dir.mkdir(parents=True, exist_ok=True)
+        self.config.assets_dir.mkdir(parents=True, exist_ok=True)
+        self.config.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        self.store = KnowledgeStore(config.database_path)
+        self.parsers = parser_router or ParserRouter(config)
+        self.dense_index = dense_index or SqliteDenseIndex(
+            config.database_path,
+            HashingEmbeddingProvider(dimensions=192),
+        )
+        self._dense_error = ""
+        self._ingest_lock = threading.Lock()
+        self._job_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-ime-knowledge")
+            if background_jobs
+            else None
+        )
+
+    def close(self, *, wait: bool = True) -> None:
+        if self._job_executor is not None:
+            self._job_executor.shutdown(wait=wait, cancel_futures=not wait)
+            self._job_executor = None
+
+    def create_base(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        parser_mode: str = "auto",
+        agent_enabled: bool = False,
+        chunking_config: dict[str, Any] | None = None,
+        retrieval_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        clean_name = _clean_name(name, field="knowledge base name")
+        parser_mode = _parser_mode(parser_mode)
+        normalized_chunking = _normalize_chunking_config(
+            chunking_config,
+            defaults={
+                **DEFAULT_CHUNKING_CONFIG,
+                "size": self.config.chunk_chars,
+                "overlap": self.config.chunk_overlap_chars,
+            },
+        )
+        normalized_retrieval = _normalize_retrieval_config(retrieval_config)
+        row = self.store.create_base(
+            base_id=uuid.uuid4().hex,
+            name=clean_name,
+            normalized_name=clean_name.casefold(),
+            description=str(description or "").strip()[:4_000],
+            parser_mode=parser_mode,
+            agent_enabled=bool(agent_enabled),
+            chunking_config_json=json.dumps(normalized_chunking, sort_keys=True),
+            retrieval_config_json=json.dumps(normalized_retrieval, sort_keys=True),
+        )
+        return _base_to_dict(row)
+
+    def list_bases(self, *, agent_only: bool = False) -> dict[str, Any]:
+        bases = [_base_to_dict(row) for row in self.store.list_bases(agent_only=agent_only)]
+        return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "bases": bases, "total": len(bases)}
+
+    def get_base(self, base_id: str) -> dict[str, Any]:
+        return _base_to_dict(self.store.get_base(_identifier(base_id, "base id")))
+
+    def update_base(
+        self,
+        base_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        parser_mode: str | None = None,
+        agent_enabled: bool | None = None,
+        chunking_config: dict[str, Any] | None = None,
+        retrieval_config: dict[str, Any] | None = None,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        current = self.store.get_base(base_id)
+        if expected_revision is not None and int(current["config_revision"]) != int(expected_revision):
+            raise KnowledgeLibraryError("knowledge base revision does not match", code="stale_revision")
+        fields: dict[str, Any] = {}
+        requires_reindex = False
+        if name is not None:
+            fields["name"] = _clean_name(name, field="knowledge base name")
+            fields["normalized_name"] = fields["name"].casefold()
+        if description is not None:
+            fields["description"] = str(description).strip()[:4_000]
+        if parser_mode is not None:
+            normalized_parser = _parser_mode(parser_mode)
+            fields["parser_mode"] = normalized_parser
+            requires_reindex = normalized_parser != str(current["parser_mode"])
+        if agent_enabled is not None:
+            fields["agent_enabled"] = int(bool(agent_enabled))
+        if chunking_config is not None:
+            normalized_chunking = _normalize_chunking_config(
+                chunking_config,
+                defaults=_json_object(current["chunking_config_json"], DEFAULT_CHUNKING_CONFIG),
+            )
+            serialized = json.dumps(normalized_chunking, sort_keys=True)
+            fields["chunking_config_json"] = serialized
+            requires_reindex = requires_reindex or serialized != str(current["chunking_config_json"])
+        if retrieval_config is not None:
+            fields["retrieval_config_json"] = json.dumps(
+                _normalize_retrieval_config(
+                    retrieval_config,
+                    defaults=_json_object(current["retrieval_config_json"], DEFAULT_RETRIEVAL_CONFIG),
+                ),
+                sort_keys=True,
+            )
+        if fields:
+            fields["config_revision"] = int(current["config_revision"]) + 1
+        updated = self.store.update_base(base_id, fields)
+        stale_count = self.store.mark_base_documents_stale(base_id) if requires_reindex else 0
+        if fields and not requires_reindex:
+            self.store.advance_ready_index_revision(base_id, int(updated["config_revision"]))
+        result = _base_to_dict(self.store.get_base(base_id))
+        result["reindexRequired"] = stale_count > 0
+        result["staleDocumentCount"] = stale_count
+        return result
+
+    def delete_base(self, base_id: str) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        documents = self.store.list_documents(base_id)
+        self.store.delete_base(base_id)
+        for row in documents:
+            _unlink_quietly(Path(str(row["stored_path"])))
+            self._delete_dense(str(row["id"]))
+        shutil.rmtree(self.config.files_dir / base_id, ignore_errors=True)
+        shutil.rmtree(self.config.artifacts_dir / base_id, ignore_errors=True)
+        return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "deleted": True, "baseId": base_id}
+
+    def import_document(
+        self,
+        base_id: str,
+        source_path: str | Path,
+        *,
+        display_name: str = "",
+        mime_type: str = "",
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        base = self.store.get_base(base_id)
+        source = _validated_source(Path(source_path), max_bytes=self.config.max_source_bytes)
+        source_hash, byte_size = _hash_file(source)
+        document_id = uuid.uuid4().hex
+        suffix = source.suffix.lower()[:20]
+        stored_dir = self.config.files_dir / base_id
+        stored_dir.mkdir(parents=True, exist_ok=True)
+        stored_path = stored_dir / f"{source_hash}{suffix}"
+        if not stored_path.exists():
+            temporary = stored_path.with_name(f".{stored_path.name}.{uuid.uuid4().hex}.tmp")
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, stored_path)
+        timestamp = now_ms()
+        guessed_mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+        supplied_mime = str(mime_type or "").split(";", 1)[0].strip().lower()
+        effective_mime = guessed_mime if not supplied_mime or supplied_mime == "application/octet-stream" else supplied_mime
+        row = self.store.insert_document(
+            {
+                "id": document_id,
+                "base_id": base_id,
+                "display_name": _clean_name(display_name or source.name, field="document name"),
+                "source_name": source.name,
+                "media_type": effective_mime[:200],
+                "sha256": source_hash,
+                "byte_size": byte_size,
+                "stored_path": str(stored_path),
+                "status": "queued",
+                "revision": 1,
+                "created_at_ms": timestamp,
+                "updated_at_ms": timestamp,
+            }
+        )
+        return self._dispatch_document(row, parser_mode=str(base["parser_mode"]))
+
+    def retry_document(self, document_id: str, *, parser_mode: str | None = None) -> dict[str, Any]:
+        document_id = _identifier(document_id, "document id")
+        row = self.store.get_document(document_id)
+        base = self.store.get_base(str(row["base_id"]))
+        selected_mode = _parser_mode(parser_mode) if parser_mode is not None else str(base["parser_mode"])
+        row = self.store.update_document(
+            document_id,
+            {
+                "revision": int(row["revision"]) + 1,
+                "status": "queued",
+                "error_code": "",
+                "error_message": "",
+            },
+        )
+        return self._dispatch_document(row, parser_mode=selected_mode)
+
+    def list_documents(self, base_id: str) -> dict[str, Any]:
+        documents = [_document_to_dict(row) for row in self.store.list_documents(_identifier(base_id, "base id"))]
+        return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "documents": documents, "total": len(documents)}
+
+    def list_jobs(self, *, base_id: str = "", limit: int = 100) -> dict[str, Any]:
+        if base_id:
+            self.store.get_base(_identifier(base_id, "base id"))
+        jobs = [
+            {
+                "jobId": str(row["id"]),
+                "kbId": str(row["base_id"]),
+                "fileId": str(row["document_id"]),
+                "fileName": str(row["file_name"]),
+                "revision": int(row["revision"]),
+                "kind": str(row["kind"]),
+                "status": str(row["status"]),
+                "stage": str(row["stage"]),
+                "error": (
+                    {"code": str(row["error_code"]), "message": str(row["error_message"])}
+                    if row["error_code"] or row["error_message"]
+                    else None
+                ),
+                "createdAtMs": int(row["created_at_ms"]),
+                "startedAtMs": int(row["started_at_ms"]) if row["started_at_ms"] is not None else None,
+                "finishedAtMs": int(row["finished_at_ms"]) if row["finished_at_ms"] is not None else None,
+                "updatedAtMs": int(row["updated_at_ms"]),
+            }
+            for row in self.store.list_jobs(base_id=base_id, limit=limit)
+        ]
+        return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "jobs": jobs, "items": jobs, "total": len(jobs)}
+
+    def get_document(self, document_id: str) -> dict[str, Any]:
+        return _document_to_dict(self.store.get_document(_identifier(document_id, "document id")))
+
+    def delete_document(self, document_id: str) -> dict[str, Any]:
+        document_id = _identifier(document_id, "document id")
+        row = self.store.delete_document(document_id)
+        _unlink_quietly(Path(str(row["stored_path"])))
+        shutil.rmtree(self.config.artifacts_dir / str(row["base_id"]) / document_id, ignore_errors=True)
+        self._delete_dense(document_id)
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "deleted": True,
+            "baseId": str(row["base_id"]),
+            "documentId": document_id,
+        }
+
+    def document_detail(
+        self,
+        base_id: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        line_offset: int = 0,
+        line_limit: int = 200,
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        document_id = _identifier(document_id, "document id")
+        document = self.store.get_document(document_id)
+        if str(document["base_id"]) != base_id:
+            raise KnowledgeNotFoundError(f"document {document_id!r} was not found in knowledge base {base_id!r}")
+        chunk_offset = max(0, int(offset))
+        chunk_limit = max(1, min(500, int(limit)))
+        chunk_rows, chunk_total = self.store.document_chunks(document_id, offset=chunk_offset, limit=chunk_limit)
+        page_rows = self.store.document_pages(document_id)
+        assets = [_asset_to_dict(row, base_id=base_id, document_id=document_id) for row in self.store.document_assets(document_id)]
+        artifact = self._artifact_window(
+            document,
+            line_offset=max(0, int(line_offset)),
+            line_limit=max(1, min(500, int(line_limit))),
+        )
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "document": {
+                **_document_to_dict(document),
+                "sourceReadPath": f"/api/knowledge-bases/{base_id}/documents/{document_id}/source",
+            },
+            "chunks": {
+                "items": [_chunk_to_dict(row) for row in chunk_rows],
+                "offset": chunk_offset,
+                "limit": chunk_limit,
+                "total": chunk_total,
+                "hasMore": chunk_offset + len(chunk_rows) < chunk_total,
+            },
+            "pages": [
+                {
+                    "page": int(row["page"]),
+                    "chunkCount": int(row["chunk_count"]),
+                    "firstOrdinal": int(row["first_ordinal"]),
+                    "lastOrdinal": int(row["last_ordinal"]),
+                }
+                for row in page_rows
+            ],
+            "assets": assets,
+            "tables": [],
+            **artifact,
+        }
+
+    def read_document_asset(self, base_id: str, document_id: str, asset_id: str) -> AssetBlob:
+        base_id = _identifier(base_id, "base id")
+        document_id = _identifier(document_id, "document id")
+        if not re.fullmatch(r"[a-f0-9]{64}", str(asset_id or "")):
+            raise KnowledgeLibraryError("invalid asset id", code="invalid_argument")
+        row = self.store.document_asset(base_id=base_id, document_id=document_id, asset_id=asset_id)
+        media_type = str(row["media_type"] or "").lower()
+        if media_type not in _IMAGE_MIME_TYPES:
+            raise KnowledgeLibraryError("asset MIME type is not allowed for inline reading", code="asset_type_not_allowed")
+        byte_size = int(row["byte_size"])
+        if byte_size > self.config.max_asset_read_bytes:
+            raise KnowledgeLibraryError("asset exceeds the inline read size limit", code="asset_too_large")
+        path = _safe_stored_path(Path(str(row["stored_path"])), root=self.config.assets_dir)
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise KnowledgeNotFoundError(f"asset {asset_id!r} is unavailable") from exc
+        if len(data) != byte_size or len(data) > self.config.max_asset_read_bytes:
+            raise KnowledgeLibraryError("asset size does not match its stored metadata", code="asset_integrity_error")
+        if hashlib.sha256(data).hexdigest() != asset_id:
+            raise KnowledgeLibraryError("asset digest verification failed", code="asset_integrity_error")
+        return AssetBlob(
+            asset_id=asset_id,
+            file_name=str(row["original_name"]),
+            media_type=media_type,
+            data=data,
+        )
+
+    def read_document_source(self, base_id: str, document_id: str) -> AssetBlob:
+        base_id = _identifier(base_id, "base id")
+        document_id = _identifier(document_id, "document id")
+        document = self.store.get_document(document_id)
+        if str(document["base_id"]) != base_id:
+            raise KnowledgeNotFoundError(f"document {document_id!r} was not found in knowledge base {base_id!r}")
+        media_type = str(document["media_type"] or "").split(";", 1)[0].lower()
+        if media_type not in _SOURCE_PREVIEW_MIME_TYPES:
+            raise KnowledgeLibraryError("source MIME type is not allowed for inline preview", code="source_type_not_allowed")
+        byte_size = int(document["byte_size"])
+        if byte_size > self.config.max_source_preview_bytes:
+            raise KnowledgeLibraryError("source exceeds the inline preview size limit", code="source_too_large")
+        base_files_root = self.config.files_dir / base_id
+        path = _safe_stored_path(Path(str(document["stored_path"])), root=base_files_root)
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise KnowledgeNotFoundError(f"source for document {document_id!r} is unavailable") from exc
+        if len(data) != byte_size or len(data) > self.config.max_source_preview_bytes:
+            raise KnowledgeLibraryError("source size does not match its stored metadata", code="source_integrity_error")
+        sha256 = str(document["sha256"])
+        if hashlib.sha256(data).hexdigest() != sha256:
+            raise KnowledgeLibraryError("source digest verification failed", code="source_integrity_error")
+        return AssetBlob(
+            asset_id=sha256,
+            file_name=str(document["display_name"]),
+            media_type=media_type,
+            data=data,
+        )
+
+    def reindex_preview(self, base_id: str) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        base = self.get_base(base_id)
+        documents = self.store.list_documents(base_id)
+        candidates = [row for row in documents if str(row["status"]) in {"ready", "stale", "failed"}]
+        preview_token = _reindex_preview_token(base_id, int(base["configRevision"]), candidates)
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "kbId": base_id,
+            "configRevision": base["configRevision"],
+            "chunkingConfig": base["chunkingConfig"],
+            "retrievalConfig": base["retrievalConfig"],
+            "documentCount": len(documents),
+            "rebuildCandidateCount": len(candidates),
+            "staleDocumentCount": sum(str(row["status"]) == "stale" for row in documents),
+            "estimatedSourceBytes": sum(int(row["byte_size"]) for row in candidates),
+            "previewToken": preview_token,
+            "documents": [
+                {"fileId": str(row["id"]), "fileName": str(row["display_name"]), "status": str(row["status"])}
+                for row in candidates
+            ],
+        }
+
+    def rebuild_base(
+        self,
+        base_id: str,
+        *,
+        preview_token: str,
+        expected_revision: int,
+        confirm_text: str,
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        base = self.store.get_base(base_id)
+        candidates = [
+            row for row in self.store.list_documents(base_id) if str(row["status"]) in {"ready", "stale", "failed"}
+        ]
+        if confirm_text != "REBUILD":
+            raise KnowledgeLibraryError("confirmText must equal REBUILD", code="confirmation_required")
+        if int(base["config_revision"]) != int(expected_revision):
+            raise KnowledgeLibraryError("knowledge base configuration changed after preview", code="stale_preview")
+        expected_token = _reindex_preview_token(base_id, int(base["config_revision"]), candidates)
+        if not preview_token or not _constant_time_equal(preview_token, expected_token):
+            raise KnowledgeLibraryError("reindex preview is stale or invalid", code="stale_preview")
+        rebuilt: list[dict[str, Any]] = []
+        for existing in candidates:
+            row = self.store.update_document(
+                str(existing["id"]),
+                {
+                    "revision": int(existing["revision"]) + 1,
+                    "status": "queued",
+                    "error_code": "",
+                    "error_message": "",
+                },
+            )
+            rebuilt.append(self._dispatch_document(row, parser_mode=str(base["parser_mode"]), job_kind="reindex"))
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "kbId": base_id,
+            "configRevision": int(base["config_revision"]),
+            "requested": len(candidates),
+            "ready": sum(item["status"] == "ready" for item in rebuilt),
+            "failed": sum(item["status"] == "failed" for item in rebuilt),
+            "queued": sum(item["status"] in {"queued", "parsing", "indexing"} for item in rebuilt),
+            "documents": rebuilt,
+        }
+
+    def search(
+        self,
+        query: str,
+        *,
+        base_ids: Sequence[str] = (),
+        limit: int | None = None,
+        mode: str | None = None,
+        threshold: float | None = None,
+        agent_only: bool = False,
+    ) -> dict[str, Any]:
+        query = _query(query)
+        base_ids = tuple(_identifier(item, "base id") for item in base_ids)
+        retrieval_config = dict(DEFAULT_RETRIEVAL_CONFIG)
+        if len(base_ids) == 1:
+            base = self.store.get_base(base_ids[0])
+            retrieval_config = _normalize_retrieval_config(
+                _json_object(base["retrieval_config_json"], DEFAULT_RETRIEVAL_CONFIG)
+            )
+        if mode is not None:
+            retrieval_config["mode"] = mode
+        if limit is not None:
+            retrieval_config["topK"] = limit
+        if threshold is not None:
+            retrieval_config["threshold"] = threshold
+        retrieval_config = _normalize_retrieval_config(retrieval_config)
+        fetch_limit = int(retrieval_config["topK"])
+        requested_mode = str(retrieval_config["mode"])
+        lexical = (
+            self.store.search(query, base_ids=base_ids, limit=fetch_limit, agent_only=agent_only)
+            if requested_mode in {"lexical", "hybrid"}
+            else []
+        )
+        hits_by_id = {hit.chunk_id: hit for hit in lexical}
+        dense_ids: list[str] = []
+        dense_scored: Sequence[tuple[str, float]] = ()
+        if requested_mode in {"dense", "hybrid"}:
+            try:
+                dense_scored = self.dense_index.search(query, base_ids=base_ids, limit=fetch_limit)
+                dense_ids = [item_id for item_id, _score in dense_scored]
+                self._dense_error = ""
+            except Exception as exc:
+                self._dense_error = str(exc)
+        dense_hits = self.store.hydrate_dense_hits(dense_scored, base_ids=base_ids, agent_only=agent_only)
+        for hit in dense_hits:
+            hits_by_id.setdefault(hit.chunk_id, hit)
+        if requested_mode == "dense":
+            lexical = dense_hits
+        elif dense_ids:
+            # Dense projections only influence canonical chunks already read from SQLite.
+            ordered_ids = reciprocal_rank_fusion([hit.chunk_id for hit in lexical], dense_ids)
+            lexical = [hits_by_id[item_id] for item_id in ordered_ids if item_id in hits_by_id][:fetch_limit]
+        lexical = [hit for hit in lexical if hit.score >= float(retrieval_config["threshold"])]
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "query": query,
+            "hits": [hit.to_dict() for hit in lexical],
+            "total": len(lexical),
+            "retrieval": {
+                "mode": requested_mode,
+                "effectiveMode": "hybrid" if dense_ids and lexical else ("lexical" if lexical else requested_mode),
+                "config": retrieval_config,
+                "lexicalAvailable": True,
+                "dense": self._dense_status(),
+            },
+        }
+
+    def find(
+        self,
+        query: str,
+        *,
+        base_ids: Sequence[str] = (),
+        limit: int = 20,
+        agent_only: bool = False,
+    ) -> dict[str, Any]:
+        query = _query(query)
+        rows = self.store.find_documents(
+            query,
+            base_ids=tuple(_identifier(item, "base id") for item in base_ids),
+            limit=limit,
+            agent_only=agent_only,
+        )
+        documents = [_document_to_dict(row, include_error=False) for row in rows]
+        return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "query": query, "documents": documents, "total": len(documents)}
+
+    def find_in_document(
+        self,
+        document_id: str,
+        patterns: Sequence[str],
+        *,
+        use_regex: bool = False,
+        case_sensitive: bool = False,
+        max_windows: int = 8,
+        window_size: int = 24,
+        agent_only: bool = False,
+    ) -> dict[str, Any]:
+        document_id = _identifier(document_id, "document id")
+        normalized_patterns = tuple(_query(pattern)[:240] for pattern in patterns[:10])
+        if not normalized_patterns:
+            raise KnowledgeLibraryError("find requires at least one pattern", code="invalid_argument")
+        matchers = _document_matchers(
+            normalized_patterns,
+            use_regex=use_regex,
+            case_sensitive=case_sensitive,
+        )
+        result = self.open_document(document_id, offset=0, limit=50, agent_only=agent_only)
+        chunks = list(result.get("chunks") or [])
+        windows: list[dict[str, Any]] = []
+        line_cursor = 1
+        for chunk in chunks:
+            content = str(chunk.get("content") or "")
+            lines = content.splitlines() or [content]
+            for line_index, line in enumerate(lines):
+                matched_pattern = next((pattern for pattern, matcher in matchers if matcher(line)), "")
+                if not matched_pattern:
+                    continue
+                radius = max(1, min(120, int(window_size))) // 2
+                start_index = max(0, line_index - radius)
+                end_index = min(len(lines), line_index + radius + 1)
+                windows.append(
+                    {
+                        "kbId": result.get("baseId"),
+                        "kbName": result.get("baseName"),
+                        "fileId": document_id,
+                        "fileName": result.get("documentName"),
+                        "chunkId": chunk.get("chunkId"),
+                        "pattern": matched_pattern,
+                        "content": "\n".join(lines[start_index:end_index]),
+                        "lineStart": line_cursor + start_index,
+                        "lineEnd": line_cursor + end_index - 1,
+                        "matchLine": line_cursor + line_index,
+                        "page": chunk.get("page"),
+                        "heading": chunk.get("heading"),
+                    }
+                )
+                if len(windows) >= max(1, min(20, int(max_windows))):
+                    break
+            line_cursor += len(lines)
+            if len(windows) >= max(1, min(20, int(max_windows))):
+                break
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "kbId": result.get("baseId"),
+            "fileId": document_id,
+            "patterns": list(normalized_patterns),
+            "windows": windows,
+            "items": windows,
+            "total": len(windows),
+        }
+
+    def open(
+        self,
+        chunk_id: str,
+        *,
+        before: int = 1,
+        after: int = 1,
+        agent_only: bool = False,
+    ) -> dict[str, Any]:
+        chunk_id = _identifier(chunk_id, "chunk id")
+        rows = self.store.open_chunk(
+            chunk_id,
+            before=max(0, min(10, int(before))),
+            after=max(0, min(10, int(after))),
+            agent_only=agent_only,
+        )
+        chunks = [
+            {
+                "chunkId": str(row["id"]),
+                "ordinal": int(row["ordinal"]),
+                "content": str(row["content"]),
+                "page": int(row["page"]) if row["page"] is not None else None,
+                "heading": str(row["heading"] or "") or None,
+            }
+            for row in rows
+        ]
+        first = rows[0]
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "baseId": str(first["base_id"]),
+            "baseName": str(first["base_name"]),
+            "documentId": str(first["document_id"]),
+            "documentName": str(first["document_name"]),
+            "anchorChunkId": chunk_id,
+            "chunks": chunks,
+        }
+
+    def open_document(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 5,
+        agent_only: bool = False,
+    ) -> dict[str, Any]:
+        document_id = _identifier(document_id, "document id")
+        rows = self.store.open_document(
+            document_id,
+            offset=max(0, int(offset)),
+            limit=max(1, min(50, int(limit))),
+            agent_only=agent_only,
+        )
+        if not rows:
+            document = self.store.get_document(document_id)
+            return {
+                "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+                "baseId": str(document["base_id"]),
+                "baseName": str(document["base_name"]),
+                "documentId": document_id,
+                "documentName": str(document["display_name"]),
+                "chunks": [],
+            }
+        first = rows[0]
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "baseId": str(first["base_id"]),
+            "baseName": str(first["base_name"]),
+            "documentId": document_id,
+            "documentName": str(first["document_name"]),
+            "chunks": [
+                {
+                    "chunkId": str(row["id"]),
+                    "ordinal": int(row["ordinal"]),
+                    "content": str(row["content"]),
+                    "page": int(row["page"]) if row["page"] is not None else None,
+                    "heading": str(row["heading"] or "") or None,
+                }
+                for row in rows
+            ],
+        }
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "status": "ready",
+            "database": {"path": str(self.config.database_path), "authoritative": True, "fts5": True},
+            "storage": {"root": str(self.config.root_dir), "files": str(self.config.files_dir)},
+            "mineru": {
+                "enabled": self.config.mineru_enabled,
+                "port": self.config.mineru_port,
+            },
+            "dense": self._dense_status(),
+            **self.store.counts(),
+        }
+
+    def mineru_health(self) -> dict[str, Any]:
+        if not self.config.mineru_enabled:
+            return {"status": "disabled", "enabled": False, "port": self.config.mineru_port}
+        return {"enabled": True, **self.parsers.mineru.health()}
+
+    def _dispatch_document(self, row: Any, *, parser_mode: str, job_kind: str = "parse_and_index") -> dict[str, Any]:
+        document_id = str(row["id"])
+        revision = int(row["revision"])
+        job_id = uuid.uuid4().hex
+        timestamp = now_ms()
+        self.store.insert_job(
+            {
+                "id": job_id,
+                "document_id": document_id,
+                "revision": revision,
+                "kind": job_kind,
+                "status": "queued",
+                "stage": "queued",
+                "created_at_ms": timestamp,
+                "updated_at_ms": timestamp,
+            }
+        )
+        if self._job_executor is not None:
+            self._job_executor.submit(
+                self._process_document_locked,
+                row,
+                parser_mode=parser_mode,
+                job_kind=job_kind,
+                job_id=job_id,
+            )
+            return _document_to_dict(self.store.get_document(document_id))
+        return self._process_document_locked(
+            row,
+            parser_mode=parser_mode,
+            job_kind=job_kind,
+            job_id=job_id,
+        )
+
+    def _process_document_locked(
+        self,
+        row: Any,
+        *,
+        parser_mode: str,
+        job_kind: str,
+        job_id: str,
+    ) -> dict[str, Any]:
+        with self._ingest_lock:
+            return self._process_document(row, parser_mode=parser_mode, job_kind=job_kind, job_id=job_id)
+
+    def _process_document(
+        self,
+        row: Any,
+        *,
+        parser_mode: str,
+        job_kind: str,
+        job_id: str,
+    ) -> dict[str, Any]:
+        document_id = str(row["id"])
+        base_id = str(row["base_id"])
+        revision = int(row["revision"])
+        base = self.store.get_base(base_id)
+        chunking_config = _normalize_chunking_config(
+            _json_object(base["chunking_config_json"], DEFAULT_CHUNKING_CONFIG),
+            defaults=DEFAULT_CHUNKING_CONFIG,
+        )
+        params_hash = hashlib.sha256(
+            json.dumps({"mode": parser_mode, "chunking": chunking_config}, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        try:
+            self.store.update_document(document_id, {"status": "parsing", "parser_params_hash": params_hash})
+            self.store.update_job(job_id, {"status": "running", "stage": "parsing", "started_at_ms": now_ms()})
+            parsed = self.parsers.parse(Path(str(row["stored_path"])), mode=parser_mode)
+            chunks = _chunk_document(
+                parsed,
+                document_id=document_id,
+                base_id=base_id,
+                chunking_config=chunking_config,
+            )
+            if not chunks:
+                raise DocumentParseError("document produced no indexable chunks", code="empty_document")
+            self.store.update_document(document_id, {"status": "indexing"})
+            self.store.update_job(job_id, {"stage": "indexing"})
+            self.store.clear_document_asset_links(document_id)
+            self._store_assets(document_id, parsed)
+            output_hash = hashlib.sha256(parsed.text.encode("utf-8")).hexdigest()
+            artifact_path = self._store_artifact(base_id, document_id, revision, parsed.text)
+            applied = self.store.replace_chunks_if_revision(
+                document_id=document_id,
+                revision=revision,
+                chunks=chunks,
+                document_fields={
+                    "status": "ready",
+                    "parser_provider": parsed.provider,
+                    "parser_version": parsed.provider_version,
+                    "output_hash": output_hash,
+                    "chunk_count": len(chunks),
+                    "error_code": "",
+                    "error_message": "",
+                    "metadata_json": json.dumps(parsed.metadata, ensure_ascii=False, sort_keys=True),
+                    "artifact_path": str(artifact_path),
+                    "indexed_config_revision": int(base["config_revision"]),
+                },
+            )
+            if not applied:
+                self.store.update_job(
+                    job_id,
+                    {"status": "superseded", "stage": "stale_result_dropped", "finished_at_ms": now_ms()},
+                )
+                return _document_to_dict(self.store.get_document(document_id))
+            try:
+                self.dense_index.replace_document(document_id, chunks)
+                self._dense_error = ""
+            except Exception as exc:
+                self._dense_error = str(exc)
+            self.store.update_job(job_id, {"status": "succeeded", "stage": "ready", "finished_at_ms": now_ms()})
+        except Exception as exc:
+            error = exc if isinstance(exc, KnowledgeLibraryError) else DocumentParseError(str(exc))
+            current = self.store.get_document(document_id)
+            if int(current["revision"]) == revision:
+                self.store.update_document(
+                    document_id,
+                    {"status": "failed", "error_code": error.code, "error_message": str(error)[:2_000]},
+                )
+            self.store.update_job(
+                job_id,
+                {
+                    "status": "failed",
+                    "stage": "failed",
+                    "error_code": error.code,
+                    "error_message": str(error)[:2_000],
+                    "finished_at_ms": now_ms(),
+                },
+            )
+        return _document_to_dict(self.store.get_document(document_id))
+
+    def _store_assets(self, document_id: str, parsed: ParsedDocument) -> None:
+        for asset in parsed.assets:
+            suffix = mimetypes.guess_extension(asset.media_type) or ""
+            path = self.config.assets_dir / f"{asset.sha256}{suffix}"
+            if not path.exists():
+                temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+                temporary.write_bytes(asset.data)
+                os.replace(temporary, path)
+            self.store.add_asset(
+                sha256=asset.sha256,
+                media_type=asset.media_type,
+                byte_size=len(asset.data),
+                stored_path=str(path),
+            )
+            self.store.link_asset(document_id=document_id, asset_sha256=asset.sha256, original_name=asset.name)
+
+    def _store_artifact(self, base_id: str, document_id: str, revision: int, text: str) -> Path:
+        directory = self.config.artifacts_dir / base_id / document_id
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"revision-{revision}.md"
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+        return path
+
+    def _artifact_window(self, document: Any, *, line_offset: int, line_limit: int) -> dict[str, Any]:
+        raw_path = str(document["artifact_path"] or "")
+        if not raw_path:
+            return {
+                "artifact": {"available": False, "format": "markdown"},
+                "contentWindow": {"items": [], "offset": line_offset, "limit": line_limit, "total": 0, "hasMore": False},
+            }
+        try:
+            path = _safe_stored_path(Path(raw_path), root=self.config.artifacts_dir)
+            data = path.read_bytes()
+        except (OSError, KnowledgeLibraryError):
+            return {
+                "artifact": {"available": False, "format": "markdown"},
+                "contentWindow": {"items": [], "offset": line_offset, "limit": line_limit, "total": 0, "hasMore": False},
+            }
+        text = data.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        window = lines[line_offset : line_offset + line_limit]
+        return {
+            "artifact": {
+                "available": True,
+                "format": "markdown",
+                "mimeType": "text/markdown; charset=utf-8",
+                "byteSize": len(data),
+                "lineCount": len(lines),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            },
+            "contentWindow": {
+                "items": [
+                    {"lineNumber": line_offset + index + 1, "content": content}
+                    for index, content in enumerate(window)
+                ],
+                "offset": line_offset,
+                "limit": line_limit,
+                "total": len(lines),
+                "hasMore": line_offset + len(window) < len(lines),
+            },
+        }
+
+    def _delete_dense(self, document_id: str) -> None:
+        try:
+            self.dense_index.delete_document(document_id)
+            self._dense_error = ""
+        except Exception as exc:
+            self._dense_error = str(exc)
+
+    def _dense_status(self) -> dict[str, Any]:
+        try:
+            status = dict(self.dense_index.status())
+        except Exception as exc:
+            status = {"available": False, "degraded": True, "reason": str(exc)}
+        if self._dense_error:
+            status.update({"available": False, "degraded": True, "reason": self._dense_error})
+        return status
+
+
+def _chunk_document(
+    parsed: ParsedDocument,
+    *,
+    document_id: str,
+    base_id: str,
+    chunking_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    chunk_chars = int(chunking_config["size"])
+    overlap_chars = int(chunking_config["overlap"])
+    strategy = str(chunking_config["strategy"])
+    respect_headings = bool(chunking_config["respectHeadings"])
+    respect_pages = bool(chunking_config["respectPageBoundaries"])
+    chunks: list[dict[str, Any]] = []
+    ordinal = 0
+    current_heading = ""
+    has_page_metadata = parsed.metadata.get("pageSeparator") == "\f" or "\f" in parsed.text
+    page_texts = parsed.text.split("\f") if respect_pages else [parsed.text.replace("\f", "\n\n")]
+    for page_index, page_text in enumerate(page_texts, start=1):
+        page = page_index if respect_pages and has_page_metadata else None
+        if strategy == "fixed":
+            blocks = [page_text.strip()] if page_text.strip() else []
+        else:
+            blocks = [item.strip() for item in re.split(r"\n\s*\n", page_text) if item.strip()]
+        buffer = ""
+        buffer_heading = current_heading
+        for block in blocks:
+            heading_match = re.match(r"^#{1,6}\s+(.+)$", block.splitlines()[0])
+            if heading_match and respect_headings:
+                current_heading = heading_match.group(1).strip()[:300]
+                if not buffer:
+                    buffer_heading = current_heading
+            candidate = f"{buffer}\n\n{block}".strip() if buffer else block
+            if len(candidate) <= chunk_chars:
+                buffer = candidate
+                continue
+            if buffer:
+                chunks.append(_chunk_record(document_id, base_id, ordinal, buffer, buffer_heading, page))
+                ordinal += 1
+                overlap = buffer[-overlap_chars:].lstrip() if overlap_chars else ""
+                buffer = overlap
+                buffer_heading = current_heading
+            remainder = f"{buffer}\n\n{block}".strip() if buffer else block
+            while len(remainder) > chunk_chars:
+                split_at = chunk_chars
+                if strategy != "fixed":
+                    boundary = max(remainder.rfind("\n", chunk_chars // 2, chunk_chars), remainder.rfind(" ", chunk_chars // 2, chunk_chars))
+                    if boundary > chunk_chars // 2:
+                        split_at = boundary
+                content = remainder[:split_at].strip()
+                if content:
+                    chunks.append(_chunk_record(document_id, base_id, ordinal, content, current_heading, page))
+                    ordinal += 1
+                next_start = max(1, split_at - overlap_chars)
+                remainder = remainder[next_start:].lstrip()
+            buffer = remainder
+        if buffer:
+            chunks.append(_chunk_record(document_id, base_id, ordinal, buffer, buffer_heading, page))
+            ordinal += 1
+    return chunks
+
+
+def _chunk_record(
+    document_id: str,
+    base_id: str,
+    ordinal: int,
+    content: str,
+    heading: str,
+    page: int | None,
+) -> dict[str, Any]:
+    content = content.strip()
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return {
+        "id": uuid.uuid5(uuid.NAMESPACE_URL, f"rag-ime:{document_id}:{ordinal}:{content_hash}").hex,
+        "document_id": document_id,
+        "base_id": base_id,
+        "ordinal": ordinal,
+        "content": content,
+        "heading": heading,
+        "page": page,
+        "content_hash": content_hash,
+    }
+
+
+def _base_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "name": str(row["name"]),
+        "description": str(row["description"] or ""),
+        "parserMode": str(row["parser_mode"]),
+        "agentEnabled": bool(row["agent_enabled"]),
+        "chunkingConfig": _json_object(row["chunking_config_json"], DEFAULT_CHUNKING_CONFIG),
+        "retrievalConfig": _json_object(row["retrieval_config_json"], DEFAULT_RETRIEVAL_CONFIG),
+        "configRevision": int(row["config_revision"]),
+        "revision": int(row["config_revision"]),
+        "documentCount": int(row["document_count"]),
+        "readyDocumentCount": int(row["ready_document_count"]),
+        "chunkCount": int(row["chunk_count"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+    }
+
+
+def _document_to_dict(row: Any, *, include_error: bool = True) -> dict[str, Any]:
+    result = {
+        "id": str(row["id"]),
+        "documentId": str(row["id"]),
+        "kbId": str(row["base_id"]),
+        "baseId": str(row["base_id"]),
+        "baseName": str(row["base_name"]),
+        "fileName": str(row["display_name"]),
+        "sourceName": str(row["source_name"]),
+        "mimeType": str(row["media_type"]),
+        "byteSize": int(row["byte_size"]),
+        "sha256": str(row["sha256"]),
+        "status": str(row["status"]),
+        "parserProvider": str(row["parser_provider"] or ""),
+        "parserVersion": str(row["parser_version"] or ""),
+        "revision": int(row["revision"]),
+        "indexedConfigRevision": int(row["indexed_config_revision"]),
+        "chunkCount": int(row["chunk_count"]),
+        "metadata": decode_metadata(row),
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+    }
+    if include_error:
+        result["error"] = (
+            {"code": str(row["error_code"]), "message": str(row["error_message"])}
+            if row["error_code"] or row["error_message"]
+            else None
+        )
+    return result
+
+
+def _chunk_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "chunkId": str(row["id"]),
+        "ordinal": int(row["ordinal"]),
+        "content": str(row["content"]),
+        "charCount": len(str(row["content"])),
+        "page": int(row["page"]) if row["page"] is not None else None,
+        "heading": str(row["heading"] or "") or None,
+        "sha256": str(row["content_hash"]),
+    }
+
+
+def _asset_to_dict(row: Any, *, base_id: str, document_id: str) -> dict[str, Any]:
+    asset_id = str(row["sha256"])
+    return {
+        "assetId": asset_id,
+        "name": str(row["original_name"]),
+        "mimeType": str(row["media_type"]),
+        "byteSize": int(row["byte_size"]),
+        "sha256": asset_id,
+        "readPath": (
+            f"/api/knowledge-bases/{base_id}/documents/{document_id}/assets/{asset_id}"
+        ),
+    }
+
+
+def _normalize_chunking_config(
+    value: dict[str, Any] | None,
+    *,
+    defaults: dict[str, Any],
+) -> dict[str, Any]:
+    if value is not None and not isinstance(value, dict):
+        raise KnowledgeLibraryError("chunkingConfig must be an object", code="invalid_argument")
+    provided = dict(value or {})
+    allowed = {"strategy", "size", "overlap", "respectHeadings", "respectPageBoundaries"}
+    unknown = sorted(set(provided) - allowed)
+    if unknown:
+        raise KnowledgeLibraryError(f"unknown chunkingConfig fields: {', '.join(unknown)}", code="invalid_argument")
+    merged = {**DEFAULT_CHUNKING_CONFIG, **defaults, **provided}
+    strategy = str(merged["strategy"] or "").strip().lower()
+    if strategy not in {"markdown", "paragraph", "fixed"}:
+        raise KnowledgeLibraryError("chunking strategy must be markdown, paragraph, or fixed", code="invalid_argument")
+    size = _strict_int(merged["size"], field="chunking size", minimum=200, maximum=8_000)
+    overlap = _strict_int(merged["overlap"], field="chunking overlap", minimum=0, maximum=2_000)
+    if overlap >= size:
+        raise KnowledgeLibraryError("chunking overlap must be smaller than size", code="invalid_argument")
+    for field in ("respectHeadings", "respectPageBoundaries"):
+        if not isinstance(merged[field], bool):
+            raise KnowledgeLibraryError(f"{field} must be boolean", code="invalid_argument")
+    return {
+        "strategy": strategy,
+        "size": size,
+        "overlap": overlap,
+        "respectHeadings": merged["respectHeadings"],
+        "respectPageBoundaries": merged["respectPageBoundaries"],
+    }
+
+
+def _normalize_retrieval_config(
+    value: dict[str, Any] | None,
+    *,
+    defaults: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if value is not None and not isinstance(value, dict):
+        raise KnowledgeLibraryError("retrievalConfig must be an object", code="invalid_argument")
+    provided = dict(value or {})
+    allowed = {"mode", "topK", "threshold"}
+    unknown = sorted(set(provided) - allowed)
+    if unknown:
+        raise KnowledgeLibraryError(f"unknown retrievalConfig fields: {', '.join(unknown)}", code="invalid_argument")
+    merged = {**DEFAULT_RETRIEVAL_CONFIG, **(defaults or {}), **provided}
+    mode = str(merged["mode"] or "").strip().lower()
+    if mode not in {"lexical", "hybrid", "dense"}:
+        raise KnowledgeLibraryError("retrieval mode must be lexical, hybrid, or dense", code="invalid_argument")
+    top_k = _strict_int(merged["topK"], field="retrieval topK", minimum=1, maximum=100)
+    if isinstance(merged["threshold"], bool):
+        raise KnowledgeLibraryError("retrieval threshold must be numeric", code="invalid_argument")
+    try:
+        threshold = float(merged["threshold"])
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeLibraryError("retrieval threshold must be numeric", code="invalid_argument") from exc
+    if not 0.0 <= threshold <= 1.0:
+        raise KnowledgeLibraryError("retrieval threshold must be between 0 and 1", code="invalid_argument")
+    return {"mode": mode, "topK": top_k, "threshold": threshold}
+
+
+def _json_object(value: Any, fallback: dict[str, Any]) -> dict[str, Any]:
+    try:
+        decoded = json.loads(str(value or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        decoded = {}
+    return {**fallback, **decoded} if isinstance(decoded, dict) else dict(fallback)
+
+
+def _strict_int(value: Any, *, field: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        raise KnowledgeLibraryError(f"{field} must be an integer", code="invalid_argument")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeLibraryError(f"{field} must be an integer", code="invalid_argument") from exc
+    if result != value and not (isinstance(value, str) and value.strip() == str(result)):
+        raise KnowledgeLibraryError(f"{field} must be an integer", code="invalid_argument")
+    if not minimum <= result <= maximum:
+        raise KnowledgeLibraryError(f"{field} must be between {minimum} and {maximum}", code="invalid_argument")
+    return result
+
+
+def _safe_stored_path(path: Path, *, root: Path) -> Path:
+    if path.is_symlink():
+        raise KnowledgeLibraryError("stored knowledge symlinks are not allowed", code="unsafe_storage_path")
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise KnowledgeNotFoundError("stored knowledge artifact is unavailable") from exc
+    try:
+        resolved.relative_to(resolved_root)
+    except ValueError as exc:
+        raise KnowledgeLibraryError("stored knowledge path escaped its storage root", code="unsafe_storage_path") from exc
+    if not resolved.is_file() or resolved.is_symlink():
+        raise KnowledgeLibraryError("stored knowledge artifact is not a regular file", code="unsafe_storage_path")
+    return resolved
+
+
+def _reindex_preview_token(base_id: str, config_revision: int, documents: Sequence[Any]) -> str:
+    material = {
+        "kbId": base_id,
+        "configRevision": int(config_revision),
+        "documents": [
+            {
+                "fileId": str(row["id"]),
+                "revision": int(row["revision"]),
+                "status": str(row["status"]),
+            }
+            for row in documents
+        ],
+    }
+    return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _constant_time_equal(left: str, right: str) -> bool:
+    return hmac.compare_digest(str(left).encode("ascii", errors="ignore"), str(right).encode("ascii"))
+
+
+def _clean_name(value: str, *, field: str) -> str:
+    clean = " ".join(str(value or "").replace("\x00", " ").split()).strip()
+    if not clean:
+        raise KnowledgeLibraryError(f"{field} is required", code="invalid_argument")
+    if len(clean) > 300:
+        raise KnowledgeLibraryError(f"{field} is too long", code="invalid_argument")
+    return clean
+
+
+def _identifier(value: str, field: str) -> str:
+    clean = str(value or "").strip()
+    if not clean or len(clean) > 128 or not re.fullmatch(r"[A-Za-z0-9._:-]+", clean):
+        raise KnowledgeLibraryError(f"invalid {field}", code="invalid_argument")
+    return clean
+
+
+def _query(value: str) -> str:
+    clean = " ".join(str(value or "").replace("\x00", " ").split()).strip()
+    if not clean:
+        raise KnowledgeLibraryError("search query is required", code="invalid_argument")
+    return clean[:2_000]
+
+
+def _document_matchers(
+    patterns: Sequence[str],
+    *,
+    use_regex: bool,
+    case_sensitive: bool,
+) -> tuple[tuple[str, Any], ...]:
+    flags = 0 if case_sensitive else re.IGNORECASE
+    matchers: list[tuple[str, Any]] = []
+    for pattern in patterns:
+        if use_regex:
+            if "(?" in pattern or re.search(r"\\[1-9]", pattern) or re.search(r"\([^)]*[+*{][^)]*\)[+*{]", pattern):
+                raise KnowledgeLibraryError("unsafe regular expression", code="unsafe_pattern")
+            try:
+                compiled = re.compile(pattern, flags)
+            except re.error as exc:
+                raise KnowledgeLibraryError(f"invalid regular expression: {exc}", code="invalid_argument") from exc
+            matchers.append((pattern, lambda value, regex=compiled: regex.search(value) is not None))
+        else:
+            needle = pattern if case_sensitive else pattern.casefold()
+            matchers.append(
+                (
+                    pattern,
+                    lambda value, expected=needle: expected in (value if case_sensitive else value.casefold()),
+                )
+            )
+    return tuple(matchers)
+
+
+def _parser_mode(value: str) -> str:
+    clean = str(value or "auto").strip().lower()
+    if clean not in PARSER_MODES:
+        raise KnowledgeLibraryError(f"invalid parser mode: {value}", code="invalid_argument")
+    return clean
+
+
+def _validated_source(path: Path, *, max_bytes: int) -> Path:
+    expanded = path.expanduser()
+    if expanded.is_symlink():
+        raise KnowledgeLibraryError("symbolic-link imports are not allowed", code="unsafe_source")
+    try:
+        resolved = expanded.resolve(strict=True)
+        stat = resolved.stat()
+    except OSError as exc:
+        raise KnowledgeNotFoundError(f"source file was not found: {expanded}") from exc
+    if not resolved.is_file():
+        raise KnowledgeLibraryError("source must be a regular file", code="unsafe_source")
+    if stat.st_size > max_bytes:
+        raise KnowledgeLibraryError("source file exceeds the configured size limit", code="source_too_large")
+    return resolved
+
+
+def _hash_file(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    byte_size = 0
+    with path.open("rb") as source:
+        while block := source.read(1024 * 1024):
+            digest.update(block)
+            byte_size += len(block)
+    return digest.hexdigest(), byte_size
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass

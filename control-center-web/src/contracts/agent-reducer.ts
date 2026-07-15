@@ -201,6 +201,13 @@ export function reduceAgentEvent(
       );
       break;
     case 'memory_checkpointed':
+      // Older journals may contain a bookkeeping event for every captured
+      // user message. Capturing a source is not memory recall or context
+      // injection, so keep those legacy events out of the visible activity
+      // trail while preserving explicit tool-receipt checkpoints.
+      if (text(payload.sourceRole) === 'user') break;
+      upsertActivity(next, event, payload, 'completed');
+      break;
     case 'memory_maintenance_updated':
       upsertActivity(next, event, payload, 'completed');
       break;
@@ -346,6 +353,7 @@ export function applyAgentSnapshot(
     next.optimisticByClientMessageId[clientMessageId] = messageId;
     attachMessageToTurn(next, optimistic);
   }
+  reconcileSnapshotTurnStatuses(next);
   return next;
 }
 
@@ -565,6 +573,28 @@ function attachMessageToTurn(state: AgentProjectionState, message: UiAgentMessag
   const turn = ensureTurn(state, message.turnId, message.createdAtMs);
   if (!turn.messageIds.includes(message.id)) turn.messageIds.push(message.id);
   turn.updatedAtMs = Math.max(turn.updatedAtMs, message.completedAtMs ?? message.createdAtMs);
+}
+
+function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
+  for (const turnId of state.turnOrder) {
+    const turn = state.turnsById[turnId];
+    if (!turn) continue;
+    const messages = turn.messageIds
+      .map((messageId) => state.messagesById[messageId])
+      .filter((message): message is UiAgentMessage => Boolean(message));
+    const statuses = new Set(messages.map((message) => message.status));
+    if (statuses.has('failed')) turn.status = 'failed';
+    else if (statuses.has('streaming')) turn.status = 'running';
+    else if (statuses.has('queued')) turn.status = 'queued';
+    else if (statuses.has('aborted')) turn.status = 'aborted';
+    else turn.status = 'completed';
+  }
+
+  const lastTurn = state.turnsById[state.turnOrder[state.turnOrder.length - 1] ?? ''];
+  const runtimeStatus = turnStatusFromRuntime(state.status);
+  if (lastTurn && runtimeStatus !== 'completed' && lastTurn.status === 'completed') {
+    lastTurn.status = runtimeStatus;
+  }
 }
 
 function detachMessageFromTurn(state: AgentProjectionState, message: UiAgentMessage): void {

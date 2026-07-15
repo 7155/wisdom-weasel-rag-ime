@@ -15,7 +15,8 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
 
   await expect(page.locator('.agent-markdown table')).toBeAttached();
   await expect(page.locator('.agent-code-block')).toBeAttached();
-  await expect(page.locator('.agent-media-block')).toBeAttached();
+  await expect(page.locator('.agent-media-block')).toHaveCount(0);
+  await expect(page.locator('.agent-inline-notice', { hasText: '图片回执不可用' })).toBeVisible();
   await expect(page.locator('.agent-sticker-block')).toBeAttached();
   await expect(page.locator('.agent-citation')).toBeAttached();
   await expect(page.locator('.agent-file-block')).toBeAttached();
@@ -53,10 +54,8 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await composer.fill('/');
   await expect(page.getByRole('listbox', { name: '命令面板' })).toBeVisible();
   await composer.fill('');
-  await page.getByRole('button', { name: '添加附件' }).click();
-  await expect(page.locator('.agent-composer__attachments')).toContainText(
-    'agent-runtime.png',
-  );
+  await expect(composer).toHaveAttribute('placeholder', /粘贴图片/);
+  await expect(page.getByRole('button', { name: '添加附件' })).toHaveCount(0);
   await expectNoHorizontalPageOverflow(page);
 });
 
@@ -75,27 +74,15 @@ test('production Agent scene matches the desktop and mobile visual baselines', a
 
 test('production Room and Role scenes retain group and persona boundaries', async ({ page }, testInfo) => {
   await page.goto('/#/rooms');
-  await expect(page.locator('.room-turn')).toBeVisible();
-  await expect(page.locator('.room-participants > span')).toHaveCount(2);
-  await expect(page.locator('.room-participant-message')).toHaveCount(2);
-  const group = page.locator('.room-group-activity');
-  await expect(group).toBeVisible();
-  await group.locator(':scope > summary').click();
-  await expect(group).toHaveAttribute('open', '');
-  await expect(group.locator(':scope > div > p')).toHaveCount(3);
-  const groupAvatarBoxes = await group
-    .locator(':scope > div .agent-persona-avatar')
-    .evaluateAll((avatars) => avatars.map((avatar) => {
-      const bounds = avatar.getBoundingClientRect();
-      return { width: bounds.width, height: bounds.height };
-    }));
-  expect(groupAvatarBoxes).toHaveLength(3);
-  for (const box of groupAvatarBoxes) {
-    expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(1);
-    expect(box.width).toBeLessThanOrEqual(32);
-  }
-  await page.getByRole('textbox', { name: 'Room 消息' }).fill('请主持人汇总两个分支。');
-  await expect(page.getByRole('button', { name: '发送 Room 消息' })).toBeEnabled();
+  const roomsScene = page.locator('main[data-route-id="rooms"]');
+  await expect(roomsScene.locator('.rooms-rail')).toBeVisible();
+  await expect(roomsScene.locator('.rooms-rail-empty')).toHaveText('还没有 Room');
+  await expect(roomsScene.locator('.room-workspace')).toBeVisible();
+  await expect(roomsScene.locator('.room-empty')).toHaveText('选择一个 Room，或新建协作 Room。');
+  await expect(page.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
+  await page.getByRole('button', { name: '新建 Room' }).click();
+  await expect(page.getByText('真实角色目录至少需要两个角色才能创建 Room。')).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
   await testInfo.attach(`room-scene-${testInfo.project.name}`, {
     body: await page.screenshot({ animations: 'disabled', fullPage: false }),
@@ -103,7 +90,7 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   });
 
   await page.goto('/#/roles');
-  await expect(page.getByRole('region', { name: 'Persona 列表' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '角色列表' })).toBeVisible();
   await expect(page.locator('.persona-grid > button')).toHaveCount(3);
   const secondPersona = page.locator('.persona-grid > button').nth(1);
   const personaName = (await secondPersona.locator('strong').innerText()).trim();
@@ -113,8 +100,8 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   await expect(page.getByText(`${personaName} 对话`, { exact: true }).first()).toBeVisible();
 
   await page.goto('/#/roles');
-  await page.getByRole('radio', { name: 'Agent Template' }).click();
-  await expect(page.getByRole('region', { name: 'Agent Template 列表' })).toBeVisible();
+  await page.getByRole('radio', { name: 'Agent 模板' }).click();
+  await expect(page.getByRole('region', { name: 'Agent 模板列表' })).toBeVisible();
   await expect(page.locator('.template-list > button')).toHaveCount(3);
   await expectNoHorizontalPageOverflow(page);
 });
@@ -126,7 +113,7 @@ async function openAgentScene(page: Page, projectName: string): Promise<void> {
       'data-rail-open',
       'false',
     );
-    await page.getByRole('button', { name: '展开 Sessions' }).click();
+    await page.getByRole('button', { name: '展开对话列表' }).click();
     await expect(page.locator('main[data-route-id="agent"]')).toHaveAttribute(
       'data-rail-open',
       'true',

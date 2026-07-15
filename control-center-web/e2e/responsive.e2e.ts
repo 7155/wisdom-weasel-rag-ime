@@ -33,13 +33,13 @@ test('production-shaped fixture stays bounded and records a viewport screenshot'
 
 test('plugin catalog keeps readable columns for long capability lists', async ({ page }) => {
   await page.goto('/#/plugins');
-  const rows = page.locator('.mgmt-list__row');
+  const rows = page.locator('.plugins-list__item');
   await expect(rows).toHaveCount(6);
   await expectNoHorizontalPageOverflow(page);
 
   const measurements = await rows.evaluateAll((items) => items.map((item) => {
-    const copy = item.querySelector<HTMLElement>('.mgmt-list__copy');
-    const meta = item.querySelector<HTMLElement>('.mgmt-list__meta');
+    const copy = item.querySelector<HTMLElement>('.plugins-list__copy');
+    const meta = item.querySelector<HTMLElement>('.plugins-list__aside');
     return {
       copyWidth: copy?.getBoundingClientRect().width ?? 0,
       copyHeight: copy?.getBoundingClientRect().height ?? 0,
@@ -48,8 +48,8 @@ test('plugin catalog keeps readable columns for long capability lists', async ({
     };
   }));
   for (const measurement of measurements) {
-    expect(measurement.copyWidth).toBeGreaterThan(180);
-    expect(measurement.copyHeight).toBeLessThan(100);
+    expect(measurement.copyWidth).toBeGreaterThan(140);
+    expect(measurement.copyHeight).toBeLessThan(90);
     expect(measurement.metaScrollWidth).toBeLessThanOrEqual(measurement.metaClientWidth + 1);
   }
 });
@@ -84,7 +84,7 @@ test('closing the Agent session rail releases its grid column', async ({ page })
   await expect(page.locator('.agent-session-row').first()).toBeVisible();
 
   const before = await conversation.boundingBox();
-  await page.getByRole('button', { name: '收起 Sessions' }).click();
+  await page.getByRole('button', { name: '收起对话列表' }).click();
   await expect(feature).toHaveAttribute('data-rail-open', 'false');
   await page.waitForTimeout(260);
   const [featureBox, after] = await Promise.all([

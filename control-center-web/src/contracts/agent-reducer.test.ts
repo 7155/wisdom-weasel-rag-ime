@@ -87,6 +87,33 @@ describe('AgentEventReducer', () => {
     expect(aborted.turnsById['turn-1'].status).toBe('aborted');
     expect(aborted.messagesById['turn-1:assistant'].status).toBe('aborted');
   });
+
+  it('hides legacy per-turn user source checkpoints but keeps explicit memory work', () => {
+    const captured = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'memory_checkpointed', {
+        sourceRole: 'user',
+        status: 'checkpointed',
+        summary: '最终用户消息已保存为记忆来源，等待异步整理',
+      }),
+    ).state;
+    expect(captured.activityOrder).toEqual([]);
+    expect(captured.turnOrder).toEqual([]);
+
+    const receipt = reduceAgentEvent(
+      captured,
+      agentEvent(2, 'memory_checkpointed', {
+        sourceRole: 'tool_receipt',
+        status: 'checkpointed',
+        summary: '已应用工具回执已保存为记忆来源，等待异步整理',
+      }),
+    ).state;
+    expect(receipt.activityOrder).toHaveLength(1);
+    expect(receipt.activitiesById[receipt.activityOrder[0]]).toMatchObject({
+      kind: 'memory_checkpointed',
+      status: 'completed',
+    });
+  });
 });
 
 function rawAgentEvent(

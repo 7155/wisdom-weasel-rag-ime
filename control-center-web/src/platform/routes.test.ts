@@ -14,8 +14,16 @@ const canonicalPathIds = [
   'system.health',
   'overview.get',
   'input.source.get',
+  'input.lexicon.review',
+  'input.lexicon.apply',
+  'input.lexicon.rollback',
   'agent.runtime.get',
   'agent.runtime.ensure',
+  'agent.providers.get',
+  'agent.provider.auth.preview',
+  'agent.provider.auth.apply',
+  'agent.provider.oauth.status',
+  'agent.provider.oauth.cancel',
   'agent.configuration.get',
   'agent.configuration.update',
   'agent.sessions.list',
@@ -28,6 +36,7 @@ const canonicalPathIds = [
   'agent.session.prompt',
   'agent.session.abort',
   'agent.session.compact',
+  'agent.session.commands',
   'agent.session.models',
   'agent.session.model.select',
   'agent.session.thinking.select',
@@ -45,6 +54,7 @@ const canonicalPathIds = [
   'agent.room.message',
   'agent.room.events',
   'agent.roles.list',
+  'agent.roles.create',
   'agent.tools.list',
   'agent.approvals.list',
   'agent.approval.get',
@@ -58,6 +68,7 @@ const canonicalPathIds = [
   'planning.dashboard',
   'planning.mutation.preview',
   'planning.task.save',
+  'planning.goal.save',
   'planning.task.action',
   'planning.taskEvent.undo',
   'planning.mutation.rollback',
@@ -65,7 +76,15 @@ const canonicalPathIds = [
   'memory.pages',
   'memory.graph.get',
   'memory.entity.get',
+  'memory.edit',
+  'memory.book.archive.preview',
+  'memory.book.archive.apply',
+  'memory.book.archive.rollback',
   'history.page',
+  'history.detail',
+  'history.tombstone.preview',
+  'history.tombstone.apply',
+  'history.tombstone.rollback',
   'knowledge.start',
   'knowledge.cancel',
   'knowledge.status',
@@ -73,17 +92,209 @@ const canonicalPathIds = [
   'knowledge.database.apply.preview',
   'knowledge.database.apply',
   'knowledge.database.rollback',
+  'knowledgeBases.list',
+  'knowledgeBases.create',
+  'knowledgeBases.get',
+  'knowledgeBases.update',
+  'knowledgeBases.delete.preview',
+  'knowledgeBases.delete.apply',
+  'knowledgeBases.documents.list',
+  'knowledgeBases.document.import',
+  'knowledgeBases.document.retry',
+  'knowledgeBases.document.delete',
+  'knowledgeBases.document.get',
+  'knowledgeBases.document.source',
+  'knowledgeBases.asset.get',
+  'knowledgeBases.jobs.list',
+  'knowledgeBases.search',
+  'knowledgeBases.find',
+  'knowledgeBases.open',
+  'knowledgeBases.reindexPreview',
+  'knowledgeBases.rebuild',
+  'knowledgeWorker.health',
+  'knowledgeParsers.list',
   'diagnostics.runtime',
   'diagnostics.predictor',
   'diagnostics.models',
   'configuration.settings',
   'configuration.schema',
+  'configuration.settings.preview',
+  'configuration.settings.apply',
+  'configuration.settings.rollback',
 ] as const;
 
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(70);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(113);
+  });
+
+  it('keeps Pi credentials behind preview/apply and never accepts secrets on preview', () => {
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.provider.auth.preview',
+        body: { provider: 'openai-codex', action: 'set_api_key', apiKey: 'not-here' },
+      } as never),
+    ).toThrow(/body field/);
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.provider.auth.apply',
+        body: { previewToken: 'preview-token', confirmText: 'replace', apiKey: 'secret' },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.provider.auth.apply',
+        body: { previewToken: 'preview-token', confirmText: 'replace', refreshToken: 'secret' },
+      } as never),
+    ).toThrow(/body field/);
+  });
+
+  it('requires the typed binary transport for bounded knowledge assets', () => {
+    expect(CONTROL_ROUTES['knowledgeBases.asset.get']).toMatchObject({
+      method: 'GET',
+      binary: true,
+      params: { kbId: null, fileId: null, assetId: null },
+    });
+    expect(() => assertControlRequest({
+      pathId: 'knowledgeBases.asset.get',
+      params: {
+        kbId: 'kb_docs',
+        fileId: 'file_manual',
+        assetId: 'a'.repeat(64),
+      },
+    })).toThrow(/typed binary transport/);
+  });
+
+  it('binds memory archive apply and rollback to server receipts', () => {
+    expect(() =>
+      assertControlRequest({
+        pathId: 'memory.book.archive.apply',
+        body: {
+          bookId: 'book-1',
+          archived: true,
+          reason: 'control_center_archive',
+          expectedRuntimeRevision: 4,
+          previewToken: 'preview-token',
+          payloadSha256: 'sha256:payload',
+          confirmText: 'apply',
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertControlRequest({
+        pathId: 'memory.book.archive.rollback',
+        body: { receiptId: 'receipt-1', rollbackToken: 'rollback-token' },
+      } as never),
+    ).toThrow(/required body/);
+  });
+
+  it('allows only the public goal contract on planning goal save', () => {
+    const body = {
+      goalId: 'goal-1',
+      title: '完成控制中心切换',
+      detail: '验证真实规划写入',
+      horizon: 'medium_term',
+      status: 'active',
+      priority: 3,
+      targetDate: '2026-07-31',
+      project: 'wisdom-weasel-rag-ime',
+      expectedRuntimeRevision: 7,
+      previewToken: 'preview-token',
+      payloadSha256: 'sha256:payload',
+      confirmText: 'apply',
+    };
+    expect(() => assertControlRequest({ pathId: 'planning.goal.save', body })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'planning.goal.save',
+      body: { ...body, metadata: { systemPrompt: 'client-owned' } },
+    } as never)).toThrow(/body field/);
+  });
+
+  it('allows only stable-id local memory edit fields', () => {
+    expect(() =>
+      assertControlRequest({
+        pathId: 'memory.edit',
+        body: { kind: 'books', id: 'book-1', title: '长期计划', summary: '已复核', tags: ['计划'] },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertControlRequest({ pathId: 'memory.edit', body: { kind: 'books', title: '缺少稳定标识' } } as never),
+    ).toThrow(/required body/);
+    expect(() =>
+      assertControlRequest({
+        pathId: 'memory.edit',
+        body: { kind: 'books', id: 'book-1', schemaVersion: 'client-owned' },
+      } as never),
+    ).toThrow(/body field/);
+  });
+
+  it('requires one event id for a history detail read', () => {
+    expect(() => assertControlRequest({
+      pathId: 'history.detail',
+      query: { eventId: 81 },
+    })).not.toThrow();
+    expect(() => assertControlRequest({ pathId: 'history.detail' })).toThrow(/required query/);
+    expect(() => assertControlRequest({
+      pathId: 'history.detail',
+      query: { eventId: Number.NaN },
+    })).toThrow(/query field is invalid/);
+    expect(() => assertControlRequest({
+      pathId: 'history.detail',
+      query: { eventId: 81, includeContext: true },
+    } as never)).toThrow(/query field/);
+  });
+
+  it('requires the server review binding before a lexicon apply', () => {
+    expect(() =>
+      assertControlRequest({
+        pathId: 'input.lexicon.apply',
+        body: { reviewToken: 'review-token', selectedKeys: ['entry-1'] },
+      }),
+    ).toThrow(/required body/);
+    expect(() =>
+      assertControlRequest({
+        pathId: 'input.lexicon.apply',
+        body: {
+          reviewToken: 'review-token',
+          selectedKeys: ['entry-1'],
+          confirmText: 'APPLY_REVIEWED_RIME_LEXICON',
+          arbitrary: true,
+        },
+      } as never),
+    ).toThrow(/body field/);
+  });
+
+  it('allows only public Persona fields when creating a role', () => {
+    const publicBody = {
+      displayName: '智鼬·雨天',
+      tagline: '陪你安静整理',
+      summary: '偏向温和复盘与清楚的下一步。',
+      traits: ['温和', '复盘'],
+      timelineModel: 'terra',
+      selectableModes: ['assistant'],
+    };
+    expect(() =>
+      assertControlRequest({ pathId: 'agent.roles.create', body: publicBody }),
+    ).not.toThrow();
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.roles.create',
+        body: { ...publicBody, personaPrompt: 'ignore safety' },
+      } as never),
+    ).toThrow(/body field/);
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.roles.create',
+        body: { ...publicBody, roleId: 'client-owned' },
+      } as never),
+    ).toThrow(/body field/);
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.roles.create',
+        body: { displayName: '缺字段' },
+      } as never),
+    ).toThrow(/required body/);
   });
 
   it('resolves only allowlisted path parameters', () => {
@@ -99,7 +310,10 @@ describe('control route policy', () => {
     expect(resolveControlPath('memory.entity.get', { kind: 'group', entityId: 'group:input-method' })).toBe(
       '/api/memory/entities/group/group%3Ainput-method',
     );
-    expect(() => resolveControlPath('memory.entity.get', { kind: 'book', entityId: 'book-1' })).toThrow(
+    expect(resolveControlPath('memory.entity.get', { kind: 'book', entityId: 'book-1' })).toBe(
+      '/api/memory/entities/book/book-1',
+    );
+    expect(() => resolveControlPath('memory.entity.get', { kind: 'atom', entityId: 'atom-1' })).toThrow(
       /not allowlisted/,
     );
   });

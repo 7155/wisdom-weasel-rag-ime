@@ -10,10 +10,16 @@ APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/Ra
 APP_CODE_DIR="$APP_SUPPORT_DIR/app"
 LAUNCH_WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
 RESTORE_SUPERVISOR="$APP_CODE_DIR/portable_restore_supervisor.py"
+PI_INTEGRATION_SOURCE_DIR="$ROOT/integrations/pi"
+PI_INTEGRATION_DIR="$APP_CODE_DIR/integrations/pi"
+PI_EXTENSION_SOURCE="$PI_INTEGRATION_SOURCE_DIR/rag-ime-control.ts"
+PI_NATIVE_SESSION_SOURCE="$PI_INTEGRATION_SOURCE_DIR/pi-native-session.ts"
+PI_EXTENSION_TARGET="$PI_INTEGRATION_DIR/rag-ime-control.ts"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
 PORT="${RAG_IME_SIDECAR_PORT:-8766}"
+KNOWLEDGE_WORKER_PORT="${RAG_IME_KNOWLEDGE_WORKER_PORT:-8769}"
 CORE_MODE="${RAG_IME_CORE_MODE:-local}"
 CORE_COMMAND="${RAG_MEMORY_CORE_COMMAND:-}"
 NO_SEED="${RAG_IME_SIDECAR_NO_SEED:-0}"
@@ -114,6 +120,13 @@ if [[ ! -f "$ROOT/scripts/sidecar_launch.py" ]]; then
   exit 1
 fi
 
+for source_file in "$PI_EXTENSION_SOURCE" "$PI_NATIVE_SESSION_SOURCE"; do
+  if [[ ! -f "$source_file" || -L "$source_file" ]]; then
+    echo "controlled Pi integration source not found or is a symlink: $source_file" >&2
+    exit 1
+  fi
+done
+
 SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
@@ -122,6 +135,11 @@ cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
 cp "$ROOT/scripts/sidecar_launch.py" "$LAUNCH_WRAPPER"
 cp "$ROOT/scripts/portable_restore_supervisor.py" "$RESTORE_SUPERVISOR"
 chmod 700 "$RESTORE_SUPERVISOR"
+rm -rf "$PI_INTEGRATION_DIR"
+mkdir -p "$PI_INTEGRATION_DIR"
+cp "$PI_EXTENSION_SOURCE" "$PI_EXTENSION_TARGET"
+cp "$PI_NATIVE_SESSION_SOURCE" "$PI_INTEGRATION_DIR/pi-native-session.ts"
+chmod 644 "$PI_EXTENSION_TARGET" "$PI_INTEGRATION_DIR/pi-native-session.ts"
 
 # Keep the explicit high-intelligence route usable after every reinstall. The
 # LaunchAgent cannot inherit an interactive shell's secrets, so install one
@@ -168,6 +186,7 @@ PLIST_PATH="$PLIST_PATH" \
 LOG_DIR="$LOG_DIR" \
 APP_SUPPORT_DIR="$APP_SUPPORT_DIR" \
 APP_CODE_DIR="$APP_CODE_DIR" \
+PI_EXTENSION_TARGET="$PI_EXTENSION_TARGET" \
 PYTHON_EXECUTABLE="$PYTHON_EXECUTABLE" \
 LAUNCH_WRAPPER="$LAUNCH_WRAPPER" \
 DB_PATH="$DB_PATH" \
@@ -321,7 +340,6 @@ preserve_existing_keys = {
     "RAG_IME_PI_ENABLED",
     "RAG_IME_PI_EXECUTABLE",
     "RAG_IME_PI_NODE",
-    "RAG_IME_PI_EXTENSION",
     "RAG_IME_PI_VERSION",
     "RAG_IME_PI_PROVIDER",
     "RAG_IME_PI_MODEL",
@@ -467,7 +485,6 @@ for key in (
     "RAG_IME_PI_ENABLED",
     "RAG_IME_PI_EXECUTABLE",
     "RAG_IME_PI_NODE",
-    "RAG_IME_PI_EXTENSION",
     "RAG_IME_PI_VERSION",
     "RAG_IME_PI_PROVIDER",
     "RAG_IME_PI_MODEL",
@@ -541,6 +558,12 @@ for key in (
         value = existing_env.get(key)
     if value:
         env_vars[key] = value
+# A source-tree Pi executable is allowed for development, but its extension is
+# always the integration installed from this checkout. Never inherit a path
+# from an older LaunchAgent or the invoking shell. Managed Pi runtimes carry
+# their own verified extension and therefore must not receive this override.
+if env_vars.get("RAG_IME_PI_EXECUTABLE"):
+    env_vars["RAG_IME_PI_EXTENSION"] = os.environ["PI_EXTENSION_TARGET"]
 enable_local_vector = os.environ.get("RAG_IME_ENABLE_LOCAL_VECTOR", "").strip().lower() in {"1", "true", "yes", "on"}
 if enable_local_vector:
     env_vars.setdefault("RAG_IME_EMBEDDING_PROVIDER", "local-hash")
@@ -586,6 +609,10 @@ kill_stale_sidecar_processes() {
   fi
   pkill -f 'sidecar_launch.py.*sidecar-server' >/dev/null 2>&1 || true
   pkill -f 'rag_ime.cli.*sidecar-server' >/dev/null 2>&1 || true
+  # The knowledge worker is a child of the Sidecar but may survive an abrupt
+  # LaunchAgent replacement. Never let a stale dev/test worker on the fixed
+  # production port make the new Sidecar adopt the wrong Knowledge root.
+  pkill -f "rag_ime.knowledge_library.worker.*--port $KNOWLEDGE_WORKER_PORT" >/dev/null 2>&1 || true
   if command -v lsof >/dev/null 2>&1; then
     local pid
     while read -r pid; do

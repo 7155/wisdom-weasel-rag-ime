@@ -4,12 +4,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { JsonValue } from '@/platform/transport';
 import type { MutationAvailability } from '@/features/overview/management-mutation';
-import { InlineNotice, StatusBadge, asRecord, stringValue } from '@/features/overview/management-ui';
+import {
+  InlineNotice,
+  StatusBadge,
+  asRecord,
+  publicErrorText,
+  stringValue,
+} from '@/features/overview/management-ui';
+import { knowledgeStatusLabel } from './KnowledgeVisualization';
 
 type KnowledgeSessionReceipt = {
   sessionId: string;
   status: string;
-  raw: Record<string, unknown>;
 };
 
 export function KnowledgeSessionWorkflow({
@@ -71,7 +77,7 @@ export function KnowledgeSessionWorkflow({
   const steps = useMemo(() => [
     { id: 'preview', label: '预览' },
     { id: 'approval', label: '确认' },
-    { id: 'receipt', label: 'Session' },
+    { id: 'receipt', label: '执行' },
     { id: 'cancelled', label: '取消' },
   ] as const, []);
   const stageIndex = stage === 'idle' ? -1 : steps.findIndex((step) => step.id === stage);
@@ -81,7 +87,7 @@ export function KnowledgeSessionWorkflow({
     <div className="mgmt-workflow" data-availability={availability.state} data-stage={stage}>
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{risk}</span>
+          <span className="mgmt-workflow__risk">{risk === 'R2' ? '谨慎确认' : '确认后执行'}</span>
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
@@ -96,13 +102,13 @@ export function KnowledgeSessionWorkflow({
             }}
             size="small"
           >
-            {availability.state === 'unsupported' ? '后端暂不支持' : availability.state === 'blocked' ? '尚不可预览' : '预览任务'}
+            {availability.state === 'unsupported' ? '当前不可用' : availability.state === 'blocked' ? '尚不可预览' : '预览任务'}
           </Button>
         ) : null}
       </div>
 
       {availability.state !== 'available' && availability.state !== 'checking' && availability.reason ? (
-        <InlineNotice title={availability.state === 'unsupported' ? '能力未开放' : '等待必要信息'} tone="warning">
+        <InlineNotice title={availability.state === 'unsupported' ? '当前不可用' : '等待必要信息'} tone="warning">
           {availability.reason}
         </InlineNotice>
       ) : null}
@@ -146,15 +152,15 @@ export function KnowledgeSessionWorkflow({
       ) : null}
 
       {startMutation.error ? (
-        <InlineNotice title="启动失败" tone="danger">{asError(startMutation.error).message}</InlineNotice>
+        <InlineNotice title="启动失败" tone="danger">{publicErrorText(startMutation.error, '知识服务暂时无法完成这项请求，请检查连接后重试。')}</InlineNotice>
       ) : null}
 
       {stage === 'receipt' && receipt ? (
         <div className="mgmt-workflow__receipt">
           <div>
             <StatusBadge label="任务已接受" tone="success" />
-            <strong>{receipt.sessionId}</strong>
-            <span>{receipt.status}</span>
+            <strong>知识任务正在处理</strong>
+            <span>{knowledgeStatusLabel(receipt.status)}</span>
           </div>
           <Button leadingIcon={<Square size={13} />} loading={cancelMutation.isPending} onClick={() => cancelMutation.mutate(receipt.sessionId)} size="small">
             取消任务
@@ -163,15 +169,15 @@ export function KnowledgeSessionWorkflow({
       ) : null}
 
       {cancelMutation.error ? (
-        <InlineNotice title="取消失败" tone="danger">{asError(cancelMutation.error).message}</InlineNotice>
+        <InlineNotice title="取消失败" tone="danger">{publicErrorText(cancelMutation.error, '暂时无法取消这项知识任务，请稍后重试。')}</InlineNotice>
       ) : null}
 
       {stage === 'cancelled' && cancelReceipt ? (
         <div className="mgmt-workflow__receipt">
           <div>
             <StatusBadge label="已取消" tone="info" />
-            <strong>{cancelReceipt.sessionId}</strong>
-            <span>{cancelReceipt.status}</span>
+            <strong>本次知识任务已停止</strong>
+            <span>{knowledgeStatusLabel(cancelReceipt.status)}</span>
           </div>
           <Button onClick={() => reset()} size="small" variant="quiet">完成</Button>
         </div>
@@ -194,13 +200,20 @@ function parseKnowledgeSession(value: unknown, expectedSessionId = ''): Knowledg
   const payload = asRecord(value);
   const sessionId = stringValue(payload.sessionId, stringValue(payload.id));
   const status = stringValue(payload.status);
-  if (payload.ok !== true) throw new Error(stringValue(payload.error, stringValue(payload.message, '知识任务请求失败。')));
+  if (payload.ok !== true) throw new Error(knowledgeRequestError(payload));
   if (!sessionId || (expectedSessionId && sessionId !== expectedSessionId) || !status) {
     throw new Error('服务端返回了无法验证的知识任务状态。');
   }
-  return { sessionId, status, raw: payload };
+  return { sessionId, status };
 }
 
-function asError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value));
+function knowledgeRequestError(payload: Record<string, unknown>): string {
+  const status = stringValue(payload.status);
+  const error = stringValue(payload.error, stringValue(payload.message));
+  if (status === 'blocked') return '当前知识服务尚未就绪，任务没有启动。';
+  if (/sensitive|secure/i.test(error)) return '请求中可能包含敏感内容，任务没有启动。';
+  if (/sessionId|provider|route|credential|schema|token|hash/i.test(error)) {
+    return '知识服务暂时无法完成这项请求，请检查连接后重试。';
+  }
+  return error || '知识任务请求失败。';
 }

@@ -137,8 +137,8 @@ class MemoryGraphReadTests(unittest.TestCase):
                     (group_id, title, description, project, quality, index, index),
                 )
             conn.execute(
-                "INSERT INTO memory_books(book_id, book_type, book_key, title, summary, project, status, quality_score, created_at_ms, updated_at_ms) "
-                "VALUES ('book:input', 'topic', 'input', '输入法知识册', '候选与上下文', ?, 'active', 0.9, 70, 70)",
+                "INSERT INTO memory_books(book_id, book_type, book_key, title, summary, project, tags_json, memory_atom_ids_json, status, quality_score, created_at_ms, updated_at_ms) "
+                "VALUES ('book:input', 'topic', 'input', '输入法知识册', '候选与上下文', ?, '[\"输入法\",\"候选\"]', '[\"atom:visible\",\"atom:sensitive\"]', 'active', 0.9, 70, 70)",
                 (PROJECT,),
             )
             memberships = (
@@ -312,6 +312,26 @@ class MemoryGraphReadTests(unittest.TestCase):
         self.assertEqual(group["connections"]["items"], [])
         self.assertTrue(group["members"]["hasMore"])
         self.assertNotIn("atom:sensitive", json.dumps(group, ensure_ascii=False))
+
+        book = self.service.management.memory_entity(
+            "book",
+            "book:input",
+            {"project": PROJECT, "connectionsLimit": 5, "membersLimit": 5},
+        )
+        validate_contract(book, "memory-entity.v1.json")
+        self.assertEqual(book["entity"]["memberCount"], 2)
+        self.assertEqual(book["attributes"]["type"], "topic")
+        self.assertEqual(book["attributes"]["tags"], ["输入法", "候选"])
+        self.assertEqual(
+            [item["node"]["entityId"] for item in book["connections"]["items"]],
+            ["group:agent"],
+        )
+        self.assertEqual(book["members"]["items"], [])
+        serialized_book = json.dumps(book, ensure_ascii=False)
+        self.assertNotIn("atom:visible", serialized_book)
+        self.assertNotIn("atom:sensitive", serialized_book)
+        self.assertNotIn("绝不能出现在图里的敏感正文", serialized_book)
+        self.assertNotIn("memory_atom_ids_json", serialized_book)
 
     def test_read_queries_reject_ambiguous_or_unsafe_shapes(self) -> None:
         with sqlite3.connect(self.db_path) as conn:

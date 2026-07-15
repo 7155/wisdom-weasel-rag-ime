@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Mapping
 
+from .agent_tool_ids import CONTROL_TOOL_IDS
 from .contracts.json_schema import ContractValidationError, validate_contract
 
 
@@ -164,7 +165,7 @@ def build_managed_pi_runtime_manifest(
     pi_entrypoint: str,
     extension_entrypoint: str,
     node_entrypoint: str = "",
-    tools: tuple[str, ...] = ("ime_memory",),
+    tools: tuple[str, ...] = CONTROL_TOOL_IDS,
     source_repository: str,
     source_commit: str,
     source_package: str,

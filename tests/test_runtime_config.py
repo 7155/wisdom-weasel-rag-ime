@@ -83,6 +83,15 @@ class RuntimeConfigResolverTests(unittest.TestCase):
         self.assertEqual(snapshot.key_policy.post_commit_number_keys, "select_prediction")
         self.assertNotIn("RAG_IME_UNRELATED_OVERRIDE", snapshot.experiment_overrides)
 
+    def test_default_post_commit_budget_and_panel_ttl_match_persisted_targets(self) -> None:
+        snapshot = RuntimeConfigResolver(
+            self.store,
+            environ={"RAG_IME_RUNTIME_PROFILE": "v1-proof"},
+        ).resolve()
+
+        self.assertEqual(snapshot.post_commit.max_calls_per_10s, 6)
+        self.assertEqual(snapshot.post_commit.panel_ttl_ms, 5000)
+
     def test_snapshot_contains_effective_memory_rag_overlay_and_active_rag_config(self) -> None:
         self.store.update_settings(
             {

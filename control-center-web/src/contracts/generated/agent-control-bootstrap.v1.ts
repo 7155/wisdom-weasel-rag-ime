@@ -32,7 +32,7 @@ export interface AgentControlBootstrapV1 {
     remoteQuery?: string[];
     target: {
       '8766': string;
-      '8768': string;
+      '8768': string | null;
       [k: string]: unknown;
     };
     [k: string]: unknown;

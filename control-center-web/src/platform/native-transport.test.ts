@@ -39,6 +39,10 @@ describe('NativeControlTransport', () => {
       native: {
         pickFiles: true,
         managedAgentImageImport: true,
+        knowledgeDocumentImport: true,
+        knowledgeParserStatus: true,
+        knowledgeAssetRead: true,
+        knowledgeDocumentSourceRead: true,
         revealPath: true,
         keychain: true,
         tcc: true,
@@ -318,6 +322,152 @@ describe('NativeControlTransport', () => {
     }]);
     transport.dispose();
   });
+
+  it('imports knowledge documents through a kb-bound native picker without accepting paths', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          kbId: 'kb_docs',
+          documentId: 'doc_manual_01',
+          fileName: 'manual.pdf',
+          mimeType: 'application/pdf',
+          byteSize: 4096,
+          sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          status: 'queued',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'knowledge-call' });
+
+    await expect(transport.importKnowledgeDocuments({
+      kbId: 'kb_docs',
+      accepts: ['application/pdf'],
+      maxFiles: 3,
+      parserProvider: 'auto',
+    })).resolves.toEqual([expect.objectContaining({ documentId: 'doc_manual_01' })]);
+    expect(sent).toEqual([{
+      id: 'knowledge-call',
+      method: 'pickFiles',
+      payload: {
+        purpose: 'knowledge-import',
+        kbId: 'kb_docs',
+        accepts: ['application/pdf'],
+        multiple: true,
+        maxFiles: 3,
+        parserProvider: 'auto',
+      },
+    }]);
+
+    const browserFile = new File(['private'], 'manual.pdf', { type: 'application/pdf' });
+    await expect(transport.importKnowledgeDocuments({
+      kbId: 'kb_docs',
+      files: [browserFile],
+    })).rejects.toThrow(/does not accept browser paths or File objects/);
+    expect(sent).toHaveLength(1);
+    transport.dispose();
+  });
+
+  it('reads a knowledge asset through the id-only native binary bridge', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const assetId = 'a'.repeat(64);
+    const blob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: {
+          kbId: 'kb_docs',
+          fileId: 'file_manual',
+          assetId,
+          mimeType: 'image/png',
+          byteSize: blob.size,
+          sha256: assetId,
+          blob,
+        },
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'asset-call' });
+
+    await expect(transport.readKnowledgeAsset({
+      kbId: 'kb_docs',
+      fileId: 'file_manual',
+      assetId,
+    })).resolves.toMatchObject({ assetId, mimeType: 'image/png', byteSize: blob.size });
+    expect(sent).toEqual([{
+      id: 'asset-call',
+      method: 'readKnowledgeAsset',
+      payload: { kbId: 'kb_docs', fileId: 'file_manual', assetId },
+    }]);
+    await expect(transport.readKnowledgeAsset({
+      kbId: 'kb_docs',
+      fileId: 'file_manual',
+      assetId: '../private',
+    })).rejects.toThrow(/sha256 assetId/);
+    expect(sent).toHaveLength(1);
+    transport.dispose();
+  });
+
+  it('reads the original knowledge source through the two-id native binary bridge', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const sha256 = 'b'.repeat(64);
+    const blob = new Blob(['%PDF'], { type: 'application/pdf' });
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: {
+          kbId: 'kb_docs',
+          fileId: 'file_manual',
+          mimeType: 'application/pdf',
+          byteSize: blob.size,
+          sha256,
+          blob,
+        },
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'source-call' });
+
+    await expect(transport.readKnowledgeDocumentSource({
+      kbId: 'kb_docs',
+      fileId: 'file_manual',
+    })).resolves.toMatchObject({ mimeType: 'application/pdf', byteSize: blob.size, sha256 });
+    expect(sent).toEqual([{
+      id: 'source-call',
+      method: 'readKnowledgeDocumentSource',
+      payload: { kbId: 'kb_docs', fileId: 'file_manual' },
+    }]);
+    transport.dispose();
+  });
+
+  it('asks native pasteImages to inspect the pasteboard when WebKit exposes no File', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'native-paste-call' });
+
+    await expect(transport.pasteImages({
+      sessionId: 'agent:session-1',
+      maxFiles: 4,
+    })).resolves.toEqual([]);
+    expect(sent).toEqual([{
+      id: 'native-paste-call',
+      method: 'pasteImages',
+      payload: { sessionId: 'agent:session-1', maxFiles: 4 },
+    }]);
+    transport.dispose();
+  });
 });
 
 function fakeBridgeWindow(
@@ -335,6 +485,10 @@ function capabilitiesFixture() {
     native: {
       filePicker: true,
       managedAgentImageImport: true,
+      knowledgeDocumentImport: true,
+      knowledgeParserStatus: true,
+      knowledgeAssetRead: true,
+      knowledgeDocumentSourceRead: true,
       revealPath: true,
       keychainStatus: true,
       tccStatus: true,

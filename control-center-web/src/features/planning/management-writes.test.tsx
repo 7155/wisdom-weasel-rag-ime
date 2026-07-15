@@ -18,17 +18,30 @@ import { PlanningFeature } from '.';
 const now = 1_784_006_400_000;
 const saveHash = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const actionHash = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const goalHash = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
 afterEach(cleanup);
 
 describe('Planning WorkContract UI', () => {
   it('derives the companion workbench from the live dashboard', async () => {
+    const user = userEvent.setup();
     renderPlanning();
     expect(await screen.findByText('完成 Web 迁移', { selector: '.planning-companion__focus strong' })).toBeInTheDocument();
     expect(screen.getByText('继续：完成管理页')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '交给智鼬整理' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '请智鼬拆解' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '一起复盘' })).toBeEnabled();
+    expect(screen.getAllByText('进行中').length).toBeGreaterThan(0);
+    expect(screen.getByText('手动添加')).toBeInTheDocument();
+    expect(screen.queryByText('in_progress')).not.toBeInTheDocument();
+    expect(screen.queryByText('manual')).not.toBeInTheDocument();
+    expect(screen.queryByText('wisdom-weasel-rag-ime')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^完成管理页/ }));
+    expect(screen.getByRole('heading', { name: '编辑任务', level: 2 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '新建任务' }));
+    expect(screen.getByRole('heading', { name: '新建任务', level: 2 })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('例如：整理今天的工作清单')).toHaveValue('');
   });
 
   it('binds task save preview to apply receipt and rollback', async () => {
@@ -36,7 +49,7 @@ describe('Planning WorkContract UI', () => {
     const transport = renderPlanning();
     await screen.findByRole('heading', { name: '规划', level: 1 });
 
-    await user.type(await screen.findByPlaceholderText('例如：完成前台输入 smoke'), '验证真实 Planning 写入');
+    await user.type(await screen.findByPlaceholderText('例如：整理今天的工作清单'), '验证真实 Planning 写入');
     const detail = document.getElementById('planning-task-detail');
     expect(detail).not.toBeNull();
     await user.type(detail as HTMLElement, '先预览，再应用并回滚');
@@ -56,7 +69,7 @@ describe('Planning WorkContract UI', () => {
     await user.click(within(workflow as HTMLElement).getByRole('checkbox', { name: '只执行上方已绑定的变更' }));
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
 
-    expect(await within(workflow as HTMLElement).findByText('receipt-task-save')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.task.save')).toMatchObject({
       body: {
         title: '验证真实 Planning 写入',
@@ -66,8 +79,8 @@ describe('Planning WorkContract UI', () => {
         expectedRuntimeRevision: 7,
       },
     });
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '回滚' }));
-    expect(await within(workflow as HTMLElement).findByText('receipt-task-save-rollback')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.mutation.rollback')).toMatchObject({
       body: {
         receiptId: 'receipt-task-save',
@@ -93,7 +106,7 @@ describe('Planning WorkContract UI', () => {
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
-    expect(await within(workflow as HTMLElement).findByText('receipt-task-action')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
 
     expect(findRequest(transport, 'planning.task.action')).toMatchObject({
       body: {
@@ -103,8 +116,8 @@ describe('Planning WorkContract UI', () => {
         payloadSha256: actionHash,
       },
     });
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '回滚' }));
-    expect(await within(workflow as HTMLElement).findByText('receipt-task-undo')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.taskEvent.undo')).toMatchObject({
       body: {
         eventId: 'task-event:1',
@@ -116,10 +129,75 @@ describe('Planning WorkContract UI', () => {
     });
   });
 
+  it('edits a live goal through preview, apply, and receipt-bound rollback', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlanning();
+    await screen.findByRole('heading', { name: '规划', level: 1 });
+
+    await user.click(await screen.findByRole('button', { name: /^完成 Web 控制中心迁移/ }));
+    expect(screen.getByRole('heading', { name: '编辑目标', level: 2 })).toBeInTheDocument();
+    const title = screen.getByPlaceholderText('例如：完成控制中心迁移');
+    expect(title).toHaveValue('完成 Web 控制中心迁移');
+    await user.clear(title);
+    await user.type(title, '完成控制中心真实切换');
+    await user.selectOptions(document.getElementById('planning-goal-horizon') as HTMLSelectElement, 'medium_term');
+    await user.selectOptions(document.getElementById('planning-goal-priority') as HTMLSelectElement, '3');
+
+    const workflow = screen.getByText('保存目标修改', { selector: 'strong' }).closest('.mgmt-workflow');
+    expect(workflow).not.toBeNull();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+
+    await waitFor(() => expect(findRequest(transport, 'planning.mutation.preview')).toMatchObject({
+      body: {
+        kind: 'goal.save',
+        expectedRuntimeRevision: 7,
+        payload: {
+          goalId: 'goal-1',
+          title: '完成控制中心真实切换',
+          detail: '接通规划、记忆和 Agent 的真实路径',
+          horizon: 'medium_term',
+          status: 'active',
+          priority: 3,
+          targetDate: '2026-07-31',
+          project: 'wisdom-weasel-rag-ime',
+        },
+      },
+    }));
+    const previewRequest = findRequest(transport, 'planning.mutation.preview');
+    expect((previewRequest?.body as Record<string, unknown>).payload).not.toHaveProperty('metadata');
+    expect(await within(workflow as HTMLElement).findByText('保存目标影响')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow as HTMLElement).getByRole('checkbox', { name: '只执行上方已绑定的变更' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+
+    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(findRequest(transport, 'planning.goal.save')).toMatchObject({
+      body: {
+        goalId: 'goal-1',
+        title: '完成控制中心真实切换',
+        previewToken: 'preview-goal-save',
+        payloadSha256: goalHash,
+        confirmText: 'apply',
+        expectedRuntimeRevision: 7,
+      },
+    });
+    expect(within(workflow as HTMLElement).queryByText(/receipt-goal-save/)).not.toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
+    expect(findRequest(transport, 'planning.mutation.rollback')).toMatchObject({
+      body: {
+        receiptId: 'receipt-goal-save',
+        rollbackToken: 'rollback-goal-save',
+        payloadSha256: goalHash,
+        confirmText: 'rollback',
+      },
+    });
+  });
+
   it('keeps a rejected apply visible and does not invent a receipt', async () => {
     const user = userEvent.setup();
     renderPlanning(true);
-    await user.type(await screen.findByPlaceholderText('例如：完成前台输入 smoke'), '触发版本冲突');
+    await user.type(await screen.findByPlaceholderText('例如：整理今天的工作清单'), '触发版本冲突');
     const workflow = screen.getByText('创建任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
@@ -127,7 +205,7 @@ describe('Planning WorkContract UI', () => {
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
-    expect(await within(workflow as HTMLElement).findByText('运行版本已变化，请重新预览。')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('页面内容已经变化，请重新预览。')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).queryByText(/receipt-task-save/)).not.toBeInTheDocument();
   });
 });
@@ -146,6 +224,7 @@ class PlanningTransport implements ControlTransport {
         'planning.dashboard',
         'planning.mutation.preview',
         'planning.task.save',
+        'planning.goal.save',
         'planning.task.action',
         'planning.taskEvent.undo',
         'planning.mutation.rollback',
@@ -162,20 +241,28 @@ class PlanningTransport implements ControlTransport {
     if (pathId === 'planning.mutation.preview') {
       const body = request.body as { kind?: unknown };
       const action = body.kind === 'task.action';
+      const goal = body.kind === 'goal.save';
       return previewResponse(
-        action ? 'planning.task.action' : 'planning.task.save',
-        action ? 'preview-task-action' : 'preview-task-save',
-        action ? actionHash : saveHash,
-        action ? '任务状态影响' : '保存任务影响',
+        action ? 'planning.task.action' : goal ? 'planning.goal.save' : 'planning.task.save',
+        action ? 'preview-task-action' : goal ? 'preview-goal-save' : 'preview-task-save',
+        action ? actionHash : goal ? goalHash : saveHash,
+        action ? '任务状态影响' : goal ? '保存目标影响' : '保存任务影响',
       ) as Response;
     }
     if (pathId === 'planning.task.save' && this.failTaskSave) return { ok: false, error: '运行版本已变化，请重新预览。', code: 'stale_revision' } as Response;
     if (pathId === 'planning.task.save') return receipt('planning.task.save', saveHash, 'receipt-task-save', 'rollback-task-save') as Response;
+    if (pathId === 'planning.goal.save') return {
+      ...receipt('planning.goal.save', goalHash, 'receipt-goal-save', 'rollback-goal-save'),
+      goal: { id: 'goal-1', title: '完成控制中心真实切换' },
+    } as Response;
     if (pathId === 'planning.task.action') return {
       ...receipt('planning.task.action', actionHash, 'receipt-task-action', 'rollback-task-action'),
       eventId: 'task-event:1',
     } as Response;
-    if (pathId === 'planning.mutation.rollback') return receipt('planning.mutation.rollback', saveHash, 'receipt-task-save-rollback', '', false) as Response;
+    if (pathId === 'planning.mutation.rollback') {
+      const payloadSha256 = String((request.body as { payloadSha256?: unknown })?.payloadSha256 ?? '');
+      return receipt('planning.mutation.rollback', payloadSha256, 'receipt-save-rollback', '', false) as Response;
+    }
     if (pathId === 'planning.taskEvent.undo') return receipt('planning.taskEvent.undo', actionHash, 'receipt-task-undo', '', false) as Response;
     throw new Error(`Unexpected request: ${pathId}`);
   }
@@ -211,10 +298,19 @@ function planningDashboard() {
     date: '2026-07-14',
     plan: { intention: '完成 Web 迁移', notes: '', reflection: '', project: 'wisdom-weasel-rag-ime' },
     tasks: [{ id: 'task-1', title: '完成管理页', detail: '接通真实写入', status: 'in_progress', source: 'manual' }],
-    goals: [],
+    goals: [{
+      id: 'goal-1',
+      title: '完成 Web 控制中心迁移',
+      detail: '接通规划、记忆和 Agent 的真实路径',
+      horizon: 'long_term',
+      status: 'active',
+      priority: 2,
+      targetDate: '2026-07-31',
+      project: 'wisdom-weasel-rag-ime',
+    }],
     pendingCompletionSuggestions: [],
     recentDetectedCompletion: null,
-    summary: { taskCount: 1, openTaskCount: 1, completedTaskCount: 0, goalCount: 0, progress: 0 },
+    summary: { taskCount: 1, openTaskCount: 1, completedTaskCount: 0, goalCount: 1, progress: 0 },
     assistant: { message: '把写入链路收束为一条可回滚路径。' },
   };
 }

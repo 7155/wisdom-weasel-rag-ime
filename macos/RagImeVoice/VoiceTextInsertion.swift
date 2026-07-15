@@ -6,15 +6,11 @@ import Foundation
 final class VoiceTextInsertionSession {
     let anchorPoint: NSPoint?
     let appBundleIdentifier: String
-    private enum InsertionMode {
-        case accessibility
-        case finalPaste
-    }
 
     private let element: AXUIElement?
     private let origin: Int
     private let originalSelectionLength: Int
-    private let insertionMode: InsertionMode
+    private let insertionMode: VoiceInsertionTargetMode
     private var insertedUTF16Length = 0
     private var hasAppliedRevision = false
 
@@ -23,7 +19,7 @@ final class VoiceTextInsertionSession {
         range: CFRange?,
         anchorPoint: NSPoint?,
         appBundleIdentifier: String,
-        insertionMode: InsertionMode
+        insertionMode: VoiceInsertionTargetMode
     ) {
         self.element = element
         origin = range?.location ?? 0
@@ -36,20 +32,22 @@ final class VoiceTextInsertionSession {
     static func capture() throws -> VoiceTextInsertionSession {
         guard AXIsProcessTrusted() else { throw VoiceInsertionError.accessibilityUnavailable }
         if IsSecureEventInputEnabled() { throw VoiceInsertionError.sensitiveField }
-        let application = frontmostApplicationIdentity()
-        if VoicePrivacyPolicy.denies(
-            bundleIdentifier: application.bundleIdentifier,
-            applicationName: application.name,
-            metadata: ""
-        ) {
-            throw VoiceInsertionError.sensitiveField
-        }
+        let frontmostApplication = frontmostApplicationIdentity()
         guard let focused = focusedElement() else {
-            return finalPasteSession(application: application)
+            try validateApplicationPrivacy(frontmostApplication)
+            return finalPasteSession(application: frontmostApplication)
         }
+        let application = VoiceInsertionTargetPolicy.resolveApplication(
+            focused: applicationIdentity(for: focused),
+            frontmost: frontmostApplication
+        )
+        try validateApplicationPrivacy(application)
         try validatePrivacy(of: focused, fallbackApplication: application)
         let range = selectedRange(focused)
-        if prefersFinalPaste(bundleIdentifier: application.bundleIdentifier) {
+        if VoiceInsertionTargetPolicy.mode(
+            for: application,
+            accessibilityWritable: true
+        ) == .finalPaste {
             return finalPasteSession(
                 application: application,
                 anchorPoint: range.flatMap { caretPoint(focused, range: $0) }
@@ -96,8 +94,12 @@ final class VoiceTextInsertionSession {
             guard let current = Self.selectedRange(element) else {
                 throw VoiceInsertionError.cursorMoved
             }
-            let expected = origin + insertedUTF16Length
-            guard current.location == expected, current.length == 0 else {
+            guard VoiceInsertionTargetPolicy.selectionMatchesOwnRevision(
+                origin: origin,
+                insertedUTF16Length: insertedUTF16Length,
+                currentLocation: current.location,
+                currentLength: current.length
+            ) else {
                 throw VoiceInsertionError.cursorMoved
             }
         }
@@ -113,7 +115,7 @@ final class VoiceTextInsertionSession {
     }
 
     private static func finalPasteSession(
-        application: (bundleIdentifier: String, name: String),
+        application: VoiceInsertionApplicationIdentity,
         anchorPoint: NSPoint? = nil
     ) -> VoiceTextInsertionSession {
         VoiceTextInsertionSession(
@@ -123,22 +125,6 @@ final class VoiceTextInsertionSession {
             appBundleIdentifier: application.bundleIdentifier,
             insertionMode: .finalPaste
         )
-    }
-
-    private static func prefersFinalPaste(bundleIdentifier: String) -> Bool {
-        let bundle = bundleIdentifier.lowercased()
-        let webEditorPrefixes = [
-            "com.openai.codex",
-            "com.openai.chat",
-            "com.google.chrome",
-            "com.microsoft.edgemac",
-            "com.apple.safari",
-            "com.brave.browser",
-            "com.vivaldi.vivaldi",
-            "company.thebrowser.browser",
-            "org.mozilla.firefox",
-        ]
-        return webEditorPrefixes.contains { bundle == $0 || bundle.hasPrefix($0 + ".") }
     }
 
     private static func focusedElement() -> AXUIElement? {
@@ -187,10 +173,13 @@ final class VoiceTextInsertionSession {
 
     private static func validatePrivacy(
         of element: AXUIElement,
-        fallbackApplication: (bundleIdentifier: String, name: String)
+        fallbackApplication: VoiceInsertionApplicationIdentity
     ) throws {
         if IsSecureEventInputEnabled() { throw VoiceInsertionError.sensitiveField }
-        let application = applicationIdentity(for: element, fallback: fallbackApplication)
+        let application = VoiceInsertionTargetPolicy.resolveApplication(
+            focused: applicationIdentity(for: element),
+            frontmost: fallbackApplication
+        )
         let role = stringAttribute(kAXRoleAttribute as CFString, element: element)
         let subrole = stringAttribute(kAXSubroleAttribute as CFString, element: element)
         let fieldMetadata = [
@@ -218,27 +207,41 @@ final class VoiceTextInsertionSession {
         }
     }
 
-    private static func frontmostApplicationIdentity() -> (bundleIdentifier: String, name: String) {
-        guard let application = NSWorkspace.shared.frontmostApplication else { return ("", "") }
-        return (
-            application.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-            application.localizedName ?? ""
+    private static func validateApplicationPrivacy(
+        _ application: VoiceInsertionApplicationIdentity
+    ) throws {
+        if VoicePrivacyPolicy.denies(
+            bundleIdentifier: application.bundleIdentifier,
+            applicationName: application.name,
+            metadata: ""
+        ) {
+            throw VoiceInsertionError.sensitiveField
+        }
+    }
+
+    private static func frontmostApplicationIdentity() -> VoiceInsertionApplicationIdentity {
+        guard let application = NSWorkspace.shared.frontmostApplication else { return .unknown }
+        return VoiceInsertionApplicationIdentity(
+            bundleIdentifier: application.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            name: application.localizedName ?? ""
         )
     }
 
     private static func applicationIdentity(
-        for element: AXUIElement,
-        fallback: (bundleIdentifier: String, name: String)
-    ) -> (bundleIdentifier: String, name: String) {
+        for element: AXUIElement
+    ) -> VoiceInsertionApplicationIdentity? {
         var processID: pid_t = 0
         guard AXUIElementGetPid(element, &processID) == .success,
               processID > 0,
               let application = NSRunningApplication(processIdentifier: processID),
               let bundleIdentifier = application.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
               !bundleIdentifier.isEmpty else {
-            return fallback
+            return nil
         }
-        return (bundleIdentifier, application.localizedName ?? "")
+        return VoiceInsertionApplicationIdentity(
+            bundleIdentifier: bundleIdentifier,
+            name: application.localizedName ?? ""
+        )
     }
 
     private static func windowMetadata(for element: AXUIElement) -> String {
@@ -265,13 +268,25 @@ final class VoiceTextInsertionSession {
     }
 
     private func validateFinalPasteTarget() throws {
-        let currentApplication = Self.frontmostApplicationIdentity()
-        if !appBundleIdentifier.isEmpty,
-           !currentApplication.bundleIdentifier.isEmpty,
-           currentApplication.bundleIdentifier != appBundleIdentifier {
+        let frontmostApplication = Self.frontmostApplicationIdentity()
+        let focused = Self.focusedElement()
+        let focusedApplication = focused.flatMap { Self.applicationIdentity(for: $0) }
+        let capturedApplication = VoiceInsertionApplicationIdentity(
+            bundleIdentifier: appBundleIdentifier,
+            name: ""
+        )
+        if !VoiceInsertionTargetPolicy.isSameApplication(
+            captured: capturedApplication,
+            focused: focusedApplication,
+            frontmost: frontmostApplication
+        ) {
             throw VoiceInsertionError.focusChanged
         }
-        if let focused = Self.focusedElement() {
+        if let focused {
+            let currentApplication = VoiceInsertionTargetPolicy.resolveApplication(
+                focused: focusedApplication,
+                frontmost: frontmostApplication
+            )
             try Self.validatePrivacy(of: focused, fallbackApplication: currentApplication)
         }
     }

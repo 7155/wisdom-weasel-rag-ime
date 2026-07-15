@@ -11,28 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS
 from rag_ime.managed_pi_runtime import (
     MANIFEST_NAME,
     ManagedPiRuntimeError,
     build_managed_pi_runtime_manifest,
     write_managed_pi_runtime_manifest,
-)
-
-
-DEFAULT_TOOLS = (
-    "ime_overview",
-    "ime_input",
-    "ime_voice",
-    "ime_planning",
-    "ime_memory",
-    "ime_knowledge",
-    "ime_models",
-    "ime_runtime",
-    "ime_configuration",
-    "ime_agents",
-    "workspace_list",
-    "workspace_read",
-    "workspace_shell",
 )
 
 
@@ -62,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             pi_entrypoint=args.pi_entrypoint,
             node_entrypoint=args.node_entrypoint,
             extension_entrypoint=args.extension_entrypoint,
-            tools=tuple(args.tool or DEFAULT_TOOLS),
+            tools=tuple(args.tool or CONTROL_TOOL_IDS),
             source_repository=args.source_repository,
             source_commit=args.source_commit,
             source_package=args.source_package,

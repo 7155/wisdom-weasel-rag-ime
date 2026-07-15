@@ -1,4 +1,23 @@
-# Management pages legacy parity
+# Web control center migration status
+
+Current snapshot: 2026-07-15 on `codex/control-center-web-migration`.
+
+- The TypeScript catalog currently contains 92 allowlisted `pathId` entries.
+- Production builds are native-only and reject HTTP/mock/preview modules at bundle time.
+- Agent conversations, Pi model selection, Rooms, user-created Personas, planning tasks,
+  Memory Book/Group/Tag reads, stable-ID memory edits, history tombstones, knowledge
+  runs, configuration changes, provider credentials, voice settings and diagnostics
+  are connected to real local routes with focused regression coverage.
+- Writes that can change local state use an explicit preview, confirmation, receipt and
+  rollback boundary where the backend supports one. Legacy import/restore endpoints
+  remain intentionally excluded until they accept bridge-owned file tokens and a bound
+  rollback contract.
+
+The remainder of this document is the original Lane D contract audit. It is retained as
+historical design evidence; statements about mock receipts or missing routes describe
+that earlier baseline, not the current production bundle.
+
+## Historical Lane D baseline
 
 Baseline: `f6c42d93c02e6e97b6b95b0fb64cb2ca07e2e8bd` on `codex/control-web-pages`.
 

@@ -48,6 +48,7 @@ from .retrieval_docs import rebuild_retrieval_docs
 from .runtime_config import RuntimeConfigSnapshot
 from .settings_store import ManagementSettingsStore, record_management_audit
 from .text_utils import compact_whitespace
+from .voice_control import read_voice_control_status, resolve_voice_support_directory
 
 
 def _provider_configuration_hash(payload: Mapping[str, object]) -> str:
@@ -73,6 +74,7 @@ class ManagementService:
         runtime_config_provider: Callable[[], RuntimeConfigSnapshot],
         last_prediction_provider: Callable[[], Mapping[str, object]] | None = None,
         cache_invalidator: Callable[[], object] | None = None,
+        voice_support_directory: str | Path | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = project
@@ -84,6 +86,11 @@ class ManagementService:
         self.runtime_config_provider = runtime_config_provider
         self.last_prediction_provider = last_prediction_provider or (lambda: {})
         self.cache_invalidator = cache_invalidator
+        self.voice_support_directory = (
+            Path(voice_support_directory).expanduser()
+            if voice_support_directory is not None
+            else resolve_voice_support_directory(self.db_path)
+        )
         self.events = ManagementEventHub()
         self.work_contract = ManagementWorkContract(db_path=self.db_path)
         self._jobs: dict[str, RuntimeJob] = {}
@@ -450,6 +457,13 @@ class ManagementService:
                 WHERE (? = 0 OR id < ?)
                   AND (? = '' OR source = ?)
                   AND (? = '' OR committed_text LIKE ? OR app LIKE ? OR project LIKE ?)
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM memory_tombstones tombstone
+                    WHERE tombstone.target_type = 'memory_id'
+                      AND tombstone.target_value = ('event:' || input_events.id)
+                      AND tombstone.active = 1
+                  )
                 ORDER BY id DESC LIMIT ?
                 """,
                 (cursor, cursor, request.status, request.status, request.query, query, query, query, request.limit + 1),
@@ -482,6 +496,345 @@ class ManagementService:
             "limit": request.limit,
             "rawTextVisible": False,
         }
+
+    def history_detail(self, event_id: object) -> dict[str, object]:
+        parsed_event_id = _strict_bounded_int(
+            event_id,
+            field="eventId",
+            minimum=1,
+            maximum=9_223_372_036_854_775_807,
+        )
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT event.id, event.created_at_ms, event.source, event.committed_text,
+                       event.app, event.project, event.candidate_rank,
+                       event.provider_name, event.context_group_id,
+                       event.context_group_level, state.accepted_count,
+                       state.skipped_count, state.pinned, state.downranked,
+                       state.deleted, state.updated_at_ms,
+                       EXISTS (
+                           SELECT 1
+                           FROM memory_tombstones tombstone
+                           WHERE tombstone.target_type = 'memory_id'
+                             AND tombstone.target_value = ('event:' || event.id)
+                             AND tombstone.active = 1
+                       ) AS hidden
+                FROM input_events event
+                LEFT JOIN memory_state state ON state.event_id = event.id
+                WHERE event.id = ?
+                LIMIT 1
+                """,
+                (parsed_event_id,),
+            ).fetchone()
+            latest_action = conn.execute(
+                """
+                SELECT action_type, created_at_ms
+                FROM memory_actions
+                WHERE event_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (parsed_event_id,),
+            ).fetchone()
+        if row is None:
+            return {
+                **self.revision().payload(),
+                "ok": False,
+                "errorCode": "not_found",
+                "error": "History record not found.",
+            }
+
+        feedback_available = row["accepted_count"] is not None
+        feedback: dict[str, object] = {"available": feedback_available}
+        if feedback_available:
+            feedback.update(
+                {
+                    "acceptedCount": int(row["accepted_count"]),
+                    "skippedCount": int(row["skipped_count"]),
+                    "pinned": bool(row["pinned"]),
+                    "downranked": bool(row["downranked"]),
+                    "deleted": bool(row["deleted"]),
+                    "updatedAtMs": int(row["updated_at_ms"]),
+                }
+            )
+        if latest_action is not None:
+            feedback["latestAction"] = str(latest_action["action_type"])
+            feedback["latestActionAtMs"] = int(latest_action["created_at_ms"])
+
+        return {
+            **self.revision().payload(),
+            "ok": True,
+            "item": {
+                "id": int(row["id"]),
+                "createdAtMs": int(row["created_at_ms"]),
+                "source": str(row["source"]),
+                "text": str(row["committed_text"]),
+                "textChars": len(str(row["committed_text"])),
+                "app": str(row["app"]),
+                "project": str(row["project"]),
+                "provider": str(row["provider_name"]),
+                "candidateRank": (
+                    int(row["candidate_rank"])
+                    if row["candidate_rank"] is not None
+                    else None
+                ),
+                "groupId": str(row["context_group_id"]),
+                "groupLevel": str(row["context_group_level"]),
+                "status": (
+                    "hidden"
+                    if bool(row["hidden"]) or bool(row["deleted"])
+                    else "active"
+                ),
+                "feedback": feedback,
+            },
+            "rawTextVisible": True,
+        }
+
+    def history_tombstone_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={"eventId", "expectedRuntimeRevision"},
+                optional={"reason"},
+            )
+            event_id = _strict_bounded_int(
+                payload.get("eventId"),
+                field="eventId",
+                minimum=1,
+                maximum=9_223_372_036_854_775_807,
+            )
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The history snapshot revision is stale.",
+                    current_revision=current,
+                )
+            reason = compact_whitespace(str(payload.get("reason") or "control-center-history"))
+            if len(reason) > 256:
+                raise ManagementWorkError("invalid_request", "reason must not exceed 256 characters.")
+            domain = {"eventId": event_id, "reason": reason}
+            with self._connect() as conn:
+                snapshot = _history_subject_snapshot(conn, event_id)
+                if snapshot["activeTombstoneIds"]:
+                    raise ManagementWorkError(
+                        "domain_conflict",
+                        "This history record is already hidden.",
+                        current_revision=self.management_work_revision(
+                            conn,
+                            subject_revision=_snapshot_revision(snapshot),
+                        ),
+                    )
+                expected_revision = self.management_work_revision(
+                    conn,
+                    subject_revision=_snapshot_revision(snapshot),
+                )
+            return self.work_contract.create_preview(
+                path_id="history.tombstone.apply",
+                payload=domain,
+                expected_revision=expected_revision,
+                required_confirm="apply",
+                summary={
+                    "title": "隐藏输入历史记录",
+                    "items": [
+                        f"记录 ID: {event_id}",
+                        "停止参与后续历史列表与记忆召回。",
+                        "保留原始审计记录，并允许使用本次收据回滚。",
+                    ],
+                    "risk": "R2",
+                },
+            )
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
+
+    def history_tombstone_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={
+                    "eventId",
+                    "reason",
+                    "expectedRuntimeRevision",
+                    "previewToken",
+                    "payloadSha256",
+                    "confirmText",
+                },
+                optional=set(),
+            )
+            event_id = _strict_bounded_int(
+                payload.get("eventId"),
+                field="eventId",
+                minimum=1,
+                maximum=9_223_372_036_854_775_807,
+            )
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The history apply request revision is stale.",
+                    current_revision=current,
+                )
+            reason = compact_whitespace(str(payload.get("reason") or ""))
+            if not reason or len(reason) > 256:
+                raise ManagementWorkError("invalid_request", "reason must contain 1 to 256 characters.")
+            domain = {"eventId": event_id, "reason": reason}
+
+            def current_revision(conn: sqlite3.Connection) -> Mapping[str, object]:
+                return self.management_work_revision(
+                    conn,
+                    subject_revision=_snapshot_revision(_history_subject_snapshot(conn, event_id)),
+                )
+
+            def execute(conn: sqlite3.Connection) -> WorkExecution:
+                before = _history_subject_snapshot(conn, event_id)
+                if before["activeTombstoneIds"]:
+                    raise ManagementWorkError("domain_conflict", "This history record is already hidden.")
+                created_at_ms = _now_ms()
+                cursor = conn.execute(
+                    """
+                    INSERT INTO memory_tombstones(
+                        created_at_ms, target_type, target_value, reason, active, metadata_json
+                    ) VALUES (?, 'memory_id', ?, ?, 1, ?)
+                    """,
+                    (
+                        created_at_ms,
+                        f"event:{event_id}",
+                        reason,
+                        json.dumps(
+                            {"source": "control-center-web", "eventId": event_id},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    ),
+                )
+                tombstone_id = int(cursor.lastrowid)
+                after = _history_subject_snapshot(conn, event_id)
+                result = {
+                    "schemaVersion": "rag-ime.history-tombstone.v1",
+                    "ok": True,
+                    "eventId": event_id,
+                    "tombstoneId": tombstone_id,
+                    "hidden": True,
+                }
+                return WorkExecution(
+                    result=result,
+                    audit_action="history_tombstone",
+                    target_type="history",
+                    target_id=str(event_id),
+                    rollback_available=True,
+                    rollback_path_id="history.tombstone.rollback",
+                    rollback_confirm="rollback",
+                    rollback_authority={"eventId": event_id, "tombstoneId": tombstone_id},
+                    rollback_data={"afterRevision": _snapshot_revision(after)},
+                )
+
+            response = self.work_contract.execute_apply(
+                path_id="history.tombstone.apply",
+                payload=domain,
+                preview_token=str(payload.get("previewToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            if self.cache_invalidator is not None:
+                self.cache_invalidator()
+            self.events.publish("history_changed", {"eventId": event_id, "action": "tombstone"})
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
+
+    def history_tombstone_rollback(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={"receiptId", "rollbackToken", "payloadSha256", "confirmText"},
+                optional=set(),
+            )
+
+            def execute(conn: sqlite3.Connection, receipt: StoredReceipt) -> WorkExecution:
+                authority = dict(receipt.rollback_authority)
+                event_id = _strict_bounded_int(
+                    authority.get("eventId"),
+                    field="eventId",
+                    minimum=1,
+                    maximum=9_223_372_036_854_775_807,
+                )
+                tombstone_id = _strict_bounded_int(
+                    authority.get("tombstoneId"),
+                    field="tombstoneId",
+                    minimum=1,
+                    maximum=9_223_372_036_854_775_807,
+                )
+                snapshot = _history_subject_snapshot(conn, event_id)
+                if _snapshot_revision(snapshot) != receipt.rollback_data.get("afterRevision"):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The history record changed after the apply receipt was issued.",
+                        current_revision=self.management_work_revision(
+                            conn,
+                            subject_revision=_snapshot_revision(snapshot),
+                        ),
+                    )
+                updated = conn.execute(
+                    """
+                    UPDATE memory_tombstones
+                    SET active = 0
+                    WHERE id = ? AND target_type = 'memory_id'
+                      AND target_value = ? AND active = 1
+                    """,
+                    (tombstone_id, f"event:{event_id}"),
+                )
+                if updated.rowcount != 1:
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The managed tombstone is no longer active.",
+                    )
+                return WorkExecution(
+                    result={
+                        "schemaVersion": "rag-ime.history-tombstone.v1",
+                        "ok": True,
+                        "eventId": event_id,
+                        "tombstoneId": tombstone_id,
+                        "hidden": False,
+                    },
+                    audit_action="history_tombstone_rollback",
+                    target_type="history",
+                    target_id=str(event_id),
+                )
+
+            response = self.work_contract.execute_rollback(
+                path_id="history.tombstone.rollback",
+                receipt_id=str(payload.get("receiptId") or ""),
+                rollback_token=str(payload.get("rollbackToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                expected_apply_path_id="history.tombstone.apply",
+                executor=execute,
+            )
+            if self.cache_invalidator is not None:
+                self.cache_invalidator()
+            authority = response.get("rollbackAuthority")
+            self.events.publish(
+                "history_changed",
+                {
+                    "eventId": authority.get("eventId") if isinstance(authority, Mapping) else 0,
+                    "action": "rollback",
+                },
+            )
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
 
     def planning_dashboard(self, *, plan_date: str = "", project: str = "") -> dict[str, object]:
         with self._connect() as conn:
@@ -522,10 +875,10 @@ class ManagementService:
         current_revision = {"runtimeRevision": self.revision().runtime_revision}
         try:
             kind = compact_whitespace(str(payload.get("kind") or ""))
-            if kind not in {"task.save", "task.action"}:
+            if kind not in {"task.save", "task.action", "goal.save"}:
                 raise ManagementWorkError(
                     "unsupported_mutation",
-                    "Planning preview supports only task.save and task.action.",
+                    "Planning preview supports only task.save, task.action, and goal.save.",
                     current_revision=current_revision,
                 )
             expected_runtime_revision = _strict_nonnegative_int(
@@ -547,16 +900,23 @@ class ManagementService:
                     required={"date", "title"},
                     optional=_PLANNING_TASK_SAVE_FIELDS - {"date", "title"},
                 )
-            else:
+            elif kind == "task.action":
                 _require_exact_keys(
                     raw_domain,
                     required=_PLANNING_TASK_ACTION_FIELDS,
                     optional=set(),
                 )
+            else:
+                _require_exact_keys(
+                    raw_domain,
+                    required={"title"},
+                    optional=_PLANNING_GOAL_SAVE_FIELDS - {"title"},
+                )
             domain = _normalize_planning_work_payload(kind, raw_domain, project=self.project)
             path_id = {
                 "task.save": "planning.task.save",
                 "task.action": "planning.task.action",
+                "goal.save": "planning.goal.save",
             }[kind]
             with self._connect() as conn:
                 subject_revision = _planning_subject_revision(conn, kind=kind, payload=domain)
@@ -564,7 +924,11 @@ class ManagementService:
                 "runtimeRevision": expected_runtime_revision,
                 "subjectRevision": subject_revision,
             }
-            title = "保存规划任务" if kind == "task.save" else "更新规划任务状态"
+            title = {
+                "task.save": "保存规划任务",
+                "task.action": "更新规划任务状态",
+                "goal.save": "保存规划目标",
+            }[kind]
             summary = {
                 "title": title,
                 "items": _planning_preview_items(kind, domain),
@@ -585,6 +949,9 @@ class ManagementService:
 
     def planning_apply_task_action(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self._planning_apply_contract("task.action", payload)
+
+    def planning_apply_goal_save(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return self._planning_apply_contract("goal.save", payload)
 
     def _planning_apply_contract(
         self,
@@ -608,6 +975,7 @@ class ManagementService:
             path_id = {
                 "task.save": "planning.task.save",
                 "task.action": "planning.task.action",
+                "goal.save": "planning.goal.save",
             }[kind]
 
             def current_revision(conn: sqlite3.Connection) -> Mapping[str, object]:
@@ -617,6 +985,29 @@ class ManagementService:
                 )
 
             def execute(conn: sqlite3.Connection) -> WorkExecution:
+                if kind == "goal.save":
+                    goal_id = compact_whitespace(str(domain.get("goalId") or ""))
+                    before = _planning_goal_snapshot(conn, goal_id) if goal_id else None
+                    result = save_goal(conn, domain, project=self.project)
+                    goal = result.get("goal") if isinstance(result.get("goal"), dict) else {}
+                    applied_goal_id = compact_whitespace(str(goal.get("id") or ""))
+                    after = _planning_goal_snapshot(conn, applied_goal_id)
+                    return WorkExecution(
+                        result=result,
+                        audit_action="planning_goal_save",
+                        target_type="goal",
+                        target_id=applied_goal_id,
+                        rollback_available=True,
+                        rollback_path_id="planning.mutation.rollback",
+                        rollback_confirm="rollback",
+                        rollback_authority={"goalId": applied_goal_id},
+                        rollback_data={
+                            "kind": kind,
+                            "goalId": applied_goal_id,
+                            "beforeGoal": before,
+                            "afterRevision": _snapshot_revision(after),
+                        },
+                    )
                 if kind == "task.save":
                     task_id = compact_whitespace(str(domain.get("taskId") or ""))
                     before = _planning_task_snapshot(conn, task_id) if task_id else None
@@ -675,12 +1066,13 @@ class ManagementService:
                 current_revision=current_revision,
                 executor=execute,
             )
-            task = response.get("task") if isinstance(response.get("task"), dict) else {}
+            subject_key = "goal" if kind == "goal.save" else "task"
+            subject = response.get(subject_key) if isinstance(response.get(subject_key), dict) else {}
             self.events.publish(
                 "planning_changed",
                 {
-                    "kind": "task",
-                    "id": task.get("id"),
+                    "kind": subject_key,
+                    "id": subject.get("id"),
                     "action": domain.get("action") or "save",
                 },
             )
@@ -756,49 +1148,62 @@ class ManagementService:
 
             def execute(conn: sqlite3.Connection, receipt: StoredReceipt) -> WorkExecution:
                 rollback_data = dict(receipt.rollback_data)
-                if rollback_data.get("kind") != "task.save":
+                kind = compact_whitespace(str(rollback_data.get("kind") or ""))
+                if kind not in {"task.save", "goal.save"}:
                     raise ManagementWorkError(
                         "rollback_authority_mismatch",
-                        "This receipt is not a task save receipt.",
+                        "This receipt is not a planning save receipt.",
                     )
-                task_id = compact_whitespace(str(rollback_data.get("taskId") or ""))
-                current_task = _planning_task_snapshot(conn, task_id)
-                if _snapshot_revision(current_task) != rollback_data.get("afterRevision"):
+                subject_id_key = "goalId" if kind == "goal.save" else "taskId"
+                before_key = "beforeGoal" if kind == "goal.save" else "beforeTask"
+                subject_id = compact_whitespace(str(rollback_data.get(subject_id_key) or ""))
+                current_subject = (
+                    _planning_goal_snapshot(conn, subject_id)
+                    if kind == "goal.save"
+                    else _planning_task_snapshot(conn, subject_id)
+                )
+                if _snapshot_revision(current_subject) != rollback_data.get("afterRevision"):
                     raise ManagementWorkError(
                         "rollback_state_changed",
-                        "The task changed after the receipt was issued.",
+                        "The planning item changed after the receipt was issued.",
                         current_revision={
                             **current,
-                            "subjectRevision": _snapshot_revision(current_task),
+                            "subjectRevision": _snapshot_revision(current_subject),
                         },
                     )
-                before = rollback_data.get("beforeTask")
+                before = rollback_data.get(before_key)
                 if before is None:
-                    conn.execute("DELETE FROM planning_tasks WHERE task_id = ?", (task_id,))
+                    if kind == "goal.save":
+                        conn.execute("DELETE FROM planning_goals WHERE goal_id = ?", (subject_id,))
+                    else:
+                        conn.execute("DELETE FROM planning_tasks WHERE task_id = ?", (subject_id,))
                     result: dict[str, object] = {
                         "schemaVersion": "rag-ime.planning.v1",
                         "ok": True,
-                        "taskId": task_id,
+                        subject_id_key: subject_id,
                         "deleted": True,
                     }
                 elif isinstance(before, Mapping):
-                    _restore_planning_task(conn, before)
+                    if kind == "goal.save":
+                        _restore_planning_goal(conn, before)
+                    else:
+                        _restore_planning_task(conn, before)
                     result = {
                         "schemaVersion": "rag-ime.planning.v1",
                         "ok": True,
-                        "taskId": task_id,
+                        subject_id_key: subject_id,
                         "restored": True,
                     }
                 else:
                     raise ManagementWorkError(
                         "stored_contract_invalid",
-                        "The task rollback snapshot is invalid.",
+                        "The planning rollback snapshot is invalid.",
                     )
                 return WorkExecution(
                     result=result,
-                    audit_action="planning_task_save_rollback",
-                    target_type="task",
-                    target_id=task_id,
+                    audit_action=f"planning_{'goal' if kind == 'goal.save' else 'task'}_save_rollback",
+                    target_type="goal" if kind == "goal.save" else "task",
+                    target_id=subject_id,
                 )
 
             response = self.work_contract.execute_rollback(
@@ -807,13 +1212,19 @@ class ManagementService:
                 rollback_token=str(payload.get("rollbackToken") or ""),
                 payload_sha256=str(payload.get("payloadSha256") or ""),
                 confirm_text=str(payload.get("confirmText") or ""),
-                expected_apply_path_id="planning.task.save",
+                expected_apply_path_id=("planning.task.save", "planning.goal.save"),
                 executor=execute,
             )
             authority = response.get("rollbackAuthority")
+            authority_payload = authority if isinstance(authority, Mapping) else {}
+            subject_kind = "goal" if authority_payload.get("goalId") else "task"
             self.events.publish(
                 "planning_changed",
-                {"kind": "task", "id": authority.get("taskId") if isinstance(authority, Mapping) else "", "action": "rollback"},
+                {
+                    "kind": subject_kind,
+                    "id": authority_payload.get(f"{subject_kind}Id"),
+                    "action": "rollback",
+                },
             )
             return response
         except Exception as exc:
@@ -904,6 +1315,240 @@ class ManagementService:
             {"kind": "book", "id": book_id, "action": "archive" if archived else "restore"},
         )
         return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def memory_book_archive_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={"bookId", "archived", "expectedRuntimeRevision"},
+                optional={"reason"},
+            )
+            book_id = compact_whitespace(str(payload.get("bookId") or ""))
+            if not book_id or len(book_id) > 512:
+                raise ManagementWorkError("invalid_request", "bookId must contain 1 to 512 characters.")
+            if not isinstance(payload.get("archived"), bool):
+                raise ManagementWorkError("invalid_request", "archived must be a boolean.")
+            archived = bool(payload["archived"])
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The memory snapshot revision is stale.",
+                    current_revision=current,
+                )
+            reason = compact_whitespace(
+                str(payload.get("reason") or ("control_center_archive" if archived else "control_center_restore"))
+            )
+            if not reason or len(reason) > 256:
+                raise ManagementWorkError("invalid_request", "reason must contain 1 to 256 characters.")
+            domain = {"bookId": book_id, "archived": archived, "reason": reason}
+            with self._connect() as conn:
+                snapshot = _memory_book_subject_snapshot(conn, book_id)
+                current_archived = str(snapshot["status"]) == "archived"
+                if current_archived == archived:
+                    raise ManagementWorkError(
+                        "domain_conflict",
+                        "This memory book already has the requested archive state.",
+                        current_revision=self.management_work_revision(
+                            conn,
+                            subject_revision=_snapshot_revision(snapshot),
+                        ),
+                    )
+                if archived and str(snapshot["book_type"]) != "topic":
+                    raise ManagementWorkError(
+                        "domain_rejected",
+                        "Only topic memory books can be archived manually.",
+                    )
+                expected_revision = self.management_work_revision(
+                    conn,
+                    subject_revision=_snapshot_revision(snapshot),
+                )
+            action_label = "归档" if archived else "恢复"
+            return self.work_contract.create_preview(
+                path_id="memory.book.archive.apply",
+                payload=domain,
+                expected_revision=expected_revision,
+                required_confirm="apply",
+                summary={
+                    "title": f"{action_label}主题记忆",
+                    "items": [
+                        f"主题：{snapshot['title']}",
+                        "归档后退出日常自动召回；明确回顾旧主题时仍可恢复。" if archived else "恢复后重新参与日常记忆召回。",
+                        "原始内容与关系仍会保留，本次变更可使用收据回滚。",
+                    ],
+                    "risk": "R2",
+                },
+            )
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
+
+    def memory_book_archive_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={
+                    "bookId",
+                    "archived",
+                    "reason",
+                    "expectedRuntimeRevision",
+                    "previewToken",
+                    "payloadSha256",
+                    "confirmText",
+                },
+                optional=set(),
+            )
+            book_id = compact_whitespace(str(payload.get("bookId") or ""))
+            if not book_id or len(book_id) > 512:
+                raise ManagementWorkError("invalid_request", "bookId must contain 1 to 512 characters.")
+            if not isinstance(payload.get("archived"), bool):
+                raise ManagementWorkError("invalid_request", "archived must be a boolean.")
+            archived = bool(payload["archived"])
+            reason = compact_whitespace(str(payload.get("reason") or ""))
+            if not reason or len(reason) > 256:
+                raise ManagementWorkError("invalid_request", "reason must contain 1 to 256 characters.")
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The memory apply request revision is stale.",
+                    current_revision=current,
+                )
+            domain = {"bookId": book_id, "archived": archived, "reason": reason}
+
+            def current_revision(conn: sqlite3.Connection) -> Mapping[str, object]:
+                return self.management_work_revision(
+                    conn,
+                    subject_revision=_snapshot_revision(_memory_book_subject_snapshot(conn, book_id)),
+                )
+
+            def execute(conn: sqlite3.Connection) -> WorkExecution:
+                before = _memory_book_subject_snapshot(conn, book_id)
+                if (str(before["status"]) == "archived") == archived:
+                    raise ManagementWorkError(
+                        "domain_conflict",
+                        "This memory book already has the requested archive state.",
+                    )
+                result = set_memory_book_archive_status(
+                    conn,
+                    book_id=book_id,
+                    archived=archived,
+                    reason=reason,
+                    actor="control-center-web",
+                )
+                result["retrievalDocs"] = rebuild_retrieval_docs(conn, project="")
+                after = _memory_book_subject_snapshot(conn, book_id)
+                return WorkExecution(
+                    result=result,
+                    audit_action="memory_book_archive" if archived else "memory_book_restore",
+                    target_type="memory_book",
+                    target_id=book_id,
+                    rollback_available=True,
+                    rollback_path_id="memory.book.archive.rollback",
+                    rollback_confirm="rollback",
+                    rollback_authority={"bookId": book_id},
+                    rollback_data={
+                        "beforeSnapshot": before,
+                        "afterRevision": _snapshot_revision(after),
+                    },
+                )
+
+            response = self.work_contract.execute_apply(
+                path_id="memory.book.archive.apply",
+                payload=domain,
+                preview_token=str(payload.get("previewToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            if self.cache_invalidator is not None:
+                self.cache_invalidator()
+            self.events.publish(
+                "memory_changed",
+                {"kind": "book", "id": book_id, "action": "archive" if archived else "restore"},
+            )
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
+
+    def memory_book_archive_rollback(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={"receiptId", "rollbackToken", "payloadSha256", "confirmText"},
+                optional=set(),
+            )
+
+            def execute(conn: sqlite3.Connection, receipt: StoredReceipt) -> WorkExecution:
+                book_id = compact_whitespace(str(receipt.rollback_authority.get("bookId") or ""))
+                if not book_id:
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The archive receipt does not identify a memory book.",
+                    )
+                current_snapshot = _memory_book_subject_snapshot(conn, book_id)
+                if _snapshot_revision(current_snapshot) != receipt.rollback_data.get("afterRevision"):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The memory book changed after the apply receipt was issued.",
+                        current_revision=self.management_work_revision(
+                            conn,
+                            subject_revision=_snapshot_revision(current_snapshot),
+                        ),
+                    )
+                before = receipt.rollback_data.get("beforeSnapshot")
+                if not isinstance(before, Mapping):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The archive receipt does not contain a restorable memory snapshot.",
+                    )
+                _restore_memory_book_snapshot(conn, before)
+                retrieval = rebuild_retrieval_docs(conn, project="")
+                return WorkExecution(
+                    result={
+                        "schemaVersion": "rag-ime.memory-book-lifecycle.v1",
+                        "ok": True,
+                        "bookId": book_id,
+                        "status": str(before["status"]),
+                        "retrievalDocs": retrieval,
+                    },
+                    audit_action="memory_book_archive_rollback",
+                    target_type="memory_book",
+                    target_id=book_id,
+                )
+
+            response = self.work_contract.execute_rollback(
+                path_id="memory.book.archive.rollback",
+                receipt_id=str(payload.get("receiptId") or ""),
+                rollback_token=str(payload.get("rollbackToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                expected_apply_path_id="memory.book.archive.apply",
+                executor=execute,
+            )
+            if self.cache_invalidator is not None:
+                self.cache_invalidator()
+            authority = response.get("rollbackAuthority")
+            self.events.publish(
+                "memory_changed",
+                {
+                    "kind": "book",
+                    "id": authority.get("bookId") if isinstance(authority, Mapping) else "",
+                    "action": "rollback",
+                },
+            )
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
 
     def memory_book_archive_maintenance(self, payload: Mapping[str, object]) -> dict[str, object]:
         apply_changes = bool(payload.get("apply", False))
@@ -1210,6 +1855,19 @@ class ManagementService:
         )
         foreground = _foreground_context_component(sidecar_ok=sidecar_ok, last_prediction=last_prediction)
         compiler = self._compiler_component()
+        voice = read_voice_control_status(self.voice_support_directory)
+        voice_agent = _mapping(voice.get("agent"))
+        recognition = _mapping(voice.get("recognition"))
+        deployed_recognition = _mapping(recognition.get("deployed"))
+        last_voice_session = _mapping(recognition.get("lastSession"))
+        voice_running = voice_agent.get("running") is True
+        microphone_allowed = voice_agent.get("microphoneAuthorization") == "authorized"
+        accessibility_allowed = voice_agent.get("accessibilityTrusted") is True
+        recognition_ready = bool(
+            deployed_recognition.get("secondPass") is True
+            and deployed_recognition.get("semanticSmoothing") is True
+            and deployed_recognition.get("fullResultReplacement") is True
+        )
         return {
             "inputMethod": _component(
                 "inputMethod",
@@ -1228,6 +1886,33 @@ class ManagementService:
             ),
             "memoryCompiler": compiler,
             "sqlite": _component("sqlite", self.db_path.exists(), "正常" if self.db_path.exists() else "缺失", {"path": str(self.db_path)}),
+            "voiceAgent": _component(
+                "voiceAgent",
+                voice_running,
+                "运行中" if voice_running else "未运行或状态已失效",
+                voice_agent,
+            ),
+            "voiceMicrophone": _component(
+                "voiceMicrophone",
+                microphone_allowed,
+                "已授权" if microphone_allowed else "未授权",
+                {"authorization": voice_agent.get("microphoneAuthorization", "unknown")},
+            ),
+            "voiceAccessibility": _component(
+                "voiceAccessibility",
+                accessibility_allowed,
+                "已授权" if accessibility_allowed else "未授权",
+                {},
+            ),
+            "voiceRecognition": _component(
+                "voiceRecognition",
+                recognition_ready,
+                "二次识别与语义顺滑已部署" if recognition_ready else "已安装语音代理尚未包含完整定稿能力",
+                {
+                    "deployed": deployed_recognition,
+                    "lastSession": last_voice_session,
+                },
+            ),
         }
 
     def _compiler_component(self) -> dict[str, object]:
@@ -1848,6 +2533,16 @@ _PLANNING_TASK_SAVE_FIELDS = {
     "project",
 }
 _PLANNING_TASK_ACTION_FIELDS = {"taskId", "action"}
+_PLANNING_GOAL_SAVE_FIELDS = {
+    "goalId",
+    "title",
+    "detail",
+    "horizon",
+    "status",
+    "priority",
+    "targetDate",
+    "project",
+}
 _WORK_APPLY_FIELDS = {
     "expectedRuntimeRevision",
     "previewToken",
@@ -1871,6 +2566,20 @@ _PLANNING_TASK_COLUMNS = (
     "completed_at_ms",
     "metadata_json",
 )
+_PLANNING_GOAL_COLUMNS = (
+    "goal_id",
+    "title",
+    "detail",
+    "horizon",
+    "status",
+    "priority",
+    "target_date",
+    "project",
+    "created_at_ms",
+    "updated_at_ms",
+    "completed_at_ms",
+    "metadata_json",
+)
 
 
 def _normalize_planning_work_payload(
@@ -1887,6 +2596,35 @@ def _normalize_planning_work_payload(
         if action not in {"start", "complete", "reopen", "cancel"}:
             raise ManagementWorkError("invalid_request", "Unsupported planning task action.")
         return {"taskId": task_id, "action": action}
+    if kind == "goal.save":
+        title = compact_whitespace(str(payload.get("title") or ""))
+        if not title:
+            raise ManagementWorkError("invalid_request", "Goal title is required.")
+        status = compact_whitespace(str(payload.get("status") or "active")).lower()
+        if status not in {"active", "completed", "archived"}:
+            raise ManagementWorkError("invalid_request", "Unsupported planning goal status.")
+        target_date = compact_whitespace(str(payload.get("targetDate") or ""))
+        if target_date:
+            try:
+                target_date = date.fromisoformat(target_date).isoformat()
+            except ValueError as exc:
+                raise ManagementWorkError(
+                    "invalid_request",
+                    "Goal target date must use YYYY-MM-DD.",
+                ) from exc
+        normalized_goal: dict[str, object] = {
+            "title": title,
+            "detail": compact_whitespace(str(payload.get("detail") or "")),
+            "horizon": compact_whitespace(str(payload.get("horizon") or "long_term")) or "long_term",
+            "status": status,
+            "priority": _strict_bounded_int(payload.get("priority", 1), field="priority", minimum=0, maximum=3),
+            "targetDate": target_date,
+            "project": compact_whitespace(str(payload.get("project") or project)),
+        }
+        goal_id = compact_whitespace(str(payload.get("goalId") or ""))
+        if goal_id:
+            normalized_goal["goalId"] = goal_id
+        return normalized_goal
     if kind != "task.save":
         raise ManagementWorkError("unsupported_mutation", "Unsupported planning mutation.")
     title = compact_whitespace(str(payload.get("title") or ""))
@@ -1921,7 +2659,13 @@ def _normalize_planning_work_payload(
 
 
 def _reject_unknown_work_fields(payload: Mapping[str, object], *, kind: str) -> None:
-    allowed_domain = _PLANNING_TASK_SAVE_FIELDS if kind == "task.save" else _PLANNING_TASK_ACTION_FIELDS
+    allowed_domain = {
+        "task.save": _PLANNING_TASK_SAVE_FIELDS,
+        "task.action": _PLANNING_TASK_ACTION_FIELDS,
+        "goal.save": _PLANNING_GOAL_SAVE_FIELDS,
+    }.get(kind)
+    if allowed_domain is None:
+        raise ManagementWorkError("unsupported_mutation", "Unsupported planning mutation.")
     _require_exact_keys(payload, required=_WORK_APPLY_FIELDS, optional=allowed_domain)
 
 
@@ -1946,6 +2690,11 @@ def _planning_subject_revision(
     kind: str,
     payload: Mapping[str, object],
 ) -> str:
+    if kind == "goal.save":
+        goal_id = compact_whitespace(str(payload.get("goalId") or ""))
+        if not goal_id:
+            return "new"
+        return _snapshot_revision(_planning_goal_snapshot(conn, goal_id))
     task_id = compact_whitespace(str(payload.get("taskId") or ""))
     if not task_id:
         return "new"
@@ -1967,10 +2716,120 @@ def _planning_task_snapshot(conn: sqlite3.Connection, task_id: str) -> dict[str,
     return {column: row[column] for column in _PLANNING_TASK_COLUMNS}
 
 
+def _planning_goal_snapshot(conn: sqlite3.Connection, goal_id: str) -> dict[str, object] | None:
+    if not goal_id:
+        return None
+    row = conn.execute(
+        "SELECT * FROM planning_goals WHERE goal_id = ?",
+        (goal_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {column: row[column] for column in _PLANNING_GOAL_COLUMNS}
+
+
 def _snapshot_revision(snapshot: Mapping[str, object] | None) -> str:
     if snapshot is None:
         return "missing"
     return canonical_payload_sha256(snapshot)
+
+
+def _history_subject_snapshot(conn: sqlite3.Connection, event_id: int) -> dict[str, object]:
+    row = conn.execute(
+        """
+        SELECT id, created_at_ms, source, app, project
+        FROM input_events
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (event_id,),
+    ).fetchone()
+    if row is None:
+        raise ManagementWorkError("domain_not_found", "The history record was not found.")
+    tombstones = conn.execute(
+        """
+        SELECT id
+        FROM memory_tombstones
+        WHERE target_type = 'memory_id' AND target_value = ? AND active = 1
+        ORDER BY id
+        """,
+        (f"event:{event_id}",),
+    ).fetchall()
+    return {
+        "event": {
+            "id": int(row["id"]),
+            "createdAtMs": int(row["created_at_ms"]),
+            "source": str(row["source"]),
+            "app": str(row["app"]),
+            "project": str(row["project"]),
+        },
+        "activeTombstoneIds": [int(item["id"]) for item in tombstones],
+    }
+
+
+_MEMORY_BOOK_ARCHIVE_COLUMNS = (
+    "book_id",
+    "book_type",
+    "book_key",
+    "title",
+    "status",
+    "archived_at_ms",
+    "last_active_at_ms",
+    "archive_reason",
+    "updated_at_ms",
+    "metadata_json",
+)
+
+
+def _memory_book_subject_snapshot(conn: sqlite3.Connection, book_id: str) -> dict[str, object]:
+    row = conn.execute(
+        f"SELECT {', '.join(_MEMORY_BOOK_ARCHIVE_COLUMNS)} FROM memory_books WHERE book_id = ? LIMIT 1",
+        (book_id,),
+    ).fetchone()
+    if row is None:
+        raise ManagementWorkError("domain_not_found", "The memory book was not found.")
+    return {column: row[column] for column in _MEMORY_BOOK_ARCHIVE_COLUMNS}
+
+
+def _restore_memory_book_snapshot(conn: sqlite3.Connection, snapshot: Mapping[str, object]) -> None:
+    missing = [column for column in _MEMORY_BOOK_ARCHIVE_COLUMNS if column not in snapshot]
+    if missing:
+        raise ManagementWorkError(
+            "stored_contract_invalid",
+            "The stored memory book snapshot is incomplete.",
+        )
+    book_id = compact_whitespace(str(snapshot["book_id"] or ""))
+    if not book_id:
+        raise ManagementWorkError(
+            "stored_contract_invalid",
+            "The stored memory book snapshot has no book id.",
+        )
+    updated = conn.execute(
+        """
+        UPDATE memory_books
+        SET book_type = ?, book_key = ?, title = ?, status = ?,
+            archived_at_ms = ?, last_active_at_ms = ?, archive_reason = ?,
+            updated_at_ms = ?, metadata_json = ?
+        WHERE book_id = ?
+        """,
+        (
+            snapshot["book_type"],
+            snapshot["book_key"],
+            snapshot["title"],
+            snapshot["status"],
+            snapshot["archived_at_ms"],
+            snapshot["last_active_at_ms"],
+            snapshot["archive_reason"],
+            snapshot["updated_at_ms"],
+            snapshot["metadata_json"],
+            book_id,
+        ),
+    )
+    if updated.rowcount != 1:
+        raise ManagementWorkError(
+            "rollback_state_changed",
+            "The memory book no longer exists.",
+        )
 
 
 def _planning_preview_items(kind: str, payload: Mapping[str, object]) -> list[str]:
@@ -1978,6 +2837,23 @@ def _planning_preview_items(kind: str, payload: Mapping[str, object]) -> list[st
         return [
             f"任务: {payload.get('taskId', '')}",
             f"动作: {payload.get('action', '')}",
+        ]
+    if kind == "goal.save":
+        horizon_label = {
+            "today": "今天",
+            "short_term": "近期",
+            "medium_term": "阶段目标",
+            "long_term": "长期目标",
+        }.get(str(payload.get("horizon") or ""), "自定义周期")
+        status_label = {
+            "active": "进行中",
+            "completed": "已完成",
+            "archived": "已归档",
+        }.get(str(payload.get("status") or ""), "待处理")
+        return [
+            f"目标: {payload.get('title', '')}",
+            f"时间范围: {horizon_label}",
+            f"状态: {status_label}",
         ]
     return [
         f"日期: {payload.get('date', '')}",
@@ -1995,6 +2871,18 @@ def _restore_planning_task(conn: sqlite3.Connection, snapshot: Mapping[str, obje
     conn.execute(
         f"INSERT OR REPLACE INTO planning_tasks({columns}) VALUES ({placeholders})",
         tuple(snapshot[column] for column in _PLANNING_TASK_COLUMNS),
+    )
+
+
+def _restore_planning_goal(conn: sqlite3.Connection, snapshot: Mapping[str, object]) -> None:
+    missing = [column for column in _PLANNING_GOAL_COLUMNS if column not in snapshot]
+    if missing:
+        raise ManagementWorkError("stored_contract_invalid", "The stored goal snapshot is incomplete.")
+    placeholders = ", ".join("?" for _ in _PLANNING_GOAL_COLUMNS)
+    columns = ", ".join(_PLANNING_GOAL_COLUMNS)
+    conn.execute(
+        f"INSERT OR REPLACE INTO planning_goals({columns}) VALUES ({placeholders})",
+        tuple(snapshot[column] for column in _PLANNING_GOAL_COLUMNS),
     )
 
 

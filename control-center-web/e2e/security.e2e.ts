@@ -12,6 +12,8 @@ test('strict CSP stays eval-free and still permits the React app to boot', async
     .locator('meta[http-equiv="Content-Security-Policy"]')
     .getAttribute('content');
   expect(contentSecurityPolicy).toContain("script-src 'self'");
+  expect(contentSecurityPolicy).toContain('frame-src blob:');
+  expect(contentSecurityPolicy).not.toMatch(/frame-src[^;]*(?:https?:|\*|'self')/);
   expect(contentSecurityPolicy).not.toContain("'unsafe-eval'");
   expect(pageErrors).toEqual([]);
 });

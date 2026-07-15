@@ -30,6 +30,10 @@ class AgentRouteTests(unittest.TestCase):
             ("agent:123", "models"),
         )
         self.assertEqual(
+            agent_session_route("/api/agent/sessions/agent:123/commands"),
+            ("agent:123", "commands"),
+        )
+        self.assertEqual(
             agent_session_route("/api/agent/sessions/agent:123/model"),
             ("agent:123", "model"),
         )

@@ -205,8 +205,8 @@ def read_memory_entity(
 ) -> dict[str, object]:
     normalized_kind = compact_whitespace(kind).lower()
     normalized_id = compact_whitespace(entity_id)
-    if normalized_kind not in {"tag", "group"}:
-        raise ValueError("memory entity kind must be tag or group")
+    if normalized_kind not in {"tag", "group", "book"}:
+        raise ValueError("memory entity kind must be tag, group, or book")
     _validate_entity_id(normalized_kind, normalized_id)
     query = MemoryEntityQuery.parse(payload, default_project=default_project)
 
@@ -217,13 +217,23 @@ def read_memory_entity(
         attributes = _tag_attributes(conn, normalized_id)
         connections = _tag_connection_page(conn, normalized_id, query)
         members = _tag_member_page(conn, normalized_id, query)
-    else:
+    elif normalized_kind == "group":
         entity = _load_group_nodes(conn, [normalized_id], project=query.project).get(normalized_id)
         if entity is None:
             raise ValueError("memory group was not found in the requested project")
         attributes = _group_attributes(conn, normalized_id)
         connections = _empty_page(query.connections_limit)
         members = _group_member_page(conn, normalized_id, query)
+    else:
+        entity = _load_book_nodes(conn, [normalized_id], project=query.project).get(normalized_id)
+        if entity is None:
+            raise ValueError("memory book was not found in the requested project")
+        attributes = _book_attributes(conn, normalized_id)
+        connections = _book_group_page(conn, normalized_id, query)
+        # A topic book may reference raw atom identifiers. Keep the read model
+        # summary-only: expose the bounded count on the node, never the ids or
+        # atom text through this endpoint.
+        members = _empty_page(query.members_limit)
 
     return {
         "schemaVersion": ENTITY_SCHEMA_VERSION,
@@ -275,6 +285,24 @@ def _group_attributes(conn: sqlite3.Connection, group_id: str) -> dict[str, obje
     return {
         "type": "semantic",
         "aliases": _safe_string_list(row["aliases_json"]),
+        "tags": _safe_string_list(row["tags_json"]),
+    }
+
+
+def _book_attributes(conn: sqlite3.Connection, book_id: str) -> dict[str, object]:
+    row = conn.execute(
+        """
+        SELECT book_type, tags_json
+        FROM memory_books
+        WHERE book_id = ?
+        """,
+        (book_id,),
+    ).fetchone()
+    if row is None:
+        return {"type": "topic", "aliases": [], "tags": []}
+    return {
+        "type": truncate_text(str(row["book_type"] or "topic"), 64) or "topic",
+        "aliases": [],
         "tags": _safe_string_list(row["tags_json"]),
     }
 
@@ -920,6 +948,7 @@ def _load_book_nodes(
             GROUP BY member_id
         )
         SELECT mb.book_id AS entity_id, mb.title, mb.summary, mb.project,
+               mb.memory_atom_ids_json,
                mb.status, mb.quality_score, mb.updated_at_ms,
                COALESCE(gc.edge_count, 0) AS edge_count
         FROM memory_books mb
@@ -941,7 +970,7 @@ def _load_book_nodes(
             source="memory_book",
             project=str(row["project"] or ""),
             quality_score=float(row["quality_score"] or 0.0),
-            member_count=0,
+            member_count=_json_array_count(row["memory_atom_ids_json"]),
             edge_count=int(row["edge_count"] or 0),
             updated_at_ms=int(row["updated_at_ms"] or 0),
         )
@@ -1215,6 +1244,51 @@ def _group_member_page(
         items,
         limit=query.members_limit,
         offset=query.members_offset,
+        has_more=has_more,
+    )
+
+
+def _book_group_page(
+    conn: sqlite3.Connection,
+    book_id: str,
+    query: MemoryEntityQuery,
+) -> dict[str, object]:
+    rows = conn.execute(
+        """
+        SELECT member.group_id, member.member_type, member.member_id, member.weight,
+               member.source, member.updated_at_ms
+        FROM memory_semantic_group_members member
+        JOIN memory_semantic_groups group_record ON group_record.group_id = member.group_id
+        WHERE member.member_type = 'book' AND member.member_id = ?
+          AND group_record.status = 'active'
+          AND (? = '' OR group_record.project = '' OR group_record.project = ?)
+        ORDER BY member.weight DESC, member.updated_at_ms DESC, member.group_id ASC
+        LIMIT ? OFFSET ?
+        """,
+        (
+            book_id,
+            query.project,
+            query.project,
+            query.connections_limit + 1,
+            query.connections_offset,
+        ),
+    ).fetchall()
+    has_more = len(rows) > query.connections_limit
+    rows = rows[: query.connections_limit]
+    node_map = _load_group_nodes(
+        conn,
+        [str(row["group_id"]) for row in rows],
+        project=query.project,
+    )
+    items = [
+        {"node": node_map[str(row["group_id"])], "edge": _group_member_edge(row)}
+        for row in rows
+        if str(row["group_id"]) in node_map
+    ]
+    return _page(
+        items,
+        limit=query.connections_limit,
+        offset=query.connections_offset,
         has_more=has_more,
     )
 
@@ -1512,3 +1586,13 @@ def _safe_string_list(value: object) -> list[str]:
         if len(result) >= 64:
             break
     return result
+
+
+def _json_array_count(value: object) -> int:
+    if isinstance(value, list):
+        return min(len(value), 1_000_000)
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return 0
+    return min(len(parsed), 1_000_000) if isinstance(parsed, list) else 0

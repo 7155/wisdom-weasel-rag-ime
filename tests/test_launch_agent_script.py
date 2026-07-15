@@ -345,6 +345,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-preserve-test-") as tmp:
             home = Path(tmp)
+            legacy_extension = home / "legacy-rag-ime-control.ts"
+            legacy_extension.write_text("export const staleSecret = 'must-not-be-installed';\n", encoding="utf-8")
             legacy_model_env = home / "legacy-deepseek.env"
             legacy_model_env.write_text(
                 "DEEPSEEK_API_KEY=test-only-preserved\n",
@@ -389,6 +391,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
                     "HOME": str(home),
                     "RAG_IME_PYTHON": sys.executable,
                     "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                    "RAG_IME_DEEPSEEK_ENV": str(legacy_model_env),
+                    "RAG_IME_PI_EXTENSION": str(legacy_extension),
                 }
             )
             result = subprocess.run(
@@ -401,6 +405,19 @@ class LaunchAgentScriptTests(unittest.TestCase):
             )
             with plist_path.open("rb") as fh:
                 payload = plistlib.load(fh)
+            managed_extension = (
+                home
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "app"
+                / "integrations"
+                / "pi"
+                / "rag-ime-control.ts"
+            )
+            managed_native_session = managed_extension.with_name("pi-native-session.ts")
+            managed_extension_text = managed_extension.read_text(encoding="utf-8")
+            managed_native_session_text = managed_native_session.read_text(encoding="utf-8")
 
         env_vars = payload["EnvironmentVariables"]
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_PROVIDER"], "mlx")
@@ -422,12 +439,66 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS"], "1536")
         self.assertEqual(env_vars["RAG_IME_PI_EXECUTABLE"], "/tmp/pi/dist/cli.js")
         self.assertEqual(env_vars["RAG_IME_PI_NODE"], "/tmp/node")
-        self.assertEqual(env_vars["RAG_IME_PI_EXTENSION"], "/tmp/rag-ime-control.ts")
+        self.assertEqual(env_vars["RAG_IME_PI_EXTENSION"], str(managed_extension))
+        self.assertEqual(
+            managed_extension_text,
+            (root / "integrations" / "pi" / "rag-ime-control.ts").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(
+            managed_native_session_text,
+            (root / "integrations" / "pi" / "pi-native-session.ts").read_text(encoding="utf-8"),
+        )
+        self.assertNotIn("must-not-be-installed", managed_extension_text)
         self.assertEqual(env_vars["RAG_IME_PI_VERSION"], "0.80.2")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_THINKING"], "disabled")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
         self.assertEqual(env_vars["RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL"], "1")
         self.assertEqual(env_vars["RAG_IME_RAG_DIRECT_DISPLAY"], "1")
+
+    def test_install_sidecar_launch_agent_does_not_shadow_managed_pi_without_executable(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-managed-pi-test-") as tmp:
+            home = Path(tmp)
+            stale_extension = home / "stale-rag-ime-control.ts"
+            stale_extension.write_text("export const stale = true;\n", encoding="utf-8")
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("RAG_IME_") and not key.startswith("DEEPSEEK_")
+            }
+            env.update(
+                {
+                    "HOME": str(home),
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                    "RAG_IME_PI_EXTENSION": str(stale_extension),
+                }
+            )
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+            with plist_path.open("rb") as fh:
+                payload = plistlib.load(fh)
+
+            managed_extension = (
+                home
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "app"
+                / "integrations"
+                / "pi"
+                / "rag-ime-control.ts"
+            )
+            self.assertTrue(managed_extension.is_file())
+            self.assertNotIn("RAG_IME_PI_EXTENSION", payload["EnvironmentVariables"])
+            self.assertNotIn(str(stale_extension), plistlib.dumps(payload).decode("utf-8"))
 
     def test_install_sidecar_launch_agent_can_enable_local_vector_baseline(self) -> None:
         root = Path(__file__).resolve().parents[1]

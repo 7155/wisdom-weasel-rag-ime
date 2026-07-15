@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rag-ime.local/contracts/knowledge-document-import.v1.json",
+  "title": "RAG-IME Knowledge Document Import Receipt",
+  "type": "object",
+  "required": ["schemaVersion", "ok", "receipt"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.knowledge-document-import.v1"},
+    "ok": {"const": true},
+    "receipt": {
+      "type": "object",
+      "required": ["kbId", "documentId", "fileName", "mimeType", "byteSize", "sha256", "status"],
+      "properties": {
+        "kbId": {"type": "string", "minLength": 1},
+        "documentId": {"type": "string", "minLength": 1},
+        "fileName": {"type": "string", "minLength": 1},
+        "mimeType": {"type": "string", "minLength": 1},
+        "byteSize": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "status": {"enum": ["queued", "parsing", "indexing", "ready", "stale", "failed", "deleting"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

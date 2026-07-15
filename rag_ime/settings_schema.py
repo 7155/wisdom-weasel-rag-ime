@@ -16,7 +16,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "enabled": True,
             "idleTriggerMs": 420,
             "minDeltaChars": 2,
-            "maxCallsPer10s": 2,
+            "maxCallsPer10s": 6,
             "cooldownMs": 1500,
             "showPendingStatus": False,
             "pendingStatusDelayMs": 600,
@@ -24,7 +24,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "tabAction": "accept_top_prediction",
             "optionNumber": "select_prediction_by_ordinal",
             "escape": "dismiss_prediction",
-            "panelTtlMs": 8500,
+            "panelTtlMs": 5000,
         },
     },
     "display": {
@@ -127,6 +127,10 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "showReasoningSummary": False,
         },
     },
+    "voice": {
+        "hotwordsEnabled": False,
+        "hotwords": [],
+    },
     "models": {
         "hot": "minimind_ime_v2",
         "main": "",
@@ -150,6 +154,14 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "localOnlyDefault": True,
         "allowRemoteModel": True,
         "sensitiveTextGuard": True,
+    },
+    "knowledgeLibrary": {
+        "parser": {
+            "mineru": {
+                "enabled": False,
+                "port": 30001,
+            },
+        },
     },
     "pinyin": {
         "fuzzyProfile": "sichuan-mild",
@@ -204,10 +216,10 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "interaction.postCommit.enabled", "type": "boolean", "label": "启用提交后预测", "default": True},
                 {"key": "interaction.postCommit.idleTriggerMs", "type": "integer", "label": "停顿触发时间", "default": 420},
                 {"key": "interaction.postCommit.minDeltaChars", "type": "integer", "label": "最少新增字符数", "default": 2},
-                {"key": "interaction.postCommit.maxCallsPer10s", "type": "integer", "label": "10 秒最大模型调用", "default": 2},
+                {"key": "interaction.postCommit.maxCallsPer10s", "type": "integer", "label": "10 秒最大模型调用", "default": 6},
                 {"key": "interaction.postCommit.cooldownMs", "type": "integer", "label": "空结果冷却", "default": 1500},
                 {"key": "interaction.postCommit.pendingStatusDelayMs", "type": "integer", "label": "状态行延迟", "default": 600},
-                {"key": "interaction.postCommit.panelTtlMs", "type": "integer", "label": "预测面板 TTL", "default": 8500},
+                {"key": "interaction.postCommit.panelTtlMs", "type": "integer", "label": "预测面板 TTL", "default": 5000},
                 {"key": "interaction.postCommit.numberKeys", "type": "enum", "label": "Post-commit 数字键", "options": ["pass_through", "select_prediction"], "default": "pass_through"},
                 {"key": "interaction.postCommit.tabAction", "type": "enum", "label": "Tab 行为", "options": ["accept_top_prediction", "rime_default", "disabled"], "default": "accept_top_prediction"},
             ],
@@ -286,6 +298,24 @@ SETTINGS_SCHEMA: dict[str, object] = {
             ],
         },
         {
+            "id": "knowledgeLibrary",
+            "label": "文档知识库",
+            "fields": [
+                {
+                    "key": "knowledgeLibrary.parser.mineru.enabled",
+                    "type": "boolean",
+                    "label": "启用本机 MinerU",
+                    "default": False,
+                },
+                {
+                    "key": "knowledgeLibrary.parser.mineru.port",
+                    "type": "integer",
+                    "label": "MinerU 本机端口",
+                    "default": 30001,
+                },
+            ],
+        },
+        {
             "id": "context",
             "label": "Context",
             "fields": [
@@ -318,6 +348,14 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "agent.pi.coordinatorEnabled", "type": "boolean", "label": "允许运行协调模式", "default": False},
                 {"key": "agent.ui.deltaFlushMilliseconds", "type": "integer", "label": "流式刷新间隔", "default": 40},
                 {"key": "agent.ui.showReasoningSummary", "type": "boolean", "label": "显示可公开的分析摘要", "default": False},
+            ],
+        },
+        {
+            "id": "voice",
+            "label": "Voice",
+            "fields": [
+                {"key": "voice.hotwordsEnabled", "type": "boolean", "label": "启用语音热词", "default": False},
+                {"key": "voice.hotwords", "type": "string-list", "label": "语音热词", "default": []},
             ],
         },
         {
@@ -395,11 +433,26 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "activeRag.shortcut": {"description": "显式生成快捷键", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
     "activeRag.latencyBudgetMs": {"description": "显式多段生成的最长等待时间", "min": 1000, "max": 300000, "step": 1000, "unit": "ms"},
     "activeRag.allowRemoteModel": {"description": "只允许显式 Active RAG 使用远程模型", "risk": "sensitive", "validation": {"confirmText": "ALLOW REMOTE MODEL"}},
+    "knowledgeLibrary.parser.mineru.enabled": {
+        "description": "只连接本机 loopback MinerU 解析服务；不会启动命令或使用云端 API",
+        "applyMode": "restart_knowledge_worker",
+        "restartComponent": "knowledge-worker",
+    },
+    "knowledgeLibrary.parser.mineru.port": {
+        "description": "MinerU loopback HTTP 端口，主机和路径由服务端固定",
+        "min": 1024,
+        "max": 65535,
+        "unit": "端口",
+        "applyMode": "restart_knowledge_worker",
+        "restartComponent": "knowledge-worker",
+    },
     "agent.pi.enabled": {"description": "按需启动受管理的 Pi RPC，不影响普通输入路径"},
     "agent.pi.idleTimeoutSeconds": {"description": "Pi 无活动后自动退出的等待时间", "min": 0, "max": 86400, "step": 60, "unit": "秒"},
     "agent.pi.coordinatorEnabled": {"description": "允许显式创建受审批约束的运行协调会话", "risk": "sensitive", "expert": True},
     "agent.ui.deltaFlushMilliseconds": {"description": "原生对话页合并流式文本更新的时间窗口", "min": 16, "max": 250, "step": 8, "unit": "ms"},
     "agent.ui.showReasoningSummary": {"description": "只显示服务端明确标记可公开的分析摘要，不显示原始 thinking"},
+    "voice.hotwordsEnabled": {"description": "仅在豆包/火山原生流式识别请求中发送已确认的热词", "applyMode": "next_voice_session"},
+    "voice.hotwords": {"description": "每行一个中英文或技术词，最多 32 个，每个 2 至 9 个字符", "applyMode": "next_voice_session"},
     "pinyin.rimeManagedPatch": {"description": "写入受管理的 Rime 模糊音 patch", "applyMode": "redeploy_rime", "restartComponent": "rime"},
     "pinyin.fuzzyProfile": {"applyMode": "redeploy_rime", "restartComponent": "rime"},
     "models.hot": {"applyMode": "restart_predictor", "restartComponent": "predictor"},

@@ -254,6 +254,11 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
             "model_name": "bigmodel",
             "enable_itn": true,
             "enable_punc": true,
+            // DDC removes filler words, stutters and semantic repetition from
+            // the provider's revised transcript. It complements the final
+            // non-streaming pass below; enable_nonstream alone only asks for
+            // the more accurate second recognition pass.
+            "enable_ddc": true,
             // Full snapshots let the final second-pass result replace earlier
             // text instead of being appended to it.
             "enable_nonstream": true,

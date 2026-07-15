@@ -23,7 +23,7 @@
     "ok": {"type": "boolean", "const": true},
     "settingsRevision": {"type": "string", "minLength": 1},
     "runtimeRevision": {"type": "integer", "minimum": 0},
-    "kind": {"type": "string", "enum": ["tag", "group"]},
+    "kind": {"type": "string", "enum": ["tag", "group", "book"]},
     "entityId": {"type": "string", "minLength": 1, "maxLength": 128},
     "entityRevision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "project": {"type": "string", "maxLength": 128},

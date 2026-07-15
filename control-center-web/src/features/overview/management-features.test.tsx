@@ -17,7 +17,8 @@ import { VoiceFeature } from '@/features/voice';
 import type { ControlPathId } from '@/platform/routes';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { StubControlTransport } from '@/test/stub-control-transport';
-import { WorkflowAction } from './management-ui';
+import { WorkflowAction, publicErrorText } from './management-ui';
+import { parseManagementWorkPreview } from './management-mutation';
 import { OverviewFeature } from './index';
 
 const now = 1_752_499_200_000;
@@ -93,6 +94,16 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
     notion: { submitConfigured: true, pollConfigured: false, ready: false, pollMode: 'worker' },
   },
   'knowledge.status': { ok: false, status: 'missing', error: 'sessionId is required', evidence: [], sources: [] },
+  'knowledgeBases.list': { ok: true, items: [], total: 0 },
+  'knowledgeWorker.health': { ok: true, available: true, status: 'ready' },
+  'knowledgeParsers.list': {
+    ok: true,
+    items: [
+      { id: 'auto', name: '自动', available: true },
+      { id: 'builtin', name: '内置解析', available: true },
+      { id: 'mineru_local_http', name: 'MinerU', available: false },
+    ],
+  },
   'diagnostics.runtime': {
     ok: true,
     components: {
@@ -139,7 +150,7 @@ const pages: readonly [string, ComponentType, string, ControlPathId][] = [
   ['voice', VoiceFeature, '语音输入', 'configuration.settings'],
   ['planning', PlanningFeature, '规划', 'planning.dashboard'],
   ['memory', MemoryFeature, '记忆', 'memory.pages'],
-  ['knowledge', KnowledgeFeature, '知识库', 'knowledge.routeStatus'],
+  ['knowledge', KnowledgeFeature, '知识库', 'knowledgeBases.list'],
   ['history', HistoryFeature, '输入历史', 'history.page'],
   ['diagnostics', DiagnosticsFeature, '诊断与修复', 'diagnostics.runtime'],
   ['configuration', ConfigurationFeature, '配置与迁移', 'configuration.schema'],
@@ -148,6 +159,38 @@ const pages: readonly [string, ComponentType, string, ControlPathId][] = [
 afterEach(cleanup);
 
 describe('management features', () => {
+  it('keeps implementation details out of user-facing errors', () => {
+    expect(publicErrorText(new Error('角色名称已存在'))).toBe('角色名称已存在');
+    expect(publicErrorText(new Error('POST /api/memory/action failed: payloadSha256 mismatch')))
+      .toBe('操作未完成，请刷新状态后重试。');
+    expect(publicErrorText(new Error('sqlite3.OperationalError at /tmp/service.py:41')))
+      .toBe('操作未完成，请刷新状态后重试。');
+    expect(publicErrorText(new Error('template service unavailable'), '暂时无法读取。'))
+      .toBe('暂时无法读取。');
+    expect(publicErrorText(new Error('profileVersion 不匹配，请重试')))
+      .toBe('操作未完成，请刷新状态后重试。');
+  });
+
+  it('keeps WorkContract identifiers out of confirmation summaries', () => {
+    const preview = parseManagementWorkPreview({
+      ok: true,
+      previewToken: 'preview-test',
+      pathId: 'planning.task.save',
+      payloadSha256: 'sha256:test',
+      expectedRevision: { runtimeRevision: 4 },
+      expiresAtMs: Date.now() + 60_000,
+      requiredConfirm: 'apply',
+      summary: {
+        title: 'pathId operationId 绑定结果',
+        items: ['记录 ID: 81', '只更新你选择的任务。'],
+        risk: 'R1',
+      },
+    }, 'planning.task.save', {});
+
+    expect(preview.summary.title).toBe('确认本次变更');
+    expect(preview.summary.items).toEqual(['只更新你选择的任务。']);
+  });
+
   it.each(pages)('%s renders from its allowlisted read boundary', async (_id, Feature, heading, expectedPathId) => {
     const transport = renderFeature(Feature);
     expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
@@ -155,7 +198,7 @@ describe('management features', () => {
     expect(screen.queryByText('top-secret-must-not-render')).not.toBeInTheDocument();
   });
 
-  it('renders the live v3 settings hash and nested runtime revision', async () => {
+  it('uses the live runtime revision without exposing internal hashes', async () => {
     renderFeature(ConfigurationFeature, {
       ...routeFixtures,
       'configuration.settings': {
@@ -170,11 +213,13 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('sha256:live-settings-hash')).toBeInTheDocument();
-    expect(screen.getByText('554')).toBeInTheDocument();
+    expect(await screen.findByText('已同步')).toBeInTheDocument();
+    expect(screen.queryByText('sha256:live-settings-hash')).not.toBeInTheDocument();
+    expect(screen.queryByText('sha256:effective-settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('554')).not.toBeInTheDocument();
   });
 
-  it('renders live predictor providerName and modelInfo.hiddenSize in diagnostics', async () => {
+  it('renders the live predictor capability without exposing provider implementation names', async () => {
     renderFeature(DiagnosticsFeature, {
       ...routeFixtures,
       'diagnostics.predictor': {
@@ -189,11 +234,12 @@ describe('management features', () => {
       },
     });
 
-    expect((await screen.findAllByText('local-mlx')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('本机模型')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('local-mlx')).not.toBeInTheDocument();
     expect(screen.getByText('768')).toBeInTheDocument();
   });
 
-  it('renders live predictor providerName on the overview model route', async () => {
+  it('keeps provider implementation names out of the overview', async () => {
     renderFeature(OverviewFeature, {
       ...routeFixtures,
       'diagnostics.models': {
@@ -204,7 +250,8 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('local-mlx')).toBeInTheDocument();
+    expect(await screen.findByText('模型与知识路由')).toBeInTheDocument();
+    expect(screen.queryByText('local-mlx')).not.toBeInTheDocument();
   });
 
   it('keeps Voice explicitly unavailable when the backend exposes no voice state', async () => {
@@ -225,16 +272,17 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('后端未返回可用的语音 Provider 配置。')).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: '原生流式' })).not.toBeInTheDocument();
+    expect(await screen.findByText('当前没有可验证的语音管理能力。选择服务只会停留在本页，不会写入任何设置。')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '原生流式' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
-    expect(screen.getAllByText('unavailable').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByRole('button', { name: '当前不可切换' })).toBeDisabled();
+    expect(screen.queryByText('unavailable')).not.toBeInTheDocument();
   });
 
   it('fails closed when the management WorkContract capability is absent', async () => {
     renderFeature(PlanningFeature);
     await screen.findByRole('heading', { name: '规划', level: 1 });
-    const unsupported = await screen.findAllByRole('button', { name: '后端暂不支持' });
+    const unsupported = await screen.findAllByRole('button', { name: '当前不可用' });
     expect(unsupported.length).toBeGreaterThan(0);
     expect(unsupported.every((button) => button.hasAttribute('disabled'))).toBe(true);
     expect(screen.queryByText('演练 / 未执行')).not.toBeInTheDocument();
@@ -257,9 +305,9 @@ describe('management features', () => {
       </ControlTransportProvider>,
     );
 
-    const button = screen.getByRole('button', { name: '真实写入尚未接入' });
+    const button = screen.getByRole('button', { name: '当前不可用' });
     expect(button).toBeDisabled();
-    expect(screen.queryByRole('button', { name: '演练流程' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看示例' })).not.toBeInTheDocument();
   });
 });
 

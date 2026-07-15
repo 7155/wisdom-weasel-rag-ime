@@ -31,6 +31,38 @@ describe('RoomEventReducer', () => {
     expect(gap.state.needsSnapshot).toBe(true);
   });
 
+  it('keeps the user message and participant reply in one completed room turn', () => {
+    const user = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'user_message', {
+        messageId: 'room-user-1',
+        text: '@智鼬·未来 请整理下一步',
+      }),
+    ).state;
+    const reply = reduceRoomEvent(
+      user,
+      roomEvent(2, 'participant_delta', {
+        messageId: 'room-assistant-1',
+        delta: '已整理',
+      }),
+    ).state;
+    const completed = reduceRoomEvent(
+      reply,
+      roomEvent(3, 'turn_completed', { status: 'completed' }),
+    ).state;
+
+    expect(completed.turnOrder).toEqual(['room-turn-1']);
+    expect(completed.turnsById['room-turn-1']).toMatchObject({
+      status: 'completed',
+      messageIds: ['room-user-1', 'room-assistant-1'],
+    });
+    expect(completed.messagesById['room-assistant-1']).toMatchObject({
+      role: 'assistant',
+      status: 'completed',
+      text: '已整理',
+    });
+  });
+
   it('merges optimistic room input by clientMessageId and keeps unknown events', () => {
     const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
       clientMessageId: 'room-client-1',
@@ -52,6 +84,31 @@ describe('RoomEventReducer', () => {
 
     expect(merged.messageOrder).toEqual(['room-user-1']);
     expect(unknown.diagnostics[0]).toMatchObject({ eventType: 'future_room_vote' });
+  });
+
+  it('unwraps the public data envelope used by real participant runtime events', () => {
+    const delta = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_delta', {
+        sourceEventId: 'agent-session:1',
+        sourceEventType: 'text_delta',
+        data: { messageId: 'real-message', delta: '真实对话' },
+      }),
+    ).state;
+    const activity = reduceRoomEvent(
+      delta,
+      roomEvent(2, 'participant_activity', {
+        sourceEventId: 'agent-session:2',
+        sourceEventType: 'tool_finished',
+        data: { status: 'completed', summary: '已整理相关资料' },
+      }),
+    ).state;
+
+    expect(activity.messagesById['real-message'].text).toBe('真实对话');
+    expect(activity.activitiesById['room-1:2:activity']).toMatchObject({
+      summary: '已整理相关资料',
+      status: 'completed',
+    });
   });
 
   it('strictly validates and replays a retained event snapshot without looping on old gap markers', () => {

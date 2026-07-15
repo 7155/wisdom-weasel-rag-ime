@@ -37,5 +37,5 @@ export function useDiagnosticsQueries() {
     queryFn: () => transport.capabilities(),
     staleTime: Infinity,
   });
-  return { capabilities, models, predictor, runtime, source, transportKind: transport.kind };
+  return { capabilities, models, predictor, runtime, source, transport, transportKind: transport.kind };
 }

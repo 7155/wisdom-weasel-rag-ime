@@ -15,6 +15,7 @@ final class RagImeAssistantPanelController {
   private var renderedContentSignature = ""
   private var expandedSnapshotId = ""
   private var pendingUpdate: DispatchWorkItem?
+  private var pendingSnapshotId = ""
   private var ttlDismissWorkItem: DispatchWorkItem?
   private var lastReliableCaretAnchor: NSPoint?
   private var lastPositionedAnchor: NSPoint?
@@ -53,6 +54,17 @@ final class RagImeAssistantPanelController {
 
   var isVisible: Bool { panel.isVisible }
 
+  func dismissPendingPrediction(snapshotId: String, reason: String) {
+    if pendingSnapshotId == snapshotId {
+      pendingUpdate?.cancel()
+      pendingUpdate = nil
+      pendingSnapshotId = ""
+    }
+    guard currentState == .pendingPrediction,
+      currentPayload?.snapshotId == snapshotId else { return }
+    dismiss(reason: reason)
+  }
+
   deinit {
     pendingUpdate?.cancel()
     ttlDismissWorkItem?.cancel()
@@ -76,7 +88,9 @@ final class RagImeAssistantPanelController {
     self.onTrace = onTrace
     traceCreationIfNeeded()
     pendingUpdate?.cancel()
+    pendingSnapshotId = payload?.snapshotId ?? ""
     let work = DispatchWorkItem { [weak self] in
+      self?.pendingSnapshotId = ""
       self?.apply(payload, anchor: anchor, incomingRestore: onRestore)
     }
     pendingUpdate = work
@@ -130,6 +144,7 @@ final class RagImeAssistantPanelController {
     let fadeAnimation = currentPayload.map(fadeAnimationEnabled(for:)) ?? true
     pendingUpdate?.cancel()
     pendingUpdate = nil
+    pendingSnapshotId = ""
     ttlDismissWorkItem?.cancel()
     ttlDismissWorkItem = nil
     let duration = visibleSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0

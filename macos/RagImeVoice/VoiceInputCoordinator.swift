@@ -76,6 +76,7 @@ final class VoiceInputCoordinator {
             state: stateName,
             interactionSource: state == .idle ? "none" : interactionSource.rawValue,
             statusText: statusText,
+            recognition: .current,
             telemetry: telemetry,
             updatedAtMs: Int(Date().timeIntervalSince1970 * 1000)
         )
@@ -131,6 +132,10 @@ final class VoiceInputCoordinator {
 
     private func press(source: InteractionSource) {
         guard state == .idle else { return }
+        // The Web Control Center writes the same bounded JSON file consumed by
+        // the native agent. Reload at the session boundary so a saved list is
+        // effective even when a distributed notification was missed.
+        hotwordConfig = VoiceHotwordConfigStore.read()
         interactionSource = source
         hotkeyPressed = true
         guard let credentials, credentials.isComplete else {

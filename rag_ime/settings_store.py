@@ -22,6 +22,7 @@ from .settings_schema import (
     unflatten_settings,
 )
 from .text_utils import now_ms
+from .voice_control import normalize_voice_hotwords, voice_hotword_config_from_settings
 
 
 class ManagementSettingsStore:
@@ -44,9 +45,23 @@ class ManagementSettingsStore:
 
     def get_settings(self, *, include_sensitive: bool = False) -> dict[str, object]:
         self.initialize()
-        settings = default_settings()
         with self._connect() as conn:
-            rows = conn.execute("SELECT key, value_json FROM management_settings").fetchall()
+            return self.get_settings_from_connection(
+                conn,
+                include_sensitive=include_sensitive,
+            )
+
+    def get_settings_from_connection(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        include_sensitive: bool = False,
+    ) -> dict[str, object]:
+        """Read settings through an existing management transaction."""
+
+        ensure_management_tables(conn)
+        settings = default_settings()
+        rows = conn.execute("SELECT key, value_json FROM management_settings").fetchall()
         for row in rows:
             key = str(row["key"])
             try:
@@ -59,6 +74,24 @@ class ManagementSettingsStore:
                 settings = deep_merge_settings(settings, unflatten_settings(validated))
         return settings if include_sensitive else redact_settings(settings)
 
+    def normalize_updates(
+        self,
+        updates: Mapping[str, object],
+        *,
+        confirm_text: str = "",
+    ) -> dict[str, object]:
+        normalized = _normalize_updates(updates)
+        _validate_remote_opt_in(normalized, confirm_text=confirm_text)
+        return normalized
+
+    @contextmanager
+    def connection(self):
+        """Open a caller-managed settings transaction with the schema initialized."""
+
+        self.initialize()
+        with self._connect() as conn:
+            yield conn
+
     def update_settings(
         self,
         updates: Mapping[str, object],
@@ -67,40 +100,75 @@ class ManagementSettingsStore:
         confirm_text: str = "",
     ) -> SettingsUpdateResult:
         self.initialize()
-        normalized = _normalize_updates(updates)
-        _validate_remote_opt_in(normalized, confirm_text=confirm_text)
-        before = self.get_settings(include_sensitive=True)
-        after = deep_merge_settings(before, normalized)
-        changed = tuple(sorted(key for key, value in flatten_settings(after).items() if flatten_settings(before).get(key) != value))
         with self._connect() as conn:
-            ensure_management_tables(conn)
-            audit_id = record_management_audit(
+            return self.update_settings_in_connection(
                 conn,
-                action="settings_update",
-                target_type="settings",
-                target_id=",".join(changed) or "no-op",
-                payload={"updates": normalized, "updatedBy": updated_by},
-                result={"changedKeys": changed},
+                updates,
+                updated_by=updated_by,
+                confirm_text=confirm_text,
             )
-            timestamp = now_ms()
-            # Dotted-key updates normalize to a partial top-level section. Persist
-            # the fully merged section so changing one leaf never erases sibling
-            # overrides that were already stored.
-            for section in normalized:
-                value = after[section]
-                conn.execute(
-                    """
-                    INSERT INTO management_settings(key, value_json, updated_at_ms, updated_by, audit_id)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(key) DO UPDATE SET
-                      value_json = excluded.value_json,
-                      updated_at_ms = excluded.updated_at_ms,
-                      updated_by = excluded.updated_by,
-                      audit_id = excluded.audit_id
-                    """,
-                    (section, json.dumps(value, ensure_ascii=False, sort_keys=True), timestamp, updated_by, audit_id),
-                )
-        return SettingsUpdateResult(settings=redact_settings(after), audit_id=int(audit_id), changed_keys=changed)
+
+    def update_settings_in_connection(
+        self,
+        conn: sqlite3.Connection,
+        updates: Mapping[str, object],
+        *,
+        updated_by: str = "local",
+        confirm_text: str = "",
+        audit_action: str = "settings_update",
+    ) -> SettingsUpdateResult:
+        """Validate, audit, and persist settings in the caller's transaction."""
+
+        ensure_management_tables(conn)
+        normalized = self.normalize_updates(updates, confirm_text=confirm_text)
+        before = self.get_settings_from_connection(conn, include_sensitive=True)
+        before_flat = flatten_settings(before)
+        after = deep_merge_settings(before, normalized)
+        voice_hotword_config_from_settings(after)
+        changed = tuple(
+            sorted(
+                key
+                for key, value in flatten_settings(after).items()
+                if before_flat.get(key) != value
+            )
+        )
+        audit_id = record_management_audit(
+            conn,
+            action=audit_action,
+            target_type="settings",
+            target_id=",".join(changed) or "no-op",
+            payload={"updates": normalized, "updatedBy": updated_by},
+            result={"changedKeys": changed},
+        )
+        timestamp = now_ms()
+        # Dotted-key updates normalize to a partial top-level section. Persist
+        # the fully merged section so changing one leaf never erases sibling
+        # overrides that were already stored.
+        for section in normalized:
+            value = after[section]
+            conn.execute(
+                """
+                INSERT INTO management_settings(key, value_json, updated_at_ms, updated_by, audit_id)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value_json = excluded.value_json,
+                  updated_at_ms = excluded.updated_at_ms,
+                  updated_by = excluded.updated_by,
+                  audit_id = excluded.audit_id
+                """,
+                (
+                    section,
+                    json.dumps(value, ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                    updated_by,
+                    audit_id,
+                ),
+            )
+        return SettingsUpdateResult(
+            settings=redact_settings(after),
+            audit_id=int(audit_id),
+            changed_keys=changed,
+        )
 
     def reset_section(self, section: str, *, updated_by: str = "local") -> SettingsUpdateResult:
         self.initialize()
@@ -592,9 +660,12 @@ def _validated_setting_value(
             raise ValueError(f"setting {key} must be a string")
         normalized = value
     else:
-        if not isinstance(value, type(default)):
+        if key == "voice.hotwords":
+            normalized = list(normalize_voice_hotwords(value))
+        elif not isinstance(value, type(default)):
             raise ValueError(f"setting {key} has an invalid type")
-        normalized = value
+        else:
+            normalized = value
 
     options = field.get("options")
     if field_type == "enum" and isinstance(options, list) and normalized not in options:

@@ -5,9 +5,12 @@ import {
   Database,
   Gauge,
   Keyboard,
+  ListChecks,
+  MessageCircle,
   RefreshCw,
   Sparkles,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Button, EmptyState } from '@/components/primitives';
 import { useOverviewQueries } from './api';
 import {
@@ -17,15 +20,15 @@ import {
   OperationalList,
   QueryState,
   StatusBadge,
-  WorkflowAction,
-  arrayRecords,
   asRecord,
   booleanValue,
   numberValue,
+  publicErrorText,
   stringValue,
 } from './management-ui';
 
 export function OverviewFeature() {
+  const navigate = useNavigate();
   const queries = useOverviewQueries();
   const overview = asRecord(queries.snapshot.data);
   const memory = asRecord(overview.memory);
@@ -58,8 +61,8 @@ export function OverviewFeature() {
           刷新
         </Button>
       }
-      description="输入法、本地预测、个人记忆、知识路由与 Pi Runtime 的实时控制面。"
-      eyebrow="WORKSPACE"
+      description="输入法、陪伴对话、个人记忆与知识检索的实时状态。"
+      eyebrow="工作台"
       routeId="overview"
       title="今日概览"
     >
@@ -78,11 +81,11 @@ export function OverviewFeature() {
               items={componentEntries.map((item) => ({
                 id: stringValue(item.id),
                 title: componentLabel(stringValue(item.id)),
-                detail: stringValue(item.detail, stringValue(item.status, '等待状态')),
-                meta: stringValue(item.status, 'unknown'),
+                detail: componentDetail(item),
+                meta: statusLabel(stringValue(item.status)),
                 status: (
                   <StatusBadge
-                    label={booleanValue(item.ok) ? 'ready' : 'degraded'}
+                    label={booleanValue(item.ok) ? '正常' : '需检查'}
                     tone={booleanValue(item.ok) ? 'success' : 'warning'}
                   />
                 ),
@@ -97,63 +100,41 @@ export function OverviewFeature() {
           <MetricStrip
             items={[
               { label: '输入事件', value: numberValue(memory.eventCount), detail: '近期上下文', icon: Keyboard },
-              { label: '可召回文档', value: numberValue(memory.retrievalDocCount), detail: 'BGE / BM25', icon: Database, tone: 'info' },
-              { label: '主题记忆', value: numberValue(memory.memoryBookCount), detail: 'Memory Books', icon: BrainCircuit },
-              { label: '待整理', value: numberValue(memory.pendingCompileEvents), detail: 'compile queue', icon: Sparkles, tone: numberValue(memory.pendingCompileEvents) ? 'warning' : 'success' },
-              { label: 'Pi Runtime', value: stringValue(runtime.status, 'unknown'), detail: stringValue(runtime.driverId, 'driver unknown'), icon: Cpu, tone: booleanValue(runtime.ok, stringValue(runtime.status) === 'ready') ? 'success' : 'warning' },
-              { label: '知识路由', value: booleanValue(knowledgeRoute.deepseekReady) ? 'ready' : 'blocked', detail: '显式知识任务', icon: Gauge, tone: booleanValue(knowledgeRoute.deepseekReady) ? 'success' : 'warning' },
+              { label: '可召回文档', value: numberValue(memory.retrievalDocCount), detail: '本地检索', icon: Database, tone: 'info' },
+              { label: '主题记忆', value: numberValue(memory.memoryBookCount), detail: '长期整理', icon: BrainCircuit },
+              { label: '待整理', value: numberValue(memory.pendingCompileEvents), detail: '等待归档', icon: Sparkles, tone: numberValue(memory.pendingCompileEvents) ? 'warning' : 'success' },
+              { label: '陪伴对话', value: runtimeStatusLabel(stringValue(runtime.status)), detail: '本机 Agent', icon: Cpu, tone: booleanValue(runtime.ok, stringValue(runtime.status) === 'ready') ? 'success' : 'warning' },
+              { label: '知识检索', value: booleanValue(knowledgeRoute.deepseekReady) ? '可用' : '需配置', detail: '按需查询', icon: Gauge, tone: booleanValue(knowledgeRoute.deepseekReady) ? 'success' : 'warning' },
             ]}
           />
         </ManagementSection>
 
         <div className="mgmt-grid-2">
-          <ManagementSection title="最近一次前台建议" description="模型、RAG/Memory 和 Rime 来源保持可区分。">
+          <ManagementSection title="最近一次前台建议" description="本机模型、知识检索、个人记忆和输入法原生候选分别记录。">
             <dl className="mgmt-kv">
               <dt>可见候选</dt><dd>{stringValue(lastPrediction.visibleCandidate, '暂无候选')}</dd>
-              <dt>触发方式</dt><dd>{stringValue(lastPrediction.triggerReason, '等待前台输入')}</dd>
-              <dt>上下文来源</dt><dd>{stringValue(lastPrediction.contextSource, 'unknown')}</dd>
+              <dt>触发方式</dt><dd>{triggerReasonLabel(stringValue(lastPrediction.triggerReason))}</dd>
+              <dt>上下文来源</dt><dd>{contextSourceLabel(stringValue(lastPrediction.contextSource))}</dd>
               <dt>延迟</dt><dd>{numberValue(lastPrediction.totalLatencyMs) ? `${Math.round(numberValue(lastPrediction.totalLatencyMs))} ms` : '暂无'}</dd>
-              <dt>来源 lanes</dt><dd>{arrayRecords(lastPrediction.sourceTypes).length ? '结构化来源' : (Array.isArray(lastPrediction.sourceTypes) ? lastPrediction.sourceTypes.map(String).join(' · ') : '暂无')}</dd>
+              <dt>信息来源</dt><dd>{Array.isArray(lastPrediction.sourceTypes) && lastPrediction.sourceTypes.length ? `${lastPrediction.sourceTypes.length} 类` : '暂无'}</dd>
             </dl>
           </ManagementSection>
 
           <ManagementSection title="模型与知识路由" description="密钥只呈现可用性，不显示配置值。">
             <dl className="mgmt-kv">
-              <dt>预测器</dt><dd>{stringValue(modelPredictor.provider, stringValue(modelPredictor.providerName, stringValue(modelPredictor.status, 'unknown')))}</dd>
-              <dt>远程模型</dt><dd>{booleanValue(asRecord(modelStatus.activeRagRoute).remoteReady) ? 'configured' : 'not configured'}</dd>
-              <dt>Notion submit</dt><dd>{booleanValue(asRecord(knowledgeRoute.notion).submitConfigured) ? 'configured' : 'not configured'}</dd>
-              <dt>Notion poll</dt><dd>{booleanValue(asRecord(knowledgeRoute.notion).pollConfigured) ? 'configured' : 'not configured'}</dd>
+              <dt>本地预测</dt><dd>{statusLabel(stringValue(modelPredictor.status, booleanValue(modelPredictor.ok) ? 'ready' : 'unknown'))}</dd>
+              <dt>远程模型</dt><dd>{booleanValue(asRecord(modelStatus.activeRagRoute).remoteReady) ? '可用' : '未配置'}</dd>
+              <dt>Notion 提交</dt><dd>{booleanValue(asRecord(knowledgeRoute.notion).submitConfigured) ? '可用' : '未配置'}</dd>
+              <dt>Notion 读取</dt><dd>{booleanValue(asRecord(knowledgeRoute.notion).pollConfigured) ? '可用' : '未配置'}</dd>
             </dl>
           </ManagementSection>
         </div>
 
-        <ManagementSection title="受控操作" description="以下操作当前为演练，不会修改本机状态。">
-          <div className="mgmt-grid-2">
-            <WorkflowAction
-              actionId="overview.pause-ai"
-              applyLabel={booleanValue(overview.aiPaused) ? '批准恢复' : '批准暂停'}
-              description="暂停或恢复后提交预测，不影响普通 Rime 拼音输入。"
-              mutationKey={['overview', 'mutation', 'pause-ai']}
-              preview={[
-                `当前状态：${booleanValue(overview.aiPaused) ? '已暂停' : '运行中'}`,
-                '只改变 AI lane，不停止 Rime 基础候选。',
-                '建议接口：runtime.action / stop_ai|resume_ai。',
-              ]}
-              risk="R1"
-              title={booleanValue(overview.aiPaused) ? '恢复 AI lanes' : '暂停 AI lanes'}
-            />
-            <WorkflowAction
-              actionId="overview.profile"
-              description="应用标准模式的输入、记忆和 RAG 设置差异。"
-              mutationKey={['overview', 'mutation', 'profile']}
-              preview={[
-                `当前 profile：${stringValue(overview.profile, 'unknown')}`,
-                '预览 setting diff 后才允许写入。',
-                '运行组件重启需求必须进入收据。',
-              ]}
-              risk="R1"
-              title="切换运行 Profile"
-            />
+        <ManagementSection title="接下来做什么" description="直接进入已经接通本机服务的工作区。">
+          <div className="mgmt-grid-3">
+            <Button leadingIcon={<ListChecks size={16} />} onClick={() => navigate('/planning')} variant="primary">看看今天的规划</Button>
+            <Button leadingIcon={<MessageCircle size={16} />} onClick={() => navigate('/agent')}>继续和智鼬聊</Button>
+            <Button leadingIcon={<BrainCircuit size={16} />} onClick={() => navigate('/memory')}>整理长期记忆</Button>
           </div>
         </ManagementSection>
       </QueryState>
@@ -161,14 +142,50 @@ export function OverviewFeature() {
   );
 }
 
+function componentDetail(item: Record<string, unknown>): string {
+  const detail = stringValue(item.detail);
+  return publicErrorText(detail, booleanValue(item.ok) ? '运行正常' : '打开诊断查看原因');
+}
+
+function statusLabel(value: string): string {
+  return ({
+    ready: '可用',
+    healthy: '正常',
+    configured: '已配置',
+    running: '运行中',
+    disabled: '已关闭',
+    degraded: '需检查',
+    blocked: '受阻',
+    unavailable: '不可用',
+    unknown: '等待状态',
+  } as Record<string, string>)[value.toLowerCase()] ?? (value ? '状态已更新' : '等待状态');
+}
+
+function runtimeStatusLabel(value: string): string {
+  return ({ ready: '可用', busy: '回复中', starting: '启动中', disabled: '已关闭', not_installed: '未安装', needs_configuration: '需配置' } as Record<string, string>)[value] ?? '等待状态';
+}
+
+function contextSourceLabel(value: string): string {
+  return ({ memory: '个人记忆', rag: '知识检索', recent: '近期输入', none: '未使用额外上下文' } as Record<string, string>)[value.toLowerCase()] ?? (value ? '已使用上下文' : '暂无');
+}
+
+function triggerReasonLabel(value: string): string {
+  return ({
+    post_commit: '完成输入后',
+    active_rag: '主动查询',
+    manual: '手动请求',
+    voice: '语音输入',
+  } as Record<string, string>)[value.toLowerCase()] ?? (value ? '由当前输入触发' : '等待前台输入');
+}
+
 function componentLabel(id: string): string {
   return ({
-    inputMethod: '鼠须管输入源',
-    sidecar: 'Sidecar',
+    inputMethod: '当前输入法',
+    sidecar: '后台服务',
     predictor: '本地预测',
     foregroundContext: '前台上下文',
-    hybridRag: 'Hybrid RAG',
-    memoryCompiler: '记忆编译',
-    sqlite: 'SQLite',
-  } as Record<string, string>)[id] ?? id;
+    hybridRag: '知识检索',
+    memoryCompiler: '记忆整理',
+    sqlite: '本机数据库',
+  } as Record<string, string>)[id] ?? '其他服务';
 }

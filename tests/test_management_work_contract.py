@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.contracts.json_schema import validate_contract
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.management_service import ManagementService
+from rag_ime.management_service import ManagementService, page_request
 from rag_ime.management_work_contract import (
     ManagementWorkContract,
     ManagementWorkError,
@@ -23,6 +23,7 @@ from rag_ime.memory_book_compiler import (
     store_memory_book_plan,
 )
 from rag_ime.models import InputEvent
+from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.runtime_config import RuntimeConfigResolver
 from rag_ime.settings_store import ManagementSettingsStore
 
@@ -275,6 +276,80 @@ class PlanningWorkContractTests(unittest.TestCase):
         dashboard = self.management.planning_dashboard(plan_date="2026-07-14")
         self.assertEqual(dashboard["tasks"], [])
 
+    def test_goal_save_update_and_rollback_use_real_goal_snapshots(self) -> None:
+        goal_payload = {
+            "goalId": "goal:contract",
+            "title": "完成控制中心迁移",
+            "detail": "先接通真实规划写入",
+            "horizon": "long_term",
+            "status": "active",
+            "priority": 2,
+            "targetDate": "2026-07-31",
+            "project": "wisdom-weasel-rag-ime",
+        }
+        create_preview = self._preview("goal.save", goal_payload)
+        self.assertIn("时间范围: 长期目标", create_preview["summary"]["items"])
+        self.assertIn("状态: 进行中", create_preview["summary"]["items"])
+        self.assertNotIn("long_term", " ".join(create_preview["summary"]["items"]))
+        created = self.management.planning_apply_goal_save(
+            {
+                **goal_payload,
+                "expectedRuntimeRevision": create_preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": create_preview["previewToken"],
+                "payloadSha256": create_preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+
+        self.assertTrue(created["ok"], created)
+        self.assertEqual(created["pathId"], "planning.goal.save")
+        self.assertEqual(created["goal"]["id"], "goal:contract")
+        self.assertEqual(created["goal"]["targetDate"], "2026-07-31")
+        self.assertTrue(created["rollbackAvailable"])
+
+        updated_payload = {
+            **goal_payload,
+            "title": "完成真实控制中心切换",
+            "horizon": "medium_term",
+            "priority": 3,
+        }
+        update_preview = self._preview("goal.save", updated_payload)
+        updated = self.management.planning_apply_goal_save(
+            {
+                **updated_payload,
+                "expectedRuntimeRevision": update_preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": update_preview["previewToken"],
+                "payloadSha256": update_preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        restored = self.management.planning_mutation_rollback(
+            {
+                "receiptId": updated["receiptId"],
+                "rollbackToken": updated["rollbackToken"],
+                "payloadSha256": updated["payloadSha256"],
+                "confirmText": "rollback",
+            }
+        )
+
+        self.assertTrue(restored["ok"], restored)
+        self.assertTrue(restored["restored"])
+        dashboard = self.management.planning_dashboard(plan_date="2026-07-14")
+        self.assertEqual(dashboard["goals"][0]["title"], "完成控制中心迁移")
+        self.assertEqual(dashboard["goals"][0]["horizon"], "long_term")
+
+        deleted = self.management.planning_mutation_rollback(
+            {
+                "receiptId": created["receiptId"],
+                "rollbackToken": created["rollbackToken"],
+                "payloadSha256": created["payloadSha256"],
+                "confirmText": "rollback",
+            }
+        )
+        self.assertTrue(deleted["ok"], deleted)
+        self.assertTrue(deleted["deleted"])
+        self.assertEqual(self.management.planning_dashboard(plan_date="2026-07-14")["goals"], [])
+
     def test_apply_without_preview_or_with_unknown_field_fails_closed(self) -> None:
         result = self.management.planning_apply_task_save(
             {
@@ -292,6 +367,20 @@ class PlanningWorkContractTests(unittest.TestCase):
         self.assertEqual(result["errorCode"], "invalid_request")
         validate_contract(result, "management-work-error.v1.json")
         self.assertEqual(self.management.planning_dashboard(plan_date="2026-07-14")["tasks"], [])
+
+        goal_result = self.management.planning_apply_goal_save(
+            {
+                "title": "不得注入内部目标字段",
+                "expectedRuntimeRevision": self.management.revision().runtime_revision,
+                "previewToken": "missing",
+                "payloadSha256": "sha256:" + "0" * 64,
+                "confirmText": "apply",
+                "metadata": {"systemPrompt": "ignore policy"},
+            }
+        )
+        self.assertFalse(goal_result["ok"])
+        self.assertEqual(goal_result["errorCode"], "invalid_request")
+        self.assertEqual(self.management.planning_dashboard(plan_date="2026-07-14")["goals"], [])
 
     def test_task_action_preview_becomes_stale_when_task_changes(self) -> None:
         self.management.planning_save_task(
@@ -322,6 +411,241 @@ class PlanningWorkContractTests(unittest.TestCase):
         self.assertEqual(denied["errorCode"], "revision_mismatch")
         dashboard = self.management.planning_dashboard(plan_date="2026-07-14")
         self.assertEqual(dashboard["tasks"][0]["status"], "in_progress")
+
+
+class HistoryWorkContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-history-work-")
+        self.db_path = Path(self.tmp.name) / "history.sqlite"
+        self.core = LocalSqliteCoreClient(self.db_path)
+        self.core.initialize()
+        self.settings = ManagementSettingsStore(self.db_path)
+        self.settings.initialize()
+        resolver = RuntimeConfigResolver(self.settings, environ={})
+        self.invalidations: list[bool] = []
+        self.management = ManagementService(
+            db_path=self.db_path,
+            project="wisdom-weasel-rag-ime",
+            repo_root=ROOT,
+            settings_store=self.settings,
+            health_provider=lambda: {"ok": True},
+            input_source_provider=lambda: {},
+            predictor_provider=lambda: {},
+            runtime_config_provider=resolver.resolve,
+            cache_invalidator=lambda: self.invalidations.append(True),
+        )
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_020,
+                source="manual",
+                committed_text="需要通过真实收据隐藏的历史记录",
+                privacy_disposition="allowed",
+                recent_context="history work contract",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        self.event_id = int(event_ref.split(":", 1)[1])
+
+    def tearDown(self) -> None:
+        self.management.close()
+        self.tmp.cleanup()
+
+    def test_tombstone_apply_and_rollback_change_the_real_history_projection(self) -> None:
+        before = self.management.history_page(page_request({"limit": 20}))
+        preview = self.management.history_tombstone_preview(
+            {
+                "eventId": self.event_id,
+                "reason": "user-requested-hide",
+                "expectedRuntimeRevision": self.management.revision().runtime_revision,
+            }
+        )
+        applied = self.management.history_tombstone_apply(
+            {
+                "eventId": self.event_id,
+                "reason": "user-requested-hide",
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        hidden = self.management.history_page(page_request({"limit": 20}))
+        rolled_back = self.management.history_tombstone_rollback(
+            {
+                "receiptId": applied["receiptId"],
+                "rollbackToken": applied["rollbackToken"],
+                "payloadSha256": applied["payloadSha256"],
+                "confirmText": "rollback",
+            }
+        )
+        restored = self.management.history_page(page_request({"limit": 20}))
+
+        self.assertEqual([item["id"] for item in before["items"]], [self.event_id])
+        self.assertTrue(applied["ok"], applied)
+        self.assertEqual(applied["pathId"], "history.tombstone.apply")
+        self.assertTrue(applied["rollbackAvailable"])
+        self.assertEqual(hidden["items"], [])
+        self.assertTrue(rolled_back["ok"], rolled_back)
+        self.assertEqual(rolled_back["pathId"], "history.tombstone.rollback")
+        self.assertEqual([item["id"] for item in restored["items"]], [self.event_id])
+        self.assertEqual(len(self.invalidations), 2)
+
+    def test_tombstone_apply_fails_closed_without_bound_preview(self) -> None:
+        denied = self.management.history_tombstone_apply(
+            {
+                "eventId": self.event_id,
+                "reason": "unbound",
+                "expectedRuntimeRevision": self.management.revision().runtime_revision,
+                "previewToken": "missing",
+                "payloadSha256": "sha256:" + "0" * 64,
+                "confirmText": "apply",
+                "shell": "rm -rf /",
+            }
+        )
+
+        self.assertFalse(denied["ok"])
+        self.assertEqual(denied["errorCode"], "invalid_request")
+        current = self.management.history_page(page_request({"limit": 20}))
+        self.assertEqual([item["id"] for item in current["items"]], [self.event_id])
+
+
+class MemoryBookArchiveWorkContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-memory-book-work-")
+        self.db_path = Path(self.tmp.name) / "memory.sqlite"
+        self.core = LocalSqliteCoreClient(self.db_path)
+        self.core.initialize()
+        self.settings = ManagementSettingsStore(self.db_path)
+        self.settings.initialize()
+        resolver = RuntimeConfigResolver(self.settings, environ={})
+        self.invalidations: list[bool] = []
+        self.management = ManagementService(
+            db_path=self.db_path,
+            project="wisdom-weasel-rag-ime",
+            repo_root=ROOT,
+            settings_store=self.settings,
+            health_provider=lambda: {"ok": True},
+            input_source_provider=lambda: {},
+            predictor_provider=lambda: {},
+            runtime_config_provider=resolver.resolve,
+            cache_invalidator=lambda: self.invalidations.append(True),
+        )
+        self.book_id = "book:control-center"
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, summary, normalized_text,
+                    project, status, confidence, quality_score, created_at_ms,
+                    updated_at_ms, last_active_at_ms, metadata_json
+                ) VALUES (?, 'topic', 'control-center', '控制中心迁移', '真实归档与恢复',
+                          '控制中心迁移 真实归档与恢复', ?, 'approved', 0.9, 0.9,
+                          100, 100, 100, '{}')
+                """,
+                (self.book_id, "wisdom-weasel-rag-ime"),
+            )
+            rebuild_retrieval_docs(conn, project="")
+
+    def tearDown(self) -> None:
+        self.management.close()
+        self.tmp.cleanup()
+
+    def test_archive_apply_and_rollback_update_the_real_retrieval_projection(self) -> None:
+        preview = self.management.memory_book_archive_preview(
+            {
+                "bookId": self.book_id,
+                "archived": True,
+                "reason": "user-requested-archive",
+                "expectedRuntimeRevision": self.management.revision().runtime_revision,
+            }
+        )
+        applied = self.management.memory_book_archive_apply(
+            {
+                "bookId": self.book_id,
+                "archived": True,
+                "reason": "user-requested-archive",
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            archived_status = conn.execute(
+                "SELECT status FROM memory_books WHERE book_id = ?",
+                (self.book_id,),
+            ).fetchone()[0]
+            archived_doc = conn.execute(
+                "SELECT metadata_json FROM memory_retrieval_docs WHERE source_id = ?",
+                (self.book_id,),
+            ).fetchone()
+        rolled_back = self.management.memory_book_archive_rollback(
+            {
+                "receiptId": applied["receiptId"],
+                "rollbackToken": applied["rollbackToken"],
+                "payloadSha256": applied["payloadSha256"],
+                "confirmText": "rollback",
+            }
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            restored_status = conn.execute(
+                "SELECT status FROM memory_books WHERE book_id = ?",
+                (self.book_id,),
+            ).fetchone()[0]
+            restored_doc_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs WHERE source_id = ?",
+                    (self.book_id,),
+                ).fetchone()[0]
+            )
+
+        self.assertTrue(preview["ok"], preview)
+        self.assertNotIn(self.book_id, preview["summary"]["items"])
+        self.assertTrue(applied["ok"], applied)
+        self.assertEqual(applied["pathId"], "memory.book.archive.apply")
+        self.assertTrue(applied["rollbackAvailable"])
+        self.assertEqual(archived_status, "archived")
+        self.assertTrue(json.loads(archived_doc[0])["archived"])
+        self.assertTrue(rolled_back["ok"], rolled_back)
+        self.assertEqual(rolled_back["pathId"], "memory.book.archive.rollback")
+        self.assertEqual(restored_status, "approved")
+        self.assertEqual(restored_doc_count, 1)
+        self.assertEqual(len(self.invalidations), 2)
+
+    def test_archive_apply_fails_closed_after_the_book_changes(self) -> None:
+        preview = self.management.memory_book_archive_preview(
+            {
+                "bookId": self.book_id,
+                "archived": True,
+                "expectedRuntimeRevision": self.management.revision().runtime_revision,
+            }
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                "UPDATE memory_books SET title = '已被其他操作更新', updated_at_ms = 200 WHERE book_id = ?",
+                (self.book_id,),
+            )
+        denied = self.management.memory_book_archive_apply(
+            {
+                "bookId": self.book_id,
+                "archived": True,
+                "reason": "control_center_archive",
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+
+        self.assertFalse(denied["ok"])
+        self.assertEqual(denied["errorCode"], "revision_mismatch")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            status = conn.execute(
+                "SELECT status FROM memory_books WHERE book_id = ?",
+                (self.book_id,),
+            ).fetchone()[0]
+        self.assertEqual(status, "approved")
 
 
 class KnowledgeDatabaseWorkContractTests(unittest.TestCase):
@@ -513,6 +837,209 @@ class KnowledgeDatabaseWorkContractTests(unittest.TestCase):
         self.assertEqual(denied["errorCode"], "invalid_request")
         self.assertTrue(applied["ok"])
         self.assertTrue(rolled_back["ok"])
+
+
+class ConfigurationSettingsWorkContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-configuration-work-")
+        self.db_path = Path(self.tmp.name) / "configuration.sqlite"
+        self.service = DebugImeService(
+            DebugServerConfig(db_path=self.db_path, seed_if_empty=False)
+        )
+
+    def tearDown(self) -> None:
+        self.service.agent.close()
+        self.service.management.close()
+        self.tmp.cleanup()
+
+    def _width_change(self) -> tuple[int, int]:
+        before = int(self.service.settings()["settings"]["display"]["maxWidth"])
+        after = before + 20 if before <= 740 else before - 20
+        return before, after
+
+    def test_settings_apply_and_rollback_use_bound_receipts_and_real_store(self) -> None:
+        before, after = self._width_change()
+        current_font_size = self.service.settings_store.get_settings()["display"][
+            "candidateFontSize"
+        ]
+        changes = {
+            "display.candidateFontSize": current_font_size,
+            "display.maxWidth": after,
+        }
+        preview = self.service.configuration_settings_preview(
+            {
+                "changes": changes,
+                "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+            }
+        )
+        applied = self.service.configuration_settings_apply(
+            {
+                "changes": changes,
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        persisted = self.service.settings_store.get_settings()
+        rolled_back = self.service.configuration_settings_rollback(
+            {
+                "receiptId": applied["receiptId"],
+                "rollbackToken": applied["rollbackToken"],
+                "payloadSha256": applied["payloadSha256"],
+                "confirmText": "rollback",
+            }
+        )
+        restored = self.service.settings_store.get_settings()
+
+        validate_contract(preview, "management-work-preview.v1.json")
+        validate_contract(applied, "management-work-receipt.v1.json")
+        validate_contract(rolled_back, "management-work-receipt.v1.json")
+        self.assertEqual(preview["pathId"], "configuration.settings.apply")
+        self.assertEqual(persisted["display"]["maxWidth"], after)
+        self.assertEqual(applied["rollbackAuthority"], {"settingKeys": ["display.maxWidth"]})
+        self.assertEqual(applied["restartComponents"], ["squirrel"])
+        self.assertEqual(restored["display"]["maxWidth"], before)
+        with sqlite3.connect(self.db_path) as conn:
+            stored_audit_id = conn.execute(
+                "SELECT audit_id FROM management_settings WHERE key = 'display'"
+            ).fetchone()[0]
+            work_audits = conn.execute(
+                """
+                SELECT action
+                FROM management_audit_log
+                WHERE action IN (
+                    'configuration_settings_apply',
+                    'configuration_settings_rollback'
+                )
+                ORDER BY id
+                """
+            ).fetchall()
+        self.assertEqual(stored_audit_id, rolled_back["auditId"])
+        self.assertEqual(
+            [row[0] for row in work_audits],
+            ["configuration_settings_apply", "configuration_settings_rollback"],
+        )
+
+    def test_settings_apply_rejects_a_preview_staled_by_another_setting_change(self) -> None:
+        _before, after = self._width_change()
+        preview = self.service.configuration_settings_preview(
+            {
+                "changes": {"display.maxWidth": after},
+                "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+            }
+        )
+        self.service.settings_store.update_settings(
+            {"display.candidateFontSize": 17},
+            updated_by="concurrent-test",
+        )
+        denied = self.service.configuration_settings_apply(
+            {
+                "changes": {"display.maxWidth": after},
+                "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+
+        validate_contract(denied, "management-work-error.v1.json")
+        self.assertEqual(denied["errorCode"], "revision_mismatch")
+        self.assertNotEqual(
+            denied["currentRevision"]["runtimeRevision"],
+            preview["expectedRevision"]["runtimeRevision"],
+        )
+        self.assertNotEqual(
+            self.service.settings_store.get_settings()["display"]["maxWidth"],
+            after,
+        )
+
+    def test_settings_preview_rejects_secret_values_without_echoing_them(self) -> None:
+        secret = "must-never-appear-in-a-receipt"
+        denied = self.service.configuration_settings_preview(
+            {
+                "changes": {"managementSecurity.token": secret},
+                "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+            }
+        )
+
+        validate_contract(denied, "management-work-error.v1.json")
+        self.assertEqual(denied["errorCode"], "unsupported_mutation")
+        self.assertNotIn(secret, json.dumps(denied, ensure_ascii=False))
+        persisted = self.service.settings_store.get_settings(include_sensitive=True)
+        self.assertNotEqual(persisted["managementSecurity"].get("token"), secret)
+
+    def test_settings_preview_rejects_transport_metadata_hidden_inside_changes(self) -> None:
+        _before, after = self._width_change()
+        denied = self.service.configuration_settings_preview(
+            {
+                "changes": {
+                    "settings": {"display.maxWidth": after},
+                    "updatedBy": "spoofed-audit-authority",
+                },
+                "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+            }
+        )
+
+        validate_contract(denied, "management-work-error.v1.json")
+        self.assertEqual(denied["errorCode"], "invalid_request")
+        self.assertNotEqual(
+            self.service.settings_store.get_settings()["display"]["maxWidth"],
+            after,
+        )
+
+    def test_http_routes_expose_the_settings_work_contract(self) -> None:
+        before, after = self._width_change()
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = ROOT / "debug"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            preview = _post_json(
+                server.server_port,
+                "/api/settings/preview",
+                {
+                    "changes": {"display.maxWidth": after},
+                    "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+                },
+            )
+            applied = _post_json(
+                server.server_port,
+                "/api/settings/apply",
+                {
+                    "changes": {"display.maxWidth": after},
+                    "expectedRuntimeRevision": preview["expectedRevision"]["runtimeRevision"],
+                    "previewToken": preview["previewToken"],
+                    "payloadSha256": preview["payloadSha256"],
+                    "confirmText": "apply",
+                },
+            )
+            rolled_back = _post_json(
+                server.server_port,
+                "/api/settings/rollback",
+                {
+                    "receiptId": applied["receiptId"],
+                    "rollbackToken": applied["rollbackToken"],
+                    "payloadSha256": applied["payloadSha256"],
+                    "confirmText": "rollback",
+                },
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertTrue(applied["ok"], applied)
+        self.assertTrue(rolled_back["ok"], rolled_back)
+        self.assertEqual(
+            self.service.settings_store.get_settings()["display"]["maxWidth"],
+            before,
+        )
 
 
 def _post_json(port: int, path: str, payload: dict[str, object]) -> dict[str, object]:

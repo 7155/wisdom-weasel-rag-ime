@@ -66,6 +66,13 @@ final class WebHostViewController: NSViewController, WKNavigationDelegate, WKUID
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        if navigationAction.navigationType == .linkActivated,
+           navigationPolicy.allowsExternalBrowserOpen(navigationAction.request.url),
+           let url = navigationAction.request.url {
+            _ = NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
         decisionHandler(navigationPolicy.decision(
             for: navigationAction.request.url,
             isMainFrame: navigationAction.targetFrame?.isMainFrame ?? false

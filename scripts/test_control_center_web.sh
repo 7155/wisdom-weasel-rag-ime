@@ -16,7 +16,8 @@ if [[ "${RAG_IME_SKIP_WEB_E2E:-0}" != "1" ]]; then
   "$ROOT/scripts/run_control_center_web_qa.sh"
 fi
 
-RAG_IME_SKIP_WEB_BUILD=1 "$ROOT/scripts/build_control_center_web_host.sh" build-release >/dev/null
+RAG_IME_USE_VERIFIED_WEB_DIST=1 \
+  "$ROOT/scripts/build_control_center_web_host.sh" build-release >/dev/null
 RAG_IME_CONTROL_SKIP_LIVE=1 \
   "$ROOT/scripts/check_control_center_footprint.sh"
 

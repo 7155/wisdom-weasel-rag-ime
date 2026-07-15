@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
+from urllib.parse import quote
 
 from .agent_configuration import (
     AgentConfigurationStore,
@@ -21,6 +22,7 @@ from .agent_events import AgentEventHub
 from .agent_delegation import AgentDelegationCoordinator
 from .agent_media import AgentMediaStore
 from .agent_memory_sources import AgentMemorySourceStore
+from .agent_personas import AgentPersonaStore
 from .agent_protocol import AgentEventEnvelope
 from .agent_room_intercom import (
     AgentRoomIntercomRouter,
@@ -28,13 +30,14 @@ from .agent_room_intercom import (
     AgentRoomTargetBusy,
 )
 from .agent_runtime_driver import (
+    AgentRuntimeError,
     AgentRuntimePolicy,
     AgentRuntimeDriver,
     RuntimeDriverContext,
     RuntimeDriverFactory,
 )
 from .agent_rooms import AgentRoomEventHub, AgentRoomStore
-from .agent_roles import agent_role, agent_role_catalog
+from .agent_roles import agent_role_catalog, persona_model_profile
 from .agent_sessions import AgentSessionStore
 from .contracts.json_schema import validate_contract
 from .external_actions import (
@@ -56,10 +59,13 @@ class AgentService:
         project: str = "",
         process_id_provider: Callable[[], int] = os.getpid,
     ) -> None:
+        self.personas = AgentPersonaStore(db_path)
+        self.personas.initialize()
         self.tool_token = secrets.token_urlsafe(32)
         configured = replace(
             runtime_config or PiRuntimeConfig.from_environment(),
             tool_gateway_token=self.tool_token,
+            role_resolver=self.personas.resolve,
         )
         self.runtime_factory = runtime_factory or PiRuntimeDriverFactory(configured)
         self.sessions = AgentSessionStore(db_path)
@@ -76,6 +82,9 @@ class AgentService:
         self.configuration_store.initialize(seed_configuration)
         self.control_events = AgentControlEventHub(self.configuration_store)
         self._configuration_lock = RLock()
+        self._room_turn_lock = RLock()
+        self._pending_room_turn_by_session: dict[str, str] = {}
+        self._room_turn_by_session_turn: dict[tuple[str, str], str] = {}
         self.runtime_factory.apply_policy(
             runtime_policy_from_configuration(
                 self.configuration_store.snapshot()["configuration"]
@@ -196,7 +205,7 @@ class AgentService:
         if role_id is not None or role_version is not None:
             current = self.configuration_store.snapshot()["configuration"]
             defaults = current["sessionDefaults"]
-            agent_role(
+            self.personas.resolve(
                 role_id or defaults["roleId"],
                 role_version or defaults["roleVersion"],
             )
@@ -276,12 +285,24 @@ class AgentService:
         mode = str(payload.get("mode") or "assistant")
         configuration = self.configuration_store.snapshot()["configuration"]
         session_defaults = configuration["sessionDefaults"]
-        role = agent_role(
+        role = self.personas.resolve(
             payload.get("roleId") or session_defaults["roleId"],
             payload.get("roleVersion") or session_defaults["roleVersion"],
         )
         if mode not in role.selectable_modes:
             raise ValueError(f"agent role {role.role_id}@{role.version} is not available for {mode} sessions")
+        requested_tool_profile = str(
+            payload.get("toolProfileVersion")
+            or session_defaults["toolProfileVersion"]
+            or role.defaults.tool_profile_version
+        )
+        if role.origin == "user":
+            if (
+                payload.get("toolProfileVersion") is not None
+                and requested_tool_profile != role.defaults.tool_profile_version
+            ):
+                raise ValueError("user persona tool policy cannot be overridden")
+            requested_tool_profile = role.defaults.tool_profile_version
         roots_value = payload.get("workspaceRoots")
         if roots_value is None:
             workspace_roots: list[str] = []
@@ -289,29 +310,48 @@ class AgentService:
             workspace_roots = [str(item) for item in roots_value]
         else:
             raise ValueError("workspaceRoots must be an array")
+        requested_model_profile = payload.get("modelProfile")
+        role_was_selected = (
+            payload.get("roleId") is not None
+            or payload.get("roleVersion") is not None
+        )
+        if requested_model_profile is not None:
+            model_profile = str(requested_model_profile)
+        elif role_was_selected:
+            model_profile = persona_model_profile(role)
+        else:
+            model_profile = str(session_defaults["modelProfile"])
         session = self.sessions.create(
             title=title,
             mode=mode,
             role_id=role.role_id,
             role_version=role.version,
-            model_profile=str(
-                payload.get("modelProfile")
-                or session_defaults["modelProfile"]
-            ),
-            tool_profile_version=str(
-                payload.get("toolProfileVersion")
-                or session_defaults["toolProfileVersion"]
-                or role.defaults.tool_profile_version
-            ),
+            model_profile=model_profile,
+            tool_profile_version=requested_tool_profile,
             workspace_roots=workspace_roots,
         )
-        return {"schemaVersion": "rag-ime.agent-session-create.v1", "ok": True, "session": session}
+        return {
+            "schemaVersion": "rag-ime.agent-session-create.v1",
+            "ok": True,
+            "session": session,
+        }
 
     def list_roles(self) -> dict[str, object]:
         return {
             "schemaVersion": "rag-ime.agent-role-list.v1",
             "ok": True,
-            "items": agent_role_catalog(),
+            "items": [
+                *agent_role_catalog(),
+                *(persona.to_payload() for persona in self.personas.list()),
+            ],
+        }
+
+    def create_role(self, payload: Mapping[str, object]) -> dict[str, object]:
+        persona = self.personas.create(payload)
+        return {
+            "schemaVersion": "rag-ime.agent-role-create.v1",
+            "ok": True,
+            "role": persona.to_payload(),
         }
 
     def list_agent_templates(self) -> dict[str, object]:
@@ -395,7 +435,7 @@ class AgentService:
         for raw in raw_participants:
             if not isinstance(raw, Mapping):
                 raise ValueError("each room participant must be an object")
-            role = agent_role(raw.get("roleId"), raw.get("roleVersion") or "1")
+            role = self.personas.resolve(raw.get("roleId"), raw.get("roleVersion") or "1")
             if "assistant" not in role.selectable_modes:
                 raise ValueError(f"role {role.role_id}@{role.version} cannot join a room")
             key = (role.role_id, role.version)
@@ -414,7 +454,6 @@ class AgentService:
             moderator_ordinal = matches[0]
 
         room_title = " ".join(str(payload.get("title") or "新群聊").split())[:120]
-        session_defaults = self.configuration_store.snapshot()["configuration"]["sessionDefaults"]
         created_session_ids: list[str] = []
         participants: list[dict[str, object]] = []
         try:
@@ -424,7 +463,7 @@ class AgentService:
                     mode="assistant",
                     role_id=role.role_id,
                     role_version=role.version,
-                    model_profile=str(session_defaults["modelProfile"]),
+                    model_profile=persona_model_profile(role),
                     tool_profile_version=role.defaults.tool_profile_version,
                 )
                 created_session_ids.append(str(session["id"]))
@@ -512,9 +551,12 @@ class AgentService:
             participant_id=str(target["id"]),
             source_session_id=str(target["sessionId"]),
         )
+        target_session_id = str(target["sessionId"])
+        self._begin_room_turn(target_session_id, room_turn_id)
         try:
-            accepted = self.prompt(str(target["sessionId"]), {"message": message})
+            accepted = self.prompt(target_session_id, {"message": message})
         except Exception as exc:
+            self._cancel_room_turn(target_session_id, room_turn_id)
             self.room_events.publish(
                 room_id=room_id,
                 event_type="turn_failed",
@@ -524,6 +566,11 @@ class AgentService:
                 source_session_id=str(target["sessionId"]),
             )
             raise
+        self._accept_room_turn(
+            target_session_id,
+            str(accepted.get("turnId") or ""),
+            room_turn_id,
+        )
         return {
             "schemaVersion": "rag-ime.agent-room-message.v1",
             "ok": True,
@@ -611,6 +658,24 @@ class AgentService:
         validate_contract(payload, "agent-model-catalog.v1.json")
         return payload
 
+    def command_catalog(self, session_id: str) -> dict[str, object]:
+        self.sessions.get(session_id)
+        runtime_available = True
+        try:
+            commands = self.runtime.command_catalog(session_id)
+        except AgentRuntimeError:
+            # Product commands are owned by the web client. An unavailable Pi
+            # runtime must not turn them into fake server-advertised commands.
+            runtime_available = False
+            commands = []
+        return {
+            "schemaVersion": "rag-ime.agent-command-catalog.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "runtimeAvailable": runtime_available,
+            "items": commands,
+        }
+
     def select_model(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         selected = self.runtime.set_model(
             session_id,
@@ -668,7 +733,7 @@ class AgentService:
             session = self.sessions.archive(session_id, archived=_bool(payload.get("archived")))
         if "mode" in payload:
             requested_mode = str(payload.get("mode") or "").strip()
-            role = agent_role(session["roleId"], session["roleVersion"])
+            role = self.personas.resolve(session["roleId"], session["roleVersion"])
             if requested_mode not in role.selectable_modes:
                 raise ValueError(
                     f"agent role {role.role_id}@{role.version} is not available for {requested_mode} sessions"
@@ -795,6 +860,7 @@ class AgentService:
 
     def prompt(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         message = _required_text(payload, "message")
+        client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
         raw_attachments = payload.get("attachments")
         if raw_attachments is None:
             attachment_ids: list[str] = []
@@ -807,6 +873,7 @@ class AgentService:
             message=message,
             checkpoint_text=message,
             attachment_ids=attachment_ids,
+            client_message_id=client_message_id,
         )
 
     def deep_search(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -881,14 +948,46 @@ class AgentService:
         message: str,
         checkpoint_text: str,
         attachment_ids: list[str],
+        client_message_id: str = "",
     ) -> dict[str, object]:
+        if attachment_ids:
+            selected = self.runtime.model_catalog(session_id).get("selected")
+            if not isinstance(selected, Mapping) or selected.get("supportsImages") is not True:
+                raise ValueError("当前模型不支持图片，请切换到支持图片的模型后重试")
         images = self.media.pi_images(session_id, attachment_ids)
-        accepted = self.runtime.prompt(session_id, message, images=images)
+        accepted = self.runtime.prompt(
+            session_id,
+            message,
+            images=images,
+            client_message_id=client_message_id,
+        )
         self.media.bind_to_pi_entry(
             session_id=session_id,
             pi_entry_id=str(accepted.get("piEntryId") or ""),
             turn_id=str(accepted.get("turnId") or ""),
             media_ids=attachment_ids,
+        )
+        attachment_receipts = [
+            self.media.receipt(media_id, session_id=session_id)
+            for media_id in dict.fromkeys(attachment_ids)
+        ]
+        turn_id = str(accepted.get("turnId") or "")
+        user_message = _prompt_user_message_payload(
+            session_id=session_id,
+            turn_id=turn_id,
+            message_id=str(accepted.get("piEntryId") or "") or f"{turn_id}:user",
+            text=message,
+            client_message_id=client_message_id,
+            attachments=attachment_receipts,
+        )
+        event_payload: dict[str, object] = {"message": user_message}
+        if client_message_id:
+            event_payload["clientMessageId"] = client_message_id
+        self.events.publish(
+            session_id,
+            "message_completed",
+            event_payload,
+            turn_id=turn_id,
         )
         try:
             memory_checkpoint = self.memory_sources.checkpoint_user_message(
@@ -905,26 +1004,17 @@ class AgentService:
                 "status": "checkpoint_failed",
                 "error": _public_error(exc),
             }
-        if memory_checkpoint.get("stored") is True:
-            self.events.publish(
-                session_id,
-                "memory_checkpointed",
-                {
-                    "sourceRole": "user",
-                    "status": "checkpointed",
-                    "summary": "最终用户消息已保存为记忆来源，等待异步整理",
-                },
-                turn_id=str(accepted.get("turnId") or ""),
-            )
+        # Final user text is captured as a private source for later memory
+        # maintenance. It is not a recall/injection step and must not appear as
+        # a user-facing tool activity on every turn. Visible memory events are
+        # reserved for explicit tool work, applied receipts, session switches,
+        # and compaction maintenance.
         return {
             "schemaVersion": "rag-ime.agent-prompt-accepted.v1",
             "ok": True,
             "sessionId": session_id,
             "memoryCheckpoint": memory_checkpoint,
-            "attachments": [
-                self.media.receipt(media_id, session_id=session_id)
-                for media_id in dict.fromkeys(attachment_ids)
-            ],
+            "attachments": attachment_receipts,
             **accepted,
         }
 
@@ -1352,7 +1442,11 @@ class AgentService:
 
     def reconfigure_runtime(self, config: PiRuntimeConfig) -> dict[str, object]:
         self.runtime.stop()
-        config = replace(config, tool_gateway_token=self.tool_token)
+        config = replace(
+            config,
+            tool_gateway_token=self.tool_token,
+            role_resolver=self.personas.resolve,
+        )
         self.runtime_factory.reconfigure(config)
         self.delegation.reconfigure(config)
         self.runtime = self.runtime_factory.create(
@@ -1410,6 +1504,7 @@ class AgentService:
         if participant is None:
             return
         mapped_type, public_data = _room_event_projection(event)
+        room_turn_id = self._room_turn_for_event(event)
         self.room_events.publish(
             room_id=str(participant["roomId"]),
             event_type=mapped_type,
@@ -1418,11 +1513,63 @@ class AgentService:
                 "sourceEventType": event.event_type,
                 "data": public_data,
             },
-            turn_id=event.turn_id,
+            turn_id=room_turn_id,
             participant_id=str(participant["id"]),
             source_session_id=event.session_id,
             created_at_ms=event.created_at_ms,
         )
+        if event.event_type in {"turn_completed", "turn_failed"}:
+            self._finish_room_turn(event.session_id, event.turn_id, room_turn_id)
+
+    def _begin_room_turn(self, session_id: str, room_turn_id: str) -> None:
+        with self._room_turn_lock:
+            self._pending_room_turn_by_session[session_id] = room_turn_id
+
+    def _accept_room_turn(
+        self,
+        session_id: str,
+        session_turn_id: str,
+        room_turn_id: str,
+    ) -> None:
+        if not session_turn_id:
+            return
+        with self._room_turn_lock:
+            if self._pending_room_turn_by_session.get(session_id) == room_turn_id:
+                self._pending_room_turn_by_session.pop(session_id, None)
+                self._room_turn_by_session_turn[(session_id, session_turn_id)] = room_turn_id
+
+    def _cancel_room_turn(self, session_id: str, room_turn_id: str) -> None:
+        with self._room_turn_lock:
+            if self._pending_room_turn_by_session.get(session_id) == room_turn_id:
+                self._pending_room_turn_by_session.pop(session_id, None)
+            for key, value in tuple(self._room_turn_by_session_turn.items()):
+                if key[0] == session_id and value == room_turn_id:
+                    self._room_turn_by_session_turn.pop(key, None)
+
+    def _room_turn_for_event(self, event: AgentEventEnvelope) -> str:
+        if not event.turn_id:
+            return ""
+        key = (event.session_id, event.turn_id)
+        with self._room_turn_lock:
+            room_turn_id = self._room_turn_by_session_turn.get(key)
+            if room_turn_id:
+                return room_turn_id
+            pending = self._pending_room_turn_by_session.get(event.session_id)
+            if pending:
+                self._room_turn_by_session_turn[key] = pending
+                return pending
+        return event.turn_id
+
+    def _finish_room_turn(
+        self,
+        session_id: str,
+        session_turn_id: str,
+        room_turn_id: str,
+    ) -> None:
+        with self._room_turn_lock:
+            self._room_turn_by_session_turn.pop((session_id, session_turn_id), None)
+            if self._pending_room_turn_by_session.get(session_id) == room_turn_id:
+                self._pending_room_turn_by_session.pop(session_id, None)
 
     def _room_runtime_generation(self, session_id: str) -> int:
         session = self.sessions.get(session_id)
@@ -1754,6 +1901,69 @@ def _deep_search_prompt(
     else:
         lines.extend(("", "输入法本轮没有可用的已召回证据，请主动检索后再回答。"))
     return "\n".join(lines), len(evidence_lines)
+
+
+def _prompt_user_message_payload(
+    *,
+    session_id: str,
+    turn_id: str,
+    message_id: str,
+    text: str,
+    client_message_id: str,
+    attachments: list[dict[str, object]],
+) -> dict[str, object]:
+    created_at_ms = int(datetime.now().timestamp() * 1000)
+    blocks: list[dict[str, object]] = [
+        {
+            "id": f"{message_id}:text",
+            "type": "text",
+            "status": "completed",
+            "presentationKind": "markdown",
+            "data": {"text": text},
+        }
+    ]
+    media_ids: list[str] = []
+    for index, receipt in enumerate(attachments):
+        media_id = str(receipt.get("mediaId") or "")
+        if not media_id:
+            continue
+        media_ids.append(media_id)
+        blocks.append(
+            {
+                "id": f"{message_id}:image:{index}",
+                "type": "image",
+                "status": "completed",
+                "presentationKind": "image",
+                "data": {
+                    "mediaId": media_id,
+                    "receiptUrl": (
+                        f"/api/agent/media/{quote(media_id, safe='')}/content"
+                        f"?sessionId={quote(session_id, safe='')}"
+                    ),
+                    "alt": str(receipt.get("fileName") or "对话图片")[:160],
+                    "mimeType": str(receipt.get("mimeType") or ""),
+                    "width": receipt.get("width"),
+                    "height": receipt.get("height"),
+                },
+            }
+        )
+    payload: dict[str, object] = {
+        "schemaVersion": "rag-ime.agent-message.v1",
+        "id": message_id,
+        "sessionId": session_id,
+        "turnId": turn_id,
+        "role": "user",
+        "status": "completed",
+        "blocks": blocks,
+        "attachments": media_ids,
+        "citations": [],
+        "createdAtMs": created_at_ms,
+        "completedAtMs": created_at_ms,
+    }
+    if client_message_id:
+        payload["clientMessageId"] = client_message_id
+    validate_contract(payload, "agent-message.v1.json")
+    return payload
 
 
 def _bounded_text(value: object, *, maximum: int) -> str:

@@ -191,6 +191,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "hermes-v1")
         self.assertEqual(created["roleVersion"], "1")
+        self.assertEqual(created["modelProfile"], "gpt/gpt-5.6")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "hermes-v1")
@@ -207,6 +208,65 @@ class AgentServiceTests(unittest.TestCase):
                 }
             )
 
+    def test_user_created_persona_can_start_a_real_session(self) -> None:
+        created_role = self.service.create_role(
+            {
+                "displayName": "智鼬·雨天",
+                "tagline": "在安静的雨天陪你整理",
+                "summary": "偏向温和复盘与日常记录。",
+                "traits": ["温和", "善于复盘"],
+                "timelineModel": "terra",
+                "selectableModes": ["assistant", "coordinator"],
+            }
+        )["role"]
+
+        self.assertTrue(str(created_role["roleId"]).startswith("persona-"))
+        for internal_key in (
+            "personaPrompt",
+            "systemPrompt",
+            "safetyPolicyPrompt",
+            "toolPolicy",
+            "origin",
+        ):
+            self.assertNotIn(internal_key, created_role)
+        self.assertEqual(self.service.list_roles()["items"][-1], created_role)
+        private_role = self.service.personas.resolve(created_role["roleId"], created_role["version"])
+        self.assertIn("智鼬·雨天", private_role.system_prompt)
+        self.assertIn("只有受控审批回执有效", private_role.system_prompt)
+        session = self.service.create_session(
+            {
+                "title": "雨天整理",
+                "mode": "coordinator",
+                "roleId": created_role["roleId"],
+                "roleVersion": created_role["version"],
+            }
+        )["session"]
+        self.assertEqual(session["roleId"], created_role["roleId"])
+        self.assertEqual(session["roleVersion"], "1")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6")
+        self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+
+        room = self.service.create_room(
+            {
+                "title": "雨天协作",
+                "participants": [
+                    {"roleId": created_role["roleId"], "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        self.assertEqual(room["participants"][0]["roleId"], created_role["roleId"])
+
+        with self.assertRaisesRegex(ValueError, "tool policy cannot be overridden"):
+            self.service.create_session(
+                {
+                    "title": "越权工具策略",
+                    "roleId": created_role["roleId"],
+                    "roleVersion": "1",
+                    "toolProfileVersion": "subagent-readonly-v1",
+                }
+            )
+
     def test_room_intercom_delivery_uses_pi_transcript_without_memory_checkpoint(self) -> None:
         room = self.service.create_room(
             {
@@ -218,6 +278,10 @@ class AgentServiceTests(unittest.TestCase):
             }
         )["room"]
         source, target = room["participants"]
+        source_session = self.service.sessions.get(str(source["sessionId"]))
+        target_session = self.service.sessions.get(str(target["sessionId"]))
+        self.assertEqual(source_session["modelProfile"], "gpt/gpt-5.6")
+        self.assertEqual(target_session["modelProfile"], "gpt/gpt-5.6")
         item = {
             "id": "room-message:test",
             "kind": "ask",
@@ -324,6 +388,38 @@ class AgentServiceTests(unittest.TestCase):
             ["model", "thinking"],
         )
 
+    def test_command_catalog_exposes_only_pi_prompt_commands_and_degrades_cleanly(self) -> None:
+        session = self.service.create_session({"title": "命令目录"})["session"]
+        session_id = str(session["id"])
+        pi_commands = [
+            {
+                "name": "review",
+                "invocation": "/review",
+                "description": "Review the active change",
+                "source": "extension",
+            }
+        ]
+        with patch.object(
+            self.service.runtime,
+            "command_catalog",
+            return_value=pi_commands,
+        ):
+            response = self.service.command_catalog(session_id)
+
+        self.assertTrue(response["runtimeAvailable"])
+        self.assertEqual(response["items"], pi_commands)
+
+        with patch.object(
+            self.service.runtime,
+            "command_catalog",
+            side_effect=PiRuntimeError("private runtime path"),
+        ):
+            unavailable = self.service.command_catalog(session_id)
+
+        self.assertFalse(unavailable["runtimeAvailable"])
+        self.assertEqual(unavailable["items"], [])
+        self.assertNotIn("private runtime path", json.dumps(unavailable))
+
     def test_session_lifecycle_probes_memory_due_without_running_the_organizer(self) -> None:
         session = self.service.create_session({"title": "生命周期"})["session"]
         session_id = str(session["id"])
@@ -422,24 +518,36 @@ class AgentServiceTests(unittest.TestCase):
             file_name="screen.png",
         )["media"]
 
-        with patch.object(
-            self.service.runtime,
-            "prompt",
-            return_value={
-                "accepted": True,
-                "turnId": "turn:image:1",
-                "piEntryId": "pi-entry:image:1",
-                "response": {"success": True},
-            },
-        ) as prompt:
+        with (
+            patch.object(
+                self.service.runtime,
+                "model_catalog",
+                return_value={"selected": {"supportsImages": True}},
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:image:1",
+                    "piEntryId": "pi-entry:image:1",
+                    "response": {"success": True},
+                },
+            ) as prompt,
+        ):
             response = self.service.prompt(
                 session_id,
-                {"message": "这张图里有什么", "attachments": [imported["mediaId"]]},
+                {
+                    "message": "这张图里有什么",
+                    "attachments": [imported["mediaId"]],
+                    "clientMessageId": "web-image-1",
+                },
             )
 
         images = prompt.call_args.kwargs["images"]
         self.assertEqual(images[0]["mimeType"], "image/png")
         self.assertEqual(base64.b64decode(images[0]["data"]), PNG_1X1)
+        self.assertEqual(prompt.call_args.kwargs["client_message_id"], "web-image-1")
         self.assertEqual(response["attachments"][0]["mediaId"], imported["mediaId"])
         self.assertEqual(
             self.service.media.attachments_for_entry(
@@ -448,10 +556,43 @@ class AgentServiceTests(unittest.TestCase):
             )[0]["mediaId"],
             imported["mediaId"],
         )
+        events, _ = self.service.events.replay(session_id)
+        user_event = next(event for event in events if event.event_type == "message_completed")
+        self.assertEqual(user_event.payload["clientMessageId"], "web-image-1")
+        self.assertEqual(user_event.payload["message"]["id"], "pi-entry:image:1")
+        self.assertEqual(user_event.payload["message"]["clientMessageId"], "web-image-1")
+        image_block = user_event.payload["message"]["blocks"][1]
+        self.assertEqual(image_block["type"], "image")
+        self.assertIn("/api/agent/media/", image_block["data"]["receiptUrl"])
 
         deleted = self.service.delete_session(session_id)
         self.assertEqual(deleted["mediaFilesDeleted"], 1)
         self.assertEqual(list(self.service.media.root.glob("*.blob")), [])
+
+    def test_text_only_pi_model_rejects_managed_image_before_prompt(self) -> None:
+        session = self.service.create_session({"title": "文本模型"})["session"]
+        session_id = str(session["id"])
+        imported = self.service.import_media(
+            session_id=session_id,
+            data=PNG_1X1,
+            mime_type="image/png",
+            file_name="screen.png",
+        )["media"]
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "model_catalog",
+                return_value={"selected": {"supportsImages": False}},
+            ),
+            patch.object(self.service.runtime, "prompt") as prompt,
+        ):
+            with self.assertRaisesRegex(ValueError, "当前模型不支持图片"):
+                self.service.prompt(
+                    session_id,
+                    {"message": "看看图片", "attachments": [imported["mediaId"]]},
+                )
+        prompt.assert_not_called()
 
     def test_persisted_runtime_toggle_is_used_unless_development_env_overrides_it(self) -> None:
         settings = {"agent": {"pi": {"enabled": True, "idleTimeoutSeconds": 321}}}
@@ -627,7 +768,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(events[-1].event_type, "approval_resolved")
         self.assertTrue(events[-1].payload["externalFinalized"])
 
-    def test_final_user_prompt_creates_source_checkpoint_without_assistant_text(self) -> None:
+    def test_final_user_prompt_creates_private_source_checkpoint_without_activity(self) -> None:
         session = self.service.create_session({"title": "连续记忆"})["session"]
         with patch.object(
             self.service.runtime,
@@ -649,7 +790,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0]["sourceRole"], "user")
         events, _ = self.service.events.replay(str(session["id"]))
-        self.assertIn("memory_checkpointed", [event.event_type for event in events])
+        self.assertNotIn("memory_checkpointed", [event.event_type for event in events])
 
     def test_input_method_deep_search_reuses_daily_assistant_and_checkpoints_only_question(self) -> None:
         runtime_status = {

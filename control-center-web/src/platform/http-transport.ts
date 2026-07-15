@@ -17,6 +17,12 @@ import {
   type ControlSubscription,
   type ControlTransport,
   type FrontendCapabilities,
+  type KnowledgeDocumentImportInput,
+  type KnowledgeDocumentImportReceipt,
+  type KnowledgeAssetPayload,
+  type KnowledgeAssetReadInput,
+  type KnowledgeDocumentSourcePayload,
+  type KnowledgeDocumentSourceReadInput,
 } from './transport';
 
 export interface HttpControlTransportOptions {
@@ -103,6 +109,177 @@ export class HttpControlTransport implements ControlTransport {
     }
     const contract = request.responseContract ?? route.responseContract;
     return (contract ? parseContract(contract, payload) : payload) as Response;
+  }
+
+  async importKnowledgeDocuments(
+    input: KnowledgeDocumentImportInput,
+  ): Promise<KnowledgeDocumentImportReceipt[]> {
+    const { files, maxFiles } = assertKnowledgeDocumentImportInput(input, true);
+    const parserProvider = knowledgeParserProvider(input);
+    const receipts: KnowledgeDocumentImportReceipt[] = [];
+    for (const file of files.slice(0, maxFiles)) {
+      if (input.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const mimeType = file.type || 'application/octet-stream';
+      const url = this.url(
+        'knowledgeBases.document.import',
+        { kbId: input.kbId },
+        {
+          fileName: file.name,
+          mimeType,
+          ...(parserProvider ? { parserProvider } : {}),
+        },
+      );
+      const response = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: new Headers({
+          Accept: 'application/json',
+          'Content-Type': mimeType,
+          'Cache-Control': 'no-store',
+          'X-Rag-Ime-File-Size': String(file.size),
+        }),
+        body: file,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      const payload = await responsePayload(response);
+      if (!response.ok) {
+        const message =
+          isRecord(payload) && typeof payload.error === 'string'
+            ? payload.error
+            : `knowledgeBases.document.import returned HTTP ${response.status}`;
+        throw new ControlTransportHttpError(
+          'knowledgeBases.document.import',
+          response.status,
+          message,
+          payload,
+        );
+      }
+      receipts.push(parseKnowledgeDocumentImportResponse(payload, input.kbId, file));
+    }
+    return receipts;
+  }
+
+  async readKnowledgeAsset(input: KnowledgeAssetReadInput): Promise<KnowledgeAssetPayload> {
+    assertKnowledgeAssetReadInput(input);
+    const url = this.url(
+      'knowledgeBases.asset.get',
+      { kbId: input.kbId, fileId: input.fileId, assetId: input.assetId },
+      undefined,
+    );
+    const response = await this.fetchImpl(url, {
+      method: 'GET',
+      headers: new Headers({
+        Accept: [...KNOWLEDGE_ASSET_MIME_TYPES].join(', '),
+        'Cache-Control': 'no-store',
+      }),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (!response.ok) {
+      const payload = await responsePayload(response);
+      const message =
+        isRecord(payload) && typeof payload.error === 'string'
+          ? payload.error
+          : `knowledgeBases.asset.get returned HTTP ${response.status}`;
+      throw new ControlTransportHttpError('knowledgeBases.asset.get', response.status, message, payload);
+    }
+    if (response.url && response.url !== url.toString()) {
+      throw new TypeError('Knowledge asset response was redirected outside its fixed route');
+    }
+    const mimeType = response.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+    const declaredSize = Number(response.headers.get('Content-Length'));
+    const sha256 = normalizedEntityTag(response.headers.get('ETag'));
+    if (
+      !KNOWLEDGE_ASSET_MIME_TYPES.has(mimeType) ||
+      !Number.isSafeInteger(declaredSize) ||
+      declaredSize <= 0 ||
+      declaredSize > MAX_KNOWLEDGE_ASSET_BYTES ||
+      sha256 !== input.assetId ||
+      response.headers.get('X-Content-Type-Options')?.toLowerCase() !== 'nosniff' ||
+      !response.headers.get('Content-Disposition')?.toLowerCase().startsWith('inline')
+    ) {
+      throw new TypeError('Knowledge asset returned invalid security headers');
+    }
+    const blob = await response.blob();
+    if (
+      blob.size !== declaredSize ||
+      blob.size > MAX_KNOWLEDGE_ASSET_BYTES ||
+      (await sha256Hex(blob)) !== sha256
+    ) {
+      throw new TypeError('Knowledge asset size did not match its bounded receipt');
+    }
+    return {
+      kbId: input.kbId,
+      fileId: input.fileId,
+      assetId: input.assetId,
+      mimeType,
+      byteSize: blob.size,
+      sha256,
+      blob,
+    };
+  }
+
+  async readKnowledgeDocumentSource(
+    input: KnowledgeDocumentSourceReadInput,
+  ): Promise<KnowledgeDocumentSourcePayload> {
+    assertKnowledgeDocumentSourceReadInput(input);
+    const url = this.url(
+      'knowledgeBases.document.source',
+      { kbId: input.kbId, fileId: input.fileId },
+      undefined,
+    );
+    const response = await this.fetchImpl(url, {
+      method: 'GET',
+      headers: new Headers({
+        Accept: [...KNOWLEDGE_SOURCE_MIME_TYPES].join(', '),
+        'Cache-Control': 'no-store',
+      }),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (!response.ok) {
+      const payload = await responsePayload(response);
+      const message =
+        isRecord(payload) && typeof payload.error === 'string'
+          ? payload.error
+          : `knowledgeBases.document.source returned HTTP ${response.status}`;
+      throw new ControlTransportHttpError(
+        'knowledgeBases.document.source',
+        response.status,
+        message,
+        payload,
+      );
+    }
+    if (response.url && response.url !== url.toString()) {
+      throw new TypeError('Knowledge source response was redirected outside its fixed route');
+    }
+    const mimeType = response.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+    const declaredSize = Number(response.headers.get('Content-Length'));
+    const sha256 = normalizedEntityTag(response.headers.get('ETag'));
+    if (
+      !KNOWLEDGE_SOURCE_MIME_TYPES.has(mimeType) ||
+      !Number.isSafeInteger(declaredSize) ||
+      declaredSize <= 0 ||
+      declaredSize > MAX_KNOWLEDGE_SOURCE_BYTES ||
+      !/^[a-f0-9]{64}$/.test(sha256) ||
+      response.headers.get('X-Content-Type-Options')?.toLowerCase() !== 'nosniff' ||
+      !response.headers.get('Content-Disposition')?.toLowerCase().startsWith('inline')
+    ) {
+      throw new TypeError('Knowledge document source returned invalid security headers');
+    }
+    const blob = await response.blob();
+    if (
+      blob.size !== declaredSize ||
+      blob.size > MAX_KNOWLEDGE_SOURCE_BYTES ||
+      (await sha256Hex(blob)) !== sha256
+    ) {
+      throw new TypeError('Knowledge document source did not match its bounded receipt');
+    }
+    return {
+      kbId: input.kbId,
+      fileId: input.fileId,
+      mimeType,
+      byteSize: blob.size,
+      sha256,
+      blob,
+    };
   }
 
   subscribe<Event = unknown>(
@@ -246,6 +423,135 @@ function streamResumeToken(event: unknown, sseId: string, fallback: string): str
 
 function isSnapshotRequired(event: unknown): boolean {
   return isRecord(event) && event.eventType === 'snapshot_required';
+}
+
+function assertKnowledgeDocumentImportInput(
+  input: KnowledgeDocumentImportInput,
+  requireFiles: true,
+): { files: File[]; maxFiles: number } {
+  if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(input.kbId)) {
+    throw new TypeError('Knowledge import requires a valid kbId');
+  }
+  const maxFiles = input.maxFiles ?? 8;
+  if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > 20) {
+    throw new TypeError('Knowledge import maxFiles must be between 1 and 20');
+  }
+  const files = Array.from(input.files ?? []);
+  if (requireFiles && files.length === 0) {
+    throw new TypeError('HTTP knowledge import requires browser-selected File objects');
+  }
+  if (files.length > maxFiles) throw new TypeError('Knowledge import selected too many files');
+  for (const file of files) {
+    if (!(file instanceof File) || file.size <= 0 || file.size > 200 * 1024 * 1024) {
+      throw new TypeError('Knowledge documents must be non-empty files no larger than 200 MiB');
+    }
+    if (!file.name || file.name.length > 512 || file.name.includes('\u0000')) {
+      throw new TypeError('Knowledge document file name is invalid');
+    }
+  }
+  return { files, maxFiles };
+}
+
+function knowledgeParserProvider(
+  input: KnowledgeDocumentImportInput,
+): 'auto' | 'builtin' | 'mineru_local_http' | undefined {
+  if (input.parserProvider && input.parser) {
+    throw new TypeError('Knowledge import accepts only one parser selector');
+  }
+  if (input.parserProvider) return input.parserProvider;
+  if (input.parser === 'mineru') return 'mineru_local_http';
+  return input.parser;
+}
+
+const KNOWLEDGE_ASSET_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+]);
+const MAX_KNOWLEDGE_ASSET_BYTES = 25 * 1024 * 1024;
+const KNOWLEDGE_SOURCE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/tiff',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+const MAX_KNOWLEDGE_SOURCE_BYTES = 50 * 1024 * 1024;
+
+function assertKnowledgeAssetReadInput(input: KnowledgeAssetReadInput): void {
+  if (!isRecord(input) || Object.keys(input).some((key) => !['kbId', 'fileId', 'assetId', 'signal'].includes(key))) {
+    throw new TypeError('Knowledge asset read input contained an unsupported field');
+  }
+  if (!isSafeKnowledgeId(input.kbId) || !isSafeKnowledgeId(input.fileId)) {
+    throw new TypeError('Knowledge asset read requires bounded kbId and fileId values');
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.assetId)) {
+    throw new TypeError('Knowledge asset read requires a sha256 assetId');
+  }
+}
+
+function assertKnowledgeDocumentSourceReadInput(input: KnowledgeDocumentSourceReadInput): void {
+  if (!isRecord(input) || Object.keys(input).some((key) => !['kbId', 'fileId', 'signal'].includes(key))) {
+    throw new TypeError('Knowledge document source input contained an unsupported field');
+  }
+  if (!isSafeKnowledgeId(input.kbId) || !isSafeKnowledgeId(input.fileId)) {
+    throw new TypeError('Knowledge document source requires bounded kbId and fileId values');
+  }
+}
+
+function isSafeKnowledgeId(value: string): boolean {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value);
+}
+
+function normalizedEntityTag(value: string | null): string {
+  return (value ?? '').trim().replace(/^W\//, '').replace(/^"|"$/g, '').toLowerCase();
+}
+
+async function sha256Hex(blob: Blob): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function parseKnowledgeDocumentImportResponse(
+  payload: unknown,
+  kbId: string,
+  file: File,
+): KnowledgeDocumentImportReceipt {
+  if (
+    !isRecord(payload) ||
+    payload.schemaVersion !== 'rag-ime.knowledge-document-import.v1' ||
+    payload.ok !== true ||
+    !isRecord(payload.receipt)
+  ) {
+    throw new TypeError('Knowledge document import returned an invalid envelope');
+  }
+  const receipt = payload.receipt;
+  if (
+    receipt.kbId !== kbId ||
+    typeof receipt.documentId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(receipt.documentId) ||
+    receipt.fileName !== file.name ||
+    typeof receipt.mimeType !== 'string' ||
+    receipt.byteSize !== file.size ||
+    typeof receipt.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(receipt.sha256) ||
+    typeof receipt.status !== 'string' ||
+    receipt.status.length === 0
+  ) {
+    throw new TypeError('Knowledge document import returned an invalid receipt');
+  }
+  return receipt as unknown as KnowledgeDocumentImportReceipt;
 }
 
 async function responsePayload(response: Response): Promise<unknown> {

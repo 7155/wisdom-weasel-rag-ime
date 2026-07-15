@@ -22,14 +22,14 @@ export function SessionRail({
     return value.includes(query.trim().toLowerCase());
   }), [query, sessions]);
   return (
-    <aside className="agent-session-rail" aria-label="Agent Sessions">
+    <aside className="agent-session-rail" aria-label="连续对话">
       <header>
-        <div><strong>Sessions</strong><small>{sessions.length} 个连续对话</small></div>
-        <IconButton label="新建 Session" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
+        <div><strong>对话</strong><small>{sessions.length} 个连续对话</small></div>
+        <IconButton label="新建对话" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
       </header>
       <label className="agent-session-search">
         <Search size={14} aria-hidden="true" />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Session" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话" />
       </label>
       <div className="agent-session-list" aria-busy={loading || undefined}>
         {filtered.map((session) => (

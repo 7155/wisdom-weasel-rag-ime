@@ -22,6 +22,7 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "prompt",
         "abort",
         "compact",
+        "commands",
         "models",
         "model",
         "thinking",

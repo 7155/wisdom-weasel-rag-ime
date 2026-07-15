@@ -697,7 +697,10 @@ export const contractSchemas = {
                   "minLength": 1
                 },
                 "8768": {
-                  "type": "string",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
                   "minLength": 1
                 }
               }
@@ -3219,7 +3222,10 @@ export const contractSchemas = {
           "maintenance_apply",
           "maintenance_rollback",
           "list",
+          "list_bases",
           "search",
+          "find",
+          "open",
           "recall",
           "deep_recall",
           "route_status",
@@ -4378,6 +4384,373 @@ export const contractSchemas = {
       }
     }
   },
+  "knowledge-document-detail.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://rag-ime.local/contracts/knowledge-document-detail.v1.json",
+    "title": "RAG-IME Knowledge Document Detail",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "document",
+      "chunks",
+      "pages",
+      "assets",
+      "tables",
+      "artifact",
+      "contentWindow"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.knowledge-library.v1"
+      },
+      "document": {
+        "type": "object",
+        "required": [
+          "documentId",
+          "kbId",
+          "fileName",
+          "mimeType",
+          "byteSize",
+          "sha256",
+          "status",
+          "sourceReadPath"
+        ],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kbId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mimeType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "parsing",
+              "indexing",
+              "ready",
+              "stale",
+              "failed",
+              "deleting"
+            ]
+          },
+          "sourceReadPath": {
+            "type": "string",
+            "pattern": "^/api/knowledge-bases/"
+          }
+        },
+        "additionalProperties": true
+      },
+      "chunks": {
+        "type": "object",
+        "required": [
+          "items",
+          "offset",
+          "limit",
+          "total",
+          "hasMore"
+        ],
+        "properties": {
+          "items": {
+            "type": "array"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "pages": {
+        "type": "array"
+      },
+      "assets": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "assetId",
+            "name",
+            "mimeType",
+            "byteSize",
+            "sha256",
+            "readPath"
+          ],
+          "properties": {
+            "assetId": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "name": {
+              "type": "string"
+            },
+            "mimeType": {
+              "enum": [
+                "image/png",
+                "image/jpeg",
+                "image/gif",
+                "image/webp",
+                "image/bmp"
+              ]
+            },
+            "byteSize": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 26214400
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "readPath": {
+              "type": "string",
+              "pattern": "^/api/knowledge-bases/"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "tables": {
+        "type": "array"
+      },
+      "artifact": {
+        "type": "object"
+      },
+      "contentWindow": {
+        "type": "object"
+      }
+    },
+    "additionalProperties": false
+  },
+  "knowledge-document-import.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://rag-ime.local/contracts/knowledge-document-import.v1.json",
+    "title": "RAG-IME Knowledge Document Import Receipt",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "receipt"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.knowledge-document-import.v1"
+      },
+      "ok": {
+        "const": true
+      },
+      "receipt": {
+        "type": "object",
+        "required": [
+          "kbId",
+          "documentId",
+          "fileName",
+          "mimeType",
+          "byteSize",
+          "sha256",
+          "status"
+        ],
+        "properties": {
+          "kbId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "documentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fileName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mimeType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "parsing",
+              "indexing",
+              "ready",
+              "stale",
+              "failed",
+              "deleting"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "knowledge-library.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://rag-ime.local/contracts/knowledge-library.v1.json",
+    "title": "RAG-IME Document Knowledge Library",
+    "type": "object",
+    "required": [
+      "schemaVersion"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.knowledge-library.v1"
+      },
+      "bases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "parserMode",
+            "agentEnabled"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": {
+              "type": "string"
+            },
+            "parserMode": {
+              "enum": [
+                "auto",
+                "builtin",
+                "mineru"
+              ]
+            },
+            "agentEnabled": {
+              "type": "boolean"
+            },
+            "chunkingConfig": {
+              "$ref": "#/$defs/chunkingConfig"
+            },
+            "retrievalConfig": {
+              "$ref": "#/$defs/retrievalConfig"
+            },
+            "configRevision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "items": {
+        "type": "array"
+      }
+    },
+    "$defs": {
+      "chunkingConfig": {
+        "type": "object",
+        "required": [
+          "strategy",
+          "size",
+          "overlap",
+          "respectHeadings",
+          "respectPageBoundaries"
+        ],
+        "properties": {
+          "strategy": {
+            "enum": [
+              "markdown",
+              "paragraph",
+              "fixed"
+            ]
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 200,
+            "maximum": 8000
+          },
+          "overlap": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2000
+          },
+          "respectHeadings": {
+            "type": "boolean"
+          },
+          "respectPageBoundaries": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "retrievalConfig": {
+        "type": "object",
+        "required": [
+          "mode",
+          "topK",
+          "threshold"
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "lexical",
+              "hybrid",
+              "dense"
+            ]
+          },
+          "topK": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": true
+  },
   "management-work-error.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.management-work-error.v1",
@@ -4713,7 +5086,8 @@ export const contractSchemas = {
         "type": "string",
         "enum": [
           "tag",
-          "group"
+          "group",
+          "book"
         ]
       },
       "entityId": {

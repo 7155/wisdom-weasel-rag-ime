@@ -15,7 +15,7 @@ final class ControlCenterAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         "worker-src 'self' blob:",
         "connect-src 'self'",
         "object-src 'none'",
-        "frame-src 'none'",
+        "frame-src blob:",
         "base-uri 'none'",
         "form-action 'none'",
     ].joined(separator: "; ")

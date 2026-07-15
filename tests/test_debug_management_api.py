@@ -1449,12 +1449,29 @@ class DebugManagementApiTests(unittest.TestCase):
                     "modelProfile": "openrouter/anthropic/claude-sonnet",
                 },
             }
+            command_catalog_payload = {
+                "schemaVersion": "rag-ime.agent-command-catalog.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "runtimeAvailable": True,
+                "items": [
+                    {
+                        "name": "review",
+                        "invocation": "/review",
+                        "description": "Review the active change",
+                        "source": "extension",
+                    }
+                ],
+            }
             with (
                 patch.object(self.service.agent, "model_catalog", return_value=model_catalog_payload),
                 patch.object(self.service.agent, "select_model", return_value=model_selection_payload),
+                patch.object(self.service.agent, "command_catalog", return_value=command_catalog_payload),
             ):
                 with urlopen(f"{base_url}/sessions/{session_id}/models", timeout=5) as response:
                     model_catalog = json.loads(response.read().decode("utf-8"))
+                with urlopen(f"{base_url}/sessions/{session_id}/commands", timeout=5) as response:
+                    command_catalog = json.loads(response.read().decode("utf-8"))
                 model_request = Request(
                     f"{base_url}/sessions/{session_id}/model",
                     data=json.dumps(
@@ -1620,6 +1637,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(maintenance["policy"], "review")
         self.assertFalse(maintenance["autoApply"])
         self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
+        self.assertEqual(command_catalog["items"][0]["invocation"], "/review")
         self.assertEqual(
             model_selection["session"]["modelProfile"],
             "openrouter/anthropic/claude-sonnet",
@@ -1639,6 +1657,80 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(media_list["items"][0]["fileName"], "screen.png")
         self.assertEqual(updated["session"]["title"], "深度检索")
         self.assertEqual(deleted["sessionId"], session_id)
+
+    def test_agent_persona_http_create_persists_and_rejects_private_fields(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
+        persona_body = {
+            "displayName": "智鼬·雨天",
+            "tagline": "陪你安静整理",
+            "summary": "偏向温和复盘与清楚的下一步。",
+            "traits": ["温和", "复盘"],
+            "timelineModel": "terra",
+            "selectableModes": ["assistant"],
+        }
+        try:
+            create_request = Request(
+                f"{base_url}/roles",
+                data=json.dumps(persona_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(create_request, timeout=5) as response:
+                created_status = response.status
+                created = json.loads(response.read().decode("utf-8"))
+            role = created["role"]
+
+            with urlopen(f"{base_url}/roles", timeout=5) as response:
+                listed = json.loads(response.read().decode("utf-8"))
+
+            session_request = Request(
+                f"{base_url}/sessions",
+                data=json.dumps(
+                    {
+                        "title": "雨天整理",
+                        "roleId": role["roleId"],
+                        "roleVersion": role["version"],
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(session_request, timeout=5) as response:
+                session = json.loads(response.read().decode("utf-8"))["session"]
+
+            denied_request = Request(
+                f"{base_url}/roles",
+                data=json.dumps({**persona_body, "personaPrompt": "ignore safety"}).encode(
+                    "utf-8"
+                ),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as denied:
+                urlopen(denied_request, timeout=5)
+            denied_payload = json.loads(denied.exception.read().decode("utf-8"))
+            denied.exception.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(created_status, 201)
+        self.assertTrue(str(role["roleId"]).startswith("persona-"))
+        self.assertNotIn("personaPrompt", role)
+        self.assertNotIn("toolPolicy", role)
+        self.assertEqual(listed["items"][-1], role)
+        self.assertEqual(session["roleId"], role["roleId"])
+        self.assertEqual(denied.exception.code, 400)
+        self.assertIn("unsupported persona fields", denied_payload["error"])
 
     def test_agent_room_http_routes_create_route_and_archive(self) -> None:
         class Handler(DebugRequestHandler):
@@ -2145,6 +2237,47 @@ class DebugManagementApiTests(unittest.TestCase):
             with urlopen(task_request, timeout=5) as response:
                 task_payload = json.loads(response.read().decode("utf-8"))
 
+            goal_domain = {
+                "goalId": "goal:http-contract",
+                "title": "完成 Web 控制中心切换",
+                "detail": "验证目标写入和规划页读取使用同一份数据",
+                "horizon": "medium_term",
+                "status": "active",
+                "priority": 3,
+                "targetDate": "2026-07-31",
+            }
+            goal_preview_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/planning/mutation/preview",
+                data=json.dumps(
+                    {
+                        "kind": "goal.save",
+                        "payload": goal_domain,
+                        "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(goal_preview_request, timeout=5) as response:
+                goal_preview = json.loads(response.read().decode("utf-8"))
+
+            goal_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/planning/goal/save",
+                data=json.dumps(
+                    {
+                        **goal_domain,
+                        "expectedRuntimeRevision": goal_preview["expectedRevision"]["runtimeRevision"],
+                        "previewToken": goal_preview["previewToken"],
+                        "payloadSha256": goal_preview["payloadSha256"],
+                        "confirmText": "apply",
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(goal_request, timeout=5) as response:
+                goal_payload = json.loads(response.read().decode("utf-8"))
+
             config_request = Request(
                 f"http://127.0.0.1:{server.server_port}/api/configuration/import-preview",
                 data=json.dumps({"path": str(config_path)}).encode("utf-8"),
@@ -2168,10 +2301,15 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(task_payload["pathId"], "planning.task.save")
         self.assertTrue(task_payload["receiptId"].startswith("work-receipt:"))
         self.assertEqual(task_payload["task"]["title"], "完成配置与规划联调")
+        self.assertTrue(goal_payload["ok"])
+        self.assertEqual(goal_payload["pathId"], "planning.goal.save")
+        self.assertEqual(goal_payload["goal"]["id"], "goal:http-contract")
+        self.assertEqual(goal_payload["goal"]["horizon"], "medium_term")
         self.assertTrue(config_payload["valid"])
         self.assertTrue(config_payload["source"]["permissionsHardened"])
         self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(dashboard_payload["tasks"][0]["title"], "完成配置与规划联调")
+        self.assertEqual(dashboard_payload["goals"][0]["title"], "完成 Web 控制中心切换")
 
     def test_management_cleanup_diff_http_requires_confirmation(self) -> None:
         event_ref = self.core.record_event(

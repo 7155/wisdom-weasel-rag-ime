@@ -32,6 +32,7 @@ class ControlScope(str, Enum):
     AGENT_DELEGATE = "agent.delegate"
     PLANNING_READ = "planning.read"
     MEMORY_READ = "memory.read"
+    MEMORY_WRITE = "memory.write"
     KNOWLEDGE_READ = "knowledge.read"
     HISTORY_READ = "history.read"
     DIAGNOSTICS_READ = "diagnostics.read"

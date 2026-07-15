@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from rag_ime.agent_tool_ids import ASSISTANT_CONTROL_TOOL_IDS, CONTROL_TOOL_IDS
 from rag_ime.managed_pi_runtime import (
     MANIFEST_NAME,
     POINTER_NAME,
@@ -41,7 +42,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(discovered.executable.name, "cli.js")
         self.assertEqual(Path(discovered.node_executable).name, "node")
         self.assertEqual(discovered.extension_path.name, "rag-ime-control.ts")
-        self.assertEqual(discovered.tools, ("ime_memory",))
+        self.assertEqual(discovered.tools, CONTROL_TOOL_IDS)
         self.assertTrue((self.app_support / "PiRuntime" / POINTER_NAME).is_file())
 
     def test_discovery_rejects_pointer_and_runtime_file_tampering(self) -> None:
@@ -121,6 +122,10 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(config.installation_error, "")
         command = config.launch_command(session={"title": "managed"})
         self.assertEqual(command[:2], [installed.node_executable, str(installed.executable)])
+        self.assertEqual(
+            command[command.index("--tools") + 1],
+            ",".join(ASSISTANT_CONTROL_TOOL_IDS),
+        )
 
     def test_explicit_development_executable_overrides_managed_install(self) -> None:
         payload, _ = self._payload("runtime-1")
@@ -195,7 +200,6 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             pi_entrypoint="lib/pi/dist/cli.js",
             node_entrypoint="bin/node",
             extension_entrypoint="extensions/rag-ime-control.ts",
-            tools=("ime_memory",),
             source_repository="local/pi",
             source_commit=hashlib.sha256(runtime_version.encode("utf-8")).hexdigest()[:12],
             source_package="@earendil-works/pi-coding-agent",

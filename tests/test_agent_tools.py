@@ -295,6 +295,54 @@ class _Core:
         return {"hits": 3, "misses": 1}
 
 
+class _KnowledgeClient:
+    def __init__(self):
+        self.calls = []
+
+    def list_bases(self, payload):
+        self.calls.append(("list_bases", dict(payload)))
+        return {
+            "items": [
+                {
+                    "kbId": "kb:project-docs",
+                    "name": "项目资料",
+                    "agentEnabled": True,
+                    "indexedDocumentCount": 2,
+                }
+            ]
+        }
+
+    def search(self, payload):
+        self.calls.append(("search", dict(payload)))
+        return {
+            "schemaVersion": "rag-ime.document-knowledge-search.v1",
+            "kbId": payload["kbId"],
+            "query": payload["query"],
+            "items": [
+                {
+                    "chunkId": "chunk:1",
+                    "fileId": "file:1",
+                    "fileName": "architecture.md",
+                    "content": "Pi 只负责 Agent Loop；输入法热路径保持独立。",
+                    "sourcePath": "/private/project/architecture.md",
+                    "citation": {"page": None, "startLine": 41, "endLine": 42},
+                }
+            ],
+        }
+
+    def find(self, payload):
+        self.calls.append(("find", dict(payload)))
+        return {"items": [{"line": 41, "content": "输入法热路径保持独立。"}]}
+
+    def open(self, payload):
+        self.calls.append(("open", dict(payload)))
+        return {"fileId": payload["fileId"], "startLine": 41, "content": "引用窗口"}
+
+    def status(self, payload):
+        self.calls.append(("status", dict(payload)))
+        return {"available": True, "state": "ready", "workerUrl": "http://127.0.0.1:8769"}
+
+
 class _Facade:
     def __init__(self):
         self.memory_run_status = "draft"
@@ -473,12 +521,14 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.session = self.store.create(title="tool test", created_at_ms=1)
         self.management = _Management()
         self.facade = _Facade()
+        self.knowledge = _KnowledgeClient()
         self.gateway = ControlToolGateway(
             sessions=self.store,
             management=self.management,
             core=_Core(),
             project="wisdom-weasel-rag-ime",
             facade=self.facade,
+            knowledge_client=self.knowledge,
         )
 
     def tearDown(self) -> None:
@@ -552,6 +602,11 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(memory["operationRisks"]["maintenance_preview"], "R0")
         self.assertEqual(memory["operationRisks"]["maintenance_apply"], "R1")
         self.assertEqual(memory["operationRisks"]["maintenance_rollback"], "R1")
+        knowledge = next(manifest for manifest in manifests if manifest["id"] == "ime_knowledge")
+        self.assertEqual(
+            knowledge["operations"],
+            ["list_bases", "search", "find", "open", "status"],
+        )
         input_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_input")
         self.assertEqual(input_tool["riskLevel"], "R1")
         self.assertEqual(input_tool["operationRisks"]["preview_settings"], "R0")
@@ -1249,20 +1304,30 @@ class ControlToolGatewayTests(unittest.TestCase):
                 )
             )
 
-    def test_overview_planning_knowledge_and_models_use_existing_services(self) -> None:
+    def test_overview_planning_document_knowledge_and_models_use_scoped_services(self) -> None:
         overview = self.gateway.execute(self._tool_call("ime_overview", "status"))["result"]
         planning = self.gateway.execute(self._tool_call("ime_planning", "dashboard"))["result"]
+        bases = self.gateway.execute(self._tool_call("ime_knowledge", "list_bases"))["result"]
         knowledge = self.gateway.execute(
-            self._tool_call("ime_knowledge", "recall", query="为什么普通生成不经过 Pi")
+            self._tool_call(
+                "ime_knowledge",
+                "search",
+                kbId="kb:project-docs",
+                query="为什么普通生成不经过 Pi",
+                topK=6,
+            )
         )["result"]
         models = self.gateway.execute(self._tool_call("ime_models", "status"))["result"]
 
         self.assertEqual(overview["unhealthyComponents"], ["predictor"])
         self.assertIn("1 个未完成任务", planning["summary"])
-        self.assertEqual(knowledge["items"][0]["text"], "Pi 只负责 Agent Loop")
+        self.assertEqual(bases["items"][0]["kbId"], "kb:project-docs")
+        self.assertIn("Pi 只负责 Agent Loop", knowledge["items"][0]["content"])
+        self.assertNotIn("/private/project", str(knowledge))
+        self.assertEqual(self.knowledge.calls[-1][0], "search")
         self.assertIn("深度知识模型当前不可用", models["summary"])
 
-    def test_write_operations_cross_project_recall_and_secrets_fail_closed(self) -> None:
+    def test_write_operations_knowledge_management_and_secrets_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "not agent-manageable"):
             self.gateway.execute(
                 self._tool_call(
@@ -1271,14 +1336,34 @@ class ControlToolGatewayTests(unittest.TestCase):
                     changes=[{"key": "privacy.debugIncludeText", "value": True}],
                 )
             )
-        blocked = self.gateway.execute(
-            self._tool_call("ime_knowledge", "recall", query="other", project="another-project")
-        )["result"]
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            self.gateway.execute(self._tool_call("ime_knowledge", "import", kbId="kb:project-docs"))
         audit = self.gateway.execute(self._tool_call("ime_configuration", "audit"))["result"]
         lexicon = self.gateway.execute(self._tool_call("ime_input", "lexicon_review"))["result"]
-        self.assertEqual(blocked["items"], [])
         self.assertNotIn("must-not-leak", str(audit))
         self.assertNotIn("must-not-reach-pi", str(lexicon))
+
+    def test_document_knowledge_never_falls_back_to_personal_memory(self) -> None:
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+        )
+
+        status = gateway.execute(self._tool_call("ime_knowledge", "status"))["result"]
+        self.assertFalse(status["available"])
+        self.assertEqual(status["reason"], "knowledge_client_not_configured")
+        with self.assertRaisesRegex(ValueError, "document knowledge library is unavailable"):
+            gateway.execute(
+                self._tool_call(
+                    "ime_knowledge",
+                    "search",
+                    kbId="kb:project-docs",
+                    query="Pi",
+                )
+            )
 
     def test_pi_extension_delegates_coordinator_shell_without_node_escape_hatch(self) -> None:
         extension = (

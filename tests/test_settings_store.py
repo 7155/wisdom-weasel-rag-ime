@@ -45,13 +45,29 @@ class SettingsStoreTests(unittest.TestCase):
 
         self.assertTrue(result.settings["activeRag"]["allowRemoteModel"])
 
+    def test_mineru_settings_only_accept_a_bounded_loopback_port(self) -> None:
+        result = self.store.update_settings(
+            {
+                "knowledgeLibrary.parser.mineru.enabled": True,
+                "knowledgeLibrary.parser.mineru.port": 30001,
+            }
+        )
+
+        mineru = result.settings["knowledgeLibrary"]["parser"]["mineru"]
+        self.assertTrue(mineru["enabled"])
+        self.assertEqual(mineru["port"], 30001)
+        with self.assertRaisesRegex(ValueError, "must be >= 1024"):
+            self.store.update_settings({"knowledgeLibrary.parser.mineru.port": 80})
+        with self.assertRaisesRegex(ValueError, "must be <= 65535"):
+            self.store.update_settings({"knowledgeLibrary.parser.mineru.port": 65536})
+
     def test_dotted_leaf_update_preserves_persisted_sibling_overrides(self) -> None:
         self.store.update_settings(
             {
                 "interaction.postCommit.idleTriggerMs": 180,
                 "interaction.postCommit.maxCallsPer10s": 6,
                 "interaction.postCommit.cooldownMs": 600,
-                "interaction.postCommit.panelTtlMs": 8500,
+                "interaction.postCommit.panelTtlMs": 5000,
             }
         )
 
@@ -63,7 +79,32 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(post_commit["minDeltaChars"], 2)
         self.assertEqual(post_commit["maxCallsPer10s"], 6)
         self.assertEqual(post_commit["cooldownMs"], 600)
-        self.assertEqual(post_commit["panelTtlMs"], 8500)
+        self.assertEqual(post_commit["panelTtlMs"], 5000)
+
+    def test_voice_hotwords_accept_technical_terms_and_keep_the_enabled_state_bound(self) -> None:
+        result = self.store.update_settings(
+            {
+                "voice.hotwords": ["GPT-5.6", "API Key", "SK", "C++"],
+                "voice.hotwordsEnabled": True,
+            }
+        )
+
+        self.assertTrue(result.settings["voice"]["hotwordsEnabled"])
+        self.assertEqual(
+            result.settings["voice"]["hotwords"],
+            ["GPT-5.6", "API Key", "SK", "C++"],
+        )
+
+    def test_voice_hotwords_cannot_be_enabled_with_an_empty_or_invalid_list(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at least one word"):
+            self.store.update_settings({"voice.hotwordsEnabled": True})
+        with self.assertRaisesRegex(ValueError, "unsupported characters"):
+            self.store.update_settings(
+                {
+                    "voice.hotwords": ["bad|word"],
+                    "voice.hotwordsEnabled": True,
+                }
+            )
 
     def test_profile_save_and_activate_dry_run(self) -> None:
         saved = self.store.save_profile(

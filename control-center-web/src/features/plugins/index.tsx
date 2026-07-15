@@ -1,42 +1,154 @@
-import { Boxes, RefreshCw, Search, ShieldCheck, Wrench } from 'lucide-react';
+import {
+  Boxes,
+  CheckCircle2,
+  ChevronRight,
+  MessageCircle,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Wrench,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button, EmptyState, Field, Input, SegmentedControl } from '@/components/primitives';
-import { usePluginCatalog } from './api';
 import {
+  InlineNotice,
   ManagementPage,
   ManagementSection,
   MetricStrip,
-  OperationalList,
   QueryState,
   StatusBadge,
-  WorkflowAction,
   arrayRecords,
   asRecord,
   stringValue,
 } from '@/features/overview/management-ui';
+import { usePluginCatalog } from './api';
+import './plugins.css';
 
-const riskFilters = ['all', 'R0', 'R1', 'R2', 'R3'] as const;
+type ToolRecord = Record<string, unknown>;
+type ModeFilter = 'all' | 'assistant' | 'coordinator';
+type AvailabilityFilter = 'all' | 'online' | 'attention';
+
+const modeFilters: readonly { label: string; value: ModeFilter }[] = [
+  { label: '全部', value: 'all' },
+  { label: '日常对话', value: 'assistant' },
+  { label: '运行协调', value: 'coordinator' },
+];
+
+const domainLabels: Record<string, string> = {
+  agents: 'Agent 协作',
+  configuration: '配置管理',
+  control: '控制中心',
+  input: '输入法',
+  knowledge: '知识检索',
+  memory: '记忆',
+  models: '模型',
+  overview: '总览',
+  planning: '规划任务',
+  runtime: '诊断',
+  voice: '语音输入',
+  workspace: '工作区',
+};
+
+const operationLabels: Record<string, string> = {
+  abort: '停止任务',
+  apply_settings: '应用输入设置',
+  artifact: '查看任务产物',
+  audit: '查看审计记录',
+  cache_stats: '查看缓存状态',
+  candidate_explain: '解释候选词',
+  capabilities: '查看可用能力',
+  catalog: '浏览目录',
+  components: '检查运行组件',
+  dashboard: '查看规划面板',
+  deep_recall: '深度检索',
+  delegate: '委派任务',
+  diagnose: '运行诊断',
+  export: '导出备份',
+  export_preview: '预览备份',
+  get_settings: '查看输入设置',
+  health: '检查健康状态',
+  history: '查看输入历史',
+  lexicon_apply: '应用词库更新',
+  lexicon_review: '审阅词库建议',
+  lexicon_rollback: '撤销词库更新',
+  list: '浏览内容',
+  maintenance_apply: '应用记忆整理',
+  maintenance_preview: '预览记忆整理',
+  maintenance_review: '审阅记忆整理',
+  maintenance_rollback: '撤销记忆整理',
+  maintenance_status: '查看整理状态',
+  pause_ai: '暂停智能功能',
+  privacy_policy: '查看隐私保护',
+  probe: '检查模型连接',
+  profile: '查看输入方案',
+  profiles: '查看模型方案',
+  profile_apply: '应用模型方案',
+  profile_preview: '预览模型方案',
+  profile_rollback: '撤销模型方案',
+  provider_apply: '切换语音服务',
+  provider_preview: '预览语音切换',
+  provider_rollback: '撤销语音切换',
+  provider_status: '查看语音服务',
+  read: '读取内容',
+  recall: '检索知识',
+  recent: '查看最近内容',
+  recent_activity: '查看最近活动',
+  redeploy_rime: '重新部署输入法',
+  restart_predictor: '重启预测服务',
+  restart_sidecar: '重启后台服务',
+  restore_apply: '恢复备份',
+  restore_preview: '预览恢复内容',
+  resume_ai: '恢复智能功能',
+  rollback_settings: '撤销输入设置',
+  room_ask: '向协作成员提问',
+  room_mailbox: '查看协作消息',
+  room_reply: '回复协作消息',
+  room_send: '发送协作消息',
+  route_status: '检查检索连接',
+  run: '运行受控命令',
+  search: '搜索内容',
+  status: '查看当前状态',
+  task_action: '更新任务',
+  trace: '查看来源链路',
+  undo_task_event: '撤销任务更新',
+};
 
 export function PluginsFeature() {
   const { catalog } = usePluginCatalog();
   const [query, setQuery] = useState('');
-  const [risk, setRisk] = useState<typeof riskFilters[number]>('all');
+  const [mode, setMode] = useState<ModeFilter>('all');
+  const [availability, setAvailability] = useState<AvailabilityFilter>('all');
+  const [selectedId, setSelectedId] = useState('');
   const items = arrayRecords(asRecord(catalog.data).items);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
     return items.filter((item) => {
-      const haystack = [item.displayName, item.description, item.domain, ...(Array.isArray(item.operations) ? item.operations : [])]
+      const modes = stringArray(item.sessionModes);
+      const state = stringValue(item.availability).toLowerCase();
+      const readableOperations = operationLabelsFor(item).join(' ');
+      const haystack = [
+        item.displayName,
+        item.description,
+        domainLabel(item),
+        readableOperations,
+      ]
         .map((value) => stringValue(value).toLocaleLowerCase('zh-CN'))
         .join(' ');
-      return (!needle || haystack.includes(needle)) && (risk === 'all' || stringValue(item.riskLevel) === risk);
+      const matchesAvailability = availability === 'all'
+        || (availability === 'online' ? state === 'online' : state !== 'online');
+      return (!needle || haystack.includes(needle))
+        && (mode === 'all' || modes.includes(mode))
+        && matchesAvailability;
     });
-  }, [items, query, risk]);
-  const categories = new Set(items.map((item) => stringValue(item.category)).filter(Boolean));
+  }, [availability, items, mode, query]);
+  const selected: ToolRecord = filtered.find((item) => itemKey(item) === selectedId) ?? filtered[0] ?? {};
+  const categories = new Set(items.map(domainLabel).filter(Boolean));
+  const confirmationCount = items.filter((item) => stringValue(item.riskLevel, 'R0') !== 'R0').length;
 
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={() => void catalog.refetch()} size="small">刷新</Button>}
-      description="查看可用 Tool、风险级别、Session 模式与受控能力范围。"
+      description="查看已经连接到本机 Agent 的工具，以及它们适合的使用方式。"
       eyebrow="TOOLS"
       routeId="plugins"
       title="插件与工具"
@@ -44,48 +156,184 @@ export function PluginsFeature() {
       <QueryState error={catalog.error as Error | null} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection title="目录状态">
           <MetricStrip items={[
-            { label: '工具', value: items.length, detail: '已发现', icon: Wrench },
-            { label: '在线', value: items.filter((item) => stringValue(item.availability) === 'online').length, detail: '当前可用', icon: ShieldCheck, tone: 'success' },
-            { label: '领域', value: categories.size, detail: '能力分类', icon: Boxes },
-            { label: '高风险', value: items.filter((item) => ['R2', 'R3'].includes(stringValue(item.riskLevel))).length, detail: '需要审批', icon: ShieldCheck, tone: 'warning' },
+            { label: '工具', value: items.length, detail: '已连接', icon: Wrench },
+            { label: '可用', value: items.filter((item) => stringValue(item.availability) === 'online').length, detail: '现在可以使用', icon: CheckCircle2, tone: 'success' },
+            { label: '分类', value: categories.size, detail: '覆盖的工作领域', icon: Boxes },
+            { label: '需确认', value: confirmationCount, detail: '执行更改前会询问你', icon: ShieldCheck, tone: confirmationCount ? 'warning' : 'neutral' },
           ]} />
         </ManagementSection>
 
-        <ManagementSection title="工具目录" description="按名称、领域与风险级别查找可用工具。">
-          <div className="mgmt-filter-row">
-            <Field htmlFor="plugin-search" label="搜索工具">
-              <Input id="plugin-search" onChange={(event) => setQuery(event.target.value)} placeholder="名称、领域或操作" value={query} />
+        <ManagementSection
+          description="选择一项即可查看用途、可用场景和能力范围。"
+          title="工具目录"
+          trailing={<span className="plugins-count">{filtered.length} 项</span>}
+        >
+          <div className="plugins-filters">
+            <Field className="plugins-search" htmlFor="plugin-search" label="搜索">
+              <Input id="plugin-search" onChange={(event) => setQuery(event.target.value)} placeholder="名称或用途" value={query} />
             </Field>
-            <SegmentedControl aria-label="风险筛选" items={riskFilters.map((item) => ({ label: item === 'all' ? '全部' : item, value: item }))} onValueChange={setRisk} value={risk} />
+            <Field htmlFor="plugin-availability" label="状态">
+              <select className="ui-input" id="plugin-availability" onChange={(event) => setAvailability(event.target.value as AvailabilityFilter)} value={availability}>
+                <option value="all">全部状态</option>
+                <option value="online">当前可用</option>
+                <option value="attention">需要处理</option>
+              </select>
+            </Field>
+            <div className="plugins-mode-filter">
+              <span>使用方式</span>
+              <SegmentedControl aria-label="使用方式筛选" items={modeFilters} onValueChange={setMode} value={mode} />
+            </div>
           </div>
+
           {filtered.length ? (
-            <OperationalList items={filtered.map((item) => ({
-              id: stringValue(item.id),
-              title: stringValue(item.displayName, stringValue(item.id)),
-              detail: stringValue(item.description),
-              meta: Array.isArray(item.operations) ? item.operations.map(String).join(' · ') : 'no operations',
-              status: <StatusBadge label={`${stringValue(item.riskLevel, 'R0')} · ${stringValue(item.availability, 'unknown')}`} tone={stringValue(item.availability) === 'online' ? (['R2', 'R3'].includes(stringValue(item.riskLevel)) ? 'warning' : 'success') : 'danger'} />,
-            }))} />
+            <div className="plugins-browser">
+              <div aria-label="工具列表" className="plugins-list" role="group">
+                {filtered.map((item) => {
+                  const id = itemKey(item);
+                  const selectedItem = item === selected;
+                  return (
+                    <button
+                      aria-pressed={selectedItem}
+                      className="plugins-list__item"
+                      data-selected={selectedItem || undefined}
+                      key={id}
+                      onClick={() => setSelectedId(id)}
+                      type="button"
+                    >
+                      <span className="plugins-list__copy">
+                        <small>{domainLabel(item)}</small>
+                        <strong>{publicToolName(item)}</strong>
+                        <span>{publicToolDescription(item)}</span>
+                      </span>
+                      <span className="plugins-list__aside">
+                        <StatusBadge {...availabilityBadge(item)} />
+                        <ChevronRight aria-hidden="true" size={15} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <ToolDetail item={selected} />
+            </div>
           ) : (
-            <EmptyState description={items.length ? '没有工具符合当前筛选。' : '当前没有可用工具。'} icon={Search} title="没有匹配项" />
+            <EmptyState description={items.length ? '没有工具符合当前筛选。' : '本机 Agent 尚未提供可用工具。'} icon={Search} title="没有匹配项" />
           )}
         </ManagementSection>
 
-        <ManagementSection title="权限变更" description="当前为演练，不会修改工具权限。">
-          <WorkflowAction
-            actionId="plugins.permissions"
-            description="调整工具在 assistant/coordinator Session 中的可用范围。"
-            mutationKey={['plugins', 'mutation', 'permissions']}
-            preview={[
-              '只允许 manifest 中声明的 toolId 与 operation。',
-              'R2/R3 操作仍需运行时逐次审批，catalog 开关不能绕过。',
-              '工具界面不得绕过宿主权限边界。',
-            ]}
-            risk="R2"
-            title="应用权限草案"
-          />
+        <ManagementSection title="安装与启用">
+          <InlineNotice title="暂未开放" tone="info">
+            本页目前只查看真实工具状态。为避免误改本机环境，安装、启用和停用会在完整的确认与撤销能力接通后再开放。
+          </InlineNotice>
         </ManagementSection>
       </QueryState>
     </ManagementPage>
   );
+}
+
+function ToolDetail({ item }: { item: ToolRecord }) {
+  const operations = operationLabelsFor(item);
+  const modes = stringArray(item.sessionModes);
+  const unknownOperationCount = Math.max(0, stringArray(item.operations).length - operations.length);
+  return (
+    <aside aria-label="工具详情" className="plugins-detail">
+      <div className="plugins-detail__heading">
+        <span className="plugins-detail__icon"><Wrench aria-hidden="true" size={18} /></span>
+        <div>
+          <small>{domainLabel(item)}</small>
+          <h3>{publicToolName(item)}</h3>
+          <p>{publicToolDescription(item)}</p>
+        </div>
+        <StatusBadge {...availabilityBadge(item)} />
+      </div>
+
+      <dl className="plugins-detail__facts">
+        <div>
+          <dt><CheckCircle2 aria-hidden="true" size={15} />当前状态</dt>
+          <dd>{availabilityDescription(item)}</dd>
+        </div>
+        <div>
+          <dt><MessageCircle aria-hidden="true" size={15} />可用方式</dt>
+          <dd>{modes.length ? modes.map(modeLabel).join('、') : '暂无可用方式'}</dd>
+        </div>
+        <div>
+          <dt><ShieldCheck aria-hidden="true" size={15} />操作确认</dt>
+          <dd>{confirmationLabel(stringValue(item.riskLevel, 'R0'))}</dd>
+        </div>
+      </dl>
+
+      <div className="plugins-detail__capabilities">
+        <h4>可以做什么</h4>
+        {operations.length || unknownOperationCount ? (
+          <ul>
+            {operations.map((operation) => <li key={operation}>{operation}</li>)}
+            {unknownOperationCount ? <li>其他 {unknownOperationCount} 项能力</li> : null}
+          </ul>
+        ) : <p>目录中尚未提供能力说明。</p>}
+      </div>
+    </aside>
+  );
+}
+
+function itemKey(item: ToolRecord): string {
+  return stringValue(item.id, stringValue(item.displayName));
+}
+
+function publicToolName(item: ToolRecord): string {
+  const value = stringValue(item.displayName).trim();
+  if (value && value.length <= 64 && !/pathId|schema|receipt|operation|policy|profile|\/api\/|https?:\/\//i.test(value)) return value;
+  return `${domainLabel(item)}工具`;
+}
+
+function publicToolDescription(item: ToolRecord): string {
+  const value = stringValue(item.description).trim();
+  if (value && value.length <= 180 && /[\u3400-\u9fff]/u.test(value) && !/pathId|schema|receipt|operation|policy|profile|\/api\/|https?:\/\//i.test(value)) return value;
+  return `用于${domainLabel(item)}相关工作。`;
+}
+
+function domainLabel(item: ToolRecord): string {
+  const domain = stringValue(item.domain, stringValue(item.category));
+  return domainLabels[domain] ?? '其他工具';
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function operationLabelsFor(item: ToolRecord): string[] {
+  return stringArray(item.operations)
+    .map((operation) => operationLabels[operation])
+    .filter((operation): operation is string => Boolean(operation));
+}
+
+function modeLabel(mode: string): string {
+  if (mode === 'assistant') return '日常对话';
+  if (mode === 'coordinator') return '运行协调';
+  return '其他方式';
+}
+
+function availabilityBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } {
+  switch (stringValue(item.availability).toLowerCase()) {
+    case 'online': return { label: '当前可用', tone: 'success' };
+    case 'unconfigured': return { label: '待配置', tone: 'warning' };
+    case 'disabled': return { label: '已停用', tone: 'neutral' };
+    case 'offline': return { label: '暂时离线', tone: 'danger' };
+    default: return { label: '状态未知', tone: 'warning' };
+  }
+}
+
+function availabilityDescription(item: ToolRecord): string {
+  switch (stringValue(item.availability).toLowerCase()) {
+    case 'online': return '已连接，可以在支持的场景中使用';
+    case 'unconfigured': return '需要先完成相关服务配置';
+    case 'disabled': return '当前已停用，不会被 Agent 调用';
+    case 'offline': return '连接暂时不可用，请稍后刷新';
+    default: return '尚未取得可靠的可用状态';
+  }
+}
+
+function confirmationLabel(riskLevel: string): string {
+  if (riskLevel === 'R0') return '只读能力可以直接使用';
+  if (riskLevel === 'R1') return '更改内容前会先请你确认';
+  if (riskLevel === 'R2') return '涉及本机操作，需要你明确授权';
+  return '敏感操作会额外说明影响并再次确认';
 }

@@ -54,6 +54,11 @@ class ControlApiFacadeTests(unittest.TestCase):
         self.assertTrue(bootstrap["capabilities"]["native"]["filePicker"])
         self.assertTrue(bootstrap["capabilities"]["native"]["managedAgentImageImport"])
         self.assertFalse(bootstrap["capabilities"]["native"]["keychainValues"])
+        self.assertTrue(
+            bootstrap["capabilities"]["features"]["inputLexiconWorkContract"]
+        )
+        self.assertTrue(bootstrap["capabilities"]["features"]["agentPersonaCreate"])
+        self.assertTrue(bootstrap["capabilities"]["features"]["memoryEdit"])
 
     def test_remote_capabilities_force_native_and_privileged_features_off(self) -> None:
         facade = ControlApiFacade(
@@ -90,6 +95,9 @@ class ControlApiFacadeTests(unittest.TestCase):
         self.assertFalse(capabilities["security"]["arbitraryShell"])
         self.assertFalse(capabilities["security"]["arbitraryFileRead"])
         self.assertFalse(capabilities["security"]["databaseApply"])
+        self.assertFalse(capabilities["features"]["inputLexiconWorkContract"])
+        self.assertFalse(capabilities["features"]["agentPersonaCreate"])
+        self.assertFalse(capabilities["features"]["memoryEdit"])
 
     def test_anonymous_remote_bootstrap_is_available_but_every_data_route_is_hidden(self) -> None:
         facade = ControlApiFacade(adapter=Gateway8768Adapter())

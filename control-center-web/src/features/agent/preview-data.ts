@@ -14,7 +14,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     displayName: '智鼬·此刻',
     tagline: '此刻陪你输入，也陪你把事情想清楚',
     summary: '时间线里的当下陪伴者，默认亲和 5.6 Terra，适合回顾、检索和日常整理。',
-    traits: ['温暖', '证据优先', '5.6 Terra'],
+    traits: ['温暖', '证据优先'],
     visualProfile: {
       avatarAssetId: 'rag-ime-timeline-present-v1',
       symbolName: 'sparkles',
@@ -35,7 +35,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     displayName: '智鼬·初识',
     tagline: '从第一笔记录开始，认真认识你的世界',
     summary: '时间线里的幼年见习记录者，默认亲和 5.6 Luna，适合轻快地认识现状并留下下一步。',
-    traits: ['好奇', '记录优先', '5.6 Luna'],
+    traits: ['好奇', '记录优先'],
     visualProfile: {
       avatarAssetId: 'rag-ime-timeline-past-v1',
       symbolName: 'scope',
@@ -56,7 +56,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     displayName: '智鼬·未来',
     tagline: '把记忆、工具与协作构筑成下一步',
     summary: '时间线里的长成态 Agent 构筑者，默认亲和 5.6 Sol，适合稳定地串联资料、角色与工具关系。',
-    traits: ['沉稳', '工具编排', '5.6 Sol'],
+    traits: ['沉稳', '工具编排'],
     visualProfile: {
       avatarAssetId: 'rag-ime-timeline-future-v1',
       symbolName: 'point.3.connected.trianglepath.dotted',
