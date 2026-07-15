@@ -107,8 +107,7 @@ export function AgentComposer({
   );
   const commands = useMemo(() => commandCatalog.filter((command) => {
     const value = draft.trim().toLowerCase();
-    if (helpOpen) return true;
-    if (paletteOpen && (!value.startsWith('/') || value.includes(' '))) return true;
+    if (helpOpen || paletteOpen) return true;
     return draft !== dismissedDraft && value.startsWith('/') && !value.includes(' ') && (value === '/' || command.invocation.toLowerCase().startsWith(value));
   }), [commandCatalog, dismissedDraft, draft, helpOpen, paletteOpen]);
   const commandPanelVisible = commands.length > 0 && (
@@ -133,11 +132,13 @@ export function AgentComposer({
   function selectCommand(command: ComposerCommand): void {
     if (!command.enabled) return;
     if (command.source === 'product' && command.name === 'help') {
+      clearTypedCommandDraft(command.invocation);
       setHelpOpen(true);
       setPaletteOpen(true);
       return;
     }
     if (command.source === 'product' && command.behavior === 'execute') {
+      clearTypedCommandDraft(command.invocation);
       setPaletteOpen(false);
       setHelpOpen(false);
       onProductCommand(command.name);
@@ -150,6 +151,12 @@ export function AgentComposer({
     onDraftChange(nextDraft);
     textareaRef.current?.focus();
   }
+  function clearTypedCommandDraft(invocation: string): void {
+    const value = draft.trim();
+    if (!value.startsWith('/') || value.includes(' ') || !invocation.startsWith(value)) return;
+    setComposerDraft('');
+    onDraftChange('');
+  }
   function toggleCommandPanel(): void {
     setPaletteOpen((current) => !current);
     setHelpOpen(false);
@@ -158,6 +165,10 @@ export function AgentComposer({
   }
   function changeDraft(event: ChangeEvent<HTMLTextAreaElement>): void {
     const nextDraft = event.currentTarget.value;
+    if (paletteOpen) {
+      setPaletteOpen(false);
+      setHelpOpen(false);
+    }
     setComposerDraft(nextDraft);
     if (!composingRef.current) onDraftChange(nextDraft);
   }
