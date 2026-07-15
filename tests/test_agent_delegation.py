@@ -228,6 +228,25 @@ class AgentDelegationTests(unittest.TestCase):
             coordinator.inspect_artifact(str(other["id"]), artifact_id)
         coordinator.close()
 
+    def test_subagent_permissions_are_intersected_with_explicit_parent_allowlist(self) -> None:
+        self.parent = self.sessions.set_runtime_policy(
+            str(self.parent["id"]),
+            mode="assistant",
+            tool_profile_version="control-center-v1",
+            allowed_tools=["ime_overview", "ime_memory"],
+        )
+        coordinator = self.coordinator()
+        batch = coordinator.delegate(
+            str(self.parent["id"]),
+            {"agent": "worker", "task": "只能使用父会话允许的工具"},
+        )["batch"]
+        child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
+
+        self.assertEqual(child["toolProfileVersion"], "subagent-worker-v1")
+        self.assertEqual(child["toolAllowlistMode"], "explicit")
+        self.assertEqual(child["allowedTools"], ["ime_overview", "ime_memory"])
+        coordinator.close()
+
     def test_retention_defaults_to_72_hours_and_gc_runs_on_startup(self) -> None:
         self.config.session_dir.mkdir(parents=True)
         child_file = self.config.session_dir / "expired-on-startup.jsonl"

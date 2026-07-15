@@ -52,6 +52,10 @@ type ToolParams = {
   cwd?: string;
   timeoutSeconds?: number;
   allowNetwork?: boolean;
+  mode?: "content" | "name" | "both";
+  oldText?: string;
+  newText?: string;
+  expectedOccurrences?: number;
   agent?: "researcher" | "planner" | "worker" | "reviewer" | "delegate";
   version?: "1";
   task?: string;
@@ -406,6 +410,25 @@ const coordinatorToolSpecs: ToolSpec[] = [
     guidelines: ["敏感文件、数据库、二进制和符号链接由 Harness 拒绝；不要尝试绕过。"],
   },
   {
+    name: "workspace_search",
+    label: "工作区搜索",
+    description: "在授权工作区内有界搜索非敏感文件名与 UTF-8 文本内容。",
+    operations: ["search"],
+    progress: { search: "正在搜索授权工作区" },
+    guidelines: ["先搜索再读取；结果有文件数、大小和条数上限，敏感文件与符号链接不会进入候选。"],
+  },
+  {
+    name: "workspace_patch",
+    label: "精确文件修改",
+    description: "预览 exact-text replacement，并在原生批准与文件哈希复验后原子写入。",
+    operations: ["apply"],
+    progress: { apply: "正在准备精确文件修改预览" },
+    guidelines: [
+      "必须提供来自 workspace_read 的 oldText；默认要求只出现一次，不提供任意写文件能力。",
+      "批准后若文件内容或授权根变化，写入会失败关闭；不要用 workspace_shell 绕过。",
+    ],
+  },
+  {
     name: "workspace_shell",
     label: "受控命令",
     description: "在用户批准后，通过 Command Harness 在授权工作区运行有界命令。",
@@ -570,6 +593,10 @@ function parametersFor(spec: ToolSpec) {
       cwd: { type: "string", maxLength: 1024 },
       timeoutSeconds: { type: "integer", minimum: 1, maximum: 120 },
       allowNetwork: { type: "boolean" },
+      mode: { type: "string", enum: ["content", "name", "both"] },
+      oldText: { type: "string", minLength: 1, maxLength: 65536 },
+      newText: { type: "string", maxLength: 131072 },
+      expectedOccurrences: { type: "integer", minimum: 1, maximum: 100 },
       agent: {
         type: "string",
         enum: ["researcher", "planner", "worker", "reviewer", "delegate"],

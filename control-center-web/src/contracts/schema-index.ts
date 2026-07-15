@@ -3106,9 +3106,10 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
-          "ime_plugins",
           "workspace_list",
           "workspace_read",
+          "workspace_search",
+          "workspace_patch",
           "workspace_shell"
         ]
       },
@@ -3211,9 +3212,10 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
-          "ime_plugins",
           "workspace_list",
           "workspace_read",
+          "workspace_search",
+          "workspace_patch",
           "workspace_shell"
         ]
       },
@@ -3284,10 +3286,8 @@ export const contractSchemas = {
           "room_ask",
           "room_reply",
           "room_mailbox",
-          "create_draft",
-          "validate",
-          "propose_install",
-          "run"
+          "run",
+          "apply"
         ]
       },
       "result": {

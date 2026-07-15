@@ -58,14 +58,18 @@ def _tools_for_session(
     available: tuple[str, ...],
     session: Mapping[str, object],
 ) -> tuple[str, ...]:
+    selected = available
+    if str(session.get("toolAllowlistMode") or "profile") == "explicit":
+        explicit = {str(value) for value in session.get("allowedTools") or []}
+        selected = tuple(tool for tool in selected if tool in explicit)
     mode = str(session.get("mode") or "assistant")
     profile = str(session.get("toolProfileVersion") or "control-center-v1")
     if profile == "subagent-readonly-v1":
         allowed = set(_SUBAGENT_READ_ONLY_TOOLS)
-        return tuple(tool for tool in available if tool in allowed)
+        return tuple(tool for tool in selected if tool in allowed)
     return tuple(
         tool
-        for tool in available
+        for tool in selected
         if mode == "coordinator" or tool not in _COORDINATOR_TOOLS
     )
 

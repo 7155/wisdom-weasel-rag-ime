@@ -48,6 +48,7 @@ export function AgentFeature() {
   const [sending, setSending] = useState(false);
   const [modelChanging, setModelChanging] = useState(false);
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
+  const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
   const [helpRequest, setHelpRequest] = useState(0);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
@@ -273,6 +274,7 @@ export function AgentFeature() {
       return;
     }
     if (value === '/model' || value === '/thinking') { setDraft(''); openModelPicker(); return; }
+    if (value === '/permissions') { setDraft(''); setPermissionPickerRequest((current) => current + 1); return; }
     if (value === '/tools') { setDraft(''); openToolPicker(); return; }
     if (value === '/status') { setDraft(''); setStatusOpen(true); return; }
     if (value === '/help') { setDraft(''); setHelpRequest((current) => current + 1); return; }
@@ -385,6 +387,9 @@ export function AgentFeature() {
         break;
       case 'tools':
         openToolPicker();
+        break;
+      case 'permissions':
+        setPermissionPickerRequest((current) => current + 1);
         break;
       case 'status':
         setStatusOpen(true);
@@ -553,7 +558,7 @@ export function AgentFeature() {
           <IconButton className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((value) => !value)} tooltip />
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => void decideApproval(id, decision, hash)} /> : null}
-        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
       <button className="agent-status-backdrop" aria-label="关闭状态面板" onClick={() => setStatusOpen(false)} type="button" />
       <AgentStatusPanel sessionId={selectedId} open={statusOpen} onClose={() => setStatusOpen(false)} />

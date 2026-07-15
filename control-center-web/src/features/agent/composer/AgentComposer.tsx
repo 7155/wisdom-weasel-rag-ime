@@ -64,6 +64,7 @@ export function AgentComposer({
   onModeChange,
   onModelChange,
   modelPickerRequest = 0,
+  permissionPickerRequest = 0,
   toolPickerRequest = 0,
   helpRequest = 0,
   imageSupport = 'unknown',
@@ -90,6 +91,7 @@ export function AgentComposer({
   onModeChange: (mode: 'assistant' | 'coordinator') => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
+  permissionPickerRequest?: number;
   toolPickerRequest?: number;
   helpRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
@@ -299,7 +301,7 @@ export function AgentComposer({
               disabled={!session || busy || sending || imageSupport !== 'supported'}
               tooltip
             />
-            <PermissionPicker session={session} persona={persona} disabled={busy || sending} onChange={onModeChange} />
+            <PermissionPicker session={session} persona={persona} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onModeChange} />
             <ToolPicker tools={tools} status={toolCatalogStatus} mode={session?.mode ?? 'assistant'} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
             <ModelTree catalog={catalog} disabled={busy || sending} requestOpen={modelPickerRequest} onChange={onModelChange} />
           </div>
@@ -370,17 +372,23 @@ function PermissionPicker({
   session,
   persona,
   disabled,
+  requestOpen,
   onChange,
 }: {
   session?: SessionSummary;
   persona?: AgentPersonaV1;
   disabled: boolean;
+  requestOpen: number;
   onChange: (mode: 'assistant' | 'coordinator') => void;
 }) {
+  const [open, setOpen] = useState(false);
   const mode = session?.mode ?? 'assistant';
   const canCoordinate = persona?.selectableModes.includes('coordinator') ?? false;
+  useEffect(() => {
+    if (requestOpen > 0 && session && !disabled) setOpen(true);
+  }, [disabled, requestOpen, session]);
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button aria-label={`对话权限：${mode === 'coordinator' ? '运行协调' : '受控模式'}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!session || disabled} leadingIcon={mode === 'coordinator' ? <Network size={15} /> : <ShieldCheck size={15} />}>{mode === 'coordinator' ? '运行协调' : '受控模式'}</Button>
       </PopoverTrigger>
@@ -466,6 +474,7 @@ const productCommandDefinitions: Omit<ProductCommand, keyof CommandAvailability>
   { name: 'compact', invocation: '/compact', description: '保留连续会话并缩短上下文', source: 'product', behavior: 'insert' },
   { name: 'model', invocation: '/model', description: '选择当前对话的模型', source: 'product', behavior: 'execute' },
   { name: 'thinking', invocation: '/thinking', description: '调整当前模型的思考强度', source: 'product', behavior: 'execute' },
+  { name: 'permissions', invocation: '/permissions', description: '查看或切换当前对话权限', source: 'product', behavior: 'execute' },
   { name: 'tools', invocation: '/tools', description: '查看当前权限可用的工具', source: 'product', behavior: 'execute' },
   { name: 'status', invocation: '/status', description: '打开当前对话状态', source: 'product', behavior: 'execute' },
   { name: 'stop', invocation: '/stop', description: '停止当前处理', source: 'product', behavior: 'execute' },

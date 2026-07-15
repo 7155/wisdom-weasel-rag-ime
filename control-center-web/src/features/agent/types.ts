@@ -46,6 +46,7 @@ export type AgentProductCommandName =
   | 'compact'
   | 'model'
   | 'thinking'
+  | 'permissions'
   | 'tools'
   | 'status'
   | 'stop'

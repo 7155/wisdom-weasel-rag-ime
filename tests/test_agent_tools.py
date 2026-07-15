@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tools import ControlToolGateway
-from rag_ime.agent_workspace import WorkspaceHarness
+from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
 
 
 class _Management:
@@ -604,9 +604,10 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_runtime",
                 "ime_configuration",
                 "ime_agents",
-                "ime_plugins",
                 "workspace_list",
                 "workspace_read",
+                "workspace_search",
+                "workspace_patch",
                 "workspace_shell",
             ],
         )
@@ -672,6 +673,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "ime_models",
                     "ime_runtime",
                     "ime_configuration",
+                    "workspace_patch",
                     "workspace_shell",
                 }
             )
@@ -751,6 +753,83 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(receipt["exitCode"], 0)
         self.assertEqual(receipt["auditId"], approval["approvalId"])
         self.assertEqual(len(executed), 1)
+
+    def test_coordinator_search_and_patch_require_native_hash_bound_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-patch"
+        workspace.mkdir()
+        target = workspace / "main.py"
+        target.write_text("print('before')\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="coordinator patch",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+        found = self.gateway.execute(
+            {
+                **self._tool_call("workspace_search", "search", query="before"),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        prepared = self.gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_patch",
+                    "apply",
+                    path=str(target),
+                    oldText="before",
+                    newText="after",
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+
+        self.assertEqual(found["matches"][0]["lineNumber"], 1)
+        self.assertEqual(target.read_text(encoding="utf-8"), "print('before')\n")
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.assertEqual(receipt["replacementCount"], 1)
+        self.assertEqual(target.read_text(encoding="utf-8"), "print('after')\n")
+
+    def test_workspace_patch_fails_closed_if_file_changes_after_native_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-stale"
+        workspace.mkdir()
+        target = workspace / "main.py"
+        target.write_text("old\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="coordinator stale patch",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=4,
+        )
+        prepared = self.gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_patch",
+                    "apply",
+                    path=str(target),
+                    oldText="old",
+                    newText="new",
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        target.write_text("changed\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(WorkspaceHarnessError, "changed"):
+            self.gateway.apply_approval(decided)
+        self.assertEqual(target.read_text(encoding="utf-8"), "changed\n")
 
     def test_task_action_requires_native_approval_then_returns_rollback_receipt(self) -> None:
         prepared = self.gateway.execute(
@@ -1469,6 +1548,8 @@ class ControlToolGatewayTests(unittest.TestCase):
             "ime_agents",
             "workspace_list",
             "workspace_read",
+            "workspace_search",
+            "workspace_patch",
             "workspace_shell",
         ):
             self.assertEqual(extension.count(f'name: "{tool}"'), 1)
@@ -1519,61 +1600,6 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def _call(self, operation: str, **args):
         return self._tool_call("ime_memory", operation, **args)
-
-    def test_agent_can_create_validate_and_propose_but_cannot_apply_a_plugin(self) -> None:
-        calls: list[tuple[str, object]] = []
-
-        class _Extensions:
-            def list(self):
-                return {"ok": True, "items": []}
-
-            def create_draft(self, payload):
-                calls.append(("create", dict(payload)))
-                return {"ok": True, "draft": {"sourcePath": "/managed/inbox/draft-1"}}
-
-            def validate(self, payload):
-                calls.append(("validate", dict(payload)))
-                return {"ok": True, "validationToken": "validation-1"}
-
-            def preview(self, payload):
-                calls.append(("preview", dict(payload)))
-                return {"ok": True, "proposalId": "proposal-1", "requiredConfirm": "apply"}
-
-        self.gateway.extensions = _Extensions()
-        draft = self.gateway.execute(
-            self._tool_call(
-                "ime_plugins",
-                "create_draft",
-                draftId="draft-1",
-                manifest={"id": "log-helper"},
-                files={"index.ts": "export default function () {}"},
-            )
-        )
-        validation = self.gateway.execute(
-            self._tool_call(
-                "ime_plugins",
-                "validate",
-                sourcePath=draft["result"]["draft"]["sourcePath"],
-            )
-        )
-        proposal = self.gateway.execute(
-            self._tool_call(
-                "ime_plugins",
-                "propose_install",
-                validationToken=validation["result"]["validationToken"],
-                enable=True,
-            )
-        )
-
-        self.assertEqual(proposal["result"]["proposalId"], "proposal-1")
-        self.assertEqual(
-            calls[-1][1],
-            {"action": "install", "validationToken": "validation-1", "enable": True},
-        )
-        plugin_manifest = next(
-            item for item in self.gateway.manifests()["items"] if item["id"] == "ime_plugins"
-        )
-        self.assertNotIn("apply", plugin_manifest["operations"])
 
     def _tool_call(self, tool: str, operation: str, **args):
         return {

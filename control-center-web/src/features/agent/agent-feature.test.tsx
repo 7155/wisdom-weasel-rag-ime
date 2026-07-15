@@ -417,6 +417,7 @@ describe('Agent experience', () => {
     expect(screen.getByRole('option', { name: /\/name/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/model/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/thinking/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/permissions/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/tools/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/status/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/help/ })).toBeInTheDocument();
@@ -460,6 +461,11 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     await user.click(screen.getByRole('option', { name: /\/model/ }));
     expect(await screen.findByText('模型与推理强度')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+
+    await user.click(screen.getByRole('button', { name: '打开命令面板' }));
+    await user.click(screen.getByRole('option', { name: /\/permissions/ }));
+    expect(await screen.findByText('对话权限')).toBeInTheDocument();
     await user.keyboard('{Escape}');
 
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));

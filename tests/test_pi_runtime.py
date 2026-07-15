@@ -21,6 +21,7 @@ from rag_ime.pi_runtime import (
     _deepseek_pi_provider,
     _pi_message_payload,
     _public_pi_model,
+    _tools_for_session,
 )
 
 
@@ -198,6 +199,38 @@ for line in sys.stdin:
     else:
         emit({"id": request_id, "type": "response", "command": kind, "success": False, "error": "unsupported"})
 '''
+
+
+class PiRuntimePermissionSelectionTests(unittest.TestCase):
+    def test_explicit_allowlist_is_intersected_with_mode_and_subagent_profile(self) -> None:
+        available = (
+            "ime_overview",
+            "ime_memory",
+            "ime_input",
+            "workspace_search",
+            "workspace_patch",
+        )
+        assistant = _tools_for_session(
+            available,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "control-center-v1",
+                "toolAllowlistMode": "explicit",
+                "allowedTools": ["ime_overview", "workspace_search"],
+            },
+        )
+        readonly_child = _tools_for_session(
+            available,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "toolAllowlistMode": "explicit",
+                "allowedTools": ["ime_memory", "ime_input"],
+            },
+        )
+
+        self.assertEqual(assistant, ("ime_overview",))
+        self.assertEqual(readonly_child, ("ime_memory",))
 
 
 class PiRuntimeTests(unittest.TestCase):
