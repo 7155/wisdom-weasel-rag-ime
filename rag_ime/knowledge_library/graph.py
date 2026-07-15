@@ -171,7 +171,31 @@ class KnowledgeGraph:
                 pattern = f"%{_escape_like(query.strip()[:200])}%"
                 seed_params.extend([pattern, pattern, pattern])
             if not focus_id and not query.strip() and not selected_kinds:
-                seed_filters.append("kind='document'")
+                relation_filters = ["base_id=?", "kind='relation'"]
+                relation_params: list[Any] = [base_id]
+                if document_id:
+                    relation_filters.append("document_id=?")
+                    relation_params.append(document_id)
+                has_semantic_relations = exclude_chunks and connection.execute(
+                    f"SELECT 1 FROM knowledge_graph_edges WHERE {' AND '.join(relation_filters)} LIMIT 1",
+                    relation_params,
+                ).fetchone() is not None
+                if has_semantic_relations:
+                    # Start the overview from complete high-confidence relation
+                    # pairs. Seeding from documents alone makes a small visible
+                    # budget fill with alphabetic topics before any semantic
+                    # edge reaches the client.
+                    relation_limit = max(1, node_limit // 2)
+                    relation_where = " AND ".join(relation_filters)
+                    seed_filters.append(
+                        "(id IN (SELECT source_id FROM knowledge_graph_edges "
+                        f"WHERE {relation_where} ORDER BY weight DESC, id LIMIT ?) OR "
+                        "id IN (SELECT target_id FROM knowledge_graph_edges "
+                        f"WHERE {relation_where} ORDER BY weight DESC, id LIMIT ?))"
+                    )
+                    seed_params.extend([*relation_params, relation_limit, *relation_params, relation_limit])
+                else:
+                    seed_filters.append("kind='document'")
             seed_rows = connection.execute(
                 f"SELECT * FROM knowledge_graph_nodes WHERE {' AND '.join(seed_filters)} "
                 "ORDER BY CASE kind WHEN 'document' THEN 0 WHEN 'topic' THEN 1 WHEN 'chunk' THEN 2 "

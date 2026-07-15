@@ -304,6 +304,11 @@ class KnowledgeGraphTests(unittest.TestCase):
         self.assertEqual(2, built["extractor"]["extractionConcurrency"])
         self.assertEqual(2, built["extractor"]["effectiveExtractionConcurrency"])
         self.assertTrue(any(edge["kind"] == "relation" for edge in built["edges"]))
+        overview = self.service.knowledge_graph(
+            self.base["id"], limit=10, depth=2, exclude_chunks=True
+        )
+        self.assertTrue(any(edge["kind"] == "relation" for edge in overview["edges"]))
+        self.assertFalse(any(node["kind"] == "chunk" for node in overview["nodes"]))
         first_call_count = extractor.calls
 
         self.service.close(wait=True)
