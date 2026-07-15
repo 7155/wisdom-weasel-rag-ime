@@ -348,12 +348,62 @@ class KnowledgeLibraryService:
         *,
         expected_revision: int | None,
         document_ids: Sequence[str] = (),
+        extractor_mode: str = "deterministic",
+        model_id: str = "",
+        batch_size: int = 4,
+        extraction_concurrency: int = 2,
+        max_entities: int = 5,
+        max_relations: int = 4,
+        max_topics: int = 2,
     ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
         normalized_ids = tuple(_identifier(item, "document id") for item in document_ids)
+        mode = str(extractor_mode or "deterministic").strip().lower()
+        if mode not in {"deterministic", "model"}:
+            raise KnowledgeLibraryError("extractorMode must be deterministic or model", code="invalid_argument")
+        options = {
+            "extractor_mode": mode,
+            "model_id": str(model_id or "").strip()[:160],
+            "batch_size": max(1, min(8, int(batch_size))),
+            "extraction_concurrency": max(1, min(4, int(extraction_concurrency))),
+            "max_entities": max(1, min(8, int(max_entities))),
+            "max_relations": max(0, min(8, int(max_relations))),
+            "max_topics": max(0, min(4, int(max_topics))),
+        }
+        if mode == "model" and self._job_executor is not None:
+            graph_job_id = f"kg-{uuid.uuid4().hex}"
+            current_revision = self.graph.reserve_rebuild(
+                base_id,
+                expected_revision=expected_revision,
+                job_id=graph_job_id,
+                document_ids=normalized_ids,
+                extractor_mode=mode,
+                extractor_model=str(options["model_id"]),
+            )
+            self._job_executor.submit(
+                self.graph.rebuild,
+                base_id,
+                expected_revision=expected_revision,
+                document_ids=normalized_ids,
+                job_id=graph_job_id,
+                **options,
+            )
+            return {
+                "ok": True,
+                "jobId": graph_job_id,
+                "status": "queued",
+                "revision": current_revision + 1,
+                "extractor": {
+                    "mode": mode,
+                    "model": options["model_id"],
+                    "extractionConcurrency": options["extraction_concurrency"],
+                },
+            }
         return self.graph.rebuild(
-            _identifier(base_id, "base id"),
+            base_id,
             expected_revision=expected_revision,
             document_ids=normalized_ids,
+            **options,
         )
 
     def preview_chunking(

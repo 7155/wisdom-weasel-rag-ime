@@ -2,31 +2,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import sqlite3
 import uuid
-from collections import Counter
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
-from .models import KnowledgeConflictError, KnowledgeLibraryError, KnowledgeNotFoundError
+from .graph_extractors import (
+    DeterministicGraphExtractor,
+    GraphExtraction,
+    GraphExtractionInput,
+    GraphExtractor,
+    extraction_from_dict,
+    graph_extractor_from_config,
+)
+from .models import KnowledgeConflictError, KnowledgeNotFoundError
 from .store import KnowledgeStore, now_ms
 
 
 GRAPH_SCHEMA_VERSION = "rag-ime.knowledge-graph.v1"
 GRAPH_NODE_KINDS = frozenset({"document", "chunk", "topic", "entity", "term"})
-_TOKEN_RE = re.compile(r"`([^`\n]{2,80})`|\b([A-Z][A-Za-z0-9_.+-]{1,63})\b")
-_ENTITY_RE = re.compile(
-    r"\[([^\]\n]{2,80})\]\([^\)\n]+\)|[\"'“‘]([^\"'”’\n]{2,80})[\"'”’]|\b([A-Z]{2,16}(?:[-_][A-Za-z0-9]+)*)\b"
-)
-_STOP_TERMS = frozenset(
-    {
-        "this", "that", "with", "from", "into", "using", "used", "the", "and", "for",
-        "一个", "一种", "这个", "那个", "可以", "以及", "进行", "通过", "使用", "需要", "如果", "其中",
-        "我们", "你们", "他们", "这些", "那些", "相关", "主要", "包括", "用于", "因为", "所以",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -59,8 +55,73 @@ class _Edge:
 class KnowledgeGraph:
     """Deterministic document graph stored only in the isolated knowledge database."""
 
-    def __init__(self, store: KnowledgeStore):
+    def __init__(
+        self,
+        store: KnowledgeStore,
+        *,
+        extractor_factory: Callable[..., GraphExtractor] | None = None,
+    ):
         self.store = store
+        self.extractor_factory = extractor_factory or graph_extractor_from_config
+
+    def current_revision(self, base_id: str) -> int:
+        self.store.get_base(base_id)
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT revision FROM knowledge_graph_state WHERE base_id=?", (base_id,)
+            ).fetchone()
+        return int(row["revision"]) if row is not None else 0
+
+    def reserve_rebuild(
+        self,
+        base_id: str,
+        *,
+        expected_revision: int | None,
+        job_id: str,
+        document_ids: Sequence[str],
+        extractor_mode: str,
+        extractor_model: str,
+    ) -> int:
+        self.store.get_base(base_id)
+        timestamp = now_ms()
+        fingerprint = self._source_fingerprint(base_id, ())
+        with self.store.connection() as connection:
+            # Serialize the status check and reservation so two rebuild POSTs cannot claim one revision.
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute(
+                "SELECT revision, status FROM knowledge_graph_state WHERE base_id=?", (base_id,)
+            ).fetchone()
+            current_revision = int(active["revision"]) if active is not None else 0
+            if active is not None and str(active["status"]) == "building":
+                raise KnowledgeConflictError("a knowledge graph rebuild is already running")
+            if expected_revision is not None and int(expected_revision) != current_revision:
+                raise KnowledgeConflictError(
+                    f"knowledge graph revision mismatch: expected {expected_revision}, current {current_revision}"
+                )
+            connection.execute(
+                "INSERT INTO knowledge_graph_state(base_id, revision, status, source_fingerprint, document_ids_json, "
+                "job_id, error_message, updated_at_ms, extractor_mode, extractor_model, extraction_stats_json) "
+                "VALUES (?, ?, 'building', ?, '[]', ?, '', ?, ?, ?, '{}') "
+                "ON CONFLICT(base_id) DO UPDATE SET status='building', job_id=excluded.job_id, "
+                "error_message='', updated_at_ms=excluded.updated_at_ms, extractor_mode=excluded.extractor_mode, "
+                "extractor_model=excluded.extractor_model, extraction_stats_json='{}'",
+                (base_id, current_revision, fingerprint, job_id, timestamp, extractor_mode, extractor_model),
+            )
+            connection.execute(
+                "INSERT INTO knowledge_graph_jobs(id, base_id, revision, status, stage, document_ids_json, "
+                "created_at_ms, updated_at_ms, extractor_mode, stats_json) "
+                "VALUES (?, ?, ?, 'queued', 'queued', ?, ?, ?, ?, '{}')",
+                (
+                    job_id,
+                    base_id,
+                    current_revision + 1,
+                    json.dumps(list(document_ids)),
+                    timestamp,
+                    timestamp,
+                    extractor_mode,
+                ),
+            )
+        return current_revision
 
     def read(
         self,
@@ -232,6 +293,16 @@ class KnowledgeGraph:
             result["jobId"] = str(state["job_id"])
         if state is not None and state["error_message"]:
             result["error"] = str(state["error_message"])
+        if state is not None:
+            extractor_stats = _json_dict(state["extraction_stats_json"])
+            mode = str(state["extractor_mode"] or "deterministic")
+            result["extractor"] = {
+                "mode": mode,
+                "model": str(state["extractor_model"] or ""),
+                "configured": bool(extractor_stats.get("configured", mode != "model")),
+                "degraded": int(extractor_stats.get("fallbackChunkCount") or 0) > 0,
+                **extractor_stats,
+            }
         return result
 
     def rebuild(
@@ -240,6 +311,14 @@ class KnowledgeGraph:
         *,
         expected_revision: int | None,
         document_ids: Sequence[str] = (),
+        extractor_mode: str = "deterministic",
+        model_id: str = "",
+        batch_size: int = 4,
+        extraction_concurrency: int = 2,
+        max_entities: int = 5,
+        max_relations: int = 4,
+        max_topics: int = 2,
+        job_id: str = "",
     ) -> dict[str, Any]:
         self.store.get_base(base_id)
         requested_ids = tuple(dict.fromkeys(str(item).strip() for item in document_ids if str(item).strip()))
@@ -267,22 +346,42 @@ class KnowledgeGraph:
                 else all_document_ids
             )
             fingerprint = self._source_fingerprint_from_connection(connection, base_id, ())
-            job_id = f"kg-{uuid.uuid4().hex}"
+            job_id = job_id or f"kg-{uuid.uuid4().hex}"
             timestamp = now_ms()
             connection.execute(
                 "INSERT INTO knowledge_graph_state(base_id, revision, status, source_fingerprint, document_ids_json, "
-                "job_id, error_message, updated_at_ms) VALUES (?, ?, 'building', ?, ?, ?, '', ?) "
+                "job_id, error_message, updated_at_ms, extractor_mode, extractor_model, extraction_stats_json) "
+                "VALUES (?, ?, 'building', ?, ?, ?, '', ?, ?, ?, '{}') "
                 "ON CONFLICT(base_id) DO UPDATE SET status='building', job_id=excluded.job_id, "
-                "error_message='', updated_at_ms=excluded.updated_at_ms",
-                (base_id, revision, fingerprint, "[]", job_id, timestamp),
+                "error_message='', updated_at_ms=excluded.updated_at_ms, extractor_mode=excluded.extractor_mode, "
+                "extractor_model=excluded.extractor_model, extraction_stats_json='{}'",
+                (base_id, revision, fingerprint, "[]", job_id, timestamp, extractor_mode, model_id),
             )
             connection.execute(
                 "INSERT INTO knowledge_graph_jobs(id, base_id, revision, status, stage, document_ids_json, "
-                "created_at_ms, updated_at_ms) VALUES (?, ?, ?, 'running', 'building', ?, ?, ?)",
-                (job_id, base_id, revision + 1, json.dumps(list(selected_ids)), timestamp, timestamp),
+                "created_at_ms, updated_at_ms, extractor_mode, stats_json) "
+                "VALUES (?, ?, ?, 'running', 'extracting', ?, ?, ?, ?, '{}') "
+                "ON CONFLICT(id) DO UPDATE SET status='running', stage='extracting', "
+                "document_ids_json=excluded.document_ids_json, updated_at_ms=excluded.updated_at_ms, "
+                "extractor_mode=excluded.extractor_mode, stats_json='{}'",
+                (job_id, base_id, revision + 1, json.dumps(list(selected_ids)), timestamp, timestamp, extractor_mode),
             )
         try:
-            nodes, edges = self._build(base_id, selected_ids)
+            extractor = self.extractor_factory(
+                extractor_mode,
+                model_id=model_id,
+                extraction_concurrency=extraction_concurrency,
+                max_entities=max_entities,
+                max_relations=max_relations,
+                max_topics=max_topics,
+            )
+            nodes, edges, extraction_stats = self._build(
+                base_id,
+                selected_ids,
+                extractor=extractor,
+                batch_size=max(1, min(8, int(batch_size))),
+                extraction_concurrency=max(1, min(4, int(extraction_concurrency))),
+            )
             self._replace(
                 base_id,
                 nodes,
@@ -292,6 +391,13 @@ class KnowledgeGraph:
                 revision + 1,
                 selected_ids=selected_ids,
                 partial=partial,
+                extractor_mode=extractor_mode,
+                extractor_model=(
+                    str(extraction_stats.get("model") or model_id)[:160]
+                    if extractor_mode == "model"
+                    else ""
+                ),
+                extraction_stats=extraction_stats,
             )
         except Exception as exc:
             with self.store.connection() as connection:
@@ -310,13 +416,22 @@ class KnowledgeGraph:
             "jobId": job_id,
             "status": "stale" if has_stale_source else "ready",
             "revision": revision + 1,
+            "extractor": extraction_stats,
         }
 
-    def _build(self, base_id: str, document_ids: Sequence[str]) -> tuple[list[_Node], list[_Edge]]:
+    def _build(
+        self,
+        base_id: str,
+        document_ids: Sequence[str],
+        *,
+        extractor: GraphExtractor,
+        batch_size: int,
+        extraction_concurrency: int,
+    ) -> tuple[list[_Node], list[_Edge], dict[str, Any]]:
         nodes: dict[str, _Node] = {}
         edges: dict[str, _Edge] = {}
         if not document_ids:
-            return [], []
+            return [], [], {"mode": extractor.mode, "processedChunkCount": 0}
         placeholders = ", ".join("?" for _ in document_ids)
         with self.store.connection() as connection:
             documents = connection.execute(
@@ -332,6 +447,12 @@ class KnowledgeGraph:
                 [base_id, *document_ids],
             ).fetchall()
         document_names = {str(row["id"]): str(row["display_name"]) for row in documents}
+        extractions, extraction_stats = self._extract_chunks(
+            chunks,
+            extractor=extractor,
+            batch_size=batch_size,
+            extraction_concurrency=extraction_concurrency,
+        )
         previous_chunk: dict[str, str] = {}
         for document in documents:
             document_id = str(document["id"])
@@ -368,27 +489,46 @@ class KnowledgeGraph:
                     chunk_id,
                 )
             previous_chunk[document_id] = chunk_node_id
-            topic_node_id = ""
+            topic_node_ids: list[str] = []
             if heading:
                 topic_id = _stable_id("topic", document_id, _normalize_label(heading))
-                topic_node_id = topic_id
+                topic_node_ids.append(topic_id)
                 nodes.setdefault(
                     topic_id,
                     _Node(topic_id, "topic", heading[:160], document_id, document_name, chunk_id, heading,
                           excerpt, page, 1.0, {"extractor": "heading-v1"}),
                 )
-                _add_edge(edges, _stable_id("document", document_id), topic_id, "contains", "contains topic", 1.0, document_id, chunk_id)
+                _add_edge(edges, _stable_id("document", document_id), topic_id, "contains", "contains topic", 1.0, document_id, chunk_id, dedupe_across_chunks=True)
                 _add_edge(edges, topic_id, chunk_node_id, "covers", "covers", 1.0, document_id, chunk_id)
-            mentions = self._mentions(content)
-            mention_ids: list[str] = []
-            for kind, label, count in mentions:
+            extraction = extractions.get(chunk_id, GraphExtraction(chunk_id))
+            for topic in extraction.topics:
+                topic_id = _stable_id("topic", base_id, _normalize_label(topic))
+                if topic_id not in topic_node_ids:
+                    topic_node_ids.append(topic_id)
+                nodes.setdefault(
+                    topic_id,
+                    _Node(topic_id, "topic", topic[:160], None, "", None, heading, excerpt, page, 0.9,
+                          {"extractor": extractor.mode}),
+                )
+                _add_edge(edges, _stable_id("document", document_id), topic_id, "contains", "contains topic", 0.9, document_id, chunk_id, dedupe_across_chunks=True)
+                _add_edge(edges, topic_id, chunk_node_id, "covers", "covers", 0.9, document_id, chunk_id)
+            mention_ids: dict[str, str] = {}
+            extracted_mentions = [
+                ("entity", item.name, item.entity_type, item.evidence)
+                for item in extraction.entities
+            ] + [("term", term, "Term", term) for term in extraction.terms]
+            for kind, label, semantic_type, evidence_text in extracted_mentions:
                 mention_id = _stable_id(kind, base_id, _normalize_label(label))
-                mention_ids.append(mention_id)
-                weight = min(1.0, 0.45 + 0.1 * count)
+                mention_ids[_normalize_label(label)] = mention_id
+                weight = 0.85 if extractor.mode == "model" else 0.7
                 nodes.setdefault(
                     mention_id,
                     _Node(mention_id, kind, label[:160], None, "", None, heading,
-                          excerpt, page, weight, {"extractor": "deterministic-v1"}),
+                          excerpt, page, weight, {
+                              "extractor": extractor.mode,
+                              "semanticType": semantic_type,
+                              "evidence": evidence_text[:240],
+                          }),
                 )
                 _add_edge(edges, chunk_node_id, mention_id, "mentions", "mentions", weight, document_id, chunk_id)
                 _add_edge(
@@ -400,8 +540,9 @@ class KnowledgeGraph:
                     weight,
                     document_id,
                     chunk_id,
+                    dedupe_across_chunks=True,
                 )
-                if topic_node_id:
+                for topic_node_id in topic_node_ids:
                     _add_edge(
                         edges,
                         topic_node_id,
@@ -411,36 +552,155 @@ class KnowledgeGraph:
                         weight,
                         document_id,
                         chunk_id,
+                        dedupe_across_chunks=True,
                     )
-            for index, source_id in enumerate(mention_ids[:8]):
-                for target_id in mention_ids[index + 1 : 8]:
-                    _add_edge(edges, source_id, target_id, "co_occurs", "co-occurs", 0.5, document_id, chunk_id)
-        return list(nodes.values()), list(edges.values())
+            for relation in extraction.relations:
+                source_id = mention_ids.get(_normalize_label(relation.source))
+                target_id = mention_ids.get(_normalize_label(relation.target))
+                if not source_id or not target_id:
+                    continue
+                _add_edge(
+                    edges,
+                    source_id,
+                    target_id,
+                    "relation",
+                    relation.relation_type[:120],
+                    relation.confidence,
+                    document_id,
+                    chunk_id,
+                )
+        extraction_stats["entityCount"] = sum(node.kind == "entity" for node in nodes.values())
+        extraction_stats["termCount"] = sum(node.kind == "term" for node in nodes.values())
+        extraction_stats["topicCount"] = sum(node.kind == "topic" for node in nodes.values())
+        extraction_stats["relationCount"] = sum(edge.kind == "relation" for edge in edges.values())
+        return list(nodes.values()), list(edges.values()), extraction_stats
 
-    @staticmethod
-    def _mentions(content: str) -> list[tuple[str, str, int]]:
-        entities: Counter[str] = Counter()
-        terms: Counter[str] = Counter()
-        for match in _ENTITY_RE.finditer(content[:100_000]):
-            label = next((value for value in match.groups() if value), "").strip()
-            if _valid_label(label):
-                entities[label] += 1
-        for match in _TOKEN_RE.finditer(content[:100_000]):
-            label = next((value for value in match.groups() if value), "").strip()
-            if not _valid_label(label) or _normalize_label(label) in _STOP_TERMS:
-                continue
-            if re.fullmatch(r"[A-Z]{2,16}(?:[-_][A-Za-z0-9]+)*", label):
-                entities[label] += 1
-            else:
-                terms[label] += 1
-        entity_items = [("entity", label, count) for label, count in entities.most_common(6)]
-        entity_keys = {_normalize_label(label) for _, label, _ in entity_items}
-        term_items = [
-            ("term", label, count)
-            for label, count in terms.most_common(10)
-            if _normalize_label(label) not in entity_keys
-        ][:6]
-        return entity_items + term_items
+    def _extract_chunks(
+        self,
+        chunks: Sequence[sqlite3.Row],
+        *,
+        extractor: GraphExtractor,
+        batch_size: int,
+        extraction_concurrency: int,
+    ) -> tuple[dict[str, GraphExtraction], dict[str, Any]]:
+        inputs = {
+            str(row["id"]): GraphExtractionInput(
+                chunk_id=str(row["id"]),
+                document_id=str(row["document_id"]),
+                content_hash=str(row["content_hash"]),
+                heading=str(row["heading"] or "")[:500],
+                content=str(row["content"] or ""),
+            )
+            for row in chunks
+        }
+        results: dict[str, GraphExtraction] = {}
+        cached_count = 0
+        fallback_count = 0
+        model_count = 0
+        errors: list[str] = []
+        missing: list[GraphExtractionInput] = []
+        with self.store.connection() as connection:
+            for item in inputs.values():
+                row = connection.execute(
+                    "SELECT content_hash, result_json, status FROM knowledge_graph_extractions "
+                    "WHERE chunk_id=? AND extractor_fingerprint=?",
+                    (item.chunk_id, extractor.fingerprint),
+                ).fetchone()
+                if row is None or str(row["content_hash"]) != item.content_hash or str(row["status"]) != "succeeded":
+                    missing.append(item)
+                    continue
+                try:
+                    raw = json.loads(str(row["result_json"]))
+                    results[item.chunk_id] = extraction_from_dict(raw, item)
+                    cached_count += 1
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    missing.append(item)
+        fallback = DeterministicGraphExtractor()
+        batches = [missing[offset : offset + batch_size] for offset in range(0, len(missing), batch_size)]
+        effective_concurrency = (
+            max(1, min(4, int(extraction_concurrency), len(batches)))
+            if extractor.mode == "model" and batches
+            else 1
+        )
+
+        def extract_batch(
+            batch: list[GraphExtractionInput],
+        ) -> tuple[list[GraphExtractionInput], dict[str, GraphExtraction], str]:
+            error_message = ""
+            try:
+                extracted = extractor.extract(batch)
+            except Exception as exc:
+                extracted = {}
+                error_message = str(exc)[:500]
+            return batch, extracted, error_message
+
+        if effective_concurrency > 1:
+            with ThreadPoolExecutor(
+                max_workers=effective_concurrency,
+                thread_name_prefix="knowledge-graph-extract",
+            ) as executor:
+                extracted_batches = executor.map(extract_batch, batches)
+                batch_results = list(extracted_batches)
+        else:
+            batch_results = [extract_batch(batch) for batch in batches]
+
+        for batch, extracted, error_message in batch_results:
+            if extractor.mode == "model":
+                model_count += len(extracted)
+            if error_message:
+                errors.append(error_message)
+            model_result_ids = set(extracted)
+            absent = [item for item in batch if item.chunk_id not in extracted]
+            if absent:
+                fallback_count += len(absent)
+                extracted.update(fallback.extract(absent))
+            with self.store.connection() as connection:
+                for item in batch:
+                    result = extracted[item.chunk_id]
+                    results[item.chunk_id] = result
+                    item_status = (
+                        "succeeded"
+                        if extractor.mode != "model" or item.chunk_id in model_result_ids
+                        else "fallback"
+                    )
+                    connection.execute(
+                        "INSERT INTO knowledge_graph_extractions(chunk_id, content_hash, extractor_fingerprint, "
+                        "result_json, status, error_message, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(chunk_id, extractor_fingerprint) DO UPDATE SET "
+                        "content_hash=excluded.content_hash, result_json=excluded.result_json, status=excluded.status, "
+                        "error_message=excluded.error_message, updated_at_ms=excluded.updated_at_ms",
+                        (
+                            item.chunk_id,
+                            item.content_hash,
+                            extractor.fingerprint,
+                            json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True),
+                            item_status,
+                            "" if item_status == "succeeded" else error_message,
+                            now_ms(),
+                        ),
+                    )
+        stats: dict[str, Any] = {
+            "mode": extractor.mode,
+            "fingerprint": extractor.fingerprint,
+            "processedChunkCount": len(inputs),
+            "cachedChunkCount": cached_count,
+            "modelChunkCount": model_count,
+            "fallbackChunkCount": fallback_count,
+            "errorCount": len(errors),
+            "batchSize": batch_size,
+            "batchCount": len(batches),
+            "extractionConcurrency": (
+                max(1, min(4, int(extraction_concurrency))) if extractor.mode == "model" else 1
+            ),
+            "effectiveExtractionConcurrency": effective_concurrency if batches else 0,
+            "configured": bool(getattr(extractor, "configured", extractor.mode != "model")),
+        }
+        extractor_config = getattr(extractor, "config", None)
+        if extractor_config is not None:
+            stats["model"] = str(getattr(extractor_config, "model", ""))[:160]
+        if errors:
+            stats["lastError"] = errors[-1]
+        return results, stats
 
     def _replace(
         self,
@@ -453,6 +713,9 @@ class KnowledgeGraph:
         *,
         selected_ids: Sequence[str],
         partial: bool,
+        extractor_mode: str,
+        extractor_model: str,
+        extraction_stats: dict[str, Any],
     ) -> None:
         timestamp = now_ms()
         with self.store.connection() as connection:
@@ -499,13 +762,24 @@ class KnowledgeGraph:
             )
             connection.execute(
                 "UPDATE knowledge_graph_state SET revision=?, status='ready', source_fingerprint=?, "
-                "document_ids_json=?, job_id=?, error_message='', updated_at_ms=? WHERE base_id=?",
-                (revision, fingerprint, "[]", job_id, timestamp, base_id),
+                "document_ids_json=?, job_id=?, error_message='', updated_at_ms=?, extractor_mode=?, "
+                "extractor_model=?, extraction_stats_json=? WHERE base_id=?",
+                (
+                    revision,
+                    fingerprint,
+                    "[]",
+                    job_id,
+                    timestamp,
+                    extractor_mode,
+                    extractor_model or str(extraction_stats.get("model") or ""),
+                    json.dumps(extraction_stats, ensure_ascii=False, sort_keys=True),
+                    base_id,
+                ),
             )
             connection.execute(
                 "UPDATE knowledge_graph_jobs SET status='succeeded', stage='completed', finished_at_ms=?, "
-                "updated_at_ms=? WHERE id=?",
-                (timestamp, timestamp, job_id),
+                "updated_at_ms=?, stats_json=? WHERE id=?",
+                (timestamp, timestamp, json.dumps(extraction_stats, ensure_ascii=False, sort_keys=True), job_id),
             )
 
     def _state_document_ids(self, base_id: str) -> tuple[str, ...]:
@@ -661,18 +935,15 @@ def _stable_id(kind: str, *parts: str) -> str:
 def _add_edge(
     edges: dict[str, _Edge], source: str, target: str, kind: str, label: str, weight: float,
     document_id: str | None, chunk_id: str | None,
+    *,
+    dedupe_across_chunks: bool = False,
 ) -> None:
-    edge_id = _stable_id("edge", source, target, kind, chunk_id or "")
+    edge_id = _stable_id("edge", source, target, kind, "" if dedupe_across_chunks else (chunk_id or ""))
     edges[edge_id] = _Edge(edge_id, source, target, kind, label, weight, document_id, chunk_id)
 
 
 def _normalize_label(value: str) -> str:
     return " ".join(value.casefold().split())[:160]
-
-
-def _valid_label(value: str) -> bool:
-    normalized = _normalize_label(value)
-    return 2 <= len(normalized) <= 80 and normalized not in _STOP_TERMS and not normalized.isdigit()
 
 
 def _escape_like(value: str) -> str:
@@ -681,3 +952,11 @@ def _escape_like(value: str) -> str:
 
 def _kind_order(kind: str) -> int:
     return {"document": 0, "topic": 1, "chunk": 2, "entity": 3, "term": 4}.get(kind, 5)
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}

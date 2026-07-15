@@ -219,6 +219,39 @@ export interface KnowledgeGraph {
   stats: { nodeCount: number; edgeCount: number; documentCount: number; chunkCount: number; indexedDocumentCount: number; pendingDocumentCount: number };
   sourceRevision: JsonValue;
   truncated: boolean;
+  extractor: KnowledgeGraphExtractorStatus | null;
+}
+
+export type KnowledgeGraphExtractorMode = 'model' | 'deterministic';
+
+export interface KnowledgeGraphExtractorStatus {
+  mode: KnowledgeGraphExtractorMode;
+  model: string;
+  configured: boolean;
+  degraded: boolean;
+  processedChunkCount: number;
+  cachedChunkCount: number;
+  modelChunkCount: number;
+  fallbackChunkCount: number;
+  errorCount: number;
+  batchSize: number;
+  batchCount: number;
+  extractionConcurrency: number;
+  effectiveExtractionConcurrency: number;
+  entityCount: number;
+  topicCount: number;
+  relationCount: number;
+  lastError: string;
+}
+
+export interface KnowledgeGraphRebuildOptions {
+  extractorMode?: KnowledgeGraphExtractorMode;
+  modelId?: string;
+  batchSize?: number;
+  extractionConcurrency?: number;
+  maxEntitiesPerChunk?: number;
+  maxRelationsPerChunk?: number;
+  maxTopicsPerChunk?: number;
 }
 
 export interface KnowledgeGraphFilters {
@@ -333,6 +366,7 @@ export function useKnowledgeGraphQuery(baseId: string, filters: KnowledgeGraphFi
       signal,
     }), baseId),
     staleTime: 10_000,
+    refetchInterval: (query) => query.state.data?.status === 'building' ? 1_500 : false,
   });
 }
 
@@ -340,11 +374,22 @@ export async function rebuildKnowledgeGraph(
   transport: ControlTransport,
   baseId: string,
   expectedRevision: JsonValue,
+  options: KnowledgeGraphRebuildOptions = {},
 ): Promise<{ jobId: string; status: string }> {
+  const extractorMode = options.extractorMode ?? 'model';
   const payload = record(await transport.request({
     pathId: 'knowledgeBases.graph.rebuild',
     params: { kbId: baseId },
-    body: { expectedRevision },
+    body: {
+      expectedRevision,
+      extractorMode,
+      ...(options.modelId ? { modelId: options.modelId } : {}),
+      batchSize: options.batchSize ?? 4,
+      extractionConcurrency: options.extractionConcurrency ?? 2,
+      maxEntitiesPerChunk: options.maxEntitiesPerChunk ?? 5,
+      maxRelationsPerChunk: options.maxRelationsPerChunk ?? 4,
+      maxTopicsPerChunk: options.maxTopicsPerChunk ?? 2,
+    },
   }));
   return { jobId: text(payload.jobId), status: text(payload.status, 'queued') };
 }
@@ -646,6 +691,7 @@ export function normalizeKnowledgeGraph(value: unknown, baseId = ''): KnowledgeG
   }).filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
   const rawStats = record(payload.stats);
   const rawStatus = record(payload.status);
+  const rawExtractor = record(payload.extractor);
   const statusValue = typeof payload.status === 'string' ? payload.status : text(rawStatus.state, 'ready');
   return {
     schemaVersion: text(payload.schemaVersion, text(payload.schema_version, 'rag-ime.knowledge-graph.v1')),
@@ -665,6 +711,25 @@ export function normalizeKnowledgeGraph(value: unknown, baseId = ''): KnowledgeG
     },
     sourceRevision: jsonValue(rawStatus.sourceRevision ?? rawStatus.source_revision ?? payload.sourceRevision ?? payload.source_revision ?? 0),
     truncated: bool(payload.truncated),
+    extractor: Object.keys(rawExtractor).length ? {
+      mode: text(rawExtractor.mode) === 'model' ? 'model' : 'deterministic',
+      model: text(rawExtractor.model),
+      configured: bool(rawExtractor.configured),
+      degraded: bool(rawExtractor.degraded),
+      processedChunkCount: number(rawExtractor.processedChunkCount),
+      cachedChunkCount: number(rawExtractor.cachedChunkCount),
+      modelChunkCount: number(rawExtractor.modelChunkCount),
+      fallbackChunkCount: number(rawExtractor.fallbackChunkCount),
+      errorCount: number(rawExtractor.errorCount),
+      batchSize: number(rawExtractor.batchSize),
+      batchCount: number(rawExtractor.batchCount),
+      extractionConcurrency: number(rawExtractor.extractionConcurrency),
+      effectiveExtractionConcurrency: number(rawExtractor.effectiveExtractionConcurrency),
+      entityCount: number(rawExtractor.entityCount),
+      topicCount: number(rawExtractor.topicCount),
+      relationCount: number(rawExtractor.relationCount),
+      lastError: text(rawExtractor.lastError),
+    } : null,
   };
 }
 

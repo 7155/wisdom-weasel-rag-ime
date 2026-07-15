@@ -185,8 +185,24 @@ class HttpKnowledgeClient:
         *,
         expected_revision: int | None,
         document_ids: list[str] | None = None,
+        extractor_mode: str = "deterministic",
+        model_id: str = "",
+        batch_size: int = 4,
+        extraction_concurrency: int = 2,
+        max_entities: int = 5,
+        max_relations: int = 4,
+        max_topics: int = 2,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"documentIds": list(document_ids or [])}
+        payload: dict[str, Any] = {
+            "documentIds": list(document_ids or []),
+            "extractorMode": extractor_mode,
+            "modelId": model_id,
+            "batchSize": batch_size,
+            "extractionConcurrency": extraction_concurrency,
+            "maxEntitiesPerChunk": max_entities,
+            "maxRelationsPerChunk": max_relations,
+            "maxTopicsPerChunk": max_topics,
+        }
         if expected_revision is not None:
             payload["expectedRevision"] = expected_revision
         return self._request(

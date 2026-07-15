@@ -188,6 +188,13 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                         else None
                     ),
                     document_ids=document_ids,
+                    extractor_mode=str(body.get("extractorMode") or "deterministic"),
+                    model_id=str(body.get("modelId") or ""),
+                    batch_size=int(body.get("batchSize") or 4),
+                    extraction_concurrency=int(body.get("extractionConcurrency") or 2),
+                    max_entities=int(body.get("maxEntitiesPerChunk") or 5),
+                    max_relations=int(body.get("maxRelationsPerChunk") or 4),
+                    max_topics=int(body.get("maxTopicsPerChunk") or 2),
                 ), HTTPStatus.OK
             if len(parts) == 2 and parts[1] == "reindex-preview" and method == "GET":
                 return service.reindex_preview(kb_id), HTTPStatus.OK

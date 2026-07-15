@@ -164,6 +164,16 @@ class KnowledgeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_knowledge_graph_jobs_base
                     ON knowledge_graph_jobs(base_id, created_at_ms DESC);
+                CREATE TABLE IF NOT EXISTS knowledge_graph_extractions (
+                    chunk_id TEXT NOT NULL REFERENCES knowledge_chunks(id) ON DELETE CASCADE,
+                    content_hash TEXT NOT NULL,
+                    extractor_fingerprint TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error_message TEXT NOT NULL DEFAULT '',
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (chunk_id, extractor_fingerprint)
+                );
                 CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
                     id TEXT PRIMARY KEY,
                     base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
@@ -211,6 +221,11 @@ class KnowledgeStore:
             _ensure_column(connection, "knowledge_documents", "artifact_path", "TEXT NOT NULL DEFAULT ''")
             _ensure_column(connection, "knowledge_documents", "indexed_config_revision", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(connection, "knowledge_jobs", "parser_mode", "TEXT NOT NULL DEFAULT 'auto'")
+            _ensure_column(connection, "knowledge_graph_state", "extractor_mode", "TEXT NOT NULL DEFAULT 'deterministic'")
+            _ensure_column(connection, "knowledge_graph_state", "extractor_model", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(connection, "knowledge_graph_state", "extraction_stats_json", "TEXT NOT NULL DEFAULT '{}'")
+            _ensure_column(connection, "knowledge_graph_jobs", "extractor_mode", "TEXT NOT NULL DEFAULT 'deterministic'")
+            _ensure_column(connection, "knowledge_graph_jobs", "stats_json", "TEXT NOT NULL DEFAULT '{}'")
             connection.execute(
                 "INSERT INTO knowledge_meta(key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

@@ -273,7 +273,13 @@ describe('document knowledge library', () => {
 
     await user.click(await screen.findByRole('tab', { name: '知识图谱' }));
     expect(await screen.findByText('4')).toBeInTheDocument();
-    expect(request(transport, 'knowledgeBases.graph.get')?.query).toMatchObject({ limit: 100, depth: 2, excludeChunks: true });
+    expect(request(transport, 'knowledgeBases.graph.get')?.query).toMatchObject({ limit: 80, depth: 2, excludeChunks: true });
+    expect(screen.getByLabelText('交互式知识图谱画布')).toHaveClass('knowledge-graph__canvas');
+    expect(screen.getByLabelText('交互式知识图谱画布')).toHaveAttribute('data-renderer', 'g6');
+    expect(screen.getByRole('button', { name: '适应全部节点' })).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: '搜索图谱' }), 'DeepSeek');
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get' && call.request.query?.query === 'DeepSeek')).toHaveLength(1), { timeout: 1_500 });
+    expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get' && call.request.query?.query)).toHaveLength(1);
     await user.click(screen.getByRole('radio', { name: '节点' }));
     await user.click(screen.getByRole('button', { name: /按需检索与上下文注入/ }));
     expect(screen.getByRole('heading', { name: '按需检索与上下文注入' })).toBeInTheDocument();
@@ -287,8 +293,19 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('radio', { name: '构建状态' }));
     expect(screen.getByText('已索引材料')).toBeInTheDocument();
     expect(screen.getByText('待处理材料')).toBeInTheDocument();
+    expect(screen.getByText('下次重建').nextElementSibling).toHaveTextContent('模型抽取（推荐）');
+    expect(screen.getByText('由 Worker 运行时配置')).toBeInTheDocument();
+    expect(screen.getByText('抽取上限').nextElementSibling).toHaveTextContent('5 实体 / 4 关系 / 2 主题');
     await user.click(screen.getAllByRole('button', { name: '重建图谱' }).at(-1)!);
-    await waitFor(() => expect(request(transport, 'knowledgeBases.graph.rebuild')?.body).toEqual({ expectedRevision: 4 }));
+    await waitFor(() => expect(request(transport, 'knowledgeBases.graph.rebuild')?.body).toEqual({
+      expectedRevision: 4,
+      extractorMode: 'model',
+      batchSize: 4,
+      extractionConcurrency: 2,
+      maxEntitiesPerChunk: 5,
+      maxRelationsPerChunk: 4,
+      maxTopicsPerChunk: 2,
+    }));
   });
 
   it('keeps build status reachable before the first graph has nodes', async () => {
@@ -300,6 +317,22 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('button', { name: '查看构建状态' }));
     expect(screen.getByText('图谱构建状态')).toBeInTheDocument();
     expect(screen.getByText('待处理材料')).toBeInTheDocument();
+  });
+
+  it('polls a queued model graph until ready and prevents duplicate rebuilds', async () => {
+    const transport = createTransport({ pollingGraph: true });
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '知识图谱' }));
+    await user.click(screen.getByRole('radio', { name: '构建状态' }));
+    expect(screen.getByRole('heading', { name: '构建中' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '重建图谱' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: '重建图谱' }).every((button) => button.hasAttribute('disabled'))).toBe(true);
+
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get')).toHaveLength(2), { timeout: 2_500 });
+    await waitFor(() => expect(screen.getAllByRole('button', { name: '重建图谱' }).every((button) => !button.hasAttribute('disabled'))).toBe(true));
+    expect(screen.getByRole('heading', { name: '已就绪' })).toBeInTheDocument();
   });
 });
 
@@ -314,7 +347,8 @@ function renderKnowledge(transport: MockControlTransport) {
   );
 }
 
-function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; pagedDetail?: boolean } = {}): MockControlTransport {
+function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; pagedDetail?: boolean; pollingGraph?: boolean } = {}): MockControlTransport {
+  let graphRequestCount = 0;
   return new MockControlTransport({
     knowledgeAsset: (input) => ({ ...input, mimeType: 'image/png', byteSize: 3, sha256: input.assetId, blob: new Blob(['png'], { type: 'image/png' }) }),
     knowledgeDocumentSource: (input) => ({ ...input, mimeType: 'application/pdf', byteSize: 3, sha256: 'b'.repeat(64), blob: new Blob(['pdf'], { type: 'application/pdf' }) }),
@@ -344,10 +378,12 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
       'knowledgeBases.rebuild': { ok: true },
       'knowledgeBases.job.cancel': { ok: true, job: { id: 'job-1', status: 'cancelled' } },
       'knowledgeBases.chunkPreview': { ok: true, fileId: 'file-runtime', total: 2, truncated: false, items: [{ chunkId: 'preview-1', ordinal: 0, content: '第一条预览', page: 1 }, { chunkId: 'preview-2', ordinal: 1, content: '第二条预览', page: 2 }] },
-      'knowledgeBases.graph.get': {
+      'knowledgeBases.graph.get': () => {
+        graphRequestCount += 1;
+        return {
         schemaVersion: 'rag-ime.knowledge-graph.v1', kbId: 'kb-runtime', revision: 4,
         sourceRevision: `sha256:${'b'.repeat(64)}`,
-        status: options.emptyGraph ? 'stale' : 'ready', updatedAtMs: Date.now(),
+        status: options.emptyGraph ? 'stale' : options.pollingGraph && graphRequestCount === 1 ? 'building' : 'ready', updatedAtMs: Date.now(),
         nodes: options.emptyGraph ? [] : [
           { id: 'doc-runtime', label: 'runtime.pdf', kind: 'document', documentId: 'file-runtime', documentName: 'runtime.pdf', weight: 1 },
           { id: 'topic-tools', label: '工具注册', kind: 'topic', weight: .9 },
@@ -368,7 +404,7 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
           pendingDocumentCount: options.emptyGraph ? 1 : 0,
         },
         truncated: false,
-      },
+      }; },
       'knowledgeBases.graph.rebuild': { ok: true, jobId: 'graph-job-1', status: 'queued' },
     },
   });

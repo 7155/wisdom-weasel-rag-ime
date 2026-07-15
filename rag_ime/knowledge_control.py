@@ -226,6 +226,15 @@ class KnowledgeControlFacade:
                     else None
                 ),
                 document_ids=[_identifier(item, "documentId") for item in (document_ids or [])],
+                extractor_mode=str(payload.get("extractorMode") or "deterministic"),
+                model_id=_text(payload.get("modelId"), maximum=160),
+                batch_size=_bounded_int(payload.get("batchSize"), default=4, minimum=1, maximum=8),
+                extraction_concurrency=_bounded_int(
+                    payload.get("extractionConcurrency"), default=2, minimum=1, maximum=4
+                ),
+                max_entities=_bounded_int(payload.get("maxEntitiesPerChunk"), default=5, minimum=1, maximum=8),
+                max_relations=_bounded_int(payload.get("maxRelationsPerChunk"), default=4, minimum=0, maximum=8),
+                max_topics=_bounded_int(payload.get("maxTopicsPerChunk"), default=2, minimum=0, maximum=4),
             )
         )
 

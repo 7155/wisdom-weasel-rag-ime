@@ -627,7 +627,7 @@ export const CONTROL_ROUTES = {
     method: 'POST',
     path: '/api/knowledge-bases/:kbId/graph/rebuild',
     params: { kbId: null },
-    body: ['expectedRevision', 'documentIds'],
+    body: ['expectedRevision', 'documentIds', 'extractorMode', 'modelId', 'batchSize', 'extractionConcurrency', 'maxEntitiesPerChunk', 'maxRelationsPerChunk', 'maxTopicsPerChunk'],
     requiredBody: ['expectedRevision'],
   },
   'knowledgeWorker.health': { method: 'GET', path: '/api/knowledge-bases/health' },

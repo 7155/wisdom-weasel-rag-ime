@@ -13,6 +13,27 @@ export interface KnowledgeGraphV1 {
   updatedAtMs: number;
   jobId?: string;
   error?: string;
+  extractor?: {
+    mode: 'deterministic' | 'model';
+    model: string;
+    configured: boolean;
+    degraded: boolean;
+    fingerprint?: string;
+    processedChunkCount?: number;
+    cachedChunkCount?: number;
+    modelChunkCount?: number;
+    fallbackChunkCount?: number;
+    errorCount?: number;
+    batchSize?: number;
+    batchCount?: number;
+    extractionConcurrency?: number;
+    effectiveExtractionConcurrency?: number;
+    entityCount?: number;
+    termCount?: number;
+    topicCount?: number;
+    relationCount?: number;
+    lastError?: string;
+  };
   /**
    * @maxItems 1000
    */

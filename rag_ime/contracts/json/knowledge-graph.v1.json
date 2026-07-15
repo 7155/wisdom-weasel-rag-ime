@@ -24,6 +24,32 @@
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "jobId": {"type": "string", "minLength": 1, "maxLength": 160},
     "error": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "extractor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "model", "configured", "degraded"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["deterministic", "model"]},
+        "model": {"type": "string", "maxLength": 160},
+        "configured": {"type": "boolean"},
+        "degraded": {"type": "boolean"},
+        "fingerprint": {"type": "string", "maxLength": 160},
+        "processedChunkCount": {"type": "integer", "minimum": 0},
+        "cachedChunkCount": {"type": "integer", "minimum": 0},
+        "modelChunkCount": {"type": "integer", "minimum": 0},
+        "fallbackChunkCount": {"type": "integer", "minimum": 0},
+        "errorCount": {"type": "integer", "minimum": 0},
+        "batchSize": {"type": "integer", "minimum": 1, "maximum": 8},
+        "batchCount": {"type": "integer", "minimum": 0},
+        "extractionConcurrency": {"type": "integer", "minimum": 1, "maximum": 4},
+        "effectiveExtractionConcurrency": {"type": "integer", "minimum": 0, "maximum": 4},
+        "entityCount": {"type": "integer", "minimum": 0},
+        "termCount": {"type": "integer", "minimum": 0},
+        "topicCount": {"type": "integer", "minimum": 0},
+        "relationCount": {"type": "integer", "minimum": 0},
+        "lastError": {"type": "string", "maxLength": 500}
+      }
+    },
     "nodes": {
       "type": "array",
       "maxItems": 1000,
