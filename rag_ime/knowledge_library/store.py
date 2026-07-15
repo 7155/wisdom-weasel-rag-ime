@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from .models import KNOWLEDGE_SCHEMA_VERSION, KnowledgeConflictError, KnowledgeLibraryError, KnowledgeNotFoundError, SearchHit
+from .permissions import harden_knowledge_tree, secure_file
 
 
 def now_ms() -> int:
@@ -17,8 +18,9 @@ def now_ms() -> int:
 class KnowledgeStore:
     def __init__(self, database_path: Path):
         self.database_path = Path(database_path)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        harden_knowledge_tree(self.database_path.parent)
         self._migrate()
+        secure_file(self.database_path)
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -34,6 +36,15 @@ class KnowledgeStore:
             raise
         finally:
             connection.close()
+            if self.database_path.exists():
+                secure_file(self.database_path)
+            for suffix in ("-wal", "-shm"):
+                sidecar = self.database_path.with_name(self.database_path.name + suffix)
+                try:
+                    if sidecar.exists():
+                        secure_file(sidecar)
+                except FileNotFoundError:
+                    pass
 
     def _migrate(self) -> None:
         with self.connection() as connection:
@@ -89,6 +100,7 @@ class KnowledgeStore:
                     document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
                     revision INTEGER NOT NULL,
                     kind TEXT NOT NULL,
+                    parser_mode TEXT NOT NULL DEFAULT 'auto',
                     status TEXT NOT NULL,
                     stage TEXT NOT NULL,
                     error_code TEXT NOT NULL DEFAULT '',
@@ -141,6 +153,7 @@ class KnowledgeStore:
             _ensure_column(connection, "knowledge_bases", "config_revision", "INTEGER NOT NULL DEFAULT 1")
             _ensure_column(connection, "knowledge_documents", "artifact_path", "TEXT NOT NULL DEFAULT ''")
             _ensure_column(connection, "knowledge_documents", "indexed_config_revision", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(connection, "knowledge_jobs", "parser_mode", "TEXT NOT NULL DEFAULT 'auto'")
             connection.execute(
                 "INSERT INTO knowledge_meta(key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -324,6 +337,63 @@ class KnowledgeStore:
         with self.connection() as connection:
             connection.execute(f"UPDATE knowledge_jobs SET {', '.join(assignments)} WHERE id=?", values)
 
+    def get_job(self, job_id: str) -> sqlite3.Row:
+        return self.one(
+            "SELECT j.*, d.base_id, d.display_name AS file_name, d.status AS document_status, "
+            "d.revision AS document_revision FROM knowledge_jobs j "
+            "JOIN knowledge_documents d ON d.id=j.document_id WHERE j.id=?",
+            (job_id,),
+        )
+
+    def recoverable_jobs(self) -> list[sqlite3.Row]:
+        return self.all(
+            "SELECT j.*, d.base_id, d.display_name AS file_name, d.status AS document_status, "
+            "d.revision AS document_revision FROM knowledge_jobs j "
+            "JOIN knowledge_documents d ON d.id=j.document_id "
+            "WHERE j.status IN ('queued', 'running') ORDER BY j.created_at_ms, j.id"
+        )
+
+    def reset_job_for_recovery(self, job_id: str) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE knowledge_jobs SET status='queued', stage='recovered', error_code='', "
+                "error_message='', started_at_ms=NULL, finished_at_ms=NULL, updated_at_ms=? "
+                "WHERE id=? AND status IN ('queued', 'running')",
+                (now_ms(), job_id),
+            )
+
+    def cancel_job(self, job_id: str) -> sqlite3.Row:
+        timestamp = now_ms()
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT j.*, d.base_id, d.display_name AS file_name, d.status AS document_status, "
+                "d.revision AS document_revision FROM knowledge_jobs j "
+                "JOIN knowledge_documents d ON d.id=j.document_id WHERE j.id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KnowledgeNotFoundError(f"knowledge job {job_id!r} was not found")
+            if str(row["status"]) in {"queued", "running"}:
+                connection.execute(
+                    "UPDATE knowledge_jobs SET status='cancelled', stage='cancelled', "
+                    "error_code='cancelled', error_message='cancelled by user', "
+                    "finished_at_ms=?, updated_at_ms=? WHERE id=?",
+                    (timestamp, timestamp, job_id),
+                )
+                connection.execute(
+                    "UPDATE knowledge_documents SET revision=revision+1, status='failed', "
+                    "error_code='cancelled', error_message='processing cancelled by user', updated_at_ms=? "
+                    "WHERE id=? AND revision=? AND status IN ('queued', 'parsing', 'indexing')",
+                    (timestamp, str(row["document_id"]), int(row["revision"])),
+                )
+        return self.get_job(job_id)
+
+    def job_is_cancelled(self, job_id: str) -> bool:
+        try:
+            return str(self.one("SELECT status FROM knowledge_jobs WHERE id=?", (job_id,))["status"]) == "cancelled"
+        except KnowledgeNotFoundError:
+            return True
+
     def replace_chunks_if_revision(
         self,
         *,
@@ -387,6 +457,34 @@ class KnowledgeStore:
         with self.connection() as connection:
             connection.execute("DELETE FROM knowledge_document_assets WHERE document_id=?", (document_id,))
 
+    def replace_document_asset_links(
+        self,
+        document_id: str,
+        assets: Sequence[tuple[str, str]],
+    ) -> None:
+        with self.connection() as connection:
+            if connection.execute("SELECT 1 FROM knowledge_documents WHERE id=?", (document_id,)).fetchone() is None:
+                raise KnowledgeNotFoundError(f"document {document_id!r} was not found")
+            connection.execute("DELETE FROM knowledge_document_assets WHERE document_id=?", (document_id,))
+            connection.executemany(
+                "INSERT OR IGNORE INTO knowledge_document_assets(document_id, asset_sha256, original_name) "
+                "VALUES (?, ?, ?)",
+                ((document_id, sha256, name) for sha256, name in assets),
+            )
+
+    def delete_unreferenced_assets(self) -> list[str]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT a.sha256, a.stored_path FROM knowledge_assets a "
+                "LEFT JOIN knowledge_document_assets da ON da.asset_sha256=a.sha256 "
+                "WHERE da.asset_sha256 IS NULL"
+            ).fetchall()
+            connection.executemany(
+                "DELETE FROM knowledge_assets WHERE sha256=?",
+                ((str(row["sha256"]),) for row in rows),
+            )
+        return [str(row["stored_path"]) for row in rows]
+
     def search(
         self,
         query: str,
@@ -394,6 +492,7 @@ class KnowledgeStore:
         base_ids: Sequence[str],
         limit: int,
         agent_only: bool,
+        document_ids: Sequence[str] = (),
     ) -> list[SearchHit]:
         fts_query = _fts_query(query)
         if not fts_query:
@@ -405,6 +504,9 @@ class KnowledgeStore:
         if base_ids:
             filters.append(f"c.base_id IN ({', '.join('?' for _ in base_ids)})")
             params.extend(base_ids)
+        if document_ids:
+            filters.append(f"c.document_id IN ({', '.join('?' for _ in document_ids)})")
+            params.extend(document_ids)
         params.append(max(1, min(100, int(limit))))
         sql = (
             "SELECT c.id AS chunk_id, c.base_id, b.name AS base_name, c.document_id, "
@@ -444,6 +546,7 @@ class KnowledgeStore:
         *,
         base_ids: Sequence[str],
         agent_only: bool,
+        document_ids: Sequence[str] = (),
     ) -> list[SearchHit]:
         if not scored_ids:
             return []
@@ -453,6 +556,9 @@ class KnowledgeStore:
         if base_ids:
             filters.append(f"c.base_id IN ({', '.join('?' for _ in base_ids)})")
             params.extend(base_ids)
+        if document_ids:
+            filters.append(f"c.document_id IN ({', '.join('?' for _ in document_ids)})")
+            params.extend(document_ids)
         if agent_only:
             filters.append("b.agent_enabled=1")
         rows = self.all(
@@ -484,6 +590,55 @@ class KnowledgeStore:
                 )
             )
         return hits
+
+    def document_ids_for_file_name(
+        self,
+        file_name: str,
+        *,
+        base_ids: Sequence[str],
+        agent_only: bool,
+    ) -> tuple[str, ...]:
+        filters = ["d.status='ready'", "(LOWER(d.display_name)=LOWER(?) OR LOWER(d.source_name)=LOWER(?))"]
+        params: list[Any] = [file_name, file_name]
+        if base_ids:
+            filters.append(f"d.base_id IN ({', '.join('?' for _ in base_ids)})")
+            params.extend(base_ids)
+        if agent_only:
+            filters.append("b.agent_enabled=1")
+        rows = self.all(
+            "SELECT d.id FROM knowledge_documents d JOIN knowledge_bases b ON b.id=d.base_id "
+            f"WHERE {' AND '.join(filters)} ORDER BY d.updated_at_ms DESC, d.id",
+            params,
+        )
+        return tuple(str(row["id"]) for row in rows)
+
+    def find_document_chunks(
+        self,
+        document_id: str,
+        patterns: Sequence[str],
+        *,
+        case_sensitive: bool,
+        offset: int,
+        limit: int,
+        agent_only: bool,
+    ) -> list[sqlite3.Row]:
+        document = self.get_document(document_id)
+        if str(document["status"]) != "ready" or (agent_only and not bool(document["base_agent_enabled"])):
+            raise KnowledgeNotFoundError(f"document {document_id!r} is not available")
+        expression = "c.content" if case_sensitive else "LOWER(c.content)"
+        predicates = [f"INSTR({expression}, ?) > 0" for _ in patterns]
+        values = list(patterns if case_sensitive else [pattern.lower() for pattern in patterns])
+        values.extend([document_id, max(0, int(offset)), max(1, min(500, int(limit)))])
+        return self.all(
+            "SELECT c.*, d.display_name AS document_name, b.name AS base_name, "
+            "(SELECT COALESCE(SUM(1 + LENGTH(p.content) - LENGTH(REPLACE(p.content, CHAR(10), ''))), 0) "
+            " FROM knowledge_chunks p WHERE p.document_id=c.document_id AND p.ordinal<c.ordinal) AS lines_before "
+            "FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id "
+            "JOIN knowledge_bases b ON b.id=c.base_id "
+            f"WHERE ({' OR '.join(predicates)}) AND c.document_id=? AND c.ordinal>=? "
+            "ORDER BY c.ordinal LIMIT ?",
+            values,
+        )
 
     def find_documents(self, query: str, *, base_ids: Sequence[str], limit: int, agent_only: bool) -> list[sqlite3.Row]:
         filters = ["d.status='ready'", "(LOWER(d.display_name) LIKE ? OR LOWER(d.source_name) LIKE ?)"]
@@ -542,6 +697,39 @@ class KnowledgeStore:
             "WHERE c.document_id=? AND c.ordinal>=? ORDER BY c.ordinal LIMIT ?",
             (document_id, max(0, int(offset)), max(1, min(50, int(limit)))),
         )
+
+    def open_document_lines(
+        self,
+        document_id: str,
+        *,
+        line_start: int,
+        line_limit: int,
+        agent_only: bool,
+    ) -> tuple[list[sqlite3.Row], int]:
+        document = self.get_document(document_id)
+        if str(document["status"]) != "ready" or (agent_only and not bool(document["base_agent_enabled"])):
+            raise KnowledgeNotFoundError(f"document {document_id!r} is not available")
+        start = max(1, int(line_start))
+        end = start + max(1, min(300, int(line_limit)))
+        rows = self.all(
+            "WITH numbered AS ("
+            " SELECT c.*, d.display_name AS document_name, b.name AS base_name, "
+            "  1 + LENGTH(c.content) - LENGTH(REPLACE(c.content, CHAR(10), '')) AS line_count, "
+            "  COALESCE(SUM(1 + LENGTH(c.content) - LENGTH(REPLACE(c.content, CHAR(10), ''))) "
+            "   OVER (ORDER BY c.ordinal ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS lines_before "
+            " FROM knowledge_chunks c JOIN knowledge_documents d ON d.id=c.document_id "
+            " JOIN knowledge_bases b ON b.id=c.base_id WHERE c.document_id=?"
+            ") SELECT * FROM numbered WHERE lines_before + line_count >= ? AND lines_before < ? ORDER BY ordinal",
+            (document_id, start, end),
+        )
+        total = int(
+            self.one(
+                "SELECT COALESCE(SUM(1 + LENGTH(content) - LENGTH(REPLACE(content, CHAR(10), ''))), 0) AS count "
+                "FROM knowledge_chunks WHERE document_id=?",
+                (document_id,),
+            )["count"]
+        )
+        return rows, total
 
     def document_chunks(self, document_id: str, *, offset: int, limit: int) -> tuple[list[sqlite3.Row], int]:
         total = int(self.one("SELECT COUNT(*) AS count FROM knowledge_chunks WHERE document_id=?", (document_id,))["count"])

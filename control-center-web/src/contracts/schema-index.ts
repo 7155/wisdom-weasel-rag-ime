@@ -4749,14 +4749,19 @@ export const contractSchemas = {
           "strategy",
           "size",
           "overlap",
+          "separator",
           "respectHeadings",
           "respectPageBoundaries"
         ],
         "properties": {
           "strategy": {
             "enum": [
+              "general",
               "markdown",
-              "paragraph",
+              "book",
+              "qa",
+              "laws",
+              "separator",
               "fixed"
             ]
           },
@@ -4769,6 +4774,10 @@ export const contractSchemas = {
             "type": "integer",
             "minimum": 0,
             "maximum": 2000
+          },
+          "separator": {
+            "type": "string",
+            "maxLength": 100
           },
           "respectHeadings": {
             "type": "boolean"
@@ -4784,7 +4793,11 @@ export const contractSchemas = {
         "required": [
           "mode",
           "topK",
-          "threshold"
+          "threshold",
+          "lexicalWeight",
+          "denseWeight",
+          "rrfK",
+          "candidateMultiplier"
         ],
         "properties": {
           "mode": {
@@ -4803,6 +4816,26 @@ export const contractSchemas = {
             "type": "number",
             "minimum": 0,
             "maximum": 1
+          },
+          "lexicalWeight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "denseWeight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "rrfK": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "candidateMultiplier": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
           }
         },
         "additionalProperties": false

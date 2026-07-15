@@ -8,6 +8,7 @@ export type NativeBridgeMethod =
   | 'request'
   | 'subscribe'
   | 'cancelSubscription'
+  | 'cancelRequest'
   | 'pickFiles'
   | 'pasteImages'
   | 'readKnowledgeAsset'

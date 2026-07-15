@@ -112,6 +112,8 @@ class ControlPathId(str, Enum):
     KNOWLEDGE_BASES_DOCUMENT_SOURCE = "knowledgeBases.document.source"
     KNOWLEDGE_BASES_ASSET_GET = "knowledgeBases.asset.get"
     KNOWLEDGE_BASES_JOBS_LIST = "knowledgeBases.jobs.list"
+    KNOWLEDGE_BASES_JOB_CANCEL = "knowledgeBases.job.cancel"
+    KNOWLEDGE_BASES_CHUNK_PREVIEW = "knowledgeBases.chunkPreview"
     KNOWLEDGE_BASES_SEARCH = "knowledgeBases.search"
     KNOWLEDGE_BASES_FIND = "knowledgeBases.find"
     KNOWLEDGE_BASES_OPEN = "knowledgeBases.open"
@@ -428,6 +430,7 @@ _ARTIFACT = {"artifactId"}
 _KNOWLEDGE_BASE = {"kbId"}
 _KNOWLEDGE_DOCUMENT = {"kbId", "fileId"}
 _KNOWLEDGE_ASSET = {"kbId", "fileId", "assetId"}
+_KNOWLEDGE_JOB = {"kbId", "jobId"}
 _PAGE_QUERY = {"limit", "cursor", "query", "status"}
 _LAST_EVENT_QUERY = {"lastEventId"}
 
@@ -534,11 +537,13 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.KNOWLEDGE_BASES_DOCUMENT_IMPORT, ControlMethod.POST, "/api/knowledge-bases/{kbId}/documents/import", None, params=_KNOWLEDGE_BASE, query={"fileName", "mimeType", "parserProvider"}, required_query={"fileName", "mimeType"}),
         _route(ControlPathId.KNOWLEDGE_BASES_DOCUMENT_RETRY, ControlMethod.POST, "/api/knowledge-bases/{kbId}/documents/{fileId}/retry", None, params=_KNOWLEDGE_DOCUMENT, body={"stage", "parserProvider", "expectedRevision"}, required_body={"stage", "expectedRevision"}),
         _route(ControlPathId.KNOWLEDGE_BASES_DOCUMENT_DELETE, ControlMethod.DELETE, "/api/knowledge-bases/{kbId}/documents/{fileId}", None, params=_KNOWLEDGE_DOCUMENT),
-        _route(ControlPathId.KNOWLEDGE_BASES_DOCUMENT_GET, ControlMethod.GET, "/api/knowledge-bases/{kbId}/documents/{fileId}", None, params=_KNOWLEDGE_DOCUMENT, query={"offset", "limit"}),
+        _route(ControlPathId.KNOWLEDGE_BASES_DOCUMENT_GET, ControlMethod.GET, "/api/knowledge-bases/{kbId}/documents/{fileId}", None, params=_KNOWLEDGE_DOCUMENT, query={"offset", "limit", "lineOffset", "lineLimit"}),
         _route(ControlPathId.KNOWLEDGE_BASES_DOCUMENT_SOURCE, ControlMethod.GET, "/api/knowledge-bases/{kbId}/documents/{fileId}/source", None, params=_KNOWLEDGE_DOCUMENT, binary=True),
         _route(ControlPathId.KNOWLEDGE_BASES_ASSET_GET, ControlMethod.GET, "/api/knowledge-bases/{kbId}/documents/{fileId}/assets/{assetId}", None, params=_KNOWLEDGE_ASSET, binary=True),
         _route(ControlPathId.KNOWLEDGE_BASES_JOBS_LIST, ControlMethod.GET, "/api/knowledge-bases/{kbId}/jobs", None, params=_KNOWLEDGE_BASE, query={"limit", "cursor", "status"}),
-        _route(ControlPathId.KNOWLEDGE_BASES_SEARCH, ControlMethod.POST, "/api/knowledge-bases/{kbId}/search", None, params=_KNOWLEDGE_BASE, body={"query", "topK", "mode", "threshold", "fileIds"}, required_body={"query"}),
+        _route(ControlPathId.KNOWLEDGE_BASES_JOB_CANCEL, ControlMethod.POST, "/api/knowledge-bases/{kbId}/jobs/{jobId}/cancel", None, params=_KNOWLEDGE_JOB, body=set()),
+        _route(ControlPathId.KNOWLEDGE_BASES_CHUNK_PREVIEW, ControlMethod.POST, "/api/knowledge-bases/{kbId}/documents/{fileId}/chunk-preview", None, params=_KNOWLEDGE_DOCUMENT, body={"chunkingConfig", "limit"}, required_body={"chunkingConfig"}),
+        _route(ControlPathId.KNOWLEDGE_BASES_SEARCH, ControlMethod.POST, "/api/knowledge-bases/{kbId}/search", None, params=_KNOWLEDGE_BASE, body={"query", "topK", "mode", "threshold", "fileIds", "fileName"}, required_body={"query"}),
         _route(ControlPathId.KNOWLEDGE_BASES_FIND, ControlMethod.POST, "/api/knowledge-bases/{kbId}/documents/{fileId}/find", None, params=_KNOWLEDGE_DOCUMENT, body={"query", "regex", "lineWindow"}, required_body={"query"}),
         _route(ControlPathId.KNOWLEDGE_BASES_OPEN, ControlMethod.GET, "/api/knowledge-bases/{kbId}/documents/{fileId}/content", None, params=_KNOWLEDGE_DOCUMENT, query={"chunkId", "page", "startLine", "lines"}),
         _route(ControlPathId.KNOWLEDGE_BASES_REINDEX_PREVIEW, ControlMethod.GET, "/api/knowledge-bases/{kbId}/reindex-preview", None, params=_KNOWLEDGE_BASE),

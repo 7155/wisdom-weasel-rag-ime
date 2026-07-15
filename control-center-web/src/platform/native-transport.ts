@@ -46,7 +46,7 @@ export interface NativeControlTransportOptions {
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
   removeAbortListener?: () => void;
 }
 
@@ -89,6 +89,7 @@ export class NativeControlTransport implements ControlTransport {
   private readonly subscriptions = new Map<string, NativeSubscription>();
   private readonly receiver: RagImeNativeBridgeReceiver;
   private readonly previousReceiver: RagImeNativeBridgeReceiver | undefined;
+  private cancellationSequence = 0;
   private disposed = false;
 
   constructor(options: NativeControlTransportOptions = {}) {
@@ -145,7 +146,8 @@ export class NativeControlTransport implements ControlTransport {
 
   async pickFiles(options: FilePickOptions): Promise<PickedFile[]> {
     assertFilePickOptions(options);
-    const result = await this.call('pickFiles', options);
+    const { signal, ...payload } = options;
+    const result = await this.call('pickFiles', payload, signal, null);
     if (!Array.isArray(result)) throw new NativeBridgeCallError('pickFiles returned a non-array');
     if (result.length > (options.maxFiles ?? (options.multiple ? 8 : 1))) {
       throw new NativeBridgeCallError('pickFiles returned too many file receipts');
@@ -185,6 +187,7 @@ export class NativeControlTransport implements ControlTransport {
         ...(parserProvider ? { parserProvider } : {}),
       },
       input.signal,
+      null,
     );
     if (!Array.isArray(result) || result.length > maxFiles) {
       throw new NativeBridgeCallError('knowledge import returned an invalid receipt list');
@@ -198,6 +201,7 @@ export class NativeControlTransport implements ControlTransport {
       'readKnowledgeAsset',
       { kbId: input.kbId, fileId: input.fileId, assetId: input.assetId },
       input.signal,
+      120_000,
     );
     return parseNativeKnowledgeAsset(result, input);
   }
@@ -210,6 +214,7 @@ export class NativeControlTransport implements ControlTransport {
       'readKnowledgeDocumentSource',
       { kbId: input.kbId, fileId: input.fileId },
       input.signal,
+      120_000,
     );
     return parseNativeKnowledgeDocumentSource(result, input);
   }
@@ -233,40 +238,48 @@ export class NativeControlTransport implements ControlTransport {
 
   dispose(): void {
     if (this.disposed) return;
-    this.disposed = true;
     for (const subscriptionId of [...this.subscriptions.keys()]) {
       this.cancelSubscription(subscriptionId);
     }
     for (const [id, item] of this.pending) {
-      globalThis.clearTimeout(item.timer);
+      if (item.timer !== undefined) globalThis.clearTimeout(item.timer);
       item.removeAbortListener?.();
+      this.postCancellation(id);
       item.reject(new NativeBridgeUnavailableError('native transport was disposed'));
       this.pending.delete(id);
     }
+    this.disposed = true;
     if (this.bridgeWindow.__RAG_IME_NATIVE_BRIDGE__ === this.receiver) {
       this.bridgeWindow.__RAG_IME_NATIVE_BRIDGE__ = this.previousReceiver;
     }
   }
 
-  private call(method: NativeBridgeMethod, payload: unknown, signal?: AbortSignal): Promise<unknown> {
+  private call(
+    method: NativeBridgeMethod,
+    payload: unknown,
+    signal?: AbortSignal,
+    timeoutMs: number | null = this.requestTimeoutMs,
+  ): Promise<unknown> {
     this.assertActive();
     if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
     const id = this.createId();
 
     return new Promise((resolve, reject) => {
-      const timer = globalThis.setTimeout(() => {
+      const timer = timeoutMs === null ? undefined : globalThis.setTimeout(() => {
         const item = this.pending.get(id);
         if (!item) return;
         item.removeAbortListener?.();
         this.pending.delete(id);
+        this.postCancellation(id);
         reject(new NativeBridgeCallError({ code: 'timeout', message: `${method} timed out` }));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
 
       const pending: PendingRequest = { resolve, reject, timer };
       if (signal) {
         const abort = (): void => {
-          globalThis.clearTimeout(timer);
+          if (timer !== undefined) globalThis.clearTimeout(timer);
           this.pending.delete(id);
+          this.postCancellation(id);
           reject(new DOMException('Aborted', 'AbortError'));
         };
         signal.addEventListener('abort', abort, { once: true });
@@ -278,7 +291,7 @@ export class NativeControlTransport implements ControlTransport {
       try {
         this.handler.postMessage(envelope);
       } catch (error) {
-        globalThis.clearTimeout(timer);
+        if (timer !== undefined) globalThis.clearTimeout(timer);
         pending.removeAbortListener?.();
         this.pending.delete(id);
         reject(asError(error));
@@ -286,12 +299,25 @@ export class NativeControlTransport implements ControlTransport {
     });
   }
 
+  private postCancellation(requestId: string): void {
+    this.cancellationSequence += 1;
+    try {
+      this.handler.postMessage({
+        id: `cancel:${this.cancellationSequence}`,
+        method: 'cancelRequest',
+        payload: { requestId },
+      });
+    } catch {
+      // Cancellation remains best effort if the native host is already gone.
+    }
+  }
+
   private receive(envelope: NativeBridgeOutboundEnvelope): void {
     if (this.disposed) return;
     if ('id' in envelope) {
       const pending = this.pending.get(envelope.id);
       if (!pending) return;
-      globalThis.clearTimeout(pending.timer);
+      if (pending.timer !== undefined) globalThis.clearTimeout(pending.timer);
       pending.removeAbortListener?.();
       this.pending.delete(envelope.id);
       if (envelope.ok) pending.resolve(envelope.result);
@@ -633,6 +659,7 @@ function assertFilePickOptions(options: FilePickOptions): void {
     'kbId',
     'parserProvider',
     'maxFiles',
+    'signal',
   ]);
   for (const key of Object.keys(options)) {
     if (!allowedKeys.has(key)) throw new TypeError(`FilePickOptions field is not allowed: ${key}`);

@@ -21,6 +21,9 @@ class EmbeddingProvider(Protocol):
     def embed(self, text: str) -> list[float]:
         ...
 
+    def embed_many(self, texts: list[str], *, batch_size: int = 32) -> list[list[float]]:
+        ...
+
 
 def embed_query(provider: EmbeddingProvider, text: str) -> list[float]:
     query_method = getattr(provider, "embed_query", None)
@@ -35,6 +38,9 @@ class NullEmbeddingProvider:
 
     def embed(self, text: str) -> list[float]:
         return []
+
+    def embed_many(self, texts: list[str], *, batch_size: int = 32) -> list[list[float]]:
+        return [[] for _ in texts]
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,9 @@ class HashingEmbeddingProvider:
             sign = 1.0 if ((raw >> 8) & 1) else -1.0
             vector[index] += sign
         return normalize_vector(vector)
+
+    def embed_many(self, texts: list[str], *, batch_size: int = 32) -> list[list[float]]:
+        return [self.embed(text) for text in texts]
 
 
 @dataclass
@@ -93,6 +102,25 @@ class SentenceTransformerEmbeddingProvider:
 
     def embed_query(self, text: str) -> list[float]:
         return self._encode(text, role="query", prefix=self.query_prefix)
+
+    def embed_many(self, texts: list[str], *, batch_size: int = 32) -> list[list[float]]:
+        normalized = [compact_whitespace(text) for text in texts]
+        results: list[list[float]] = [[] for _ in normalized]
+        missing_indexes = [index for index, text in enumerate(normalized) if text]
+        if not missing_indexes:
+            return results
+        step = max(1, min(128, int(batch_size)))
+        model = self._load_model()
+        for offset in range(0, len(missing_indexes), step):
+            indexes = missing_indexes[offset : offset + step]
+            encoded = model.encode(
+                [self.document_prefix + normalized[index] for index in indexes],
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            for index, vector in zip(indexes, encoded.tolist()):
+                results[index] = [float(value) for value in vector]
+        return results
 
     def _encode(self, text: str, *, role: str, prefix: str) -> list[float]:
         normalized_text = compact_whitespace(text)
@@ -159,6 +187,11 @@ class MlxBertEmbeddingProvider:
 
     def embed_query(self, text: str) -> list[float]:
         return self._encode(text, role="query", prefix=self.query_prefix)
+
+    def embed_many(self, texts: list[str], *, batch_size: int = 32) -> list[list[float]]:
+        # MLX execution remains serialized by the provider lock; this contract
+        # still lets the projection layer batch providers that support it.
+        return [self.embed(text) for text in texts]
 
     def _encode(self, text: str, *, role: str, prefix: str) -> list[float]:
         normalized = compact_whitespace(text)
@@ -324,7 +357,7 @@ class OpenAICompatibleEmbeddingProvider:
 
 
 def embedding_provider_from_env(env: dict[str, str] | None = None) -> EmbeddingProvider:
-    source = env or os.environ
+    source = os.environ if env is None else env
     provider = source.get("RAG_IME_EMBEDDING_PROVIDER", "none").strip().lower()
     if provider in {"local-hash", "hash", "term-vector", "local-term-vector"}:
         return HashingEmbeddingProvider(dimensions=int(_float_env(source, "RAG_IME_EMBEDDING_DIMENSIONS", 96)))
@@ -372,6 +405,60 @@ def embedding_provider_from_env(env: dict[str, str] | None = None) -> EmbeddingP
             )
         )
     return NullEmbeddingProvider()
+
+
+def embedding_provider_info(provider: EmbeddingProvider) -> dict[str, Any]:
+    """Return public, secret-free provider diagnostics for status surfaces."""
+
+    fingerprint = str(getattr(provider, "fingerprint", "none") or "none")
+    if isinstance(provider, NullEmbeddingProvider):
+        return {
+            "provider": "none",
+            "model": "",
+            "fingerprint": fingerprint,
+            "semantic": False,
+            "configured": False,
+        }
+    if isinstance(provider, HashingEmbeddingProvider):
+        return {
+            "provider": "local-hash",
+            "model": "deterministic-term-vector-v1",
+            "dimensions": max(8, int(provider.dimensions)),
+            "fingerprint": fingerprint,
+            "semantic": False,
+            "configured": True,
+        }
+    if isinstance(provider, SentenceTransformerEmbeddingProvider):
+        return {
+            "provider": "sentence-transformers",
+            "model": provider.model,
+            "fingerprint": fingerprint,
+            "semantic": True,
+            "configured": True,
+        }
+    if isinstance(provider, MlxBertEmbeddingProvider):
+        return {
+            "provider": "mlx-bert",
+            "model": provider.model,
+            "fingerprint": fingerprint,
+            "semantic": True,
+            "configured": True,
+        }
+    if isinstance(provider, OpenAICompatibleEmbeddingProvider):
+        return {
+            "provider": "openai-compatible",
+            "model": provider.config.model,
+            "fingerprint": fingerprint,
+            "semantic": True,
+            "configured": True,
+        }
+    return {
+        "provider": type(provider).__name__,
+        "model": str(getattr(provider, "model", "") or ""),
+        "fingerprint": fingerprint,
+        "semantic": True,
+        "configured": True,
+    }
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:

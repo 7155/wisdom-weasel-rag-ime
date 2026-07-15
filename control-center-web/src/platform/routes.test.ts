@@ -106,6 +106,8 @@ const canonicalPathIds = [
   'knowledgeBases.document.source',
   'knowledgeBases.asset.get',
   'knowledgeBases.jobs.list',
+  'knowledgeBases.job.cancel',
+  'knowledgeBases.chunkPreview',
   'knowledgeBases.search',
   'knowledgeBases.find',
   'knowledgeBases.open',
@@ -126,7 +128,7 @@ const canonicalPathIds = [
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(113);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(115);
   });
 
   it('keeps Pi credentials behind preview/apply and never accepts secrets on preview', () => {

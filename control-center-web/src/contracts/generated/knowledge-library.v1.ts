@@ -21,9 +21,10 @@ export interface KnowledgeLibraryV1 {
   [k: string]: unknown;
 }
 export interface ChunkingConfig {
-  strategy: 'markdown' | 'paragraph' | 'fixed';
+  strategy: 'general' | 'markdown' | 'book' | 'qa' | 'laws' | 'separator' | 'fixed';
   size: number;
   overlap: number;
+  separator: string;
   respectHeadings: boolean;
   respectPageBoundaries: boolean;
 }
@@ -31,4 +32,8 @@ export interface RetrievalConfig {
   mode: 'lexical' | 'hybrid' | 'dense';
   topK: number;
   threshold: number;
+  lexicalWeight: number;
+  denseWeight: number;
+  rrfK: number;
+  candidateMultiplier: number;
 }

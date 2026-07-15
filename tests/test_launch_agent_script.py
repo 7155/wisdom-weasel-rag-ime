@@ -170,7 +170,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
 
         self.assertEqual(payload["Label"], "com.rag-ime.sidecar")
         self.assertTrue(payload["RunAtLoad"])
-        self.assertFalse(payload["KeepAlive"])
+        self.assertTrue(payload["KeepAlive"])
         self.assertNotIn("PYTHONPATH", payload["EnvironmentVariables"])
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SOURCE_ROOT"], str(root))
         self.assertTrue(payload["EnvironmentVariables"]["RAG_IME_ROOT"].endswith("RagIme/app"))
@@ -193,6 +193,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_ACTIVE_RAG"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS"], "1536")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_KNOWLEDGE_PYTHON"], sys.executable)
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_COMPOSING_MODEL"], "0")
@@ -270,7 +271,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn('RAG_IME_ENABLE_MLX_BGE=1 conflicts with explicit', script_text)
         self.assertIn('MLX BGE model directory does not exist:', script_text)
 
-    def test_install_sidecar_launch_agent_can_opt_into_keepalive(self) -> None:
+    def test_install_sidecar_launch_agent_can_explicitly_disable_keepalive(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-keepalive-test-") as tmp:
             env = {
@@ -278,7 +279,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "HOME": tmp,
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
-                "RAG_IME_LAUNCH_KEEP_ALIVE": "1",
+                "RAG_IME_LAUNCH_KEEP_ALIVE": "0",
             }
             subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
@@ -292,7 +293,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             with plist_path.open("rb") as fh:
                 payload = plistlib.load(fh)
 
-        self.assertTrue(payload["KeepAlive"])
+        self.assertFalse(payload["KeepAlive"])
 
     def test_install_sidecar_launch_agent_rejects_broken_python(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -316,6 +317,59 @@ class LaunchAgentScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("sqlite3/hashlib/ssl", result.stderr)
+
+    def test_install_sidecar_launch_agent_rejects_relative_knowledge_python(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-knowledge-python-") as tmp:
+            env = {
+                **os.environ,
+                "HOME": tmp,
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_KNOWLEDGE_PYTHON": "python3",
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be an absolute executable file", result.stderr)
+
+    def test_install_sidecar_launch_agent_preserves_existing_knowledge_python(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-preserve-knowledge-python-") as tmp:
+            home = Path(tmp) / "home"
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+            plist_path.parent.mkdir(parents=True)
+            with plist_path.open("wb") as target:
+                plistlib.dump(
+                    {"EnvironmentVariables": {"RAG_IME_KNOWLEDGE_PYTHON": sys.executable}},
+                    target,
+                )
+            sidecar_python = Path(tmp) / "sidecar-python"
+            sidecar_python.symlink_to(sys.executable)
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "RAG_IME_PYTHON": str(sidecar_python),
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+            }
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            with plist_path.open("rb") as source:
+                payload = plistlib.load(source)
+
+        self.assertEqual(sys.executable, payload["EnvironmentVariables"]["RAG_IME_KNOWLEDGE_PYTHON"])
 
     def test_install_sidecar_launch_agent_allows_explicit_v1_budget_override(self) -> None:
         root = Path(__file__).resolve().parents[1]

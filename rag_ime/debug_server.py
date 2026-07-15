@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -16,7 +17,7 @@ from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Event, RLock
+from threading import Event, RLock, current_thread, main_thread
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -5260,6 +5261,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         {
                             "offset": _query_first(query, "offset"),
                             "limit": _query_first(query, "limit"),
+                            "lineOffset": _query_first(query, "lineOffset"),
+                            "lineLimit": _query_first(query, "lineLimit"),
                         },
                     )
                 elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "source":
@@ -5997,6 +6000,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "retry":
                     response = control.retry_document(knowledge_parts[0], knowledge_parts[2], payload)
                     status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "jobs" and knowledge_parts[3] == "cancel":
+                    response = control.cancel_job(knowledge_parts[0], knowledge_parts[2])
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "chunk-preview":
+                    response = control.preview_chunking(knowledge_parts[0], knowledge_parts[2], payload)
+                    status = HTTPStatus.OK
                 elif len(knowledge_parts) == 2 and knowledge_parts[1] == "search":
                     response = control.search(knowledge_parts[0], payload)
                     status = HTTPStatus.OK
@@ -6575,10 +6584,24 @@ def run_debug_server(config: DebugServerConfig) -> None:
     url = f"http://{config.host}:{config.port}/api/health"
     print(f"RAG IME {config.server_name} API: {url}")
     print(f"DB: {config.db_path}")
+    previous_sigterm = signal.getsignal(signal.SIGTERM) if current_thread() is main_thread() else None
+
+    def stop_server(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    if previous_sigterm is not None:
+        signal.signal(signal.SIGTERM, stop_server)
     try:
-        server.serve_forever()
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
     finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
         server.server_close()
+        if service.knowledge_worker is not None:
+            service.knowledge_worker.close()
         service.pi_provider_auth.close()
         service.agent.close()
 

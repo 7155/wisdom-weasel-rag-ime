@@ -177,6 +177,8 @@ class KnowledgeControlFacade:
             _identifier(file_id, "fileId"),
             offset=_bounded_int(query.get("offset"), default=0, minimum=0, maximum=50_000_000),
             limit=_bounded_int(query.get("limit"), default=100, minimum=1, maximum=500),
+            line_offset=_bounded_int(query.get("lineOffset"), default=0, minimum=0, maximum=50_000_000),
+            line_limit=_bounded_int(query.get("lineLimit"), default=200, minimum=1, maximum=1_000),
         )
         return {"ok": True, **result}
 
@@ -233,6 +235,31 @@ class KnowledgeControlFacade:
         result = self.worker.management_call("management_jobs", _identifier(kb_id, "kbId"), limit=100)
         return {"schemaVersion": "rag-ime.knowledge-jobs.v1", "ok": True, "items": _items(result, "jobs")}
 
+    def cancel_job(self, kb_id: str, job_id: str) -> dict[str, object]:
+        kb_id = _identifier(kb_id, "kbId")
+        result = self.worker.management_call("management_cancel_job", _identifier(job_id, "jobId"))
+        job = dict(result.get("job") or result)
+        if str(job.get("kbId") or job.get("baseId") or "") != kb_id:
+            raise KnowledgeLibraryError("job is outside the selected knowledge base", code="scope_mismatch")
+        return {"schemaVersion": "rag-ime.knowledge-job.v1", "ok": True, "job": job}
+
+    def preview_chunking(
+        self,
+        kb_id: str,
+        file_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        result = self.worker.management_call(
+            "management_preview_chunking",
+            _identifier(kb_id, "kbId"),
+            _identifier(file_id, "fileId"),
+            {
+                "chunkingConfig": _object(payload.get("chunkingConfig"), "chunkingConfig"),
+                "limit": _bounded_int(payload.get("limit"), default=12, minimum=1, maximum=30),
+            },
+        )
+        return {"ok": True, **result}
+
     def search(self, kb_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         request: dict[str, object] = {
             "kbId": _identifier(kb_id, "kbId"),
@@ -244,6 +271,8 @@ class KnowledgeControlFacade:
             request["mode"] = _optional_retrieval_mode(payload.get("mode"))
         if payload.get("threshold") is not None:
             request["threshold"] = _bounded_float(payload.get("threshold"), default=0.0, minimum=0.0, maximum=1.0)
+        if payload.get("fileName") is not None:
+            request["fileName"] = _required_text(payload.get("fileName"), "fileName", maximum=512)
         result = self.worker.management_call("management_search", request)
         return {"schemaVersion": "rag-ime.knowledge-search.v1", "ok": True, "items": _items(result, "hits"), **{key: value for key, value in result.items() if key in {"query", "retrieval", "total"}}}
 

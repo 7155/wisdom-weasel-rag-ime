@@ -371,6 +371,41 @@ describe('NativeControlTransport', () => {
     transport.dispose();
   });
 
+  it('keeps an interactive picker open past the normal timeout and cancels it explicitly', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: NativeBridgeRequestEnvelope[] = [];
+      const controller = new AbortController();
+      const bridgeWindow = fakeBridgeWindow((envelope) => sent.push(envelope));
+      const transport = new NativeControlTransport({
+        bridgeWindow,
+        createId: () => 'knowledge-interactive',
+        requestTimeoutMs: 100,
+      });
+      const pending = transport.importKnowledgeDocuments({
+        kbId: 'kb_docs',
+        maxFiles: 1,
+        signal: controller.signal,
+      });
+      const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ method: 'pickFiles' });
+
+      controller.abort();
+      await rejected;
+      expect(sent[1]).toEqual({
+        id: 'cancel:1',
+        method: 'cancelRequest',
+        payload: { requestId: 'knowledge-interactive' },
+      });
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reads a knowledge asset through the id-only native binary bridge', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     const assetId = 'a'.repeat(64);

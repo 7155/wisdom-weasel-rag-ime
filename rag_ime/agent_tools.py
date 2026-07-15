@@ -2948,7 +2948,7 @@ class ControlToolGateway:
                 {
                     "query": query,
                     "topK": _bounded_int(args.get("topK"), default=6, minimum=1, maximum=12),
-                    "searchMode": search_mode,
+                    "mode": search_mode,
                 }
             )
             file_name = _bounded_text(args.get("fileName"), maximum=240)
@@ -2980,6 +2980,7 @@ class ControlToolGateway:
                     "windowSize": _bounded_int(
                         args.get("windowSize"), default=24, minimum=4, maximum=120
                     ),
+                    "offset": _bounded_int(args.get("offset"), default=0, minimum=0, maximum=1_000_000),
                 }
             )
         elif operation == "open":

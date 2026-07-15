@@ -1325,7 +1325,64 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("Pi 只负责 Agent Loop", knowledge["items"][0]["content"])
         self.assertNotIn("/private/project", str(knowledge))
         self.assertEqual(self.knowledge.calls[-1][0], "search")
+        self.assertEqual("hybrid", self.knowledge.calls[-1][1]["mode"])
+        self.assertNotIn("searchMode", self.knowledge.calls[-1][1])
         self.assertIn("深度知识模型当前不可用", models["summary"])
+
+    def test_document_knowledge_search_normalizes_mode_and_preserves_file_name_scope(self) -> None:
+        self.gateway.execute(
+            self._tool_call(
+                "ime_knowledge",
+                "search",
+                kbId="kb:project-docs",
+                query="Agent Loop",
+                searchMode="dense",
+                fileName="architecture.md",
+            )
+        )
+        operation, payload = self.knowledge.calls[-1]
+        self.assertEqual("search", operation)
+        self.assertEqual("dense", payload["mode"])
+        self.assertEqual("architecture.md", payload["fileName"])
+
+    def test_document_knowledge_exposes_only_five_read_operations_end_to_end(self) -> None:
+        calls = [
+            self._tool_call("ime_knowledge", "list_bases"),
+            self._tool_call(
+                "ime_knowledge",
+                "search",
+                kbId="kb:project-docs",
+                query="Agent Loop",
+            ),
+            self._tool_call(
+                "ime_knowledge",
+                "find",
+                kbId="kb:project-docs",
+                fileId="file:1",
+                patterns=["热路径"],
+            ),
+            self._tool_call(
+                "ime_knowledge",
+                "open",
+                kbId="kb:project-docs",
+                fileId="file:1",
+                line=41,
+                windowSize=20,
+            ),
+            self._tool_call("ime_knowledge", "status"),
+        ]
+
+        for call in calls:
+            result = self.gateway.execute(call)["result"]
+            self.assertIsInstance(result, dict)
+        self.assertEqual(
+            ["list_bases", "search", "find", "open", "status"],
+            [operation for operation, _payload in self.knowledge.calls[-5:]],
+        )
+        manifest = next(
+            item for item in self.gateway.manifests()["items"] if item["id"] == "ime_knowledge"
+        )
+        self.assertEqual(("list_bases", "search", "find", "open", "status"), tuple(manifest["operations"]))
 
     def test_write_operations_knowledge_management_and_secrets_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "not agent-manageable"):

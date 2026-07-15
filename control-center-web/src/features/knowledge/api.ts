@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useControlTransport } from '@/app/control-transport';
 import type {
   ControlTransport,
@@ -26,9 +26,10 @@ export interface DocumentKnowledgeBase {
 }
 
 export interface KnowledgeChunkingConfig {
-  strategy: 'markdown' | 'paragraph' | 'fixed';
+  strategy: 'general' | 'markdown' | 'book' | 'qa' | 'laws' | 'separator' | 'fixed';
   size: number;
   overlap: number;
+  separator: string;
   respectHeadings: boolean;
   respectPageBoundaries: boolean;
 }
@@ -37,6 +38,10 @@ export interface KnowledgeRetrievalConfig {
   mode: 'hybrid' | 'dense' | 'lexical';
   topK: number;
   threshold: number;
+  lexicalWeight: number;
+  denseWeight: number;
+  rrfK: number;
+  candidateMultiplier: number;
 }
 
 export interface KnowledgeDocument {
@@ -58,6 +63,7 @@ export interface KnowledgeDocument {
   tokenCount: number;
   parserVersion: string;
   sourceReadPath: string;
+  indexedConfigRevision: number;
 }
 
 export interface KnowledgeChunk {
@@ -113,6 +119,8 @@ export interface KnowledgeDocumentDetail {
     sha256: string;
   };
   contentWindow: { lineNumber: number; content: string }[];
+  contentLineTotal: number;
+  contentHasMore: boolean;
 }
 
 export interface KnowledgeIndexJob {
@@ -126,7 +134,32 @@ export interface KnowledgeIndexJob {
   progress: number;
   error: string;
   createdAtMs: number;
+  startedAtMs: number;
+  finishedAtMs: number;
   updatedAtMs: number;
+  revision: number;
+  errorCode: string;
+  parserMode: KnowledgeParserMode;
+  cancellable: boolean;
+}
+
+export interface KnowledgeChunkPreview {
+  documentId: string;
+  total: number;
+  truncated: boolean;
+  chunks: KnowledgeChunk[];
+}
+
+export interface KnowledgeIndexRuntimeStatus {
+  available: boolean;
+  degraded: boolean;
+  kind: string;
+  fingerprint: string;
+  provider: string;
+  model: string;
+  dimensions: number | null;
+  vectorCount: number | null;
+  reason: string;
 }
 
 export interface KnowledgeReindexPreview {
@@ -158,6 +191,7 @@ export const knowledgeLibraryKeys = {
   documents: (baseId: string) => [...knowledgeLibraryKeys.root, 'documents', baseId] as const,
   jobs: (baseId: string) => [...knowledgeLibraryKeys.root, 'jobs', baseId] as const,
   documentDetail: (baseId: string, documentId: string) => [...knowledgeLibraryKeys.root, 'document-detail', baseId, documentId] as const,
+  documentContent: (baseId: string, documentId: string) => [...knowledgeLibraryKeys.root, 'document-content', baseId, documentId] as const,
   worker: () => [...knowledgeLibraryKeys.root, 'worker'] as const,
   parsers: () => [...knowledgeLibraryKeys.root, 'parsers'] as const,
 };
@@ -203,7 +237,11 @@ export function useKnowledgeLibraryQueries(baseId: string) {
       params: { kbId: baseId },
       signal,
     }), baseId),
-    staleTime: 5_000,
+    staleTime: 2_000,
+    refetchInterval: (query) => {
+      const rows = (query.state.data ?? []) as KnowledgeIndexJob[];
+      return rows.some((row) => isActiveJobStatus(row.status)) ? 1_500 : 15_000;
+    },
   });
   const worker = useQuery({
     queryKey: knowledgeLibraryKeys.worker(),
@@ -221,17 +259,46 @@ export function useKnowledgeLibraryQueries(baseId: string) {
 
 export function useKnowledgeDocumentDetail(baseId: string, documentId: string, enabled = true) {
   const transport = useControlTransport();
-  return useQuery({
+  const chunksQuery = useInfiniteQuery({
     queryKey: knowledgeLibraryKeys.documentDetail(baseId, documentId),
     enabled: enabled && Boolean(baseId && documentId),
-    queryFn: async ({ signal }) => normalizeDocumentDetail(await transport.request({
+    initialPageParam: 0,
+    queryFn: async ({ pageParam, signal }) => normalizeDocumentDetail(await transport.request({
       pathId: 'knowledgeBases.document.get',
       params: { kbId: baseId, fileId: documentId },
-      query: { offset: 0, limit: 200 },
+      query: { offset: pageParam, limit: 200, lineOffset: 0, lineLimit: 1 },
       signal,
     }), baseId, documentId),
+    getNextPageParam: (lastPage, pages) => lastPage.chunkHasMore
+      ? pages.reduce((count, page) => count + page.chunks.length, 0)
+      : undefined,
     staleTime: 10_000,
   });
+  const contentQuery = useInfiniteQuery({
+    queryKey: knowledgeLibraryKeys.documentContent(baseId, documentId),
+    enabled: enabled && Boolean(baseId && documentId),
+    initialPageParam: 0,
+    queryFn: async ({ pageParam, signal }) => normalizeDocumentDetail(await transport.request({
+      pathId: 'knowledgeBases.document.get',
+      params: { kbId: baseId, fileId: documentId },
+      query: { offset: 0, limit: 1, lineOffset: pageParam, lineLimit: 200 },
+      signal,
+    }), baseId, documentId),
+    getNextPageParam: (lastPage, pages) => lastPage.contentHasMore
+      ? pages.reduce((count, page) => count + page.contentWindow.length, 0)
+      : undefined,
+    staleTime: 10_000,
+  });
+  const chunkDetail = chunksQuery.data ? mergeDocumentDetailPages(chunksQuery.data.pages) : undefined;
+  return {
+    ...chunksQuery,
+    data: chunkDetail && contentQuery.data ? mergeDocumentContentPages(chunkDetail, contentQuery.data.pages) : chunkDetail,
+    error: chunksQuery.error ?? contentQuery.error,
+    isPending: chunksQuery.isPending || contentQuery.isPending,
+    fetchNextContentPage: contentQuery.fetchNextPage,
+    hasNextContentPage: contentQuery.hasNextPage,
+    isFetchingNextContentPage: contentQuery.isFetchingNextPage,
+  };
 }
 
 export async function createKnowledgeBase(
@@ -298,11 +365,16 @@ export async function retryKnowledgeDocument(
   transport: ControlTransport,
   base: DocumentKnowledgeBase,
   document: KnowledgeDocument,
+  options: { parser?: KnowledgeParserMode; stage?: 'parse' | 'index' } = {},
 ): Promise<void> {
   await transport.request({
     pathId: 'knowledgeBases.document.retry',
     params: { kbId: base.id, fileId: document.id },
-    body: { stage: 'parse', expectedRevision: document.revision },
+    body: {
+      stage: options.stage ?? 'parse',
+      ...(options.parser ? { parserProvider: parserProvider(options.parser) } : {}),
+      expectedRevision: document.revision,
+    },
   });
 }
 
@@ -340,6 +412,50 @@ export async function rebuildKnowledgeBase(
       confirmText: 'REBUILD',
     },
   });
+}
+
+export async function cancelKnowledgeJob(
+  transport: ControlTransport,
+  baseId: string,
+  jobId: string,
+): Promise<void> {
+  await transport.request({
+    pathId: 'knowledgeBases.job.cancel',
+    params: { kbId: baseId, jobId },
+    body: {},
+  });
+}
+
+export async function previewKnowledgeChunking(
+  transport: ControlTransport,
+  baseId: string,
+  documentId: string,
+  chunkingConfig: KnowledgeChunkingConfig,
+): Promise<KnowledgeChunkPreview> {
+  const payload = record(await transport.request({
+    pathId: 'knowledgeBases.chunkPreview',
+    params: { kbId: baseId, fileId: documentId },
+    body: { chunkingConfig: jsonRecord({ ...chunkingConfig }), limit: 12 },
+  }));
+  const chunks = list(payload.items).map((item, index) => {
+    const row = record(item);
+    return {
+      id: text(row.chunkId, text(row.id, `preview-${index + 1}`)),
+      ordinal: number(row.ordinal ?? index),
+      content: text(row.content),
+      page: nullableNumber(row.page),
+      heading: text(row.heading),
+      lineStart: null,
+      lineEnd: null,
+      tokenCount: number(row.tokenCount),
+    } satisfies KnowledgeChunk;
+  });
+  return {
+    documentId,
+    total: number(payload.total),
+    truncated: bool(payload.truncated),
+    chunks,
+  };
 }
 
 export async function deleteKnowledgeDocument(
@@ -449,6 +565,7 @@ function normalizeDocuments(value: unknown, baseId: string): KnowledgeDocument[]
       tokenCount: number(row.tokenCount ?? row.tokens),
       parserVersion: text(row.parserVersion ?? row.parser_version),
       sourceReadPath: safeSourcePath(text(row.sourceReadPath)),
+      indexedConfigRevision: number(row.indexedConfigRevision ?? row.indexed_config_revision),
     };
   }).filter((row) => Boolean(row.id));
 }
@@ -517,6 +634,8 @@ function normalizeDocumentDetail(value: unknown, baseId: string, documentId: str
       const row = record(item);
       return { lineNumber: number(row.lineNumber) || index + 1, content: text(row.content) };
     }),
+    contentLineTotal: number(record(envelope.contentWindow).total) || number(record(envelope.artifact).lineCount),
+    contentHasMore: bool(record(envelope.contentWindow).hasMore),
   };
 }
 
@@ -524,29 +643,40 @@ function normalizeJobs(value: unknown, baseId: string): KnowledgeIndexJob[] {
   const payload = record(value);
   return list(payload.items ?? payload.jobs ?? value).map((item, index) => {
     const row = record(item);
+    const nestedError = record(row.error);
     return {
       id: text(row.id, text(row.jobId, `job-${index + 1}`)),
       baseId: text(row.baseId, baseId),
-      documentId: text(row.documentId),
+      documentId: text(row.documentId, text(row.fileId)),
       documentName: text(row.documentName, text(row.fileName)),
       kind: text(row.kind, text(row.type, 'index')),
       status: text(row.status, 'queued'),
       stage: text(row.stage, text(row.status, 'queued')),
       progress: Math.max(0, Math.min(1, number(row.progress))),
-      error: text(row.error, text(row.errorMessage)),
+      error: text(row.errorMessage, text(nestedError.message)),
       createdAtMs: number(row.createdAtMs ?? row.created_at_ms),
+      startedAtMs: number(row.startedAtMs ?? row.started_at_ms),
+      finishedAtMs: number(row.finishedAtMs ?? row.finished_at_ms),
       updatedAtMs: number(row.updatedAtMs ?? row.updated_at_ms),
+      revision: number(row.revision),
+      errorCode: text(row.errorCode, text(nestedError.code)),
+      parserMode: parserMode(text(row.parserMode, 'auto')),
+      cancellable: bool(row.cancellable) || isActiveJobStatus(text(row.status)),
     };
   });
 }
 
 function normalizeChunkingConfig(value: unknown): KnowledgeChunkingConfig {
   const row = record(value);
-  const strategy = text(row.strategy, 'markdown');
+  const rawStrategy = text(row.strategy, 'markdown');
+  const strategy = rawStrategy === 'paragraph' ? 'general' : rawStrategy;
   return {
-    strategy: strategy === 'paragraph' || strategy === 'fixed' ? strategy : 'markdown',
-    size: boundedNumber(row.size, 200, 4_000, 1_200),
-    overlap: boundedNumber(row.overlap, 0, 1_000, 160),
+    strategy: ['general', 'markdown', 'book', 'qa', 'laws', 'separator', 'fixed'].includes(strategy)
+      ? strategy as KnowledgeChunkingConfig['strategy']
+      : 'markdown',
+    size: boundedNumber(row.size, 200, 8_000, 1_200),
+    overlap: boundedNumber(row.overlap, 0, 2_000, 160),
+    separator: text(row.separator, '\n\n'),
     respectHeadings: row.respectHeadings !== false,
     respectPageBoundaries: row.respectPageBoundaries !== false,
   };
@@ -559,6 +689,10 @@ function normalizeRetrievalConfig(value: unknown): KnowledgeRetrievalConfig {
     mode: mode === 'dense' || mode === 'lexical' ? mode : 'hybrid',
     topK: boundedNumber(row.topK ?? row.top_k, 1, 100, 10),
     threshold: boundedNumber(row.threshold, 0, 1, 0),
+    lexicalWeight: boundedNumber(row.lexicalWeight ?? row.lexical_weight, 0, 10, 1),
+    denseWeight: boundedNumber(row.denseWeight ?? row.dense_weight, 0, 10, 1),
+    rrfK: boundedNumber(row.rrfK ?? row.rrf_k, 1, 1_000, 60),
+    candidateMultiplier: boundedNumber(row.candidateMultiplier ?? row.candidate_multiplier, 1, 20, 4),
   };
 }
 
@@ -566,8 +700,57 @@ function emptyDocument(baseId: string, documentId: string): KnowledgeDocument {
   return {
     id: documentId, baseId, name: '未命名文档', mimeType: '', byteSize: 0, status: 'ready', stage: 'ready',
     progress: 1, error: '', chunkCount: 0, parser: '', updatedAtMs: 0, revision: 0, sha256: '', pageCount: 0,
-    tokenCount: 0, parserVersion: '', sourceReadPath: '',
+    tokenCount: 0, parserVersion: '', sourceReadPath: '', indexedConfigRevision: 0,
   };
+}
+
+function mergeDocumentDetailPages(pages: KnowledgeDocumentDetail[]): KnowledgeDocumentDetail {
+  const first = pages[0];
+  if (!first) throw new Error('文档详情为空。');
+  const chunks = pages.flatMap((page) => page.chunks);
+  const last = pages.at(-1) ?? first;
+  return { ...first, chunks, chunkHasMore: last.chunkHasMore };
+}
+
+function mergeDocumentContentPages(detail: KnowledgeDocumentDetail, pages: KnowledgeDocumentDetail[]): KnowledgeDocumentDetail {
+  const contentWindow = pages.flatMap((page) => page.contentWindow);
+  const last = pages.at(-1);
+  return {
+    ...detail,
+    contentWindow,
+    contentLineTotal: pages[0]?.contentLineTotal || detail.contentLineTotal,
+    contentHasMore: last?.contentHasMore ?? false,
+  };
+}
+
+function isActiveJobStatus(value: string): boolean {
+  return ['queued', 'running', 'parsing', 'embedding', 'indexing'].includes(value.toLowerCase());
+}
+
+export function knowledgeIndexRuntimeStatus(value: unknown): KnowledgeIndexRuntimeStatus {
+  const root = record(value);
+  const components = record(root.components);
+  const providerRoot = record(root.provider);
+  const denseContainer = firstRecord(root.dense, components.dense, providerRoot.dense, root.embedding, components.embedding);
+  const dense = { ...denseContainer, ...record(denseContainer.provider) };
+  const fingerprint = text(dense.fingerprint);
+  const parts = fingerprint.split(':');
+  const dimensions = number(dense.dimensions ?? dense.dimension) || parts.map((part) => Number(part)).find((part) => Number.isInteger(part) && part > 0) || null;
+  return {
+    available: dense.available === true,
+    degraded: dense.degraded === true,
+    kind: text(dense.kind, '未报告'),
+    fingerprint,
+    provider: text(dense.providerName, text(dense.kind, parts[0] || '未报告')),
+    model: text(dense.model, parts.length > 2 ? parts.slice(1).filter((part) => !/^\d+$/u.test(part)).join(':') || '内置' : parts[1] || '未报告'),
+    dimensions,
+    vectorCount: typeof dense.vectorCount === 'number' && Number.isFinite(dense.vectorCount) ? dense.vectorCount : null,
+    reason: text(dense.reason),
+  };
+}
+
+function firstRecord(...values: unknown[]): Record<string, unknown> {
+  return values.map(record).find((value) => Object.keys(value).length > 0) ?? {};
 }
 
 function normalizeSearchHits(value: unknown): KnowledgeSearchHit[] {

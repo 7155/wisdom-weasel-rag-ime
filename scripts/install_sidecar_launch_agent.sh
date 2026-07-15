@@ -110,6 +110,38 @@ PY
   exit 1
 fi
 
+EXISTING_KNOWLEDGE_PYTHON=""
+if [[ -f "$PLIST_PATH" ]]; then
+  EXISTING_KNOWLEDGE_PYTHON="$("$PYTHON_EXECUTABLE" - "$PLIST_PATH" <<'PY' 2>/dev/null || true
+import plistlib
+import sys
+
+try:
+    with open(sys.argv[1], "rb") as source:
+        payload = plistlib.load(source)
+    value = payload.get("EnvironmentVariables", {}).get("RAG_IME_KNOWLEDGE_PYTHON", "")
+    if isinstance(value, str):
+        print(value)
+except Exception:
+    pass
+PY
+)"
+fi
+KNOWLEDGE_PYTHON="${RAG_IME_KNOWLEDGE_PYTHON:-${EXISTING_KNOWLEDGE_PYTHON:-$PYTHON_EXECUTABLE}}"
+if [[ "$KNOWLEDGE_PYTHON" != /* || ! -f "$KNOWLEDGE_PYTHON" || ! -x "$KNOWLEDGE_PYTHON" ]]; then
+  echo "RAG_IME_KNOWLEDGE_PYTHON must be an absolute executable file: $KNOWLEDGE_PYTHON" >&2
+  exit 1
+fi
+if ! "$KNOWLEDGE_PYTHON" - <<'PY' >/dev/null 2>&1; then
+import sys
+
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+  echo "RAG_IME_KNOWLEDGE_PYTHON must run Python 3.11 or newer: $KNOWLEDGE_PYTHON" >&2
+  exit 1
+fi
+export RAG_IME_KNOWLEDGE_PYTHON="$KNOWLEDGE_PYTHON"
+
 set -a
 eval "$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_EXECUTABLE" -m rag_ime.runtime_profile --profile "$RUNTIME_PROFILE" --format shell)"
 set +a
@@ -250,6 +282,7 @@ env_vars = {
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
     "RAG_IME_RUNTIME_PROFILE": os.environ.get("RAG_IME_RUNTIME_PROFILE", "foreground-rag-proof"),
+    "RAG_IME_KNOWLEDGE_PYTHON": os.environ["RAG_IME_KNOWLEDGE_PYTHON"],
     "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
     "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
     "RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE": os.environ.get(
@@ -414,6 +447,7 @@ preserve_existing_keys = {
     "RAG_IME_VECTOR_CANDIDATES",
     "RAG_IME_VECTOR_WEIGHT",
     "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT",
+    "RAG_IME_KNOWLEDGE_DENSE_BACKEND",
 }
 for key in (
     "RAG_IME_RIME_CACHE_TTL_MS",
@@ -552,6 +586,7 @@ for key in (
     "RAG_IME_VECTOR_CANDIDATES",
     "RAG_IME_VECTOR_WEIGHT",
     "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT",
+    "RAG_IME_KNOWLEDGE_DENSE_BACKEND",
 ):
     value = os.environ.get(key)
     if not value and key in preserve_existing_keys:
@@ -578,7 +613,7 @@ payload = {
     "Label": label,
     "ProgramArguments": args,
     "RunAtLoad": True,
-    "KeepAlive": os.environ.get("RAG_IME_LAUNCH_KEEP_ALIVE", "0").strip().lower()
+    "KeepAlive": os.environ.get("RAG_IME_LAUNCH_KEEP_ALIVE", "1").strip().lower()
     not in {"0", "false", "no", "off"},
     "ThrottleInterval": 10,
     "StandardOutPath": str(Path(os.environ["LOG_DIR"]) / "sidecar.out.log"),

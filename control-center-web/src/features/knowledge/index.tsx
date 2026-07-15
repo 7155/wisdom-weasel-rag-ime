@@ -41,6 +41,7 @@ import {
 } from '@/features/overview/management-ui';
 import {
   chooseKnowledgeFiles,
+  cancelKnowledgeJob,
   createKnowledgeBase,
   deleteKnowledgeBase,
   deleteKnowledgeDocument,
@@ -48,6 +49,7 @@ import {
   knowledgeLibraryKeys,
   openKnowledgeHit,
   previewKnowledgeReindex,
+  previewKnowledgeChunking,
   rebuildKnowledgeBase,
   retryKnowledgeDocument,
   searchKnowledgeBase,
@@ -55,14 +57,17 @@ import {
   useKnowledgeDocumentDetail,
   useKnowledgeLibraryQueries,
   type KnowledgeChunkingConfig,
+  type KnowledgeChunkPreview,
   type DocumentKnowledgeBase,
   type KnowledgeDocument,
+  type KnowledgeIndexRuntimeStatus,
   type KnowledgeParserMode,
   type KnowledgeRetrievalConfig,
   type KnowledgeReindexPreview,
   type KnowledgeSearchHit,
+  knowledgeIndexRuntimeStatus,
 } from './api';
-import { KnowledgeDocumentViewer, KnowledgeJobsPanel, KnowledgeMaterialsPanel } from './document-workspace';
+import { KnowledgeDocumentViewer, KnowledgeJobsPanel, KnowledgeMaterialsPanel, type KnowledgeUploadItem } from './document-workspace';
 import './knowledge.css';
 
 type DetailTab = 'materials' | 'viewer' | 'search' | 'jobs' | 'settings';
@@ -74,6 +79,9 @@ export function KnowledgeFeature() {
   const [deleteBaseOpen, setDeleteBaseOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<KnowledgeDocument | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState('');
+  const [focusedHit, setFocusedHit] = useState<KnowledgeSearchHit | null>(null);
+  const [reparseDocument, setReparseDocument] = useState<KnowledgeDocument | null>(null);
+  const [uploadItems, setUploadItems] = useState<KnowledgeUploadItem[]>([]);
   const queries = useKnowledgeLibraryQueries(selectedBaseId);
   const queryClient = useQueryClient();
   const bases = queries.bases.data ?? [];
@@ -96,6 +104,11 @@ export function KnowledgeFeature() {
     if (!documents.some((item) => item.id === selectedDocumentId)) setSelectedDocumentId(documents[0]?.id ?? '');
   }, [documents, selectedDocumentId]);
 
+  useEffect(() => {
+    setFocusedHit(null);
+    setUploadItems([]);
+  }, [selectedBaseId]);
+
   const refresh = () => void Promise.all([
     queries.bases.refetch(),
     queries.worker.refetch(),
@@ -110,6 +123,8 @@ export function KnowledgeFeature() {
         queryClient.invalidateQueries({ queryKey: knowledgeLibraryKeys.base(baseId) }),
         queryClient.invalidateQueries({ queryKey: knowledgeLibraryKeys.documents(baseId) }),
         queryClient.invalidateQueries({ queryKey: knowledgeLibraryKeys.jobs(baseId) }),
+        queryClient.invalidateQueries({ queryKey: [...knowledgeLibraryKeys.root, 'document-detail', baseId] }),
+        queryClient.invalidateQueries({ queryKey: [...knowledgeLibraryKeys.root, 'document-content', baseId] }),
       ] : []),
     ]);
   };
@@ -133,24 +148,59 @@ export function KnowledgeFeature() {
     },
   });
   const importMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ retryItem }: { retryItem?: KnowledgeUploadItem }) => {
       if (!selectedBase) return [];
-      const files = queries.transport.kind === 'http' ? await chooseKnowledgeFiles(20) : undefined;
-      if (queries.transport.kind === 'http' && !files?.length) return [];
-      return importKnowledgeDocuments(queries.transport, {
-        kbId: selectedBase.id,
-        files,
-        parserProvider: selectedBase.parser === 'mineru' ? 'mineru_local_http' : selectedBase.parser,
-        maxFiles: 20,
-      });
+      const parser = retryItem?.parser ?? selectedBase.parser;
+      if (queries.transport.kind !== 'http') {
+        try {
+          const receipts = await importKnowledgeDocuments(queries.transport, {
+            kbId: selectedBase.id,
+            parserProvider: parser === 'mineru' ? 'mineru_local_http' : parser,
+            maxFiles: 20,
+          });
+          setUploadItems(receipts.map((receipt) => ({ id: receipt.documentId, fileName: receipt.fileName, byteSize: receipt.byteSize, parser, status: 'accepted', documentId: receipt.documentId, error: '' })));
+          return receipts;
+        } catch (error) {
+          setUploadItems([{ id: 'native-import', fileName: '本机文件导入', byteSize: 0, parser, status: 'failed', documentId: '', error: publicErrorText(error, '本机文件导入失败。') }]);
+          throw error;
+        }
+      }
+      const files = retryItem?.file ? [retryItem.file] : await chooseKnowledgeFiles(20);
+      if (!files.length) return [];
+      const queue = retryItem ? [retryItem] : files.map((file, index) => ({
+        id: uploadItemId(file, index), fileName: file.name, byteSize: file.size, file, parser, status: 'queued' as const, documentId: '', error: '',
+      }));
+      if (!retryItem) setUploadItems(queue);
+      const receipts = [];
+      const errors: string[] = [];
+      for (const item of queue) {
+        setUploadItems((current) => replaceUploadItem(current, item.id, { status: 'uploading', error: '' }));
+        try {
+          const [receipt] = await importKnowledgeDocuments(queries.transport, {
+            kbId: selectedBase.id,
+            files: item.file ? [item.file] : undefined,
+            parserProvider: parser === 'mineru' ? 'mineru_local_http' : parser,
+            maxFiles: 1,
+          });
+          if (!receipt) throw new Error('导入服务没有返回文件回执。');
+          receipts.push(receipt);
+          setUploadItems((current) => replaceUploadItem(current, item.id, { status: 'accepted', documentId: receipt.documentId, error: '' }));
+        } catch (error) {
+          const message = publicErrorText(error, '上传失败。');
+          errors.push(`${item.fileName}: ${message}`);
+          setUploadItems((current) => replaceUploadItem(current, item.id, { status: 'failed', error: message }));
+        }
+      }
+      if (errors.length) throw new Error(errors.join('\n'));
+      return receipts;
     },
-    onSuccess: () => invalidateBase(),
+    onSettled: () => invalidateBase(),
   });
   const retryMutation = useMutation({
-    mutationFn: (document: KnowledgeDocument) => selectedBase
-      ? retryKnowledgeDocument(queries.transport, selectedBase, document)
+    mutationFn: ({ document, parser }: { document: KnowledgeDocument; parser: KnowledgeParserMode }) => selectedBase
+      ? retryKnowledgeDocument(queries.transport, selectedBase, document, { parser })
       : Promise.reject(new Error('没有选中的知识库。')),
-    onSuccess: () => invalidateBase(),
+    onSuccess: async () => { setReparseDocument(null); await invalidateBase(); },
   });
   const deleteDocumentMutation = useMutation({
     mutationFn: (documentId: string) => deleteKnowledgeDocument(queries.transport, selectedBaseId, documentId),
@@ -188,6 +238,17 @@ export function KnowledgeFeature() {
       setTab('jobs');
       await invalidateBase();
     },
+  });
+  const cancelJobMutation = useMutation({
+    mutationFn: (jobId: string) => cancelKnowledgeJob(queries.transport, selectedBaseId, jobId),
+    onSettled: () => invalidateBase(),
+  });
+  const chunkPreviewMutation = useMutation({
+    mutationFn: ({ documentId, config }: { documentId: string; config: KnowledgeChunkingConfig }) => (
+      selectedBase
+        ? previewKnowledgeChunking(queries.transport, selectedBase.id, documentId, config)
+        : Promise.reject(new Error('没有选中的知识库。'))
+    ),
   });
 
   const pageError = queries.bases.error as Error | null;
@@ -234,14 +295,18 @@ export function KnowledgeFeature() {
                       detailLoading={detailQuery.isPending && Boolean(selectedDocumentId)}
                       documents={documents}
                       error={queries.documents.error as Error | null}
+                      importError={importMutation.error as Error | null}
                       importing={importMutation.isPending}
                       onDelete={setDocumentToDelete}
-                      onImport={() => importMutation.mutate()}
-                      onOpen={(documentId) => { setSelectedDocumentId(documentId); setTab('viewer'); }}
-                      onRetry={(document) => retryMutation.mutate(document)}
-                      onSelect={setSelectedDocumentId}
-                      pendingDocumentId={retryMutation.variables?.id ?? ''}
+                      onClearUploads={() => { importMutation.reset(); setUploadItems([]); }}
+                      onImport={() => importMutation.mutate({})}
+                      onOpen={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); setTab('viewer'); }}
+                      onReparse={setReparseDocument}
+                      onRetryUpload={(item) => importMutation.mutate({ retryItem: item })}
+                      onSelect={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); }}
+                      pendingDocumentId={retryMutation.variables?.document.id ?? ''}
                       selectedDocumentId={selectedDocumentId}
+                      uploadItems={uploadItems}
                     />
                   </TabsContent>
                   <TabsContent value="viewer">
@@ -250,33 +315,55 @@ export function KnowledgeFeature() {
                       documents={documents}
                       error={detailQuery.error as Error | null}
                       loading={detailQuery.isPending && Boolean(selectedDocumentId)}
-                      onSelectDocument={setSelectedDocumentId}
+                      focusHit={focusedHit}
+                      hasMoreChunks={Boolean(detailQuery.hasNextPage)}
+                      hasMoreContent={Boolean(detailQuery.hasNextContentPage)}
+                      loadingMoreChunks={detailQuery.isFetchingNextPage}
+                      loadingMoreContent={detailQuery.isFetchingNextContentPage}
+                      onLoadMoreChunks={() => void detailQuery.fetchNextPage()}
+                      onLoadMoreContent={() => void detailQuery.fetchNextContentPage()}
+                      onSelectDocument={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); }}
                       selectedDocumentId={selectedDocumentId}
                       transport={queries.transport}
                     />
                   </TabsContent>
                   <TabsContent value="search">
-                    <KnowledgeSearchPanel base={selectedBase} transport={queries.transport} />
+                    <KnowledgeSearchPanel base={selectedBase} onOpenHit={(hit) => { setSelectedDocumentId(hit.documentId); setFocusedHit(hit); setTab('viewer'); }} transport={queries.transport} />
                   </TabsContent>
                   <TabsContent value="jobs">
-                    <KnowledgeJobsPanel jobs={queries.jobs.data ?? []} />
+                    <KnowledgeJobsPanel
+                      cancelError={cancelJobMutation.error}
+                      cancellingJobId={cancelJobMutation.isPending ? cancelJobMutation.variables ?? '' : ''}
+                      error={queries.jobs.error as Error | null}
+                      jobs={queries.jobs.data ?? []}
+                      loading={queries.jobs.isFetching}
+                      onCancel={(jobId) => cancelJobMutation.mutate(jobId)}
+                      onRefresh={() => void queries.jobs.refetch()}
+                    />
                   </TabsContent>
                   <TabsContent value="settings">
                     <KnowledgeSettingsPanel
                       base={selectedBase}
+                      documents={documents}
+                      indexRuntime={knowledgeIndexRuntimeStatus(queries.worker.data)}
                       onAgentEnabled={(agentEnabled) => updateMutation.mutate({ agentEnabled })}
                       onParser={(parser) => updateMutation.mutate({ parser })}
                       onSaveInfo={(name, description) => updateMutation.mutate({ name, description })}
                       onSaveChunking={(chunkingConfig) => updateMutation.mutate({ chunkingConfig })}
                       onSaveRetrieval={(retrievalConfig) => updateMutation.mutate({ retrievalConfig })}
                       onPreviewReindex={() => reindexPreviewMutation.mutate()}
+                      onPreviewChunking={(documentId, config) => chunkPreviewMutation.mutate({ documentId, config })}
                       onRebuild={(preview) => rebuildMutation.mutate(preview)}
                       parserData={queries.parsers.data}
                       pending={updateMutation.isPending}
+                      updateError={updateMutation.error}
                       rebuildError={rebuildMutation.error ?? reindexPreviewMutation.error}
                       rebuilding={rebuildMutation.isPending}
                       reindexPreview={reindexPreviewMutation.data ?? null}
                       reindexPreviewing={reindexPreviewMutation.isPending}
+                      chunkPreview={chunkPreviewMutation.data ?? null}
+                      chunkPreviewError={chunkPreviewMutation.error}
+                      chunkPreviewing={chunkPreviewMutation.isPending}
                       refreshParser={() => void Promise.all([queries.parsers.refetch(), queries.worker.refetch()])}
                       worker={worker}
                     />
@@ -318,6 +405,13 @@ export function KnowledgeFeature() {
         onOpenChange={(open) => { if (!open) setDocumentToDelete(null); }}
         open={Boolean(documentToDelete)}
         title="删除文档"
+      />
+      <ReparseDocumentDialog
+        document={reparseDocument}
+        error={retryMutation.error}
+        loading={retryMutation.isPending}
+        onConfirm={(parser) => { if (reparseDocument) retryMutation.mutate({ document: reparseDocument, parser }); }}
+        onOpenChange={(open) => { if (!open) { setReparseDocument(null); retryMutation.reset(); } }}
       />
     </ManagementPage>
   );
@@ -389,7 +483,7 @@ function KnowledgeBaseHeader({ base, onDelete, worker }: { base: DocumentKnowled
   );
 }
 
-function KnowledgeSearchPanel({ base, transport }: { base: DocumentKnowledgeBase; transport: ReturnType<typeof useKnowledgeLibraryQueries>['transport'] }) {
+function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKnowledgeBase; onOpenHit: (hit: KnowledgeSearchHit) => void; transport: ReturnType<typeof useKnowledgeLibraryQueries>['transport'] }) {
   const [draft, setDraft] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const searchMutation = useMutation({
@@ -423,6 +517,8 @@ function KnowledgeSearchPanel({ base, transport }: { base: DocumentKnowledgeBase
         <span>{retrievalModeLabel(base.retrievalConfig.mode)}</span>
         <span>Top K {base.retrievalConfig.topK}</span>
         <span>阈值 {base.retrievalConfig.threshold.toFixed(2)}</span>
+        {base.retrievalConfig.mode === 'hybrid' ? <span>L {base.retrievalConfig.lexicalWeight.toFixed(1)} / D {base.retrievalConfig.denseWeight.toFixed(1)}</span> : null}
+        {base.retrievalConfig.mode === 'hybrid' ? <span>RRF K {base.retrievalConfig.rrfK} · 候选 ×{base.retrievalConfig.candidateMultiplier}</span> : null}
       </div>
       {searchMutation.error ? <InlineNotice title="检索失败" tone="warning">{publicErrorText(searchMutation.error, 'Knowledge Worker 暂时无法完成检索。')}</InlineNotice> : null}
       {hits.length ? (
@@ -435,7 +531,7 @@ function KnowledgeSearchPanel({ base, transport }: { base: DocumentKnowledgeBase
               </button>
             ))}
           </div>
-          {selected ? <KnowledgeHitDetail baseId={base.id} hit={selected} transport={transport} /> : null}
+          {selected ? <KnowledgeHitDetail baseId={base.id} hit={selected} onOpen={onOpenHit} transport={transport} /> : null}
         </div>
       ) : searchMutation.isSuccess ? (
         <EmptyState description="换一个关键词，或检查文件是否已经完成索引。" icon={FileSearch} title="没有匹配片段" />
@@ -446,8 +542,8 @@ function KnowledgeSearchPanel({ base, transport }: { base: DocumentKnowledgeBase
   );
 }
 
-function KnowledgeHitDetail({ baseId, hit, transport }: { baseId: string; hit: KnowledgeSearchHit; transport: ReturnType<typeof useKnowledgeLibraryQueries>['transport'] }) {
-  const openMutation = useMutation({ mutationFn: () => openKnowledgeHit(transport, baseId, hit) });
+function KnowledgeHitDetail({ baseId, hit, onOpen, transport }: { baseId: string; hit: KnowledgeSearchHit; onOpen: (hit: KnowledgeSearchHit) => void; transport: ReturnType<typeof useKnowledgeLibraryQueries>['transport'] }) {
+  const openMutation = useMutation({ mutationFn: () => openKnowledgeHit(transport, baseId, hit), onSuccess: () => onOpen(hit) });
   return (
     <article className="knowledge-search__detail">
       <span>{hit.documentName}</span>
@@ -466,12 +562,18 @@ function KnowledgeHitDetail({ baseId, hit, transport }: { baseId: string; hit: K
 
 function KnowledgeSettingsPanel({
   base,
+  chunkPreview,
+  chunkPreviewError,
+  chunkPreviewing,
+  documents,
+  indexRuntime,
   onAgentEnabled,
   onParser,
   onSaveInfo,
   onSaveChunking,
   onSaveRetrieval,
   onPreviewReindex,
+  onPreviewChunking,
   onRebuild,
   parserData,
   pending,
@@ -480,15 +582,22 @@ function KnowledgeSettingsPanel({
   reindexPreview,
   reindexPreviewing,
   refreshParser,
+  updateError,
   worker,
 }: {
   base: DocumentKnowledgeBase;
+  chunkPreview: KnowledgeChunkPreview | null;
+  chunkPreviewError: unknown;
+  chunkPreviewing: boolean;
+  documents: readonly KnowledgeDocument[];
+  indexRuntime: KnowledgeIndexRuntimeStatus;
   onAgentEnabled: (enabled: boolean) => void;
   onParser: (parser: KnowledgeParserMode) => void;
   onSaveInfo: (name: string, description: string) => void;
   onSaveChunking: (config: KnowledgeChunkingConfig) => void;
   onSaveRetrieval: (config: KnowledgeRetrievalConfig) => void;
   onPreviewReindex: () => void;
+  onPreviewChunking: (documentId: string, config: KnowledgeChunkingConfig) => void;
   onRebuild: (preview: KnowledgeReindexPreview) => void;
   parserData: unknown;
   pending: boolean;
@@ -497,6 +606,7 @@ function KnowledgeSettingsPanel({
   reindexPreview: KnowledgeReindexPreview | null;
   reindexPreviewing: boolean;
   refreshParser: () => void;
+  updateError: unknown;
   worker: WorkerState;
 }) {
   const mineru = mineruState(parserData);
@@ -504,14 +614,40 @@ function KnowledgeSettingsPanel({
   const [retrieval, setRetrieval] = useState(base.retrievalConfig);
   const [name, setName] = useState(base.name);
   const [description, setDescription] = useState(base.description);
+  const [previewDocumentId, setPreviewDocumentId] = useState(documents[0]?.id ?? '');
+  const chunkingError = chunking.size < 200 || chunking.size > 8_000
+    ? '切分大小必须在 200–8000 之间。'
+    : chunking.overlap < 0 || chunking.overlap > 2_000 || chunking.overlap >= chunking.size
+      ? '重叠必须大于等于 0，且小于切分大小。'
+      : chunking.strategy === 'separator' && !chunking.separator
+        ? '自定义分隔符不能为空。'
+      : '';
+  const retrievalError = retrieval.topK < 1 || retrieval.topK > 100
+    ? 'Top K 必须在 1–100 之间。'
+    : retrieval.threshold < 0 || retrieval.threshold > 1
+      ? '阈值必须在 0–1 之间。'
+      : retrieval.lexicalWeight < 0 || retrieval.lexicalWeight > 10 || retrieval.denseWeight < 0 || retrieval.denseWeight > 10
+        ? '检索权重必须在 0–10 之间。'
+        : retrieval.lexicalWeight + retrieval.denseWeight <= 0
+          ? 'Lexical 和 Dense 权重不能同时为 0。'
+          : retrieval.rrfK < 1 || retrieval.rrfK > 1_000 || retrieval.candidateMultiplier < 1 || retrieval.candidateMultiplier > 20
+            ? 'RRF K 或候选倍数超出允许范围。'
+            : '';
   useEffect(() => {
     setChunking(base.chunkingConfig);
     setRetrieval(base.retrievalConfig);
     setName(base.name);
     setDescription(base.description);
   }, [base.id, base.name, base.description, base.chunkingConfig, base.retrievalConfig]);
+  useEffect(() => {
+    if (!documents.some((document) => document.id === previewDocumentId)) {
+      setPreviewDocumentId(documents[0]?.id ?? '');
+    }
+  }, [documents, previewDocumentId]);
+  const visibleChunkPreview = chunkPreview?.documentId === previewDocumentId ? chunkPreview : null;
   return (
     <div className="knowledge-panel knowledge-settings">
+      {updateError ? <InlineNotice title="设置没有保存" tone="warning">{publicErrorText(updateError, '知识库仍使用保存前的配置。')}</InlineNotice> : null}
       <section>
         <div className="knowledge-settings__heading"><BookOpen size={16} /><div><strong>基本信息</strong><span>知识库识别信息</span></div></div>
         <div className="knowledge-settings-fields knowledge-settings-fields--info">
@@ -539,13 +675,21 @@ function KnowledgeSettingsPanel({
       <section>
         <div className="knowledge-settings__heading"><Settings2 size={16} /><div><strong>切分</strong><span>修改后材料进入待重建状态</span></div></div>
         <div className="knowledge-settings-fields knowledge-settings-fields--chunking">
-          <Field htmlFor="knowledge-chunk-strategy" label="策略"><select className="ui-input" id="knowledge-chunk-strategy" onChange={(event) => setChunking({ ...chunking, strategy: asChunkingStrategy(event.target.value) })} value={chunking.strategy}><option value="markdown">Markdown</option><option value="paragraph">段落</option><option value="fixed">固定长度</option></select></Field>
-          <Field htmlFor="knowledge-chunk-size" label="大小"><Input id="knowledge-chunk-size" max={4_000} min={200} onChange={(event) => setChunking({ ...chunking, size: Number(event.target.value) })} step={100} type="number" value={chunking.size} /></Field>
-          <Field htmlFor="knowledge-chunk-overlap" label="重叠"><Input id="knowledge-chunk-overlap" max={1_000} min={0} onChange={(event) => setChunking({ ...chunking, overlap: Number(event.target.value) })} step={20} type="number" value={chunking.overlap} /></Field>
+          <Field htmlFor="knowledge-chunk-strategy" label="策略"><select className="ui-input" id="knowledge-chunk-strategy" onChange={(event) => setChunking({ ...chunking, strategy: asChunkingStrategy(event.target.value) })} value={chunking.strategy}><option value="general">通用段落</option><option value="markdown">Markdown 标题</option><option value="book">书籍章节</option><option value="qa">问答</option><option value="laws">法律条款</option><option value="separator">自定义分隔符</option><option value="fixed">固定长度</option></select></Field>
+          <Field htmlFor="knowledge-chunk-size" label="大小"><Input id="knowledge-chunk-size" max={8_000} min={200} onChange={(event) => setChunking({ ...chunking, size: Number(event.target.value) })} step={100} type="number" value={chunking.size} /></Field>
+          <Field htmlFor="knowledge-chunk-overlap" label="重叠"><Input id="knowledge-chunk-overlap" max={2_000} min={0} onChange={(event) => setChunking({ ...chunking, overlap: Number(event.target.value) })} step={20} type="number" value={chunking.overlap} /></Field>
+          {chunking.strategy === 'separator' ? <Field htmlFor="knowledge-chunk-separator" label="分隔符"><Input id="knowledge-chunk-separator" maxLength={100} onChange={(event) => setChunking({ ...chunking, separator: event.target.value })} value={chunking.separator} /></Field> : null}
           <Switch checked={chunking.respectHeadings} label="保留标题边界" onCheckedChange={(respectHeadings) => setChunking({ ...chunking, respectHeadings })} />
           <Switch checked={chunking.respectPageBoundaries} label="保留页面边界" onCheckedChange={(respectPageBoundaries) => setChunking({ ...chunking, respectPageBoundaries })} />
         </div>
-        <div className="knowledge-settings__actions"><Button disabled={pending || equalConfig(chunking, base.chunkingConfig)} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button></div>
+        {chunkingError ? <p className="knowledge-inline-error" role="alert">{chunkingError}</p> : null}
+        <div className="knowledge-chunk-preview-controls">
+          <Field htmlFor="knowledge-preview-document" label="预览材料"><select className="ui-input" id="knowledge-preview-document" onChange={(event) => setPreviewDocumentId(event.target.value)} value={previewDocumentId}>{documents.map((document) => <option key={document.id} value={document.id}>{document.name}</option>)}</select></Field>
+          <Button disabled={!previewDocumentId || Boolean(chunkingError)} loading={chunkPreviewing} onClick={() => onPreviewChunking(previewDocumentId, chunking)} size="small">预览切分</Button>
+        </div>
+        {chunkPreviewError ? <InlineNotice title="切分预览失败" tone="warning">{publicErrorText(chunkPreviewError, '请确认材料已经完成解析。')}</InlineNotice> : null}
+        {visibleChunkPreview ? <div className="knowledge-chunk-preview"><header><strong>{visibleChunkPreview.total} 个片段</strong><span>显示前 {visibleChunkPreview.chunks.length} 个</span></header><div>{visibleChunkPreview.chunks.map((chunk) => <article key={chunk.id}><b>#{chunk.ordinal + 1}{chunk.page ? ` · 第 ${chunk.page} 页` : ''}</b><p>{chunk.content}</p></article>)}</div></div> : null}
+        <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(chunkingError) || equalConfig(chunking, base.chunkingConfig)} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button></div>
       </section>
       <section>
         <div className="knowledge-settings__heading"><Search size={16} /><div><strong>检索</strong><span>页面测试与 Agent Tool</span></div></div>
@@ -554,7 +698,30 @@ function KnowledgeSettingsPanel({
           <Field htmlFor="knowledge-retrieval-topk" label="Top K"><Input id="knowledge-retrieval-topk" max={100} min={1} onChange={(event) => setRetrieval({ ...retrieval, topK: Number(event.target.value) })} type="number" value={retrieval.topK} /></Field>
           <Field htmlFor="knowledge-retrieval-threshold" label="阈值"><Input id="knowledge-retrieval-threshold" max={1} min={0} onChange={(event) => setRetrieval({ ...retrieval, threshold: Number(event.target.value) })} step={0.05} type="number" value={retrieval.threshold} /></Field>
         </div>
-        <div className="knowledge-settings__actions"><Button disabled={pending || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button></div>
+        <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
+          <Field htmlFor="knowledge-lexical-weight" label="Lexical 权重"><Input id="knowledge-lexical-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, lexicalWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.lexicalWeight} /></Field>
+          <Field htmlFor="knowledge-dense-weight" label="Dense 权重"><Input id="knowledge-dense-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, denseWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.denseWeight} /></Field>
+          <Field htmlFor="knowledge-rrf-k" label="RRF K"><Input id="knowledge-rrf-k" max={1_000} min={1} onChange={(event) => setRetrieval({ ...retrieval, rrfK: Number(event.target.value) })} type="number" value={retrieval.rrfK} /></Field>
+          <Field htmlFor="knowledge-candidate-multiplier" label="候选倍数"><Input id="knowledge-candidate-multiplier" max={20} min={1} onChange={(event) => setRetrieval({ ...retrieval, candidateMultiplier: Number(event.target.value) })} type="number" value={retrieval.candidateMultiplier} /></Field>
+        </div>
+        {retrievalError ? <p className="knowledge-inline-error" role="alert">{retrievalError}</p> : null}
+        <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button></div>
+      </section>
+      <section>
+        <div className="knowledge-settings__heading"><Database size={16} /><div><strong>Embedding 与索引</strong><span>运行时只读状态</span></div></div>
+        <div className="knowledge-index-status">
+          <StatusBadge label={indexRuntime.available ? indexRuntime.degraded ? '降级' : '可用' : '未就绪'} tone={indexRuntime.available ? indexRuntime.degraded ? 'warning' : 'success' : 'neutral'} />
+          <span>{indexRuntime.reason || '配置由 Knowledge Worker 启动环境管理。'}</span>
+        </div>
+        <div className="knowledge-settings-fields knowledge-settings-fields--index">
+          <Field htmlFor="knowledge-dense-provider" label="Dense Provider"><Input disabled id="knowledge-dense-provider" readOnly value={indexRuntime.provider} /></Field>
+          <Field htmlFor="knowledge-dense-model" label="Model / Fingerprint"><Input disabled id="knowledge-dense-model" readOnly value={indexRuntime.fingerprint || indexRuntime.model} /></Field>
+          <Field htmlFor="knowledge-dense-dimension" label="维度"><Input disabled id="knowledge-dense-dimension" readOnly value={indexRuntime.dimensions ?? '未报告'} /></Field>
+          <Field htmlFor="knowledge-vector-count" label="向量数量"><Input disabled id="knowledge-vector-count" readOnly value={indexRuntime.vectorCount ?? '未报告'} /></Field>
+          <Field htmlFor="knowledge-index-revision" label="索引 revision"><Input disabled id="knowledge-index-revision" readOnly value={indexRevisionLabel(documents)} /></Field>
+          <Field htmlFor="knowledge-config-revision" label="配置 revision"><Input disabled id="knowledge-config-revision" readOnly value={String(base.revision)} /></Field>
+        </div>
+        <InlineNotice title="运行时索引身份" tone="info">Provider、模型和维度由 Knowledge Worker 启动环境管理；页面只展示服务真实报告，不会伪保存。</InlineNotice>
       </section>
       <section>
         <div className="knowledge-settings__heading"><RefreshCw size={16} /><div><strong>索引重建</strong><span>{base.documentCount} 个材料 · {base.chunkCount} 个现有片段</span></div></div>
@@ -603,6 +770,30 @@ function CreateKnowledgeBaseDialog({
   );
 }
 
+function ReparseDocumentDialog({ document, error, loading, onConfirm, onOpenChange }: { document: KnowledgeDocument | null; error: unknown; loading: boolean; onConfirm: (parser: KnowledgeParserMode) => void; onOpenChange: (open: boolean) => void }) {
+  const [parser, setParser] = useState<KnowledgeParserMode>('auto');
+  useEffect(() => { if (document) setParser(asParserMode(document.parser)); }, [document]);
+  return (
+    <Dialog open={Boolean(document)} onOpenChange={(next) => { if (!loading) onOpenChange(next); }}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>重新解析文档</DialogTitle><DialogDescription>{document ? `“${document.name}”将重新生成 Markdown、Chunks 和索引。` : ''}</DialogDescription></DialogHeader>
+        <div className="knowledge-create-form">
+          <Field htmlFor="knowledge-document-parser" label="解析方式">
+            <select className="ui-input" id="knowledge-document-parser" onChange={(event) => setParser(asParserMode(event.target.value))} value={parser}>
+              <option value="auto">自动选择</option>
+              <option value="builtin">内置文本解析</option>
+              <option value="mineru">MinerU OCR / 版面解析</option>
+            </select>
+          </Field>
+          {parser === 'mineru' ? <InlineNotice title="MinerU OCR" tone="info">适用于扫描 PDF、图片和需要保留版面的文档；任务会走本机 MinerU 服务。</InlineNotice> : null}
+          {error ? <p className="knowledge-inline-error" role="alert">{publicErrorText(error, '重新解析失败，现有索引仍然保留。')}</p> : null}
+        </div>
+        <DialogFooter><Button disabled={loading} onClick={() => onOpenChange(false)} variant="quiet">取消</Button><Button leadingIcon={<RefreshCw size={14} />} loading={loading} onClick={() => onConfirm(parser)} variant="primary">开始重新解析</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ConfirmDialog({ description, error, loading, onConfirm, onOpenChange, open, title }: { description: string; error: unknown; loading: boolean; onConfirm: () => void; onOpenChange: (open: boolean) => void; open: boolean; title: string }) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!loading) onOpenChange(next); }}>
@@ -643,11 +834,18 @@ function object(value: unknown): Record<string, unknown> {
 }
 
 function asDetailTab(value: string): DetailTab { return ['viewer', 'search', 'jobs', 'settings'].includes(value) ? value as DetailTab : 'materials'; }
-function asParserMode(value: string): KnowledgeParserMode { return value === 'builtin' || value === 'mineru' ? value : 'auto'; }
-function asChunkingStrategy(value: string): KnowledgeChunkingConfig['strategy'] { return value === 'paragraph' || value === 'fixed' ? value : 'markdown'; }
+function asParserMode(value: string): KnowledgeParserMode { return value === 'builtin' ? value : value === 'mineru' || value === 'mineru_local_http' ? 'mineru' : 'auto'; }
+function asChunkingStrategy(value: string): KnowledgeChunkingConfig['strategy'] { return ['general', 'markdown', 'book', 'qa', 'laws', 'separator', 'fixed'].includes(value) ? value as KnowledgeChunkingConfig['strategy'] : 'markdown'; }
 function asRetrievalMode(value: string): KnowledgeRetrievalConfig['mode'] { return value === 'dense' || value === 'lexical' ? value : 'hybrid'; }
 function retrievalModeLabel(value: KnowledgeRetrievalConfig['mode']): string { return value === 'dense' ? '向量检索' : value === 'lexical' ? '关键词检索' : '混合检索'; }
 function equalConfig(left: object, right: object): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 function parserLabel(value: KnowledgeParserMode): string { return value === 'builtin' ? '内置' : value === 'mineru' ? 'MinerU' : '自动'; }
 function scoreLabel(value: number | null): string { return value === null ? '未提供评分' : `${Math.round(value <= 1 ? value * 100 : value)}%`; }
 function citationLabel(hit: KnowledgeSearchHit): string { if (hit.page !== null) return `第 ${hit.page} 页`; if (hit.lineStart !== null) return hit.lineEnd && hit.lineEnd !== hit.lineStart ? `第 ${hit.lineStart}-${hit.lineEnd} 行` : `第 ${hit.lineStart} 行`; return '文档片段'; }
+function uploadItemId(file: File, index: number): string { return `upload-${Date.now()}-${index}-${file.name}-${file.size}`; }
+function replaceUploadItem(items: KnowledgeUploadItem[], id: string, patch: Partial<KnowledgeUploadItem>): KnowledgeUploadItem[] { return items.map((item) => item.id === id ? { ...item, ...patch } : item); }
+function indexRevisionLabel(documents: readonly KnowledgeDocument[]): string {
+  const revisions = [...new Set(documents.map((document) => document.indexedConfigRevision).filter((value) => value > 0))].sort((left, right) => left - right);
+  if (!revisions.length) return '未建立';
+  return revisions.length === 1 ? String(revisions[0]) : `${revisions[0]}–${revisions.at(-1)}`;
+}

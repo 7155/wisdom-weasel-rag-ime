@@ -200,6 +200,15 @@ struct NativeRoutePolicyTests {
         expect(knowledgeUpload.request.url?.path == "/api/knowledge-bases/kb_docs/documents/import", "knowledge upload route")
         expect(knowledgeUpload.request.url?.port == 8766, "knowledge upload is sidecar-only")
 
+        let knowledgeDetail = try policy.resolveRequest(
+            pathId: "knowledgeBases.document.get",
+            parameters: ["kbId": "kb_docs", "fileId": "file_manual"],
+            query: ["offset": "400", "limit": "200", "lineOffset": "800", "lineLimit": "200"],
+            body: nil
+        )
+        expect(knowledgeDetail.request.url?.query?.contains("lineOffset=800") == true, "knowledge Markdown window offset")
+        expect(knowledgeDetail.request.url?.query?.contains("lineLimit=200") == true, "knowledge Markdown window limit")
+
         let assetId = String(repeating: "a", count: 64)
         let knowledgeAsset = try policy.resolveBinary(
             pathId: "knowledgeBases.asset.get",

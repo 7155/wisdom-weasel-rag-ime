@@ -34,6 +34,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         "request",
         "subscribe",
         "cancelSubscription",
+        "cancelRequest",
         "pickFiles",
         "pasteImages",
         "readKnowledgeAsset",
@@ -48,6 +49,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     private let assetSessionDelegate: NativeNoRedirectSessionDelegate
     private let assetSession: URLSession
     private var requestTasks: [String: URLSessionTask] = [:]
+    private var filePanels: [String: NSOpenPanel] = [:]
+    private var binaryTransferIds: [String: String] = [:]
     private var allowedRevealPaths: Set<String> = []
     private lazy var eventBridge = NativeEventBridge { [weak self] envelope in
         self?.sendToWeb(envelope)
@@ -77,6 +80,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     func shutdown() {
         requestTasks.values.forEach { $0.cancel() }
         requestTasks.removeAll()
+        filePanels.values.forEach { $0.cancel(nil) }
+        filePanels.removeAll()
+        binaryTransferIds.removeAll()
         eventBridge.cancelAll()
         requestSession.invalidateAndCancel()
         assetSession.invalidateAndCancel()
@@ -91,7 +97,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
               id.utf8.count <= 160,
               let method = envelope["method"] as? String,
               Self.allowedMethods.contains(method),
-              !requestTasks.keys.contains(id) else {
+              !requestTasks.keys.contains(id),
+              !filePanels.keys.contains(id),
+              !binaryTransferIds.keys.contains(id) else {
             let fallbackId = (message.body as? [String: Any])?["id"] as? String ?? "invalid"
             replyError(id: fallbackId, code: "invalid_bridge_request", message: "Native bridge request was rejected")
             return
@@ -107,6 +115,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             subscribe(id: id, payload: payload)
         case "cancelSubscription":
             cancelSubscription(id: id, payload: payload)
+        case "cancelRequest":
+            cancelRequest(id: id, payload: payload)
         case "pickFiles":
             pickFiles(id: id, payload: payload)
         case "pasteImages":
@@ -282,6 +292,33 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             )
         } catch {
             replyError(id: id, code: "invalid_subscription", message: error.localizedDescription)
+        }
+    }
+
+    private func cancelRequest(id: String, payload: [String: Any]) {
+        do {
+            guard Set(payload.keys) == ["requestId"] else {
+                throw NativeRoutePolicyError.invalidParameter("requestId")
+            }
+            let requestId = try requiredString("requestId", in: payload)
+            let taskCancelled = requestTasks.removeValue(forKey: requestId).map { task in
+                task.cancel()
+                return true
+            } ?? false
+            let panelCancelled = filePanels.removeValue(forKey: requestId).map { panel in
+                panel.cancel(nil)
+                return true
+            } ?? false
+            let transferCancelled = cancelKnowledgeBinaryTransfer(requestId: requestId)
+            replySuccess(
+                id: id,
+                result: [
+                    "requestId": requestId,
+                    "cancelled": taskCancelled || panelCancelled || transferCancelled,
+                ]
+            )
+        } catch {
+            replyError(id: id, code: "invalid_request_cancellation", message: error.localizedDescription)
         }
     }
 
@@ -650,22 +687,143 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             return
         }
         let metadataBase64 = metadataData.base64EncodedString()
-        let bytesBase64 = binary.data.base64EncodedString()
+        let transferId = UUID().uuidString
         let script = """
         (() => {
           const decode = value => Uint8Array.from(atob(value), c => c.charCodeAt(0));
           const metadata = JSON.parse(new TextDecoder().decode(decode('\(metadataBase64)')));
-          const blob = new Blob([decode('\(bytesBase64)')], { type: metadata.mimeType });
-          const id = metadata.id;
-          delete metadata.id;
+          const transfers = window.__RAG_IME_NATIVE_BINARY_TRANSFERS__ ??= new Map();
+          transfers.set('\(transferId)', { metadata, parts: [], received: 0 });
+        })();
+        """
+        guard let webView else {
+            replyError(id: id, code: "knowledge_binary_read_failed", message: "Native web view is unavailable")
+            return
+        }
+        binaryTransferIds[id] = transferId
+        webView.evaluateJavaScript(script) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error {
+                    self.failKnowledgeBinaryTransfer(id: id, transferId: transferId, error: error)
+                    return
+                }
+                self.appendKnowledgeBinaryChunk(
+                    id: id,
+                    transferId: transferId,
+                    binary: binary,
+                    ranges: NativeBinaryTransferPlan.chunkRanges(byteCount: binary.data.count),
+                    index: 0
+                )
+            }
+        }
+    }
+
+    private func appendKnowledgeBinaryChunk(
+        id: String,
+        transferId: String,
+        binary: NativeKnowledgeAsset,
+        ranges: [Range<Int>],
+        index: Int
+    ) {
+        guard binaryTransferIds[id] == transferId else { return }
+        guard index < ranges.count else {
+            finishKnowledgeBinaryTransfer(id: id, transferId: transferId)
+            return
+        }
+        guard let webView else {
+            failKnowledgeBinaryTransfer(
+                id: id,
+                transferId: transferId,
+                error: NativeMediaImportError.rejected("Native web view is unavailable")
+            )
+            return
+        }
+        let encoded = binary.data.subdata(in: ranges[index]).base64EncodedString()
+        let script = """
+        (() => {
+          const transfer = window.__RAG_IME_NATIVE_BINARY_TRANSFERS__?.get('\(transferId)');
+          if (!transfer) throw new Error('Native binary transfer was cancelled');
+          const part = Uint8Array.from(atob('\(encoded)'), c => c.charCodeAt(0));
+          transfer.parts.push(part);
+          transfer.received += part.byteLength;
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self, self.binaryTransferIds[id] == transferId else { return }
+                if let error {
+                    self.failKnowledgeBinaryTransfer(id: id, transferId: transferId, error: error)
+                    return
+                }
+                self.appendKnowledgeBinaryChunk(
+                    id: id,
+                    transferId: transferId,
+                    binary: binary,
+                    ranges: ranges,
+                    index: index + 1
+                )
+            }
+        }
+    }
+
+    private func finishKnowledgeBinaryTransfer(id: String, transferId: String) {
+        guard binaryTransferIds[id] == transferId else { return }
+        guard let webView else {
+            failKnowledgeBinaryTransfer(
+                id: id,
+                transferId: transferId,
+                error: NativeMediaImportError.rejected("Native web view is unavailable")
+            )
+            return
+        }
+        let script = """
+        (() => {
+          const transfers = window.__RAG_IME_NATIVE_BINARY_TRANSFERS__;
+          const transfer = transfers?.get('\(transferId)');
+          if (!transfer) throw new Error('Native binary transfer was cancelled');
+          transfers.delete('\(transferId)');
+          if (transfer.received !== transfer.metadata.byteSize) {
+            throw new Error('Native binary transfer size mismatch');
+          }
+          const id = transfer.metadata.id;
+          const blob = new Blob(transfer.parts, { type: transfer.metadata.mimeType });
+          delete transfer.metadata.id;
           window.__RAG_IME_NATIVE_BRIDGE__?.receive({
             id,
             ok: true,
-            result: { ...metadata, blob },
+            result: { ...transfer.metadata, blob },
           });
         })();
         """
-        webView?.evaluateJavaScript(script, completionHandler: nil)
+        webView.evaluateJavaScript(script) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self, self.binaryTransferIds[id] == transferId else { return }
+                self.binaryTransferIds.removeValue(forKey: id)
+                if let error {
+                    self.replyError(
+                        id: id,
+                        code: "knowledge_binary_transfer_failed",
+                        message: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    private func failKnowledgeBinaryTransfer(id: String, transferId: String, error: Error) {
+        guard binaryTransferIds[id] == transferId else { return }
+        binaryTransferIds.removeValue(forKey: id)
+        let cleanup = "window.__RAG_IME_NATIVE_BINARY_TRANSFERS__?.delete('\(transferId)');"
+        webView?.evaluateJavaScript(cleanup, completionHandler: nil)
+        replyError(id: id, code: "knowledge_binary_transfer_failed", message: error.localizedDescription)
+    }
+
+    private func cancelKnowledgeBinaryTransfer(requestId: String) -> Bool {
+        guard let transferId = binaryTransferIds.removeValue(forKey: requestId) else { return false }
+        let cleanup = "window.__RAG_IME_NATIVE_BINARY_TRANSFERS__?.delete('\(transferId)');"
+        webView?.evaluateJavaScript(cleanup, completionHandler: nil)
+        return true
     }
 
     private func presentAgentImagePicker(
@@ -683,8 +841,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         panel.allowedContentTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"].compactMap {
             UTType(mimeType: $0)
         }
+        filePanels[id] = panel
         panel.begin { [weak self] response in
             guard let self else { return }
+            self.filePanels.removeValue(forKey: id)
             guard response == .OK else {
                 self.replySuccess(id: id, result: [])
                 return
@@ -721,8 +881,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             return UTType(mimeType: value)
         }
         if !allowedTypes.isEmpty { panel.allowedContentTypes = allowedTypes }
+        filePanels[id] = panel
         panel.begin { [weak self] response in
             guard let self else { return }
+            self.filePanels.removeValue(forKey: id)
             guard response == .OK else {
                 self.replySuccess(id: id, result: [])
                 return
@@ -779,8 +941,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             return UTType(mimeType: value)
         }
         if !allowedTypes.isEmpty { panel.allowedContentTypes = allowedTypes }
+        filePanels[id] = panel
         panel.begin { [weak self] response in
             guard let self else { return }
+            self.filePanels.removeValue(forKey: id)
             guard response == .OK else {
                 self.replySuccess(id: id, result: [])
                 return

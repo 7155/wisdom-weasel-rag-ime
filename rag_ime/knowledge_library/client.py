@@ -44,8 +44,13 @@ class LocalKnowledgeClient:
                 str(payload.get("query") or ""),
                 base_ids=_kb_ids(payload),
                 limit=_top_k(payload, 10) if ("topK" in payload or "limit" in payload) else None,
-                mode=str(payload["mode"]) if payload.get("mode") is not None else None,
+                mode=(
+                    str(payload.get("mode") or payload.get("searchMode"))
+                    if payload.get("mode") is not None or payload.get("searchMode") is not None
+                    else None
+                ),
                 threshold=float(payload["threshold"]) if payload.get("threshold") is not None else None,
+                file_name=str(payload.get("fileName") or ""),
                 agent_only=True,
             )
         )
@@ -62,6 +67,7 @@ class LocalKnowledgeClient:
             case_sensitive=payload.get("caseSensitive") is True,
             max_windows=int(payload.get("maxWindows") or 8),
             window_size=int(payload.get("windowSize") or 24),
+            offset=int(payload.get("offset") or 0),
             agent_only=True,
         )
         requested_bases = _kb_ids(payload)
@@ -82,11 +88,12 @@ class LocalKnowledgeClient:
         elif file_id:
             window_size = max(1, min(300, int(payload.get("windowSize") or 40)))
             line = max(1, int(payload.get("line") or 1))
-            offset = max(0, int(payload.get("offset") or payload.get("lineStart") or 0))
-            result = self.service.open_document(
+            offset = max(0, int(payload.get("offset") or 0))
+            line_start = max(1, int(payload.get("lineStart") or line) + offset)
+            result = self.service.open_document_lines(
                 file_id,
-                offset=max(0, offset + (line - 1) // 40),
-                limit=_top_k(payload, max(1, min(50, (window_size + 39) // 40))),
+                line_start=line_start,
+                line_limit=window_size,
                 agent_only=True,
             )
         else:
@@ -171,6 +178,18 @@ class HttpKnowledgeClient:
             f"{urllib.parse.quote(file_id, safe='')}/detail?{query}"
         )
         return self._request("GET", path)
+
+    def management_preview_chunking(
+        self,
+        kb_id: str,
+        file_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        path = (
+            f"/v1/knowledge/bases/{urllib.parse.quote(kb_id, safe='')}/documents/"
+            f"{urllib.parse.quote(file_id, safe='')}/chunk-preview"
+        )
+        return self._request("POST", path, payload)
 
     def management_read_asset(self, kb_id: str, file_id: str, asset_id: str) -> AssetBlob:
         path = (
@@ -268,6 +287,13 @@ class HttpKnowledgeClient:
         if kb_id:
             query["kbId"] = kb_id
         return self._request("GET", f"/v1/knowledge/jobs?{urllib.parse.urlencode(query)}")
+
+    def management_cancel_job(self, job_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/v1/knowledge/jobs/{urllib.parse.quote(job_id, safe='')}/cancel",
+            {},
+        )
 
     def management_import_document(
         self,
@@ -391,6 +417,7 @@ def _agent_search(result: dict[str, Any]) -> dict[str, Any]:
                 "content": item.get("content", ""),
                 "text": item.get("content", ""),
                 "score": item.get("score", 0.0),
+                "diagnostics": dict(item.get("diagnostics") or {}),
                 "citation": citation,
             }
         )
@@ -413,6 +440,8 @@ def _agent_open(result: dict[str, Any]) -> dict[str, Any]:
             "text": item.get("content", ""),
             "page": item.get("page"),
             "heading": item.get("heading"),
+            "lineStart": item.get("lineStart"),
+            "lineEnd": item.get("lineEnd"),
         }
         for item in result.get("chunks", [])
     ]
@@ -423,6 +452,11 @@ def _agent_open(result: dict[str, Any]) -> dict[str, Any]:
         "fileId": result.get("documentId"),
         "fileName": result.get("documentName"),
         "anchorChunkId": result.get("anchorChunkId"),
+        "lineStart": result.get("lineStart"),
+        "lineEnd": result.get("lineEnd"),
+        "totalLines": result.get("totalLines"),
+        "nextLineStart": result.get("nextLineStart"),
+        "hasMore": result.get("hasMore", False),
         "chunks": chunks,
         "items": chunks,
     }

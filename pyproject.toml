@@ -17,6 +17,10 @@ embedding-mlx = [
   "mlx>=0.29,<1",
   "transformers>=4.50,<6",
 ]
+knowledge-ann = [
+  "numpy>=2.0,<3",
+  "usearch>=2.23,<3",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

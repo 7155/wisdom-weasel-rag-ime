@@ -10,12 +10,13 @@ import shutil
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Sequence
 
-from ..embeddings import HashingEmbeddingProvider
-from .dense import DenseIndex, SqliteDenseIndex, reciprocal_rank_fusion
+from ..embeddings import embedding_provider_from_env
+from .dense import DenseIndex, dense_index_from_env
 from .models import (
     AssetBlob,
     KNOWLEDGE_SCHEMA_VERSION,
@@ -27,6 +28,7 @@ from .models import (
     ParsedDocument,
 )
 from .parsers import ParserRouter
+from .permissions import harden_knowledge_tree, secure_directory, secure_file
 from .store import KnowledgeStore, decode_metadata, now_ms
 
 
@@ -34,6 +36,7 @@ DEFAULT_CHUNKING_CONFIG: dict[str, Any] = {
     "strategy": "markdown",
     "size": 1_200,
     "overlap": 160,
+    "separator": "\n\n",
     "respectHeadings": True,
     "respectPageBoundaries": True,
 }
@@ -41,7 +44,12 @@ DEFAULT_RETRIEVAL_CONFIG: dict[str, Any] = {
     "mode": "hybrid",
     "topK": 10,
     "threshold": 0.0,
+    "lexicalWeight": 1.0,
+    "denseWeight": 1.0,
+    "rrfK": 60,
+    "candidateMultiplier": 4,
 }
+CHUNKING_STRATEGIES = ("general", "markdown", "book", "qa", "laws", "separator", "fixed")
 _IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"})
 _SOURCE_PREVIEW_MIME_TYPES = _IMAGE_MIME_TYPES | frozenset(
     {
@@ -75,15 +83,15 @@ class KnowledgeLibraryService:
         background_jobs: bool = False,
     ):
         self.config = config
-        self.config.root_dir.mkdir(parents=True, exist_ok=True)
-        self.config.files_dir.mkdir(parents=True, exist_ok=True)
-        self.config.assets_dir.mkdir(parents=True, exist_ok=True)
-        self.config.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        harden_knowledge_tree(self.config.root_dir)
+        secure_directory(self.config.files_dir)
+        secure_directory(self.config.assets_dir)
+        secure_directory(self.config.artifacts_dir)
         self.store = KnowledgeStore(config.database_path)
         self.parsers = parser_router or ParserRouter(config)
-        self.dense_index = dense_index or SqliteDenseIndex(
+        self.dense_index = dense_index or dense_index_from_env(
             config.database_path,
-            HashingEmbeddingProvider(dimensions=192),
+            embedding_provider_from_env(),
         )
         self._dense_error = ""
         self._ingest_lock = threading.Lock()
@@ -92,6 +100,8 @@ class KnowledgeLibraryService:
             if background_jobs
             else None
         )
+        if self._job_executor is not None:
+            self._recover_incomplete_jobs()
 
     def close(self, *, wait: bool = True) -> None:
         if self._job_executor is not None:
@@ -197,12 +207,16 @@ class KnowledgeLibraryService:
     def delete_base(self, base_id: str) -> dict[str, Any]:
         base_id = _identifier(base_id, "base id")
         documents = self.store.list_documents(base_id)
+        for row in self.store.list_jobs(base_id=base_id, limit=500):
+            if str(row["status"]) in {"queued", "running"}:
+                self.store.cancel_job(str(row["id"]))
         self.store.delete_base(base_id)
         for row in documents:
             _unlink_quietly(Path(str(row["stored_path"])))
             self._delete_dense(str(row["id"]))
         shutil.rmtree(self.config.files_dir / base_id, ignore_errors=True)
         shutil.rmtree(self.config.artifacts_dir / base_id, ignore_errors=True)
+        self._remove_unreferenced_assets()
         return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "deleted": True, "baseId": base_id}
 
     def import_document(
@@ -221,12 +235,14 @@ class KnowledgeLibraryService:
         document_id = uuid.uuid4().hex
         suffix = source.suffix.lower()[:20]
         stored_dir = self.config.files_dir / base_id
-        stored_dir.mkdir(parents=True, exist_ok=True)
+        secure_directory(stored_dir)
         stored_path = stored_dir / f"{source_hash}{suffix}"
         if not stored_path.exists():
             temporary = stored_path.with_name(f".{stored_path.name}.{uuid.uuid4().hex}.tmp")
             shutil.copyfile(source, temporary)
+            secure_file(temporary)
             os.replace(temporary, stored_path)
+        secure_file(stored_path)
         timestamp = now_ms()
         guessed_mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
         supplied_mime = str(mime_type or "").split(";", 1)[0].strip().lower()
@@ -277,39 +293,81 @@ class KnowledgeLibraryService:
     def list_jobs(self, *, base_id: str = "", limit: int = 100) -> dict[str, Any]:
         if base_id:
             self.store.get_base(_identifier(base_id, "base id"))
-        jobs = [
-            {
-                "jobId": str(row["id"]),
-                "kbId": str(row["base_id"]),
-                "fileId": str(row["document_id"]),
-                "fileName": str(row["file_name"]),
-                "revision": int(row["revision"]),
-                "kind": str(row["kind"]),
-                "status": str(row["status"]),
-                "stage": str(row["stage"]),
-                "error": (
-                    {"code": str(row["error_code"]), "message": str(row["error_message"])}
-                    if row["error_code"] or row["error_message"]
-                    else None
-                ),
-                "createdAtMs": int(row["created_at_ms"]),
-                "startedAtMs": int(row["started_at_ms"]) if row["started_at_ms"] is not None else None,
-                "finishedAtMs": int(row["finished_at_ms"]) if row["finished_at_ms"] is not None else None,
-                "updatedAtMs": int(row["updated_at_ms"]),
-            }
-            for row in self.store.list_jobs(base_id=base_id, limit=limit)
-        ]
+        jobs = [_job_to_dict(row) for row in self.store.list_jobs(base_id=base_id, limit=limit)]
         return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "jobs": jobs, "items": jobs, "total": len(jobs)}
+
+    def cancel_job(self, job_id: str, *, base_id: str = "") -> dict[str, Any]:
+        job_id = _identifier(job_id, "job id")
+        row = self.store.get_job(job_id)
+        if base_id and str(row["base_id"]) != _identifier(base_id, "base id"):
+            raise KnowledgeNotFoundError(f"knowledge job {job_id!r} was not found")
+        cancelled = self.store.cancel_job(job_id)
+        return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "job": _job_to_dict(cancelled)}
+
+    def preview_chunking(
+        self,
+        base_id: str,
+        document_id: str,
+        chunking_config: dict[str, Any],
+        *,
+        limit: int = 12,
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        document_id = _identifier(document_id, "document id")
+        base = self.store.get_base(base_id)
+        document = self.store.get_document(document_id)
+        if str(document["base_id"]) != base_id:
+            raise KnowledgeNotFoundError(
+                f"document {document_id!r} was not found in knowledge base {base_id!r}"
+            )
+        raw_artifact_path = str(document["artifact_path"] or "")
+        if not raw_artifact_path:
+            raise KnowledgeLibraryError(
+                "document has no parsed Markdown artifact to preview",
+                code="artifact_unavailable",
+            )
+        artifact_path = _safe_stored_path(Path(raw_artifact_path), root=self.config.artifacts_dir)
+        if artifact_path.stat().st_size > self.config.max_source_bytes:
+            raise KnowledgeLibraryError("parsed artifact is too large to preview", code="artifact_too_large")
+        normalized = _normalize_chunking_config(
+            chunking_config,
+            defaults=_json_object(base["chunking_config_json"], DEFAULT_CHUNKING_CONFIG),
+        )
+        parsed = ParsedDocument(
+            text=artifact_path.read_text(encoding="utf-8"),
+            provider="artifact_preview",
+            metadata=decode_metadata(document),
+        )
+        chunks = _chunk_document(
+            parsed,
+            document_id=document_id,
+            base_id=base_id,
+            chunking_config=normalized,
+        )
+        preview_limit = max(1, min(30, int(limit)))
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "kbId": base_id,
+            "fileId": document_id,
+            "config": normalized,
+            "total": len(chunks),
+            "items": [_chunk_to_dict(item) for item in chunks[:preview_limit]],
+            "truncated": len(chunks) > preview_limit,
+        }
 
     def get_document(self, document_id: str) -> dict[str, Any]:
         return _document_to_dict(self.store.get_document(_identifier(document_id, "document id")))
 
     def delete_document(self, document_id: str) -> dict[str, Any]:
         document_id = _identifier(document_id, "document id")
+        for job in self.store.list_jobs(limit=500):
+            if str(job["document_id"]) == document_id and str(job["status"]) in {"queued", "running"}:
+                self.store.cancel_job(str(job["id"]))
         row = self.store.delete_document(document_id)
         _unlink_quietly(Path(str(row["stored_path"])))
         shutil.rmtree(self.config.artifacts_dir / str(row["base_id"]) / document_id, ignore_errors=True)
         self._delete_dense(document_id)
+        self._remove_unreferenced_assets()
         return {
             "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
             "deleted": True,
@@ -506,59 +564,129 @@ class KnowledgeLibraryService:
         limit: int | None = None,
         mode: str | None = None,
         threshold: float | None = None,
+        file_name: str = "",
         agent_only: bool = False,
     ) -> dict[str, Any]:
         query = _query(query)
-        base_ids = tuple(_identifier(item, "base id") for item in base_ids)
-        retrieval_config = dict(DEFAULT_RETRIEVAL_CONFIG)
-        if len(base_ids) == 1:
-            base = self.store.get_base(base_ids[0])
+        selected_ids = tuple(_identifier(item, "base id") for item in base_ids)
+        file_name = str(file_name or "").strip()[:512]
+        if selected_ids:
+            base_rows = [self.store.get_base(base_id) for base_id in selected_ids]
+        else:
+            base_rows = self.store.list_bases(agent_only=agent_only)
+        if agent_only:
+            base_rows = [row for row in base_rows if bool(row["agent_enabled"])]
+
+        all_hits = []
+        library_diagnostics: list[dict[str, Any]] = []
+        dense_errors: list[str] = []
+        resolved_configs: list[dict[str, Any]] = []
+        for base in base_rows:
+            base_id = str(base["id"])
             retrieval_config = _normalize_retrieval_config(
                 _json_object(base["retrieval_config_json"], DEFAULT_RETRIEVAL_CONFIG)
             )
-        if mode is not None:
-            retrieval_config["mode"] = mode
-        if limit is not None:
-            retrieval_config["topK"] = limit
-        if threshold is not None:
-            retrieval_config["threshold"] = threshold
-        retrieval_config = _normalize_retrieval_config(retrieval_config)
-        fetch_limit = int(retrieval_config["topK"])
-        requested_mode = str(retrieval_config["mode"])
-        lexical = (
-            self.store.search(query, base_ids=base_ids, limit=fetch_limit, agent_only=agent_only)
-            if requested_mode in {"lexical", "hybrid"}
-            else []
-        )
-        hits_by_id = {hit.chunk_id: hit for hit in lexical}
-        dense_ids: list[str] = []
-        dense_scored: Sequence[tuple[str, float]] = ()
-        if requested_mode in {"dense", "hybrid"}:
-            try:
-                dense_scored = self.dense_index.search(query, base_ids=base_ids, limit=fetch_limit)
-                dense_ids = [item_id for item_id, _score in dense_scored]
-                self._dense_error = ""
-            except Exception as exc:
-                self._dense_error = str(exc)
-        dense_hits = self.store.hydrate_dense_hits(dense_scored, base_ids=base_ids, agent_only=agent_only)
-        for hit in dense_hits:
-            hits_by_id.setdefault(hit.chunk_id, hit)
-        if requested_mode == "dense":
-            lexical = dense_hits
-        elif dense_ids:
-            # Dense projections only influence canonical chunks already read from SQLite.
-            ordered_ids = reciprocal_rank_fusion([hit.chunk_id for hit in lexical], dense_ids)
-            lexical = [hits_by_id[item_id] for item_id in ordered_ids if item_id in hits_by_id][:fetch_limit]
-        lexical = [hit for hit in lexical if hit.score >= float(retrieval_config["threshold"])]
+            if mode is not None:
+                retrieval_config["mode"] = mode
+            if limit is not None:
+                retrieval_config["topK"] = limit
+            if threshold is not None:
+                retrieval_config["threshold"] = threshold
+            retrieval_config = _normalize_retrieval_config(retrieval_config)
+            resolved_configs.append(retrieval_config)
+            requested_mode = str(retrieval_config["mode"])
+            document_ids: Sequence[str] = ()
+            if file_name:
+                document_ids = self.store.document_ids_for_file_name(
+                    file_name,
+                    base_ids=(base_id,),
+                    agent_only=agent_only,
+                )
+                if not document_ids:
+                    library_diagnostics.append(
+                        {
+                            "kbId": base_id,
+                            "kbName": str(base["name"]),
+                            "config": retrieval_config,
+                            "effectiveMode": "no-matching-file",
+                            "candidateLimit": 0,
+                            "lexicalCandidates": 0,
+                            "denseCandidates": 0,
+                            "returned": 0,
+                        }
+                    )
+                    continue
+            candidate_limit = min(
+                100,
+                int(retrieval_config["topK"]) * int(retrieval_config["candidateMultiplier"]),
+            )
+            lexical_hits = (
+                self.store.search(
+                    query,
+                    base_ids=(base_id,),
+                    limit=candidate_limit,
+                    agent_only=agent_only,
+                    document_ids=document_ids,
+                )
+                if requested_mode in {"lexical", "hybrid"}
+                else []
+            )
+            dense_scored: Sequence[tuple[str, float]] = ()
+            if requested_mode in {"dense", "hybrid"}:
+                try:
+                    dense_scored = self.dense_index.search(
+                        query,
+                        base_ids=(base_id,),
+                        limit=candidate_limit,
+                        document_ids=document_ids,
+                    )
+                except Exception as exc:
+                    dense_errors.append(f"{base_id}: {exc}")
+            dense_hits = self.store.hydrate_dense_hits(
+                dense_scored,
+                base_ids=(base_id,),
+                agent_only=agent_only,
+                document_ids=document_ids,
+            )
+            ranked, effective_mode = _rank_retrieval_hits(
+                lexical_hits,
+                dense_hits,
+                requested_mode=requested_mode,
+                config=retrieval_config,
+            )
+            ranked = [
+                hit for hit in ranked if hit.score >= float(retrieval_config["threshold"])
+            ][: int(retrieval_config["topK"])]
+            all_hits.extend(ranked)
+            library_diagnostics.append(
+                {
+                    "kbId": base_id,
+                    "kbName": str(base["name"]),
+                    "config": retrieval_config,
+                    "effectiveMode": effective_mode,
+                    "candidateLimit": candidate_limit,
+                    "lexicalCandidates": len(lexical_hits),
+                    "denseCandidates": len(dense_hits),
+                    "returned": len(ranked),
+                }
+            )
+        self._dense_error = "; ".join(dense_errors)[:2_000]
+        result_limit = max(1, min(100, int(limit or max((item["topK"] for item in resolved_configs), default=10))))
+        all_hits.sort(key=lambda hit: (-hit.score, hit.base_id, hit.chunk_id))
+        all_hits = all_hits[:result_limit]
+        requested_modes = {str(item["mode"]) for item in resolved_configs}
+        effective_modes = {str(item["effectiveMode"]) for item in library_diagnostics}
         return {
             "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
             "query": query,
-            "hits": [hit.to_dict() for hit in lexical],
-            "total": len(lexical),
+            "fileName": file_name or None,
+            "hits": [hit.to_dict() for hit in all_hits],
+            "total": len(all_hits),
             "retrieval": {
-                "mode": requested_mode,
-                "effectiveMode": "hybrid" if dense_ids and lexical else ("lexical" if lexical else requested_mode),
-                "config": retrieval_config,
+                "mode": next(iter(requested_modes)) if len(requested_modes) == 1 else "per-library",
+                "effectiveMode": next(iter(effective_modes)) if len(effective_modes) == 1 else "mixed",
+                "config": resolved_configs[0] if len(resolved_configs) == 1 else None,
+                "libraries": library_diagnostics,
                 "lexicalAvailable": True,
                 "dense": self._dense_status(),
             },
@@ -591,6 +719,7 @@ class KnowledgeLibraryService:
         case_sensitive: bool = False,
         max_windows: int = 8,
         window_size: int = 24,
+        offset: int = 0,
         agent_only: bool = False,
     ) -> dict[str, Any]:
         document_id = _identifier(document_id, "document id")
@@ -602,13 +731,35 @@ class KnowledgeLibraryService:
             use_regex=use_regex,
             case_sensitive=case_sensitive,
         )
-        result = self.open_document(document_id, offset=0, limit=50, agent_only=agent_only)
-        chunks = list(result.get("chunks") or [])
+        document = self.store.get_document(document_id)
+        if str(document["status"]) != "ready" or (agent_only and not bool(document["base_agent_enabled"])):
+            raise KnowledgeNotFoundError(f"document {document_id!r} is not available")
+        page_limit = max(1, min(20, int(max_windows)))
+        chunk_offset = max(0, int(offset))
+        if use_regex:
+            rows = _regex_document_rows(
+                self.store,
+                document_id,
+                matchers,
+                offset=chunk_offset,
+                limit=page_limit + 1,
+            )
+        else:
+            rows = self.store.find_document_chunks(
+                document_id,
+                normalized_patterns,
+                case_sensitive=case_sensitive,
+                offset=chunk_offset,
+                limit=page_limit + 1,
+                agent_only=agent_only,
+            )
+        has_more = len(rows) > page_limit
+        rows = rows[:page_limit]
         windows: list[dict[str, Any]] = []
-        line_cursor = 1
-        for chunk in chunks:
-            content = str(chunk.get("content") or "")
+        for row in rows:
+            content = str(row["content"] or "")
             lines = content.splitlines() or [content]
+            lines_before = int(row["lines_before"] or 0)
             for line_index, line in enumerate(lines):
                 matched_pattern = next((pattern for pattern, matcher in matchers if matcher(line)), "")
                 if not matched_pattern:
@@ -618,33 +769,35 @@ class KnowledgeLibraryService:
                 end_index = min(len(lines), line_index + radius + 1)
                 windows.append(
                     {
-                        "kbId": result.get("baseId"),
-                        "kbName": result.get("baseName"),
+                        "kbId": str(document["base_id"]),
+                        "kbName": str(document["base_name"]),
                         "fileId": document_id,
-                        "fileName": result.get("documentName"),
-                        "chunkId": chunk.get("chunkId"),
+                        "fileName": str(document["display_name"]),
+                        "chunkId": str(row["id"]),
                         "pattern": matched_pattern,
                         "content": "\n".join(lines[start_index:end_index]),
-                        "lineStart": line_cursor + start_index,
-                        "lineEnd": line_cursor + end_index - 1,
-                        "matchLine": line_cursor + line_index,
-                        "page": chunk.get("page"),
-                        "heading": chunk.get("heading"),
+                        "lineStart": lines_before + start_index + 1,
+                        "lineEnd": lines_before + end_index,
+                        "matchLine": lines_before + line_index + 1,
+                        "page": int(row["page"]) if row["page"] is not None else None,
+                        "heading": str(row["heading"] or "") or None,
                     }
                 )
-                if len(windows) >= max(1, min(20, int(max_windows))):
-                    break
-            line_cursor += len(lines)
-            if len(windows) >= max(1, min(20, int(max_windows))):
+                # Pagination advances by matching chunk ordinal. One bounded
+                # context window per chunk avoids ambiguous intra-chunk cursors.
                 break
+        next_offset = int(rows[-1]["ordinal"]) + 1 if rows and has_more else None
         return {
             "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
-            "kbId": result.get("baseId"),
+            "kbId": str(document["base_id"]),
             "fileId": document_id,
             "patterns": list(normalized_patterns),
             "windows": windows,
             "items": windows,
             "total": len(windows),
+            "offset": chunk_offset,
+            "nextOffset": next_offset,
+            "hasMore": has_more,
         }
 
     def open(
@@ -727,6 +880,60 @@ class KnowledgeLibraryService:
             ],
         }
 
+    def open_document_lines(
+        self,
+        document_id: str,
+        *,
+        line_start: int = 1,
+        line_limit: int = 180,
+        agent_only: bool = False,
+    ) -> dict[str, Any]:
+        document_id = _identifier(document_id, "document id")
+        requested_start = max(1, int(line_start))
+        requested_limit = max(1, min(300, int(line_limit)))
+        rows, total_lines = self.store.open_document_lines(
+            document_id,
+            line_start=requested_start,
+            line_limit=requested_limit,
+            agent_only=agent_only,
+        )
+        document = self.store.get_document(document_id)
+        requested_end = requested_start + requested_limit - 1
+        chunks: list[dict[str, Any]] = []
+        for row in rows:
+            chunk_start = int(row["lines_before"]) + 1
+            chunk_end = chunk_start + int(row["line_count"]) - 1
+            visible_start = max(requested_start, chunk_start)
+            visible_end = min(requested_end, chunk_end)
+            lines = (str(row["content"] or "").splitlines() or [str(row["content"] or "")])
+            local_start = visible_start - chunk_start
+            local_end = visible_end - chunk_start + 1
+            chunks.append(
+                {
+                    "chunkId": str(row["id"]),
+                    "ordinal": int(row["ordinal"]),
+                    "content": "\n".join(lines[local_start:local_end]),
+                    "page": int(row["page"]) if row["page"] is not None else None,
+                    "heading": str(row["heading"] or "") or None,
+                    "lineStart": visible_start,
+                    "lineEnd": visible_end,
+                }
+            )
+        returned_end = chunks[-1]["lineEnd"] if chunks else min(total_lines, requested_end)
+        return {
+            "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+            "baseId": str(document["base_id"]),
+            "baseName": str(document["base_name"]),
+            "documentId": document_id,
+            "documentName": str(document["display_name"]),
+            "lineStart": requested_start,
+            "lineEnd": returned_end,
+            "totalLines": total_lines,
+            "nextLineStart": returned_end + 1 if returned_end < total_lines else None,
+            "hasMore": returned_end < total_lines,
+            "chunks": chunks,
+        }
+
     def status(self) -> dict[str, Any]:
         return {
             "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
@@ -736,6 +943,12 @@ class KnowledgeLibraryService:
             "mineru": {
                 "enabled": self.config.mineru_enabled,
                 "port": self.config.mineru_port,
+            },
+            "chunking": {
+                "strategies": list(CHUNKING_STRATEGIES),
+                "presets": list(CHUNKING_STRATEGIES),
+                "default": dict(DEFAULT_CHUNKING_CONFIG),
+                "semanticChunking": False,
             },
             "dense": self._dense_status(),
             **self.store.counts(),
@@ -757,6 +970,7 @@ class KnowledgeLibraryService:
                 "document_id": document_id,
                 "revision": revision,
                 "kind": job_kind,
+                "parser_mode": parser_mode,
                 "status": "queued",
                 "stage": "queued",
                 "created_at_ms": timestamp,
@@ -778,6 +992,32 @@ class KnowledgeLibraryService:
             job_kind=job_kind,
             job_id=job_id,
         )
+
+    def _recover_incomplete_jobs(self) -> None:
+        if self._job_executor is None:
+            return
+        for job in self.store.recoverable_jobs():
+            job_id = str(job["id"])
+            document_id = str(job["document_id"])
+            if int(job["revision"]) != int(job["document_revision"]):
+                self.store.update_job(
+                    job_id,
+                    {"status": "superseded", "stage": "stale_result_dropped", "finished_at_ms": now_ms()},
+                )
+                continue
+            try:
+                row = self.store.get_document(document_id)
+            except KnowledgeNotFoundError:
+                continue
+            parser_mode = _parser_mode(str(job["parser_mode"] or "auto"))
+            self.store.reset_job_for_recovery(job_id)
+            self._job_executor.submit(
+                self._process_document_locked,
+                row,
+                parser_mode=parser_mode,
+                job_kind=str(job["kind"]),
+                job_id=job_id,
+            )
 
     def _process_document_locked(
         self,
@@ -801,6 +1041,8 @@ class KnowledgeLibraryService:
         document_id = str(row["id"])
         base_id = str(row["base_id"])
         revision = int(row["revision"])
+        if self.store.job_is_cancelled(job_id):
+            return self._document_result_or_deleted(document_id, base_id=base_id)
         base = self.store.get_base(base_id)
         chunking_config = _normalize_chunking_config(
             _json_object(base["chunking_config_json"], DEFAULT_CHUNKING_CONFIG),
@@ -813,6 +1055,8 @@ class KnowledgeLibraryService:
             self.store.update_document(document_id, {"status": "parsing", "parser_params_hash": params_hash})
             self.store.update_job(job_id, {"status": "running", "stage": "parsing", "started_at_ms": now_ms()})
             parsed = self.parsers.parse(Path(str(row["stored_path"])), mode=parser_mode)
+            if self.store.job_is_cancelled(job_id):
+                return self._document_result_or_deleted(document_id, base_id=base_id)
             chunks = _chunk_document(
                 parsed,
                 document_id=document_id,
@@ -823,10 +1067,13 @@ class KnowledgeLibraryService:
                 raise DocumentParseError("document produced no indexable chunks", code="empty_document")
             self.store.update_document(document_id, {"status": "indexing"})
             self.store.update_job(job_id, {"stage": "indexing"})
-            self.store.clear_document_asset_links(document_id)
-            self._store_assets(document_id, parsed)
+            asset_links = self._store_assets(parsed)
             output_hash = hashlib.sha256(parsed.text.encode("utf-8")).hexdigest()
             artifact_path = self._store_artifact(base_id, document_id, revision, parsed.text)
+            if self.store.job_is_cancelled(job_id):
+                _unlink_quietly(artifact_path)
+                self._remove_unreferenced_assets()
+                return self._document_result_or_deleted(document_id, base_id=base_id)
             applied = self.store.replace_chunks_if_revision(
                 document_id=document_id,
                 revision=revision,
@@ -849,7 +1096,12 @@ class KnowledgeLibraryService:
                     job_id,
                     {"status": "superseded", "stage": "stale_result_dropped", "finished_at_ms": now_ms()},
                 )
-                return _document_to_dict(self.store.get_document(document_id))
+                _unlink_quietly(artifact_path)
+                self._remove_unreferenced_assets()
+                return self._document_result_or_deleted(document_id, base_id=base_id)
+            self.store.replace_document_asset_links(document_id, asset_links)
+            self._remove_unreferenced_assets()
+            self._remove_superseded_artifacts(base_id, document_id, keep=artifact_path)
             try:
                 self.dense_index.replace_document(document_id, chunks)
                 self._dense_error = ""
@@ -858,48 +1110,79 @@ class KnowledgeLibraryService:
             self.store.update_job(job_id, {"status": "succeeded", "stage": "ready", "finished_at_ms": now_ms()})
         except Exception as exc:
             error = exc if isinstance(exc, KnowledgeLibraryError) else DocumentParseError(str(exc))
-            current = self.store.get_document(document_id)
-            if int(current["revision"]) == revision:
+            try:
+                current = self.store.get_document(document_id)
+            except KnowledgeNotFoundError:
+                current = None
+            if current is not None and int(current["revision"]) == revision:
                 self.store.update_document(
                     document_id,
                     {"status": "failed", "error_code": error.code, "error_message": str(error)[:2_000]},
                 )
-            self.store.update_job(
-                job_id,
-                {
-                    "status": "failed",
-                    "stage": "failed",
-                    "error_code": error.code,
-                    "error_message": str(error)[:2_000],
-                    "finished_at_ms": now_ms(),
-                },
-            )
-        return _document_to_dict(self.store.get_document(document_id))
+            if not self.store.job_is_cancelled(job_id):
+                self.store.update_job(
+                    job_id,
+                    {
+                        "status": "failed",
+                        "stage": "failed",
+                        "error_code": error.code,
+                        "error_message": str(error)[:2_000],
+                        "finished_at_ms": now_ms(),
+                    },
+                )
+        return self._document_result_or_deleted(document_id, base_id=base_id)
 
-    def _store_assets(self, document_id: str, parsed: ParsedDocument) -> None:
+    def _store_assets(self, parsed: ParsedDocument) -> list[tuple[str, str]]:
+        links: list[tuple[str, str]] = []
         for asset in parsed.assets:
             suffix = mimetypes.guess_extension(asset.media_type) or ""
             path = self.config.assets_dir / f"{asset.sha256}{suffix}"
             if not path.exists():
                 temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
                 temporary.write_bytes(asset.data)
+                secure_file(temporary)
                 os.replace(temporary, path)
+            secure_file(path)
             self.store.add_asset(
                 sha256=asset.sha256,
                 media_type=asset.media_type,
                 byte_size=len(asset.data),
                 stored_path=str(path),
             )
-            self.store.link_asset(document_id=document_id, asset_sha256=asset.sha256, original_name=asset.name)
+            links.append((asset.sha256, asset.name))
+        return links
+
+    def _remove_unreferenced_assets(self) -> None:
+        for path in self.store.delete_unreferenced_assets():
+            _unlink_quietly(Path(path))
+
+    def _document_result_or_deleted(self, document_id: str, *, base_id: str) -> dict[str, Any]:
+        try:
+            return _document_to_dict(self.store.get_document(document_id))
+        except KnowledgeNotFoundError:
+            return {
+                "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+                "documentId": document_id,
+                "baseId": base_id,
+                "status": "deleting",
+            }
 
     def _store_artifact(self, base_id: str, document_id: str, revision: int, text: str) -> Path:
         directory = self.config.artifacts_dir / base_id / document_id
-        directory.mkdir(parents=True, exist_ok=True)
+        secure_directory(directory)
         path = directory / f"revision-{revision}.md"
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         temporary.write_text(text, encoding="utf-8")
+        secure_file(temporary)
         os.replace(temporary, path)
+        secure_file(path)
         return path
+
+    def _remove_superseded_artifacts(self, base_id: str, document_id: str, *, keep: Path) -> None:
+        directory = self.config.artifacts_dir / base_id / document_id
+        for candidate in directory.glob("revision-*.md"):
+            if candidate != keep:
+                _unlink_quietly(candidate)
 
     def _artifact_window(self, document: Any, *, line_offset: int, line_limit: int) -> dict[str, Any]:
         raw_path = str(document["artifact_path"] or "")
@@ -968,6 +1251,141 @@ class KnowledgeLibraryService:
         return status
 
 
+def _rank_retrieval_hits(
+    lexical_hits: Sequence[Any],
+    dense_hits: Sequence[Any],
+    *,
+    requested_mode: str,
+    config: dict[str, Any],
+) -> tuple[list[Any], str]:
+    if requested_mode == "lexical":
+        return [
+            replace(
+                hit,
+                diagnostics={
+                    "effectiveMode": "lexical",
+                    "lexicalRank": rank,
+                    "lexicalScore": hit.score,
+                },
+            )
+            for rank, hit in enumerate(lexical_hits, start=1)
+        ], "lexical"
+    if requested_mode == "dense":
+        return [
+            replace(
+                hit,
+                diagnostics={
+                    "effectiveMode": "dense",
+                    "denseRank": rank,
+                    "denseScore": hit.score,
+                },
+            )
+            for rank, hit in enumerate(dense_hits, start=1)
+        ], "dense"
+    if not dense_hits:
+        return [
+            replace(
+                hit,
+                diagnostics={
+                    "effectiveMode": "lexical",
+                    "fallbackFrom": "hybrid",
+                    "lexicalRank": rank,
+                    "lexicalScore": hit.score,
+                },
+            )
+            for rank, hit in enumerate(lexical_hits, start=1)
+        ], "lexical"
+    if not lexical_hits:
+        return [
+            replace(
+                hit,
+                diagnostics={
+                    "effectiveMode": "dense",
+                    "fallbackFrom": "hybrid",
+                    "denseRank": rank,
+                    "denseScore": hit.score,
+                },
+            )
+            for rank, hit in enumerate(dense_hits, start=1)
+        ], "dense"
+
+    lexical_weight = float(config["lexicalWeight"])
+    dense_weight = float(config["denseWeight"])
+    rrf_k = int(config["rrfK"])
+    lexical_ranks = {hit.chunk_id: rank for rank, hit in enumerate(lexical_hits, start=1)}
+    dense_ranks = {hit.chunk_id: rank for rank, hit in enumerate(dense_hits, start=1)}
+    lexical_scores = {hit.chunk_id: hit.score for hit in lexical_hits}
+    dense_scores = {hit.chunk_id: hit.score for hit in dense_hits}
+    hits_by_id = {hit.chunk_id: hit for hit in lexical_hits}
+    hits_by_id.update({hit.chunk_id: hit for hit in dense_hits})
+    maximum = (lexical_weight + dense_weight) / (rrf_k + 1)
+    ranked: list[Any] = []
+    for chunk_id, hit in hits_by_id.items():
+        lexical_rank = lexical_ranks.get(chunk_id)
+        dense_rank = dense_ranks.get(chunk_id)
+        raw_score = 0.0
+        if lexical_rank is not None:
+            raw_score += lexical_weight / (rrf_k + lexical_rank)
+        if dense_rank is not None:
+            raw_score += dense_weight / (rrf_k + dense_rank)
+        fused_score = raw_score / maximum if maximum > 0 else 0.0
+        ranked.append(
+            replace(
+                hit,
+                score=round(max(0.0, min(1.0, fused_score)), 6),
+                diagnostics={
+                    "effectiveMode": "hybrid",
+                    "fusion": "weighted-rrf",
+                    "fusionScoreRaw": round(raw_score, 9),
+                    "lexicalRank": lexical_rank,
+                    "denseRank": dense_rank,
+                    "lexicalScore": lexical_scores.get(chunk_id),
+                    "denseScore": dense_scores.get(chunk_id),
+                    "lexicalWeight": lexical_weight,
+                    "denseWeight": dense_weight,
+                    "rrfK": rrf_k,
+                },
+            )
+        )
+    ranked.sort(key=lambda hit: (-hit.score, hit.chunk_id))
+    return ranked, "hybrid"
+
+
+def _regex_document_rows(
+    store: KnowledgeStore,
+    document_id: str,
+    matchers: Sequence[tuple[str, Any]],
+    *,
+    offset: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    scan_offset = 0
+    lines_before = 0
+    while len(rows) < limit:
+        batch, total = store.document_chunks(document_id, offset=scan_offset, limit=200)
+        if not batch:
+            break
+        for row in batch:
+            content = str(row["content"] or "")
+            line_count = max(1, len(content.splitlines()))
+            if int(row["ordinal"]) >= offset and any(
+                matcher(line)
+                for line in (content.splitlines() or [content])
+                for _pattern, matcher in matchers
+            ):
+                item = dict(row)
+                item["lines_before"] = lines_before
+                rows.append(item)
+                if len(rows) >= limit:
+                    break
+            lines_before += line_count
+        scan_offset += len(batch)
+        if scan_offset >= total:
+            break
+    return rows
+
+
 def _chunk_document(
     parsed: ParsedDocument,
     *,
@@ -978,6 +1396,7 @@ def _chunk_document(
     chunk_chars = int(chunking_config["size"])
     overlap_chars = int(chunking_config["overlap"])
     strategy = str(chunking_config["strategy"])
+    separator = str(chunking_config.get("separator") or "\n\n")
     respect_headings = bool(chunking_config["respectHeadings"])
     respect_pages = bool(chunking_config["respectPageBoundaries"])
     chunks: list[dict[str, Any]] = []
@@ -987,16 +1406,13 @@ def _chunk_document(
     page_texts = parsed.text.split("\f") if respect_pages else [parsed.text.replace("\f", "\n\n")]
     for page_index, page_text in enumerate(page_texts, start=1):
         page = page_index if respect_pages and has_page_metadata else None
-        if strategy == "fixed":
-            blocks = [page_text.strip()] if page_text.strip() else []
-        else:
-            blocks = [item.strip() for item in re.split(r"\n\s*\n", page_text) if item.strip()]
+        blocks = _chunk_strategy_blocks(page_text, strategy=strategy, separator=separator)
         buffer = ""
         buffer_heading = current_heading
         for block in blocks:
-            heading_match = re.match(r"^#{1,6}\s+(.+)$", block.splitlines()[0])
-            if heading_match and respect_headings:
-                current_heading = heading_match.group(1).strip()[:300]
+            block_heading = _chunk_block_heading(block, strategy=strategy)
+            if block_heading and respect_headings:
+                current_heading = block_heading[:300]
                 if not buffer:
                     buffer_heading = current_heading
             candidate = f"{buffer}\n\n{block}".strip() if buffer else block
@@ -1029,6 +1445,50 @@ def _chunk_document(
     return chunks
 
 
+def _chunk_strategy_blocks(text: str, *, strategy: str, separator: str) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+    if strategy == "fixed":
+        return [text]
+    if strategy == "separator":
+        return [item.strip() for item in text.split(separator) if item.strip()]
+    if strategy == "markdown":
+        pattern = r"(?m)(?=^[ \t]{0,3}#{1,6}[ \t]+)|\n\s*\n"
+    elif strategy == "book":
+        pattern = (
+            r"(?im)(?=^[ \t]{0,3}#{1,6}[ \t]+|^第[零〇一二三四五六七八九十百千万0-9]+[章节篇部卷][^\n]*$|"
+            r"^chapter[ \t]+[0-9ivxlcdm]+\b)"
+        )
+    elif strategy == "qa":
+        pattern = r"(?im)(?=^(?:q(?:uestion)?[ \t]*[:：]|问题[ \t]*[:：]|问[ \t]*[:：]|\d+[.)、][ \t]+))"
+    elif strategy == "laws":
+        pattern = r"(?m)(?=^第[零〇一二三四五六七八九十百千万0-9]+条(?:之[一二三四五六七八九十0-9]+)?[ \t]*)"
+    else:
+        pattern = r"\n\s*\n"
+    blocks = [item.strip() for item in re.split(pattern, text) if item.strip()]
+    if len(blocks) == 1 and strategy in {"book", "qa", "laws"}:
+        return [item.strip() for item in re.split(r"\n\s*\n", text) if item.strip()]
+    return blocks
+
+
+def _chunk_block_heading(block: str, *, strategy: str) -> str:
+    first_line = (block.splitlines() or [""])[0].strip()
+    markdown = re.match(r"^#{1,6}\s+(.+?)(?:\s+#+)?$", first_line)
+    if markdown:
+        return markdown.group(1).strip()
+    if strategy == "book" and re.match(
+        r"(?i)^(?:第[零〇一二三四五六七八九十百千万0-9]+[章节篇部卷]|chapter\s+[0-9ivxlcdm]+\b)",
+        first_line,
+    ):
+        return first_line
+    if strategy == "qa" and re.match(r"(?i)^(?:q(?:uestion)?\s*[:：]|问题\s*[:：]|问\s*[:：]|\d+[.)、]\s+)", first_line):
+        return first_line
+    if strategy == "laws" and re.match(r"^第[零〇一二三四五六七八九十百千万0-9]+条", first_line):
+        return first_line
+    return ""
+
+
 def _chunk_record(
     document_id: str,
     base_id: str,
@@ -1048,6 +1508,43 @@ def _chunk_record(
         "heading": heading,
         "page": page,
         "content_hash": content_hash,
+    }
+
+
+def _job_to_dict(row: Any) -> dict[str, Any]:
+    status = str(row["status"])
+    stage = str(row["stage"])
+    progress_by_stage = {
+        "queued": 0.0,
+        "recovered": 0.05,
+        "parsing": 0.35,
+        "indexing": 0.8,
+        "ready": 1.0,
+        "failed": 1.0,
+        "cancelled": 1.0,
+        "stale_result_dropped": 1.0,
+    }
+    return {
+        "jobId": str(row["id"]),
+        "kbId": str(row["base_id"]),
+        "fileId": str(row["document_id"]),
+        "fileName": str(row["file_name"]),
+        "revision": int(row["revision"]),
+        "kind": str(row["kind"]),
+        "parserMode": str(row["parser_mode"] or "auto"),
+        "status": status,
+        "stage": stage,
+        "progress": progress_by_stage.get(stage, 0.5 if status == "running" else 0.0),
+        "cancellable": status in {"queued", "running"},
+        "error": (
+            {"code": str(row["error_code"]), "message": str(row["error_message"])}
+            if row["error_code"] or row["error_message"]
+            else None
+        ),
+        "createdAtMs": int(row["created_at_ms"]),
+        "startedAtMs": int(row["started_at_ms"]) if row["started_at_ms"] is not None else None,
+        "finishedAtMs": int(row["finished_at_ms"]) if row["finished_at_ms"] is not None else None,
+        "updatedAtMs": int(row["updated_at_ms"]),
     }
 
 
@@ -1400,18 +1897,30 @@ def _normalize_chunking_config(
     if value is not None and not isinstance(value, dict):
         raise KnowledgeLibraryError("chunkingConfig must be an object", code="invalid_argument")
     provided = dict(value or {})
-    allowed = {"strategy", "size", "overlap", "respectHeadings", "respectPageBoundaries"}
+    allowed = {"strategy", "preset", "size", "overlap", "separator", "respectHeadings", "respectPageBoundaries"}
     unknown = sorted(set(provided) - allowed)
     if unknown:
         raise KnowledgeLibraryError(f"unknown chunkingConfig fields: {', '.join(unknown)}", code="invalid_argument")
     merged = {**DEFAULT_CHUNKING_CONFIG, **defaults, **provided}
+    if provided.get("preset") is not None and provided.get("strategy") is None:
+        merged["strategy"] = provided["preset"]
     strategy = str(merged["strategy"] or "").strip().lower()
-    if strategy not in {"markdown", "paragraph", "fixed"}:
-        raise KnowledgeLibraryError("chunking strategy must be markdown, paragraph, or fixed", code="invalid_argument")
+    if strategy == "paragraph":
+        strategy = "general"
+    if strategy not in CHUNKING_STRATEGIES:
+        raise KnowledgeLibraryError(
+            f"chunking strategy must be one of: {', '.join(CHUNKING_STRATEGIES)}",
+            code="invalid_argument",
+        )
     size = _strict_int(merged["size"], field="chunking size", minimum=200, maximum=8_000)
     overlap = _strict_int(merged["overlap"], field="chunking overlap", minimum=0, maximum=2_000)
     if overlap >= size:
         raise KnowledgeLibraryError("chunking overlap must be smaller than size", code="invalid_argument")
+    separator = str(merged.get("separator") or "")
+    if strategy == "separator" and not separator:
+        raise KnowledgeLibraryError("separator strategy requires a non-empty separator", code="invalid_argument")
+    if len(separator) > 100:
+        raise KnowledgeLibraryError("chunking separator must be at most 100 characters", code="invalid_argument")
     for field in ("respectHeadings", "respectPageBoundaries"):
         if not isinstance(merged[field], bool):
             raise KnowledgeLibraryError(f"{field} must be boolean", code="invalid_argument")
@@ -1419,6 +1928,7 @@ def _normalize_chunking_config(
         "strategy": strategy,
         "size": size,
         "overlap": overlap,
+        "separator": separator,
         "respectHeadings": merged["respectHeadings"],
         "respectPageBoundaries": merged["respectPageBoundaries"],
     }
@@ -1432,7 +1942,15 @@ def _normalize_retrieval_config(
     if value is not None and not isinstance(value, dict):
         raise KnowledgeLibraryError("retrievalConfig must be an object", code="invalid_argument")
     provided = dict(value or {})
-    allowed = {"mode", "topK", "threshold"}
+    allowed = {
+        "mode",
+        "topK",
+        "threshold",
+        "lexicalWeight",
+        "denseWeight",
+        "rrfK",
+        "candidateMultiplier",
+    }
     unknown = sorted(set(provided) - allowed)
     if unknown:
         raise KnowledgeLibraryError(f"unknown retrievalConfig fields: {', '.join(unknown)}", code="invalid_argument")
@@ -1449,7 +1967,30 @@ def _normalize_retrieval_config(
         raise KnowledgeLibraryError("retrieval threshold must be numeric", code="invalid_argument") from exc
     if not 0.0 <= threshold <= 1.0:
         raise KnowledgeLibraryError("retrieval threshold must be between 0 and 1", code="invalid_argument")
-    return {"mode": mode, "topK": top_k, "threshold": threshold}
+    lexical_weight = _strict_float(
+        merged["lexicalWeight"], field="retrieval lexicalWeight", minimum=0.0, maximum=10.0
+    )
+    dense_weight = _strict_float(
+        merged["denseWeight"], field="retrieval denseWeight", minimum=0.0, maximum=10.0
+    )
+    if lexical_weight + dense_weight <= 0:
+        raise KnowledgeLibraryError("retrieval weights cannot both be zero", code="invalid_argument")
+    rrf_k = _strict_int(merged["rrfK"], field="retrieval rrfK", minimum=1, maximum=1_000)
+    candidate_multiplier = _strict_int(
+        merged["candidateMultiplier"],
+        field="retrieval candidateMultiplier",
+        minimum=1,
+        maximum=20,
+    )
+    return {
+        "mode": mode,
+        "topK": top_k,
+        "threshold": threshold,
+        "lexicalWeight": lexical_weight,
+        "denseWeight": dense_weight,
+        "rrfK": rrf_k,
+        "candidateMultiplier": candidate_multiplier,
+    }
 
 
 def _json_object(value: Any, fallback: dict[str, Any]) -> dict[str, Any]:
@@ -1469,6 +2010,18 @@ def _strict_int(value: Any, *, field: str, minimum: int, maximum: int) -> int:
         raise KnowledgeLibraryError(f"{field} must be an integer", code="invalid_argument") from exc
     if result != value and not (isinstance(value, str) and value.strip() == str(result)):
         raise KnowledgeLibraryError(f"{field} must be an integer", code="invalid_argument")
+    if not minimum <= result <= maximum:
+        raise KnowledgeLibraryError(f"{field} must be between {minimum} and {maximum}", code="invalid_argument")
+    return result
+
+
+def _strict_float(value: Any, *, field: str, minimum: float, maximum: float) -> float:
+    if isinstance(value, bool):
+        raise KnowledgeLibraryError(f"{field} must be numeric", code="invalid_argument")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeLibraryError(f"{field} must be numeric", code="invalid_argument") from exc
     if not minimum <= result <= maximum:
         raise KnowledgeLibraryError(f"{field} must be between {minimum} and {maximum}", code="invalid_argument")
     return result

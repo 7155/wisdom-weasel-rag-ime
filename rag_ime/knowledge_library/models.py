@@ -114,9 +114,10 @@ class SearchHit:
     score: float
     page: int | None = None
     heading: str = ""
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "chunkId": self.chunk_id,
             "baseId": self.base_id,
             "baseName": self.base_name,
@@ -133,3 +134,6 @@ class SearchHit:
                 "chunkId": self.chunk_id,
             },
         }
+        if self.diagnostics:
+            result["diagnostics"] = dict(self.diagnostics)
+        return result

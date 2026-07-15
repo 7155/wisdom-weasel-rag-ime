@@ -68,6 +68,8 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "knowledgeBases.document.source",
                 "knowledgeBases.asset.get",
                 "knowledgeBases.jobs.list",
+                "knowledgeBases.job.cancel",
+                "knowledgeBases.chunkPreview",
                 "knowledgeBases.search",
                 "knowledgeBases.find",
                 "knowledgeBases.open",
@@ -741,7 +743,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
             if path_id.value.startswith("knowledgeBases.")
             or path_id in {ControlPathId.KNOWLEDGE_WORKER_HEALTH, ControlPathId.KNOWLEDGE_PARSERS_LIST}
         }
-        self.assertEqual(len(document_routes), 21)
+        self.assertEqual(len(document_routes), 23)
         for path_id in document_routes:
             self.assertFalse(manifest[path_id]["remoteSafe"])
             self.assertIsNone(manifest[path_id]["target"]["8768"])
@@ -807,7 +809,27 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 ),
                 ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
             )
-        self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+            self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+    def test_document_detail_allows_independent_chunk_and_markdown_windows(self) -> None:
+        request = ControlRequest(
+            request_id="request-knowledge-document-windows",
+            path_id=ControlPathId.KNOWLEDGE_BASES_DOCUMENT_GET.value,
+            params={"kbId": "kb-docs", "fileId": "file-manual"},
+            query={"offset": 400, "limit": 200, "lineOffset": 800, "lineLimit": 200},
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-knowledge-document-unknown-window",
+                    path_id=ControlPathId.KNOWLEDGE_BASES_DOCUMENT_GET.value,
+                    params={"kbId": "kb-docs", "fileId": "file-manual"},
+                    query={"lineCursor": 800},
+                ),
+                ControlAccessContext.native(),
+            )
 
 
 if __name__ == "__main__":

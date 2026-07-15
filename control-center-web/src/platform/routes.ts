@@ -551,7 +551,7 @@ export const CONTROL_ROUTES = {
     method: 'GET',
     path: '/api/knowledge-bases/:kbId/documents/:fileId',
     params: { kbId: null, fileId: null },
-    query: ['offset', 'limit'],
+    query: ['offset', 'limit', 'lineOffset', 'lineLimit'],
   },
   'knowledgeBases.document.source': {
     method: 'GET',
@@ -571,11 +571,24 @@ export const CONTROL_ROUTES = {
     params: { kbId: null },
     query: ['limit', 'cursor', 'status'],
   },
+  'knowledgeBases.job.cancel': {
+    method: 'POST',
+    path: '/api/knowledge-bases/:kbId/jobs/:jobId/cancel',
+    params: { kbId: null, jobId: null },
+    body: [],
+  },
+  'knowledgeBases.chunkPreview': {
+    method: 'POST',
+    path: '/api/knowledge-bases/:kbId/documents/:fileId/chunk-preview',
+    params: { kbId: null, fileId: null },
+    body: ['chunkingConfig', 'limit'],
+    requiredBody: ['chunkingConfig'],
+  },
   'knowledgeBases.search': {
     method: 'POST',
     path: '/api/knowledge-bases/:kbId/search',
     params: { kbId: null },
-    body: ['query', 'topK', 'mode', 'threshold', 'fileIds'],
+    body: ['query', 'topK', 'mode', 'threshold', 'fileIds', 'fileName'],
     requiredBody: ['query'],
   },
   'knowledgeBases.find': {

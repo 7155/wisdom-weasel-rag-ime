@@ -81,6 +81,7 @@ export interface FilePickOptions {
   kbId?: string;
   parserProvider?: 'auto' | 'builtin' | 'mineru_local_http';
   maxFiles?: number;
+  signal?: AbortSignal;
 }
 
 export interface PickedFile {

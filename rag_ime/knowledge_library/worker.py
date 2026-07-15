@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
+import re
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -11,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from .client import LocalKnowledgeClient
+from .identity import knowledge_worker_fingerprint, normalized_knowledge_root
 from .models import AssetBlob, KNOWLEDGE_SCHEMA_VERSION, KnowledgeConflictError, KnowledgeLibraryConfig, KnowledgeLibraryError, KnowledgeNotFoundError
+from .permissions import secure_directory, secure_file
 from .service import KnowledgeLibraryService
 
 
@@ -22,11 +28,33 @@ MAX_JSON_BYTES = 2 * 1024 * 1024
 class KnowledgeWorkerServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], service: KnowledgeLibraryService):
+    def __init__(
+        self,
+        address: tuple[str, int],
+        service: KnowledgeLibraryService,
+        *,
+        owner: str = "",
+        idle_seconds: float = 900.0,
+        parent_pid: int = 0,
+    ):
         super().__init__(address, KnowledgeWorkerHandler)
         self.service = service
         self.agent_client = LocalKnowledgeClient(service)
         self.last_activity = time.monotonic()
+        self.worker_root = normalized_knowledge_root(service.config.root_dir)
+        self.worker_owner = owner or f"standalone:{os.getpid()}"
+        self.parent_pid = max(0, int(parent_pid))
+        self.config_fingerprint = knowledge_worker_fingerprint(
+            service.config.root_dir,
+            mineru_enabled=service.config.mineru_enabled,
+            mineru_port=service.config.mineru_port,
+            idle_seconds=idle_seconds,
+            python_executable=sys.executable,
+            python_version=platform.python_version(),
+            embedding_provider=os.environ.get("RAG_IME_EMBEDDING_PROVIDER", "none"),
+            embedding_model=os.environ.get("RAG_IME_EMBEDDING_MODEL", ""),
+            dense_backend=os.environ.get("RAG_IME_KNOWLEDGE_DENSE_BACKEND", "sqlite-exact"),
+        )
 
 
 class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
@@ -91,7 +119,14 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
         service = self.server.service
         agent = self.server.agent_client
         if method == "GET" and path == "/v1/health":
-            return {"status": "ok", "schemaVersion": KNOWLEDGE_SCHEMA_VERSION}, HTTPStatus.OK
+            return {
+                "status": "ok",
+                "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
+                "root": self.server.worker_root,
+                "configFingerprint": self.server.config_fingerprint,
+                "owner": self.server.worker_owner,
+                "parentPid": self.server.parent_pid or None,
+            }, HTTPStatus.OK
         if method == "GET" and path == "/v1/agent/knowledge/bases":
             return agent.list_bases({}), HTTPStatus.OK
         if method == "GET" and path == "/v1/agent/knowledge/status":
@@ -152,6 +187,14 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                     urllib.parse.unquote(parts[2]),
                     urllib.parse.unquote(parts[4]),
                 ), HTTPStatus.OK
+            if len(parts) == 4 and parts[1] == "documents" and parts[3] == "chunk-preview" and method == "POST":
+                body = self._json_body()
+                return service.preview_chunking(
+                    kb_id,
+                    urllib.parse.unquote(parts[2]),
+                    body.get("chunkingConfig") if isinstance(body.get("chunkingConfig"), dict) else {},
+                    limit=int(body.get("limit") or 12),
+                ), HTTPStatus.OK
             if len(parts) != 1:
                 raise KnowledgeNotFoundError(f"worker route not found: {method} {path}")
             if method == "GET":
@@ -177,6 +220,9 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                 base_id=str((query.get("kbId") or [""])[0]),
                 limit=int(_first(query, "limit", default="100")),
             ), HTTPStatus.OK
+        if method == "POST" and path.startswith("/v1/knowledge/jobs/") and path.endswith("/cancel"):
+            job_id = urllib.parse.unquote(path.removeprefix("/v1/knowledge/jobs/").removesuffix("/cancel"))
+            return service.cancel_job(job_id), HTTPStatus.OK
         if method == "POST" and path == "/v1/knowledge/documents/import":
             return self._import_document(query), HTTPStatus.CREATED
         if path.startswith("/v1/knowledge/documents/"):
@@ -196,8 +242,13 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                 str(body.get("query") or ""),
                 base_ids=_string_list(body.get("kbIds") or body.get("kbId")),
                 limit=int(body["limit"]) if body.get("limit") is not None else None,
-                mode=str(body["mode"]) if body.get("mode") is not None else None,
+                mode=(
+                    str(body.get("mode") or body.get("searchMode"))
+                    if body.get("mode") is not None or body.get("searchMode") is not None
+                    else None
+                ),
                 threshold=float(body["threshold"]) if body.get("threshold") is not None else None,
+                file_name=str(body.get("fileName") or ""),
             ), HTTPStatus.OK
         if method == "POST" and path == "/v1/knowledge/find":
             body = self._json_body()
@@ -210,6 +261,7 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                     case_sensitive=body.get("caseSensitive") is True,
                     max_windows=int(body.get("maxWindows") or body.get("limit") or 8),
                     window_size=int(body.get("windowSize") or body.get("lineWindow") or 24),
+                    offset=int(body.get("offset") or 0),
                 ), HTTPStatus.OK
             find_result = service.find(
                 requested_query,
@@ -247,7 +299,7 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
         if not file_name or file_name in {".", ".."}:
             raise KnowledgeLibraryError("file name is required", code="invalid_argument")
         incoming = self.server.service.config.root_dir / "incoming"
-        incoming.mkdir(parents=True, exist_ok=True)
+        secure_directory(incoming)
         suffix = Path(file_name).suffix[:20]
         temporary_path: Path | None = None
         try:
@@ -260,6 +312,7 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                         raise KnowledgeLibraryError("request body ended before Content-Length", code="invalid_request")
                     target.write(block)
                     remaining -= len(block)
+            secure_file(temporary_path)
             document = self.server.service.import_document(
                 kb_id,
                 temporary_path,
@@ -337,6 +390,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mineru-enabled", action="store_true")
     parser.add_argument("--mineru-port", type=int, default=30_001)
     parser.add_argument("--idle-seconds", type=float, default=900.0)
+    parser.add_argument("--owner", default="")
+    parser.add_argument("--parent-pid", type=int, default=0)
     return parser
 
 
@@ -346,17 +401,30 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("knowledge worker host must be loopback")
     if not 1_024 <= args.port <= 65_535:
         raise SystemExit("knowledge worker port must be between 1024 and 65535")
+    if args.owner and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", args.owner) is None:
+        raise SystemExit("knowledge worker owner is invalid")
+    if args.parent_pid < 0:
+        raise SystemExit("knowledge worker parent pid is invalid")
+    os.umask(0o077)
     config = KnowledgeLibraryConfig(
         root_dir=args.root,
         mineru_enabled=bool(args.mineru_enabled),
         mineru_port=int(args.mineru_port),
     )
     service = KnowledgeLibraryService(config, background_jobs=True)
-    server = KnowledgeWorkerServer((args.host, args.port), service)
+    server = KnowledgeWorkerServer(
+        (args.host, args.port),
+        service,
+        owner=args.owner,
+        idle_seconds=args.idle_seconds,
+        parent_pid=args.parent_pid,
+    )
     server.timeout = 0.5
     try:
         while True:
             server.handle_request()
+            if args.parent_pid and os.getppid() != args.parent_pid:
+                break
             if args.idle_seconds > 0 and time.monotonic() - server.last_activity >= args.idle_seconds:
                 break
     except KeyboardInterrupt:

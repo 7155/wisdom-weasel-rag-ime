@@ -31,11 +31,12 @@
   "$defs": {
     "chunkingConfig": {
       "type": "object",
-      "required": ["strategy", "size", "overlap", "respectHeadings", "respectPageBoundaries"],
+      "required": ["strategy", "size", "overlap", "separator", "respectHeadings", "respectPageBoundaries"],
       "properties": {
-        "strategy": {"enum": ["markdown", "paragraph", "fixed"]},
+        "strategy": {"enum": ["general", "markdown", "book", "qa", "laws", "separator", "fixed"]},
         "size": {"type": "integer", "minimum": 200, "maximum": 8000},
         "overlap": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "separator": {"type": "string", "maxLength": 100},
         "respectHeadings": {"type": "boolean"},
         "respectPageBoundaries": {"type": "boolean"}
       },
@@ -43,11 +44,15 @@
     },
     "retrievalConfig": {
       "type": "object",
-      "required": ["mode", "topK", "threshold"],
+      "required": ["mode", "topK", "threshold", "lexicalWeight", "denseWeight", "rrfK", "candidateMultiplier"],
       "properties": {
         "mode": {"enum": ["lexical", "hybrid", "dense"]},
         "topK": {"type": "integer", "minimum": 1, "maximum": 100},
-        "threshold": {"type": "number", "minimum": 0, "maximum": 1}
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "lexicalWeight": {"type": "number", "minimum": 0, "maximum": 10},
+        "denseWeight": {"type": "number", "minimum": 0, "maximum": 10},
+        "rrfK": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "candidateMultiplier": {"type": "integer", "minimum": 1, "maximum": 20}
       },
       "additionalProperties": false
     }

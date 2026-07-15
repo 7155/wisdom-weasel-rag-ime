@@ -146,6 +146,44 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertIn("navigationPolicy.allowsExternalBrowserOpen", web_host)
         self.assertIn("NSWorkspace.shared.open(url)", web_host)
 
+        self.assertIn('"cancelRequest"', bridge)
+        self.assertIn("NativeBinaryTransferPlan.chunkRanges", bridge)
+        self.assertNotIn("binary.data.base64EncodedString()", bridge)
+
+    def test_native_binary_chunk_plan_handles_25_and_50_mib_payloads(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-native-binary-") as temporary:
+            output = Path(temporary) / "native-binary-tests"
+            environment = os.environ.copy()
+            environment["CLANG_MODULE_CACHE_PATH"] = str(Path(temporary) / "clang-cache")
+            environment["SWIFT_MODULECACHE_PATH"] = str(Path(temporary) / "swift-cache")
+            subprocess.run(
+                [
+                    "xcrun",
+                    "swiftc",
+                    "-swift-version",
+                    "5",
+                    "-target",
+                    "arm64-apple-macosx13.0",
+                    str(HOST / "NativeBinaryTransfer.swift"),
+                    str(ROOT / "tests" / "swift" / "NativeBinaryTransferTests.swift"),
+                    "-o",
+                    str(output),
+                ],
+                check=True,
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            result = subprocess.run(
+                [str(output)],
+                check=True,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("NativeBinaryTransferTests: OK", result.stdout)
+
     def test_host_keeps_a_native_draggable_titlebar(self) -> None:
         source = (HOST / "RagImeControlWebApp.swift").read_text(encoding="utf-8")
 

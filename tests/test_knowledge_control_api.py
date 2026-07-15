@@ -104,7 +104,10 @@ class KnowledgeControlApiTests(unittest.TestCase):
         )["base"]
         self.assertTrue(updated["agentEnabled"])
 
-        data = b"# Field report\n\nThe grounding line retreated during the winter survey."
+        data = (
+            "# Field report\n\nThe grounding line retreated during the winter survey.\n"
+            + "\n".join(f"Observation line {index}" for index in range(1, 451))
+        ).encode("utf-8")
         query = urlencode(
             {
                 "fileName": "field-report.md",
@@ -129,11 +132,37 @@ class KnowledgeControlApiTests(unittest.TestCase):
         self.assertTrue(detail["artifact"]["available"])
         self.assertIn("Field report", detail["contentWindow"]["items"][0]["content"])
         self.assertTrue(detail["chunks"]["items"])
+        later_lines = self._json_request(
+            "GET",
+            f"{self.base_url}/{quote(kb_id)}/documents/{quote(receipt['documentId'])}"
+            "?offset=0&limit=1&lineOffset=200&lineLimit=25",
+        )
+        self.assertEqual(201, later_lines["contentWindow"]["items"][0]["lineNumber"])
+        self.assertIn("Observation line", later_lines["contentWindow"]["items"][0]["content"])
+        self.assertEqual(25, len(later_lines["contentWindow"]["items"]))
+        self.assertTrue(later_lines["contentWindow"]["hasMore"])
         source, source_headers = self._binary_request(
             f"{self.base_url}/{quote(kb_id)}/documents/{quote(receipt['documentId'])}/source"
         )
         self.assertEqual(data, source)
         self.assertEqual(f'"{receipt["sha256"]}"', source_headers["ETag"])
+        chunk_preview = self._json_request(
+            "POST",
+            f"{self.base_url}/{quote(kb_id)}/documents/{quote(receipt['documentId'])}/chunk-preview",
+            {
+                "chunkingConfig": {
+                    "strategy": "fixed",
+                    "size": 200,
+                    "overlap": 20,
+                    "separator": "\n\n",
+                    "respectHeadings": True,
+                    "respectPageBoundaries": True,
+                },
+                "limit": 2,
+            },
+        )
+        self.assertEqual(receipt["documentId"], chunk_preview["fileId"])
+        self.assertGreater(chunk_preview["total"], 0)
 
         asset_data = b"\x89PNG\r\n\x1a\nfacade-asset"
         asset_id = hashlib.sha256(asset_data).hexdigest()
@@ -181,7 +210,7 @@ class KnowledgeControlApiTests(unittest.TestCase):
             "GET",
             f"{self.base_url}/{quote(kb_id)}/documents/{quote(receipt['documentId'])}/content?lines=20",
         )
-        self.assertIn("grounding line", opened["chunks"][0]["content"])
+        self.assertTrue(any("grounding line" in item["content"] for item in opened["chunks"]))
         found = self._json_request(
             "POST",
             f"{self.base_url}/{quote(kb_id)}/documents/{quote(receipt['documentId'])}/find",

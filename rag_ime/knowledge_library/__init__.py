@@ -1,7 +1,7 @@
 """Isolated document knowledge library for the control center and Agent tools."""
 
 from .client import HttpKnowledgeClient, KnowledgeClient, LocalKnowledgeClient
-from .dense import SqliteDenseIndex
+from .dense import SqliteDenseIndex, USearchDenseIndex, dense_index_from_env
 from .models import (
     DOCUMENT_STATES,
     JOB_STATES,
@@ -42,4 +42,6 @@ __all__ = [
     "ParserRouter",
     "SearchHit",
     "SqliteDenseIndex",
+    "USearchDenseIndex",
+    "dense_index_from_env",
 ]
