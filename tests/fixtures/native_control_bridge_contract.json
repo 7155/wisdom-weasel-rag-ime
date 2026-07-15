@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 125,
+  "routeCount": 128,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -30,6 +30,7 @@
     "agent.session.delete",
     "agent.session.prompt",
     "agent.session.abort",
+    "agent.session.review.resolve",
     "agent.session.compact",
     "agent.session.commands",
     "agent.session.models",
@@ -54,6 +55,7 @@
     "agent.approvals.list",
     "agent.approval.get",
     "agent.approval.decide",
+    "agent.memoryMaintenance.run",
     "agent.subagents.templates",
     "agent.subagents.list",
     "agent.subagents.create",
@@ -85,6 +87,7 @@
     "knowledge.status",
     "knowledge.routeStatus",
     "knowledge.database.apply.preview",
+    "knowledge.database.draft.edit",
     "knowledge.database.apply",
     "knowledge.database.rollback",
     "knowledgeBases.list",

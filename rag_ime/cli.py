@@ -1142,6 +1142,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Persistent JSONL journal for explicit Active RAG request chains. Empty disables it.",
     )
 
+    agent_gateway = subparsers.add_parser("agent-gateway", help="Run the isolated Agent Gateway on port 8768")
+    agent_gateway.add_argument("--host", default=os.environ.get("RAG_IME_AGENT_GATEWAY_HOST", "127.0.0.1"))
+    agent_gateway.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_AGENT_GATEWAY_PORT", "8768")))
+    agent_gateway.add_argument("--project", default="wisdom-weasel-rag-ime")
+    agent_gateway.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
+
     mlx_predictor_server = subparsers.add_parser(
         "mlx-predictor-server",
         help="Run the resident MLX-LM prediction service for the IME model lane",
@@ -3046,6 +3052,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
                 vector_auto_rebuild_limit=args.vector_auto_rebuild_limit,
                 active_rag_trace_path=Path(args.active_rag_trace_log) if args.active_rag_trace_log else None,
+            )
+        )
+        return 0
+
+    if args.command == "agent-gateway":
+        from .debug_server import DebugServerConfig, run_debug_server
+
+        run_debug_server(
+            DebugServerConfig(
+                host=args.host,
+                port=args.port,
+                db_path=Path(args.db_path),
+                project=args.project,
+                static_dir=Path("."),
+                seed_if_empty=not args.no_seed,
+                core=core,
+                server_name="agent gateway",
+                rime_cache_ttl_ms=0,
+                vector_auto_rebuild_limit=0,
+                active_rag_trace_path=None,
             )
         )
         return 0

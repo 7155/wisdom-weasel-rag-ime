@@ -339,6 +339,89 @@ describe('Rooms experience', () => {
     expect(transport.activeSubscriptionCount()).toBe(1);
   });
 
+  it('loads and saves each Room participant runtime and tool policy', async () => {
+    const room = roomSummary('room-a', '权限 Room');
+    const session = {
+      id: 'room-a:s1', mode: 'assistant', status: 'idle',
+      toolProfileVersion: 'control-center-v1', toolAllowlistMode: 'profile', allowedTools: [],
+    };
+    const tools = [
+      { id: 'ime_overview', displayName: '控制中心概览', description: '查看整体状态', sessionModes: ['assistant', 'coordinator'], operations: ['status'], profileOperations: { 'control-center-v1': ['status'], 'subagent-readonly-v1': ['status'] }, enabled: true },
+      { id: 'ime_memory', displayName: '记忆与工具书', description: '检索记忆', sessionModes: ['assistant', 'coordinator'], operations: ['catalog'], profileOperations: { 'control-center-v1': ['catalog'], 'subagent-readonly-v1': ['catalog'] }, enabled: true },
+      { id: 'workspace_read', displayName: '工作区读取', description: '读取工作区', sessionModes: ['coordinator'], operations: ['read'], profileOperations: { 'control-center-v1': ['read'], 'subagent-readonly-v1': [] }, enabled: false },
+    ];
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.room.snapshot': roomSnapshot('room-a', []),
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.sessions.list': { ok: true, items: [session] },
+      'agent.tools.list': { ok: true, items: tools },
+      'agent.session.mode.update': (request: ControlRequest) => ({ ok: true, session: { ...session, ...(request.body as Record<string, unknown>), toolAllowlistMode: 'explicit' } }),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '配置 智鼬 的权限' }));
+    expect(await screen.findByRole('dialog', { name: '智鼬的运行权限' })).toBeInTheDocument();
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query).toEqual({ sessionId: 'room-a:s1' });
+    await user.click(screen.getByRole('radio', { name: '协调者' }));
+    await user.click(screen.getByRole('radio', { name: '只读' }));
+    await user.click(screen.getByRole('checkbox', { name: /记忆与工具书/ }));
+    await user.click(screen.getByRole('button', { name: '保存权限' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.session.mode.update')?.request).toMatchObject({
+      params: { sessionId: 'room-a:s1' },
+      body: {
+        mode: 'coordinator',
+        toolProfileVersion: 'subagent-readonly-v1',
+        allowedTools: ['ime_overview'],
+      },
+    });
+  });
+
+  it('links Room approvals to the exact participant Agent session', () => {
+    const room = roomSummary('room-a', '审阅 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.messageOrder.push('assistant');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a', status: 'running', messageIds: ['assistant'], activityIds: [],
+      participantIds: ['room-a:p1'], createdAtMs: 1, updatedAtMs: 1,
+    };
+    projection.messagesById.assistant = {
+      id: 'assistant', roomId: room.id, turnId: 'turn-a', participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1', role: 'assistant', status: 'completed', text: '', createdAtMs: 1,
+      message: {
+        schemaVersion: 'rag-ime.agent-message.v1', id: 'assistant', sessionId: 'room-a:s1',
+        turnId: 'turn-a', role: 'assistant', status: 'completed', attachments: [], citations: [], createdAtMs: 1,
+        blocks: [{ id: 'approval', type: 'approval', status: 'running', presentationKind: 'approval', data: { approvalId: 'approval:1', payloadSha256: 'a'.repeat(64), state: 'pending', title: '应用设置' } }],
+      },
+    };
+
+    render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
+    expect(screen.getByRole('link', { name: /前往审阅/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
+  });
+
+  it('links a paused memory review activity to the exact participant Agent session', () => {
+    const room = roomSummary('room-a', '记忆审阅 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.activityOrder.push('review:1');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a', status: 'running', messageIds: [], activityIds: ['review:1'],
+      participantIds: ['room-a:p1'], createdAtMs: 1, updatedAtMs: 1,
+    };
+    projection.activitiesById['review:1'] = {
+      id: 'review:1', turnId: 'turn-a', participantId: 'room-a:p1', sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity', status: 'completed', summary: '等待审阅',
+      payload: { requestKind: 'memory_review', runId: 'memory:run:1' }, createdAtMs: 1,
+    };
+
+    render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
+    expect(screen.getByRole('link', { name: /立即审阅/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
+  });
+
   it('keeps group activity Persona avatars square on narrow layouts', () => {
     const room: RoomSummary = {
       id: 'room-a', title: '迁移作战室', status: 'active', routingPolicy: 'moderator',

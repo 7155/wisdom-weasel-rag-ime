@@ -150,8 +150,10 @@ describe('Planning WorkContract UI', () => {
     expect(title).toHaveValue('完成 Web 控制中心迁移');
     await user.clear(title);
     await user.type(title, '完成控制中心真实切换');
-    await user.selectOptions(document.getElementById('planning-goal-horizon') as HTMLSelectElement, 'medium_term');
-    await user.selectOptions(document.getElementById('planning-goal-priority') as HTMLSelectElement, '3');
+    await user.click(screen.getByRole('combobox', { name: '时间范围' }));
+    await user.click(await screen.findByRole('option', { name: '阶段目标' }));
+    await user.click(screen.getByRole('combobox', { name: '优先级' }));
+    await user.click(await screen.findByRole('option', { name: '最高' }));
 
     const workflow = screen.getByText('保存目标修改', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();

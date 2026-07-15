@@ -133,17 +133,18 @@ describe('Agent tool activity details', () => {
     const { container } = render(<ActivitySummary activities={[completed, progress]} />);
     openActivity(container);
 
-    expect([...document.querySelectorAll('.agent-activity-row > summary strong')].map((node) => node.textContent)).toEqual([
+    const dialog = screen.getByRole('dialog');
+    expect([...dialog.querySelectorAll('.agent-activity-row > summary strong')].map((node) => node.textContent)).toEqual([
       '控制中心概览',
       '控制中心概览',
     ]);
-    expect(screen.getByText('2 / 3 可用')).toBeInTheDocument();
-    expect(screen.getByText('预测服务')).toBeInTheDocument();
-    expect(screen.getByText('4 条')).toBeInTheDocument();
-    expect(screen.getByText('21 条')).toBeInTheDocument();
-    expect(screen.getByText('2 条')).toBeInTheDocument();
-    expect(screen.getAllByText('正在读取控制中心状态')).toHaveLength(2);
-    expect(screen.getAllByText('进行中')).not.toHaveLength(0);
+    expect(dialog).toHaveTextContent('2 / 3 可用');
+    expect(dialog).toHaveTextContent('预测服务');
+    expect(dialog).toHaveTextContent('4 条');
+    expect(dialog).toHaveTextContent('21 条');
+    expect(dialog).toHaveTextContent('2 条');
+    expect(dialog).toHaveTextContent('正在读取控制中心状态');
+    expect(dialog).toHaveTextContent('进行中');
     expect(container).not.toHaveTextContent('/Volumes/private/model');
     expect(container).not.toHaveTextContent('hidden-token');
     expect(container).not.toHaveTextContent('raw progress content');
@@ -181,6 +182,7 @@ describe('Agent tool activity details', () => {
     openActivity(container);
 
     expect(screen.getByText('文档知识库')).toBeInTheDocument();
+    expect(screen.getByText('信息来源')).toBeInTheDocument();
     expect(screen.getByText('acceptance.md · 41-57 行')).toBeInTheDocument();
     expect(screen.getByText('design.pdf · 第 3 页')).toBeInTheDocument();
     expect(container).not.toHaveTextContent('不应在时间线详情里展开');

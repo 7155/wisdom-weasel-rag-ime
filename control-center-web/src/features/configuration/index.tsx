@@ -1,6 +1,6 @@
 import { FileCheck2, KeyRound, RefreshCw, Settings2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Button, EmptyState, Field, Input, Switch } from '@/components/primitives';
+import { Button, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
 import {
   configurationMutationPathIds,
   isSecretConfigurationKey,
@@ -120,12 +120,17 @@ export function ConfigurationFeature() {
           {sections.length ? (
             <div className="configuration-editor">
               <div className="configuration-editor__fields mgmt-stack">
-                <label className="ui-field">
-                  <span className="ui-field__label">设置分组</span>
-                  <select className="ui-input" onChange={(event) => setActiveSection(event.target.value)} value={stringValue(section?.id)}>
-                    {sections.map((item) => <option key={stringValue(item.id)} value={stringValue(item.id)}>{publicSectionLabel(stringValue(item.id), stringValue(item.label))}</option>)}
-                  </select>
-                </label>
+                <Field htmlFor="configuration-section" label="设置分组">
+                  <Select
+                    id="configuration-section"
+                    onValueChange={setActiveSection}
+                    options={sections.map((item) => ({
+                      value: stringValue(item.id),
+                      label: publicSectionLabel(stringValue(item.id), stringValue(item.label)),
+                    }))}
+                    value={stringValue(section?.id)}
+                  />
+                </Field>
                 <div className="mgmt-list">
                   {fields.map((field) => (
                     <SettingField
@@ -255,9 +260,12 @@ function SettingField({ field, onChange, value }: { field: Record<string, unknow
     return (
       <div className="mgmt-list__row">
         <Field description={description} htmlFor={id} label={label}>
-          <select className="ui-input" id={id} onChange={(event) => onChange(event.target.value)} value={stringValue(value)}>
-            {field.options.map((option) => <option key={String(option)} value={String(option)}>{optionLabel(key, String(option))}</option>)}
-          </select>
+          <Select
+            id={id}
+            onValueChange={onChange}
+            options={field.options.map((option) => ({ value: String(option), label: optionLabel(key, String(option)) }))}
+            value={stringValue(value)}
+          />
         </Field>
       </div>
     );

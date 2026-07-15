@@ -25,7 +25,7 @@ from .agent_runtime_driver import (
     RuntimeDriverContext,
     SessionContextProvider,
 )
-from .agent_roles import PersonaManifest, agent_role, persona_model_profile
+from .agent_roles import PersonaManifest, agent_role
 from .agent_sessions import AgentSessionStore
 from .agent_templates import agent_template
 from .deepseek_config import load_deepseek_config
@@ -48,6 +48,7 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "ime_agents",
 )
 _APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
+_REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
 _MAX_PERSISTED_TRANSCRIPT_BYTES = 64 * 1024 * 1024
 _MAX_PERSISTED_TRANSCRIPT_ENTRIES = 100_000
 _MAX_PERSISTED_TRANSCRIPT_LINE_BYTES = 4 * 1024 * 1024
@@ -92,6 +93,8 @@ class PiRuntimeConfig:
     model_configuration_error: str = ""
     pi_version: str = "0.80.2"
     installation_error: str = ""
+    protocol_version: str = "1"
+    max_sessions: int = 8
     role_resolver: Callable[[object, object], PersonaManifest] = field(
         default=agent_role,
         repr=False,
@@ -112,7 +115,7 @@ class PiRuntimeConfig:
         executable_value = os.environ.get("RAG_IME_PI_EXECUTABLE", "").strip()
         extension_value = os.environ.get("RAG_IME_PI_EXTENSION", "").strip()
         node_value = os.environ.get("RAG_IME_PI_NODE", "").strip()
-        expected_pi_version = os.environ.get("RAG_IME_PI_VERSION", "0.80.2").strip() or "0.80.2"
+        expected_pi_version = os.environ.get("RAG_IME_PI_VERSION", "0.80.7").strip() or "0.80.7"
         development_tools = tuple(
             item.strip()
             for item in os.environ.get(
@@ -127,6 +130,7 @@ class PiRuntimeConfig:
         tools: tuple[str, ...] = ()
         pi_version = expected_pi_version
         installation_error = ""
+        protocol_version = os.environ.get("RAG_IME_PI_PROTOCOL_VERSION", "").strip()
         if executable_value:
             # Explicit executable overrides are for source-tree development only.
             # Product discovery never falls back to PATH or a user's global Pi.
@@ -152,6 +156,7 @@ class PiRuntimeConfig:
                 node_executable = installation.node_executable
                 tools = installation.tools
                 pi_version = installation.pi_version
+                protocol_version = protocol_version or installation.protocol_version
         provider, model, model_base_url, provider_environment, model_providers, model_error = (
             _pi_model_configuration_from_environment()
         )
@@ -181,6 +186,8 @@ class PiRuntimeConfig:
             ),
             pi_version=pi_version,
             installation_error=installation_error,
+            protocol_version=protocol_version or "1",
+            max_sessions=_env_int("RAG_IME_PI_MAX_SESSIONS", 8, minimum=1, maximum=32),
             provider_environment=provider_environment,
             model_providers=model_providers,
             model_base_url=model_base_url,
@@ -248,6 +255,27 @@ class PiRuntimeConfig:
         title = " ".join(str(session.get("title") or "智鼬").split())[:120]
         if title:
             command.extend(["--name", title])
+        command.extend(["--system-prompt", self.system_prompt_for_session(session)])
+        selected_provider, selected_model = self.resolved_model_reference(session)
+        if selected_provider:
+            command.extend(["--provider", selected_provider])
+        if selected_model:
+            command.extend(["--model", selected_model])
+        return command
+
+    def launch_host_command(self) -> list[str]:
+        if self.executable is None:
+            raise PiRuntimeError("managed Pi runtime is not installed")
+        executable = self.executable.expanduser().resolve(strict=False)
+        if not executable.is_file():
+            raise PiRuntimeError("managed Pi executable does not exist")
+        if executable.suffix.lower() in {".js", ".mjs", ".cjs"}:
+            if not self.node_executable:
+                raise PiRuntimeError("managed Pi Node runtime is unavailable")
+            return [self.node_executable, str(executable)]
+        return [str(executable)]
+
+    def system_prompt_for_session(self, session: Mapping[str, object]) -> str:
         role = self.role_resolver(
             session.get("roleId") or "zhiyou-v1",
             session.get("roleVersion") or "1",
@@ -264,13 +292,7 @@ class PiRuntimeConfig:
                 "你当前是一次有界任务委派中的临时执行单元，不是长期群聊成员。\n"
                 f"{template.prompt.strip()}\n"
             )
-        command.extend(["--system-prompt", system_prompt])
-        selected_provider, selected_model = self.resolved_model_reference(session)
-        if selected_provider:
-            command.extend(["--provider", selected_provider])
-        if selected_model:
-            command.extend(["--model", selected_model])
-        return command
+        return system_prompt
 
     def resolved_model_reference(self, session: Mapping[str, object]) -> tuple[str, str]:
         session_provider, session_model = _split_model_reference(session.get("modelProfile"))
@@ -278,19 +300,10 @@ class PiRuntimeConfig:
         selected_model = session_model or self.model
         configured_ids = _configured_model_ids(self.model_providers.get(selected_provider))
         if configured_ids and selected_model not in configured_ids:
-            try:
-                persona = self.role_resolver(
-                    session.get("roleId") or "zhiyou-v1",
-                    session.get("roleVersion") or "1",
-                )
-                persona_provider, persona_model = _split_model_reference(
-                    persona_model_profile(persona)
-                )
-            except ValueError:
-                persona_provider, persona_model = "", ""
-            if persona_provider == selected_provider and persona_model in configured_ids:
-                selected_model = persona_model
-            elif self.provider == selected_provider and self.model in configured_ids:
+            # Pi/provider configuration is the only model catalog authority.
+            # Persona names are not model aliases and must not participate in
+            # compatibility fallback.
+            if self.provider == selected_provider and self.model in configured_ids:
                 selected_model = self.model
             else:
                 selected_model = configured_ids[0]
@@ -300,10 +313,17 @@ class PiRuntimeConfig:
         allowed = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
         environment = {key: os.environ[key] for key in allowed if os.environ.get(key)}
         environment.update({str(key): str(value) for key, value in self.provider_environment.items()})
+        environment["RAG_IME_APP_SUPPORT_DIR"] = str(self.agent_dir.parent.parent)
         environment["PI_CODING_AGENT_DIR"] = str(self.agent_dir)
+        environment["RAG_IME_PI_AGENT_DIR"] = str(self.agent_dir)
+        environment["RAG_IME_PI_SESSION_DIR"] = str(self.session_dir)
+        environment["RAG_IME_PI_MAX_SESSIONS"] = str(self.max_sessions)
         if self.tool_gateway_token:
             environment["RAG_IME_AGENT_TOOL_TOKEN"] = self.tool_gateway_token
             environment["RAG_IME_AGENT_TOOL_URL"] = self.tool_gateway_url
+            environment["RAG_IME_TOOL_GATEWAY_TOKEN"] = self.tool_gateway_token
+            environment["RAG_IME_TOOL_GATEWAY_URL"] = self.tool_gateway_url
+            environment["RAG_IME_PLUGIN_APPROVAL_TOKEN"] = self.tool_gateway_token
         if session is not None:
             environment["RAG_IME_AGENT_SESSION_ID"] = str(session.get("id") or "")
             environment["RAG_IME_AGENT_SESSION_MODE"] = str(session.get("mode") or "assistant")
@@ -393,16 +413,29 @@ class PiRuntimeDriverFactory:
         config = replace(
             self._config,
             tool_gateway_token=context.tool_gateway_token,
+            tool_gateway_url=context.tool_gateway_url,
             idle_timeout_seconds=(
                 0 if purpose == "delegated" else self._config.idle_timeout_seconds
             ),
         )
+        if config.protocol_version == "2":
+            from .pi_runtime_v2 import PiRuntimeHostManager
+
+            return PiRuntimeHostManager(
+                config=config,
+                sessions=context.sessions,
+                events=context.events,
+                media_resolver=context.media_resolver,
+                session_context_provider=session_context_provider,
+                tool_manifest_provider=context.tool_manifest_provider,
+            )
         return PiRuntimeManager(
             config=config,
             sessions=context.sessions,
             events=context.events,
             media_resolver=context.media_resolver,
             session_context_provider=session_context_provider,
+            tool_manifest_provider=context.tool_manifest_provider,
         )
 
     def reconfigure(self, config: object) -> None:
@@ -620,12 +653,14 @@ class PiRuntimeManager:
         events: AgentEventHub,
         media_resolver: Callable[[str, str, str], str] | None = None,
         session_context_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
+        tool_manifest_provider: Callable[[Mapping[str, object]], list[Mapping[str, object]]] | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
         self.events = events
         self._media_resolver = media_resolver
         self._session_context_provider = session_context_provider
+        self._tool_manifest_provider = tool_manifest_provider
         self._lifecycle_lock = threading.RLock()
         self._lock = threading.RLock()
         self._client: PiRpcClient | None = None
@@ -637,6 +672,7 @@ class PiRuntimeManager:
         self._idle_timer: threading.Timer | None = None
         self._intentional_stop = False
         self._pending_approval_requests: dict[str, str] = {}
+        self._pending_review_requests: dict[str, str] = {}
         self._last_pi_entry_id = ""
         # Pi emits one assistant message before every tool call. The product UI
         # presents those messages as one Agent turn, not as a stack of avatars.
@@ -1040,6 +1076,14 @@ class PiRuntimeManager:
             )
         return commands
 
+    def tool_catalog(self, session_id: str) -> list[dict[str, object]]:
+        """Return the backend authority catalog used to configure Pi tools."""
+
+        session = dict(self.sessions.get(session_id))
+        if self._tool_manifest_provider is None:
+            return []
+        return [dict(item) for item in self._tool_manifest_provider(session)]
+
     def model_catalog(self, session_id: str) -> dict[str, object]:
         self.ensure(session_id)
         with self._lock:
@@ -1167,6 +1211,7 @@ class PiRuntimeManager:
             self._active_session_id = ""
             self._status = "stopped" if self.config.enabled else "disabled"
             self._pending_approval_requests.clear()
+            self._pending_review_requests.clear()
             self._last_pi_entry_id = ""
         if client is not None:
             client.stop()
@@ -1283,6 +1328,30 @@ class PiRuntimeManager:
                     turn_id=turn_id,
                 )
                 return
+            if method == "confirm" and title.startswith(_REVIEW_TITLE_PREFIX):
+                run_id = title[len(_REVIEW_TITLE_PREFIX) :].strip()
+                if not run_id:
+                    client.respond_extension_ui(request_id, confirmed=False)
+                    return
+                with self._lock:
+                    if self._client is not client or self._active_session_id != session_id:
+                        client.respond_extension_ui(request_id, confirmed=False)
+                        return
+                    self._pending_review_requests[run_id] = request_id
+                self.events.publish(
+                    session_id,
+                    "user_input_required",
+                    {
+                        "requestId": request_id,
+                        "requestKind": "memory_review",
+                        "method": "confirm",
+                        "runId": run_id,
+                        "title": "审阅记忆草案",
+                        "message": "记忆草案已准备好，请逐项审阅后继续本轮。",
+                    },
+                    turn_id=turn_id,
+                )
+                return
             if method not in {"select", "confirm", "input", "editor"}:
                 return
             safe = {
@@ -1307,6 +1376,7 @@ class PiRuntimeManager:
                 self._active_client_message_id = ""
                 self._stream_pi_message_id = ""
                 self._pending_approval_requests.clear()
+                self._pending_review_requests.clear()
                 self._schedule_idle_locked()
             self.events.publish(
                 session_id,
@@ -1326,6 +1396,44 @@ class PiRuntimeManager:
                 and self._client.running
                 and approval_id in self._pending_approval_requests
             )
+
+    def has_pending_review(self, session_id: str, run_id: str) -> bool:
+        with self._lock:
+            return (
+                self._active_session_id == session_id
+                and self._client is not None
+                and self._client.running
+                and run_id in self._pending_review_requests
+            )
+
+    def resolve_review(
+        self,
+        session_id: str,
+        run_id: str,
+        *,
+        reviewed: bool,
+    ) -> None:
+        with self._lock:
+            if self._active_session_id != session_id or self._client is None or not self._client.running:
+                raise PiRuntimeError("review is no longer attached to an active Pi session")
+            request_id = self._pending_review_requests.get(run_id)
+            if not request_id:
+                raise PiRuntimeError("review request is no longer pending")
+            client = self._client
+        client.respond_extension_ui(request_id, confirmed=reviewed)
+        with self._lock:
+            self._pending_review_requests.pop(run_id, None)
+        self.events.publish(
+            session_id,
+            "approval_resolved",
+            {
+                "requestId": request_id,
+                "runId": run_id,
+                "state": "approved",
+                "reviewState": "reviewed" if reviewed else "deferred",
+            },
+            turn_id=self._active_turn_id,
+        )
 
     def resolve_approval(
         self,
@@ -1386,6 +1494,7 @@ class PiRuntimeManager:
                 self._status = "faulted"
                 self._last_error = _redact_runtime_text(error or f"Pi exited with code {exit_code}")
             self._pending_approval_requests.clear()
+            self._pending_review_requests.clear()
             self._last_pi_entry_id = ""
         if session_id:
             self.sessions.set_status(session_id, "idle" if intentional else "faulted")
@@ -1405,6 +1514,7 @@ class PiRuntimeManager:
             self._stream_pi_message_id = ""
             self._last_error = safe_error
             self._pending_approval_requests.clear()
+            self._pending_review_requests.clear()
             self._schedule_idle_locked()
         self.events.publish(session_id, "turn_failed", {"error": safe_error}, turn_id=turn_id)
 
@@ -1782,13 +1892,18 @@ def _public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:
 def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
     if not bool(raw.get("reasoning")):
         return ["off"]
+    explicit = raw.get("thinkingLevels")
+    if isinstance(explicit, list):
+        allowed = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+        levels = [str(level) for level in explicit if str(level) in allowed]
+        return list(dict.fromkeys(levels)) or ["off"]
     mapping = _mapping(raw.get("thinkingLevelMap"))
     levels: list[str] = []
-    for level in ("off", "minimal", "low", "medium", "high", "xhigh"):
+    for level in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
         mapped = mapping.get(level)
         if mapped is None and level in mapping:
             continue
-        if level == "xhigh" and level not in mapping:
+        if level in {"xhigh", "max"} and level not in mapping:
             continue
         levels.append(level)
     return levels or ["off"]

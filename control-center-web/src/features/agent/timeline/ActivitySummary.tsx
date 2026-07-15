@@ -53,6 +53,7 @@ export function ActivitySummary({
       summary: publicActivitySummary(activity.summary, presentation.title),
     }];
   });
+  const liveActivities = running || waiting ? activities.slice(-3) : [];
   return (
     <div className="agent-activity-group">
       <Dialog>
@@ -89,6 +90,13 @@ export function ActivitySummary({
           </div>
         </DialogContent>
       </Dialog>
+      {liveActivities.length ? (
+        <div className="agent-activity-live" aria-label="当前活动">
+          {liveActivities.map((activity) => (
+            <ActivityRow key={activity.id} activity={activity} onApprovalDecision={onApprovalDecision} />
+          ))}
+        </div>
+      ) : null}
       {pendingApprovals.map((approval) => (
         <div className="agent-activity-approval" key={approval.approvalId}>
           <ShieldAlert aria-hidden="true" size={16} />
@@ -159,7 +167,7 @@ function PublicToolFields({ view }: { view: PublicToolResultView }) {
 
 function SourceList({ items }: { items: string[] }) {
   if (items.length === 0) return null;
-  return <ul className="agent-activity-row__sources">{items.map((item) => <li key={item}>{item}</li>)}</ul>;
+  return <div className="agent-activity-row__source-panel"><strong><BookOpenText size={13} />信息来源</strong><ul className="agent-activity-row__sources">{items.map((item) => <li key={item}>{item}</li>)}</ul></div>;
 }
 
 interface ActivityPresentation {
@@ -180,7 +188,13 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     return { title: '模型服务请求失败', kind: 'runtime', icon: TriangleAlert, detail: '模型请求没有完成；可返回对话重试或切换模型。' };
   }
   if (activity.kind.includes('approval') || activity.kind === 'user_input_required') {
-    return { title: '权限确认', kind: 'approval', icon: ShieldAlert, detail: '是否执行以你的本机确认结果为准。' };
+    const memoryReview = activity.kind === 'user_input_required' && payload.requestKind === 'memory_review';
+    return {
+      title: memoryReview ? '记忆草案审阅' : '权限确认',
+      kind: 'approval',
+      icon: ShieldAlert,
+      detail: memoryReview ? 'Agent 已暂停，等待你在审阅弹窗中处理草案。' : '是否执行以你的本机确认结果为准。',
+    };
   }
   if (activity.kind.includes('memory') || toolId.includes('memory')) {
     return { title: '记忆', kind: 'memory', icon: BookOpenText };

@@ -233,7 +233,8 @@ main[data-route-id='input'] .input-setting-editor-row .ui-switch-field__descript
   line-height: 1.45;
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input {
+main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input,
+main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-select__trigger {
   width: 100%;
   min-width: 0;
   grid-column: 2;
@@ -340,7 +341,8 @@ main[data-route-id='input'] .mgmt-list__content span {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input {
+  main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input,
+  main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-select__trigger {
     grid-column: 1;
     grid-row: auto;
   }

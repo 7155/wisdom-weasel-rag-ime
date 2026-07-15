@@ -571,6 +571,24 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "archived"):
             self.gateway.execute(self._call("catalog"))
 
+    def test_explicit_tool_allowlist_filters_manifests_and_execution(self) -> None:
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="assistant",
+            tool_profile_version="control-center-v1",
+            allowed_tools=["ime_overview"],
+        )
+        manifests = self.gateway.manifests(session_id=str(self.session["id"]))
+        overview = next(item for item in manifests["items"] if item["id"] == "ime_overview")
+        memory = next(item for item in manifests["items"] if item["id"] == "ime_memory")
+
+        self.assertTrue(overview["enabled"])
+        self.assertFalse(memory["enabled"])
+        self.assertEqual(manifests["sessionPolicy"]["allowedTools"], ["ime_overview"])
+        self.gateway.execute(self._tool_call("ime_overview", "status"))
+        with self.assertRaisesRegex(ValueError, "tool profile"):
+            self.gateway.execute(self._call("catalog"))
+
     def test_manifests_expose_workspace_shell_only_for_coordinator_sessions(self) -> None:
         manifests = self.gateway.manifests()["items"]
         self.assertEqual(
@@ -586,6 +604,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_runtime",
                 "ime_configuration",
                 "ime_agents",
+                "ime_plugins",
                 "workspace_list",
                 "workspace_read",
                 "workspace_shell",
@@ -1457,6 +1476,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("RAG_IME_AGENT_SESSION_MODE", extension)
         self.assertIn('sessionMode === "coordinator"', extension)
         self.assertIn("/tool/approval-result", extension)
+        self.assertIn('const reviewTitlePrefix = "RAG-IME-REVIEW:"', extension)
+        self.assertIn("result.reviewRequired === true", extension)
+        self.assertIn("resolvedReviewRunIds.has(runId)", extension)
 
     def test_room_tool_uses_trusted_session_identity_and_drops_forged_source_fields(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []
@@ -1497,6 +1519,61 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def _call(self, operation: str, **args):
         return self._tool_call("ime_memory", operation, **args)
+
+    def test_agent_can_create_validate_and_propose_but_cannot_apply_a_plugin(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        class _Extensions:
+            def list(self):
+                return {"ok": True, "items": []}
+
+            def create_draft(self, payload):
+                calls.append(("create", dict(payload)))
+                return {"ok": True, "draft": {"sourcePath": "/managed/inbox/draft-1"}}
+
+            def validate(self, payload):
+                calls.append(("validate", dict(payload)))
+                return {"ok": True, "validationToken": "validation-1"}
+
+            def preview(self, payload):
+                calls.append(("preview", dict(payload)))
+                return {"ok": True, "proposalId": "proposal-1", "requiredConfirm": "apply"}
+
+        self.gateway.extensions = _Extensions()
+        draft = self.gateway.execute(
+            self._tool_call(
+                "ime_plugins",
+                "create_draft",
+                draftId="draft-1",
+                manifest={"id": "log-helper"},
+                files={"index.ts": "export default function () {}"},
+            )
+        )
+        validation = self.gateway.execute(
+            self._tool_call(
+                "ime_plugins",
+                "validate",
+                sourcePath=draft["result"]["draft"]["sourcePath"],
+            )
+        )
+        proposal = self.gateway.execute(
+            self._tool_call(
+                "ime_plugins",
+                "propose_install",
+                validationToken=validation["result"]["validationToken"],
+                enable=True,
+            )
+        )
+
+        self.assertEqual(proposal["result"]["proposalId"], "proposal-1")
+        self.assertEqual(
+            calls[-1][1],
+            {"action": "install", "validationToken": "validation-1", "enable": True},
+        )
+        plugin_manifest = next(
+            item for item in self.gateway.manifests()["items"] if item["id"] == "ime_plugins"
+        )
+        self.assertNotIn("apply", plugin_manifest["operations"])
 
     def _tool_call(self, tool: str, operation: str, **args):
         return {

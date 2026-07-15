@@ -182,7 +182,7 @@ export function RolesFeature() {
       {notice ? <p className="roles-notice" role="status">{notice}</p> : null}
       {view === 'personas' ? (
         <div className="roles-layout">
-          <section className="persona-grid" aria-label="角色列表">{personas.length ? personas.map((item) => <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div><b aria-label="时间线模型">{personaTimeline(item).label}</b>{personaExpressionTraits(item).map((trait) => <i key={trait}>{trait}</i>)}</div></button>) : <p className="roles-empty">本机还没有可用角色。</p>}</section>
+          <section className="persona-grid" aria-label="角色列表">{personas.length ? personas.map((item) => <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div><b aria-label="角色阶段">{personaPhase(item).label}</b>{personaExpressionTraits(item).map((trait) => <i key={trait}>{trait}</i>)}</div></button>) : <p className="roles-empty">本机还没有可用角色。</p>}</section>
           {persona ? <PersonaInspector persona={persona} /> : null}
         </div>
       ) : (
@@ -194,7 +194,7 @@ export function RolesFeature() {
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!roleCreating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="role-create-dialog">
-        <DialogHeader><DialogTitle>创建角色</DialogTitle><DialogDescription>给同一个智鼬设定名字、表达方式和时间线模型。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>创建角色</DialogTitle><DialogDescription>给同一个智鼬设定名字、表达方式和陪伴阶段。实际对话模型由 Agent 中的 Pi 模型目录选择。</DialogDescription></DialogHeader>
         <form id="role-create-form" className="role-create-form" onSubmit={(event) => { event.preventDefault(); void createRole(); }}>
           {createError ? <p className="role-create-error" role="alert">{createError}</p> : null}
           <div className="role-create-two-columns">
@@ -202,7 +202,7 @@ export function RolesFeature() {
             <label className="role-create-field"><span>一句话介绍</span><input maxLength={80} value={createTagline} onChange={(event) => setCreateTagline(event.target.value)} placeholder="她会怎样陪你" aria-label="角色一句话介绍" /></label>
           </div>
           <label className="role-create-field"><span>角色说明</span><textarea rows={3} maxLength={180} value={createSummary} onChange={(event) => setCreateSummary(event.target.value)} placeholder="她更适合陪你完成哪些事情" aria-label="角色说明" /></label>
-          <fieldset><legend>时间线模型</legend><div className="role-timeline-options">{timelineOptions.map((option) => <label key={option.value}><input type="radio" name="role-timeline" value={option.value} checked={timelineModel === option.value} onChange={() => setTimelineModel(option.value)} /><span><strong>{option.label}</strong><small>{option.caption}</small></span></label>)}</div></fieldset>
+          <fieldset><legend>陪伴阶段</legend><div className="role-timeline-options">{timelineOptions.map((option) => <label key={option.value}><input type="radio" name="role-timeline" value={option.value} checked={timelineModel === option.value} onChange={() => setTimelineModel(option.value)} /><span><strong>{option.label}</strong><small>{option.caption}</small></span></label>)}</div></fieldset>
           <fieldset><legend>表达特征 <small>{createTraits.length}/5</small></legend><div className="role-trait-editor"><input maxLength={24} value={traitDraft} onChange={(event) => setTraitDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addTrait(); } }} placeholder="例如：温暖" aria-label="新增表达特征" /><IconButton label="添加表达特征" icon={<Plus size={15} />} disabled={!normalizeTrait(traitDraft) || createTraits.length >= 5} onClick={addTrait} tooltip /></div>{createTraits.length ? <div className="role-trait-list">{createTraits.map((trait) => <button type="button" key={trait} aria-label={`删除表达特征：${trait}`} onClick={() => setCreateTraits((current) => current.filter((item) => item !== trait))}><span>{trait}</span><X size={12} /></button>)}</div> : null}</fieldset>
           <fieldset><legend>可用方式</legend><div className="role-mode-options"><label><input type="checkbox" checked disabled />陪伴对话</label><label><input type="checkbox" checked={coordinatorEnabled} onChange={(event) => setCoordinatorEnabled(event.target.checked)} />协作主持</label></div></fieldset>
         </form>
@@ -215,15 +215,15 @@ export function RolesFeature() {
 type TimelineModel = 'luna' | 'terra' | 'sol';
 
 const timelineOptions: ReadonlyArray<{ value: TimelineModel; label: string; caption: string }> = [
-  { value: 'luna', label: '5.6 Luna', caption: '幼年时间线' },
-  { value: 'terra', label: '5.6 Terra', caption: '当下时间线' },
-  { value: 'sol', label: '5.6 Sol', caption: '成年时间线' },
+  { value: 'luna', label: '初识阶段', caption: '好奇、轻快，侧重认识与记录' },
+  { value: 'terra', label: '此刻阶段', caption: '温暖、清晰，侧重回顾与整理' },
+  { value: 'sol', label: '构筑阶段', caption: '沉稳、面向行动，侧重协作与推进' },
 ];
 
 function PersonaInspector({ persona }: { persona: AgentPersonaV1 }) {
-  const timeline = personaTimeline(persona);
+  const phase = personaPhase(persona);
   const expressionTraits = personaExpressionTraits(persona);
-  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>角色</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />时间线模型</dt><dd>{timeline.label}</dd></div><div><dt><Sparkles size={15} />表达特征</dt><dd>{expressionTraits.length ? expressionTraits.join(' · ') : '自然'}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />操作确认</dt><dd>敏感操作由你确认</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具</dd></div></dl></aside>;
+  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>角色</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />陪伴阶段</dt><dd>{phase.label}</dd></div><div><dt><Sparkles size={15} />表达特征</dt><dd>{expressionTraits.length ? expressionTraits.join(' · ') : '自然'}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />操作确认</dt><dd>敏感操作由你确认</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具</dd></div></dl></aside>;
 }
 
 function TemplateInspector({ template }: { template: AgentTemplateV1 }) {
@@ -234,19 +234,19 @@ function templateItems(value: unknown): AgentTemplateV1[] { const source = recor
 function createdSessionId(value: unknown): string { const session = record(record(value).session); return typeof session.id === 'string' ? session.id : ''; }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 
-function personaTimeline(persona: AgentPersonaV1): { label: string; model: string } {
+function personaPhase(persona: AgentPersonaV1): { id: TimelineModel | ''; label: string } {
+  const assetId = persona.visualProfile.avatarAssetId.toLowerCase();
   const policy = persona.defaults.modelPolicy.toLowerCase();
-  if (policy.includes('terra')) return { model: '5.6 Terra', label: '5.6 Terra · 当下' };
-  if (policy.includes('luna')) return { model: '5.6 Luna', label: '5.6 Luna · 幼年' };
-  if (policy.includes('sol')) return { model: '5.6 Sol', label: '5.6 Sol · 成年' };
-  return { model: '', label: '模型由角色配置决定' };
+  if (assetId.includes('present') || policy.includes('terra')) return { id: 'terra', label: '此刻阶段' };
+  if (assetId.includes('past') || policy.includes('luna')) return { id: 'luna', label: '初识阶段' };
+  if (assetId.includes('future') || policy.includes('sol')) return { id: 'sol', label: '构筑阶段' };
+  return { id: '', label: '自定义阶段' };
 }
 
 function personaExpressionTraits(persona: AgentPersonaV1): string[] {
-  const model = personaTimeline(persona).model.toLowerCase();
   return persona.traits.filter((trait) => {
     const normalized = trait.trim().toLowerCase();
-    return normalized !== model && !/^5\.6\s+(?:terra|luna|sol)$/.test(normalized);
+    return !/^(?:5\.6\s+)?(?:terra|luna|sol)$/.test(normalized);
   });
 }
 

@@ -24,7 +24,8 @@ enum VoiceASRProbe {
     }
 
     static func run(pcmPath: String) -> Int32 {
-        guard let credentials = VoiceKeychainStore.loadCredentials(), credentials.isComplete else {
+        guard let credentials = VoiceKeychainStore.loadCredentials(allowLegacyFallback: true),
+              credentials.isComplete else {
             fputs("voice probe: credentials missing\n", stderr)
             return 2
         }

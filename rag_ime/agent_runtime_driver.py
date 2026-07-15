@@ -11,6 +11,7 @@ from .agent_sessions import AgentSessionStore
 
 MediaResolver = Callable[[str, str, str], str]
 SessionContextProvider = Callable[[Mapping[str, object]], Mapping[str, object]]
+ToolManifestProvider = Callable[[Mapping[str, object]], list[Mapping[str, object]]]
 
 
 class AgentRuntimeError(RuntimeError):
@@ -24,7 +25,9 @@ class RuntimeDriverContext:
     sessions: AgentSessionStore
     events: AgentEventHub
     tool_gateway_token: str
+    tool_gateway_url: str = "http://127.0.0.1:8766/api/agent/tool/execute"
     media_resolver: MediaResolver | None = None
+    tool_manifest_provider: ToolManifestProvider | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,7 @@ class AgentRuntimeDriver(Protocol):
         message: str,
         *,
         images: list[Mapping[str, str]] | None = None,
+        client_message_id: str = "",
     ) -> dict[str, object]: ...
 
     def messages(self, session_id: str) -> list[dict[str, object]]: ...
@@ -86,11 +90,23 @@ class AgentRuntimeDriver(Protocol):
 
     def set_thinking_level(self, session_id: str, *, level: str) -> dict[str, object]: ...
 
+    def tool_catalog(self, session_id: str) -> list[dict[str, object]]: ...
+
     def abort(self, session_id: str) -> None: ...
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]: ...
 
     def has_pending_approval(self, session_id: str, approval_id: str) -> bool: ...
+
+    def has_pending_review(self, session_id: str, run_id: str) -> bool: ...
+
+    def resolve_review(
+        self,
+        session_id: str,
+        run_id: str,
+        *,
+        reviewed: bool,
+    ) -> None: ...
 
     def resolve_approval(
         self,

@@ -7,6 +7,7 @@
     "schemaVersion": {"type": "string", "const": "rag-ime.pi-runtime-manifest.v1"},
     "runtimeVersion": {"type": "string", "minLength": 1},
     "piVersion": {"type": "string", "minLength": 1},
+    "runtimeProtocolVersion": {"type": "string", "enum": ["1", "2"]},
     "platform": {"type": "string", "minLength": 1},
     "architecture": {"type": "string", "minLength": 1},
     "launchKind": {"type": "string", "enum": ["node", "standalone"]},

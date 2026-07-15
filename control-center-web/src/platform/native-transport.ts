@@ -490,7 +490,7 @@ function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
   if (
     !Number.isSafeInteger(value.byteSize)
     || value.byteSize < 0
-    || (value.byteSize === 0 && options.purpose !== 'export-destination')
+    || (value.byteSize === 0 && options.purpose !== 'export-destination' && options.selection !== 'directory')
   ) {
     throw new NativeBridgeCallError('pickFiles returned an invalid byte size');
   }
@@ -696,6 +696,7 @@ function assertFilePickOptions(options: FilePickOptions): void {
     'accepts',
     'multiple',
     'purpose',
+    'selection',
     'sessionId',
     'kbId',
     'parserProvider',
@@ -705,8 +706,14 @@ function assertFilePickOptions(options: FilePickOptions): void {
   for (const key of Object.keys(options)) {
     if (!allowedKeys.has(key)) throw new TypeError(`FilePickOptions field is not allowed: ${key}`);
   }
-  if (!['attachment', 'configuration-import', 'restore', 'export-destination', 'knowledge-import'].includes(options.purpose)) {
+  if (!['attachment', 'configuration-import', 'restore', 'export-destination', 'knowledge-import', 'plugin-source'].includes(options.purpose)) {
     throw new TypeError('FilePickOptions purpose is not allowlisted');
+  }
+  if (options.selection !== undefined && !['file', 'directory'].includes(options.selection)) {
+    throw new TypeError('FilePickOptions selection is not allowlisted');
+  }
+  if (options.purpose === 'plugin-source' && options.selection !== 'directory') {
+    throw new TypeError('plugin-source selection must be a directory');
   }
   if (options.accepts !== undefined && (!Array.isArray(options.accepts) || options.accepts.some((value) => typeof value !== 'string'))) {
     throw new TypeError('FilePickOptions accepts must contain strings');

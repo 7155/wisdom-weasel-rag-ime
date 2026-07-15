@@ -40,6 +40,17 @@ export type ToolManifest = ControlToolManifestV1;
 
 export type AgentCommandSource = 'extension' | 'prompt' | 'skill';
 
+export type AgentProductCommandName =
+  | 'new'
+  | 'name'
+  | 'compact'
+  | 'model'
+  | 'thinking'
+  | 'tools'
+  | 'status'
+  | 'stop'
+  | 'help';
+
 export interface AgentCommand {
   name: string;
   invocation: string;

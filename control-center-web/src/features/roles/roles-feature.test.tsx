@@ -19,7 +19,9 @@ describe('Roles experience', () => {
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
     expect(await screen.findByText('此刻陪你输入，也陪你把事情想清楚')).toBeInTheDocument();
-    expect(screen.getAllByLabelText('时间线模型')[0]).toHaveTextContent('5.6 Terra · 当下');
+    expect(screen.getAllByLabelText('角色阶段')[0]).toHaveTextContent('此刻阶段');
+    expect(screen.getByText('陪伴阶段')).toBeInTheDocument();
+    expect(screen.queryByText(/5\.6 (?:Luna|Terra|Sol)/)).not.toBeInTheDocument();
     expect(screen.getByText('温暖 · 证据优先')).toBeInTheDocument();
     expect(screen.queryByText('control-center-safe-v1')).not.toBeInTheDocument();
     expect(screen.queryByText('control-center-v1')).not.toBeInTheDocument();
@@ -123,7 +125,7 @@ describe('Roles experience', () => {
       traits: ['清晰', '温和'] as ['清晰', '温和'],
       defaults: {
         ...previewPersonas[2]!.defaults,
-        modelPolicy: 'affinity-5.6-sol',
+        modelPolicy: 'session-selected',
       },
       selectableModes: ['assistant', 'coordinator'] as ['assistant', 'coordinator'],
     };
@@ -151,7 +153,8 @@ describe('Roles experience', () => {
     await user.type(name, '智鼬·晨光');
     await user.type(tagline, '先看清今天，再稳稳向前');
     await user.type(summary, '适合陪我整理早晨计划与关键证据。');
-    await user.click(screen.getByRole('radio', { name: /5\.6 Sol/ }));
+    expect(screen.getByText(/实际对话模型由 Agent 中的 Pi 模型目录选择/)).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: /构筑阶段/ }));
     const trait = screen.getByRole('textbox', { name: '新增表达特征' });
     await user.type(trait, '清晰{Enter}');
     await user.type(trait, '温和');
@@ -168,7 +171,8 @@ describe('Roles experience', () => {
       selectableModes: ['assistant', 'coordinator'],
     });
     expect(await screen.findByRole('button', { name: /智鼬·晨光/ })).toHaveAttribute('aria-current', 'true');
-    expect(screen.getAllByText('5.6 Sol · 成年')).not.toHaveLength(0);
+    expect(screen.getAllByText('构筑阶段')).not.toHaveLength(0);
+    expect(screen.queryByText(/5\.6 (?:Luna|Terra|Sol)/)).not.toBeInTheDocument();
     expect(screen.getByText('清晰 · 温和')).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '创建角色' })).not.toBeInTheDocument();
 

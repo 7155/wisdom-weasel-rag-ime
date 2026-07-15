@@ -30,6 +30,7 @@ class KnowledgeWorkerSupervisor:
         idle_seconds: int = 900,
         popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
         clock: Callable[[], float] = time.monotonic,
+        allow_shared_owner: bool | None = None,
     ) -> None:
         self.settings_provider = settings_provider
         self.root_dir = Path(root_dir or default_knowledge_root()).expanduser()
@@ -40,6 +41,12 @@ class KnowledgeWorkerSupervisor:
         self.idle_seconds = max(60, min(86_400, int(idle_seconds)))
         self._popen = popen
         self._clock = clock
+        self.allow_shared_owner = (
+            str(os.environ.get("RAG_IME_KNOWLEDGE_SHARED_WORKER", "0")).strip().lower()
+            in {"1", "true", "yes", "on"}
+            if allow_shared_owner is None
+            else bool(allow_shared_owner)
+        )
         self.python_executable, self.python_version = _knowledge_python_runtime()
         self._client = HttpKnowledgeClient(self.base_url)
         self._process: subprocess.Popen[bytes] | None = None
@@ -86,6 +93,9 @@ class KnowledgeWorkerSupervisor:
                         self._adopted_owner = str(health["owner"])
                         return
                     if _pid_exists(parent_pid):
+                        if self.allow_shared_owner:
+                            self._adopted_owner = str(health["owner"])
+                            return
                         raise KnowledgeLibraryError(
                             "the matching knowledge worker belongs to another live Sidecar",
                             code="worker_parent_mismatch",

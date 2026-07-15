@@ -35,7 +35,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         payload, _ = self._payload("runtime-1")
 
         installed = install_managed_pi_runtime(payload, self.app_support)
-        discovered = discover_managed_pi_runtime(self.app_support, expected_pi_version="0.80.2")
+        discovered = discover_managed_pi_runtime(self.app_support, expected_pi_version="0.80.7")
 
         self.assertEqual(installed.runtime_version, "runtime-1")
         self.assertEqual(discovered.runtime_dir, (self.app_support / "PiRuntime" / "runtime-1").resolve())
@@ -78,7 +78,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             build_managed_pi_runtime_manifest(
                 symlink_payload,
                 runtime_version="runtime-symlink",
-                pi_version="0.80.2",
+                pi_version="0.80.7",
                 launch_kind="node",
                 pi_entrypoint="bin/node",
                 node_entrypoint="bin/node",
@@ -102,6 +102,24 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(pointer["schemaVersion"], POINTER_SCHEMA_VERSION)
         self.assertEqual(pointer["version"], "runtime-2")
         self.assertEqual(discover_managed_pi_runtime(self.app_support).runtime_version, "runtime-2")
+
+    def test_protocol_v2_manifest_is_discovered_by_the_product_runtime(self) -> None:
+        payload, _ = self._payload("runtime-v2", protocol_version="2")
+        install_managed_pi_runtime(payload, self.app_support)
+
+        discovered = discover_managed_pi_runtime(self.app_support, expected_pi_version="0.80.7")
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_APP_SUPPORT_DIR": str(self.app_support),
+                "RAG_IME_PI_ENABLED": "true",
+            },
+            clear=True,
+        ):
+            config = PiRuntimeConfig.from_environment()
+
+        self.assertEqual(discovered.protocol_version, "2")
+        self.assertEqual(config.protocol_version, "2")
 
     def test_pi_runtime_config_discovers_managed_install_without_path_fallback(self) -> None:
         payload, _ = self._payload("runtime-1")
@@ -180,7 +198,12 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagedPiRuntimeError, "does not match required"):
             discover_managed_pi_runtime(self.app_support, expected_pi_version="0.81.0")
 
-    def _payload(self, runtime_version: str) -> tuple[Path, dict[str, object]]:
+    def _payload(
+        self,
+        runtime_version: str,
+        *,
+        protocol_version: str = "1",
+    ) -> tuple[Path, dict[str, object]]:
         payload = self.root / f"payload-{runtime_version}"
         node = payload / "bin" / "node"
         executable = payload / "lib" / "pi" / "dist" / "cli.js"
@@ -195,7 +218,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         manifest = build_managed_pi_runtime_manifest(
             payload,
             runtime_version=runtime_version,
-            pi_version="0.80.2",
+            pi_version="0.80.7",
             launch_kind="node",
             pi_entrypoint="lib/pi/dist/cli.js",
             node_entrypoint="bin/node",
@@ -203,6 +226,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             source_repository="local/pi",
             source_commit=hashlib.sha256(runtime_version.encode("utf-8")).hexdigest()[:12],
             source_package="@earendil-works/pi-coding-agent",
+            protocol_version=protocol_version,
         )
         write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
         return payload, manifest

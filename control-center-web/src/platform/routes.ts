@@ -137,7 +137,7 @@ export const CONTROL_ROUTES = {
     method: 'PATCH',
     path: '/api/agent/sessions/:sessionId',
     params: { sessionId: null },
-    body: ['mode', 'workspaceRoots'],
+    body: ['mode', 'workspaceRoots', 'toolProfileVersion', 'allowedTools'],
     requiredBody: ['mode'],
   },
   'agent.session.delete': {
@@ -156,6 +156,13 @@ export const CONTROL_ROUTES = {
     method: 'POST',
     path: '/api/agent/sessions/:sessionId/abort',
     params: { sessionId: null },
+  },
+  'agent.session.review.resolve': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/review',
+    params: { sessionId: null },
+    body: ['runId', 'decision'],
+    requiredBody: ['runId', 'decision'],
   },
   'agent.session.compact': {
     method: 'POST',
@@ -279,7 +286,33 @@ export const CONTROL_ROUTES = {
     body: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes'],
     requiredBody: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes'],
   },
-  'agent.tools.list': { method: 'GET', path: '/api/agent/tools' },
+  'agent.tools.list': { method: 'GET', path: '/api/agent/tools', query: ['sessionId'] },
+  'agent.extensions.list': { method: 'GET', path: '/api/agent/extensions' },
+  'agent.extensions.create': {
+    method: 'POST',
+    path: '/api/agent/extensions/drafts',
+    body: ['draftId', 'manifest', 'files'],
+    requiredBody: ['draftId', 'manifest', 'files'],
+  },
+  'agent.extensions.proposals': { method: 'GET', path: '/api/agent/extensions/proposals' },
+  'agent.extensions.validate': {
+    method: 'POST',
+    path: '/api/agent/extensions/validate',
+    body: ['sourcePath'],
+    requiredBody: ['sourcePath'],
+  },
+  'agent.extensions.preview': {
+    method: 'POST',
+    path: '/api/agent/extensions/preview',
+    body: ['action', 'validationToken', 'pluginId', 'enable'],
+    requiredBody: ['action'],
+  },
+  'agent.extensions.apply': {
+    method: 'POST',
+    path: '/api/agent/extensions/apply',
+    body: ['previewToken', 'payloadSha256', 'confirmText'],
+    requiredBody: ['previewToken', 'payloadSha256', 'confirmText'],
+  },
   'agent.approvals.list': {
     method: 'GET',
     path: '/api/agent/approvals',
@@ -297,6 +330,12 @@ export const CONTROL_ROUTES = {
     params: { approvalId: null },
     body: ['decision', 'payloadSha256'],
     requiredBody: ['decision', 'payloadSha256'],
+  },
+  'agent.memoryMaintenance.run': {
+    method: 'GET',
+    path: '/api/agent/memory-maintenance',
+    query: ['runId', 'project'],
+    requiredQuery: ['runId'],
   },
   'agent.subagents.templates': {
     method: 'GET',
@@ -472,6 +511,12 @@ export const CONTROL_ROUTES = {
     path: '/api/knowledge/database/apply-preview',
     body: ['runId', 'expectedRuntimeRevision'],
     requiredBody: ['runId'],
+  },
+  'knowledge.database.draft.edit': {
+    method: 'POST',
+    path: '/api/knowledge/database/draft-edit',
+    body: ['runId', 'diffId', 'selected', 'payload'],
+    requiredBody: ['runId', 'diffId', 'selected'],
   },
   'knowledge.database.apply': {
     method: 'POST',

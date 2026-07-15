@@ -7,7 +7,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Button, EmptyState, Field, Input, SegmentedControl, Switch } from '@/components/primitives';
+import { Button, EmptyState, Field, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
 import { inputSettingsMutationPathIds, useInputMethodQueries } from './api';
 import { LexiconWorkflow } from './lexicon-workflow';
 import {
@@ -569,17 +569,16 @@ function InputSettingField({
     return (
       <div className="input-setting-editor-row">
         <Field description={description} htmlFor={id} label={label}>
-          <select
-            className="ui-input"
+          <Select
             disabled={disabled}
             id={id}
-            onChange={(event) => onChange(event.target.value)}
+            onValueChange={onChange}
+            options={field.options.map((option) => ({
+              value: String(option),
+              label: inputOptionLabel(String(option)),
+            }))}
             value={stringValue(value)}
-          >
-            {field.options.map((option) => (
-              <option key={String(option)} value={String(option)}>{inputOptionLabel(String(option))}</option>
-            ))}
-          </select>
+          />
         </Field>
       </div>
     );

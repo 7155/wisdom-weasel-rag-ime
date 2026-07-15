@@ -12,6 +12,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "ime_runtime",
     "ime_configuration",
     "ime_agents",
+    "ime_plugins",
 )
 
 COORDINATOR_TOOL_IDS = (

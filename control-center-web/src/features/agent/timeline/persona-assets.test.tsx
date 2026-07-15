@@ -10,9 +10,9 @@ describe('Persona timeline assets', () => {
     expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].timeline).toBe('past');
     expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].timeline).toBe('present');
     expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].timeline).toBe('future');
-    expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].modelAffinity).toBe('5.6 Luna');
-    expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].modelAffinity).toBe('5.6 Terra');
-    expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].modelAffinity).toBe('5.6 Sol');
+    expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].phaseLabel).toBe('初识阶段');
+    expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].phaseLabel).toBe('此刻阶段');
+    expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].phaseLabel).toBe('构筑阶段');
     expect(resolvePersonaAsset('rag-ime-timeline-past-v1', 'thinking')).toContain('/src/assets/personas/luna-v2.webp');
     expect(resolvePersonaAsset('rag-ime-timeline-present-v1', 'done')).toContain('/src/assets/personas/terra-v2.webp');
     expect(resolvePersonaAsset('rag-ime-timeline-future-v1', 'idle')).toContain('/src/assets/personas/sol-v2.webp');

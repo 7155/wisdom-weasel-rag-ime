@@ -1322,7 +1322,8 @@ export const contractSchemas = {
                 "low",
                 "medium",
                 "high",
-                "xhigh"
+                "xhigh",
+                "max"
               ]
             }
           },
@@ -1377,7 +1378,8 @@ export const contractSchemas = {
           "low",
           "medium",
           "high",
-          "xhigh"
+          "xhigh",
+          "max"
         ]
       },
       "providers": {
@@ -1479,7 +1481,8 @@ export const contractSchemas = {
                 "low",
                 "medium",
                 "high",
-                "xhigh"
+                "xhigh",
+                "max"
               ]
             }
           },
@@ -2490,6 +2493,13 @@ export const contractSchemas = {
           "archived"
         ]
       },
+      "sessionKind": {
+        "type": "string",
+        "enum": [
+          "conversation",
+          "subagent_runtime"
+        ]
+      },
       "roleId": {
         "type": "string",
         "minLength": 1
@@ -2505,6 +2515,21 @@ export const contractSchemas = {
       "toolProfileVersion": {
         "type": "string",
         "minLength": 1
+      },
+      "toolAllowlistMode": {
+        "type": "string",
+        "enum": [
+          "profile",
+          "explicit"
+        ]
+      },
+      "allowedTools": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
       },
       "createdAtMs": {
         "type": "integer",
@@ -3036,7 +3061,8 @@ export const contractSchemas = {
           "low",
           "medium",
           "high",
-          "xhigh"
+          "xhigh",
+          "max"
         ]
       },
       "selected": {
@@ -3080,6 +3106,7 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "ime_plugins",
           "workspace_list",
           "workspace_read",
           "workspace_shell"
@@ -3184,6 +3211,7 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "ime_plugins",
           "workspace_list",
           "workspace_read",
           "workspace_shell"
@@ -3256,6 +3284,9 @@ export const contractSchemas = {
           "room_ask",
           "room_reply",
           "room_mailbox",
+          "create_draft",
+          "validate",
+          "propose_install",
           "run"
         ]
       },
@@ -6275,6 +6306,13 @@ export const contractSchemas = {
       "piVersion": {
         "type": "string",
         "minLength": 1
+      },
+      "runtimeProtocolVersion": {
+        "type": "string",
+        "enum": [
+          "1",
+          "2"
+        ]
       },
       "platform": {
         "type": "string",

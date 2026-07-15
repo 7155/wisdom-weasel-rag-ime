@@ -35,10 +35,12 @@ from .agent_runtime_driver import (
     AgentRuntimeDriver,
     RuntimeDriverContext,
     RuntimeDriverFactory,
+    ToolManifestProvider,
 )
 from .agent_rooms import AgentRoomEventHub, AgentRoomStore
-from .agent_roles import agent_role_catalog, persona_model_profile
+from .agent_roles import agent_role_catalog
 from .agent_sessions import AgentSessionStore
+from .agent_tool_ids import CONTROL_TOOL_IDS
 from .contracts.json_schema import validate_contract
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
@@ -58,13 +60,20 @@ class AgentService:
         configuration_defaults: Mapping[str, object] | None = None,
         project: str = "",
         process_id_provider: Callable[[], int] = os.getpid,
+        tool_gateway_url: str = "http://127.0.0.1:8766/api/agent/tool/execute",
+        tool_gateway_token: str = "",
     ) -> None:
         self.personas = AgentPersonaStore(db_path)
         self.personas.initialize()
-        self.tool_token = secrets.token_urlsafe(32)
+        self.tool_token = str(tool_gateway_token or secrets.token_urlsafe(32))
+        self.tool_gateway_url = str(tool_gateway_url).strip()
+        if not self.tool_gateway_url:
+            raise ValueError("tool gateway URL must not be empty")
+        self._tool_manifest_provider: ToolManifestProvider | None = None
         configured = replace(
             runtime_config or PiRuntimeConfig.from_environment(),
             tool_gateway_token=self.tool_token,
+            tool_gateway_url=self.tool_gateway_url,
             role_resolver=self.personas.resolve,
         )
         self.runtime_factory = runtime_factory or PiRuntimeDriverFactory(configured)
@@ -114,6 +123,8 @@ class AgentService:
                 events=self.events,
                 media_resolver=self.media.resolve_pi_image,
                 tool_gateway_token=self.tool_token,
+                tool_gateway_url=self.tool_gateway_url,
+                tool_manifest_provider=self._runtime_tool_manifest,
             ),
             purpose="interactive",
         )
@@ -160,6 +171,20 @@ class AgentService:
         probe: Callable[[Mapping[str, object]], Mapping[str, object]],
     ) -> None:
         self._memory_maintenance_probe = probe
+
+    def bind_tool_manifest_provider(self, provider: ToolManifestProvider) -> None:
+        """Bind the backend-owned tool catalog without exposing gateway credentials."""
+
+        self._tool_manifest_provider = provider
+
+    def _runtime_tool_manifest(
+        self,
+        session: Mapping[str, object],
+    ) -> list[Mapping[str, object]]:
+        provider = self._tool_manifest_provider
+        if provider is None:
+            return []
+        return [dict(item) for item in provider(session)]
 
     def runtime_status(self) -> dict[str, object]:
         payload = self.runtime.runtime_status()
@@ -311,15 +336,12 @@ class AgentService:
         else:
             raise ValueError("workspaceRoots must be an array")
         requested_model_profile = payload.get("modelProfile")
-        role_was_selected = (
-            payload.get("roleId") is not None
-            or payload.get("roleVersion") is not None
-        )
         if requested_model_profile is not None:
             model_profile = str(requested_model_profile)
-        elif role_was_selected:
-            model_profile = persona_model_profile(role)
         else:
+            # Persona controls prompt, visual identity and tool policy. The
+            # Pi runtime catalog is the model authority; choosing a role must
+            # never silently substitute a guessed or unavailable model ID.
             model_profile = str(session_defaults["modelProfile"])
         session = self.sessions.create(
             title=title,
@@ -454,6 +476,7 @@ class AgentService:
             moderator_ordinal = matches[0]
 
         room_title = " ".join(str(payload.get("title") or "新群聊").split())[:120]
+        session_defaults = self.configuration_store.snapshot()["configuration"]["sessionDefaults"]
         created_session_ids: list[str] = []
         participants: list[dict[str, object]] = []
         try:
@@ -463,7 +486,7 @@ class AgentService:
                     mode="assistant",
                     role_id=role.role_id,
                     role_version=role.version,
-                    model_profile=persona_model_profile(role),
+                    model_profile=str(session_defaults["modelProfile"]),
                     tool_profile_version=role.defaults.tool_profile_version,
                 )
                 created_session_ids.append(str(session["id"]))
@@ -731,8 +754,8 @@ class AgentService:
             session = self.sessions.rename(session_id, str(payload.get("title") or ""))
         if "archived" in payload:
             session = self.sessions.archive(session_id, archived=_bool(payload.get("archived")))
-        if "mode" in payload:
-            requested_mode = str(payload.get("mode") or "").strip()
+        if any(key in payload for key in ("mode", "toolProfileVersion", "allowedTools")):
+            requested_mode = str(payload.get("mode") or session.get("mode") or "").strip()
             role = self.personas.resolve(session["roleId"], session["roleVersion"])
             if requested_mode not in role.selectable_modes:
                 raise ValueError(
@@ -746,9 +769,39 @@ class AgentService:
             roots = payload.get("workspaceRoots")
             if roots is not None and not isinstance(roots, list):
                 raise ValueError("workspaceRoots must be an array")
-            session = self.sessions.set_mode(
+            requested_profile = str(
+                payload.get("toolProfileVersion")
+                or session.get("toolProfileVersion")
+                or "control-center-v1"
+            ).strip()
+            if requested_profile not in {"control-center-v1", "subagent-readonly-v1"}:
+                raise ValueError("unsupported Agent tool profile")
+            if "allowedTools" in payload:
+                raw_allowed_tools = payload.get("allowedTools")
+                if not isinstance(raw_allowed_tools, list):
+                    raise ValueError("allowedTools must be an array")
+                allowed_tools: list[str] | None = []
+                for value in raw_allowed_tools:
+                    tool_id = str(value or "").strip()
+                    if tool_id not in CONTROL_TOOL_IDS:
+                        raise ValueError(f"unknown Agent tool: {tool_id or '(empty)'}")
+                    if tool_id not in allowed_tools:
+                        allowed_tools.append(tool_id)
+            else:
+                allowed_tools = (
+                    [str(value) for value in session.get("allowedTools") or []]
+                    if session.get("toolAllowlistMode") == "explicit"
+                    else None
+                )
+            if requested_mode == "assistant" and any(
+                tool_id.startswith("workspace_") for tool_id in allowed_tools or []
+            ):
+                raise ValueError("assistant sessions cannot enable workspace tools")
+            session = self.sessions.set_runtime_policy(
                 session_id,
-                requested_mode,
+                mode=requested_mode,
+                tool_profile_version=requested_profile,
+                allowed_tools=allowed_tools,
                 workspace_roots=[str(value) for value in roots] if isinstance(roots, list) else None,
             )
         maintenance = (
@@ -1100,6 +1153,27 @@ class AgentService:
             "ok": True,
             "sessionId": session_id,
             "items": items,
+        }
+
+    def resolve_review(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        run_id = _required_text(payload, "runId")
+        decision = str(payload.get("decision") or "").strip().lower()
+        if decision not in {"reviewed", "deferred"}:
+            raise ValueError("decision must be reviewed or deferred")
+        if not self.runtime.has_pending_review(session_id, run_id):
+            raise ValueError("review is no longer active in Pi")
+        self.runtime.resolve_review(
+            session_id,
+            run_id,
+            reviewed=decision == "reviewed",
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-review-decision.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "runId": run_id,
+            "decision": decision,
+            "runtimeNotified": True,
         }
 
     def decide_approval(self, approval_id: str, payload: Mapping[str, object]) -> dict[str, object]:
@@ -1650,6 +1724,10 @@ def agent_service_from_environment(db_path: str | Path, *, project: str = "") ->
         db_path=db_path,
         runtime_config=PiRuntimeConfig.from_environment(),
         project=project,
+        tool_gateway_url=os.environ.get(
+            "RAG_IME_AGENT_TOOL_URL",
+            "http://127.0.0.1:8766/api/agent/tool/execute",
+        ),
     )
 
 
@@ -1695,6 +1773,10 @@ def agent_service_from_settings(
             coordinator_enabled=_bool(pi.get("coordinatorEnabled")),
         ),
         project=project,
+        tool_gateway_url=os.environ.get(
+            "RAG_IME_AGENT_TOOL_URL",
+            "http://127.0.0.1:8766/api/agent/tool/execute",
+        ),
     )
 
 
@@ -1734,6 +1816,9 @@ def _room_event_projection(event: AgentEventEnvelope) -> tuple[str, dict[str, ob
             "toolCallId",
             "callId",
             "approvalId",
+            "requestId",
+            "requestKind",
+            "runId",
             "state",
             "riskLevel",
             "trigger",

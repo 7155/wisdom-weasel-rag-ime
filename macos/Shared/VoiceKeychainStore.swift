@@ -115,6 +115,45 @@ enum VoiceProviderConfigStore {
     }
 }
 
+enum VoiceCredentialMetadataStore {
+    private struct Payload: Codable {
+        static let schemaVersion = "rag-ime.voice-credential-metadata.v1"
+        let schemaVersion: String
+        let configuredProviders: [VoiceASRProvider]
+    }
+
+    static var configURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/RagIme", isDirectory: true)
+            .appendingPathComponent("voice-credential-status.json")
+    }
+
+    static func isConfigured(_ provider: VoiceASRProvider) -> Bool {
+        configuredProviders().contains(provider)
+    }
+
+    static func markConfigured(_ provider: VoiceASRProvider) throws {
+        var providers = configuredProviders()
+        providers.insert(provider)
+        let directory = configURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let payload = Payload(
+            schemaVersion: Payload.schemaVersion,
+            configuredProviders: providers.sorted { $0.rawValue < $1.rawValue }
+        )
+        let data = try JSONEncoder().encode(payload)
+        try data.write(to: configURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+    }
+
+    private static func configuredProviders() -> Set<VoiceASRProvider> {
+        guard let data = try? Data(contentsOf: configURL),
+              let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              payload.schemaVersion == Payload.schemaVersion else { return [] }
+        return Set(payload.configuredProviders)
+    }
+}
+
 enum VoiceKeychainStore {
     // Keep the original service identifier so existing locally stored credentials continue to work.
     static let service = "com.rag-ime.voice.volcengine"
@@ -124,6 +163,7 @@ enum VoiceKeychainStore {
     static let defaultHTTPEndpoint = "https://api.openai.com/v1/audio/transcriptions"
 
     private enum Account: String {
+        case credentialBundle = "credentials-v1"
         case appID = "app-id"
         case accessToken = "access-token"
         case resourceID = "resource-id"
@@ -132,12 +172,38 @@ enum VoiceKeychainStore {
         case headersJSON = "headers-json"
     }
 
-    static func loadCredentials() -> VoiceASRCredentials? {
-        loadCredentials(provider: VoiceProviderConfigStore.read())
+    static func loadCredentials(allowLegacyFallback: Bool = false) -> VoiceASRCredentials? {
+        loadCredentials(
+            provider: VoiceProviderConfigStore.read(),
+            allowLegacyFallback: allowLegacyFallback
+        )
     }
 
-    static func loadCredentials(provider: VoiceASRProvider) -> VoiceASRCredentials? {
-        if let local = VoiceCredentialFileStore.loadCredentials(provider: provider) { return local }
+    static func loadCredentials(
+        provider: VoiceASRProvider,
+        allowLegacyFallback: Bool = false
+    ) -> VoiceASRCredentials? {
+        if let local = VoiceCredentialFileStore.loadCredentials(provider: provider) {
+            try? VoiceCredentialMetadataStore.markConfigured(provider)
+            return local
+        }
+        if let bundled = readCredentialBundle(provider: provider), bundled.isComplete {
+            try? VoiceCredentialMetadataStore.markConfigured(provider)
+            return bundled
+        }
+        // The old layout stored six independent Keychain items and can trigger
+        // one authorization prompt per item after a development rebuild. Only
+        // an explicitly opted-in runtime migration may inspect that layout.
+        guard allowLegacyFallback,
+              let credentials = readLegacyCredentials(provider: provider) else { return nil }
+        // Collapse a successfully authorized legacy read into the one-item
+        // bundle so every subsequent runtime access has one Keychain boundary.
+        try? writeCredentialBundle(credentials)
+        try? VoiceCredentialMetadataStore.markConfigured(provider)
+        return credentials
+    }
+
+    private static func readLegacyCredentials(provider: VoiceASRProvider) -> VoiceASRCredentials? {
         guard let accessToken = read(.accessToken, provider: provider) else { return nil }
         let credentials = VoiceASRCredentials(
             provider: provider,
@@ -148,7 +214,8 @@ enum VoiceKeychainStore {
             model: read(.model, provider: provider) ?? defaultRealtimeModel,
             headersJSON: read(.headersJSON, provider: provider) ?? ""
         )
-        return credentials.isComplete ? credentials : nil
+        guard credentials.isComplete else { return nil }
+        return credentials
     }
 
     static func save(appID: String, accessToken: String?, resourceID: String) throws {
@@ -171,8 +238,15 @@ enum VoiceKeychainStore {
         model: String,
         headersJSON: String = ""
     ) throws {
-        let previous = loadCredentials(provider: provider)
         let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Supplying a new token must not read old Keychain items first. This
+        // keeps an explicit save to a single Keychain authorization boundary.
+        // An empty token may reuse the current one-item bundle, but saving never
+        // scans legacy items. Users with only the old layout re-enter the token
+        // once, after which all fields live in a single Keychain record.
+        let previous = token?.isEmpty == false
+            ? nil
+            : loadCredentials(provider: provider, allowLegacyFallback: false)
         let credentials = VoiceASRCredentials(
             provider: provider,
             appID: appID.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -183,13 +257,9 @@ enum VoiceKeychainStore {
             headersJSON: headersJSON.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         guard credentials.isComplete else { throw VoiceKeychainError.invalidValue }
-        try write(credentials.appID, account: .appID, provider: provider)
-        try write(credentials.resourceID, account: .resourceID, provider: provider)
-        try write(credentials.endpoint, account: .endpoint, provider: provider)
-        try write(credentials.model, account: .model, provider: provider)
-        try write(credentials.headersJSON, account: .headersJSON, provider: provider)
-        try write(credentials.accessToken, account: .accessToken, provider: provider)
+        try writeCredentialBundle(credentials)
         try VoiceProviderConfigStore.write(provider)
+        try VoiceCredentialMetadataStore.markConfigured(provider)
     }
 
     static func saveLocal(appID: String, accessToken: String?, resourceID: String) throws {
@@ -226,33 +296,27 @@ enum VoiceKeychainStore {
         guard credentials.isComplete else { throw VoiceKeychainError.invalidValue }
         try VoiceCredentialFileStore.save(credentials)
         try VoiceProviderConfigStore.write(provider)
+        try VoiceCredentialMetadataStore.markConfigured(provider)
     }
 
     static var hasAccessToken: Bool { hasAccessToken(provider: VoiceProviderConfigStore.read()) }
 
     static func hasAccessToken(provider: VoiceASRProvider) -> Bool {
         if VoiceCredentialFileStore.loadCredentials(provider: provider)?.isComplete == true { return true }
-        return !(read(.accessToken, provider: provider) ?? "").isEmpty
+        return readCredentialBundle(provider: provider)?.isComplete == true
     }
 
     static func hasKeychainAccessToken(provider: VoiceASRProvider) -> Bool {
-        !(read(.accessToken, provider: provider) ?? "").isEmpty
+        readCredentialBundle(provider: provider)?.isComplete == true
     }
 
-    static func hasCompleteKeychainCredentials(provider: VoiceASRProvider) -> Bool {
-        guard let accessToken = read(.accessToken, provider: provider) else { return false }
-        let defaultEndpoint = provider == .httpTranscription
-            ? defaultHTTPEndpoint
-            : defaultRealtimeEndpoint
-        return VoiceASRCredentials(
-            provider: provider,
-            appID: read(.appID, provider: provider) ?? "",
-            accessToken: accessToken,
-            resourceID: read(.resourceID, provider: provider) ?? defaultResourceID,
-            endpoint: read(.endpoint, provider: provider) ?? defaultEndpoint,
-            model: read(.model, provider: provider) ?? defaultRealtimeModel,
-            headersJSON: read(.headersJSON, provider: provider) ?? ""
-        ).isComplete
+    static func hasConfiguredCredentialMetadata(provider: VoiceASRProvider) -> Bool {
+        // Ordinary control-center rendering must never touch Keychain. macOS can
+        // ask for one password per legacy item after a development rebuild, so a
+        // non-secret 0600 receipt records only whether an explicit save or a real
+        // voice-runtime load completed successfully.
+        return VoiceCredentialFileStore.loadCredentials(provider: provider)?.isComplete == true
+            || VoiceCredentialMetadataStore.isConfigured(provider)
     }
 
     private static func service(for provider: VoiceASRProvider) -> String {
@@ -260,6 +324,11 @@ enum VoiceKeychainStore {
     }
 
     private static func read(_ account: Account, provider: VoiceASRProvider) -> String? {
+        guard let data = readData(account, provider: provider) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func readData(_ account: Account, provider: VoiceASRProvider) -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service(for: provider),
@@ -268,19 +337,18 @@ enum VoiceKeychainStore {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
+        return result as? Data
     }
 
-    private static func write(_ value: String, account: Account, provider: VoiceASRProvider) throws {
+    private static func writeData(_ data: Data, account: Account, provider: VoiceASRProvider) throws {
         let identity: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service(for: provider),
             kSecAttrAccount as String: account.rawValue,
         ]
         let attributes: [String: Any] = [
-            kSecValueData as String: Data(value.utf8),
+            kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
         let status = SecItemUpdate(identity as CFDictionary, attributes as CFDictionary)
@@ -292,6 +360,17 @@ enum VoiceKeychainStore {
             return
         }
         guard status == errSecSuccess else { throw VoiceKeychainError.osStatus(status) }
+    }
+
+    private static func readCredentialBundle(provider: VoiceASRProvider) -> VoiceASRCredentials? {
+        guard let data = readData(.credentialBundle, provider: provider),
+              let credentials = try? JSONDecoder().decode(VoiceASRCredentials.self, from: data),
+              credentials.provider == provider else { return nil }
+        return credentials
+    }
+
+    private static func writeCredentialBundle(_ credentials: VoiceASRCredentials) throws {
+        try writeData(try JSONEncoder().encode(credentials), account: .credentialBundle, provider: credentials.provider)
     }
 }
 

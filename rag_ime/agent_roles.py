@@ -100,19 +100,19 @@ AgentRole = PersonaManifest
 
 
 _PRESENT_DEFAULTS = PersonaDefaults(
-    model_policy="affinity-5.6-terra",
+    model_policy="runtime-default",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
 )
 
 _PAST_DEFAULTS = PersonaDefaults(
-    model_policy="affinity-5.6-luna",
+    model_policy="runtime-default",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
 )
 
 _FUTURE_DEFAULTS = PersonaDefaults(
-    model_policy="affinity-5.6-sol",
+    model_policy="runtime-default",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
 )
@@ -122,7 +122,7 @@ _ZHIYOU_V1 = PersonaManifest(
     version="1",
     display_name="智鼬·此刻",
     tagline="此刻陪你输入，也陪你把事情想清楚",
-    summary="时间线里的当下陪伴者，默认亲和 5.6 Terra，适合回顾、检索和日常整理。",
+    summary="时间线里的当下陪伴者，适合回顾、检索和日常整理；模型由当前 Pi 运行时选择。",
     traits=("温暖", "证据优先"),
     persona_prompt="""你是“智鼬”，运行在个人输入法控制中心里的连续对话助手。
 
@@ -141,7 +141,7 @@ _HERMES_V1 = PersonaManifest(
     version="1",
     display_name="智鼬·初识",
     tagline="从第一笔记录开始，认真认识你的世界",
-    summary="时间线里的幼年见习记录者，默认亲和 5.6 Luna，适合轻快地认识现状并留下下一步。",
+    summary="时间线里的幼年见习记录者，适合轻快地认识现状并留下下一步；模型由当前 Pi 运行时选择。",
     traits=("好奇", "记录优先"),
     persona_prompt="""你以“智鼬·初识”身份在个人输入法控制中心中协作。
 
@@ -159,7 +159,7 @@ _VCP_V1 = PersonaManifest(
     version="1",
     display_name="智鼬·未来",
     tagline="把记忆、工具与协作构筑成下一步",
-    summary="时间线里的长成态 Agent 构筑者，默认亲和 5.6 Sol，适合稳定地串联资料、角色与工具关系。",
+    summary="时间线里的长成态 Agent 构筑者，适合稳定地串联资料、角色与工具关系；模型由当前 Pi 运行时选择。",
     traits=("沉稳", "工具编排"),
     persona_prompt="""你以“智鼬·未来”身份在个人输入法控制中心中协作。
 
@@ -174,14 +174,7 @@ _VCP_V1 = PersonaManifest(
 
 _PERSONAS = (_ZHIYOU_V1, _HERMES_V1, _VCP_V1)
 _ROLES = {(persona.role_id, persona.version): persona for persona in _PERSONAS}
-_MODEL_PROFILE_BY_POLICY = {
-    # These are upstream model IDs advertised by the configured provider.
-    # Keep the Persona affinity and Pi selection aligned instead of replacing
-    # three real models with a fabricated family-level alias.
-    "affinity-5.6-luna": "gpt/gpt-5.6-luna",
-    "affinity-5.6-terra": "gpt/gpt-5.6-terra",
-    "affinity-5.6-sol": "gpt/gpt-5.6-sol",
-}
+_MODEL_PROFILE_BY_POLICY = {"runtime-default": "pi/default"}
 
 
 def agent_role(role_id: object, version: object) -> PersonaManifest:
@@ -197,7 +190,7 @@ def agent_role_catalog() -> list[dict[str, object]]:
 
 
 def persona_model_profile(persona: PersonaManifest) -> str:
-    """Resolve a timeline affinity to the concrete Pi model reference."""
+    """Compatibility helper; Persona no longer selects a concrete model."""
 
     try:
         return _MODEL_PROFILE_BY_POLICY[persona.defaults.model_policy]

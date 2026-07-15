@@ -10,7 +10,7 @@ type PersonaTimeline = 'legacy-state' | 'past' | 'present' | 'future';
 type PersonaAssetRecord = Readonly<{
   personaId: string;
   timeline: PersonaTimeline;
-  modelAffinity: string;
+  phaseLabel: string;
   states: PersonaAssetStates;
 }>;
 
@@ -26,10 +26,10 @@ export const personaAssetManifest = {
   schemaVersion: 'rag-ime.persona-assets.v3',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
-    'rag-ime-companion-v1': assetRecord('zhiyou-v1', 'legacy-state', 'session-selected', legacyCompanionStates),
-    'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '5.6 Luna', singlePortrait(lunaPortrait)),
-    'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '5.6 Terra', singlePortrait(terraPortrait)),
-    'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '5.6 Sol', singlePortrait(solPortrait)),
+    'rag-ime-companion-v1': assetRecord('zhiyou-v1', 'legacy-state', '经典形象', legacyCompanionStates),
+    'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '初识阶段', singlePortrait(lunaPortrait)),
+    'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '此刻阶段', singlePortrait(terraPortrait)),
+    'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '构筑阶段', singlePortrait(solPortrait)),
   },
 } as const;
 
@@ -47,10 +47,10 @@ export function resolvePersonaAsset(
 function assetRecord(
   personaId: string,
   timeline: PersonaTimeline,
-  modelAffinity: string,
+  phaseLabel: string,
   states: PersonaAssetStates,
 ): PersonaAssetRecord {
-  return { personaId, timeline, modelAffinity, states };
+  return { personaId, timeline, phaseLabel, states };
 }
 
 function singlePortrait(source: string): PersonaAssetStates {

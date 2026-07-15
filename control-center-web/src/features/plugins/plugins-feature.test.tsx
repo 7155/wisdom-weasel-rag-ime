@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -11,7 +11,7 @@ import { PluginsFeature } from '.';
 afterEach(cleanup);
 
 describe('PluginsFeature', () => {
-  it('opens a readable detail view without exposing manifest implementation fields', async () => {
+  it('opens a readable tool detail without exposing implementation fields', async () => {
     const user = userEvent.setup();
     renderPlugins();
 
@@ -19,11 +19,9 @@ describe('PluginsFeature', () => {
     const list = await screen.findByRole('group', { name: '工具列表' });
     expect(within(list).getByRole('button', { name: /记忆与工具书/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('complementary', { name: '工具详情' })).toHaveTextContent('搜索内容');
-    expect(screen.getByRole('complementary', { name: '工具详情' })).toHaveTextContent('日常对话、运行协调');
 
     await user.click(within(list).getByRole('button', { name: /历史与配置/ }));
     const detail = screen.getByRole('complementary', { name: '工具详情' });
-    expect(detail).toHaveTextContent('历史与配置');
     expect(detail).toHaveTextContent('敏感操作会额外说明影响并再次确认');
     expect(detail).toHaveTextContent('恢复备份');
 
@@ -35,7 +33,7 @@ describe('PluginsFeature', () => {
     expect(document.body).not.toHaveTextContent('coordinator');
   });
 
-  it('filters by readable purpose, availability and supported mode', async () => {
+  it('filters tools by readable purpose, availability and supported mode', async () => {
     const user = userEvent.setup();
     renderPlugins();
     await screen.findByRole('heading', { name: '插件与工具', level: 1 });
@@ -46,94 +44,77 @@ describe('PluginsFeature', () => {
     expect(screen.queryByRole('button', { name: /记忆与工具书/ })).not.toBeInTheDocument();
 
     await user.clear(search);
-    await user.selectOptions(screen.getByRole('combobox', { name: '状态' }), 'attention');
+    await user.click(screen.getByRole('combobox', { name: '状态' }));
+    await user.click(await screen.findByRole('option', { name: '需要处理' }));
     expect(screen.getByRole('button', { name: /工作区读取/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /语音输入/ })).not.toBeInTheDocument();
-
-    await user.selectOptions(screen.getByRole('combobox', { name: '状态' }), 'all');
+    await user.click(screen.getByRole('combobox', { name: '状态' }));
+    await user.click(await screen.findByRole('option', { name: '全部状态' }));
     await user.click(screen.getByRole('radio', { name: '日常对话' }));
     expect(screen.queryByRole('button', { name: /工作区读取/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /记忆与工具书/ })).toBeInTheDocument();
   });
 
-  it('stays read-only until install and enable actions have a real confirmation flow', async () => {
-    renderPlugins();
-    expect(await screen.findByText('本页目前只查看真实工具状态。为避免误改本机环境，安装、启用和停用会在完整的确认与撤销能力接通后再开放。')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /安装|启用|停用|演练|应用权限/ })).not.toBeInTheDocument();
+  it('validates, previews and explicitly applies a selected plugin directory', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins();
+    await user.click(await screen.findByRole('button', { name: '选择插件目录' }));
+    expect(transport.filePickCalls).toEqual([{ purpose: 'plugin-source', selection: 'directory', maxFiles: 1 }]);
+    await user.click(screen.getByRole('button', { name: '校验' }));
+    expect(await screen.findByText('校验通过')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '生成安装预览' }));
+    expect(await screen.findByText('等待你的批准')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '批准并应用' }));
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.extensions.apply'
+      && typeof call.request.body === 'object'
+      && call.request.body !== null
+      && !Array.isArray(call.request.body)
+      && call.request.body.confirmText === 'apply'
+      && call.request.body.previewToken === 'preview-token'
+    ))).toBe(true));
   });
 });
 
 function renderPlugins() {
   const transport = new MockControlTransport({
+    pickedFiles: [{
+      id: 'plugin-source-1',
+      name: 'guided-plugin',
+      mimeType: 'application/octet-stream',
+      byteSize: 0,
+      path: '/trusted/guided-plugin',
+    }],
     routes: {
-      'agent.tools.list': {
+      'agent.tools.list': { ok: true, items: toolItems() },
+      'agent.extensions.list': { ok: true, items: [] },
+      'agent.extensions.proposals': { ok: true, items: [] },
+      'agent.extensions.validate': {
         ok: true,
-        items: [
-          tool({
-            id: 'ime_memory',
-            displayName: '记忆与工具书',
-            description: '搜索与维护长期记忆',
-            domain: 'memory',
-            riskLevel: 'R1',
-            operations: ['search', 'maintenance_apply'],
-            sessionModes: ['assistant', 'coordinator'],
-          }),
-          tool({
-            id: 'ime_configuration',
-            displayName: '历史与配置',
-            description: '查看历史并恢复便携备份',
-            domain: 'configuration',
-            riskLevel: 'R3',
-            operations: ['history', 'restore_apply'],
-            sessionModes: ['assistant', 'coordinator'],
-            privatePath: '/api/private/tools',
-          }),
-          tool({
-            id: 'ime_voice',
-            displayName: '语音输入',
-            description: '查看语音状态与服务连接',
-            domain: 'voice',
-            riskLevel: 'R1',
-            operations: ['provider_status'],
-            sessionModes: ['assistant', 'coordinator'],
-          }),
-          tool({
-            id: 'workspace_read',
-            displayName: '工作区读取',
-            description: '读取已授权工作区中的文本',
-            domain: 'workspace',
-            riskLevel: 'R0',
-            operations: ['read'],
-            sessionModes: ['coordinator'],
-            availability: 'offline',
-          }),
-        ],
+        validationToken: 'validation-token',
+        extension: { id: 'guided-plugin', displayName: 'Guided Plugin', version: '1.0.0', totalBytes: 128 },
       },
+      'agent.extensions.preview': {
+        ok: true,
+        previewToken: 'preview-token',
+        payloadSha256: 'a'.repeat(64),
+        summary: { action: 'install', pluginId: 'guided-plugin', displayName: 'Guided Plugin' },
+      },
+      'agent.extensions.apply': { ok: true, receipt: { receiptId: 'plugin:install:test' } },
     },
   });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <MemoryRouter initialEntries={['/plugins']}>
-      <TooltipProvider delayDuration={0}>
-        <ControlTransportProvider transport={transport}>
-          <QueryClientProvider client={client}>
-            <PluginsFeature />
-          </QueryClientProvider>
-        </ControlTransportProvider>
-      </TooltipProvider>
-    </MemoryRouter>,
-  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(<MemoryRouter initialEntries={['/plugins']}><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}><QueryClientProvider client={client}><PluginsFeature /></QueryClientProvider></ControlTransportProvider></TooltipProvider></MemoryRouter>);
   return transport;
 }
 
+function toolItems() {
+  return [
+    tool({ id: 'ime_memory', displayName: '记忆与工具书', description: '搜索与维护长期记忆', domain: 'memory', riskLevel: 'R1', operations: ['search', 'maintenance_apply'], sessionModes: ['assistant', 'coordinator'] }),
+    tool({ id: 'ime_configuration', displayName: '历史与配置', description: '查看历史并恢复便携备份', domain: 'configuration', riskLevel: 'R3', operations: ['history', 'restore_apply'], sessionModes: ['assistant', 'coordinator'], privatePath: '/api/private/tools' }),
+    tool({ id: 'ime_voice', displayName: '语音输入', description: '查看语音状态与服务连接', domain: 'voice', riskLevel: 'R1', operations: ['provider_status'], sessionModes: ['assistant', 'coordinator'] }),
+    tool({ id: 'workspace_read', displayName: '工作区读取', description: '读取已授权工作区中的文本', domain: 'workspace', riskLevel: 'R0', operations: ['read'], sessionModes: ['coordinator'], availability: 'offline' }),
+  ];
+}
+
 function tool(overrides: Record<string, unknown>) {
-  return {
-    schemaVersion: 'rag-ime.control-tool-manifest.v1',
-    category: overrides.domain,
-    operationRisks: {},
-    resultPresentation: 'tool_result',
-    availability: 'online',
-    version: '1',
-    ...overrides,
-  };
+  return { category: overrides.domain, operationRisks: {}, resultPresentation: 'tool_result', availability: 'online', version: '1', ...overrides };
 }

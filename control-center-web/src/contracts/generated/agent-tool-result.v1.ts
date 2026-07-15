@@ -18,6 +18,7 @@ export interface AgentToolResultV1 {
     | 'ime_runtime'
     | 'ime_configuration'
     | 'ime_agents'
+    | 'ime_plugins'
     | 'workspace_list'
     | 'workspace_read'
     | 'workspace_shell';
@@ -86,6 +87,9 @@ export interface AgentToolResultV1 {
     | 'room_ask'
     | 'room_reply'
     | 'room_mailbox'
+    | 'create_draft'
+    | 'validate'
+    | 'propose_install'
     | 'run';
   result: {
     [k: string]: unknown;

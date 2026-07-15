@@ -13,6 +13,7 @@ import {
   Field,
   IconButton,
   Input,
+  Select,
   TextArea,
 } from '@/components/primitives';
 import type { JsonValue } from '@/platform/transport';
@@ -527,28 +528,28 @@ export function PlanningFeature() {
               <div className="mgmt-stack">
                 <div className="planning-dialog__selects">
                   <Field htmlFor="planning-goal-horizon" label="时间范围">
-                    <select className="ui-input" id="planning-goal-horizon" onChange={(event) => setGoalHorizon(event.target.value)} value={goalHorizon}>
-                      <option value="today">今天</option>
-                      <option value="short_term">近期</option>
-                      <option value="medium_term">阶段目标</option>
-                      <option value="long_term">长期目标</option>
-                    </select>
+                    <Select id="planning-goal-horizon" onValueChange={setGoalHorizon} options={[
+                      { value: 'today', label: '今天' },
+                      { value: 'short_term', label: '近期' },
+                      { value: 'medium_term', label: '阶段目标' },
+                      { value: 'long_term', label: '长期目标' },
+                    ]} value={goalHorizon} />
                   </Field>
                   <Field htmlFor="planning-goal-status" label="状态">
-                    <select className="ui-input" id="planning-goal-status" onChange={(event) => setGoalStatus(event.target.value)} value={goalStatus}>
-                      <option value="active">进行中</option>
-                      <option value="completed">已完成</option>
-                      <option value="archived">已归档</option>
-                    </select>
+                    <Select id="planning-goal-status" onValueChange={setGoalStatus} options={[
+                      { value: 'active', label: '进行中' },
+                      { value: 'completed', label: '已完成' },
+                      { value: 'archived', label: '已归档' },
+                    ]} value={goalStatus} />
                   </Field>
                 </div>
                 <Field htmlFor="planning-goal-priority" label="优先级">
-                  <select className="ui-input" id="planning-goal-priority" onChange={(event) => setGoalPriority(Number(event.target.value))} value={goalPriority}>
-                    <option value={0}>低</option>
-                    <option value={1}>普通</option>
-                    <option value={2}>高</option>
-                    <option value={3}>最高</option>
-                  </select>
+                  <Select id="planning-goal-priority" onValueChange={(value) => setGoalPriority(Number(value))} options={[
+                    { value: '0', label: '低' },
+                    { value: '1', label: '普通' },
+                    { value: '2', label: '高' },
+                    { value: '3', label: '最高' },
+                  ]} value={String(goalPriority)} />
                 </Field>
                 <ManagementMutationWorkflow
                   availability={mutationBoundary.availability(

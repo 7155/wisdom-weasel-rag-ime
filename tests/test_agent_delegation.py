@@ -60,6 +60,22 @@ class _HangingRuntime(_CompletingRuntime):
         return {"accepted": True, "turnId": "turn:hanging"}
 
 
+class _ForkInspectingRuntime(_CompletingRuntime):
+    snapshots: list[dict[str, object]] = []
+
+    def prompt(self, session_id, message):
+        session = self.sessions.get(session_id)
+        path = Path(str(session["sessionFile"]))
+        self.__class__.snapshots.append(
+            {
+                "path": path,
+                "mode": stat.S_IMODE(path.stat().st_mode),
+                "text": path.read_text(encoding="utf-8"),
+            }
+        )
+        return super().prompt(session_id, message)
+
+
 class _SoftBudgetRuntime(_CompletingRuntime):
     def prompt(self, session_id, message):
         self.events.publish(session_id, "text_delta", {"delta": "软" * 205})
@@ -118,6 +134,8 @@ class AgentDelegationTests(unittest.TestCase):
         runtime_factory=_CompletingRuntime,
         *,
         cancellation_grace_ms: int = 50,
+        subagent_session_retention_ms: int | None = None,
+        subagent_session_gc_interval_ms: int | None = None,
     ) -> AgentDelegationCoordinator:
         return AgentDelegationCoordinator(
             db_path=self.db_path,
@@ -126,6 +144,8 @@ class AgentDelegationTests(unittest.TestCase):
             events=self.events,
             runtime_factory=runtime_factory,
             cancellation_grace_ms=cancellation_grace_ms,
+            subagent_session_retention_ms=subagent_session_retention_ms,
+            subagent_session_gc_interval_ms=subagent_session_gc_interval_ms,
         )
 
     def test_fixed_catalog_parallel_results_and_internal_sessions(self) -> None:
@@ -155,7 +175,31 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertTrue(all(run["artifact"]["recordCount"] >= 4 for run in batch["runs"]))
         self.assertNotIn(str(self.root), json.dumps(batch["runs"][0]["artifact"]))
         self.assertEqual([item["id"] for item in self.sessions.list()], [self.parent["id"]])
-        self.assertEqual(len(self.sessions.list(include_internal=True)), 3)
+        self.assertEqual(
+            [item["id"] for item in self.sessions.list(include_archived=True)],
+            [self.parent["id"]],
+        )
+        internal = self.sessions.list(include_archived=True, include_internal=True)
+        self.assertEqual(len(internal), 3)
+        children = [item for item in internal if item["id"] != self.parent["id"]]
+        self.assertTrue(all(item["sessionKind"] == "subagent_runtime" for item in children))
+        self.assertTrue(all(item["status"] != "archived" for item in children))
+        run_id = str(batch["runs"][0]["id"])
+        _wait_until(
+            lambda: "runtime_retained"
+            in {
+                str(item["eventType"])
+                for item in coordinator.artifacts.lifecycle_records(
+                    owner_kind="subagent_run", owner_id=run_id
+                )
+            }
+        )
+        records = coordinator.artifacts.lifecycle_records(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+        )
+        self.assertIn("runtime_retained", {str(item["eventType"]) for item in records})
+        self.assertNotIn("runtime_retired", {str(item["eventType"]) for item in records})
         with self.assertRaisesRegex(ValueError, "unsupported agent template"):
             coordinator.delegate(
                 str(self.parent["id"]),
@@ -182,6 +226,76 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertLessEqual(inspected["returnedRecords"], 3)
         with self.assertRaisesRegex(ValueError, "does not belong"):
             coordinator.inspect_artifact(str(other["id"]), artifact_id)
+        coordinator.close()
+
+    def test_retention_defaults_to_72_hours_and_gc_runs_on_startup(self) -> None:
+        self.config.session_dir.mkdir(parents=True)
+        child_file = self.config.session_dir / "expired-on-startup.jsonl"
+        _write_jsonl(
+            child_file,
+            _session_records(session_id="expired-child", cwd=self.config.agent_dir),
+            mode=0o600,
+        )
+        child = self.sessions.create(
+            title="过期子任务",
+            session_kind="subagent_runtime",
+        )
+        self.sessions.bind_runtime_session(
+            str(child["id"]),
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="expired-child",
+            transcript_ref=str(child_file),
+            binding_state="prepared",
+        )
+        store = AgentDelegationStore(self.db_path)
+        store.initialize()
+        batch = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[_run_spec(str(child["id"]), task="启动时回收")],
+            created_at_ms=1_000,
+        )
+        run_id = str(batch["runs"][0]["id"])
+        store.start_run(run_id, started_at_ms=1_100)
+        store.finish_run(
+            run_id,
+            state="completed",
+            result={"summary": "持久结果"},
+            completed_at_ms=1_200,
+        )
+
+        coordinator = self.coordinator(
+            subagent_session_retention_ms=1_000,
+            subagent_session_gc_interval_ms=60_000,
+        )
+
+        default_db = self.root / "default-retention.sqlite"
+        default_sessions = AgentSessionStore(default_db)
+        default_sessions.initialize()
+        with patch.dict(
+            "os.environ",
+            {"RAG_IME_SUBAGENT_SESSION_RETENTION_HOURS": "72"},
+        ):
+            default_coordinator = AgentDelegationCoordinator(
+                db_path=default_db,
+                runtime_config=self.config,
+                sessions=default_sessions,
+                events=AgentEventHub(),
+                runtime_factory=_CompletingRuntime,
+            )
+        self.assertEqual(
+            72 * 60 * 60 * 1_000,
+            default_coordinator._subagent_session_retention_ms,
+        )
+        default_coordinator.close()
+        with self.assertRaises(KeyError):
+            self.sessions.get(str(child["id"]))
+        self.assertFalse(child_file.exists())
+        self.assertEqual(coordinator.store.get_run(run_id)["result"]["summary"], "持久结果")
         coordinator.close()
 
     def test_nested_delegation_stops_at_depth_two(self) -> None:
@@ -240,7 +354,8 @@ class AgentDelegationTests(unittest.TestCase):
             },
         }
         _write_jsonl(child_file, child_records, mode=0o600)
-        coordinator = self.coordinator()
+        _ForkInspectingRuntime.snapshots.clear()
+        coordinator = self.coordinator(_ForkInspectingRuntime)
         batch = coordinator.delegate(
             str(self.parent["id"]),
             {
@@ -255,14 +370,90 @@ class AgentDelegationTests(unittest.TestCase):
             },
         )["batch"]
         child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
+        self.assertEqual(child["sessionKind"], "subagent_runtime")
+        self.assertNotEqual(child["status"], "archived")
         self.assertEqual(Path(str(child["sessionFile"])).resolve(), child_file.resolve())
         self.assertNotEqual(child_file, parent_file)
-        self.assertEqual(stat.S_IMODE(child_file.stat().st_mode), 0o600)
-        child_text = child_file.read_text(encoding="utf-8")
+        self.assertTrue(child_file.exists())
+        self.assertEqual(len(_ForkInspectingRuntime.snapshots), 1)
+        snapshot = _ForkInspectingRuntime.snapshots[0]
+        self.assertEqual(Path(str(snapshot["path"])).resolve(), child_file.resolve())
+        self.assertEqual(snapshot["mode"], 0o600)
+        child_text = str(snapshot["text"])
         self.assertIn("已有上下文", child_text)
         self.assertIn("公开结论", child_text)
         self.assertIn("普通思考可以保留", child_text)
         self.assertEqual(json.loads(child_text.splitlines()[0])["id"], "child-pi")
+        coordinator.close()
+
+    def test_expired_runtime_session_is_retired_but_result_and_artifact_remain(self) -> None:
+        self.config.session_dir.mkdir(parents=True)
+        parent_file = self.config.session_dir / "retained-parent.jsonl"
+        child_file = self.config.session_dir / "retained-child.jsonl"
+        parent_records = _session_records(session_id="retained-parent", cwd=self.config.agent_dir)
+        child_records = [dict(item) for item in parent_records]
+        child_records[0] = {
+            **child_records[0],
+            "id": "retained-child",
+            "parentSession": str(parent_file),
+        }
+        _write_jsonl(parent_file, parent_records)
+        _write_jsonl(child_file, child_records, mode=0o600)
+        self.parent = self.sessions.prepare_session_file(
+            str(self.parent["id"]),
+            pi_session_id="retained-parent",
+            session_file=str(parent_file),
+        )
+        coordinator = self.coordinator(
+            _ForkInspectingRuntime,
+            subagent_session_retention_ms=1_000,
+            subagent_session_gc_interval_ms=0,
+        )
+        batch = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "agent": "reviewer",
+                "task": "保留后清理",
+                "contextMode": "fork",
+                "_runtimeContext": _fork_context(
+                    parent_file=parent_file,
+                    child_file=child_file,
+                    child_session_id="retained-child",
+                ),
+            },
+        )["batch"]
+        run = batch["runs"][0]
+        child_session_id = str(run["childSessionId"])
+        artifact_id = str(run["artifact"]["artifactId"])
+        completed_at_ms = int(run["completedAtMs"])
+
+        retained = self.sessions.get(child_session_id)
+        self.assertNotEqual(retained["status"], "archived")
+        self.assertTrue(child_file.exists())
+        self.assertEqual(coordinator.collect_expired_sessions(now_ms=completed_at_ms + 999), 0)
+
+        self.assertEqual(coordinator.collect_expired_sessions(now_ms=completed_at_ms + 1_000), 1)
+        with self.assertRaises(KeyError):
+            self.sessions.get(child_session_id)
+        self.assertNotIn(
+            child_session_id,
+            {
+                str(item["id"])
+                for item in self.sessions.list(
+                    include_archived=True, include_internal=True
+                )
+            },
+        )
+        self.assertFalse(child_file.exists())
+        durable_run = coordinator.store.get_run(str(run["id"]))
+        self.assertEqual(durable_run["result"]["summary"], run["result"]["summary"])
+        inspected = coordinator.inspect_artifact(
+            str(self.parent["id"]), artifact_id, limit=100
+        )
+        self.assertIn(
+            "runtime_retired",
+            {str(item["eventType"]) for item in inspected["records"]},
+        )
         coordinator.close()
 
     def test_fork_rejects_missing_or_untrusted_runtime_context(self) -> None:
@@ -349,6 +540,19 @@ class AgentDelegationTests(unittest.TestCase):
         )
         batch = response["batch"]
         _wait_until(lambda: coordinator.store.active_run_count() == 2)
+        self.assertEqual(
+            [item["id"] for item in self.sessions.list(include_archived=True)],
+            [self.parent["id"]],
+        )
+        live_internal = self.sessions.list(include_archived=True, include_internal=True)
+        self.assertEqual(len(live_internal), 3)
+        self.assertTrue(
+            all(
+                item["sessionKind"] == "subagent_runtime"
+                for item in live_internal
+                if item["id"] != self.parent["id"]
+            )
+        )
         with self.assertRaisesRegex(ValueError, "at most two"):
             coordinator.delegate(
                 str(self.parent["id"]),
@@ -361,6 +565,15 @@ class AgentDelegationTests(unittest.TestCase):
         final = coordinator.store.get_batch(str(batch["id"]))
         self.assertTrue(final["abortRequested"])
         self.assertEqual({run["state"] for run in final["runs"]}, {"aborted"})
+        _wait_until(lambda: coordinator.store.active_run_count() == 0)
+        retained = self.sessions.list(include_archived=True, include_internal=True)
+        self.assertTrue(
+            all(
+                item["status"] != "archived"
+                for item in retained
+                if item["id"] != self.parent["id"]
+            )
+        )
         coordinator.close()
 
     def test_soft_budget_is_recorded_without_stopping_a_successful_run(self) -> None:
@@ -422,6 +635,7 @@ class AgentDelegationTests(unittest.TestCase):
             role_id="hermes-v1",
             role_version="1",
             model_profile="gpt/test-model",
+            session_kind="subagent_runtime",
         )
         batch = store.create_batch(
             parent_session_id=str(self.parent["id"]),
@@ -458,6 +672,9 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertTrue(run["result"]["recovered"])
         self.assertEqual(run["usage"]["totalTokens"], 42)
         self.assertNotIn(run_id, coordinator._threads)
+        retained = self.sessions.get(str(child["id"]))
+        self.assertEqual(retained["sessionKind"], "subagent_runtime")
+        self.assertNotEqual(retained["status"], "archived")
         coordinator.close()
 
     def test_restart_relaunches_queued_work_but_fails_uncheckpointed_running_work(self) -> None:

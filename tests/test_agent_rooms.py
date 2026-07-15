@@ -317,6 +317,17 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(snapshot["resumeToken"], events[-1]["resumeToken"])
         self.assertEqual(snapshot["room"]["id"], room["id"])
 
+        policy = self.service.update_session(
+            str(hermes["sessionId"]),
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "allowedTools": ["ime_overview", "ime_memory"],
+            },
+        )["session"]
+        self.assertEqual(policy["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertEqual(policy["allowedTools"], ["ime_overview", "ime_memory"])
+
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)

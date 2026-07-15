@@ -36,7 +36,7 @@ final class VoiceInputCoordinator {
     private var interactionSource: InteractionSource = .hotkey
 
     init() {
-        credentials = VoiceKeychainStore.loadCredentials()
+        credentials = VoiceKeychainStore.loadCredentials(allowLegacyFallback: true)
         hotwordConfig = VoiceHotwordConfigStore.read()
         hotkey.onPress = { [weak self] in self?.press(source: .hotkey) }
         hotkey.onRelease = { [weak self] in self?.release() }
@@ -104,7 +104,7 @@ final class VoiceInputCoordinator {
     }
 
     func reloadConfiguration() {
-        credentials = VoiceKeychainStore.loadCredentials()
+        credentials = VoiceKeychainStore.loadCredentials(allowLegacyFallback: true)
         hotwordConfig = VoiceHotwordConfigStore.read()
         hotkey.reloadConfiguration()
         onStateChanged?()

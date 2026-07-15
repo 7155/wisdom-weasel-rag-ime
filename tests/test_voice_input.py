@@ -24,7 +24,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertEqual(info["CFBundleIdentifier"], "com.rag-ime.voice")
         self.assertTrue(info["LSUIElement"])
         self.assertIn("NSMicrophoneUsageDescription", info)
-        for framework in ("AVFoundation", "ApplicationServices", "Carbon", "Security"):
+        for framework in ("AVFoundation", "ApplicationServices", "Carbon", "LocalAuthentication", "Security"):
             self.assertIn(f"-framework {framework}", build)
         self.assertIn("scripts/support/build_app_icon.sh", build)
         self.assertIn("CompanionStates", build)
@@ -43,6 +43,14 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("SecItemCopyMatching", keychain)
         self.assertIn("SecItemUpdate", keychain)
         self.assertIn("VoiceCredentialFileStore.loadCredentials(provider: provider)", keychain)
+        self.assertIn('case credentialBundle = "credentials-v1"', keychain)
+        self.assertIn("VoiceCredentialMetadataStore.isConfigured(provider)", keychain)
+        self.assertIn("voice-credential-status.json", keychain)
+        self.assertIn("allowLegacyFallback: Bool = false", keychain)
+        self.assertIn("readLegacyCredentials(provider: provider)", keychain)
+        self.assertIn("try? writeCredentialBundle(credentials)", keychain)
+        self.assertIn("readCredentialBundle(provider: provider)?.isComplete == true", keychain)
+        self.assertIn("loadCredentials(allowLegacyFallback: true)", coordinator)
         self.assertIn('"voice-credentials-\\(provider.rawValue).json"', keychain)
         self.assertIn("voice-credentials.json", keychain)
         self.assertIn(".posixPermissions: 0o600", keychain)
@@ -156,8 +164,42 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn('"voiceCredentialSave"', bridge)
         self.assertIn('"voiceAction"', bridge)
         self.assertIn("VoiceKeychainStore.save", bridge)
-        self.assertIn("VoiceKeychainStore.hasCompleteKeychainCredentials", bridge)
+        self.assertIn("VoiceKeychainStore.hasConfiguredCredentialMetadata", bridge)
         self.assertNotIn("accessToken", bridge[bridge.index("private func voiceCredentialStatus"):bridge.index("private func voiceCredentialSave")])
+
+        metadata_start = keychain.index("static func hasConfiguredCredentialMetadata")
+        metadata_end = keychain.index("private static func service", metadata_start)
+        metadata_query = keychain[metadata_start:metadata_end]
+        self.assertIn("VoiceCredentialMetadataStore.isConfigured", metadata_query)
+        self.assertNotIn("SecItemCopyMatching", metadata_query)
+        self.assertNotIn("LocalAuthentication", metadata_query)
+        self.assertNotIn("kSecReturnData", metadata_query)
+        self.assertNotIn("read(", metadata_query)
+
+        legacy_start = keychain.index("private static func readLegacyCredentials")
+        legacy_end = keychain.index("static func save(appID", legacy_start)
+        default_load_start = keychain.index("static func loadCredentials(")
+        default_load_end = keychain.index("private static func readLegacyCredentials", default_load_start)
+        self.assertIn("guard allowLegacyFallback", keychain[default_load_start:default_load_end])
+        self.assertIn("read(.accessToken", keychain[legacy_start:legacy_end])
+
+        save_start = keychain.index("static func save(\n        provider:")
+        save_end = keychain.index("static func saveLocal(appID", save_start)
+        save_body = keychain[save_start:save_end]
+        self.assertEqual(save_body.count("writeCredentialBundle(credentials)"), 1)
+        self.assertNotIn("allowLegacyFallback: true", save_body)
+        self.assertNotIn("readLegacyCredentials", save_body)
+
+        token_status_start = keychain.index("static func hasAccessToken(provider:")
+        token_status_end = keychain.index("static func hasConfiguredCredentialMetadata", token_status_start)
+        token_status_body = keychain[token_status_start:token_status_end]
+        self.assertEqual(token_status_body.count("readCredentialBundle(provider: provider)"), 2)
+        self.assertNotIn("read(.accessToken", token_status_body)
+
+        coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
+        probe = (ROOT / "macos/RagImeVoice/VoiceASRProbe.swift").read_text(encoding="utf-8")
+        self.assertIn("loadCredentials(allowLegacyFallback: true)", coordinator)
+        self.assertIn("loadCredentials(allowLegacyFallback: true)", probe)
 
     def test_middle_mouse_is_default_push_to_talk_and_keyboard_fallbacks_remain_configurable(self) -> None:
         config = (ROOT / "macos/Shared/VoiceHotkeyConfig.swift").read_text(encoding="utf-8")

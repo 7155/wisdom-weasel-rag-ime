@@ -152,6 +152,16 @@ for line in sys.stdin:
                 "timeout": 60000,
             })
             continue
+        if str(command.get("message", "")).startswith("review:"):
+            emit({
+                "type": "extension_ui_request",
+                "id": "ui-review-1",
+                "method": "confirm",
+                "title": "RAG-IME-REVIEW:" + str(command.get("message")),
+                "message": "Review the memory draft in the control center",
+                "timeout": 60000,
+            })
+            continue
         emit({"type": "message_update", "message": {"role": "assistant", "timestamp": 101},
               "assistantMessageEvent": {"type": "thinking_delta", "contentIndex": 0, "delta": "private chain of thought"}})
         emit({"type": "message_update", "message": {"role": "assistant", "timestamp": 101},
@@ -392,14 +402,14 @@ class PiRuntimeTests(unittest.TestCase):
         imported_model = managed_models["providers"]["gpt"]["models"][0]
         self.assertEqual(
             imported_model["thinkingLevelMap"],
-            {"xhigh": "max"},
+            {"xhigh": "xhigh", "max": "max"},
         )
         self.assertEqual(imported_model["input"], ["text", "image"])
         command = config.launch_command(session=self.session)
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
         self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
 
-    def test_timeline_persona_models_remain_exact_pi_api_models(self) -> None:
+    def test_provider_models_remain_exact_pi_api_models_without_persona_aliasing(self) -> None:
         provider_path = self.root / "timeline-provider.json"
         provider_path.write_text(
             json.dumps(
@@ -454,7 +464,7 @@ class PiRuntimeTests(unittest.TestCase):
         )
         command = config.launch_command(session=legacy_session)
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
-        self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-terra")
+        self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
 
     def test_imported_provider_input_capability_honors_explicit_model_metadata(self) -> None:
         provider_path = self.root / "provider-input-capabilities.json"
@@ -533,7 +543,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertTrue(models["timeline-max"]["reasoning"])
         self.assertEqual(
             models["timeline-max"]["thinkingLevelMap"],
-            {"xhigh": "max"},
+            {"max": "max"},
         )
         self.assertTrue(models["explicit-no-max"]["reasoning"])
         self.assertEqual(
@@ -541,21 +551,21 @@ class PiRuntimeTests(unittest.TestCase):
             {"xhigh": None},
         )
 
-    def test_pi_max_mapping_keeps_the_standard_reasoning_levels(self) -> None:
+    def test_pi_max_mapping_exposes_the_distinct_max_reasoning_level(self) -> None:
         model = _public_pi_model(
             {
                 "provider": "gpt",
                 "id": "gpt-5.6-luna",
                 "name": "GPT-5.6 Luna",
                 "reasoning": True,
-                "thinkingLevelMap": {"xhigh": "max"},
+                "thinkingLevelMap": {"max": "max"},
                 "input": ["text", "image"],
             }
         )
 
         self.assertEqual(
             model["thinkingLevels"],
-            ["off", "minimal", "low", "medium", "high", "xhigh"],
+            ["off", "minimal", "low", "medium", "high", "max"],
         )
 
     def test_imported_provider_rejects_credentials_and_query_parameters_in_url(self) -> None:
@@ -941,6 +951,35 @@ class PiRuntimeTests(unittest.TestCase):
         events, _ = self.events.replay(session_id)
         resolved = next(event for event in events if event.event_type == "approval_resolved")
         self.assertEqual(resolved.payload["state"], "external_pending")
+        self.assertIn("turn_completed", [event.event_type for event in events])
+
+    def test_memory_review_pauses_and_resumes_the_same_pi_turn(self) -> None:
+        session_id = str(self.session["id"])
+        run_id = "review:memory-run-1"
+
+        self.runtime.prompt(session_id, run_id)
+        _wait_until(lambda: self.runtime.has_pending_review(session_id, run_id))
+        events, _ = self.events.replay(session_id)
+        required = next(
+            event
+            for event in events
+            if event.event_type == "user_input_required"
+            and event.payload.get("requestKind") == "memory_review"
+        )
+        self.assertEqual(required.payload["runId"], run_id)
+        self.assertEqual(required.payload["title"], "审阅记忆草案")
+
+        self.runtime.resolve_review(session_id, run_id, reviewed=True)
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+        events, _ = self.events.replay(session_id)
+        resolved = next(
+            event
+            for event in events
+            if event.event_type == "approval_resolved"
+            and event.payload.get("runId") == run_id
+        )
+        self.assertEqual(resolved.payload["requestId"], required.payload["requestId"])
+        self.assertEqual(resolved.payload["reviewState"], "reviewed")
         self.assertIn("turn_completed", [event.event_type for event in events])
 
     def test_disabled_and_uninstalled_states_fail_closed(self) -> None:

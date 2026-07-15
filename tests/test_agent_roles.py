@@ -38,11 +38,11 @@ class AgentRoleTests(unittest.TestCase):
         self.assertEqual(catalog[2]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-future-v1")
         self.assertEqual(
             [item["defaults"]["modelPolicy"] for item in catalog],
-            ["affinity-5.6-terra", "affinity-5.6-luna", "affinity-5.6-sol"],
+            ["runtime-default", "runtime-default", "runtime-default"],
         )
         self.assertEqual(
             [persona_model_profile(item) for item in roles],
-            ["gpt/gpt-5.6-terra", "gpt/gpt-5.6-luna", "gpt/gpt-5.6-sol"],
+            ["pi/default", "pi/default", "pi/default"],
         )
         self.assertEqual(catalog[2]["visualProfile"]["accentToken"], "rose")
 

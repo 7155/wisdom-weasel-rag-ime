@@ -45,6 +45,10 @@ class AgentRouteTests(unittest.TestCase):
             agent_session_route("/api/agent/sessions/agent:123/intercom"),
             ("agent:123", "intercom"),
         )
+        self.assertEqual(
+            agent_session_route("/api/agent/sessions/agent:123/review"),
+            ("agent:123", "review"),
+        )
 
     def test_unknown_or_nested_routes_do_not_fall_through(self) -> None:
         for path in (

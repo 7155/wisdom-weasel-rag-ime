@@ -40,6 +40,7 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_DELETE = "agent.session.delete"
     AGENT_SESSION_PROMPT = "agent.session.prompt"
     AGENT_SESSION_ABORT = "agent.session.abort"
+    AGENT_SESSION_REVIEW_RESOLVE = "agent.session.review.resolve"
     AGENT_SESSION_COMPACT = "agent.session.compact"
     AGENT_SESSION_COMMANDS = "agent.session.commands"
     AGENT_SESSION_MODELS = "agent.session.models"
@@ -64,6 +65,7 @@ class ControlPathId(str, Enum):
     AGENT_APPROVALS_LIST = "agent.approvals.list"
     AGENT_APPROVAL_GET = "agent.approval.get"
     AGENT_APPROVAL_DECIDE = "agent.approval.decide"
+    AGENT_MEMORY_MAINTENANCE_RUN = "agent.memoryMaintenance.run"
     AGENT_SUBAGENTS_TEMPLATES = "agent.subagents.templates"
     AGENT_SUBAGENTS_LIST = "agent.subagents.list"
     AGENT_SUBAGENTS_CREATE = "agent.subagents.create"
@@ -96,6 +98,7 @@ class ControlPathId(str, Enum):
     KNOWLEDGE_STATUS = "knowledge.status"
     KNOWLEDGE_ROUTE_STATUS = "knowledge.routeStatus"
     KNOWLEDGE_DATABASE_APPLY_PREVIEW = "knowledge.database.apply.preview"
+    KNOWLEDGE_DATABASE_DRAFT_EDIT = "knowledge.database.draft.edit"
     KNOWLEDGE_DATABASE_APPLY = "knowledge.database.apply"
     KNOWLEDGE_DATABASE_ROLLBACK = "knowledge.database.rollback"
     KNOWLEDGE_BASES_LIST = "knowledgeBases.list"
@@ -471,10 +474,11 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_SNAPSHOT, ControlMethod.GET, "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_RENAME, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"title"}, required_body={"title"}, remote_body={"title"}),
         _route(ControlPathId.AGENT_SESSION_ARCHIVE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"archived"}, required_body={"archived"}, remote_body={"archived"}),
-        _route(ControlPathId.AGENT_SESSION_MODE_UPDATE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION, body={"mode", "workspaceRoots"}, required_body={"mode"}),
+        _route(ControlPathId.AGENT_SESSION_MODE_UPDATE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION, body={"mode", "workspaceRoots", "toolProfileVersion", "allowedTools"}, required_body={"mode"}),
         _route(ControlPathId.AGENT_SESSION_DELETE, ControlMethod.DELETE, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_PROMPT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/prompt", "/control/v1/agent/sessions/{sessionId}/prompt", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"message", "attachments", "clientMessageId"}, required_body={"message"}, remote_body={"message", "attachments", "clientMessageId"}),
         _route(ControlPathId.AGENT_SESSION_ABORT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/abort", "/control/v1/agent/sessions/{sessionId}/abort", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION),
+        _route(ControlPathId.AGENT_SESSION_REVIEW_RESOLVE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/review", "/control/v1/agent/sessions/{sessionId}/review", params=_SESSION, body={"runId", "decision"}, required_body={"runId", "decision"}),
         _route(ControlPathId.AGENT_SESSION_COMPACT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/compact", "/control/v1/agent/sessions/{sessionId}/compact", params=_SESSION, body={"instructions"}),
         _route(ControlPathId.AGENT_SESSION_COMMANDS, ControlMethod.GET, "/api/agent/sessions/{sessionId}/commands", "/control/v1/agent/sessions/{sessionId}/commands", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_MODELS, ControlMethod.GET, "/api/agent/sessions/{sessionId}/models", "/control/v1/agent/sessions/{sessionId}/models", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
@@ -496,10 +500,11 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_ROLES_LIST, ControlMethod.GET, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_ROLES_CREATE, ControlMethod.POST, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, required_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body_values={"timelineModel": {"luna", "terra", "sol"}}),
-        _route(ControlPathId.AGENT_TOOLS_LIST, ControlMethod.GET, "/api/agent/tools", "/control/v1/agent/tools"),
+        _route(ControlPathId.AGENT_TOOLS_LIST, ControlMethod.GET, "/api/agent/tools", "/control/v1/agent/tools", query={"sessionId"}),
         _route(ControlPathId.AGENT_APPROVALS_LIST, ControlMethod.GET, "/api/agent/approvals", "/control/v1/agent/approvals", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, query={"sessionId", "state", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_APPROVAL_GET, ControlMethod.GET, "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, params=_APPROVAL),
         _route(ControlPathId.AGENT_APPROVAL_DECIDE, ControlMethod.POST, "/api/agent/approvals/{approvalId}/decision", "/control/v1/agent/approvals/{approvalId}/decision", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, params=_APPROVAL, body={"decision", "payloadSha256"}, required_body={"decision", "payloadSha256"}, remote_body={"decision", "payloadSha256"}, remote_body_values={"decision": {"approve", "reject"}}),
+        _route(ControlPathId.AGENT_MEMORY_MAINTENANCE_RUN, ControlMethod.GET, "/api/agent/memory-maintenance", "/control/v1/agent/memory-maintenance", query={"runId", "project"}, required_query={"runId"}),
         _route(ControlPathId.AGENT_SUBAGENTS_TEMPLATES, ControlMethod.GET, "/api/agent/subagents/templates", "/control/v1/agent/subagents/templates", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_SUBAGENTS_LIST, ControlMethod.GET, "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_SUBAGENTS_CREATE, ControlMethod.POST, "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, body={"sessionId", "tasks", "agent", "version", "task", "contextMode", "wait"}, required_body={"sessionId"}, remote_body={"sessionId", "tasks", "agent", "version", "task", "contextMode", "wait"}, remote_body_values={"contextMode": {"fresh"}}),
@@ -532,6 +537,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.KNOWLEDGE_STATUS, ControlMethod.GET, "/api/knowledge/status", "/control/v1/knowledge/status", scopes=[ControlScope.KNOWLEDGE_READ], remote_safe=True, query={"sessionId", "id"}),
         _route(ControlPathId.KNOWLEDGE_ROUTE_STATUS, ControlMethod.GET, "/api/knowledge/route-status", "/control/v1/knowledge/route-status", scopes=[ControlScope.KNOWLEDGE_READ], remote_safe=True),
         _route(ControlPathId.KNOWLEDGE_DATABASE_APPLY_PREVIEW, ControlMethod.POST, "/api/knowledge/database/apply-preview", "/control/v1/knowledge/database/apply-preview", body={"runId", "expectedRuntimeRevision"}, required_body={"runId"}),
+        _route(ControlPathId.KNOWLEDGE_DATABASE_DRAFT_EDIT, ControlMethod.POST, "/api/knowledge/database/draft-edit", "/control/v1/knowledge/database/draft-edit", body={"runId", "diffId", "selected", "payload"}, required_body={"runId", "diffId", "selected"}),
         _route(ControlPathId.KNOWLEDGE_DATABASE_APPLY, ControlMethod.POST, "/api/knowledge/database/apply", "/control/v1/knowledge/database/apply", body={"runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"}, required_body={"runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"}),
         _route(ControlPathId.KNOWLEDGE_DATABASE_ROLLBACK, ControlMethod.POST, "/api/knowledge/database/rollback", "/control/v1/knowledge/database/rollback", body={"runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"}, required_body={"runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"}),
 

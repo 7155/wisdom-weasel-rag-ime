@@ -8,6 +8,7 @@ export interface PiRuntimeManifestV1 {
   schemaVersion: 'rag-ime.pi-runtime-manifest.v1';
   runtimeVersion: string;
   piVersion: string;
+  runtimeProtocolVersion?: '1' | '2';
   platform: string;
   architecture: string;
   launchKind: 'node' | 'standalone';

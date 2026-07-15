@@ -74,7 +74,9 @@ export interface FilePickOptions {
     | 'configuration-import'
     | 'restore'
     | 'export-destination'
-    | 'knowledge-import';
+    | 'knowledge-import'
+    | 'plugin-source';
+  selection?: 'file' | 'directory';
   /** Required for attachment imports; the native host binds every receipt to this Agent session. */
   sessionId?: string;
   /** Required only for a native knowledge-import picker. */

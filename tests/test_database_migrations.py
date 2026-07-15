@@ -22,10 +22,10 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 first.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 27)
+            self.assertEqual(status["currentVersion"], 30)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -65,6 +65,17 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("management_work_previews", tables)
             self.assertIn("management_work_receipts", tables)
             self.assertIn("agent_personas", tables)
+            self.assertIn("agent_session_tool_policies", tables)
+            session_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(agent_sessions)")
+            }
+            self.assertIn("session_kind", session_columns)
+            run_foreign_keys = {
+                str(row[3]): (str(row[2]), str(row[6]))
+                for row in conn.execute("PRAGMA foreign_key_list(agent_subagent_runs)")
+            }
+            self.assertNotIn("child_session_id", run_foreign_keys)
+            self.assertEqual(run_foreign_keys["batch_id"], ("agent_subagent_batches", "CASCADE"))
             persona_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_personas)")
             }

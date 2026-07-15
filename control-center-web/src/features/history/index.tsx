@@ -20,6 +20,7 @@ import {
   EmptyState,
   Field,
   Input,
+  Select,
 } from '@/components/primitives';
 import {
   historyMutationPathIds,
@@ -108,16 +109,15 @@ export function HistoryFeature() {
               <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="文本、应用或项目" value={draftQuery} />
             </Field>
             <Button leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">搜索</Button>
-            <label className="ui-field">
-              <span className="ui-field__label">来源</span>
-              <select className="ui-input" onChange={(event) => setFilter(event.target.value)} value={filter}>
-                <option value="">全部来源</option>
-                <option value="rime_commit">Rime 提交</option>
-                <option value="assistant_candidate">助手候选</option>
-                <option value="voice">语音</option>
-                <option value="import">导入</option>
-              </select>
-            </label>
+            <Field htmlFor="history-source-filter" label="来源">
+              <Select id="history-source-filter" onValueChange={setFilter} options={[
+                { value: '', label: '全部来源' },
+                { value: 'rime_commit', label: 'Rime 提交' },
+                { value: 'assistant_candidate', label: '助手候选' },
+                { value: 'voice', label: '语音' },
+                { value: 'import', label: '导入' },
+              ]} value={filter} />
+            </Field>
           </div>
           {rows.length ? (
             <>
@@ -128,13 +128,12 @@ export function HistoryFeature() {
         </ManagementSection>
 
         <ManagementSection title="反馈与移除" description="选择已加载记录后，所有写动作都先预览影响并保留可撤销记录。">
-          <label className="ui-field" style={{ maxWidth: 420 }}>
-            <span className="ui-field__label">记录</span>
-            <select className="ui-input" onChange={(event) => setSelectedId(event.target.value)} value={selectedId}>
-              <option value="">请选择</option>
-              {rows.map((row) => <option key={stringValue(row.id)} value={stringValue(row.id)}>{stringValue(row.created)} · {stringValue(row.text)}</option>)}
-            </select>
-          </label>
+          <Field htmlFor="history-record" label="记录" style={{ maxWidth: 420 }}>
+            <Select id="history-record" onValueChange={setSelectedId} options={[
+              { value: '', label: '请选择' },
+              ...rows.map((row) => ({ value: stringValue(row.id), label: `${stringValue(row.created)} · ${stringValue(row.text)}` })),
+            ]} value={selectedId} />
+          </Field>
           <div className="mgmt-grid-2" style={{ marginTop: 12 }}>
             <UnsupportedWorkflow
               description="为所选候选提交负反馈，并保留来源信息。"

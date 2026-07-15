@@ -125,6 +125,22 @@ class AgentServiceTests(unittest.TestCase):
         controlled = self.service.update_session(session_id, {"mode": "assistant"})
         self.assertEqual(controlled["session"]["mode"], "assistant")
         self.assertEqual(controlled["session"]["workspaceRoots"], [])
+        restricted = self.service.update_session(
+            session_id,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "allowedTools": ["ime_overview", "ime_memory"],
+            },
+        )["session"]
+        self.assertEqual(restricted["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertEqual(restricted["toolAllowlistMode"], "explicit")
+        self.assertEqual(restricted["allowedTools"], ["ime_overview", "ime_memory"])
+        with self.assertRaisesRegex(ValueError, "unknown Agent tool"):
+            self.service.update_session(
+                session_id,
+                {"mode": "assistant", "allowedTools": ["untrusted_tool"]},
+            )
 
         deleted = self.service.delete_session(session_id)
         self.assertTrue(deleted["ok"])
@@ -191,7 +207,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "hermes-v1")
         self.assertEqual(created["roleVersion"], "1")
-        self.assertEqual(created["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(created["modelProfile"], "pi/default")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "hermes-v1")
@@ -243,7 +259,7 @@ class AgentServiceTests(unittest.TestCase):
         )["session"]
         self.assertEqual(session["roleId"], created_role["roleId"])
         self.assertEqual(session["roleVersion"], "1")
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-terra")
+        self.assertEqual(session["modelProfile"], "pi/default")
         self.assertEqual(session["toolProfileVersion"], "control-center-v1")
 
         room = self.service.create_room(
@@ -280,8 +296,8 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "gpt/gpt-5.6-luna")
-        self.assertEqual(target_session["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(source_session["modelProfile"], "pi/default")
+        self.assertEqual(target_session["modelProfile"], "pi/default")
         item = {
             "id": "room-message:test",
             "kind": "ask",
@@ -694,6 +710,32 @@ class AgentServiceTests(unittest.TestCase):
             {"sessionId": session["id"], "approvalId": approval["approvalId"]}
         )
         self.assertEqual(lookup["approval"]["receipt"]["auditId"], 42)
+
+    def test_memory_review_decision_resumes_the_active_pi_turn(self) -> None:
+        session = self.service.create_session({"title": "记忆草案审阅"})["session"]
+        session_id = str(session["id"])
+        with (
+            patch.object(self.service.runtime, "has_pending_review", return_value=True),
+            patch.object(self.service.runtime, "resolve_review") as resolve,
+        ):
+            result = self.service.resolve_review(
+                session_id,
+                {"runId": "memory-run-1", "decision": "deferred"},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["decision"], "deferred")
+        resolve.assert_called_once_with(
+            session_id,
+            "memory-run-1",
+            reviewed=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "reviewed or deferred"):
+            self.service.resolve_review(
+                session_id,
+                {"runId": "memory-run-1", "decision": "approve"},
+            )
 
     def test_sidecar_restart_is_released_to_pi_then_finalized_by_new_process(self) -> None:
         session = self.service.create_session({"title": "Sidecar 两阶段重启"})["session"]

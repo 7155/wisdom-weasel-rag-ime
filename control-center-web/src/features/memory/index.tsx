@@ -12,6 +12,7 @@ import {
   Field,
   Input,
   SegmentedControl,
+  Select,
   Switch,
   Tabs as ViewTabs,
   TabsContent,
@@ -124,17 +125,16 @@ export function MemoryFeature() {
                     <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
                   </Field>
                   <Button leadingIcon={<Search size={14} />} onClick={runSearch} size="small">搜索</Button>
-                  <label className="ui-field">
-                    <span className="ui-field__label">状态</span>
-                    <select className="ui-input" onChange={(event) => { setStatus(event.target.value); setSelectedId(''); setEditOpen(false); }} value={status}>
-                      <option value="">全部</option>
-                      <option value="active">使用中</option>
-                      <option value="approved">已确认</option>
-                      <option value="archived">已归档</option>
-                      <option value="disabled">已暂停</option>
-                      <option value="suppressed">已抑制</option>
-                    </select>
-                  </label>
+                  <Field htmlFor="memory-status-filter" label="状态">
+                    <Select id="memory-status-filter" onValueChange={(value) => { setStatus(value); setSelectedId(''); setEditOpen(false); }} options={[
+                      { value: '', label: '全部' },
+                      { value: 'active', label: '使用中' },
+                      { value: 'approved', label: '已确认' },
+                      { value: 'archived', label: '已归档' },
+                      { value: 'disabled', label: '已暂停' },
+                      { value: 'suppressed', label: '已抑制' },
+                    ]} value={status} />
+                  </Field>
                 </div>
               </div>
               {rows.length ? (
@@ -466,15 +466,15 @@ function MemoryEditFields({
   };
   const colorField = (
     <Field htmlFor="memory-edit-color" label="颜色">
-      <select className="ui-input" id="memory-edit-color" onChange={(event) => update('color', event.target.value)} value={draft.color}>
-        <option value="blue">蓝色</option>
-        <option value="teal">青色</option>
-        <option value="green">绿色</option>
-        <option value="orange">橙色</option>
-        <option value="pink">粉色</option>
-        <option value="purple">紫色</option>
-        <option value="gray">灰色</option>
-      </select>
+      <Select id="memory-edit-color" onValueChange={(value) => update('color', value)} options={[
+        { value: 'blue', label: '蓝色' },
+        { value: 'teal', label: '青色' },
+        { value: 'green', label: '绿色' },
+        { value: 'orange', label: '橙色' },
+        { value: 'pink', label: '粉色' },
+        { value: 'purple', label: '紫色' },
+        { value: 'gray', label: '灰色' },
+      ]} value={draft.color} />
     </Field>
   );
 

@@ -78,6 +78,7 @@ function createPreviewTransport(): MockControlTransport {
   };
   return new MockControlTransport({
     routes,
+    capabilities: { routeIds: Object.keys(routes) as ControlPathId[] },
     pickedFiles: [
       {
         id: 'media_preview_attachment_01',
@@ -153,6 +154,18 @@ function previewResponse(pathId: ControlPathId): unknown {
           previewTool('ime_knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
         ],
       };
+    case 'agent.subagents.list':
+      return {
+        ok: true,
+        items: [previewSubagentBatch()],
+      };
+    case 'agent.subagent.get':
+      return {
+        ok: true,
+        batch: previewSubagentBatch(),
+      };
+    case 'agent.artifact.get':
+      return previewSubagentArtifact();
     case 'planning.dashboard':
       return { ok: true, date: new Date().toISOString().slice(0, 10), tasks: [], goals: [] };
     case 'memory.summary':
@@ -265,6 +278,102 @@ function previewKnowledgeBase(): Record<string, unknown> {
     parserMode: 'auto',
     revision: 1,
     updatedAtMs: Date.now() - 120_000,
+  };
+}
+
+function previewSubagentBatch(): Record<string, unknown> {
+  const now = Date.now();
+  const budget = {
+    maxTurns: 10,
+    maxToolCalls: 18,
+    maxTotalTokens: 32_000,
+    maxDurationMs: 300_000,
+    maxOutputChars: 24_000,
+  };
+  const run = (
+    id: string,
+    templateId: 'researcher' | 'reviewer',
+    task: string,
+    state: 'running' | 'completed',
+    ordinal: number,
+  ) => ({
+    schemaVersion: 'rag-ime.agent-subagent-run.v1',
+    id,
+    batchId: 'subagent-batch:preview',
+    childSessionId: `subagent-runtime:${id}`,
+    templateId,
+    templateVersion: '1',
+    ordinal,
+    task,
+    state,
+    budget,
+    usage: state === 'completed'
+      ? { turnCount: 3, toolCount: 5, totalTokens: 4_820 }
+      : { turnCount: 2, toolCount: 3, totalTokens: 2_140 },
+    result: state === 'completed' ? { summary: '已核对来源与结论，结果已经交回主对话。' } : {},
+    error: '',
+    artifact: {
+      schemaVersion: 'rag-ime.agent-artifact-ref.v1',
+      artifactId: `artifact:${id}`,
+      ownerKind: 'subagent_run',
+      ownerId: id,
+      kind: 'lifecycle',
+      sha256: 'a'.repeat(64),
+    },
+    supervision: { phase: 'none', reason: '', requestedAtMs: null, graceMs: 0 },
+    createdAtMs: now - (state === 'running' ? 68_000 : 180_000),
+    startedAtMs: now - (state === 'running' ? 64_000 : 176_000),
+    updatedAtMs: now - (state === 'running' ? 2_000 : 92_000),
+    completedAtMs: state === 'completed' ? now - 92_000 : null,
+  });
+  return {
+    schemaVersion: 'rag-ime.agent-subagent-batch.v1',
+    id: 'subagent-batch:preview',
+    parentSessionId: 'session-preview',
+    state: 'running',
+    runs: [
+      run('subagent-run:research', 'researcher', '检索 Agent 状态投影和知识来源证据', 'running', 0),
+      run('subagent-run:review', 'reviewer', '审阅前端交互与工具生命周期边界', 'completed', 1),
+    ],
+  };
+}
+
+function previewSubagentArtifact(): Record<string, unknown> {
+  const now = Date.now();
+  const records = [
+    ['queued', '任务已进入并行队列'],
+    ['started', '子智能体已经开始执行'],
+    ['checkpoint', '已保存一次可恢复进度'],
+  ].map(([eventType, summary], index) => ({
+    schemaVersion: 'rag-ime.agent-artifact-record.v1',
+    recordId: `preview-artifact:${index + 1}`,
+    eventType,
+    createdAtMs: now - (3 - index) * 20_000,
+    payload: { summary },
+  }));
+  return {
+    schemaVersion: 'rag-ime.agent-artifact-inspection.v1',
+    artifact: {
+      schemaVersion: 'rag-ime.agent-artifact-ref.v1',
+      artifactId: 'artifact:subagent-run:research',
+      ownerKind: 'subagent_run',
+      ownerId: 'subagent-run:research',
+      kind: 'lifecycle',
+      mediaType: 'application/x-ndjson',
+      appendOnly: true,
+      byteSize: 512,
+      sha256: 'a'.repeat(64),
+      recordCount: records.length,
+      snapshotRevision: 1,
+      snapshotSha256: 'b'.repeat(64),
+      createdAtMs: now - 80_000,
+      updatedAtMs: now - 20_000,
+    },
+    records,
+    totalRecords: records.length,
+    returnedRecords: records.length,
+    truncated: false,
+    limits: { requestedRecords: 60, maxRecords: 500, maxOutputBytes: 262_144 },
   };
 }
 

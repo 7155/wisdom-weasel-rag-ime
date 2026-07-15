@@ -1,6 +1,6 @@
 import { BookOpen, Boxes, Network, RefreshCw, Search, Tags } from 'lucide-react';
 import { useDeferredValue, useMemo, useState, type KeyboardEvent } from 'react';
-import { Button, EmptyState, Input, SegmentedControl } from '@/components/primitives';
+import { Button, EmptyState, Input, SegmentedControl, Select } from '@/components/primitives';
 import {
   ManagementSection,
   QueryState,
@@ -132,15 +132,16 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
                 value={filter}
               />
             </label>
-            <select
+            <Select
               aria-label="关系来源"
-              className="ui-input memory-relations__source"
-              onChange={(event) => setSource(event.target.value)}
+              className="memory-relations__source"
+              onValueChange={setSource}
+              options={[
+                { value: '', label: '全部来源' },
+                ...sources.map((item) => ({ value: item, label: formatSource(item) })),
+              ]}
               value={source}
-            >
-              <option value="">全部来源</option>
-              {sources.map((item) => <option key={item} value={item}>{formatSource(item)}</option>)}
-            </select>
+            />
             <Button
               aria-label="刷新记忆关系"
               leadingIcon={<RefreshCw size={14} />}

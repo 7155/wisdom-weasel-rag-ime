@@ -593,6 +593,9 @@ for key in (
         value = existing_env.get(key)
     if value:
         env_vars[key] = value
+env_vars["RAG_IME_PI_ENABLED"] = "0"
+env_vars["RAG_IME_AGENT_GATEWAY_ENABLED"] = "1"
+env_vars["RAG_IME_KNOWLEDGE_SHARED_WORKER"] = "1"
 # A source-tree Pi executable is allowed for development, but its extension is
 # always the integration installed from this checkout. Never inherit a path
 # from an older LaunchAgent or the invoking shell. Managed Pi runtimes carry
@@ -731,6 +734,12 @@ if not payload.get("ok"):
 PY
   then
     echo "health: OK"
+    if [[ "${RAG_IME_INSTALL_AGENT_GATEWAY:-1}" != "0" ]]; then
+      RAG_IME_APP_SUPPORT_DIR="$APP_SUPPORT_DIR" \
+      RAG_IME_DB_PATH="$DB_PATH" \
+      RAG_IME_PYTHON="$PYTHON_EXECUTABLE" \
+      "$ROOT/scripts/install_agent_gateway_launch_agent.sh"
+    fi
     exit 0
   fi
   sleep 0.5

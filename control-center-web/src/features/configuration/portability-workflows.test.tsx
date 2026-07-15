@@ -98,6 +98,7 @@ class PortabilityTransport extends MockControlTransport {
     const receipts: Record<FilePickOptions['purpose'], PickedFile[]> = {
       attachment: [],
       'knowledge-import': [],
+      'plugin-source': [],
       'configuration-import': [{
         id: 'config-file-1',
         name: 'rag-ime.config.yaml',

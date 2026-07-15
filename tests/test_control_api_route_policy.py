@@ -52,6 +52,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "knowledge.status",
                 "knowledge.routeStatus",
                 "knowledge.database.apply.preview",
+                "knowledge.database.draft.edit",
                 "knowledge.database.apply",
                 "knowledge.database.rollback",
                 "knowledgeBases.list",
@@ -798,6 +799,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
         entries = {item["pathId"]: item for item in manifest}
         for path_id in (
             "knowledge.database.apply.preview",
+            "knowledge.database.draft.edit",
             "knowledge.database.apply",
             "knowledge.database.rollback",
         ):

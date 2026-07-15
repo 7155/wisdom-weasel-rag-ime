@@ -313,6 +313,41 @@ describe('NativeControlTransport', () => {
     transport.dispose();
   });
 
+  it('selects plugin sources only as native directories', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'plugin-directory-1',
+          name: 'guided-plugin',
+          mimeType: 'application/octet-stream',
+          byteSize: 0,
+          path: '/Users/undo/Plugins/guided-plugin',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow });
+    await expect(transport.pickFiles({
+      purpose: 'plugin-source',
+      selection: 'directory',
+      maxFiles: 1,
+    })).resolves.toEqual([expect.objectContaining({ path: '/Users/undo/Plugins/guided-plugin' })]);
+    expect(sent[0]?.payload).toEqual({
+      purpose: 'plugin-source',
+      selection: 'directory',
+      maxFiles: 1,
+    });
+    await expect(transport.pickFiles({
+      purpose: 'plugin-source',
+      selection: 'file',
+      maxFiles: 1,
+    })).rejects.toThrow(/directory/);
+    transport.dispose();
+  });
+
   it('imports pasted clipboard images through the session-bound native media bridge', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     const bridgeWindow = fakeBridgeWindow((envelope) => {

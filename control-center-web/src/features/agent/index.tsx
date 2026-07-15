@@ -1,4 +1,4 @@
-import { AlertCircle, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { AlertCircle, PanelLeftClose, PanelLeftOpen, PanelRightOpen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
@@ -8,9 +8,11 @@ import type { UiAgentEvent } from '@/contracts/ui-events';
 import { AgentComposer } from './composer/AgentComposer';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
 import { SessionRail } from './sessions/SessionRail';
+import { AgentStatusPanel } from './status/AgentStatusPanel';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
 import { AgentTimeline } from './timeline/AgentTimeline';
 import { publicAgentErrorText } from './public-error';
+import { ApprovalReviewDialog, MemoryReviewDialog } from './review/AgentReviewDialogs';
 import {
   activeSessionId,
   commandItems,
@@ -19,6 +21,7 @@ import {
   sessionItems,
   toolItems,
   type AgentCommand,
+  type AgentProductCommandName,
   type ComposerAttachment,
   type ModelCatalog,
   type SessionSummary,
@@ -45,7 +48,10 @@ export function AgentFeature() {
   const [sending, setSending] = useState(false);
   const [modelChanging, setModelChanging] = useState(false);
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
+  const [toolPickerRequest, setToolPickerRequest] = useState(0);
+  const [helpRequest, setHelpRequest] = useState(0);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
+  const [statusOpen, setStatusOpen] = useState(() => isWideStatusViewport());
   const [error, setError] = useState('');
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
@@ -64,6 +70,14 @@ export function AgentFeature() {
     }
     return false;
   });
+  const pendingMemoryReview = useAgentLiveStore((state) => latestWaitingActivity(
+    state.projections[selectedId],
+    (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind === 'memory_review',
+  ));
+  const pendingApproval = useAgentLiveStore((state) => latestWaitingActivity(
+    state.projections[selectedId],
+    (activity) => activity.kind === 'approval_required',
+  ));
 
   const loadSessions = useCallback(async (preferredId = '') => {
     setLoading(true);
@@ -198,7 +212,9 @@ export function AgentFeature() {
   }, [ensure, selectedId, transport]);
 
   const session = sessions.find((item) => item.id === selectedId);
-  const defaultPersona = personas.find((item) => item.defaults.modelPolicy.toLowerCase().includes('luna')) ?? personas[0];
+  const defaultPersona = personas.find((item) => item.roleId === 'zhiyou-v1')
+    ?? personas.find((item) => item.visualProfile.avatarAssetId.includes('timeline-present'))
+    ?? personas[0];
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
   const busy = hasActiveTurn;
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
@@ -233,15 +249,39 @@ export function AgentFeature() {
     if (!session || sending) return;
     const value = draft.trim();
     if (value === '/new') { setDraft(''); await createSession(); return; }
-    if (value.startsWith('/compact')) {
+    if (isCommand(value, '/name')) {
+      const title = normalizedSessionTitle(commandArgument(value, '/name'));
+      if (!title) {
+        setError('请在 /name 后输入新的对话名称。');
+        return;
+      }
       setSending(true);
-      try { await transport.request({ pathId: 'agent.session.compact', params: { sessionId: session.id }, body: { instructions: value.slice('/compact'.length).trim() } }); setDraft(''); }
+      try {
+        await transport.request({ pathId: 'agent.session.rename', params: { sessionId: session.id }, body: { title } });
+        setSessions((current) => current.map((item) => item.id === session.id ? { ...item, title, updatedAtMs: Date.now() } : item));
+        setDraft('');
+        setError('');
+      } catch (requestError) { setError(errorText(requestError)); }
+      finally { setSending(false); }
+      return;
+    }
+    if (isCommand(value, '/compact')) {
+      setSending(true);
+      try { await transport.request({ pathId: 'agent.session.compact', params: { sessionId: session.id }, body: { instructions: commandArgument(value, '/compact') } }); setDraft(''); }
       catch (requestError) { setError(errorText(requestError)); }
       finally { setSending(false); }
       return;
     }
+    if (value === '/model' || value === '/thinking') { setDraft(''); openModelPicker(); return; }
+    if (value === '/tools') { setDraft(''); openToolPicker(); return; }
+    if (value === '/status') { setDraft(''); setStatusOpen(true); return; }
+    if (value === '/help') { setDraft(''); setHelpRequest((current) => current + 1); return; }
     if (value === '/stop') { setDraft(''); await stop(); return; }
     if (!value && attachments.length === 0) return;
+    if (value.startsWith('/') && !isAdvertisedPiCommand(value, commands)) {
+      setError('这个命令不在当前对话的控制中心或 Pi RPC 命令目录中，未发送给模型。');
+      return;
+    }
     if (attachments.length && imageSupport !== 'supported') {
       setError(imageSupport === 'unsupported'
         ? '当前模型不支持图片，请移除图片或切换到支持图片的模型。'
@@ -315,6 +355,52 @@ export function AgentFeature() {
       return;
     }
     setModelPickerRequest((current) => current + 1);
+  }
+
+  function openToolPicker(): void {
+    if (toolCatalogStatus !== 'ready') {
+      setError('工具目录暂时不可用。');
+      return;
+    }
+    const hasAvailableTool = tools.some((tool) => (
+      tool.availability === 'online' && session && tool.sessionModes.includes(session.mode)
+    ));
+    if (!hasAvailableTool) {
+      setError('当前权限模式没有可用工具。');
+      return;
+    }
+    setToolPickerRequest((current) => current + 1);
+  }
+
+  function runProductCommand(command: AgentProductCommandName): void {
+    if ((busy || sending) && command !== 'status' && command !== 'stop') return;
+    switch (command) {
+      case 'new':
+        setDraft('');
+        void createSession();
+        break;
+      case 'model':
+      case 'thinking':
+        openModelPicker();
+        break;
+      case 'tools':
+        openToolPicker();
+        break;
+      case 'status':
+        setStatusOpen(true);
+        break;
+      case 'stop':
+        if (busy) void stop();
+        break;
+      case 'help':
+        setHelpRequest((current) => current + 1);
+        break;
+      case 'name':
+      case 'compact':
+        // These commands are inserted into the composer so their optional or
+        // required argument stays editable before the API call.
+        break;
+    }
   }
 
   async function stop(): Promise<void> {
@@ -446,36 +532,72 @@ export function AgentFeature() {
   }
 
   async function decideApproval(approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string): Promise<void> {
-    try { await transport.request({ pathId: 'agent.approval.decide', params: { approvalId }, body: { decision, payloadSha256 } }); }
+    try {
+      await transport.request({
+        pathId: 'agent.approval.decide',
+        params: { approvalId },
+        body: { decision: decision === 'approved' ? 'approve' : 'reject', payloadSha256 },
+      });
+    }
     catch (requestError) { setError(errorText(requestError)); }
   }
 
   return (
-    <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen}>
+    <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
       <SessionRail sessions={sessions} selectedId={selectedId} loading={loading} onSelect={selectSession} onCreate={() => void createSession()} />
       <section className="agent-conversation">
         <header className="agent-conversation__header">
           <IconButton className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={() => setRailOpen((value) => !value)} tooltip />
           <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${persona?.displayName ?? '智鼬'} · ${session.mode === 'coordinator' ? '运行协调' : '受控模式'}` : '选择一个对话'}</small></span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
+          <IconButton className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((value) => !value)} tooltip />
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => void decideApproval(id, decision, hash)} /> : null}
-        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
+      <button className="agent-status-backdrop" aria-label="关闭状态面板" onClick={() => setStatusOpen(false)} type="button" />
+      <AgentStatusPanel sessionId={selectedId} open={statusOpen} onClose={() => setStatusOpen(false)} />
+      <MemoryReviewDialog activity={pendingApproval ? undefined : pendingMemoryReview} sessionId={selectedId} onError={setError} />
+      <ApprovalReviewDialog activity={pendingApproval} onDecision={decideApproval} />
     </main>
   );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function isCommand(value: string, invocation: string): boolean {
+  return value === invocation || value.startsWith(`${invocation} `);
+}
+function commandArgument(value: string, invocation: string): string {
+  return value.slice(invocation.length).trim();
+}
+function normalizedSessionTitle(value: string): string {
+  return value.split(/\s+/u).filter(Boolean).join(' ').slice(0, 120);
+}
+function isAdvertisedPiCommand(value: string, commands: AgentCommand[]): boolean {
+  return commands.some((command) => isCommand(value, command.invocation));
+}
 function errorText(value: unknown): string {
   const message = value instanceof Error ? value.message : String(value);
   if (/invalid route parameter:\s*limit/i.test(message)) return '对话列表暂时无法加载，请刷新后重试。';
   return publicAgentErrorText(value, '操作未完成，请刷新状态后重试。');
 }
 function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }
+function isWideStatusViewport(): boolean { return window.matchMedia?.('(min-width: 1180px)').matches === true; }
 
 const PASTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function latestWaitingActivity(
+  projection: ReturnType<typeof agentProjection> | undefined,
+  predicate: (activity: ReturnType<typeof agentProjection>['activitiesById'][string]) => boolean,
+) {
+  if (!projection) return undefined;
+  for (let index = projection.activityOrder.length - 1; index >= 0; index -= 1) {
+    const activity = projection.activitiesById[projection.activityOrder[index] ?? ''];
+    if (activity?.status === 'waiting' && predicate(activity)) return activity;
+  }
+  return undefined;
+}
 
 function selectedModelImageSupport(catalog?: ModelCatalog): 'supported' | 'unsupported' | 'unknown' {
   if (!catalog) return 'unknown';

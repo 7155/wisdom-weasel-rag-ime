@@ -11,7 +11,7 @@ export interface AgentModelCatalogV1 {
   selected: {
     [k: string]: unknown;
   } | null;
-  thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   providers: {
     id: string;
     displayName: string;
@@ -28,8 +28,8 @@ export interface Model {
    * @minItems 1
    */
   thinkingLevels: [
-    'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh',
-    ...('off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh')[],
+    'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+    ...('off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max')[],
   ];
   supportsImages: boolean;
   contextWindow: number;

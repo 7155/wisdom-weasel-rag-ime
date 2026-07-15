@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -32,6 +33,8 @@ _MAX_PARALLEL_RUNS = 2
 _MAX_FORK_BYTES = 32 * 1024 * 1024
 _SOFT_BUDGET_RATIO = 0.8
 _DEFAULT_CANCELLATION_GRACE_MS = 2_000
+_DEFAULT_SUBAGENT_SESSION_RETENTION_MS = 72 * 60 * 60 * 1_000
+_DEFAULT_SUBAGENT_SESSION_GC_INTERVAL_MS = 15 * 60 * 1_000
 
 
 class AgentDelegationStore:
@@ -97,6 +100,17 @@ class AgentDelegationStore:
             for ordinal, value in enumerate(values):
                 run_id = f"subagent-run:{uuid.uuid4()}"
                 run_ids.append(run_id)
+                child_session_id = _required_text(value, "childSessionId")
+                marked = conn.execute(
+                    """
+                    UPDATE agent_sessions
+                    SET session_kind = 'subagent_runtime'
+                    WHERE id = ?
+                    """,
+                    (child_session_id,),
+                )
+                if marked.rowcount != 1:
+                    raise ValueError("delegated child session does not exist")
                 conn.execute(
                     """
                     INSERT INTO agent_subagent_runs(
@@ -109,7 +123,7 @@ class AgentDelegationStore:
                     (
                         run_id,
                         batch_id,
-                        _required_text(value, "childSessionId"),
+                        child_session_id,
                         _required_text(value, "templateId"),
                         _required_text(value, "templateVersion"),
                         ordinal,
@@ -218,6 +232,28 @@ class AgentDelegationStore:
                 "SELECT COUNT(*) FROM agent_subagent_runs WHERE state IN ('queued', 'running')"
             ).fetchone()
         return int(row[0] if row else 0)
+
+    def terminal_child_sessions(
+        self,
+        *,
+        completed_before_ms: int | None = None,
+    ) -> list[tuple[str, str]]:
+        clauses = ["state IN ('completed', 'failed', 'aborted', 'timed_out')"]
+        values: list[object] = []
+        if completed_before_ms is not None:
+            clauses.append("COALESCE(completed_at_ms, updated_at_ms) <= ?")
+            values.append(int(completed_before_ms))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, child_session_id
+                FROM agent_subagent_runs
+                WHERE {' AND '.join(clauses)}
+                ORDER BY completed_at_ms, id
+                """,  # noqa: S608 - clauses are fixed above.
+                tuple(values),
+            ).fetchall()
+        return [(str(row["id"]), str(row["child_session_id"])) for row in rows]
 
     def start_run(self, run_id: str, *, started_at_ms: int | None = None) -> dict[str, object]:
         now = _timestamp(started_at_ms)
@@ -784,6 +820,8 @@ class AgentDelegationCoordinator:
         tool_gateway_token: str = "",
         artifact_root: str | Path | None = None,
         cancellation_grace_ms: int = _DEFAULT_CANCELLATION_GRACE_MS,
+        subagent_session_retention_ms: int | None = None,
+        subagent_session_gc_interval_ms: int | None = None,
     ) -> None:
         self.artifacts = AgentArtifactStore(db_path, root=artifact_root)
         self.store = AgentDelegationStore(db_path, artifacts=self.artifacts)
@@ -800,11 +838,36 @@ class AgentDelegationCoordinator:
             tool_gateway_token or runtime_config.tool_gateway_token
         )
         self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
+        self._subagent_session_retention_ms = max(
+            0,
+            min(
+                int(
+                    subagent_session_retention_ms
+                    if subagent_session_retention_ms is not None
+                    else _subagent_session_retention_from_environment()
+                ),
+                30 * 24 * 60 * 60 * 1_000,
+            ),
+        )
+        self._subagent_session_gc_interval_ms = max(
+            0,
+            min(
+                int(
+                    subagent_session_gc_interval_ms
+                    if subagent_session_gc_interval_ms is not None
+                    else _subagent_session_gc_interval_from_environment()
+                ),
+                24 * 60 * 60 * 1_000,
+            ),
+        )
         self._lock = threading.RLock()
+        self._retirement_lock = threading.RLock()
+        self._last_session_gc_monotonic = 0.0
         self._active_runs: dict[str, _ActiveDelegatedRun] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._closed = False
         recoverable = self.store.reconcile_interrupted_runs()
+        self.collect_expired_sessions(force=True)
         if self.runtime_config.enabled:
             for run_id in recoverable:
                 self._start_run_thread(run_id)
@@ -820,7 +883,8 @@ class AgentDelegationCoordinator:
 
     def delegate(self, parent_session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         parent = self.sessions.get(parent_session_id)
-        if parent.get("status") == "archived":
+        parent_run = self.store.run_for_child_session(parent_session_id)
+        if parent.get("status") == "archived" and parent_run is None:
             raise ValueError("archived sessions cannot delegate tasks")
         tasks = _delegation_tasks(payload)
         context_mode = str(payload.get("contextMode") or "fresh").strip()
@@ -838,7 +902,6 @@ class AgentDelegationCoordinator:
             if context_mode == "fork"
             else []
         )
-        parent_run = self.store.run_for_child_session(parent_session_id)
         depth = int(parent_run.get("depth") or 0) + 1 if parent_run else 1
         parent_run_id = str(parent_run.get("id") or "") if parent_run else ""
         if depth > 2:
@@ -869,6 +932,7 @@ class AgentDelegationCoordinator:
                         role_version=str(parent.get("roleVersion") or "1"),
                         model_profile=str(parent.get("modelProfile") or "pi/default"),
                         tool_profile_version=template.tool_profile_version,
+                        session_kind="subagent_runtime",
                     )
                     if context_mode == "fork":
                         branch = native_forks[ordinal]
@@ -987,6 +1051,7 @@ class AgentDelegationCoordinator:
         active = self.store.request_abort(identifier)
         for run_id in active:
             self._request_cancel(run_id, state="aborted", reason="Stopped by user")
+        self.collect_expired_sessions(force=False)
         return {
             "schemaVersion": "rag-ime.agent-delegation-abort.v1",
             "ok": True,
@@ -1003,7 +1068,8 @@ class AgentDelegationCoordinator:
         while time.monotonic() < deadline:
             batch = self.store.get_batch(batch_id)
             if str(batch["state"]) in _TERMINAL_STATES:
-                return batch
+                self.collect_expired_sessions(force=False)
+                return self.store.get_batch(batch_id)
             time.sleep(0.025)
         self.store.request_abort(batch_id)
         for run in batch["runs"]:
@@ -1042,8 +1108,10 @@ class AgentDelegationCoordinator:
             self._runtime_driver_factory.reconfigure(config)
             self._tool_gateway_token = config.tool_gateway_token
             self._closed = False
+        recoverable = self.store.reconcile_interrupted_runs()
+        self.collect_expired_sessions(force=True)
         if config.enabled:
-            for run_id in self.store.reconcile_interrupted_runs():
+            for run_id in recoverable:
                 self._start_run_thread(run_id)
 
     def refresh_runtime_factory(self) -> None:
@@ -1056,8 +1124,10 @@ class AgentDelegationCoordinator:
                 self.runtime_config = factory_config
                 self._tool_gateway_token = factory_config.tool_gateway_token
             self._closed = False
+        recoverable = self.store.reconcile_interrupted_runs()
+        self.collect_expired_sessions(force=True)
         if self.runtime_config.enabled:
-            for run_id in self.store.reconcile_interrupted_runs():
+            for run_id in recoverable:
                 self._start_run_thread(run_id)
 
     def owns_session(self, session_id: str) -> bool:
@@ -1339,9 +1409,117 @@ class AgentDelegationCoordinator:
                 final,
                 "子 Agent 已完成" if state == "completed" else "子 Agent 已停止",
             )
+            self._record_retained_child_session(run_id, child_session_id)
+            self.collect_expired_sessions(force=False)
         finally:
             with self._lock:
                 self._threads.pop(run_id, None)
+
+    def collect_expired_sessions(
+        self,
+        *,
+        force: bool = True,
+        now_ms: int | None = None,
+    ) -> int:
+        """Destroy expired child-runtime state while preserving run results and Artifacts."""
+
+        monotonic_now = time.monotonic()
+        with self._retirement_lock:
+            elapsed_ms = (monotonic_now - self._last_session_gc_monotonic) * 1_000
+            if (
+                not force
+                and self._last_session_gc_monotonic > 0
+                and elapsed_ms < self._subagent_session_gc_interval_ms
+            ):
+                return 0
+            self._last_session_gc_monotonic = monotonic_now
+        current_ms = _timestamp(now_ms)
+        cutoff_ms = current_ms - self._subagent_session_retention_ms
+        retired_count = 0
+        for run_id, child_session_id in self.store.terminal_child_sessions(
+            completed_before_ms=cutoff_ms
+        ):
+            try:
+                session = self.sessions.get(child_session_id)
+            except KeyError:
+                continue
+            if self._retire_child_session(run_id, child_session_id):
+                retired_count += 1
+        return retired_count
+
+    def _record_retained_child_session(self, run_id: str, child_session_id: str) -> None:
+        try:
+            run = self.store.get_run(run_id)
+            completed_at_ms = int(run.get("completedAtMs") or run.get("updatedAtMs") or 0)
+            retained_until_ms = completed_at_ms + self._subagent_session_retention_ms
+            now = _timestamp(None)
+            self.artifacts.append_records(
+                owner_kind="subagent_run",
+                owner_id=run_id,
+                records=[
+                    {
+                        "recordId": f"runtime-retained:{now}",
+                        "eventType": "runtime_retained",
+                        "createdAtMs": now,
+                        "payload": {
+                            "childSessionId": child_session_id,
+                            "retainedUntilMs": retained_until_ms,
+                        },
+                    }
+                ],
+            )
+        except Exception:
+            # The run result is already durable. Retention metadata is advisory.
+            return
+
+    def _retire_child_session(self, run_id: str, child_session_id: str) -> bool:
+        with self._retirement_lock:
+            try:
+                session = self.sessions.get(child_session_id)
+                binding = self.sessions.runtime_binding(child_session_id)
+                managed_root = self._runtime_driver_factory.session_root.expanduser().resolve(
+                    strict=False
+                )
+                paths = {
+                    str(session.get("sessionFile") or "").strip(),
+                    str(binding.get("transcriptRef") or "").strip()
+                    if isinstance(binding, Mapping)
+                    else "",
+                }
+                for raw_path in paths:
+                    if not raw_path:
+                        continue
+                    candidate = Path(raw_path).expanduser()
+                    path = candidate.resolve(strict=False)
+                    if (
+                        not candidate.is_symlink()
+                        and _is_within(path, managed_root)
+                        and path.is_file()
+                    ):
+                        path.unlink()
+                destroyed = self.sessions.destroy_internal(child_session_id)
+                now = _timestamp(None)
+                self.artifacts.append_records(
+                    owner_kind="subagent_run",
+                    owner_id=run_id,
+                    records=[
+                        {
+                            "recordId": f"runtime-retired:{now}",
+                            "eventType": "runtime_retired",
+                            "createdAtMs": now,
+                            "payload": {
+                                "childSessionId": child_session_id,
+                                "status": "destroyed",
+                                "previousStatus": destroyed["status"],
+                            },
+                        }
+                    ],
+                )
+                return True
+            except Exception:
+                # The run projection and Artifact are already durable. A stale
+                # internal runtime remains hidden and can be retired on restart.
+                return False
 
     def _request_cancel(self, run_id: str, *, state: str, reason: str) -> None:
         if state not in {"failed", "aborted", "timed_out"}:
@@ -1742,6 +1920,46 @@ def _bounded_int(value: object, *, minimum: int, maximum: int) -> int:
     if not minimum <= number <= maximum:
         raise ValueError("delegation budget value is outside the managed range")
     return number
+
+
+def _subagent_session_retention_from_environment() -> int:
+    return (
+        _bounded_environment_int(
+            "RAG_IME_SUBAGENT_SESSION_RETENTION_HOURS",
+            default=72,
+            minimum=1,
+            maximum=30 * 24,
+        )
+        * 60
+        * 60
+        * 1_000
+    )
+
+
+def _subagent_session_gc_interval_from_environment() -> int:
+    return (
+        _bounded_environment_int(
+            "RAG_IME_SUBAGENT_SESSION_GC_INTERVAL_SECONDS",
+            default=15 * 60,
+            minimum=60,
+            maximum=24 * 60 * 60,
+        )
+        * 1_000
+    )
+
+
+def _bounded_environment_int(
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return max(minimum, min(value, maximum))
 
 
 def _timestamp(value: int | None) -> int:

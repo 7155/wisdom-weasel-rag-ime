@@ -10,6 +10,7 @@ import {
   DialogTitle,
   Field,
   Input,
+  Select,
 } from '@/components/primitives';
 import { InlineNotice, ManagementSection, StatusBadge, arrayRecords, asRecord, stringValue } from '@/features/overview/management-ui';
 import { usePiProviderCatalog } from './api';
@@ -224,9 +225,13 @@ export function PiProviderCredentials() {
       <div className="mgmt-grid-2">
         <div className="mgmt-stack">
           <Field htmlFor="pi-provider" label="模型服务">
-            <select className="ui-input" disabled={working || loginWaiting} id="pi-provider" onChange={(event) => selectProvider(event.target.value)} value={providerId}>
-              {providers.map((item) => <option key={stringValue(item.id)} value={stringValue(item.id)}>{providerDisplayName(item)}</option>)}
-            </select>
+            <Select
+              disabled={working || loginWaiting}
+              id="pi-provider"
+              onValueChange={selectProvider}
+              options={providers.map((item) => ({ value: stringValue(item.id), label: providerDisplayName(item) }))}
+              value={providerId}
+            />
           </Field>
           <div className="mgmt-toolbar">
             <StatusBadge label={auth.configured === true ? '已连接' : '未连接'} tone={auth.configured === true ? 'success' : 'neutral'} />

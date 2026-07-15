@@ -26,6 +26,7 @@ xcrun swiftc \
   -framework ApplicationServices \
   -framework AVFoundation \
   -framework Carbon \
+  -framework LocalAuthentication \
   -framework Security \
   -framework SwiftUI \
   "${sources[@]}" \

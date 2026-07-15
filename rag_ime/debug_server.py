@@ -28,6 +28,7 @@ from .active_rag_service import (
     ActiveRagStartRequest,
     active_rag_sensitive_text_blocked,
 )
+from .agent_extensions import AgentExtensionService
 from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
     agent_approval_route,
@@ -394,6 +395,17 @@ class DebugImeService:
                 worker=self.knowledge_worker,
                 work_contract=self.management.work_contract,
             )
+        plugin_inbox = os.environ.get("RAG_IME_AGENT_PLUGIN_INBOX_DIR", "").strip()
+        self.agent_extensions = AgentExtensionService(
+            runtime_provider=lambda: self.agent.runtime,
+            inbox_root=(
+                Path(plugin_inbox).expanduser()
+                if plugin_inbox
+                else Path(config.db_path).expanduser().resolve(strict=False).parent
+                / "AgentPlugins"
+                / "inbox"
+            ),
+        )
         self.agent_tools = ControlToolGateway(
             sessions=self.agent.sessions,
             management=self.management,
@@ -403,7 +415,9 @@ class DebugImeService:
             knowledge_client=self.knowledge_client,
             delegation=self.agent.delegation,
             collaboration=self.agent,
+            extensions=self.agent_extensions,
         )
+        self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
         self.control_api = AgentKernelControlFacade(
             agent=self.agent,
             capabilities=self.agent_tools,
@@ -417,6 +431,7 @@ class DebugImeService:
         )
         self.agent.bind_approval_executor(self.agent_tools.apply_approval)
         self.agent.bind_memory_maintenance_probe(self.agent_memory_maintenance_status)
+        self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
         self.frontend_gateway = FrontendGateway(
             suggest_handler=self.rime_suggest,
             selection_handler=self.rime_select,
@@ -5364,7 +5379,18 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.agent.room(agent_room_id))
             return
         if parsed.path == "/api/agent/tools":
-            self._write_json(HTTPStatus.OK, self.service.agent_tools.manifests())
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent_tools.manifests(
+                    session_id=_query_first(query, "sessionId"),
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/extensions":
+            self._write_json(HTTPStatus.OK, self.service.agent_extensions.list())
+            return
+        if parsed.path == "/api/agent/extensions/proposals":
+            self._write_json(HTTPStatus.OK, self.service.agent_extensions.proposals())
             return
         if parsed.path == "/api/agent/roles":
             self._write_json(HTTPStatus.OK, self.service.agent.list_roles())
@@ -5424,9 +5450,17 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/agent/memory-maintenance":
+            run_id = _query_first(query, "runId")
             self._write_json(
                 HTTPStatus.OK,
-                self.service.agent_memory_maintenance_status(
+                self.service.agent_memory_maintenance_run(
+                    {
+                        "runId": run_id,
+                        "project": _query_first(query, "project"),
+                    }
+                )
+                if run_id
+                else self.service.agent_memory_maintenance_status(
                     {
                         "project": _query_first(query, "project"),
                         "limit": _query_first(query, "limit"),
@@ -6055,6 +6089,17 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.oauth_cancel(payload))
             elif path == "/api/agent/configuration":
                 self._write_json(HTTPStatus.OK, self.service.agent.update_configuration(payload))
+            elif path == "/api/agent/extensions/drafts":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent_extensions.create_draft(payload),
+                )
+            elif path == "/api/agent/extensions/validate":
+                self._write_json(HTTPStatus.OK, self.service.agent_extensions.validate(payload))
+            elif path == "/api/agent/extensions/preview":
+                self._write_json(HTTPStatus.OK, self.service.agent_extensions.preview(payload))
+            elif path == "/api/agent/extensions/apply":
+                self._write_json(HTTPStatus.OK, self.service.agent_extensions.apply(payload))
             elif path == "/api/agent/deep-search":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
             elif path == "/api/agent/sessions":
@@ -6086,6 +6131,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
             elif agent_session_id and agent_action == "abort":
                 self._write_json(HTTPStatus.OK, self.service.agent.abort(agent_session_id))
+            elif agent_session_id and agent_action == "review":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.resolve_review(agent_session_id, payload),
+                )
             elif agent_session_id and agent_action == "compact":
                 self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
             elif agent_session_id and agent_action == "model":

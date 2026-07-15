@@ -1,7 +1,9 @@
 import { ArrowUpRight, BrainCircuit, CircleDashed, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/primitives';
+import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { ActivitySummary } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
@@ -105,19 +107,17 @@ export function AgentTurn({
   if (!turn) return null;
   const rawFailure = turn.failure || blockFailure;
   const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
-  const showPending = (turn.status === 'queued' || turn.status === 'running')
-    && assistantIds.length === 0
-    && activities.length === 0;
+  const showWorking = turn.status === 'queued' || turn.status === 'running';
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user />)}
-      {assistantIds.length > 0 || activities.length > 0 || failure || showPending ? (
+      {assistantIds.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
-          <PersonaAvatar persona={persona} presence={showPending ? 'thinking' : presence} />
+          <PersonaAvatar persona={persona} presence={showWorking ? 'thinking' : presence} />
           <div className="agent-assistant-turn__body">
-            <header><strong>{persona?.displayName ?? '智鼬'}</strong><span>{showPending ? '思考中' : turnStatusLabel(turn.status)}</span></header>
-            {showPending ? <AssistantPendingState /> : null}
+            <header><strong>{persona?.displayName ?? '智鼬'}</strong><span>{showWorking ? '正在处理' : turnStatusLabel(turn.status)}</span></header>
+            {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} /> : null}
             <ActivitySummary activities={activities} onApprovalDecision={onApprovalDecision} />
             {assistantIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} />)}
             {failure ? (
@@ -139,11 +139,24 @@ export function AgentTurn({
   );
 }
 
-function AssistantPendingState() {
+function AssistantWorkingState({
+  activities,
+  startedAtMs,
+}: {
+  activities: AgentActivityProjection[];
+  startedAtMs: number;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const detail = useMemo(() => workingDetail(activities), [activities]);
   return (
     <div className="agent-assistant-pending" role="status" aria-live="polite">
-      <CircleDashed aria-hidden="true" size={16} />
-      <span><strong>正在准备</strong><small>消息已收到，正在组织本轮响应。</small></span>
+      <CircleDashed aria-hidden="true" size={17} />
+      <span><strong>思考中 <time>{formatElapsed(nowMs - startedAtMs)}</time></strong><small>{detail}</small></span>
+      <i className="agent-working-dots" aria-hidden="true"><b /><b /><b /></i>
     </div>
   );
 }
@@ -197,4 +210,21 @@ const emptyIds: string[] = [];
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function workingDetail(activities: AgentActivityProjection[]): string {
+  const latest = [...activities].reverse().find((activity) => activity.status === 'running');
+  const tool = text(latest?.payload.toolName ?? latest?.payload.toolId).toLowerCase();
+  if (tool.includes('memory')) return '正在读取并整理相关记忆，工具明细会实时显示在下方。';
+  if (tool.includes('knowledge') || tool.includes('rag')) return '正在检索知识库，工具明细会实时显示在下方。';
+  if (tool.includes('planning')) return '正在整理计划与下一步。';
+  if (latest) return '正在执行工具，进度和结果会实时显示在下方。';
+  return '消息已收到，正在组织本轮响应。';
+}
+
+function formatElapsed(durationMs: number): string {
+  const seconds = Math.max(0, Math.floor(durationMs / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return minutes > 0 ? `${minutes}分 ${remaining}秒` : `${remaining}秒`;
 }

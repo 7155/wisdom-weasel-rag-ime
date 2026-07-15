@@ -109,10 +109,11 @@ final class NativeRoutePolicy {
             "agent.session.snapshot": route("GET", "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", remoteSafe: true),
             "agent.session.rename": route("PATCH", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", remoteSafe: true, bodyKeys: ["title"], requiredBodyKeys: ["title"]),
             "agent.session.archive": route("PATCH", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", remoteSafe: true, bodyKeys: ["archived"], requiredBodyKeys: ["archived"]),
-            "agent.session.mode.update": route("PATCH", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", bodyKeys: ["mode", "workspaceRoots"], requiredBodyKeys: ["mode"]),
+            "agent.session.mode.update": route("PATCH", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", bodyKeys: ["mode", "workspaceRoots", "toolProfileVersion", "allowedTools"], requiredBodyKeys: ["mode"]),
             "agent.session.delete": route("DELETE", "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}"),
             "agent.session.prompt": route("POST", "/api/agent/sessions/{sessionId}/prompt", "/control/v1/agent/sessions/{sessionId}/prompt", remoteSafe: true, bodyKeys: ["message", "attachments", "clientMessageId"], requiredBodyKeys: ["message"]),
             "agent.session.abort": route("POST", "/api/agent/sessions/{sessionId}/abort", "/control/v1/agent/sessions/{sessionId}/abort", remoteSafe: true),
+            "agent.session.review.resolve": route("POST", "/api/agent/sessions/{sessionId}/review", "/control/v1/agent/sessions/{sessionId}/review", bodyKeys: ["runId", "decision"], requiredBodyKeys: ["runId", "decision"]),
             "agent.session.compact": route("POST", "/api/agent/sessions/{sessionId}/compact", "/control/v1/agent/sessions/{sessionId}/compact", bodyKeys: ["instructions"]),
             "agent.session.commands": route("GET", "/api/agent/sessions/{sessionId}/commands", "/control/v1/agent/sessions/{sessionId}/commands", remoteSafe: true),
             "agent.session.models": route("GET", "/api/agent/sessions/{sessionId}/models", "/control/v1/agent/sessions/{sessionId}/models", remoteSafe: true),
@@ -133,10 +134,17 @@ final class NativeRoutePolicy {
             "agent.room.events": route("GET", "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", remoteSafe: true, subscription: true),
             "agent.roles.list": route("GET", "/api/agent/roles", "/control/v1/agent/roles", remoteSafe: true),
             "agent.roles.create": route("POST", "/api/agent/roles", "/control/v1/agent/roles", remoteSafe: true, bodyKeys: ["displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"], requiredBodyKeys: ["displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"]),
-            "agent.tools.list": route("GET", "/api/agent/tools", "/control/v1/agent/tools"),
+            "agent.tools.list": route("GET", "/api/agent/tools", "/control/v1/agent/tools", query: ["sessionId"]),
+            "agent.extensions.list": route("GET", "/api/agent/extensions", "/control/v1/agent/extensions"),
+            "agent.extensions.create": route("POST", "/api/agent/extensions/drafts", "/control/v1/agent/extensions/drafts", bodyKeys: ["draftId", "manifest", "files"], requiredBodyKeys: ["draftId", "manifest", "files"]),
+            "agent.extensions.proposals": route("GET", "/api/agent/extensions/proposals", "/control/v1/agent/extensions/proposals"),
+            "agent.extensions.validate": route("POST", "/api/agent/extensions/validate", "/control/v1/agent/extensions/validate", bodyKeys: ["sourcePath"], requiredBodyKeys: ["sourcePath"]),
+            "agent.extensions.preview": route("POST", "/api/agent/extensions/preview", "/control/v1/agent/extensions/preview", bodyKeys: ["action", "validationToken", "pluginId", "enable"], requiredBodyKeys: ["action"]),
+            "agent.extensions.apply": route("POST", "/api/agent/extensions/apply", "/control/v1/agent/extensions/apply", bodyKeys: ["previewToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["previewToken", "payloadSha256", "confirmText"]),
             "agent.approvals.list": route("GET", "/api/agent/approvals", "/control/v1/agent/approvals", query: ["sessionId", "state", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.approval.get": route("GET", "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", remoteSafe: true),
             "agent.approval.decide": route("POST", "/api/agent/approvals/{approvalId}/decision", "/control/v1/agent/approvals/{approvalId}/decision", remoteSafe: true, bodyKeys: ["decision", "payloadSha256"], requiredBodyKeys: ["decision", "payloadSha256"]),
+            "agent.memoryMaintenance.run": route("GET", "/api/agent/memory-maintenance", "/control/v1/agent/memory-maintenance", query: ["runId", "project"], requiredQuery: ["runId"]),
             "agent.subagents.templates": route("GET", "/api/agent/subagents/templates", "/control/v1/agent/subagents/templates", remoteSafe: true),
             "agent.subagents.list": route("GET", "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.subagents.create": route("POST", "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", remoteSafe: true, bodyKeys: ["sessionId", "tasks", "agent", "version", "task", "contextMode", "wait"], requiredBodyKeys: ["sessionId"]),
@@ -168,6 +176,7 @@ final class NativeRoutePolicy {
             "knowledge.status": route("GET", "/api/knowledge/status", "/control/v1/knowledge/status", query: ["sessionId", "id"], remoteSafe: true),
             "knowledge.routeStatus": route("GET", "/api/knowledge/route-status", "/control/v1/knowledge/route-status", remoteSafe: true),
             "knowledge.database.apply.preview": route("POST", "/api/knowledge/database/apply-preview", "/control/v1/knowledge/database/apply-preview", bodyKeys: ["runId", "expectedRuntimeRevision"], requiredBodyKeys: ["runId"]),
+            "knowledge.database.draft.edit": route("POST", "/api/knowledge/database/draft-edit", "/control/v1/knowledge/database/draft-edit", bodyKeys: ["runId", "diffId", "selected", "payload"], requiredBodyKeys: ["runId", "diffId", "selected"]),
             "knowledge.database.apply": route("POST", "/api/knowledge/database/apply", "/control/v1/knowledge/database/apply", bodyKeys: ["runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"], requiredBodyKeys: ["runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"]),
             "knowledge.database.rollback": route("POST", "/api/knowledge/database/rollback", "/control/v1/knowledge/database/rollback", bodyKeys: ["runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"], requiredBodyKeys: ["runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"]),
             "knowledgeBases.list": route("GET", "/api/knowledge-bases", nil, query: ["limit", "cursor", "query", "status"]),
@@ -221,7 +230,7 @@ final class NativeRoutePolicy {
     init(
         sidecarBaseURL: URL = URL(string: "http://127.0.0.1:8766")!,
         gatewayBaseURL: URL = URL(string: "http://127.0.0.1:8768")!,
-        preferGateway: Bool = ProcessInfo.processInfo.environment["RAG_IME_AGENT_GATEWAY_ENABLED"] == "1"
+        preferGateway: Bool = ProcessInfo.processInfo.environment["RAG_IME_AGENT_GATEWAY_ENABLED"] != "0"
     ) {
         self.sidecarBaseURL = sidecarBaseURL
         self.gatewayBaseURL = gatewayBaseURL

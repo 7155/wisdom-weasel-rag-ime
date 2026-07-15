@@ -178,10 +178,10 @@ def _reasoning_capabilities(
     # `variants` only tells us about named overrides, so absence there must not
     # be translated into a Pi `null` capability.
     level_map: dict[str, str | None] = {}
-    if "max" in declared_levels:
-        level_map["xhigh"] = "max"
-    elif "xhigh" in declared_levels:
+    if "xhigh" in declared_levels:
         level_map["xhigh"] = "xhigh"
+    if "max" in declared_levels:
+        level_map["max"] = "max"
     return True, level_map
 
 
@@ -200,9 +200,7 @@ def _sanitize_thinking_level_map(value: Mapping[object, object]) -> dict[str, st
     result: dict[str, str | None] = {}
     for raw_level, raw_mapping in value.items():
         level = str(raw_level).strip().lower()
-        if level == "max":
-            level = "xhigh"
-        if level not in {"off", "minimal", "low", "medium", "high", "xhigh"}:
+        if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
             continue
         if raw_mapping is None:
             result[level] = None

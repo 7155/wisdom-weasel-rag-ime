@@ -217,6 +217,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SUGGESTION_CACHE_SIZE"], "32")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RAG_DIRECT_DISPLAY"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PI_ENABLED"], "0")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AGENT_GATEWAY_ENABLED"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_KNOWLEDGE_SHARED_WORKER"], "1")
+
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IDLE_MS"], "180")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS"], "3")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S"], "6")
@@ -243,6 +247,68 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn("while (( SECONDS < health_deadline )); do", script_source)
         self.assertNotIn("for _attempt in {1..20}", script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
+
+    def test_install_agent_gateway_dry_run_uses_managed_runtime_and_scrubs_source_overrides(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-agent-gateway-launchd-") as tmp:
+            home = Path(tmp)
+            app_support = home / "Library" / "Application Support" / "RagIme"
+            app_code = app_support / "app"
+            (app_code / "rag_ime").mkdir(parents=True)
+            wrapper = app_code / "sidecar_launch.py"
+            wrapper.write_text("raise SystemExit(0)\n", encoding="utf-8")
+            runtime_root = app_support / "PiRuntime"
+            runtime_root.mkdir()
+            (runtime_root / "current.json").write_text("{}\n", encoding="utf-8")
+
+            launch_agents = home / "Library" / "LaunchAgents"
+            launch_agents.mkdir(parents=True)
+            side_plist = launch_agents / "com.rag-ime.sidecar.plist"
+            with side_plist.open("wb") as handle:
+                plistlib.dump(
+                    {
+                        "ProgramArguments": [sys.executable],
+                        "EnvironmentVariables": {
+                            "RAG_IME_PI_EXECUTABLE": "/source/pi/dist/cli.js",
+                            "RAG_IME_PI_NODE": "/source/node",
+                            "RAG_IME_PI_EXTENSION": "/source/rag-ime-control.ts",
+                            "RAG_IME_PI_PROTOCOL_VERSION": "1",
+                            "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                        },
+                    },
+                    handle,
+                )
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "RAG_IME_APP_SUPPORT_DIR": str(app_support),
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_agent_gateway_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            gateway_plist = launch_agents / "com.rag-ime.agent-gateway.plist"
+            with gateway_plist.open("rb") as handle:
+                payload = plistlib.load(handle)
+
+        self.assertIn("dry-run", result.stdout)
+        self.assertEqual(payload["Label"], "com.rag-ime.agent-gateway")
+        self.assertIn("agent-gateway", payload["ProgramArguments"])
+        launch_env = payload["EnvironmentVariables"]
+        self.assertEqual(launch_env["RAG_IME_PI_ENABLED"], "1")
+        self.assertEqual(launch_env["RAG_IME_PI_VERSION"], "0.80.7")
+        self.assertEqual(launch_env["RAG_IME_AGENT_TOOL_URL"], "http://127.0.0.1:8768/api/agent/tool/execute")
+        self.assertEqual(launch_env["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
+        self.assertNotIn("RAG_IME_PI_EXECUTABLE", launch_env)
+        self.assertNotIn("RAG_IME_PI_NODE", launch_env)
+        self.assertNotIn("RAG_IME_PI_EXTENSION", launch_env)
+        self.assertNotIn("RAG_IME_PI_PROTOCOL_VERSION", launch_env)
 
     def test_restart_runtime_script_defaults_to_foreground_rag_profile(self) -> None:
         root = Path(__file__).resolve().parents[1]

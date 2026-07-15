@@ -45,6 +45,7 @@ class ManagedPiRuntimeInstallation:
     extension_path: Path
     tools: tuple[str, ...]
     manifest_sha256: str
+    protocol_version: str = "1"
 
 
 def discover_managed_pi_runtime(
@@ -169,6 +170,7 @@ def build_managed_pi_runtime_manifest(
     source_repository: str,
     source_commit: str,
     source_package: str,
+    protocol_version: str = "1",
 ) -> dict[str, object]:
     root = Path(payload_dir).expanduser().resolve(strict=True)
     if not root.is_dir() or root.is_symlink():
@@ -213,6 +215,7 @@ def build_managed_pi_runtime_manifest(
         "schemaVersion": MANIFEST_SCHEMA_VERSION,
         "runtimeVersion": version,
         "piVersion": str(pi_version).strip(),
+        "runtimeProtocolVersion": _protocol_version(protocol_version),
         "platform": _current_platform(),
         "architecture": _current_architecture(),
         "launchKind": launch_kind,
@@ -339,6 +342,7 @@ def _load_installation(
         extension_path=extension,
         tools=_validate_tools(manifest.get("tools")),
         manifest_sha256=actual_manifest_sha256,
+        protocol_version=_protocol_version(manifest.get("runtimeProtocolVersion") or "1"),
     )
 
 
@@ -351,6 +355,7 @@ def _validate_manifest(manifest: Mapping[str, object]) -> None:
     if not str(manifest.get("piVersion") or "").strip():
         raise ManagedPiRuntimeError("managed Pi manifest piVersion is empty")
     _validate_tools(manifest.get("tools"))
+    _protocol_version(manifest.get("runtimeProtocolVersion") or "1")
     source = manifest.get("source")
     if not isinstance(source, Mapping) or any(
         not str(source.get(key) or "").strip() for key in ("repository", "commit", "package")
@@ -367,6 +372,13 @@ def _validate_manifest(manifest: Mapping[str, object]) -> None:
             raise ManagedPiRuntimeError("managed Pi manifest file size is invalid")
         if not isinstance(item.get("executable"), bool):
             raise ManagedPiRuntimeError("managed Pi manifest executable flag is invalid")
+
+
+def _protocol_version(value: object) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in {"1", "2"}:
+        raise ManagedPiRuntimeError("managed Pi runtimeProtocolVersion must be 1 or 2")
+    return normalized
 
 
 def _manifest_file_items(manifest: Mapping[str, object]) -> list[Mapping[str, object]]:

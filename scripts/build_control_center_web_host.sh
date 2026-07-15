@@ -84,6 +84,7 @@ xcrun swiftc \
   -swift-version 5 \
   -target arm64-apple-macosx13.0 \
   -framework AppKit \
+  -framework LocalAuthentication \
   -framework Security \
   -framework UniformTypeIdentifiers \
   -framework WebKit \

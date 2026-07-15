@@ -22,10 +22,13 @@ export interface AgentSessionV1 {
   title: string;
   mode: 'assistant' | 'coordinator';
   status: 'idle' | 'active' | 'busy' | 'faulted' | 'archived';
+  sessionKind?: 'conversation' | 'subagent_runtime';
   roleId: string;
   roleVersion: string;
   modelProfile: string;
   toolProfileVersion: string;
+  toolAllowlistMode?: 'profile' | 'explicit';
+  allowedTools?: string[];
   createdAtMs: number;
   updatedAtMs: number;
   lastOpenedAtMs?: number;

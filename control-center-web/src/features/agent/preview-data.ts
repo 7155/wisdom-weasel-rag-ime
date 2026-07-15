@@ -13,7 +13,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     version: '1',
     displayName: '智鼬·此刻',
     tagline: '此刻陪你输入，也陪你把事情想清楚',
-    summary: '时间线里的当下陪伴者，默认亲和 5.6 Terra，适合回顾、检索和日常整理。',
+    summary: '处在此刻阶段的陪伴者，表达温暖清晰，适合回顾、检索和日常整理。',
     traits: ['温暖', '证据优先'],
     visualProfile: {
       avatarAssetId: 'rag-ime-timeline-present-v1',
@@ -21,7 +21,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       accentToken: 'teal',
     },
     defaults: {
-      modelPolicy: 'affinity-5.6-terra',
+      modelPolicy: 'session-selected',
       memoryPolicy: 'personal-evidence-v1',
       toolProfileVersion: 'control-center-v1',
     },
@@ -34,7 +34,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     version: '1',
     displayName: '智鼬·初识',
     tagline: '从第一笔记录开始，认真认识你的世界',
-    summary: '时间线里的幼年见习记录者，默认亲和 5.6 Luna，适合轻快地认识现状并留下下一步。',
+    summary: '处在初识阶段的见习记录者，表达好奇轻快，适合认识现状并留下下一步。',
     traits: ['好奇', '记录优先'],
     visualProfile: {
       avatarAssetId: 'rag-ime-timeline-past-v1',
@@ -42,7 +42,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       accentToken: 'blue',
     },
     defaults: {
-      modelPolicy: 'affinity-5.6-luna',
+      modelPolicy: 'session-selected',
       memoryPolicy: 'personal-evidence-v1',
       toolProfileVersion: 'control-center-v1',
     },
@@ -55,7 +55,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     version: '1',
     displayName: '智鼬·未来',
     tagline: '把记忆、工具与协作构筑成下一步',
-    summary: '时间线里的长成态 Agent 构筑者，默认亲和 5.6 Sol，适合稳定地串联资料、角色与工具关系。',
+    summary: '处在构筑阶段的 Agent 构筑者，表达沉稳务实，适合串联资料、角色与工具关系。',
     traits: ['沉稳', '工具编排'],
     visualProfile: {
       avatarAssetId: 'rag-ime-timeline-future-v1',
@@ -63,7 +63,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       accentToken: 'rose',
     },
     defaults: {
-      modelPolicy: 'affinity-5.6-sol',
+      modelPolicy: 'session-selected',
       memoryPolicy: 'personal-evidence-v1',
       toolProfileVersion: 'control-center-v1',
     },

@@ -183,6 +183,14 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "ime_plugins",
+        "domain": "agents",
+        "displayName": "插件制作与安装",
+        "description": "制作、校验并提交插件安装提议；最终应用必须由用户在控制中心批准",
+        "operations": ("list", "create_draft", "validate", "propose_install"),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "workspace_list",
         "domain": "workspace",
         "displayName": "工作区浏览",
@@ -297,6 +305,7 @@ class ControlToolGateway:
         workspace_harness: WorkspaceHarness | None = None,
         delegation: object | None = None,
         collaboration: object | None = None,
+        extensions: object | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -307,8 +316,56 @@ class ControlToolGateway:
         self.workspace_harness = workspace_harness or WorkspaceHarness()
         self.delegation = delegation
         self.collaboration = collaboration
+        self.extensions = extensions
 
-    def manifests(self) -> dict[str, object]:
+    def manifests(self, *, session_id: str = "") -> dict[str, object]:
+        session = self.sessions.get(session_id) if session_id else None
+        manifests = self._manifest_items(session)
+        response: dict[str, object] = {
+            "schemaVersion": "rag-ime.control-tool-list.v1",
+            "ok": True,
+            "items": manifests,
+        }
+        if session is not None:
+            response["sessionPolicy"] = {
+                "sessionId": session["id"],
+                "mode": session["mode"],
+                "toolProfileVersion": session["toolProfileVersion"],
+                "toolAllowlistMode": session.get("toolAllowlistMode", "profile"),
+                "allowedTools": list(session.get("allowedTools") or []),
+            }
+        return response
+
+    def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
+        manifests: list[Mapping[str, object]] = []
+        for manifest in self._manifest_items(session):
+            if manifest.get("enabled") is not True:
+                continue
+            operations = list(manifest.get("effectiveOperations") or [])
+            manifests.append(
+                {
+                    "name": manifest["id"],
+                    "description": manifest["description"],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "op": {"type": "string", "enum": operations},
+                        },
+                        "required": ["op"],
+                        # Operation-specific arguments stay backend-validated so the
+                        # runtime host never becomes a second product schema authority.
+                        "additionalProperties": True,
+                    },
+                    "profile": session.get("toolProfileVersion") or "control-center-v1",
+                    "risk": manifest.get("riskLevel") or "R0",
+                }
+            )
+        return manifests
+
+    def _manifest_items(
+        self,
+        session: Mapping[str, object] | None,
+    ) -> list[dict[str, object]]:
         manifests = []
         for spec in _TOOL_SPECS:
             operations = list(spec["operations"])
@@ -332,12 +389,45 @@ class ControlToolGateway:
                 "version": "1",
             }
             validate_contract(manifest, "control-tool-manifest.v1.json")
+            if session is not None:
+                mode_compatible = str(session.get("mode") or "assistant") in manifest["sessionModes"]
+                manifest["profileOperations"] = {
+                    profile: [
+                        operation
+                        for operation in operations
+                        if _tool_profile_allows(
+                            {
+                                **session,
+                                "toolProfileVersion": profile,
+                                "toolAllowlistMode": "profile",
+                                "allowedTools": [],
+                            },
+                            tool=str(spec["id"]),
+                            operation=operation,
+                            spec=spec,
+                        )
+                    ]
+                    for profile in ("control-center-v1", "subagent-readonly-v1")
+                }
+                effective_operations = [
+                    operation
+                    for operation in operations
+                    if mode_compatible
+                    and _tool_profile_allows(
+                        session,
+                        tool=str(spec["id"]),
+                        operation=operation,
+                        spec=spec,
+                    )
+                ]
+                manifest["enabled"] = bool(effective_operations)
+                manifest["effectiveOperations"] = effective_operations
+                manifest["explicitlyAllowed"] = (
+                    str(session.get("toolAllowlistMode") or "profile") != "explicit"
+                    or str(spec["id"]) in {str(value) for value in session.get("allowedTools") or []}
+                )
             manifests.append(manifest)
-        return {
-            "schemaVersion": "rag-ime.control-tool-list.v1",
-            "ok": True,
-            "items": manifests,
-        }
+        return manifests
 
     def execute(self, payload: Mapping[str, object]) -> dict[str, object]:
         request = dict(payload)
@@ -370,6 +460,7 @@ class ControlToolGateway:
             "ime_runtime": self._runtime,
             "ime_configuration": self._configuration,
             "ime_agents": self._agents,
+            "ime_plugins": self._plugins,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
         if risk_level == "R0":
@@ -402,6 +493,27 @@ class ControlToolGateway:
         }
         validate_contract(response, "agent-tool-result.v1.json")
         return response
+
+    def _plugins(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if self.extensions is None:
+            raise ValueError("managed plugin lifecycle is unavailable")
+        if operation == "list":
+            return dict(self.extensions.list())  # type: ignore[attr-defined]
+        if operation == "create_draft":
+            return dict(self.extensions.create_draft(args))  # type: ignore[attr-defined]
+        if operation == "validate":
+            return dict(self.extensions.validate(args))  # type: ignore[attr-defined]
+        if operation == "propose_install":
+            return dict(
+                self.extensions.preview(  # type: ignore[attr-defined]
+                    {
+                        "action": "install",
+                        "validationToken": args.get("validationToken"),
+                        "enable": args.get("enable") is True,
+                    }
+                )
+            )
+        raise ValueError("unsupported ime_plugins operation")
 
     def _agents(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation in {"catalog", "delegate", "status", "artifact", "abort"} and self.delegation is None:
@@ -3523,6 +3635,11 @@ def _tool_profile_allows(
     operation: str,
     spec: Mapping[str, object],
 ) -> bool:
+    if (
+        str(session.get("toolAllowlistMode") or "profile") == "explicit"
+        and tool not in {str(value) for value in session.get("allowedTools") or []}
+    ):
+        return False
     profile = str(session.get("toolProfileVersion") or "control-center-v1")
     if profile in {"control-center-v1", "subagent-worker-v1"}:
         return True

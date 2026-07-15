@@ -18,8 +18,8 @@ export interface AgentModelSelectionV1 {
      * @minItems 1
      */
     thinkingLevels: [
-      'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh',
-      ...('off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh')[],
+      'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+      ...('off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max')[],
     ];
     supportsImages: boolean;
     contextWindow: number;

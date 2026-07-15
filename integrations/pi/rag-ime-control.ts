@@ -8,6 +8,8 @@ const gatewayToken = process.env.RAG_IME_AGENT_TOOL_TOKEN ?? "";
 const sessionId = process.env.RAG_IME_AGENT_SESSION_ID ?? "";
 const sessionMode = process.env.RAG_IME_AGENT_SESSION_MODE ?? "assistant";
 const toolProfileVersion = process.env.RAG_IME_AGENT_TOOL_PROFILE_VERSION ?? "control-center-v1";
+const reviewTitlePrefix = "RAG-IME-REVIEW:";
+const resolvedReviewRunIds = new Set<string>();
 
 type ToolParams = {
   op: string;
@@ -252,7 +254,7 @@ const toolSpecs: ToolSpec[] = [
     guidelines: [
       "当前连续会话没有相关证据，或证据已过期、冲突、主题变化时，先用 catalog 查找相关 Book、Group 和 Tag；已有足够且仍有效的前文证据时直接复用，不要每轮机械重复检索。",
       "需要详细证据时再用 read；需要近期上下文时用 recent；不要在回答正文显示内部 ID 或 [L:...] 标签。",
-      "maintenance_preview 只生成或复用草案，不会应用；先用 maintenance_review 逐项说明变更，再请求 maintenance_apply。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
+      "maintenance_preview 和 maintenance_review 会立即暂停当前回合并打开控制中心审阅；恢复后只简要说明审阅结果并结束本轮，不要再次调用记忆维护工具。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
       "应用或回滚只能使用 maintenance_status/maintenance_preview 返回的真实 runId，不能猜测内部 ID。",
     ],
   },
@@ -669,6 +671,41 @@ export default function (pi: any) {
           ? prepareNativeForkContext(ctx, forkCount)
           : undefined;
         const result = await callGateway(spec.name, toolCallId, params, signal, runtimeContext);
+        if (result.reviewRequired === true) {
+          const run = (result.run ?? {}) as Record<string, unknown>;
+          const runId = String(run.runId ?? result.runId ?? "");
+          if (!runId || !ctx?.ui?.confirm) {
+            throw new Error("native review bridge is unavailable");
+          }
+          if (resolvedReviewRunIds.has(runId)) {
+            return {
+              content: [{ type: "text", text: JSON.stringify({
+                summary: "这份记忆草案已经完成或暂缓审阅，不要重复调用记忆维护工具；请直接结束本轮。",
+                reviewState: "already_resolved",
+                runId,
+              }) }],
+              details: { ...result, reviewState: "already_resolved", runId },
+            };
+          }
+          const reviewed = await ctx.ui.confirm(
+            `${reviewTitlePrefix}${runId}`,
+            "记忆草案已经生成，请在控制中心逐项审阅。完成或暂缓后，本轮会自动收尾。",
+            { timeout: 600000 },
+          );
+          resolvedReviewRunIds.add(runId);
+          if (resolvedReviewRunIds.size > 128) {
+            const oldest = resolvedReviewRunIds.values().next().value;
+            if (typeof oldest === "string") resolvedReviewRunIds.delete(oldest);
+          }
+          const reviewState = reviewed ? "reviewed" : "deferred";
+          const summary = reviewed
+            ? "控制中心已完成本次草案审阅。本轮不要继续调用记忆维护工具，请简要确认后结束。"
+            : "用户暂缓了本次草案审阅，未应用变更。本轮不要继续调用记忆维护工具，请简要确认后结束。";
+          return {
+            content: [{ type: "text", text: JSON.stringify({ summary, reviewState, runId }) }],
+            details: { ...result, reviewState, runId },
+          };
+        }
         if (result.approvalRequired === true) {
           const approval = (result.approval ?? {}) as Record<string, unknown>;
           const approvalId = String(approval.approvalId ?? result.approvalId ?? "");
@@ -678,7 +715,7 @@ export default function (pi: any) {
           const confirmed = await ctx.ui.confirm(
             `RAG-IME-APPROVAL:${approvalId}`,
             "请在控制中心核对差异并决定是否继续。",
-            { timeout: 60000 },
+            { timeout: 600000 },
           );
           let resolved: Record<string, unknown> | undefined;
           try {

@@ -367,10 +367,8 @@ describe('InputMethodFeature', () => {
     });
     renderFeature(transport);
 
-    await user.selectOptions(
-      await screen.findByLabelText('预测出现时的数字键'),
-      'select_prediction',
-    );
+    await user.click(await screen.findByRole('combobox', { name: '预测出现时的数字键' }));
+    await user.click(await screen.findByRole('option', { name: '选择对应的续写候选' }));
     const candidateCount = screen.getByLabelText('续写候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');

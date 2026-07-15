@@ -28,6 +28,7 @@ describe('AgentComposer macOS input methods', () => {
             onPickAttachments={() => {}}
             onPasteImages={() => {}}
             onToolSelect={() => {}}
+            onProductCommand={() => {}}
             onSend={onSend}
             onStop={() => {}}
             onModeChange={() => {}}
@@ -80,6 +81,7 @@ describe('AgentComposer macOS input methods', () => {
           onPickAttachments={() => {}}
           onPasteImages={() => {}}
           onToolSelect={() => {}}
+          onProductCommand={() => {}}
           onSend={() => {}}
           onStop={() => {}}
           onModeChange={() => {}}

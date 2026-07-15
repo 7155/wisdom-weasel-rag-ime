@@ -44,7 +44,8 @@ describe('History WorkContract UI', () => {
     const user = userEvent.setup();
     const transport = renderHistory();
     await screen.findByRole('heading', { name: '输入历史', level: 1 });
-    await user.selectOptions(await screen.findByRole('combobox', { name: '记录' }), '81');
+    await user.click(await screen.findByRole('combobox', { name: '记录' }));
+    await user.click(await screen.findByRole('option', { name: /完成了/ }));
     const workflow = screen.getByText('隐藏记录', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 

@@ -29,9 +29,11 @@ SELECT
     b.generation AS runtime_generation,
     b.binding_state AS runtime_binding_state,
     b.created_at_ms AS runtime_binding_created_at_ms,
-    b.updated_at_ms AS runtime_binding_updated_at_ms
+    b.updated_at_ms AS runtime_binding_updated_at_ms,
+    tp.allowed_tools_json AS allowed_tools_json
 FROM agent_sessions AS s
 LEFT JOIN agent_runtime_bindings AS b ON b.session_id = s.id
+LEFT JOIN agent_session_tool_policies AS tp ON tp.session_id = s.id
 """
 
 
@@ -55,6 +57,7 @@ class AgentSessionStore:
         tool_profile_version: str = "control-center-v1",
         workspace_roots: Iterable[str] = (),
         shell_policy_version: str | None = None,
+        session_kind: str = "conversation",
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         if mode not in {"assistant", "coordinator"}:
@@ -65,6 +68,9 @@ class AgentSessionStore:
         roots = _workspace_roots(workspace_roots)
         if mode == "assistant" and roots:
             raise ValueError("assistant sessions cannot carry workspace roots")
+        normalized_kind = str(session_kind or "").strip()
+        if normalized_kind not in {"conversation", "subagent_runtime"}:
+            raise ValueError("agent session kind must be conversation or subagent_runtime")
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         session_id = f"agent:{uuid.uuid4()}"
         shell_policy = shell_policy_version or (
@@ -76,8 +82,8 @@ class AgentSessionStore:
                 INSERT INTO agent_sessions(
                     id, title, session_mode, role_id, role_version, model_profile,
                     tool_profile_version, workspace_roots_json, shell_policy_version,
-                    created_at_ms, updated_at_ms, last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                    session_kind, created_at_ms, updated_at_ms, last_opened_at_ms, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -89,6 +95,7 @@ class AgentSessionStore:
                     tool_profile_version,
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     shell_policy,
+                    normalized_kind,
                     timestamp,
                     timestamp,
                     timestamp,
@@ -116,8 +123,11 @@ class AgentSessionStore:
         bounded_limit = max(1, min(int(limit), 500))
         clauses = [] if include_archived else ["s.status <> 'archived'"]
         if not include_internal:
-            clauses.append(
-                "s.id NOT IN (SELECT child_session_id FROM agent_subagent_runs)"
+            clauses.extend(
+                [
+                    "s.session_kind = 'conversation'",
+                    "s.id NOT IN (SELECT child_session_id FROM agent_subagent_runs)",
+                ]
             )
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
@@ -338,6 +348,72 @@ class AgentSessionStore:
         )
         return self.get(session_id)
 
+    def set_runtime_policy(
+        self,
+        session_id: str,
+        *,
+        mode: str,
+        tool_profile_version: str,
+        allowed_tools: Iterable[str] | None,
+        workspace_roots: Iterable[str] | None = None,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized_mode = str(mode or "").strip()
+        if normalized_mode not in {"assistant", "coordinator"}:
+            raise ValueError("agent session mode must be assistant or coordinator")
+        profile = str(tool_profile_version or "").strip()
+        if profile not in {"control-center-v1", "subagent-readonly-v1"}:
+            raise ValueError("unsupported Agent tool profile")
+        current = self.get(session_id)
+        roots = _workspace_roots(
+            current.get("workspaceRoots", []) if workspace_roots is None else workspace_roots
+        )
+        if normalized_mode == "assistant":
+            roots = []
+        normalized_tools = _allowed_tools(allowed_tools)
+        shell_policy = (
+            "coordinator-per-command-v1"
+            if normalized_mode == "coordinator"
+            else "assistant-no-shell-v1"
+        )
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_sessions
+                SET session_mode = ?, tool_profile_version = ?, workspace_roots_json = ?,
+                    shell_policy_version = ?, updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (
+                    normalized_mode,
+                    profile,
+                    json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
+                    shell_policy,
+                    timestamp,
+                    session_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionNotFound(session_id)
+            conn.execute(
+                """
+                INSERT INTO agent_session_tool_policies(session_id, allowed_tools_json, updated_at_ms)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    allowed_tools_json = excluded.allowed_tools_json,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    session_id,
+                    json.dumps(normalized_tools, ensure_ascii=False, separators=(",", ":"))
+                    if normalized_tools is not None
+                    else "null",
+                    timestamp,
+                ),
+            )
+        return self.get(session_id)
+
     def archive(self, session_id: str, *, archived: bool = True, updated_at_ms: int | None = None) -> dict[str, object]:
         timestamp = _timestamp(updated_at_ms)
         if archived:
@@ -353,6 +429,67 @@ class AgentSessionStore:
                 (timestamp,),
             )
         return self.get(session_id)
+
+    def retire_internal(
+        self,
+        session_id: str,
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Make a delegated runtime identity non-resumable without deleting its audit owner."""
+
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            owned = conn.execute(
+                "SELECT 1 FROM agent_subagent_runs WHERE child_session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if owned is None:
+                raise ValueError("only delegated runtime sessions can be retired")
+            conn.execute(
+                "DELETE FROM agent_runtime_bindings WHERE session_id = ?",
+                (session_id,),
+            )
+            cursor = conn.execute(
+                """
+                UPDATE agent_sessions
+                SET session_kind = 'subagent_runtime', status = 'archived',
+                    pi_session_id = '', session_file = '', workspace_roots_json = '[]',
+                    last_message_preview = '', archived_at_ms = ?, updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (timestamp, timestamp, session_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionNotFound(session_id)
+        return self.get(session_id)
+
+    def destroy_internal(self, session_id: str) -> dict[str, object]:
+        """Delete an expired delegated Session while leaving its run projection intact."""
+
+        session = self.get(session_id)
+        with self._connect() as conn:
+            owned = conn.execute(
+                """
+                SELECT state FROM agent_subagent_runs
+                WHERE child_session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if owned is None:
+                raise ValueError("only delegated runtime sessions can be destroyed")
+            if str(owned["state"]) not in {"completed", "failed", "aborted", "timed_out"}:
+                raise ValueError("active delegated runtime sessions cannot be destroyed")
+            cursor = conn.execute(
+                """
+                DELETE FROM agent_sessions
+                WHERE id = ? AND session_kind = 'subagent_runtime'
+                """,
+                (session_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("only internal subagent sessions can be destroyed")
+        return session
 
     def delete(self, session_id: str) -> dict[str, object]:
         session = self.get(session_id)
@@ -722,6 +859,7 @@ def _session_payload(
     runtime_binding: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     roots = json.loads(str(row["workspace_roots_json"] or "[]"))
+    allowed_tools = _stored_allowed_tools(row["allowed_tools_json"])
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-session.v1",
         "id": str(row["id"]),
@@ -730,10 +868,13 @@ def _session_payload(
         "title": str(row["title"]),
         "mode": str(row["session_mode"]),
         "status": str(row["status"]),
+        "sessionKind": str(row["session_kind"]),
         "roleId": str(row["role_id"]),
         "roleVersion": str(row["role_version"]),
         "modelProfile": str(row["model_profile"]),
         "toolProfileVersion": str(row["tool_profile_version"]),
+        "toolAllowlistMode": "explicit" if allowed_tools is not None else "profile",
+        "allowedTools": allowed_tools or [],
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
         "lastOpenedAtMs": int(row["last_opened_at_ms"]),
@@ -831,6 +972,35 @@ def _workspace_roots(values: Iterable[str]) -> list[str]:
         if normalized not in roots:
             roots.append(normalized)
     return roots
+
+
+def _allowed_tools(values: Iterable[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+    if isinstance(values, (str, bytes)):
+        raise ValueError("allowedTools must be an array")
+    tools: list[str] = []
+    for value in values:
+        tool = str(value or "").strip()
+        if not tool or len(tool) > 120 or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for character in tool):
+            raise ValueError("allowedTools contains an invalid tool id")
+        if tool not in tools:
+            tools.append(tool)
+    if len(tools) > 100:
+        raise ValueError("allowedTools contains too many tool ids")
+    return tools
+
+
+def _stored_allowed_tools(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(str(value or "null"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    return [str(item) for item in parsed if str(item).strip()]
 
 
 def _timestamp(value: int | None) -> int:
