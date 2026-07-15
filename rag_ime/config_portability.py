@@ -515,9 +515,18 @@ def _provider_errors(slot_name: str, slot: Mapping[str, object]) -> list[str]:
     if slot_name in {"instant", "knowledge"}:
         unknown = set(slot) - _PROVIDER_KEYS
         errors.extend(f"unknown providers.{slot_name} field: {key}" for key in sorted(unknown))
-        endpoint = compact_whitespace(str(slot.get("endpoint") or ""))
-        if endpoint and not endpoint.lower().startswith(("http://", "https://")):
-            errors.append(f"providers.{slot_name}.endpoint must use http or https")
+        if "endpoint" in slot:
+            endpoint = compact_whitespace(str(slot.get("endpoint") or ""))
+            try:
+                parsed = urlsplit(endpoint)
+                hostname = parsed.hostname
+            except ValueError:
+                hostname = None
+                parsed = None
+            if parsed is None or parsed.scheme.lower() not in {"http", "https"} or not hostname:
+                errors.append(
+                    f"providers.{slot_name}.endpoint must be a complete http or https URL"
+                )
     else:
         allowed = {
             "provider", "appID", "accessToken", "resourceID", "endpoint",

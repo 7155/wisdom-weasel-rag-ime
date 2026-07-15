@@ -83,8 +83,7 @@ enum ModelProviderConfigStore {
 
     static func saveInstant(_ slot: InstantCompletionSlot, preservingKey: Bool = true) throws {
         let previous = loadInstant()
-        try validateURL(slot.endpoint, allowedSchemes: ["http", "https"])
-        try validateHeaders(slot.headersJSON)
+        try validateInstant(slot)
         let key = preservingKey && slot.apiKey.isEmpty ? previous.apiKey : slot.apiKey
         if !key.isEmpty { try writeSecret(key, account: instantKeyAccount) }
         try writeEnv([
@@ -97,8 +96,7 @@ enum ModelProviderConfigStore {
 
     static func saveKnowledge(_ slot: KnowledgeProviderSlot, preservingKey: Bool = true) throws {
         let previous = loadKnowledge()
-        try validateURL(slot.endpoint, allowedSchemes: ["http", "https"])
-        try validateHeaders(slot.headersJSON)
+        try validateKnowledge(slot)
         let key = preservingKey && slot.apiKey.isEmpty ? previous.apiKey : slot.apiKey
         if !key.isEmpty { try writeSecret(key, account: knowledgeKeyAccount) }
         try writeEnv([
@@ -108,6 +106,16 @@ enum ModelProviderConfigStore {
             "RAG_IME_KNOWLEDGE_EXTRA_HEADERS_JSON": compactJSON(slot.headersJSON),
             "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
         ], to: knowledgeURL)
+    }
+
+    static func validateInstant(_ slot: InstantCompletionSlot) throws {
+        try validateURL(slot.endpoint, allowedSchemes: ["http", "https"])
+        try validateHeaders(slot.headersJSON)
+    }
+
+    static func validateKnowledge(_ slot: KnowledgeProviderSlot) throws {
+        try validateURL(slot.endpoint, allowedSchemes: ["http", "https"])
+        try validateHeaders(slot.headersJSON)
     }
 
     private static func readEnv(_ url: URL) -> [String: String] {

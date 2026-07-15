@@ -37,6 +37,30 @@ class NativeMemoryProviderUIContractTests(unittest.TestCase):
         self.assertIn("原配置尚未改动", page)
         self.assertNotIn("即时补全仅允许本机或局域网地址", page)
 
+    def test_provider_ui_validates_local_fields_before_backend_apply(self) -> None:
+        page = (ROOT / "macos/RagImeControl/Pages/RagAndModelsPage.swift").read_text(
+            encoding="utf-8"
+        )
+        store = (ROOT / "macos/Shared/ModelProviderConfigStore.swift").read_text(
+            encoding="utf-8"
+        )
+
+        instant_save = page[page.index("private func saveInstantSlot() async") :]
+        instant_save = instant_save[: instant_save.index("private func saveKnowledgeSlot() async")]
+        knowledge_save = page[page.index("private func saveKnowledgeSlot() async") :]
+        knowledge_save = knowledge_save[: knowledge_save.index("@ViewBuilder")]
+
+        self.assertLess(
+            instant_save.index("ModelProviderConfigStore.validateInstant(slot)"),
+            instant_save.index("model.applyProviderConfiguration("),
+        )
+        self.assertLess(
+            knowledge_save.index("ModelProviderConfigStore.validateKnowledge(slot)"),
+            knowledge_save.index("model.applyProviderConfiguration("),
+        )
+        self.assertIn("static func validateInstant(_ slot: InstantCompletionSlot) throws", store)
+        self.assertIn("static func validateKnowledge(_ slot: KnowledgeProviderSlot) throws", store)
+
     def test_provider_metadata_has_every_non_optional_swift_decode_field(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-provider-ui-") as temporary:
             support = Path(temporary)

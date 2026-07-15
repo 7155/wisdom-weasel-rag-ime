@@ -315,19 +315,21 @@ struct RagAndModelsPage: View {
         providerSaveBusy = true
         defer { providerSaveBusy = false }
         do {
+            let slot = InstantCompletionSlot(
+                provider: instantProvider,
+                endpoint: instantEndpoint,
+                model: instantModel,
+                apiKey: instantAPIKey,
+                headersJSON: instantHeaders
+            )
+            try ModelProviderConfigStore.validateInstant(slot)
             guard let applied = await model.applyProviderConfiguration(
                 slot: "instant",
                 provider: instantProvider.rawValue,
                 endpoint: instantEndpoint,
                 model: instantModel
             ) else { return }
-            try ModelProviderConfigStore.saveInstant(.init(
-                provider: instantProvider,
-                endpoint: instantEndpoint,
-                model: instantModel,
-                apiKey: instantAPIKey,
-                headersJSON: instantHeaders
-            ))
+            try ModelProviderConfigStore.saveInstant(slot)
             instantAPIKey = ""
             instantKeyConfigured = ModelProviderConfigStore.loadInstant().apiKey.isEmpty == false
             providerSaveMessage = applied.existingSecretPreserved
@@ -346,19 +348,21 @@ struct RagAndModelsPage: View {
         providerSaveBusy = true
         defer { providerSaveBusy = false }
         do {
+            let slot = KnowledgeProviderSlot(
+                provider: knowledgeProvider,
+                endpoint: knowledgeEndpoint,
+                model: knowledgeModel,
+                apiKey: knowledgeAPIKey,
+                headersJSON: knowledgeHeaders
+            )
+            try ModelProviderConfigStore.validateKnowledge(slot)
             guard let applied = await model.applyProviderConfiguration(
                 slot: "knowledge",
                 provider: knowledgeProvider.rawValue,
                 endpoint: knowledgeEndpoint,
                 model: knowledgeModel
             ) else { return }
-            try ModelProviderConfigStore.saveKnowledge(.init(
-                provider: knowledgeProvider,
-                endpoint: knowledgeEndpoint,
-                model: knowledgeModel,
-                apiKey: knowledgeAPIKey,
-                headersJSON: knowledgeHeaders
-            ))
+            try ModelProviderConfigStore.saveKnowledge(slot)
             knowledgeAPIKey = ""
             knowledgeKeyConfigured = ModelProviderConfigStore.loadKnowledge().apiKey.isEmpty == false
             providerSaveMessage = applied.existingSecretPreserved
