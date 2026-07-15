@@ -260,6 +260,16 @@ def _canonicalize_input_events(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE input_events ADD COLUMN {name} {declaration}")
 
 
+def _migrate_agent_identity_column(conn: sqlite3.Connection) -> None:
+    """Add the Agent identity column before the identity migration uses it."""
+
+    if not _table_exists(conn, "agent_sessions"):
+        return
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(agent_sessions)")}
+    if "agent_id" not in columns:
+        conn.execute("ALTER TABLE agent_sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''")
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -271,4 +281,5 @@ _MIGRATION_HOOKS: dict[int, MigrationHook] = {
     1: _canonicalize_memory_feedback_events,
     3: _migrate_context_group_columns,
     7: _canonicalize_input_events,
+    29: _migrate_agent_identity_column,
 }
