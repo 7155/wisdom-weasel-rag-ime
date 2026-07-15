@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, GitBranch, Network, RefreshCw, Search } from 'lucide-react';
+import { Expand, ExternalLink, GitBranch, Minimize2, Network, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Virtuoso } from 'react-virtuoso';
-import { Button, EmptyState, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
+import { Button, EmptyState, IconButton, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
 import type { ControlTransport } from '@/platform/transport';
 import {
@@ -50,6 +51,8 @@ export function KnowledgeGraphPanel({
   const [showStructure, setShowStructure] = useState(false);
   const [extractorMode, setExtractorMode] = useState<KnowledgeGraphExtractorMode>('model');
   const [selection, setSelection] = useState<Selection>(null);
+  const [focusMode, setFocusMode] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(true);
   const debouncedQuery = useDebouncedValue(query.trim(), 300);
   const filters = useMemo(() => ({
     documentId: documentId === 'all' ? undefined : documentId,
@@ -73,22 +76,39 @@ export function KnowledgeGraphPanel({
   const selectedEdge = selection?.type === 'edge' ? graph?.edges.find((edge) => edge.id === selection.id) ?? null : null;
 
   useEffect(() => setSelection(null), [base.id, debouncedQuery, depth, documentId, excludeChunks, kind, limit]);
+  useEffect(() => {
+    if (!focusMode) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFocusMode(false);
+        setSettingsOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [focusMode]);
 
-  return (
-    <div className="knowledge-panel knowledge-graph">
+  const panel = (
+    <div aria-label="知识图谱工作区" className="knowledge-panel knowledge-graph" data-focus={focusMode || undefined}>
       <div className="knowledge-graph__toolbar">
         <div className="knowledge-graph__search"><Search aria-hidden="true" size={14} /><Input aria-label="搜索图谱" onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点、主题或实体" value={query} /></div>
         <Select aria-label="材料范围" onValueChange={setDocumentId} options={[{ value: 'all', label: '全部材料' }, ...documents.map((document) => ({ value: document.id, label: document.name }))]} value={documentId} />
         <Select aria-label="节点类型" onValueChange={setKind} options={KIND_OPTIONS} value={kind} />
         <SegmentedControl aria-label="图谱显示方式" items={[{ value: 'graph', label: <><Network size={13} />图谱</> }, { value: 'nodes', label: '节点' }, { value: 'edges', label: '关系' }, { value: 'status', label: '构建状态' }]} onValueChange={setView} value={view} />
-        <Button disabled={rebuilding} leadingIcon={<RefreshCw className={rebuilding ? 'ui-spin' : ''} size={14} />} loading={rebuild.isPending} onClick={() => rebuild.mutate()} size="small">重建图谱</Button>
+        <div className="knowledge-graph__toolbar-actions">
+          <IconButton icon={<SlidersHorizontal size={14} />} label={settingsOpen ? '收起图谱设置' : '展开图谱设置'} onClick={() => setSettingsOpen((value) => !value)} size="small" tooltip />
+          <IconButton icon={focusMode ? <Minimize2 size={14} /> : <Expand size={14} />} label={focusMode ? '退出专注查看' : '专注查看图谱'} onClick={() => { const next = !focusMode; setFocusMode(next); setSettingsOpen(!next); }} size="small" tooltip />
+          <Button disabled={rebuilding} leadingIcon={<RefreshCw className={rebuilding ? 'ui-spin' : ''} size={14} />} loading={rebuild.isPending} onClick={() => rebuild.mutate()} size="small">重建图谱</Button>
+        </div>
       </div>
-      <div className="knowledge-graph__settings" aria-label="图谱加载设置">
-        <label><span>节点上限</span><Select aria-label="节点上限" onValueChange={setLimit} options={['50', '80', '100', '200', '500', '1000'].map((value) => ({ value, label: value }))} value={limit} /></label>
-        <label><span>搜索深度</span><Select aria-label="搜索深度" onValueChange={setDepth} options={['1', '2', '3', '4', '5'].map((value) => ({ value, label: `${value} 层` }))} value={depth} /></label>
-        <label><span>抽取方式</span><Select aria-label="图谱抽取方式" onValueChange={(value) => setExtractorMode(value as KnowledgeGraphExtractorMode)} options={[{ value: 'model', label: '模型抽取（推荐）' }, { value: 'deterministic', label: '确定性规则（降级）' }]} value={extractorMode} /></label>
-        <Switch checked={excludeChunks} label="隐藏片段节点" onCheckedChange={setExcludeChunks} />
-        <Switch checked={showStructure} label="显示结构关系" onCheckedChange={setShowStructure} />
+      <div className="knowledge-graph__settings" aria-label="图谱加载设置" data-collapsed={!settingsOpen || undefined}>
+        {settingsOpen ? <>
+          <label><span>节点上限</span><Select aria-label="节点上限" onValueChange={setLimit} options={['50', '80', '100', '200', '500', '1000'].map((value) => ({ value, label: value }))} value={limit} /></label>
+          <label><span>搜索深度</span><Select aria-label="搜索深度" onValueChange={setDepth} options={['1', '2', '3', '4', '5'].map((value) => ({ value, label: `${value} 层` }))} value={depth} /></label>
+          <label><span>抽取方式</span><Select aria-label="图谱抽取方式" onValueChange={(value) => setExtractorMode(value as KnowledgeGraphExtractorMode)} options={[{ value: 'model', label: '模型抽取（推荐）' }, { value: 'deterministic', label: '确定性规则（降级）' }]} value={extractorMode} /></label>
+          <Switch checked={excludeChunks} label="隐藏片段节点" onCheckedChange={setExcludeChunks} />
+          <Switch checked={showStructure} label="显示结构关系" onCheckedChange={setShowStructure} />
+        </> : null}
         <span className="knowledge-graph__status"><StatusBadge label={graphStatusLabel(graph?.status, graphQuery.isFetching)} tone={graph?.status === 'failed' ? 'danger' : graph?.status === 'stale' ? 'warning' : 'success'} />{graph?.updatedAtMs ? `更新于 ${formatTime(graph.updatedAtMs)}` : '等待图谱数据'}</span>
       </div>
       {rebuild.data ? <InlineNotice title="图谱重建已提交" tone="info">任务 {rebuild.data.jobId || '已进入队列'} · {rebuild.data.status}</InlineNotice> : null}
@@ -97,7 +117,7 @@ export function KnowledgeGraphPanel({
       {graph ? <GraphStats graph={graph} /> : null}
       {graphQuery.isPending ? <p className="knowledge-detail-loading">正在加载知识图谱…</p> : null}
       {graph && (graph.nodes.length || view === 'status') ? (
-        <div className="knowledge-graph__workspace">
+        <div className="knowledge-graph__workspace" data-has-selection={Boolean(selection) || undefined}>
           {view === 'graph' ? <InteractiveGraphCanvas edges={canvasEdges} nodes={canvasNodes} onSelect={setSelection} selection={selection} /> : null}
           {view === 'nodes' ? <GraphList mode="nodes" edges={graph.edges} nodes={graph.nodes} onSelect={setSelection} selection={selection} /> : null}
           {view === 'edges' ? <GraphList mode="edges" edges={graph.edges} nodes={graph.nodes} onSelect={setSelection} selection={selection} /> : null}
@@ -107,6 +127,7 @@ export function KnowledgeGraphPanel({
       ) : graph && !graphQuery.isPending ? <EmptyState action={<Button onClick={() => setView('status')} size="small">查看构建状态</Button>} description="调整材料、类型、深度或节点上限后再试。" icon={GitBranch} title="当前范围没有图谱节点" /> : null}
     </div>
   );
+  return focusMode ? createPortal(panel, document.body) : panel;
 }
 
 function GraphStats({ graph }: { graph: NonNullable<ReturnType<typeof useKnowledgeGraphQuery>['data']> }) {
@@ -125,10 +146,11 @@ function GraphBuildStatus({ base, extractorMode, graph, onRebuild, rebuilding }:
 }
 
 function GraphInspector({ edge, edges, node, nodes, onOpenSource, onSelect }: { edge: KnowledgeGraphEdge | null; edges: readonly KnowledgeGraphEdge[]; node: KnowledgeGraphNode | null; nodes: readonly KnowledgeGraphNode[]; onOpenSource: (node: KnowledgeGraphNode) => void; onSelect: (selection: Selection) => void }) {
-  if (!node && !edge) return <aside className="knowledge-graph__inspector"><EmptyState description="可查看摘录、关系和材料来源。" icon={Network} title="选择一个节点或关系" /></aside>;
-  if (edge) return <aside className="knowledge-graph__inspector"><span className="knowledge-graph-kind" data-kind="edge">关系</span><h3>{edge.label || edge.kind}</h3><dl><div><dt>起点</dt><dd>{nodeName(nodes, edge.source)}</dd></div><div><dt>终点</dt><dd>{nodeName(nodes, edge.target)}</dd></div><div><dt>类型</dt><dd>{edge.kind}</dd></div><div><dt>权重</dt><dd>{score(edge.weight)}</dd></div></dl></aside>;
+  if (!node && !edge) return null;
+  const close = <IconButton className="knowledge-graph__inspector-close" icon={<X size={14} />} label="关闭图谱详情" onClick={() => onSelect(null)} size="small" tooltip />;
+  if (edge) return <aside aria-label="关系详情" className="knowledge-graph__inspector">{close}<span className="knowledge-graph-kind" data-kind="edge">关系</span><h3>{edge.label || edge.kind}</h3><dl><div><dt>起点</dt><dd>{nodeName(nodes, edge.source)}</dd></div><div><dt>终点</dt><dd>{nodeName(nodes, edge.target)}</dd></div><div><dt>类型</dt><dd>{edge.kind}</dd></div><div><dt>权重</dt><dd>{score(edge.weight)}</dd></div></dl></aside>;
   const related = edges.filter((candidate) => candidate.source === node!.id || candidate.target === node!.id).slice(0, 8);
-  return <aside className="knowledge-graph__inspector"><span className="knowledge-graph-kind" data-kind={node?.kind}>{kindLabel(node!.kind)}</span><h3>{node!.label}</h3><p>{node!.excerpt || '该节点没有可显示的摘录。'}</p><dl><div><dt>材料</dt><dd>{node!.documentName || '跨文档概念'}</dd></div><div><dt>标题</dt><dd>{node!.heading || '未记录'}</dd></div><div><dt>页码</dt><dd>{node!.page ?? '未记录'}</dd></div><div><dt>权重</dt><dd>{score(node!.weight)}</dd></div></dl>{related.length ? <section className="knowledge-graph__evidence"><header><strong>关联证据</strong><span>{related.length}</span></header>{related.map((relation) => <button key={relation.id} onClick={() => onSelect({ type: 'edge', id: relation.id })} type="button"><span>{relation.label || relation.kind}</span><small>{nodeName(nodes, relation.source === node!.id ? relation.target : relation.source)}</small></button>)}</section> : null}{node!.documentId ? <Button leadingIcon={<ExternalLink size={14} />} onClick={() => onOpenSource(node!)} size="small" variant="primary">打开材料来源</Button> : null}</aside>;
+  return <aside aria-label="节点详情" className="knowledge-graph__inspector">{close}<span className="knowledge-graph-kind" data-kind={node?.kind}>{kindLabel(node!.kind)}</span><h3>{node!.label}</h3><p>{node!.excerpt || '该节点没有可显示的摘录。'}</p><dl><div><dt>材料</dt><dd>{node!.documentName || '跨文档概念'}</dd></div><div><dt>标题</dt><dd>{node!.heading || '未记录'}</dd></div><div><dt>页码</dt><dd>{node!.page ?? '未记录'}</dd></div><div><dt>权重</dt><dd>{score(node!.weight)}</dd></div></dl>{related.length ? <section className="knowledge-graph__evidence"><header><strong>关联证据</strong><span>{related.length}</span></header>{related.map((relation) => <button key={relation.id} onClick={() => onSelect({ type: 'edge', id: relation.id })} type="button"><span>{relation.label || relation.kind}</span><small>{nodeName(nodes, relation.source === node!.id ? relation.target : relation.source)}</small></button>)}</section> : null}{node!.documentId ? <Button leadingIcon={<ExternalLink size={14} />} onClick={() => onOpenSource(node!)} size="small" variant="primary">打开材料来源</Button> : null}</aside>;
 }
 
 function nodeName(nodes: readonly KnowledgeGraphNode[], id: string) { return nodes.find((node) => node.id === id)?.label ?? id; }

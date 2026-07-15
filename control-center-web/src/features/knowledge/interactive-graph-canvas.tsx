@@ -1,5 +1,5 @@
 import type { Graph } from '@antv/g6';
-import { LocateFixed, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
+import { LocateFixed, Scan, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { IconButton } from '@/components/primitives';
 import type { KnowledgeGraphEdge, KnowledgeGraphNode, KnowledgeGraphNodeKind } from './api';
@@ -61,14 +61,14 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
         node: {
           type: 'circle',
           style: {
-            size: (datum) => Math.min(18 + Number(datum.data?.degree ?? 0) * 2.4, 42),
+            size: (datum) => Math.min(20 + Number(datum.data?.degree ?? 0) * 2.4, 44),
             fill: (datum) => kindColor(String(datum.data?.kind), style),
             stroke: cssColor(style, '--color-surface', '#fff'),
             lineWidth: 1.5,
             opacity: .94,
             labelText: (datum) => truncate(String(datum.data?.label ?? datum.id), 24),
             labelFill: cssColor(style, '--color-text-secondary', '#526159'),
-            labelFontSize: 10,
+            labelFontSize: 11,
             labelPlacement: 'bottom',
             labelMaxWidth: 126,
             labelWordWrap: true,
@@ -176,7 +176,7 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
       <div className="knowledge-graph__canvas-controls" aria-label="图谱视口控制">
         <IconButton icon={<ZoomIn size={15} />} label="放大图谱" onClick={() => invoke((graph) => graph.zoomBy(1.25, { duration: 120 }))} size="small" tooltip />
         <IconButton icon={<ZoomOut size={15} />} label="缩小图谱" onClick={() => invoke((graph) => graph.zoomBy(.8, { duration: 120 }))} size="small" tooltip />
-        <IconButton icon={<Maximize2 size={15} />} label="适应全部节点" onClick={() => invoke((graph) => graph.fitView({}, { duration: 180 }))} size="small" tooltip />
+        <IconButton icon={<Scan size={15} />} label="适应全部节点" onClick={() => invoke((graph) => graph.fitView({}, { duration: 180 }))} size="small" tooltip />
         <IconButton disabled={selection?.type !== 'node'} icon={<LocateFixed size={15} />} label="聚焦所选节点" onClick={() => selection?.type === 'node' && invoke((graph) => graph.focusElement(selection.id, { duration: 180 }))} size="small" tooltip />
       </div>
       <GraphLegend nodes={nodes} />
