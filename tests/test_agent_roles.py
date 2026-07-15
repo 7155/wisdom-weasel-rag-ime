@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from rag_ime.agent_roles import agent_role, agent_role_catalog
+from rag_ime.agent_roles import agent_role, agent_role_catalog, persona_model_profile
 
 
 class AgentRoleTests(unittest.TestCase):
@@ -39,6 +39,10 @@ class AgentRoleTests(unittest.TestCase):
         self.assertEqual(
             [item["defaults"]["modelPolicy"] for item in catalog],
             ["affinity-5.6-terra", "affinity-5.6-luna", "affinity-5.6-sol"],
+        )
+        self.assertEqual(
+            [persona_model_profile(item) for item in roles],
+            ["gpt/gpt-5.6-terra", "gpt/gpt-5.6-luna", "gpt/gpt-5.6-sol"],
         )
         self.assertEqual(catalog[2]["visualProfile"]["accentToken"], "rose")
 

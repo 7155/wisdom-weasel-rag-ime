@@ -399,7 +399,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
         self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
 
-    def test_timeline_persona_aliases_do_not_become_pi_api_models(self) -> None:
+    def test_timeline_persona_models_remain_exact_pi_api_models(self) -> None:
         provider_path = self.root / "timeline-provider.json"
         provider_path.write_text(
             json.dumps(
@@ -411,10 +411,6 @@ class PiRuntimeTests(unittest.TestCase):
                                 "apiKey": "gpt-test-secret",
                             },
                             "models": {
-                                "gpt-5.6": {
-                                    "name": "GPT-5.6 (Sol)",
-                                    "variants": {"low": {}, "high": {}, "max": {}},
-                                },
                                 "gpt-5.6-luna": {"name": "GPT-5.6 Luna"},
                                 "gpt-5.6-terra": {"name": "GPT-5.6 Terra"},
                                 "gpt-5.6-sol": {"name": "GPT-5.6 Sol"},
@@ -428,9 +424,14 @@ class PiRuntimeTests(unittest.TestCase):
 
         bundle = load_pi_provider_config(provider_path)
         models = bundle.providers["gpt"]["models"]
-        self.assertEqual([model["id"] for model in models], ["gpt-5.6"])
-        self.assertEqual(models[0]["name"], "GPT-5.6")
-        self.assertEqual(models[0]["thinkingLevelMap"], {"xhigh": "max"})
+        self.assertEqual(
+            [model["id"] for model in models],
+            ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+        )
+        self.assertEqual(
+            [model["name"] for model in models],
+            ["GPT-5.6 Luna", "GPT-5.6 Terra", "GPT-5.6 Sol"],
+        )
 
         with mock.patch.dict(
             os.environ,
@@ -445,15 +446,15 @@ class PiRuntimeTests(unittest.TestCase):
             clear=True,
         ), mock.patch("rag_ime.pi_runtime.load_deepseek_config", return_value=None):
             config = PiRuntimeConfig.from_environment()
-        self.assertEqual(config.model, "gpt-5.6")
+        self.assertEqual(config.model, "gpt-5.6-luna")
 
         legacy_session = self.store.create(
-            title="legacy luna",
-            model_profile="gpt/gpt-5.6-luna",
+            title="legacy family alias",
+            model_profile="gpt/gpt-5.6",
         )
         command = config.launch_command(session=legacy_session)
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
-        self.assertEqual(command[command.index("--model") + 1], "gpt-5.6")
+        self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-terra")
 
     def test_imported_provider_input_capability_honors_explicit_model_metadata(self) -> None:
         provider_path = self.root / "provider-input-capabilities.json"

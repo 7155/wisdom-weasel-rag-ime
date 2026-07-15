@@ -175,14 +175,12 @@ _VCP_V1 = PersonaManifest(
 _PERSONAS = (_ZHIYOU_V1, _HERMES_V1, _VCP_V1)
 _ROLES = {(persona.role_id, persona.version): persona for persona in _PERSONAS}
 _MODEL_PROFILE_BY_POLICY = {
-    # Luna, Terra and Sol are Persona timelines, not provider model IDs. Pi
-    # passes a custom model ID to the upstream API verbatim, so inventing
-    # suffixed IDs here makes an otherwise valid gateway reject the request.
-    # Keep the timeline affinity in the Persona manifest while all three use
-    # the canonical Pi model selected for this family.
-    "affinity-5.6-luna": "gpt/gpt-5.6",
-    "affinity-5.6-terra": "gpt/gpt-5.6",
-    "affinity-5.6-sol": "gpt/gpt-5.6",
+    # These are upstream model IDs advertised by the configured provider.
+    # Keep the Persona affinity and Pi selection aligned instead of replacing
+    # three real models with a fabricated family-level alias.
+    "affinity-5.6-luna": "gpt/gpt-5.6-luna",
+    "affinity-5.6-terra": "gpt/gpt-5.6-terra",
+    "affinity-5.6-sol": "gpt/gpt-5.6-sol",
 }
 
 

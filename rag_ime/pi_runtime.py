@@ -25,7 +25,7 @@ from .agent_runtime_driver import (
     RuntimeDriverContext,
     SessionContextProvider,
 )
-from .agent_roles import PersonaManifest, agent_role
+from .agent_roles import PersonaManifest, agent_role, persona_model_profile
 from .agent_sessions import AgentSessionStore
 from .agent_templates import agent_template
 from .deepseek_config import load_deepseek_config
@@ -276,14 +276,25 @@ class PiRuntimeConfig:
         session_provider, session_model = _split_model_reference(session.get("modelProfile"))
         selected_provider = session_provider or self.provider
         selected_model = session_model or self.model
-        return (
-            selected_provider,
-            _canonical_configured_model_id(
-                selected_provider,
-                selected_model,
-                self.model_providers,
-            ),
-        )
+        configured_ids = _configured_model_ids(self.model_providers.get(selected_provider))
+        if configured_ids and selected_model not in configured_ids:
+            try:
+                persona = self.role_resolver(
+                    session.get("roleId") or "zhiyou-v1",
+                    session.get("roleVersion") or "1",
+                )
+                persona_provider, persona_model = _split_model_reference(
+                    persona_model_profile(persona)
+                )
+            except ValueError:
+                persona_provider, persona_model = "", ""
+            if persona_provider == selected_provider and persona_model in configured_ids:
+                selected_model = persona_model
+            elif self.provider == selected_provider and self.model in configured_ids:
+                selected_model = self.model
+            else:
+                selected_model = configured_ids[0]
+        return selected_provider, selected_model
 
     def child_environment(self, *, session: Mapping[str, object] | None = None) -> dict[str, str]:
         allowed = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -1740,31 +1751,6 @@ def _split_model_reference(value: object) -> tuple[str, str]:
     return provider, model
 
 
-def _canonical_configured_model_id(
-    provider: str,
-    model_id: str,
-    providers: Mapping[str, Mapping[str, object]],
-) -> str:
-    """Migrate product timeline aliases to a Pi/API model that really exists."""
-
-    match = re.fullmatch(r"(gpt-5\.6)-(?:luna|terra|sol)", model_id, flags=re.IGNORECASE)
-    if not match:
-        return model_id
-    provider_config = providers.get(provider)
-    if not isinstance(provider_config, Mapping):
-        return model_id
-    raw_models = provider_config.get("models")
-    if not isinstance(raw_models, list):
-        return model_id
-    base_id = match.group(1)
-    configured_ids = {
-        str(value.get("id") or "").strip()
-        for value in raw_models
-        if isinstance(value, Mapping)
-    }
-    return base_id if base_id in configured_ids else model_id
-
-
 def _model_reference_part(value: object, *, field: str, maximum: int) -> str:
     normalized = str(value or "").strip()
     if not normalized or len(normalized) > maximum:
@@ -1885,7 +1871,9 @@ def _pi_model_configuration_from_environment() -> tuple[
         model = explicit_model or deepseek_model
     else:
         model = explicit_model or _first_provider_model(providers.get(provider)) or imported_first_model
-    model = _canonical_configured_model_id(provider, model, providers)
+    configured_ids = _configured_model_ids(providers.get(provider))
+    if configured_ids and model not in configured_ids:
+        model = configured_ids[0]
 
     if not providers:
         error = imported_error or deepseek_error or "尚未配置 Pi 对话模型"
@@ -1946,6 +1934,21 @@ def _first_provider_model(provider: Mapping[str, object] | None) -> str:
         return ""
     first = models[0]
     return str(first.get("id") or "").strip() if isinstance(first, Mapping) else ""
+
+
+def _configured_model_ids(provider: Mapping[str, object] | None) -> list[str]:
+    if not isinstance(provider, Mapping):
+        return []
+    raw_models = provider.get("models")
+    if not isinstance(raw_models, list):
+        return []
+    return [
+        model_id
+        for value in raw_models
+        if isinstance(value, Mapping)
+        for model_id in [str(value.get("id") or "").strip()]
+        if model_id
+    ]
 
 
 def _env_bool(name: str, default: bool) -> bool:

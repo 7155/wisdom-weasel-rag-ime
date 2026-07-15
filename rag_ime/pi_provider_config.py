@@ -123,22 +123,10 @@ def _remote_base_url(value: object) -> str:
 def _models(value: object) -> list[dict[str, object]]:
     if not isinstance(value, dict):
         return []
-    declared_ids = {str(raw_id).strip() for raw_id in value}
-    timeline_aliases = {
-        model_id: base_id
-        for model_id in declared_ids
-        for base_id in [_timeline_alias_base(model_id)]
-        if base_id and base_id in declared_ids
-    }
     models: list[dict[str, object]] = []
     for raw_id, raw_model in value.items():
         model_id = str(raw_id).strip()
         if not _MODEL_ID_PATTERN.fullmatch(model_id):
-            continue
-        # Product timeline names describe a Persona. They are not additional
-        # upstream API models. When the same config contains the canonical
-        # base model, only expose that Pi-owned model to the runtime.
-        if model_id in timeline_aliases:
             continue
         definition = raw_model if isinstance(raw_model, dict) else {}
         limit = definition.get("limit") if isinstance(definition.get("limit"), dict) else {}
@@ -147,8 +135,6 @@ def _models(value: object) -> list[dict[str, object]]:
         reasoning, thinking_level_map = _reasoning_capabilities(definition)
         input_modalities = _input_modalities(model_id, definition)
         model_name = str(definition.get("name") or model_id).strip()[:160] or model_id
-        if model_id in timeline_aliases.values():
-            model_name = _neutral_timeline_model_name(model_name)
         model: dict[str, object] = {
             "id": model_id,
             "name": model_name,
@@ -162,18 +148,6 @@ def _models(value: object) -> list[dict[str, object]]:
             model["thinkingLevelMap"] = thinking_level_map
         models.append(model)
     return models
-
-
-def _timeline_alias_base(model_id: str) -> str:
-    """Return the canonical API model for a product-only timeline alias."""
-
-    match = re.fullmatch(r"(gpt-5\.6)-(?:luna|terra|sol)", model_id, flags=re.IGNORECASE)
-    return match.group(1) if match else ""
-
-
-def _neutral_timeline_model_name(value: str) -> str:
-    normalized = re.sub(r"\s*\((?:luna|terra|sol)\)\s*$", "", value, flags=re.IGNORECASE)
-    return normalized.strip() or value
 
 
 def _reasoning_capabilities(

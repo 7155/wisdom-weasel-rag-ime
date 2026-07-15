@@ -191,7 +191,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "hermes-v1")
         self.assertEqual(created["roleVersion"], "1")
-        self.assertEqual(created["modelProfile"], "gpt/gpt-5.6")
+        self.assertEqual(created["modelProfile"], "gpt/gpt-5.6-luna")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "hermes-v1")
@@ -243,7 +243,7 @@ class AgentServiceTests(unittest.TestCase):
         )["session"]
         self.assertEqual(session["roleId"], created_role["roleId"])
         self.assertEqual(session["roleVersion"], "1")
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-terra")
         self.assertEqual(session["toolProfileVersion"], "control-center-v1")
 
         room = self.service.create_room(
@@ -280,8 +280,8 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "gpt/gpt-5.6")
-        self.assertEqual(target_session["modelProfile"], "gpt/gpt-5.6")
+        self.assertEqual(source_session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(target_session["modelProfile"], "gpt/gpt-5.6-sol")
         item = {
             "id": "room-message:test",
             "kind": "ask",
