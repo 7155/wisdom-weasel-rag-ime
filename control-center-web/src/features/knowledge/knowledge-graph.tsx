@@ -99,8 +99,8 @@ export function KnowledgeGraphPanel({
         <Select aria-label="节点类型" onValueChange={setKind} options={KIND_OPTIONS} value={kind} />
         <SegmentedControl aria-label="图谱显示方式" items={[{ value: 'graph', label: <><Network size={13} />图谱</> }, { value: 'nodes', label: '节点' }, { value: 'edges', label: '关系' }, { value: 'status', label: '构建状态' }]} onValueChange={setView} value={view} />
         <div className="knowledge-graph__toolbar-actions">
-          <IconButton icon={<SlidersHorizontal size={14} />} label={settingsOpen ? '收起图谱设置' : '展开图谱设置'} onClick={() => setSettingsOpen((value) => !value)} size="small" tooltip />
-          {!focusMode ? <IconButton icon={<Expand size={14} />} label="专注查看图谱" onClick={() => { setFocusMode(true); setSettingsOpen(false); }} size="small" tooltip /> : null}
+          <Button aria-pressed={settingsOpen} leadingIcon={<SlidersHorizontal size={14} />} onClick={() => setSettingsOpen((value) => !value)} size="small" variant="quiet">{settingsOpen ? '收起设置' : '展开设置'}</Button>
+          {!focusMode ? <Button leadingIcon={<Expand size={14} />} onClick={() => { setFocusMode(true); setSettingsOpen(false); }} size="small" variant="quiet">专注查看</Button> : null}
           <Button disabled={rebuilding} leadingIcon={<RefreshCw className={rebuilding ? 'ui-spin' : ''} size={14} />} loading={rebuild.isPending} onClick={() => rebuild.mutate()} size="small">重建图谱</Button>
         </div>
       </div>

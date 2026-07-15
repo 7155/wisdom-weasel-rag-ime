@@ -1,7 +1,7 @@
 import type { Graph } from '@antv/g6';
 import { LocateFixed, Scan, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { IconButton } from '@/components/primitives';
+import { Button } from '@/components/primitives';
 import type { KnowledgeGraphEdge, KnowledgeGraphNode, KnowledgeGraphNodeKind } from './api';
 
 export type GraphSelection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null;
@@ -169,15 +169,16 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
     const graph = graphRef.current;
     if (graph) void action(graph);
   };
+  const ready = readyVersion > 0;
 
   return (
     <div className="knowledge-graph__canvas" aria-label="交互式知识图谱画布" data-ready={readyVersion > 0 || undefined} data-renderer="g6">
       <div className="knowledge-graph__g6" ref={containerRef} />
       <div className="knowledge-graph__canvas-controls" aria-label="图谱视口控制">
-        <IconButton icon={<ZoomIn size={15} />} label="放大图谱" onClick={() => invoke((graph) => graph.zoomBy(1.25, { duration: 120 }))} size="small" tooltip />
-        <IconButton icon={<ZoomOut size={15} />} label="缩小图谱" onClick={() => invoke((graph) => graph.zoomBy(.8, { duration: 120 }))} size="small" tooltip />
-        <IconButton icon={<Scan size={15} />} label="适应全部节点" onClick={() => invoke((graph) => graph.fitView({}, { duration: 180 }))} size="small" tooltip />
-        <IconButton disabled={selection?.type !== 'node'} icon={<LocateFixed size={15} />} label="聚焦所选节点" onClick={() => selection?.type === 'node' && invoke((graph) => graph.focusElement(selection.id, { duration: 180 }))} size="small" tooltip />
+        <Button disabled={!ready} leadingIcon={<ZoomIn size={14} />} onClick={() => invoke((graph) => graph.zoomBy(1.25, { duration: 120 }))} size="small" title={ready ? '放大图谱' : '图谱正在加载'} variant="quiet">放大</Button>
+        <Button disabled={!ready} leadingIcon={<ZoomOut size={14} />} onClick={() => invoke((graph) => graph.zoomBy(.8, { duration: 120 }))} size="small" title={ready ? '缩小图谱' : '图谱正在加载'} variant="quiet">缩小</Button>
+        <Button disabled={!ready} leadingIcon={<Scan size={14} />} onClick={() => invoke((graph) => graph.fitView({}, { duration: 180 }))} size="small" title={ready ? '让全部节点适应当前画布' : '图谱正在加载'} variant="quiet">适应画布</Button>
+        <Button disabled={!ready || selection?.type !== 'node'} leadingIcon={<LocateFixed size={14} />} onClick={() => selection?.type === 'node' && invoke((graph) => graph.focusElement(selection.id, { duration: 180 }))} size="small" title={selection?.type === 'node' ? '把所选节点移到画布中心' : '请先选择一个节点'} variant="quiet">定位节点</Button>
       </div>
       <GraphLegend nodes={nodes} />
     </div>
