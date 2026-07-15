@@ -11,7 +11,10 @@
 .knowledge-graph { display: grid; min-height: 620px; align-content: start; container-name: knowledge-graph; container-type: inline-size; }
 .knowledge-graph[data-focus] { position: fixed; z-index: 130; inset: 0; min-height: 0; overflow: auto; background: var(--color-surface); align-content: start; }
 .knowledge-graph__toolbar { display: grid; align-items: center; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--color-border); grid-template-columns: minmax(220px, 1fr) minmax(150px, 210px) 150px auto auto; }
+.knowledge-graph__search-group { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
+.knowledge-graph__focus-back { flex: 0 0 auto; }
 .knowledge-graph__search { position: relative; min-width: 0; }
+.knowledge-graph__search-group .knowledge-graph__search { flex: 1 1 auto; }
 .knowledge-graph__search > svg { position: absolute; z-index: 1; top: 50%; left: 10px; color: var(--color-text-tertiary); transform: translateY(-50%); }
 .knowledge-graph__search .ui-input { padding-left: 32px; }
 .knowledge-graph__toolbar .ui-segmented { min-width: 124px; }
@@ -91,7 +94,7 @@
 
 @container knowledge-graph (max-width: 560px) {
   .knowledge-graph__toolbar { grid-template-columns: 1fr 1fr; }
-  .knowledge-graph__search, .knowledge-graph__toolbar .ui-segmented { grid-column: 1 / -1; }
+  .knowledge-graph__search-group, .knowledge-graph__toolbar .ui-segmented { grid-column: 1 / -1; }
   .knowledge-graph__toolbar-actions { grid-column: 1 / -1; grid-row: auto; justify-content: flex-end; }
   .knowledge-graph__canvas, .knowledge-graph__list { height: 560px; }
   .knowledge-graph__inspector { top: auto; left: var(--space-3); max-height: min(360px, 52%); width: auto; }
@@ -102,7 +105,7 @@
 }
 @media (max-width: 760px) {
   .knowledge-graph__toolbar { grid-template-columns: 1fr 1fr; }
-  .knowledge-graph__search, .knowledge-graph__toolbar .ui-segmented { grid-column: 1 / -1; }
+  .knowledge-graph__search-group, .knowledge-graph__toolbar .ui-segmented { grid-column: 1 / -1; }
   .knowledge-graph__toolbar-actions { grid-column: 1 / -1; grid-row: auto; justify-content: flex-end; }
   .knowledge-graph__settings { align-items: flex-start; flex-wrap: wrap; }
   .knowledge-graph__status { width: 100%; margin-left: 0; }

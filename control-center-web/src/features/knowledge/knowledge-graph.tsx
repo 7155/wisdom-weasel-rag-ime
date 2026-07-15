@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Expand, ExternalLink, GitBranch, Minimize2, Network, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowLeft, Expand, ExternalLink, GitBranch, Network, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Virtuoso } from 'react-virtuoso';
@@ -91,13 +91,16 @@ export function KnowledgeGraphPanel({
   const panel = (
     <div aria-label="知识图谱工作区" className="knowledge-panel knowledge-graph" data-focus={focusMode || undefined}>
       <div className="knowledge-graph__toolbar">
-        <div className="knowledge-graph__search"><Search aria-hidden="true" size={14} /><Input aria-label="搜索图谱" onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点、主题或实体" value={query} /></div>
+        <div className="knowledge-graph__search-group">
+          {focusMode ? <Button className="knowledge-graph__focus-back" leadingIcon={<ArrowLeft size={14} />} onClick={() => { setFocusMode(false); setSettingsOpen(true); }} size="small" variant="quiet">返回知识库</Button> : null}
+          <div className="knowledge-graph__search"><Search aria-hidden="true" size={14} /><Input aria-label="搜索图谱" onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点、主题或实体" value={query} /></div>
+        </div>
         <Select aria-label="材料范围" onValueChange={setDocumentId} options={[{ value: 'all', label: '全部材料' }, ...documents.map((document) => ({ value: document.id, label: document.name }))]} value={documentId} />
         <Select aria-label="节点类型" onValueChange={setKind} options={KIND_OPTIONS} value={kind} />
         <SegmentedControl aria-label="图谱显示方式" items={[{ value: 'graph', label: <><Network size={13} />图谱</> }, { value: 'nodes', label: '节点' }, { value: 'edges', label: '关系' }, { value: 'status', label: '构建状态' }]} onValueChange={setView} value={view} />
         <div className="knowledge-graph__toolbar-actions">
           <IconButton icon={<SlidersHorizontal size={14} />} label={settingsOpen ? '收起图谱设置' : '展开图谱设置'} onClick={() => setSettingsOpen((value) => !value)} size="small" tooltip />
-          <IconButton icon={focusMode ? <Minimize2 size={14} /> : <Expand size={14} />} label={focusMode ? '退出专注查看' : '专注查看图谱'} onClick={() => { const next = !focusMode; setFocusMode(next); setSettingsOpen(!next); }} size="small" tooltip />
+          {!focusMode ? <IconButton icon={<Expand size={14} />} label="专注查看图谱" onClick={() => { setFocusMode(true); setSettingsOpen(false); }} size="small" tooltip /> : null}
           <Button disabled={rebuilding} leadingIcon={<RefreshCw className={rebuilding ? 'ui-spin' : ''} size={14} />} loading={rebuild.isPending} onClick={() => rebuild.mutate()} size="small">重建图谱</Button>
         </div>
       </div>

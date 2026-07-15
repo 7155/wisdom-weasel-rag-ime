@@ -279,7 +279,12 @@ describe('document knowledge library', () => {
     expect(screen.getByRole('button', { name: '适应全部节点' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '专注查看图谱' }));
     expect(screen.getByLabelText('知识图谱工作区')).toHaveAttribute('data-focus', 'true');
+    expect(screen.getByRole('button', { name: '返回知识库' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: '节点上限' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '返回知识库' }));
+    expect(screen.getByLabelText('知识图谱工作区')).not.toHaveAttribute('data-focus');
+    expect(screen.getByRole('combobox', { name: '节点上限' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '专注查看图谱' }));
     await user.keyboard('{Escape}');
     expect(screen.getByLabelText('知识图谱工作区')).not.toHaveAttribute('data-focus');
     expect(screen.getByRole('combobox', { name: '节点上限' })).toBeInTheDocument();
