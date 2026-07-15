@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleDashed,
   Database,
+  ExternalLink,
   GitBranch,
   Search,
   ShieldAlert,
@@ -137,12 +138,17 @@ function ActivityRow({
           <strong>{presentation.title}</strong>
           <small>{activity.kind === 'reasoning_summary' ? '正在整理信息与下一步' : toolView?.summary ?? visibleSummary}</small>
         </span>
-        <i data-status={activity.status}>{statusLabel(activity.status)}</i>
+        <i data-status={activity.status}>{toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}{statusLabel(activity.status)}</i>
       </summary>
       <div className="agent-activity-row__details">
         {presentation.detail ? <p>{presentation.detail}</p> : null}
         {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
         <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
+        {toolView?.destination ? (
+          <a className="agent-tool-destination" href={toolView.destination.href}>
+            {toolView.destination.label}<ExternalLink size={13} aria-hidden="true" />
+          </a>
+        ) : null}
         {canDecide ? (
           <div className="agent-activity-row__approval-actions">
             <Button size="small" variant="quiet" onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}>拒绝</Button>
@@ -208,7 +214,7 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   if (toolId.includes('runtime') || toolId.includes('workspace')) {
     return { title: '运行环境', kind: 'runtime', icon: toolId.includes('workspace') ? TerminalSquare : Database };
   }
-  if (toolId.includes('planning')) return { title: '规划', kind: 'tool', icon: Bot };
+  if (toolId.includes('planning') || toolId === 'agent_plan') return { title: toolId === 'agent_plan' ? '当前回合计划' : '规划', kind: 'tool', icon: Bot };
   return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
 }
 

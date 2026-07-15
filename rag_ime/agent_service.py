@@ -754,7 +754,10 @@ class AgentService:
             session = self.sessions.rename(session_id, str(payload.get("title") or ""))
         if "archived" in payload:
             session = self.sessions.archive(session_id, archived=_bool(payload.get("archived")))
-        if any(key in payload for key in ("mode", "toolProfileVersion", "allowedTools")):
+        if any(
+            key in payload
+            for key in ("mode", "toolProfileVersion", "toolAllowlistMode", "allowedTools")
+        ):
             requested_mode = str(payload.get("mode") or session.get("mode") or "").strip()
             role = self.personas.resolve(session["roleId"], session["roleVersion"])
             if requested_mode not in role.selectable_modes:
@@ -776,7 +779,16 @@ class AgentService:
             ).strip()
             if requested_profile not in {"control-center-v1", "subagent-readonly-v1"}:
                 raise ValueError("unsupported Agent tool profile")
-            if "allowedTools" in payload:
+            requested_allowlist_mode = str(
+                payload.get("toolAllowlistMode")
+                or ("explicit" if "allowedTools" in payload else session.get("toolAllowlistMode"))
+                or "profile"
+            ).strip()
+            if requested_allowlist_mode not in {"profile", "explicit"}:
+                raise ValueError("unsupported Agent tool allowlist mode")
+            if requested_allowlist_mode == "profile":
+                allowed_tools = None
+            elif "allowedTools" in payload:
                 raw_allowed_tools = payload.get("allowedTools")
                 if not isinstance(raw_allowed_tools, list):
                     raise ValueError("allowedTools must be an array")
@@ -791,7 +803,7 @@ class AgentService:
                 allowed_tools = (
                     [str(value) for value in session.get("allowedTools") or []]
                     if session.get("toolAllowlistMode") == "explicit"
-                    else None
+                    else []
                 )
             if requested_mode == "assistant" and any(
                 tool_id.startswith("workspace_") for tool_id in allowed_tools or []
@@ -851,6 +863,83 @@ class AgentService:
             "sessionFileDeleted": deleted_file,
             "mediaFilesDeleted": media_files_deleted,
         }
+
+    def fork_candidates(self, session_id: str) -> dict[str, object]:
+        self._forkable_session(session_id)
+        response = {
+            "schemaVersion": "rag-ime.agent-session-fork-candidates.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "items": self.runtime.fork_candidates(session_id),
+        }
+        validate_contract(response, "agent-session-fork-candidates.v1.json")
+        return response
+
+    def fork_session(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        source = self._forkable_session(session_id)
+        entry_id = _required_text(payload, "entryId")
+        requested_title = str(payload.get("title") or "").strip()
+        title = requested_title or f"{source['title']} · 分支"
+        target = self.sessions.create(
+            title=title,
+            mode=str(source["mode"]),
+            role_id=str(source["roleId"]),
+            role_version=str(source["roleVersion"]),
+            model_profile=str(source["modelProfile"]),
+            tool_profile_version=str(source["toolProfileVersion"]),
+            workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
+            shell_policy_version=str(source.get("shellPolicyVersion") or "") or None,
+            session_kind="conversation",
+        )
+        target_id = str(target["id"])
+        allowed_tools = (
+            [str(value) for value in source.get("allowedTools") or []]
+            if source.get("toolAllowlistMode") == "explicit"
+            else None
+        )
+        target = self.sessions.set_runtime_policy(
+            target_id,
+            mode=str(source["mode"]),
+            tool_profile_version=str(source["toolProfileVersion"]),
+            allowed_tools=allowed_tools,
+            workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
+        )
+        try:
+            forked = self.runtime.fork_session(
+                session_id,
+                target_id,
+                entry_id=entry_id,
+            )
+        except Exception:
+            # The target product identity is provisional until Pi returns a
+            # distinct persisted branch. Never leave a phantom Session behind.
+            try:
+                self.sessions.delete(target_id)
+            except KeyError:
+                pass
+            raise
+        response = {
+            "schemaVersion": "rag-ime.agent-session-fork-create.v1",
+            "ok": True,
+            "sourceSessionId": session_id,
+            "entryId": entry_id,
+            "selectedText": str(forked.get("selectedText") or ""),
+            "session": forked.get("session") or self.sessions.get(target_id),
+        }
+        validate_contract(response, "agent-session-fork-create.v1.json")
+        return response
+
+    def _forkable_session(self, session_id: str) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        if str(session.get("sessionKind") or "conversation") != "conversation":
+            raise ValueError("only conversation Sessions can be forked")
+        if self.rooms.participant_for_session(session_id, active_only=False) is not None:
+            raise ValueError("room participant Sessions cannot be forked")
+        if self.delegation.owns_session(session_id):
+            raise ValueError("subagent Sessions cannot be forked")
+        if str(session.get("status") or "") != "idle":
+            raise ValueError("conversation forks are only available for idle Sessions")
+        return session
 
     def messages(self, session_id: str) -> dict[str, object]:
         # Capture the event cursor before asking Pi for its snapshot. Events that

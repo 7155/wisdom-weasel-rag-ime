@@ -67,6 +67,12 @@ type ToolParams = {
   contextMode?: "fresh" | "fork";
   wait?: boolean;
   batchId?: string;
+  itemId?: string;
+  title?: string;
+  status?:
+    | "pending" | "in_progress" | "completed"
+    | "queued" | "delivering" | "delivered" | "replied"
+    | "failed" | "stale" | "cancelled";
 };
 
 type ToolSpec = {
@@ -390,6 +396,48 @@ const toolSpecs: ToolSpec[] = [
       "worker 仍没有任意文件或 Shell 权限；所有控制中心写操作继续经过原生审批。",
     ],
   },
+  {
+    name: "agent_plan",
+    label: "当前回合计划",
+    description: "维护当前 Agent Session 的有界执行清单，不修改用户的每日规划。",
+    operations: ["list", "update"],
+    progress: {
+      list: "正在读取当前回合计划",
+      update: "正在更新当前回合计划",
+    },
+    guidelines: [
+      "这是当前 Session 的执行清单，不是用户的长期记忆或每日计划；不要把这里的更新描述成修改了用户规划。",
+      "开始复杂任务时先 list；创建计划项时提供 title 和 status，后续用返回的 itemId 更新同一项。",
+      "同一时间只能有一个 in_progress；完成当前项后再推进下一项，避免用重复标题创建新项。",
+    ],
+    parameterSchema: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: {
+            op: { const: "list" },
+            limit: { type: "integer", minimum: 1, maximum: 100 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: {
+            op: { const: "update" },
+            itemId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 240 },
+            status: {
+              type: "string",
+              enum: ["pending", "in_progress", "completed"],
+            },
+          },
+        },
+      ],
+    },
+  },
 ];
 
 const coordinatorToolSpecs: ToolSpec[] = [
@@ -648,6 +696,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
     ime_models: ["status", "profiles", "probe", "cache_stats"],
     ime_runtime: ["health", "components", "diagnose"],
     ime_agents: ["catalog", "delegate", "status", "artifact", "abort"],
+    agent_plan: ["list", "update"],
   };
   return specs.flatMap((spec) => {
     const operations = spec.operations.filter((operation) => allowed[spec.name]?.includes(operation));

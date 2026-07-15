@@ -33,6 +33,7 @@ import {
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type {
   AgentCommand,
+  AgentPermissionSelection,
   AgentProductCommandName,
   ComposerAttachment,
   ModelCatalog,
@@ -61,7 +62,7 @@ export function AgentComposer({
   onProductCommand,
   onSend,
   onStop,
-  onModeChange,
+  onPermissionChange,
   onModelChange,
   modelPickerRequest = 0,
   permissionPickerRequest = 0,
@@ -88,7 +89,7 @@ export function AgentComposer({
   onProductCommand: (command: AgentProductCommandName) => void;
   onSend: () => void;
   onStop: () => void;
-  onModeChange: (mode: 'assistant' | 'coordinator') => void;
+  onPermissionChange: (selection: AgentPermissionSelection) => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
   permissionPickerRequest?: number;
@@ -249,7 +250,7 @@ export function AgentComposer({
       {commandPanelVisible ? (
         <div className="agent-command-palette" role="listbox" aria-label="命令面板">
           <header>
-            <span><strong>{helpOpen ? '命令帮助' : '当前可用命令'}</strong><small>{session ? `${permissionLabel(session.mode)} · ${commands.length} 项` : '未选择对话'}</small></span>
+            <span><strong>{helpOpen ? '命令帮助' : '当前可用命令'}</strong><small>{session ? `${permissionLabel(session)} · ${commands.length} 项` : '未选择对话'}</small></span>
             {helpOpen ? <p>控制中心命令直接操作界面或 API；Pi 命令只来自当前对话的 RPC 目录。</p> : null}
           </header>
           {commands.map((command, index) => (
@@ -301,8 +302,8 @@ export function AgentComposer({
               disabled={!session || busy || sending || imageSupport !== 'supported'}
               tooltip
             />
-            <PermissionPicker session={session} persona={persona} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onModeChange} />
-            <ToolPicker tools={tools} status={toolCatalogStatus} mode={session?.mode ?? 'assistant'} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
+            <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} />
+            <ToolPicker tools={tools} status={toolCatalogStatus} session={session} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
             <ModelTree catalog={catalog} disabled={busy || sending} requestOpen={modelPickerRequest} onChange={onModelChange} />
           </div>
           <IconButton
@@ -322,14 +323,14 @@ export function AgentComposer({
 function ToolPicker({
   tools,
   status,
-  mode,
+  session,
   disabled,
   requestOpen,
   onSelect,
 }: {
   tools: ToolManifest[];
   status: 'loading' | 'ready' | 'failed';
-  mode: 'assistant' | 'coordinator';
+  session?: SessionSummary;
   disabled: boolean;
   requestOpen: number;
   onSelect: (tool: ToolManifest) => void;
@@ -338,13 +339,13 @@ function ToolPicker({
   useEffect(() => {
     if (requestOpen > 0 && status === 'ready' && !disabled) setOpen(true);
   }, [disabled, requestOpen, status]);
-  const availableCount = tools.filter((tool) => tool.availability === 'online' && tool.sessionModes.includes(mode)).length;
+  const availableCount = tools.filter((tool) => toolAvailableForCurrentSession(tool, session)).length;
   const label = status === 'loading'
     ? '受控工具：加载中'
     : status === 'failed'
       ? '受控工具目录加载失败'
-      : `受控工具：${tools.length} 个`;
-  const text = status === 'loading' ? '工具 · 加载中' : status === 'failed' ? '工具 · 未加载' : `工具 · ${tools.length}`;
+      : `当前权限可用工具：${availableCount} 个`;
+  const text = status === 'loading' ? '工具 · 加载中' : status === 'failed' ? '工具 · 未加载' : `工具 · ${availableCount}`;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -354,11 +355,11 @@ function ToolPicker({
         <header><strong>受控工具</strong><small>当前模式可用 {availableCount} / 目录共 {tools.length}</small></header>
         <div>
           {tools.map((tool) => {
-            const available = tool.availability === 'online' && tool.sessionModes.includes(mode);
+            const available = toolAvailableForCurrentSession(tool, session);
             return (
               <button type="button" key={tool.id} disabled={!available} onClick={() => onSelect(tool)}>
                 <span><strong>{tool.displayName}</strong><small>{tool.description}</small></span>
-                <i data-risk={tool.riskLevel}>{available ? riskLabel(tool.riskLevel) : '当前模式不可用'}</i>
+                <i data-risk={tool.riskLevel}>{available ? riskLabel(tool.riskLevel) : '当前权限不可用'}</i>
               </button>
             );
           })}
@@ -371,18 +372,22 @@ function ToolPicker({
 function PermissionPicker({
   session,
   persona,
+  tools,
   disabled,
   requestOpen,
   onChange,
 }: {
   session?: SessionSummary;
   persona?: AgentPersonaV1;
+  tools: ToolManifest[];
   disabled: boolean;
   requestOpen: number;
-  onChange: (mode: 'assistant' | 'coordinator') => void;
+  onChange: (selection: AgentPermissionSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
   const mode = session?.mode ?? 'assistant';
+  const profile = session?.toolProfileVersion ?? 'control-center-v1';
+  const current = permissionPreset(mode, profile);
   const canCoordinate = persona?.selectableModes.includes('coordinator') ?? false;
   useEffect(() => {
     if (requestOpen > 0 && session && !disabled) setOpen(true);
@@ -390,15 +395,108 @@ function PermissionPicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button aria-label={`对话权限：${mode === 'coordinator' ? '运行协调' : '受控模式'}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!session || disabled} leadingIcon={mode === 'coordinator' ? <Network size={15} /> : <ShieldCheck size={15} />}>{mode === 'coordinator' ? '运行协调' : '受控模式'}</Button>
+        <Button aria-label={`对话权限：${current.label}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!session || disabled} leadingIcon={current.icon === 'network' ? <Network size={15} /> : current.icon === 'lock' ? <LockKeyhole size={15} /> : <ShieldCheck size={15} />}>{current.label}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-picker-popover">
-        <header><LockKeyhole size={16} /><span><strong>对话权限</strong><small>以本机确认结果为准</small></span></header>
-        <button type="button" aria-current={mode === 'assistant'} onClick={() => onChange('assistant')}><ShieldCheck size={17} /><span><strong>受控模式</strong><small>只读优先，写操作逐项批准</small></span>{mode === 'assistant' ? <Check size={15} /> : null}</button>
-        <button type="button" disabled={!canCoordinate} aria-current={mode === 'coordinator'} onClick={() => onChange('coordinator')}><Network size={17} /><span><strong>运行协调</strong><small>可编排受控子 Agent</small></span>{mode === 'coordinator' ? <Check size={15} /> : null}</button>
+        <header><LockKeyhole size={16} /><span><strong>对话权限</strong><small>模式、工具范围与审批共同生效</small></span></header>
+        {PERMISSION_PRESETS.map((preset) => {
+          const selected = current.id === preset.id;
+          const available = preset.mode !== 'coordinator' || canCoordinate;
+          const toolCount = tools.filter((tool) => toolAvailableForPolicy(tool, preset.mode, preset.toolProfileVersion)).length;
+          return (
+            <button
+              type="button"
+              key={preset.id}
+              disabled={!available}
+              aria-current={selected}
+              onClick={() => {
+                onChange({ mode: preset.mode, toolProfileVersion: preset.toolProfileVersion });
+                setOpen(false);
+              }}
+            >
+              {preset.icon === 'network' ? <Network size={17} /> : preset.icon === 'lock' ? <LockKeyhole size={17} /> : <ShieldCheck size={17} />}
+              <span>
+                <strong>{preset.label}</strong>
+                <small>{available ? `${preset.description} · ${toolCount} 个工具` : '当前角色未开放协调权限'}</small>
+              </span>
+              {selected ? <Check size={15} /> : null}
+            </button>
+          );
+        })}
+        {session?.toolAllowlistMode === 'explicit' ? <p className="agent-picker-popover__note">当前会话还受 {session.allowedTools?.length ?? 0} 项自定义工具上限约束；选择预设后恢复该预设的完整工具范围。</p> : null}
       </PopoverContent>
     </Popover>
   );
+}
+
+type PermissionPreset = AgentPermissionSelection & {
+  id: string;
+  label: string;
+  description: string;
+  icon: 'shield' | 'lock' | 'network';
+};
+
+const PERMISSION_PRESETS: PermissionPreset[] = [
+  {
+    id: 'controlled',
+    label: '受控助手',
+    description: '可读取产品状态，写操作逐项批准',
+    icon: 'shield',
+    mode: 'assistant',
+    toolProfileVersion: 'control-center-v1',
+  },
+  {
+    id: 'readonly',
+    label: '只读观察',
+    description: '只允许检索、查看与维护会话计划',
+    icon: 'lock',
+    mode: 'assistant',
+    toolProfileVersion: 'subagent-readonly-v1',
+  },
+  {
+    id: 'coordinator',
+    label: '运行协调',
+    description: '可编排受控子 Agent 与授权工作区工具',
+    icon: 'network',
+    mode: 'coordinator',
+    toolProfileVersion: 'control-center-v1',
+  },
+];
+
+function permissionPreset(mode: SessionSummary['mode'], profile: string): PermissionPreset {
+  const exact = PERMISSION_PRESETS.find((item) => item.mode === mode && item.toolProfileVersion === profile);
+  if (exact) return exact;
+  if (profile === 'subagent-readonly-v1') {
+    return {
+      ...PERMISSION_PRESETS[1]!,
+      id: 'readonly-coordinator',
+      label: mode === 'coordinator' ? '只读协调' : '只读观察',
+      mode,
+      icon: mode === 'coordinator' ? 'network' : 'lock',
+    };
+  }
+  return mode === 'coordinator' ? PERMISSION_PRESETS[2]! : PERMISSION_PRESETS[0]!;
+}
+
+function toolAvailableForPolicy(
+  tool: ToolManifest,
+  mode: SessionSummary['mode'],
+  profile: AgentPermissionSelection['toolProfileVersion'],
+): boolean {
+  if (tool.availability !== 'online' || !tool.sessionModes.includes(mode)) return false;
+  const operationsByProfile = record(tool.profileOperations);
+  const operations = operationsByProfile[profile];
+  return !Array.isArray(operations) || operations.length > 0;
+}
+
+function toolAvailableForCurrentSession(tool: ToolManifest, session?: SessionSummary): boolean {
+  if (!session) return false;
+  if (!toolAvailableForPolicy(
+    tool,
+    session.mode,
+    session.toolProfileVersion === 'subagent-readonly-v1' ? 'subagent-readonly-v1' : 'control-center-v1',
+  )) return false;
+  return tool.enabled !== false;
 }
 
 function ModelTree({
@@ -471,6 +569,7 @@ interface ProductCommand extends CommandAvailability {
 const productCommandDefinitions: Omit<ProductCommand, keyof CommandAvailability>[] = [
   { name: 'new', invocation: '/new', description: '创建一段独立对话', source: 'product', behavior: 'execute' },
   { name: 'name', invocation: '/name', description: '重命名当前对话', source: 'product', behavior: 'insert' },
+  { name: 'branch', invocation: '/branch', description: '从历史用户消息创建独立分支', source: 'product', behavior: 'execute' },
   { name: 'compact', invocation: '/compact', description: '保留连续会话并缩短上下文', source: 'product', behavior: 'insert' },
   { name: 'model', invocation: '/model', description: '选择当前对话的模型', source: 'product', behavior: 'execute' },
   { name: 'thinking', invocation: '/thinking', description: '调整当前模型的思考强度', source: 'product', behavior: 'execute' },
@@ -540,11 +639,9 @@ function productCommandAvailability(
   }
   if (name === 'tools') {
     if (toolCatalogStatus !== 'ready') return { enabled: false, disabledReason: '工具目录暂不可用' };
-    const hasAvailableTool = tools.some((tool) => (
-      tool.availability === 'online' && tool.sessionModes.includes(session.mode)
-    ));
+    const hasAvailableTool = tools.some((tool) => toolAvailableForCurrentSession(tool, session));
     if (!hasAvailableTool) {
-      return { enabled: false, disabledReason: `${permissionLabel(session.mode)}没有可用工具` };
+      return { enabled: false, disabledReason: `${permissionLabel(session)}没有可用工具` };
     }
   }
   return { enabled: true };
@@ -577,8 +674,11 @@ function commandTitle(source: ComposerCommand['source']): string {
   return ({ product: '控制中心', extension: 'Pi 扩展', prompt: 'Pi 提示模板', skill: 'Pi Skill' })[source];
 }
 
-function permissionLabel(mode: SessionSummary['mode']): string {
-  return mode === 'coordinator' ? '运行协调' : '受控模式';
+function permissionLabel(session: SessionSummary): string {
+  return permissionPreset(
+    session.mode,
+    session.toolProfileVersion ?? 'control-center-v1',
+  ).label;
 }
 
 function composerPlaceholder(name: string, support: 'supported' | 'unsupported' | 'unknown'): string {

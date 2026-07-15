@@ -13,8 +13,9 @@ import { AgentFeature } from './index';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from './preview-data';
 import { SessionRail } from './sessions/SessionRail';
 import { useAgentLiveStore } from './state/live-store';
+import { projectStatusPanel } from './status/AgentStatusPanel';
 import { AgentTurn } from './timeline/AgentTimeline';
-import type { ModelCatalog, ThinkingLevel } from './types';
+import { sessionItems, type ModelCatalog, type ThinkingLevel } from './types';
 
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({ data, itemContent }: { data: string[]; itemContent: (index: number, item: string) => ReactNode }) => (
@@ -36,6 +37,40 @@ describe('Agent experience', () => {
     render(<TooltipProvider><SessionRail sessions={previewSessions} selectedId="session-preview" loading={false} onSelect={onSelect} onCreate={() => {}} /></TooltipProvider>);
     await user.click(screen.getByRole('button', { name: /记忆整理/ }));
     expect(onSelect).toHaveBeenCalledWith('session-memory');
+  });
+
+  it('creates a real Pi-backed conversation branch and restores the selected message as draft', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '创建对话分支' }));
+    const dialog = await screen.findByRole('dialog', { name: '从历史消息创建分支' });
+    expect(within(dialog).getByText(/原对话保持不变/)).toBeInTheDocument();
+    await user.click(await within(dialog).findByRole('radio', { name: /帮我整理权限模式/ }));
+    await user.click(within(dialog).getByRole('button', { name: '创建分支' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.forks.create',
+        params: { sessionId: 'session-preview' },
+        body: expect.objectContaining({ entryId: 'entry-permissions' }),
+      }),
+    })));
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
+    expect(screen.getByRole('button', { name: /控制中心迁移 · 分支/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('keeps delegated runtime sessions out of the user conversation rail', () => {
+    const parent = { ...previewSessions[0]!, id: 'session-parent', title: '用户主对话' };
+    const child = {
+      ...parent,
+      id: 'session-child-runtime',
+      title: '研究员临时会话',
+      sessionKind: 'subagent_runtime',
+    };
+
+    expect(sessionItems({ ok: true, items: [parent, child] })).toEqual([parent]);
   });
 
   it('renders one persona avatar and one activity container per assistant turn without raw payloads', async () => {
@@ -125,9 +160,101 @@ describe('Agent experience', () => {
     expect(statusPanel.querySelector('.agent-status-turn[data-state="running"] > svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-tool[data-state="running"] .agent-status-tool__icon svg')).toBeInTheDocument();
     await user.click(knowledgeStep);
+    expect(within(statusPanel).getByText('来源 2 · 进行中')).toBeInTheDocument();
     expect(within(statusPanel).getByText('信息来源')).toBeInTheDocument();
     expect(within(statusPanel).getByText('memory-design.md · 42-48 行')).toBeInTheDocument();
     expect(within(statusPanel).getByText('agent-runtime.pdf · 第 7 页')).toBeInTheDocument();
+  });
+
+  it('keeps every tool step from the current turn available in the status panel', () => {
+    const sessionId = 'session-tool-audit';
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'tool-audit',
+      text: '检查所有步骤',
+      nowMs: 1,
+    });
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    const turnId = projection.turnOrder[0]!;
+    useAgentLiveStore.getState().applyEvents(sessionId, Array.from({ length: 12 }, (_, index) => ({
+      schemaVersion: 'rag-ime.agent-event.v1' as const,
+      eventId: `tool-step-${index}`,
+      sessionId,
+      turnId,
+      sequence: index + 1,
+      createdAtMs: index + 2,
+      streamKind: 'agent' as const,
+      eventType: 'tool_started' as const,
+      payload: {
+        toolCallId: `tool-call-${index}`,
+        toolId: 'ime_knowledge',
+        operation: 'search',
+        summary: `检索步骤 ${index + 1}`,
+      },
+      resumeToken: `tool-step-${index}`,
+    })));
+
+    expect(projectStatusPanel(useAgentLiveStore.getState().projections[sessionId]).tools).toHaveLength(12);
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('projects the session-local agent plan into the right status panel', () => {
+    const sessionId = 'session-plan-panel';
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'plan-panel',
+      text: '按计划执行',
+      nowMs: 1,
+    });
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    const turnId = projection.turnOrder[0]!;
+    useAgentLiveStore.getState().applyEvents(sessionId, [{
+      schemaVersion: 'rag-ime.agent-event.v1',
+      eventId: 'agent-plan-start',
+      sessionId,
+      turnId,
+      sequence: 1,
+      createdAtMs: 2,
+      streamKind: 'agent',
+      eventType: 'tool_started',
+      payload: {
+        toolCallId: 'agent-plan-call',
+        toolId: 'agent_plan',
+        operation: 'list',
+        summary: '正在读取当前计划',
+      },
+      resumeToken: 'agent-plan-start',
+    }, {
+      schemaVersion: 'rag-ime.agent-event.v1',
+      eventId: 'agent-plan-result',
+      sessionId,
+      turnId,
+      sequence: 2,
+      createdAtMs: 3,
+      streamKind: 'agent',
+      eventType: 'tool_finished',
+      payload: {
+        toolCallId: 'agent-plan-call',
+        toolId: 'agent_plan',
+        operation: 'list',
+        summary: '当前计划已读取',
+        result: {
+          details: {
+            result: {
+              items: [
+                { itemId: 'step-1', title: '核对权限边界', status: 'completed' },
+                { itemId: 'step-2', title: '验证原生交互', status: 'in_progress' },
+              ],
+            },
+          },
+        },
+      },
+      resumeToken: 'agent-plan-result',
+    }]);
+
+    expect(projectStatusPanel(useAgentLiveStore.getState().projections[sessionId]).tasks).toEqual([
+      { id: 'agent-plan:step-1', label: '核对权限边界', status: 'completed' },
+      { id: 'agent-plan:step-2', label: '验证原生交互', status: 'running' },
+    ]);
+    useAgentLiveStore.getState().clear(sessionId);
   });
 
   it('keeps hydrated legacy history replies beside their user turns', () => {
@@ -466,7 +593,25 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     await user.click(screen.getByRole('option', { name: /\/permissions/ }));
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
-    await user.keyboard('{Escape}');
+    const permissionPicker = document.querySelector('.agent-picker-popover');
+    expect(permissionPicker).not.toBeNull();
+    expect(within(permissionPicker as HTMLElement).getByRole('button', { name: /受控助手/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('button', { name: /只读观察/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('button', { name: /运行协调/ })).toBeInTheDocument();
+    await user.click(within(permissionPicker as HTMLElement).getByRole('button', { name: /只读观察/ }));
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: {
+          mode: 'assistant',
+          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          toolProfileVersion: 'subagent-readonly-v1',
+          toolAllowlistMode: 'profile',
+        },
+      }),
+    })));
+    expect(await screen.findByRole('button', { name: '对话权限：只读观察' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
@@ -534,7 +679,7 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     const toolsCommand = screen.getByRole('option', { name: /\/tools/ });
     expect(toolsCommand).toBeDisabled();
-    expect(toolsCommand).toHaveAttribute('title', '受控模式没有可用工具');
+    expect(toolsCommand).toHaveAttribute('title', '受控助手没有可用工具');
     await user.click(screen.getByRole('button', { name: '关闭命令面板' }));
 
     act(() => {
@@ -681,7 +826,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     const user = userEvent.setup();
     renderAgent(transport);
-    const trigger = await screen.findByRole('button', { name: '受控工具：13 个' });
+    const trigger = await screen.findByRole('button', { name: '当前权限可用工具：13 个' });
 
     await user.click(trigger);
     expect(screen.getByRole('button', { name: /控制中心概览/ })).toBeInTheDocument();
@@ -974,6 +1119,31 @@ function featureTransport(
       'agent.session.models': modelCatalog,
       'agent.session.commands': commandCatalog(),
       'agent.session.prompt': promptRoute,
+      'agent.session.forks.list': {
+        schemaVersion: 'rag-ime.agent-session-fork-candidates.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        items: [
+          { entryId: 'entry-start', text: '先梳理交互状态' },
+          { entryId: 'entry-permissions', text: '帮我整理权限模式' },
+        ],
+      },
+      'agent.session.forks.create': {
+        schemaVersion: 'rag-ime.agent-session-fork-create.v1',
+        ok: true,
+        sourceSessionId: 'session-preview',
+        entryId: 'entry-permissions',
+        selectedText: '帮我整理权限模式',
+        session: {
+          ...previewSessions[0],
+          schemaVersion: 'rag-ime.agent-session.v1',
+          id: 'session-forked',
+          title: '控制中心迁移 · 分支',
+          createdAtMs: Date.now() - 1_000,
+          messageCount: 2,
+          updatedAtMs: Date.now(),
+        },
+      },
       'agent.sessions.create': { ok: true },
       'agent.session.rename': { ok: true },
       'agent.session.compact': { ok: true },

@@ -70,6 +70,43 @@ class _GatewayRuntimeFactory:
         return None
 
 
+class _ForkRuntime:
+    def __init__(self, sessions, root: Path, *, fail: bool = False):
+        self.sessions = sessions
+        self.root = root
+        self.fail = fail
+        self.target_session_id = ""
+
+    def fork_candidates(self, session_id: str):
+        return [{"entryId": "entry-user-1", "text": "保留这个节点"}]
+
+    def fork_session(self, source_session_id: str, target_session_id: str, *, entry_id: str):
+        self.target_session_id = target_session_id
+        if self.fail:
+            raise PiRuntimeError("fork failed")
+        transcript = self.root / f"{target_session_id.replace(':', '-')}.jsonl"
+        transcript.touch()
+        session = self.sessions.bind_runtime_session(
+            target_session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-fork-1",
+            transcript_ref=str(transcript),
+            branch_anchor=entry_id,
+            message_count=3,
+        )
+        return {
+            "sourceSessionId": source_session_id,
+            "targetSessionId": target_session_id,
+            "entryId": entry_id,
+            "selectedText": "保留这个节点",
+            "session": self.sessions.set_status(target_session_id, "idle"),
+        }
+
+    def stop(self):
+        return None
+
+
 class AgentServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-service-")
@@ -136,6 +173,22 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(restricted["toolProfileVersion"], "subagent-readonly-v1")
         self.assertEqual(restricted["toolAllowlistMode"], "explicit")
         self.assertEqual(restricted["allowedTools"], ["ime_overview", "ime_memory"])
+        restored_profile = self.service.update_session(
+            session_id,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "control-center-v1",
+                "toolAllowlistMode": "profile",
+            },
+        )["session"]
+        self.assertEqual(restored_profile["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(restored_profile["toolAllowlistMode"], "profile")
+        self.assertEqual(restored_profile["allowedTools"], [])
+        with self.assertRaisesRegex(ValueError, "unsupported Agent tool allowlist mode"):
+            self.service.update_session(
+                session_id,
+                {"mode": "assistant", "toolAllowlistMode": "unrestricted"},
+            )
         with self.assertRaisesRegex(ValueError, "unknown Agent tool"):
             self.service.update_session(
                 session_id,
@@ -145,6 +198,83 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_conversation_fork_clones_identity_policy_and_returns_new_session(self) -> None:
+        source = self.service.create_session(
+            {
+                "title": "原对话",
+                "mode": "assistant",
+                "roleId": "hermes-v1",
+                "roleVersion": "1",
+                "modelProfile": "gpt/test-model",
+                "toolProfileVersion": "subagent-readonly-v1",
+            }
+        )["session"]
+        source = self.service.update_session(
+            str(source["id"]),
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "allowedTools": ["ime_overview", "ime_memory"],
+            },
+        )["session"]
+        runtime = _ForkRuntime(self.service.sessions, self.root)
+        self.service.runtime = runtime
+
+        catalog = self.service.fork_candidates(str(source["id"]))
+        forked = self.service.fork_session(
+            str(source["id"]),
+            {"entryId": "entry-user-1", "title": "新路线"},
+        )
+
+        self.assertEqual(catalog["items"][0]["entryId"], "entry-user-1")
+        target = forked["session"]
+        self.assertNotEqual(target["id"], source["id"])
+        self.assertEqual(target["title"], "新路线")
+        for key in (
+            "mode",
+            "roleId",
+            "roleVersion",
+            "modelProfile",
+            "toolProfileVersion",
+            "toolAllowlistMode",
+            "allowedTools",
+            "workspaceRoots",
+            "shellPolicyVersion",
+        ):
+            self.assertEqual(target[key], source[key], key)
+        self.assertEqual(self.service.sessions.get(str(source["id"])), source)
+        self.assertIsNotNone(self.service.sessions.runtime_binding(str(target["id"])))
+
+    def test_failed_conversation_fork_removes_provisional_product_session(self) -> None:
+        source = self.service.create_session({"title": "原对话"})["session"]
+        runtime = _ForkRuntime(self.service.sessions, self.root, fail=True)
+        self.service.runtime = runtime
+
+        with self.assertRaisesRegex(PiRuntimeError, "fork failed"):
+            self.service.fork_session(
+                str(source["id"]),
+                {"entryId": "entry-user-1"},
+            )
+
+        self.assertEqual([item["id"] for item in self.service.sessions.list()], [source["id"]])
+        self.assertTrue(runtime.target_session_id)
+
+    def test_conversation_fork_is_rejected_before_runtime_when_source_is_not_idle(self) -> None:
+        source = self.service.create_session({"title": "正在运行"})["session"]
+        self.service.sessions.set_status(str(source["id"]), "busy")
+        runtime = _ForkRuntime(self.service.sessions, self.root)
+        self.service.runtime = runtime
+
+        with self.assertRaisesRegex(ValueError, "only available for idle"):
+            self.service.fork_candidates(str(source["id"]))
+        with self.assertRaisesRegex(ValueError, "only available for idle"):
+            self.service.fork_session(
+                str(source["id"]),
+                {"entryId": "entry-user-1"},
+            )
+
+        self.assertFalse(runtime.target_session_id)
 
     def test_kernel_configuration_drives_new_sessions_and_runtime_policy(self) -> None:
         initial = self.service.configuration()["configuration"]

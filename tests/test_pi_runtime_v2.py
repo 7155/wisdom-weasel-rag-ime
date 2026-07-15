@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
-from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 from rag_ime.pi_runtime_v2 import PiRuntimeHostManager
 
 
@@ -164,6 +164,18 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].payload["terminalEvent"], "agent_settled")
         messages = self.runtime.messages(session_id)
         self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+
+    def test_v2_reports_branching_as_unavailable_until_host_protocol_supports_it(self) -> None:
+        first_id = str(self.first["id"])
+        self.assertFalse(self.runtime.runtime_status()["capabilities"]["conversationFork"])
+        with self.assertRaisesRegex(PiRuntimeError, "unavailable"):
+            self.runtime.fork_candidates(first_id)
+        with self.assertRaisesRegex(PiRuntimeError, "unavailable"):
+            self.runtime.fork_session(
+                first_id,
+                str(self.second["id"]),
+                entry_id="entry-user-1",
+            )
 
     def _record_event(self, event) -> None:
         self.store.record_runtime_event(

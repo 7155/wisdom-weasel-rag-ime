@@ -135,6 +135,80 @@ class AgentSessionStoreTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 3)
 
+    def test_agent_plan_is_append_only_and_projects_latest_item_state(self) -> None:
+        session = self.store.create(title="plan", created_at_ms=100)
+        session_id = str(session["id"])
+
+        created = self.store.update_agent_plan_item(
+            session_id,
+            title="核对权限边界",
+            status="pending",
+            updated_at_ms=200,
+        )
+        item_id = str(created["event"]["itemId"])
+        advanced = self.store.update_agent_plan_item(
+            session_id,
+            item_id=item_id,
+            status="in_progress",
+            updated_at_ms=300,
+        )
+
+        self.assertEqual(advanced["plan"]["revision"], 2)
+        self.assertEqual(
+            advanced["plan"]["items"],
+            [
+                {
+                    "id": item_id,
+                    "title": "核对权限边界",
+                    "status": "in_progress",
+                    "sequence": 2,
+                    "updatedAtMs": 300,
+                }
+            ],
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            events = conn.execute(
+                """
+                SELECT sequence, status FROM agent_plan_events
+                WHERE session_id = ? ORDER BY sequence
+                """,
+                (session_id,),
+            ).fetchall()
+        self.assertEqual(events, [(1, "pending"), (2, "in_progress")])
+
+    def test_agent_plan_allows_only_one_in_progress_item(self) -> None:
+        session = self.store.create(title="plan", created_at_ms=100)
+        session_id = str(session["id"])
+        first = self.store.update_agent_plan_item(
+            session_id,
+            title="第一项",
+            status="in_progress",
+        )
+        second = self.store.update_agent_plan_item(
+            session_id,
+            title="第二项",
+            status="pending",
+        )
+
+        with self.assertRaisesRegex(ValueError, "only one"):
+            self.store.update_agent_plan_item(
+                session_id,
+                item_id=str(second["event"]["itemId"]),
+                status="in_progress",
+            )
+        self.store.update_agent_plan_item(
+            session_id,
+            item_id=str(first["event"]["itemId"]),
+            status="completed",
+        )
+        promoted = self.store.update_agent_plan_item(
+            session_id,
+            item_id=str(second["event"]["itemId"]),
+            status="in_progress",
+        )
+        self.assertEqual(promoted["plan"]["counts"]["inProgress"], 1)
+        self.assertEqual(promoted["plan"]["counts"]["completed"], 1)
+
     def test_unknown_mode_and_status_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "assistant or coordinator"):
             self.store.create(title="bad", mode="admin")

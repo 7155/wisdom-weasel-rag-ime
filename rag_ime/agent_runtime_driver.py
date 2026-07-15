@@ -76,6 +76,16 @@ class AgentRuntimeDriver(Protocol):
 
     def messages(self, session_id: str) -> list[dict[str, object]]: ...
 
+    def fork_candidates(self, session_id: str) -> list[dict[str, object]]: ...
+
+    def fork_session(
+        self,
+        source_session_id: str,
+        target_session_id: str,
+        *,
+        entry_id: str,
+    ) -> dict[str, object]: ...
+
     def command_catalog(self, session_id: str) -> list[dict[str, object]]: ...
 
     def model_catalog(self, session_id: str) -> dict[str, object]: ...

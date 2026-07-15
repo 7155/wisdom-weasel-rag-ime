@@ -338,20 +338,13 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func pickFiles(id: String, payload: [String: Any]) {
         do {
-            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "selection", "sessionId", "kbId", "parserProvider", "maxFiles"]
+            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "sessionId", "kbId", "parserProvider", "maxFiles"]
             guard Set(payload.keys).isSubset(of: allowedKeys) else {
                 throw NativeMediaImportError.rejected("File picker payload contained an unsupported field")
             }
             let purpose = try requiredString("purpose", in: payload)
-            guard ["attachment", "configuration-import", "restore", "export-destination", "knowledge-import", "plugin-source"].contains(purpose) else {
+            guard ["attachment", "configuration-import", "restore", "export-destination", "knowledge-import"].contains(purpose) else {
                 throw NativeMediaImportError.rejected("File picker purpose is not allowlisted")
-            }
-            let selection = payload["selection"] as? String
-            if let selection, !["file", "directory"].contains(selection) {
-                throw NativeMediaImportError.rejected("File picker selection is not allowlisted")
-            }
-            if purpose == "plugin-source" && selection != "directory" {
-                throw NativeMediaImportError.rejected("Plugin sources must be selected as a directory")
             }
             let multiple: Bool
             if let rawMultiple = payload["multiple"] {
@@ -890,8 +883,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         multiple: Bool
     ) {
         let panel = NSOpenPanel()
-        panel.canChooseFiles = purpose != "export-destination" && purpose != "plugin-source"
-        panel.canChooseDirectories = purpose == "export-destination" || purpose == "plugin-source"
+        panel.canChooseFiles = purpose != "export-destination"
+        panel.canChooseDirectories = purpose == "export-destination"
         panel.allowsMultipleSelection = multiple && maxFiles > 1
         panel.resolvesAliases = true
         panel.prompt = "选择"

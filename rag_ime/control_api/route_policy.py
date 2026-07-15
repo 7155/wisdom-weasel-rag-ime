@@ -39,6 +39,8 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_MODE_UPDATE = "agent.session.mode.update"
     AGENT_SESSION_DELETE = "agent.session.delete"
     AGENT_SESSION_PROMPT = "agent.session.prompt"
+    AGENT_SESSION_FORKS_LIST = "agent.session.forks.list"
+    AGENT_SESSION_FORKS_CREATE = "agent.session.forks.create"
     AGENT_SESSION_ABORT = "agent.session.abort"
     AGENT_SESSION_REVIEW_RESOLVE = "agent.session.review.resolve"
     AGENT_SESSION_COMPACT = "agent.session.compact"
@@ -477,6 +479,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_MODE_UPDATE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION, body={"mode", "workspaceRoots", "toolProfileVersion", "allowedTools"}, required_body={"mode"}),
         _route(ControlPathId.AGENT_SESSION_DELETE, ControlMethod.DELETE, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_PROMPT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/prompt", "/control/v1/agent/sessions/{sessionId}/prompt", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"message", "attachments", "clientMessageId"}, required_body={"message"}, remote_body={"message", "attachments", "clientMessageId"}),
+        _route(ControlPathId.AGENT_SESSION_FORKS_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/forks", "/control/v1/agent/sessions/{sessionId}/forks", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
+        _route(ControlPathId.AGENT_SESSION_FORKS_CREATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/forks", "/control/v1/agent/sessions/{sessionId}/forks", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"entryId", "title"}, required_body={"entryId"}, remote_body={"entryId", "title"}),
         _route(ControlPathId.AGENT_SESSION_ABORT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/abort", "/control/v1/agent/sessions/{sessionId}/abort", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_REVIEW_RESOLVE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/review", "/control/v1/agent/sessions/{sessionId}/review", params=_SESSION, body={"runId", "decision"}, required_body={"runId", "decision"}),
         _route(ControlPathId.AGENT_SESSION_COMPACT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/compact", "/control/v1/agent/sessions/{sessionId}/compact", params=_SESSION, body={"instructions"}),

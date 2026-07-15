@@ -185,6 +185,7 @@ describe('Agent tool activity details', () => {
     expect(screen.getByText('信息来源')).toBeInTheDocument();
     expect(screen.getByText('acceptance.md · 41-57 行')).toBeInTheDocument();
     expect(screen.getByText('design.pdf · 第 3 页')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开知识库' })).toHaveAttribute('href', '#/knowledge');
     expect(container).not.toHaveTextContent('不应在时间线详情里展开');
     expect(container).not.toHaveTextContent('/Users/private');
   });

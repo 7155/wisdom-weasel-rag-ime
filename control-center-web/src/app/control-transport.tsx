@@ -76,6 +76,50 @@ function createPreviewTransport(): MockControlTransport {
     sessions.unshift(session);
     return { ok: true, session };
   };
+  routes['agent.session.forks.list'] = (request: ControlRequest) => ({
+    schemaVersion: 'rag-ime.agent-session-fork-candidates.v1',
+    ok: true,
+    sessionId: stringValue(record(request.params).sessionId) || 'session-preview',
+    items: [
+      { entryId: 'preview-entry-1', text: '先把真实权限边界和工具范围梳理清楚。' },
+      { entryId: 'preview-entry-2', text: '继续优化 Agent 的思考、工具和子智能体状态。' },
+      { entryId: 'preview-entry-3', text: '从这里重新讨论对话分支的交互。' },
+    ],
+  });
+  routes['agent.session.forks.create'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const sourceSessionId = stringValue(record(request.params).sessionId) || 'session-preview';
+    const entryId = stringValue(body.entryId) || 'preview-entry-3';
+    const selectedText = ({
+      'preview-entry-1': '先把真实权限边界和工具范围梳理清楚。',
+      'preview-entry-2': '继续优化 Agent 的思考、工具和子智能体状态。',
+      'preview-entry-3': '从这里重新讨论对话分支的交互。',
+    } as Record<string, string>)[entryId] ?? '从这里创建分支。';
+    const now = Date.now();
+    const session = {
+      ...previewSession(
+        `session-fork-${nextSessionId++}`,
+        stringValue(body.title) || '对话分支',
+        'zhiyou-v1',
+        now,
+      ),
+      schemaVersion: 'rag-ime.agent-session.v1',
+      status: 'idle',
+      modelProfile: 'session-selected',
+      toolProfileVersion: 'control-center-v1',
+      createdAtMs: now,
+      messageCount: 2,
+    };
+    sessions.unshift(session);
+    return {
+      schemaVersion: 'rag-ime.agent-session-fork-create.v1',
+      ok: true,
+      sourceSessionId,
+      entryId,
+      selectedText,
+      session,
+    };
+  };
   return new MockControlTransport({
     routes,
     capabilities: { routeIds: Object.keys(routes) as ControlPathId[] },

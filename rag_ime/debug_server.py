@@ -5494,6 +5494,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if agent_session_id and agent_action == "messages":
             self._write_json(HTTPStatus.OK, self.service.agent.messages(agent_session_id))
             return
+        if agent_session_id and agent_action == "forks":
+            try:
+                self._write_json(HTTPStatus.OK, self.service.agent.fork_candidates(agent_session_id))
+            except Exception as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
         if agent_session_id and agent_action == "commands":
             self._write_json(HTTPStatus.OK, self.service.agent.command_catalog(agent_session_id))
             return
@@ -6099,6 +6105,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "prompt":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
+            elif agent_session_id and agent_action == "forks":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.fork_session(agent_session_id, payload),
+                )
             elif agent_session_id and agent_action == "abort":
                 self._write_json(HTTPStatus.OK, self.service.agent.abort(agent_session_id))
             elif agent_session_id and agent_action == "review":

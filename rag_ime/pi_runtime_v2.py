@@ -323,6 +323,7 @@ class PiRuntimeHostManager:
             "capabilities": {
                 "rpc": installed,
                 "sessions": True,
+                "conversationFork": False,
                 "multiSession": True,
                 "maxSessions": int(capabilities.get("maxSessions") or self.config.max_sessions),
                 "tools": True,
@@ -503,6 +504,20 @@ class PiRuntimeHostManager:
                 ).to_payload()
             )
         return result
+
+    def fork_candidates(self, session_id: str) -> list[dict[str, object]]:
+        del session_id
+        raise PiRuntimeError("conversation branching is unavailable in Pi Runtime Host protocol v2")
+
+    def fork_session(
+        self,
+        source_session_id: str,
+        target_session_id: str,
+        *,
+        entry_id: str,
+    ) -> dict[str, object]:
+        del source_session_id, target_session_id, entry_id
+        raise PiRuntimeError("conversation branching is unavailable in Pi Runtime Host protocol v2")
 
     def command_catalog(self, session_id: str) -> list[dict[str, object]]:
         self.ensure(session_id)

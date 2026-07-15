@@ -604,6 +604,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_runtime",
                 "ime_configuration",
                 "ime_agents",
+                "agent_plan",
                 "workspace_list",
                 "workspace_read",
                 "workspace_search",
@@ -681,6 +682,44 @@ class ControlToolGatewayTests(unittest.TestCase):
         assistant_call = self._tool_call("workspace_list", "list")
         with self.assertRaisesRegex(ValueError, "session mode"):
             self.gateway.execute(assistant_call)
+
+    def test_agent_plan_is_session_local_and_readonly_profile_safe(self) -> None:
+        created = self.gateway.execute(
+            self._tool_call(
+                "agent_plan",
+                "update",
+                title="验证权限模式",
+                status="pending",
+            )
+        )["result"]
+        item_id = created["event"]["itemId"]
+
+        self.assertEqual(created["presentationKind"], "task_plan")
+        self.assertEqual(created["items"][0]["title"], "验证权限模式")
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="assistant",
+            tool_profile_version="subagent-readonly-v1",
+            allowed_tools=["agent_plan"],
+        )
+        updated = self.gateway.execute(
+            self._tool_call(
+                "agent_plan",
+                "update",
+                itemId=item_id,
+                status="in_progress",
+            )
+        )["result"]
+        self.assertEqual(updated["plan"]["counts"]["inProgress"], 1)
+
+        other = self.store.create(title="other session", created_at_ms=2)
+        other_plan = self.gateway.execute(
+            {
+                **self._tool_call("agent_plan", "list"),
+                "sessionId": other["id"],
+            }
+        )["result"]
+        self.assertEqual(other_plan["items"], [])
 
     def test_coordinator_workspace_read_and_shell_use_hash_bound_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace"
@@ -1546,6 +1585,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "ime_runtime",
             "ime_configuration",
             "ime_agents",
+            "agent_plan",
             "workspace_list",
             "workspace_read",
             "workspace_search",

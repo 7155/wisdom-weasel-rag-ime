@@ -183,6 +183,14 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "agent_plan",
+        "domain": "planning",
+        "displayName": "当前回合计划",
+        "description": "维护当前 Agent Session 的有界执行清单；它不修改用户的每日规划",
+        "operations": ("list", "update"),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "workspace_list",
         "domain": "workspace",
         "displayName": "工作区浏览",
@@ -469,6 +477,7 @@ class ControlToolGateway:
             "ime_runtime": self._runtime,
             "ime_configuration": self._configuration,
             "ime_agents": self._agents,
+            "agent_plan": self._agent_plan,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
         if risk_level == "R0":
@@ -558,6 +567,44 @@ class ControlToolGateway:
                 )
             )
         raise ValueError("unsupported ime_agents operation")
+
+    def _agent_plan(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        if not session_id:
+            raise ValueError("agent plan session is missing")
+        if operation == "list":
+            plan = self.sessions.agent_plan(
+                session_id,
+                limit=_bounded_int(args.get("limit"), default=100, minimum=1, maximum=100),
+            )
+            counts = plan["counts"] if isinstance(plan.get("counts"), Mapping) else {}
+            return {
+                "summary": (
+                    f"当前计划有 {_safe_int(counts.get('pending'))} 项待办、"
+                    f"{_safe_int(counts.get('inProgress'))} 项进行中、"
+                    f"{_safe_int(counts.get('completed'))} 项已完成"
+                ),
+                "presentationKind": "task_plan",
+                "plan": plan,
+                "items": list(plan.get("items") or []),
+            }
+        if operation == "update":
+            result = self.sessions.update_agent_plan_item(
+                session_id,
+                item_id=_bounded_text(args.get("itemId"), maximum=160),
+                title=_bounded_text(args.get("title"), maximum=240),
+                status=_bounded_text(args.get("status"), maximum=40),
+            )
+            event = result["event"] if isinstance(result.get("event"), Mapping) else {}
+            plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
+            return {
+                "summary": f"计划项《{event.get('title', '')}》已更新为 {event.get('status', '')}",
+                "presentationKind": "task_plan",
+                "event": event,
+                "plan": plan,
+                "items": list(plan.get("items") or []),
+            }
+        raise ValueError("unsupported agent_plan operation")
 
     def apply_approval(self, approval: Mapping[str, object]) -> dict[str, object]:
         """Execute one already-approved operation after revalidating its preview."""
@@ -3712,6 +3759,7 @@ def _tool_profile_allows(
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),
         "ime_agents": frozenset({"catalog", "delegate", "status", "artifact", "abort"}),
+        "agent_plan": frozenset({"list", "update"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())

@@ -34,6 +34,8 @@ const canonicalPathIds = [
   'agent.session.mode.update',
   'agent.session.delete',
   'agent.session.prompt',
+  'agent.session.forks.list',
+  'agent.session.forks.create',
   'agent.session.abort',
   'agent.session.review.resolve',
   'agent.session.compact',
@@ -350,6 +352,9 @@ describe('control route policy', () => {
     expect(
       resolveControlPath('agent.session.prompt', { sessionId: 'session:123' }),
     ).toBe('/api/agent/sessions/session%3A123/prompt');
+    expect(
+      resolveControlPath('agent.session.forks.list', { sessionId: 'session:123' }),
+    ).toBe('/api/agent/sessions/session%3A123/forks');
     expect(() =>
       resolveControlPath('agent.session.prompt', { sessionId: 'https://evil.invalid' }),
     ).toThrow(ControlRoutePolicyError);

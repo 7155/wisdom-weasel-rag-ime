@@ -547,6 +547,167 @@ class AgentSessionStore:
             ).fetchone()
         return int(row[0] if row else 0)
 
+    def agent_plan(self, session_id: str, *, limit: int = 100) -> dict[str, object]:
+        self.get(session_id)
+        bounded_limit = max(1, min(int(limit), 100))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                WITH latest AS (
+                    SELECT event_id, sequence, item_id, title, status, created_at_ms,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY item_id ORDER BY sequence DESC
+                           ) AS row_number
+                    FROM agent_plan_events
+                    WHERE session_id = ?
+                )
+                SELECT event_id, sequence, item_id, title, status, created_at_ms
+                FROM latest
+                WHERE row_number = 1
+                ORDER BY
+                    CASE status
+                        WHEN 'in_progress' THEN 0
+                        WHEN 'pending' THEN 1
+                        ELSE 2
+                    END,
+                    sequence,
+                    item_id
+                LIMIT ?
+                """,
+                (session_id, bounded_limit),
+            ).fetchall()
+            revision_row = conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM agent_plan_events WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        items = [_agent_plan_item(row) for row in rows]
+        completed = sum(1 for item in items if item["status"] == "completed")
+        in_progress = sum(1 for item in items if item["status"] == "in_progress")
+        return {
+            "schemaVersion": "rag-ime.agent-plan.v1",
+            "sessionId": session_id,
+            "revision": int(revision_row[0] if revision_row else 0),
+            "items": items,
+            "counts": {
+                "total": len(items),
+                "pending": len(items) - completed - in_progress,
+                "inProgress": in_progress,
+                "completed": completed,
+            },
+        }
+
+    def update_agent_plan_item(
+        self,
+        session_id: str,
+        *,
+        item_id: str = "",
+        title: str = "",
+        status: str = "",
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized_item_id = str(item_id or "").strip()
+        if not normalized_item_id:
+            normalized_item_id = f"plan-item:{uuid.uuid4()}"
+        if len(normalized_item_id) > 160 or any(
+            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:_-."
+            for character in normalized_item_id
+        ):
+            raise ValueError("agent plan itemId is invalid")
+        requested_title = " ".join(str(title or "").split())[:240]
+        requested_status = str(status or "").strip()
+        if requested_status and requested_status not in {"pending", "in_progress", "completed"}:
+            raise ValueError("agent plan status must be pending, in_progress, or completed")
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            # Serialize the read-check-append sequence across Sidecar workers.
+            conn.execute("BEGIN IMMEDIATE")
+            session = conn.execute(
+                "SELECT id FROM agent_sessions WHERE id = ? AND status <> 'archived'",
+                (session_id,),
+            ).fetchone()
+            if session is None:
+                raise AgentSessionNotFound(session_id)
+            current = conn.execute(
+                """
+                SELECT title, status FROM agent_plan_events
+                WHERE session_id = ? AND item_id = ?
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (session_id, normalized_item_id),
+            ).fetchone()
+            if current is None:
+                item_count = int(
+                    conn.execute(
+                        "SELECT COUNT(DISTINCT item_id) FROM agent_plan_events WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()[0]
+                )
+                if item_count >= 100:
+                    raise ValueError("agent plan is limited to 100 items")
+            normalized_title = requested_title or (str(current["title"]) if current is not None else "")
+            normalized_status = requested_status or (
+                str(current["status"]) if current is not None else "pending"
+            )
+            if not normalized_title:
+                raise ValueError("title is required when creating an agent plan item")
+            if normalized_status == "in_progress":
+                other = conn.execute(
+                    """
+                    WITH latest AS (
+                        SELECT item_id, status,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY item_id ORDER BY sequence DESC
+                               ) AS row_number
+                        FROM agent_plan_events WHERE session_id = ?
+                    )
+                    SELECT item_id FROM latest
+                    WHERE row_number = 1 AND status = 'in_progress' AND item_id <> ?
+                    LIMIT 1
+                    """,
+                    (session_id, normalized_item_id),
+                ).fetchone()
+                if other is not None:
+                    raise ValueError("only one agent plan item may be in_progress")
+            sequence = int(
+                conn.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_plan_events WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()[0]
+            )
+            event_id = f"plan-event:{uuid.uuid4()}"
+            conn.execute(
+                """
+                INSERT INTO agent_plan_events(
+                    event_id, session_id, sequence, item_id, title, status, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    session_id,
+                    sequence,
+                    normalized_item_id,
+                    normalized_title,
+                    normalized_status,
+                    timestamp,
+                ),
+            )
+            conn.execute(
+                "UPDATE agent_sessions SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, session_id),
+            )
+        plan = self.agent_plan(session_id)
+        return {
+            "event": {
+                "eventId": event_id,
+                "sequence": sequence,
+                "itemId": normalized_item_id,
+                "title": normalized_title,
+                "status": normalized_status,
+                "createdAtMs": timestamp,
+            },
+            "plan": plan,
+        }
+
     def record_runtime_event(
         self,
         *,
@@ -922,6 +1083,16 @@ def _runtime_binding_payload(row: sqlite3.Row) -> dict[str, object]:
         "metadata": metadata if isinstance(metadata, dict) else {},
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
+    }
+
+
+def _agent_plan_item(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "id": str(row["item_id"]),
+        "title": str(row["title"]),
+        "status": str(row["status"]),
+        "sequence": int(row["sequence"]),
+        "updatedAtMs": int(row["created_at_ms"]),
     }
 
 

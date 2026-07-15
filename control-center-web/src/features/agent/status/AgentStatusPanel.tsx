@@ -6,6 +6,7 @@ import {
   CircleDashed,
   FileText,
   FolderKanban,
+  ExternalLink,
   ListChecks,
   LoaderCircle,
   Paperclip,
@@ -53,7 +54,9 @@ export function AgentStatusPanel({
       signal,
     }),
     enabled: open && Boolean(sessionId),
-    refetchInterval: open ? 4_000 : false,
+    refetchInterval: open
+      ? (query) => hasActiveSubagentRuns(subagentRuns(query.state.data)) ? 1_000 : 5_000
+      : false,
     retry: false,
   });
   const runs = useMemo(() => subagentRuns(subagents.data), [subagents.data]);
@@ -161,7 +164,7 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
       <summary>
         <span className="agent-status-tool__icon">{stateIcon}</span>
         <span><strong>{knowledge ? '知识库' : view.toolLabel}</strong><small>{view.summary}</small></span>
-        <i>{activityStatusLabel(activity.status)}</i>
+        <i>{view.sources.length ? `来源 ${view.sources.length} · ` : ''}{activityStatusLabel(activity.status)}</i>
         <ChevronRight size={14} />
       </summary>
       <div>
@@ -173,6 +176,11 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
               {view.sources.map((source) => <li key={source}>{source}</li>)}
             </ul>
           </section>
+        ) : null}
+        {view.destination ? (
+          <a className="agent-tool-destination" href={view.destination.href}>
+            {view.destination.label}<ExternalLink size={13} aria-hidden="true" />
+          </a>
         ) : null}
       </div>
     </details>
@@ -206,6 +214,10 @@ function SubagentResultDialog({ run, sessionId, triggerLabel }: { run: AgentSuba
       signal,
     }),
     enabled: open,
+    refetchInterval: (query) => {
+      const latest = findSubagentRun(query.state.data, run.id) ?? run;
+      return isActiveSubagentRun(latest) ? 1_000 : false;
+    },
     retry: false,
   });
   const current = findSubagentRun(detail.data, run.id) ?? run;
@@ -221,6 +233,7 @@ function SubagentResultDialog({ run, sessionId, triggerLabel }: { run: AgentSuba
       signal,
     }),
     enabled: open && Boolean(artifactId),
+    refetchInterval: open && active ? 1_500 : false,
     retry: false,
   });
   const records = publicArtifactRecords(artifact.data);
@@ -397,11 +410,21 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
   }
   const tools = turn.activityIds
     .map((id) => projection.activitiesById[id])
-    .filter((activity): activity is AgentActivityProjection => Boolean(activity && activity.kind.startsWith('tool_')))
-    .slice(-8);
+    .filter((activity): activity is AgentActivityProjection => Boolean(activity && activity.kind.startsWith('tool_')));
+  for (const activity of tools) {
+    if (text(activity.payload.toolId ?? activity.payload.toolName) !== 'agent_plan') continue;
+    planItemsFromActivity(activity).slice(0, 12).forEach((item, index) => {
+      const value = record(item);
+      tasks.push({
+        id: `agent-plan:${text(value.id ?? value.itemId) || index}`,
+        label: publicText(value.title ?? value.label, `步骤 ${index + 1}`),
+        status: taskStatus(text(value.status)),
+      });
+    });
+  }
   return {
     turn,
-    tasks,
+    tasks: uniqueBy(tasks, (item) => item.id),
     tools,
     files: uniqueBy(files, (item) => item.name),
     artifacts: uniqueBy(artifacts, (item) => item.name),
@@ -409,10 +432,33 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
   };
 }
 
+function planItemsFromActivity(activity: AgentActivityProjection): unknown[] {
+  const payload = record(activity.payload);
+  const result = record(payload.result ?? payload.partialResult);
+  const details = record(result.details);
+  const detailResult = record(details.result);
+  const directResult = record(result.result);
+  const layers = [detailResult, directResult, details, result, payload];
+  for (const layer of layers) {
+    if (Array.isArray(layer.items)) return layer.items;
+    const plan = record(layer.plan);
+    if (Array.isArray(plan.items)) return plan.items;
+  }
+  return [];
+}
+
 function subagentRuns(value: unknown): AgentSubagentRunV1[] {
   const source = Array.isArray(record(value).items) ? record(value).items as unknown[] : [];
   const runs = source.flatMap((batch) => Array.isArray(record(batch).runs) ? record(batch).runs as unknown[] : []);
   return runs.filter(isSubagentRun);
+}
+
+function isActiveSubagentRun(run: AgentSubagentRunV1): boolean {
+  return run.state === 'queued' || run.state === 'running';
+}
+
+function hasActiveSubagentRuns(runs: AgentSubagentRunV1[]): boolean {
+  return runs.some(isActiveSubagentRun);
 }
 
 function findSubagentRun(value: unknown, runId: string): AgentSubagentRunV1 | undefined {

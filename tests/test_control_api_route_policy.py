@@ -393,6 +393,14 @@ class ControlRoutePolicyTests(unittest.TestCase):
         self.assertTrue(prompt["remoteSafe"])
         self.assertFalse(prompt["subscription"])
 
+        forks = entries[ControlPathId.AGENT_SESSION_FORKS_CREATE.value]
+        self.assertEqual(forks["method"], "POST")
+        self.assertEqual(
+            forks["target"]["8766"],
+            "/api/agent/sessions/{sessionId}/forks",
+        )
+        self.assertTrue(forks["remoteSafe"])
+
         events = entries[ControlPathId.AGENT_SESSION_EVENTS.value]
         self.assertTrue(events["subscription"])
         self.assertIn("lastEventId", events["query"])
