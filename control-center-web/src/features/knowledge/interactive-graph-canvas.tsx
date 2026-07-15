@@ -1,4 +1,4 @@
-import type { Graph } from '@antv/g6/esm/runtime/graph.js';
+import type { Graph } from '@antv/g6';
 import { LocateFixed, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { IconButton } from '@/components/primitives';

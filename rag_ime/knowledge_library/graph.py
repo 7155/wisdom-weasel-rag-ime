@@ -196,10 +196,16 @@ class KnowledgeGraph:
                     seed_params.extend([*relation_params, relation_limit, *relation_params, relation_limit])
                 else:
                     seed_filters.append("kind='document'")
+            seed_kind_order = (
+                "CASE kind WHEN 'entity' THEN 0 WHEN 'term' THEN 1 WHEN 'topic' THEN 2 "
+                "WHEN 'document' THEN 3 ELSE 4 END"
+                if exclude_chunks
+                else "CASE kind WHEN 'document' THEN 0 WHEN 'topic' THEN 1 WHEN 'chunk' THEN 2 "
+                "WHEN 'entity' THEN 3 ELSE 4 END"
+            )
             seed_rows = connection.execute(
                 f"SELECT * FROM knowledge_graph_nodes WHERE {' AND '.join(seed_filters)} "
-                "ORDER BY CASE kind WHEN 'document' THEN 0 WHEN 'topic' THEN 1 WHEN 'chunk' THEN 2 "
-                "WHEN 'entity' THEN 3 ELSE 4 END, weight DESC, label COLLATE NOCASE, id LIMIT ?",
+                f"ORDER BY {seed_kind_order}, weight DESC, label COLLATE NOCASE, id LIMIT ?",
                 [*seed_params, node_limit],
             ).fetchall()
             if focus_id and not seed_rows:
@@ -265,7 +271,7 @@ class KnowledgeGraph:
             output_rows.sort(
                 key=lambda row: (
                     0 if str(row["id"]) in seed_ids else 1,
-                    _kind_order(str(row["kind"])),
+                    _semantic_kind_order(str(row["kind"])) if exclude_chunks else _kind_order(str(row["kind"])),
                     -float(row["weight"]),
                     str(row["label"]).casefold(),
                     str(row["id"]),
@@ -976,6 +982,10 @@ def _escape_like(value: str) -> str:
 
 def _kind_order(kind: str) -> int:
     return {"document": 0, "topic": 1, "chunk": 2, "entity": 3, "term": 4}.get(kind, 5)
+
+
+def _semantic_kind_order(kind: str) -> int:
+    return {"entity": 0, "term": 1, "topic": 2, "document": 3, "chunk": 4}.get(kind, 5)
 
 
 def _json_dict(value: Any) -> dict[str, Any]:

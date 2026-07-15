@@ -11,9 +11,6 @@ importers:
       '@antv/g6':
         specifier: ^5.1.1
         version: 5.1.1
-      '@antv/layout':
-        specifier: 2.0.0
-        version: 2.0.0
       '@radix-ui/react-avatar':
         specifier: ^1.2.2
         version: 1.2.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
