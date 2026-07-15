@@ -557,9 +557,9 @@ class LaunchAgentScriptTests(unittest.TestCase):
             str(home / "Library" / "Application Support" / "RagIme" / "deepseek.env"),
         )
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS"], "1536")
-        self.assertEqual(env_vars["RAG_IME_PI_EXECUTABLE"], "/tmp/pi/dist/cli.js")
-        self.assertEqual(env_vars["RAG_IME_PI_NODE"], "/tmp/node")
-        self.assertEqual(env_vars["RAG_IME_PI_EXTENSION"], str(managed_extension))
+        self.assertNotIn("RAG_IME_PI_EXECUTABLE", env_vars)
+        self.assertNotIn("RAG_IME_PI_NODE", env_vars)
+        self.assertNotIn("RAG_IME_PI_EXTENSION", env_vars)
         self.assertEqual(
             managed_extension_text,
             (root / "integrations" / "pi" / "rag-ime-control.ts").read_text(encoding="utf-8"),
@@ -569,7 +569,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             (root / "integrations" / "pi" / "pi-native-session.ts").read_text(encoding="utf-8"),
         )
         self.assertNotIn("must-not-be-installed", managed_extension_text)
-        self.assertEqual(env_vars["RAG_IME_PI_VERSION"], "0.80.2")
+        self.assertNotIn("RAG_IME_PI_VERSION", env_vars)
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_THINKING"], "disabled")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
         self.assertEqual(env_vars["RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL"], "1")

@@ -593,15 +593,18 @@ for key in (
         value = existing_env.get(key)
     if value:
         env_vars[key] = value
+for key in (
+    "RAG_IME_PI_EXECUTABLE",
+    "RAG_IME_PI_NODE",
+    "RAG_IME_PI_EXTENSION",
+    "RAG_IME_PI_PROTOCOL_VERSION",
+    "RAG_IME_PI_TOOLS",
+    "RAG_IME_PI_VERSION",
+):
+    env_vars.pop(key, None)
 env_vars["RAG_IME_PI_ENABLED"] = "0"
 env_vars["RAG_IME_AGENT_GATEWAY_ENABLED"] = "1"
 env_vars["RAG_IME_KNOWLEDGE_SHARED_WORKER"] = "1"
-# A source-tree Pi executable is allowed for development, but its extension is
-# always the integration installed from this checkout. Never inherit a path
-# from an older LaunchAgent or the invoking shell. Managed Pi runtimes carry
-# their own verified extension and therefore must not receive this override.
-if env_vars.get("RAG_IME_PI_EXECUTABLE"):
-    env_vars["RAG_IME_PI_EXTENSION"] = os.environ["PI_EXTENSION_TARGET"]
 enable_local_vector = os.environ.get("RAG_IME_ENABLE_LOCAL_VECTOR", "").strip().lower() in {"1", "true", "yes", "on"}
 if enable_local_vector:
     env_vars.setdefault("RAG_IME_EMBEDDING_PROVIDER", "local-hash")
