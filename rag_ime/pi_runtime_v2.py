@@ -450,8 +450,10 @@ class PiRuntimeHostManager:
         if images:
             params["images"] = [dict(image) for image in images]
         with self._lock:
-            self._cancel_idle_locked()
             state = self._states.setdefault(session_id, _HostedSessionState())
+            if state.turn_id:
+                raise PiRuntimeError("Pi 正在处理上一轮，请等待结束或停止完成后再发送")
+            self._cancel_idle_locked()
             state.stream_pi_message_id = ""
             state.last_agent_messages = []
             state.final_error = ""
@@ -911,7 +913,7 @@ class PiRuntimeHostManager:
             self._last_error = message
             self._status = "ready" if self._client is not None and self._client.running else "faulted"
             self._schedule_idle_locked()
-        self.sessions.set_status(session_id, "error", last_message_preview=message)
+        self.sessions.set_status(session_id, "faulted", last_message_preview=message)
         self.events.publish(session_id, "turn_failed", {"error": message}, turn_id=turn_id)
 
     def _handle_host_exit(self, exit_code: int | None, error: str) -> None:
@@ -926,7 +928,7 @@ class PiRuntimeHostManager:
             self._status = "faulted"
             self._last_error = message
         for session_id, turn_id in active:
-            self.sessions.set_status(session_id, "error", last_message_preview=message)
+            self.sessions.set_status(session_id, "faulted", last_message_preview=message)
             self.events.publish(session_id, "turn_failed", {"error": message}, turn_id=turn_id)
 
     def _schedule_idle_locked(self) -> None:

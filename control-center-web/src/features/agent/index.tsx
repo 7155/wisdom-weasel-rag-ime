@@ -45,16 +45,19 @@ export function AgentFeature() {
   const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [tools, setTools] = useState<ToolManifest[]>([]);
   const [toolCatalogStatus, setToolCatalogStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [conversationForkAvailable, setConversationForkAvailable] = useState(false);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [modelChanging, setModelChanging] = useState(false);
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
   const [helpRequest, setHelpRequest] = useState(0);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
+  const [forkingEntryId, setForkingEntryId] = useState('');
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(() => isWideStatusViewport());
   const [error, setError] = useState('');
@@ -140,6 +143,8 @@ export function AgentFeature() {
     setAttachments([]);
     setCatalog(undefined);
     setCommands([]);
+    setConversationForkAvailable(false);
+    setForkingEntryId('');
   }, [selectedId]);
   useEffect(() => {
     if (!requestedDraft) return;
@@ -189,10 +194,11 @@ export function AgentFeature() {
     }
     async function loadSessionCatalogs(): Promise<void> {
       setToolCatalogStatus('loading');
-      const [modelResult, commandResult, toolResult] = await Promise.allSettled([
+      const [modelResult, commandResult, toolResult, runtimeResult] = await Promise.allSettled([
         transport.request({ pathId: 'agent.session.models', params: { sessionId: selectedId } }),
         transport.request({ pathId: 'agent.session.commands', params: { sessionId: selectedId } }),
         transport.request({ pathId: 'agent.tools.list', query: { sessionId: selectedId } }),
+        transport.request({ pathId: 'agent.runtime.get' }),
       ]);
       if (!active) return;
       const notices: string[] = [];
@@ -218,6 +224,13 @@ export function AgentFeature() {
         setToolCatalogStatus('failed');
         notices.push('工具目录暂时不可用，模型不会获得工具能力。');
       }
+      const runtimePayload = runtimeResult.status === 'fulfilled' && isRecord(runtimeResult.value)
+        ? runtimeResult.value
+        : {};
+      const runtimeCapabilities = isRecord(runtimePayload.capabilities)
+        ? runtimePayload.capabilities
+        : {};
+      setConversationForkAvailable(runtimeCapabilities.conversationFork === true);
       if (notices.length) setError(notices.join(' '));
     }
     void (async () => {
@@ -233,6 +246,10 @@ export function AgentFeature() {
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
   const busy = hasActiveTurn;
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
+  useEffect(() => {
+    if (!busy) setStopping(false);
+  }, [busy]);
+  useEffect(() => setStopping(false), [selectedId]);
 
   function selectSession(sessionId: string): void {
     setSelectedId(sessionId);
@@ -432,6 +449,10 @@ export function AgentFeature() {
 
   function openForkDialog(): void {
     if (!session) return;
+    if (!conversationForkAvailable) {
+      setError('当前 Pi 运行时不支持对话分支。');
+      return;
+    }
     if (busy || session.status === 'busy' || session.status === 'active') {
       setError('请先等待当前回合结束或停止本轮，再创建对话分支。');
       return;
@@ -448,14 +469,42 @@ export function AgentFeature() {
     if (isMobileViewport()) setRailOpen(false);
   }
 
+  async function forkFromMessage(entryId: string, selectedText: string): Promise<void> {
+    if (!session || !conversationForkAvailable || busy || forkingEntryId) return;
+    setForkingEntryId(entryId);
+    setError('');
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.session.forks.create',
+        params: { sessionId: session.id },
+        body: { entryId, title: `${session.title} · 分支` },
+      });
+      const created = (isRecord(response.session) ? response.session : {}) as unknown as SessionSummary;
+      if (!created.id) throw new Error('后端没有返回新分支会话。');
+      const restored = typeof response.selectedText === 'string' && response.selectedText.trim()
+        ? response.selectedText
+        : selectedText;
+      await acceptFork(created, restored);
+    } catch (requestError) {
+      setError(publicAgentErrorText(requestError, '创建对话分支失败。'));
+    } finally {
+      setForkingEntryId('');
+    }
+  }
+
   async function stop(): Promise<void> {
-    if (!session) return;
+    if (!session || stopping) return;
+    setStopping(true);
     try {
       await transport.request({ pathId: 'agent.session.abort', params: { sessionId: session.id } });
-      const projection = agentProjection(session.id);
-      const turnId = [...projection.turnOrder].reverse().find((id) => ['running', 'queued', 'waiting'].includes(projection.turnsById[id]?.status ?? ''));
-      if (turnId) useAgentLiveStore.getState().abortTurn(session.id, turnId, Date.now());
-    } catch (requestError) { setError(errorText(requestError)); }
+      // Abort acknowledgement only means Pi accepted the request. Keep the
+      // composer locked until the runtime publishes the real terminal event;
+      // otherwise a late event from the old turn can close a newly sent turn.
+      setError('');
+    } catch (requestError) {
+      setStopping(false);
+      setError(errorText(requestError));
+    }
   }
 
   async function pasteImages(files?: File[]): Promise<void> {
@@ -618,8 +667,12 @@ export function AgentFeature() {
         params: { approvalId },
         body: { decision: decision === 'approved' ? 'approve' : 'reject', payloadSha256 },
       });
+      setError('');
     }
-    catch (requestError) { setError(errorText(requestError)); }
+    catch (requestError) {
+      setError(errorText(requestError));
+      throw requestError;
+    }
   }
 
   return (
@@ -631,12 +684,12 @@ export function AgentFeature() {
           <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${persona?.displayName ?? '智鼬'} · ${sessionPermissionLabel(session)}` : '选择一个对话'}</small></span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
-            <IconButton label="创建对话分支" icon={<GitBranch size={17} />} onClick={openForkDialog} disabled={!session || busy} tooltip />
+            <IconButton label={conversationForkAvailable ? '创建对话分支' : '当前运行时不支持对话分支'} icon={<GitBranch size={17} />} onClick={openForkDialog} disabled={!session || busy || !conversationForkAvailable} tooltip />
             <IconButton className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((value) => !value)} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => void decideApproval(id, decision, hash)} /> : null}
-        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable} forkingEntryId={forkingEntryId} onForkFromMessage={(entryId, message) => { void forkFromMessage(entryId, message); }} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} /> : null}
+        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
       <button className="agent-status-backdrop" aria-label="关闭状态面板" onClick={() => setStatusOpen(false)} type="button" />
       <AgentStatusPanel sessionId={selectedId} open={statusOpen} onClose={() => setStatusOpen(false)} />

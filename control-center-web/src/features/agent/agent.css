@@ -63,8 +63,7 @@
 .agent-fork-dialog { width: min(620px, calc(100vw - 32px)); }
 .agent-fork-dialog .ui-dialog__title { display: flex; align-items: center; gap: 8px; }
 .agent-fork-dialog__state { display: flex; min-height: 108px; align-items: center; justify-content: center; gap: 8px; color: var(--color-text-secondary); }
-.agent-fork-dialog__state svg,
-.agent-fork-dialog footer svg { animation: agent-spin 1s linear infinite; }
+.agent-fork-dialog__state svg { animation: agent-status-spin 1s linear infinite; }
 .agent-fork-dialog__list { display: grid; max-height: min(420px, 52vh); gap: 1px; overflow-y: auto; border-block: 1px solid var(--color-border); }
 .agent-fork-dialog__list button { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; gap: 8px; width: 100%; border: 0; border-left: 3px solid transparent; padding: 11px 10px 11px 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .agent-fork-dialog__list button:hover { background: var(--color-surface-hover); }
@@ -74,13 +73,18 @@
 .agent-fork-dialog__error { margin: 0; border-left: 3px solid var(--color-danger); padding: 9px 11px; background: var(--color-danger-soft); color: var(--color-danger); font-size: 13px; }
 .agent-fork-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
 .agent-fork-dialog footer svg { animation: none; }
-.agent-fork-dialog footer button:disabled svg { animation: agent-spin 1s linear infinite; }
+.agent-fork-dialog footer button:disabled svg { animation: agent-status-spin 1s linear infinite; }
 .agent-timeline { display: grid; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
 .agent-timeline > div:first-child { height: 100%; }
 .agent-turn { width: min(100%, 900px); margin: 0 auto; padding: 16px 24px 8px; }
-.agent-user-message { width: fit-content; max-width: min(76%, 690px); margin: 0 0 18px auto; padding: 10px 13px; border-radius: 8px 8px 2px 8px; background: var(--color-surface-subtle); color: var(--color-text); animation: agent-message-enter var(--duration-enter) var(--ease-standard) both; }
+.agent-user-message-shell { position: relative; width: fit-content; max-width: min(76%, 690px); margin: 0 0 18px auto; }
+.agent-user-message-shell[data-actions='true'] { margin-bottom: 28px; }
+.agent-user-message { width: fit-content; max-width: 100%; padding: 10px 13px; border-radius: 8px 8px 2px 8px; background: var(--color-surface-subtle); color: var(--color-text); animation: agent-message-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-user-message .agent-markdown > :first-child, .agent-user-message .agent-markdown > :last-child { margin-block: 0; }
 .agent-user-message > small { display: block; margin-top: 6px; color: var(--color-text-tertiary); font-size: 11px; }
+.agent-message-actions { position: absolute; top: calc(100% + 3px); right: 0; display: flex; justify-content: flex-end; opacity: 0; transition: opacity var(--duration-enter) var(--ease-standard); }
+.agent-user-message-shell:hover .agent-message-actions,
+.agent-user-message-shell:focus-within .agent-message-actions { opacity: 1; }
 .agent-assistant-turn { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: start; gap: 11px; animation: agent-message-enter var(--duration-panel) var(--ease-standard) both; }
 .agent-assistant-turn__body { min-width: 0; }
 .agent-assistant-turn__body > header { display: flex; align-items: baseline; gap: 7px; min-height: 26px; }
@@ -244,6 +248,13 @@
 .agent-approval-dialog__summary { display: grid; gap: 5px; padding: 13px 14px; border-left: 3px solid var(--color-warning); background: var(--color-warning-soft); }
 .agent-approval-dialog__summary strong { font-size: 14px; }
 .agent-approval-dialog__summary small { color: var(--color-text-secondary); font-size: 12px; }
+.agent-approval-dialog__changes { display: grid; max-height: min(360px, 44dvh); gap: 0; margin: 0; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-2); }
+.agent-approval-dialog__changes > div { display: grid; grid-template-columns: minmax(92px, .32fr) minmax(0, 1fr); gap: 6px 12px; padding: 10px 12px; border-bottom: 1px solid var(--color-border); }
+.agent-approval-dialog__changes > div:last-child { border-bottom: 0; }
+.agent-approval-dialog__changes dt { grid-row: 1 / span 2; color: var(--color-text-secondary); font-size: 12px; font-weight: 700; }
+.agent-approval-dialog__changes dd { display: grid; min-width: 0; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; margin: 0; }
+.agent-approval-dialog__changes dd > span { color: var(--color-text-tertiary); font-size: 11px; }
+.agent-approval-dialog__changes code { overflow: auto; max-height: 148px; padding: 0; background: transparent; color: var(--color-text); font: 500 11px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .agent-composer-wrap { position: relative; z-index: 6; width: min(100%, 900px); margin: 0 auto; padding: 8px 24px 16px; }
 .agent-composer { overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-3); background: var(--color-surface); box-shadow: var(--shadow-composer); transition: transform var(--duration-enter) var(--ease-standard), box-shadow var(--duration-panel) var(--ease-standard); }
@@ -500,7 +511,8 @@
   .agent-session-rail { position: absolute; z-index: 12; top: 0; bottom: 0; left: 0; width: min(82vw, 304px); box-shadow: var(--shadow-menu); transform: translateX(0); transition: transform var(--duration-panel) var(--ease-standard), opacity var(--duration-enter) var(--ease-standard), box-shadow var(--duration-enter) var(--ease-standard); }
   .agent-feature[data-rail-open='false'] .agent-session-rail { transform: translateX(-100%); opacity: 1; }
   .agent-turn { padding: 13px 12px 5px; }
-  .agent-user-message { max-width: 92%; margin-bottom: 14px; }
+  .agent-user-message-shell { max-width: 92%; margin-bottom: 14px; }
+  .agent-user-message-shell[data-actions='true'] { margin-bottom: 28px; }
   .agent-assistant-turn { grid-template-columns: 32px minmax(0, 1fr); gap: 8px; }
   .agent-persona-avatar { width: 30px; height: 30px; }
   .agent-composer-wrap { padding: 6px 9px 10px; }
@@ -523,8 +535,9 @@
 }
 
 @media (max-width: 420px) {
-  .agent-conversation__header { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 6px 8px; }
-  .agent-conversation__actions { grid-column: 2; grid-row: 1; justify-self: end; }
+  .agent-conversation__header { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 6px 8px; }
+  .agent-conversation__header > span { grid-column: 2; min-width: 0; }
+  .agent-conversation__actions { grid-column: 3; grid-row: 1; justify-self: end; }
   .agent-conversation__header p { grid-column: 1 / -1; max-width: 100%; margin: 0; padding: 6px 8px; border-radius: var(--radius-1); background: var(--color-danger-soft); }
   .agent-conversation__header p > span { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .agent-composer__picker .ui-button__label { max-width: 82px; }
@@ -541,6 +554,10 @@
   .agent-subagent-result dl > div:nth-child(n + 3) { border-top: 1px solid var(--color-border); }
 }
 
+@media (hover: none), (pointer: coarse) {
+  .agent-message-actions { opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-streaming-cursor,
   .agent-assistant-pending > svg,
@@ -555,6 +572,8 @@
   .agent-status-subagent[data-state='running'] .agent-status-subagent__state svg,
   .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
   .agent-status-empty[data-animated] > svg,
+  .agent-fork-dialog__state svg,
+  .agent-fork-dialog footer button:disabled svg,
   .agent-composer[data-busy] .agent-composer__send > span {
     animation: none;
     opacity: 1;
@@ -579,6 +598,8 @@
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='running'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-empty[data-animated] > svg,
+:root[data-reduce-motion='true'] .agent-fork-dialog__state svg,
+:root[data-reduce-motion='true'] .agent-fork-dialog footer button:disabled svg,
 :root[data-reduce-motion='true'] .agent-composer[data-busy] .agent-composer__send > span {
   animation: none;
   opacity: 1;

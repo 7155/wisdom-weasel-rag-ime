@@ -737,6 +737,15 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(history[0]["turnId"], history[1]["turnId"])
         self.assertNotEqual(history[0]["id"], history[1]["id"])
 
+    def test_prompt_rejects_a_second_turn_until_the_active_turn_settles(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            self.runtime._active_turn_id = "turn:still-aborting"
+
+        with self.assertRaisesRegex(PiRuntimeError, "上一轮"):
+            self.runtime.prompt(session_id, "不要覆盖旧回合")
+
     def test_pi_user_echo_is_not_published_as_a_second_public_message(self) -> None:
         session_id = str(self.session["id"])
         self.runtime.ensure(session_id)

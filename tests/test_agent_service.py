@@ -793,6 +793,59 @@ class AgentServiceTests(unittest.TestCase):
             "pending",
         )
 
+    def test_expired_or_stale_approval_closes_the_pending_pi_request(self) -> None:
+        session = self.service.create_session({"title": "审批终态"})["session"]
+        session_id = str(session["id"])
+        expired = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_input",
+            operation="apply_settings",
+            payload_sha256="e" * 64,
+            preview={"summary": "过期变更"},
+            risk_level="R1",
+            requested_at_ms=100,
+            ttl_ms=1_000,
+        )
+        with (
+            patch.object(self.service.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.runtime, "resolve_approval") as resolve_expired,
+        ):
+            result = self.service.decide_approval(
+                str(expired["approvalId"]),
+                {"decision": "approve", "payloadSha256": "e" * 64},
+            )
+        self.assertEqual(result["approval"]["state"], "expired")
+        resolve_expired.assert_called_once_with(
+            session_id,
+            str(expired["approvalId"]),
+            approved=False,
+            resolution_state="expired",
+        )
+
+        stale = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_input",
+            operation="apply_settings",
+            payload_sha256="a" * 64,
+            preview={"summary": "哈希已变化"},
+            risk_level="R1",
+        )
+        with (
+            patch.object(self.service.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.runtime, "resolve_approval") as resolve_stale,
+        ):
+            result = self.service.decide_approval(
+                str(stale["approvalId"]),
+                {"decision": "approve", "payloadSha256": "b" * 64},
+            )
+        self.assertEqual(result["approval"]["state"], "stale")
+        resolve_stale.assert_called_once_with(
+            session_id,
+            str(stale["approvalId"]),
+            approved=False,
+            resolution_state="stale",
+        )
+
     def test_approved_operation_executes_before_pi_is_released_and_returns_receipt(self) -> None:
         session = self.service.create_session({"title": "任务审批"})["session"]
         approval = self.service.sessions.create_approval(

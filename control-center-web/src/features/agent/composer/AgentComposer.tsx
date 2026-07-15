@@ -3,6 +3,7 @@ import {
   Check,
   ChevronRight,
   LockKeyhole,
+  LoaderCircle,
   Network,
   Paperclip,
   Plus,
@@ -52,6 +53,7 @@ export function AgentComposer({
   tools,
   toolCatalogStatus,
   busy,
+  stopping = false,
   sending,
   onDraftChange,
   onAttachmentsChange,
@@ -79,6 +81,7 @@ export function AgentComposer({
   tools: ToolManifest[];
   toolCatalogStatus: 'loading' | 'ready' | 'failed';
   busy: boolean;
+  stopping?: boolean;
   sending: boolean;
   onDraftChange: (value: string) => void;
   onAttachmentsChange: (value: ComposerAttachment[]) => void;
@@ -308,10 +311,11 @@ export function AgentComposer({
           </div>
           <IconButton
             className="agent-composer__send"
-            label={busy ? '停止本轮' : '发送'}
-            icon={busy ? <StopCircle size={18} /> : <Send size={18} />}
+            label={stopping ? '正在停止本轮' : busy ? '停止本轮' : '发送'}
+            icon={stopping ? <LoaderCircle className="ui-spin" size={18} /> : busy ? <StopCircle size={18} /> : <Send size={18} />}
             onClick={busy ? onStop : onSend}
-            disabled={!busy && !canSend}
+            disabled={stopping || (!busy && !canSend)}
+            aria-busy={stopping || undefined}
             tooltip
           />
         </div>

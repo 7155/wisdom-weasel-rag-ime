@@ -44,7 +44,9 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '创建对话分支' }));
+    const branchButton = await screen.findByRole('button', { name: '创建对话分支' });
+    await waitFor(() => expect(branchButton).toBeEnabled());
+    await user.click(branchButton);
     const dialog = await screen.findByRole('dialog', { name: '从历史消息创建分支' });
     expect(within(dialog).getByText(/原对话保持不变/)).toBeInTheDocument();
     await user.click(await within(dialog).findByRole('radio', { name: /帮我整理权限模式/ }));
@@ -59,6 +61,50 @@ describe('Agent experience', () => {
     })));
     expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
     expect(screen.getByRole('button', { name: /控制中心迁移 · 分支/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('creates a branch directly from the selected user message', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const actions = await screen.findAllByRole('button', { name: '从这条消息创建分支' });
+    await user.click(actions.at(-1)!);
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.forks.create',
+        params: { sessionId: 'session-preview' },
+        body: expect.objectContaining({ entryId: 'session-preview:user-media' }),
+      }),
+    })));
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
+  });
+
+  it('does not offer branches when the active Pi protocol declares them unsupported', async () => {
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        schemaVersion: 'rag-ime.agent-runtime.v1',
+        enabled: true,
+        managed: true,
+        status: 'ready',
+        piVersion: '0.80.7',
+        idleTimeoutSeconds: 600,
+        capabilities: { conversationFork: false },
+      },
+    );
+    renderAgent(transport);
+
+    const unavailable = await screen.findByRole('button', { name: '当前运行时不支持对话分支' });
+    await waitFor(() => expect(unavailable).toBeDisabled());
+    expect(screen.queryByRole('button', { name: '从这条消息创建分支' })).not.toBeInTheDocument();
   });
 
   it('keeps delegated runtime sessions out of the user conversation rail', () => {
@@ -475,11 +521,24 @@ describe('Agent experience', () => {
           approvalId: 'approval-live-1',
           payloadSha256: 'approval-live-hash',
           summary: '应用这次输入法配置变更',
+          riskLevel: 'R2',
+          preview: {
+            title: '确认输入法配置变更',
+            summary: '关闭模糊音并重新部署输入方案',
+            changes: [
+              { label: '模糊音', before: '开启', after: '关闭' },
+              { label: '输入方案', before: '', after: '小鹤双拼' },
+            ],
+          },
         },
         resumeToken: 'approval-pending-ui',
       }]);
     });
 
+    expect(await screen.findByRole('heading', { name: '确认输入法配置变更' })).toBeInTheDocument();
+    expect(screen.getByText('模糊音')).toBeInTheDocument();
+    expect(screen.getByText('开启')).toBeInTheDocument();
+    expect(screen.getByText('关闭')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: '批准并执行' }));
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
@@ -489,6 +548,82 @@ describe('Agent experience', () => {
         body: { decision: 'approve', payloadSha256: 'approval-live-hash' },
       }),
     })));
+  });
+
+  it('keeps approval failures visible inside the forced review dialog', async () => {
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () => { throw new Error('审批已过期，请重新发起操作'); },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-approval-error';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'approval-pending-error-ui',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'approval_required',
+        payload: {
+          approvalId: 'approval-live-error',
+          payloadSha256: 'approval-live-error-hash',
+          summary: '应用设置',
+          preview: { title: '确认应用设置', changes: [{ label: '候选数', before: '5', after: '7' }] },
+        },
+        resumeToken: 'approval-pending-error-ui',
+      }]);
+    });
+
+    await user.click(await screen.findByRole('button', { name: '批准并执行' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '确认应用设置' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('审批已过期，请重新发起操作');
+    expect(within(dialog).getByRole('button', { name: '批准并执行' })).toBeEnabled();
+  });
+
+  it('keeps the turn busy while abort is only acknowledged and prevents repeated stop clicks', async () => {
+    let resolveAbort!: (value: unknown) => void;
+    const abortPending = new Promise((resolve) => { resolveAbort = resolve; });
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => abortPending,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
+    act(() => {
+      useAgentLiveStore.getState().appendOptimistic('session-preview', {
+        clientMessageId: 'stop-in-flight',
+        text: '停止这轮',
+        nowMs: Date.now(),
+      });
+    });
+
+    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+
+    const stopping = await screen.findByRole('button', { name: '正在停止本轮' });
+    expect(stopping).toBeDisabled();
+    expect(stopping).toHaveAttribute('aria-busy', 'true');
+    expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('busy');
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.abort')).toHaveLength(1);
+    resolveAbort({ ok: true });
   });
 
   it('opens memory review immediately and resumes Pi when the user defers it', async () => {
@@ -1093,6 +1228,22 @@ function featureTransport(
   sessionRoute: unknown = { ok: true, items: previewSessions },
   promptRoute: unknown = { ok: true },
   subagentRoute: unknown = { ok: true, items: [] },
+  approvalRoute: unknown = { ok: true },
+  abortRoute: unknown = { ok: true },
+  runtimeRoute: unknown = {
+    schemaVersion: 'rag-ime.agent-runtime.v1',
+    enabled: true,
+    managed: true,
+    status: 'ready',
+    driverId: 'managed-pi',
+    runtimeKind: 'pi_rpc',
+    runtimeVersion: 'preview',
+    piVersion: '0.80.7',
+    idleTimeoutSeconds: 600,
+    activeSessionId: null,
+    lastError: '',
+    capabilities: { conversationFork: true },
+  },
 ): MockControlTransport {
   return new MockControlTransport({
     pickedFiles: [{
@@ -1115,6 +1266,7 @@ function featureTransport(
       'agent.sessions.list': sessionRoute,
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.tools.list': toolRoute,
+      'agent.runtime.get': runtimeRoute,
       'agent.session.snapshot': previewAgentSnapshot('session-preview'),
       'agent.session.models': modelCatalog,
       'agent.session.commands': commandCatalog(),
@@ -1147,11 +1299,11 @@ function featureTransport(
       'agent.sessions.create': { ok: true },
       'agent.session.rename': { ok: true },
       'agent.session.compact': { ok: true },
-      'agent.session.abort': { ok: true },
+      'agent.session.abort': abortRoute,
       'agent.session.mode.update': { ok: true },
       'agent.session.model.select': { ok: true },
       'agent.session.thinking.select': { ok: true },
-      'agent.approval.decide': { ok: true },
+      'agent.approval.decide': approvalRoute,
       'agent.memoryMaintenance.run': memoryRunFixture(),
       'agent.session.review.resolve': { ok: true },
       'agent.subagents.list': subagentRoute,

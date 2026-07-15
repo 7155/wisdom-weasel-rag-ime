@@ -1273,16 +1273,48 @@ class AgentService:
         session_id = str(current["sessionId"])
         approved = decision == "approve"
         pending_in_pi = self.runtime.has_pending_approval(session_id, approval_id)
+        current_state = str(current.get("state") or "")
+        if current_state != "pending":
+            return self._finish_terminal_approval(
+                current,
+                pending_in_pi=pending_in_pi,
+            )
         if approved and not pending_in_pi:
             raise ValueError("approval is no longer active in Pi")
+        payload_sha256 = _required_text(payload, "payloadSha256")
+        if payload_sha256 != str(current.get("payloadSha256") or ""):
+            try:
+                self.sessions.decide_approval(
+                    approval_id,
+                    approved=approved,
+                    payload_sha256=payload_sha256,
+                    decided_by="native-control-center",
+                )
+            except ValueError:
+                terminal = self.sessions.get_approval(approval_id)
+                if str(terminal.get("state") or "") not in {"expired", "stale"}:
+                    raise
+                return self._finish_terminal_approval(
+                    terminal,
+                    pending_in_pi=pending_in_pi,
+                )
         if approved and self._approval_executor is None:
             raise ValueError("approval executor is unavailable")
-        decided = self.sessions.decide_approval(
-            approval_id,
-            approved=approved,
-            payload_sha256=_required_text(payload, "payloadSha256"),
-            decided_by="native-control-center",
-        )
+        try:
+            decided = self.sessions.decide_approval(
+                approval_id,
+                approved=approved,
+                payload_sha256=payload_sha256,
+                decided_by="native-control-center",
+            )
+        except ValueError:
+            terminal = self.sessions.get_approval(approval_id)
+            if str(terminal.get("state") or "") not in {"expired", "stale"}:
+                raise
+            return self._finish_terminal_approval(
+                terminal,
+                pending_in_pi=pending_in_pi,
+            )
         final = decided
         if approved:
             try:
@@ -1375,6 +1407,15 @@ class AgentService:
                 # The native decision and mutation receipt are authoritative.
                 # A crashed Pi turn must not rewrite an applied operation as failed.
                 runtime_warning = "Pi 会话未收到审批结果，请刷新该对话"
+        else:
+            self.events.publish(
+                session_id,
+                "approval_resolved",
+                {
+                    "approvalId": approval_id,
+                    "state": str(final.get("state") or "rejected"),
+                },
+            )
         return {
             "schemaVersion": "rag-ime.agent-approval-decision.v1",
             "ok": True,
@@ -1382,6 +1423,43 @@ class AgentService:
             "runtimeNotified": runtime_notified,
             "runtimeWarning": runtime_warning,
             "memoryCheckpoint": memory_checkpoint,
+        }
+
+    def _finish_terminal_approval(
+        self,
+        approval: Mapping[str, object],
+        *,
+        pending_in_pi: bool,
+    ) -> dict[str, object]:
+        approval_id = str(approval.get("approvalId") or "")
+        session_id = str(approval.get("sessionId") or "")
+        state = str(approval.get("state") or "stale")
+        runtime_notified = False
+        runtime_warning = ""
+        if pending_in_pi:
+            try:
+                self.runtime.resolve_approval(
+                    session_id,
+                    approval_id,
+                    approved=False,
+                    resolution_state=state,
+                )
+                runtime_notified = True
+            except Exception:
+                runtime_warning = "Pi 会话未收到审批终态，请刷新该对话"
+        else:
+            self.events.publish(
+                session_id,
+                "approval_resolved",
+                {"approvalId": approval_id, "state": state},
+            )
+        return {
+            "schemaVersion": "rag-ime.agent-approval-decision.v1",
+            "ok": True,
+            "approval": dict(approval),
+            "runtimeNotified": runtime_notified,
+            "runtimeWarning": runtime_warning,
+            "memoryCheckpoint": {},
         }
 
     def finalize_external_approval(

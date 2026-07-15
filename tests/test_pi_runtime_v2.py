@@ -177,6 +177,26 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 entry_id="entry-user-1",
             )
 
+    def test_prompt_rejects_a_second_turn_until_the_active_turn_settles(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = "turn-still-aborting"
+
+        with self.assertRaisesRegex(PiRuntimeError, "上一轮"):
+            self.runtime.prompt(session_id, "不要覆盖旧回合")
+
+    def test_turn_failure_uses_supported_faulted_status_and_publishes_event(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+
+        self.runtime._turn_failed(session_id, "turn-provider-error", RuntimeError("provider failed"))
+
+        self.assertEqual(self.store.get(session_id)["status"], "faulted")
+        failed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_failed"]
+        self.assertEqual(failed[-1].turn_id, "turn-provider-error")
+        self.assertEqual(failed[-1].payload["error"], "provider failed")
+
     def _record_event(self, event) -> None:
         self.store.record_runtime_event(
             event_id=event.event_id,

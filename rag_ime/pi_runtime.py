@@ -864,6 +864,8 @@ class PiRuntimeManager:
         self.ensure(session_id)
         turn_id = f"turn:{uuid.uuid4()}"
         with self._lock:
+            if self._active_turn_id:
+                raise PiRuntimeError("Pi 正在处理上一轮，请等待结束或停止完成后再发送")
             client = self._require_client_locked(session_id)
             self._active_turn_id = turn_id
             self._active_client_message_id = str(client_message_id).strip()
