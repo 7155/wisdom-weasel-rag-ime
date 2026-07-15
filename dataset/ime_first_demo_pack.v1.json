@@ -1,0 +1,204 @@
+{
+  "schemaVersion": "rag-ime.ime-first-demo-pack.v1",
+  "fixtureId": "public-ime-first-2026-07",
+  "fixtureTag": "demo-pack:public-ime-first-2026-07",
+  "project": "wisdom-weasel-rag-ime",
+  "description": "Public-safe deterministic data for an input-method-first product demo.",
+  "sceneOrder": ["ordinaryPinyin", "continuousTab", "ragMemory", "knowledgeWorkbench"],
+  "events": [
+    {
+      "id": "ordinary-pinyin",
+      "text": "用",
+      "recentContext": "普通拼音输入中，yon 和 yong 都应选择“用”。",
+      "preedit": "yon",
+      "app": "demo.textedit",
+      "source": "ime_demo_fixture",
+      "providerName": "demo-fixture",
+      "tags": ["普通拼音", "Rime", "yong"],
+      "contextGroupId": "demo:input-method"
+    },
+    {
+      "id": "tab-chain",
+      "text": "输入法优先演示先验证普通拼音，再连续按 Tab 接受三候选。",
+      "recentContext": "三个短补全只插入后缀，接受后立即基于新上下文继续推荐。",
+      "preedit": "shurufa youxian yanshi",
+      "app": "demo.textedit",
+      "source": "ime_demo_fixture",
+      "providerName": "demo-fixture",
+      "tags": ["输入法", "连续补全", "Tab", "三候选"],
+      "contextGroupId": "demo:input-method"
+    },
+    {
+      "id": "rag-memory",
+      "text": "本地 RAG 使用 Memory Book、TagMemo 和来源事件进行可追踪召回。",
+      "recentContext": "候选只展示短语，证据区保留 book、atom 和 source event 标识。",
+      "app": "demo.textedit",
+      "source": "ime_demo_fixture",
+      "providerName": "demo-fixture",
+      "tags": ["RAG", "Memory Book", "TagMemo", "来源追踪"],
+      "contextGroupId": "demo:input-method"
+    },
+    {
+      "id": "knowledge-workbench",
+      "text": "显式知识工作台用于 DeepSeek 长文、个人回忆和数据库整理，不占用普通拼音候选栏。",
+      "recentContext": "输入法热路径先给本地短候选；用户显式打开知识工作台后，再把当前问题、项目上下文和本地来源组织成长文本请求。",
+      "app": "com.rag-ime.control.demo",
+      "source": "ime_demo_fixture",
+      "providerName": "demo-fixture",
+      "tags": ["DeepSeek", "知识工作台", "长文本", "显式查询"],
+      "contextGroupId": "demo:knowledge-workbench"
+    },
+    {
+      "id": "anti-echo",
+      "text": "候选只补后缀，不重复上文；短输入不应每次都触发补全。",
+      "recentContext": "连续推荐需要接受候选这一显式信号，普通短提交仍受最小增量和节流约束。",
+      "app": "demo.textedit",
+      "source": "ime_demo_fixture",
+      "providerName": "demo-fixture",
+      "tags": ["反回声", "触发策略", "短补全"],
+      "contextGroupId": "demo:input-method"
+    }
+  ],
+  "rimeFeedback": [
+    {
+      "preedit": "yon",
+      "rejectedText": "哟",
+      "acceptedText": "用",
+      "action": "correction_pair",
+      "candidateRank": 4,
+      "contextHash": "demo:yon:1"
+    },
+    {
+      "preedit": "yo n",
+      "acceptedText": "用",
+      "action": "accepted",
+      "candidateRank": 2,
+      "contextHash": "demo:yon:2"
+    }
+  ],
+  "tabFrames": [
+    {
+      "id": "tab-1",
+      "context": "今天演示这套输入法",
+      "candidates": [
+        "：先验证普通拼音。",
+        "：再连续按 Tab 接受候选。",
+        "：最后打开知识工作台。"
+      ]
+    },
+    {
+      "id": "tab-2",
+      "context": "今天演示这套输入法：先验证普通拼音。",
+      "candidates": [
+        "接着按 Tab 继续下一段。",
+        "然后检查 RAG 来源。",
+        "最后显式调用 DeepSeek。"
+      ]
+    },
+    {
+      "id": "tab-3",
+      "context": "今天演示这套输入法：先验证普通拼音。接着按 Tab 继续下一段。",
+      "candidates": [
+        "现在可以查看可追踪来源。",
+        "也可以打开知识工作台。",
+        "单个有语义的中文提交也会稳定触发联想。"
+      ]
+    }
+  ],
+  "memoryBook": {
+    "schemaVersion": "rag-ime.memory-book-compile.v1",
+    "dailyBooks": [
+      {
+        "bookId": "book:demo:ime-first",
+        "bookKey": "ime-first-demo-v1",
+        "title": "输入法优先演示路线",
+        "summary": "先验证普通拼音和 yong，再连续接受三个本地补全，随后展示可追踪 RAG，最后显式打开知识工作台。",
+        "tags": ["输入法", "RAG", "连续补全", "DeepSeek"],
+        "surfaceHints": ["输入法优先演示", "连续按Tab", "知识工作台"],
+        "queryExpansions": ["输入法演示", "三候选", "DS 长文"],
+        "sourceRefs": ["ordinary-pinyin", "tab-chain", "rag-memory", "knowledge-workbench"],
+        "memoryAtomIds": ["atom:demo:ime-flow", "atom:demo:knowledge-workbench"],
+        "confidence": 0.96,
+        "qualityScore": 0.95
+      }
+    ],
+    "memoryAtoms": [
+      {
+        "atomId": "atom:demo:ime-flow",
+        "kind": "demo_contract",
+        "canonicalText": "输入法优先路线包含普通拼音、三个短补全、连续 Tab 和可追踪 RAG。",
+        "summary": "模型候选只补后缀，接受后才沿新上下文继续生成。",
+        "tags": ["输入法", "普通拼音", "三候选", "RAG"],
+        "aliases": ["输入法优先", "连续推荐"],
+        "surfaceHints": ["连续按Tab", "三个短补全"],
+        "queryExpansions": ["yon yong 用", "LLM 三候选", "RAG 来源"],
+        "sourceRefs": ["ordinary-pinyin", "tab-chain", "anti-echo"],
+        "directCandidateAllowed": false,
+        "confidence": 0.95,
+        "qualityScore": 0.94
+      },
+      {
+        "atomId": "atom:demo:knowledge-workbench",
+        "kind": "product_boundary",
+        "canonicalText": "DeepSeek 只在用户显式打开知识工作台时处理长文、回忆和数据库整理。",
+        "summary": "知识工作台接收问题、当前上下文和本地可追踪证据；普通按键候选保持短而快。",
+        "tags": ["DeepSeek", "知识工作台", "长文本", "来源追踪"],
+        "aliases": ["DS 工作台", "个人知识库"],
+        "surfaceHints": ["显式知识工作台", "高质量长文"],
+        "queryExpansions": ["DeepSeek 长文", "帮助回忆", "整理数据库"],
+        "sourceRefs": ["knowledge-workbench", "rag-memory"],
+        "directCandidateAllowed": false,
+        "confidence": 0.94,
+        "qualityScore": 0.93
+      }
+    ],
+    "tagEdges": [
+      {
+        "src": "输入法",
+        "dst": "连续补全",
+        "edgeType": "demo_step",
+        "weight": 0.92,
+        "evidenceRefs": ["tab-chain"]
+      },
+      {
+        "src": "RAG",
+        "dst": "知识工作台",
+        "edgeType": "explicit_handoff",
+        "weight": 0.9,
+        "evidenceRefs": ["rag-memory", "knowledge-workbench"]
+      }
+    ],
+    "phraseCandidates": [
+      {
+        "text": "输入法优先演示",
+        "tags": ["输入法", "演示"],
+        "sourceRefs": ["tab-chain"],
+        "weight": 0.9
+      },
+      {
+        "text": "连续按Tab",
+        "tags": ["连续补全", "Tab"],
+        "sourceRefs": ["tab-chain"],
+        "weight": 0.9
+      },
+      {
+        "text": "显式知识工作台",
+        "tags": ["DeepSeek", "知识工作台"],
+        "sourceRefs": ["knowledge-workbench"],
+        "weight": 0.88
+      }
+    ],
+    "warnings": []
+  },
+  "ragQuery": {
+    "text": "输入法优先演示 连续 Tab RAG 来源",
+    "topK": 5,
+    "expectedSourceIds": ["book:demo:ime-first", "atom:demo:ime-flow"]
+  },
+  "knowledgeWorkbench": {
+    "mode": "long_form",
+    "question": "根据输入法演示记忆，写一段可直接使用的产品演示说明。",
+    "context": "当前演示已经完成普通拼音和三候选连续 Tab，下一步要说明本地 RAG 的来源，并在用户显式操作后交给 DeepSeek 知识工作台生成多段高质量正文。",
+    "maxChars": 2400
+  }
+}

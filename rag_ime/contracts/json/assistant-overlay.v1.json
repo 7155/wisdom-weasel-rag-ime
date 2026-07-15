@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.assistant-overlay.v1",
+  "type": "object",
+  "required": ["schemaVersion", "visible", "uiMode", "phase", "inputMode", "candidates", "keyPolicy", "frontendTransaction"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.assistant-overlay.v1"},
+    "visible": {"type": "boolean"},
+    "uiMode": {"type": "string"},
+    "phase": {"type": "string"},
+    "inputMode": {"type": "string"},
+    "statusText": {"type": "string"},
+    "snapshotId": {"type": "string"},
+    "sessionFingerprint": {"type": "string"},
+    "expiresAfterMs": {"type": "integer", "minimum": 0},
+    "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "sourceCards": {"type": "array"},
+    "keyPolicy": {"type": "object"},
+    "overlayConfig": {"type": "object"},
+    "progressive": {"type": "object"},
+    "frontendTransaction": {"type": "object"},
+    "dismissReason": {"type": "string"}
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": ["insertText", "sourceType"],
+      "properties": {
+        "text": {"type": "string"},
+        "insertText": {"type": "string", "minLength": 1},
+        "sourceType": {"type": "string", "enum": ["model", "rag", "memory", "action"]},
+        "candidateStableId": {"type": "string"},
+        "snapshotId": {"type": "string"},
+        "selectionAction": {"type": "string"},
+        "sourceBadge": {"type": "string"},
+        "memoryId": {"type": "string"},
+        "suggestionId": {"type": "string"},
+        "sourceEventId": {"type": ["integer", "null"]},
+        "metadata": {"type": "object"}
+      }
+    }
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rag-ime.local/contracts/knowledge-document-detail.v1.json",
+  "title": "RAG-IME Knowledge Document Detail",
+  "type": "object",
+  "required": ["schemaVersion", "document", "chunks", "pages", "assets", "tables", "artifact", "contentWindow"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.knowledge-library.v1"},
+    "document": {
+      "type": "object",
+      "required": ["documentId", "kbId", "fileName", "mimeType", "byteSize", "sha256", "status", "sourceReadPath"],
+      "properties": {
+        "documentId": {"type": "string", "minLength": 1},
+        "kbId": {"type": "string", "minLength": 1},
+        "fileName": {"type": "string", "minLength": 1},
+        "mimeType": {"type": "string", "minLength": 1},
+        "byteSize": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "status": {"enum": ["queued", "parsing", "indexing", "ready", "stale", "failed", "deleting"]},
+        "pageCount": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "sourceReadPath": {"type": "string", "pattern": "^/api/knowledge-bases/"}
+      },
+      "additionalProperties": true
+    },
+    "chunks": {
+      "type": "object",
+      "required": ["items", "offset", "limit", "total", "hasMore"],
+      "properties": {
+        "items": {"type": "array"},
+        "offset": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+        "total": {"type": "integer", "minimum": 0},
+        "hasMore": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "pages": {"type": "array"},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["assetId", "name", "mimeType", "byteSize", "sha256", "readPath"],
+        "properties": {
+          "assetId": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "name": {"type": "string"},
+          "mimeType": {"enum": ["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"]},
+          "byteSize": {"type": "integer", "minimum": 0, "maximum": 26214400},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "readPath": {"type": "string", "pattern": "^/api/knowledge-bases/"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "tables": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["tableId", "title", "page", "columns", "rows", "markdown"],
+        "properties": {
+          "tableId": {"type": "string", "minLength": 1},
+          "title": {"type": "string", "maxLength": 300},
+          "page": {"type": ["integer", "null"], "minimum": 1},
+          "columns": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {"type": "string", "maxLength": 500}
+          },
+          "rows": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {"type": "string", "maxLength": 500}
+            }
+          },
+          "markdown": {"type": "string", "maxLength": 64000}
+        },
+        "additionalProperties": false
+      }
+    },
+    "artifact": {"type": "object"},
+    "contentWindow": {"type": "object"}
+  },
+  "additionalProperties": false
+}

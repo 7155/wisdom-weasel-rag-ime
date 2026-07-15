@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.rime-suggest-response.v1",
+  "type": "object",
+  "required": ["schemaVersion", "sessionId", "requestSeq", "displayCandidates", "predictionSession", "keyPolicy", "assistantOverlay"],
+  "properties": {
+    "schemaVersion": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "requestSeq": {"type": "integer", "minimum": 0},
+    "runtimeRevision": {"type": "integer", "minimum": 0},
+    "runtimeConfig": {"type": "object"},
+    "displayCandidates": {"type": "array"},
+    "predictionSession": {"type": "object"},
+    "keyPolicy": {"type": "object"},
+    "assistantOverlay": {"type": "object"},
+    "overlayConfig": {"type": "object"},
+    "frontendTransaction": {"type": "object"},
+    "stored": {"type": "boolean"},
+    "noStore": {"type": "boolean"},
+    "privacyAssessment": {"type": "object"},
+    "storageReceipt": {"type": "object"}
+  }
+}

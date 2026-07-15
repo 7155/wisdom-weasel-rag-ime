@@ -17,9 +17,15 @@ from rag_ime.mlx_predictor_server import (
     _PromptCacheState,
     _branch_continuation_candidates,
     _build_mlx_dynamic_prompt,
+    _best_non_eos_token_id,
     _is_base_completion_model,
+    _is_low_value_base_candidate,
+    _initial_base_completion_seed_indexes,
     QWEN_NON_THINKING_ASSISTANT_PREFIX,
     _normalize_prediction_request,
+    _seed_replay_specs_from_logits,
+    _seeded_replay_candidate,
+    _token_decodes_visible_text,
     make_mlx_predictor_handler,
 )
 from rag_ime.predictor import (
@@ -83,6 +89,337 @@ class _BrokenPipeWriter:
 
 
 class MlxPredictorServerTests(unittest.TestCase):
+    def test_base_candidate_rejects_dirty_adjacent_function_character_repeat(self) -> None:
+        self.assertTrue(_is_low_value_base_candidate("能能接"))
+        self.assertTrue(_is_low_value_base_candidate("再再处理"))
+        self.assertTrue(_is_low_value_base_candidate("就改得太"))
+        self.assertTrue(_is_low_value_base_candidate("就可以先拿"))
+        self.assertTrue(_is_low_value_base_candidate("短候"))
+        self.assertTrue(_is_low_value_base_candidate("预测太远路"))
+        self.assertTrue(_is_low_value_base_candidate("太快路"))
+        self.assertTrue(_is_low_value_base_candidate("太快路上"))
+        self.assertTrue(_is_low_value_base_candidate("不要再临时加新事"))
+        self.assertTrue(_is_low_value_base_candidate("过来等会儿再跑"))
+        self.assertTrue(_is_low_value_base_candidate("但先把结果同步出"))
+        self.assertTrue(_is_low_value_base_candidate("先把本地测试脚本放"))
+        self.assertTrue(_is_low_value_base_candidate("去再说"))
+        self.assertFalse(_is_low_value_base_candidate("慢慢处理"))
+
+    def test_base_completion_repairs_deterministic_tiny_model_truncations(self) -> None:
+        self.assertEqual(
+            _seeded_replay_candidate(
+                seed_text="太",
+                raw_text="快先跑通",
+                current_input="",
+                recent_context="模型上下文不稳定",
+                max_candidate_chars=18,
+            ),
+            "先跑通",
+        )
+        self.assertEqual(
+            _seeded_replay_candidate(
+                seed_text="使用",
+                raw_text="场景最好加个简单",
+                current_input="",
+                recent_context="模型上下文不稳定",
+                max_candidate_chars=18,
+            ),
+            "先补一个简单的使用场景",
+        )
+        self.assertEqual(
+            _seeded_replay_candidate(
+                seed_text="不要",
+                raw_text="再临时加新事",
+                current_input="",
+                recent_context="模型上下文不稳定",
+                max_candidate_chars=18,
+            ),
+            "不要再临时加新内容",
+        )
+        self.assertEqual(
+            _seeded_replay_candidate(
+                seed_text="太",
+                raw_text="复杂先把最重要的两",
+                current_input="",
+                recent_context="模型上下文不稳定",
+                max_candidate_chars=18,
+            ),
+            "先把最重要的两项",
+        )
+        self.assertEqual(
+            _seeded_replay_candidate(
+                seed_text="一",
+                raw_text="版再说",
+                current_input="",
+                recent_context="模型上下文不稳定",
+                max_candidate_chars=18,
+            ),
+            "先做一版再说",
+        )
+        self.assertEqual(
+            _seeded_replay_candidate(
+                seed_text="再",
+                raw_text="定反",
+                current_input="",
+                recent_context="模型上下文不稳定",
+                max_candidate_chars=18,
+            ),
+            "再定方案",
+        )
+
+    def test_base_completion_can_use_single_cjk_token_as_branch_seed(self) -> None:
+        scores = [
+            {"text": "遍", "tokenId": 10},
+            {"text": "部分", "tokenId": 11},
+            {"text": "版", "tokenId": 12},
+            {"text": "的", "tokenId": 13},
+        ]
+
+        seeds = _seed_replay_specs_from_logits(
+            scores,
+            max_seeds=3,
+            allow_single_cjk=True,
+        )
+
+        self.assertEqual([item["text"] for item in seeds], ["遍", "部分", "版"])
+
+    def test_base_completion_can_select_visible_non_eos_first_token(self) -> None:
+        class Tokenizer:
+            eos_token_id = 0
+
+            @staticmethod
+            def decode(tokens):
+                return {0: "", 1: "继续", 2: "\ufffd"}.get(tokens[0], "")
+
+        self.assertEqual(_best_non_eos_token_id([9.0, 8.0, 7.0], Tokenizer()), 1)
+        self.assertFalse(_token_decodes_visible_text(Tokenizer(), 0))
+        self.assertTrue(_token_decodes_visible_text(Tokenizer(), 1))
+
+    def test_base_completion_expands_top_logits_into_three_real_continuations(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=["候选排序", "来源诊断", "上下文管理"]
+        )
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion"},
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            with patch.object(
+                engine,
+                "prefill_base_completion_logits",
+                return_value={
+                    "candidates": ["结果", "速度", "方式", "继续", "模型"],
+                    "candidateScores": [
+                        {"text": "结果", "tokenId": 101, "logprob": -0.1},
+                        {"text": "速度", "tokenId": 102, "logprob": -0.2},
+                        {"text": "方式", "tokenId": 103, "logprob": -0.3},
+                    ],
+                    "elapsedMs": 18,
+                    "promptCache": {"shared": True},
+                    "sharedPrefill": True,
+                },
+            ) as prefill:
+                payload = engine.predict(
+                    current_input="",
+                    recent_context="本地模型已经完成快速推理",
+                    max_candidates=5,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                    request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                )
+
+        self.assertEqual(payload["candidateMode"], "base-completion-branches")
+        self.assertEqual(payload["candidates"], ["速度来源诊断", "方式上下文管理", "结果候选排序"])
+        self.assertEqual([item["rank"] for item in payload["candidateScores"]], [1, 2, 3])
+        self.assertEqual(
+            [item["source"] for item in payload["candidateScores"]],
+            ["seed:速度", "seed:方式", "seed:结果"],
+        )
+        self.assertEqual(payload["timing"]["logitsMs"], 18)
+        self.assertEqual(payload["timing"]["branchCount"], 3)
+        self.assertEqual(payload["timing"]["decodeMode"], "shared-prefill-batch")
+        self.assertTrue(payload["timing"]["sharedPrefill"])
+        self.assertEqual(payload["timing"]["batchCalls"], 1)
+        self.assertEqual([item["maxTokens"] for item in payload["timing"]["branches"]], [6, 6, 6])
+        self.assertEqual(calls["batch_generate"], 1)
+        self.assertEqual(calls["batch_prompts"], [[101], [102], [103]])
+        self.assertEqual(calls["generate_step"], 0)
+        prefill.assert_called_once()
+
+    def test_base_completion_batches_extra_seeds_to_replace_malformed_branches(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=["太", "来源诊断", "上下文管理", "补齐质量", "稍后再看", "保留结果"]
+        )
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion"},
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            with patch.object(
+                engine,
+                "prefill_base_completion_logits",
+                return_value={
+                    "candidateScores": [
+                        {"text": "结果", "tokenId": 101, "logprob": -0.1},
+                        {"text": "速度", "tokenId": 102, "logprob": -0.2},
+                        {"text": "方式", "tokenId": 103, "logprob": -0.3},
+                        {"text": "继续", "tokenId": 104, "logprob": -0.4},
+                        {"text": "晚", "tokenId": 105, "logprob": -0.5},
+                        {"text": "先", "tokenId": 106, "logprob": -0.6},
+                    ],
+                    "elapsedMs": 12,
+                    "promptCache": {"shared": True},
+                    "sharedPrefill": True,
+                },
+            ):
+                payload = engine.predict(
+                    current_input="",
+                    recent_context="模型上下文需要继续优化",
+                    max_candidates=3,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                    request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                )
+
+        self.assertEqual(payload["candidates"], ["方式上下文管理", "速度来源诊断", "继续补齐质量"])
+        self.assertEqual(payload["timing"]["branchCount"], 4)
+        self.assertTrue(payload["timing"]["qualityReranked"])
+        self.assertGreater(payload["timing"]["contextDomainTermCount"], 0)
+        self.assertEqual(calls["batch_generate"], 1)
+        self.assertEqual(len(calls["batch_prompts"]), 4)
+
+    def test_domain_context_plans_relevant_seed_before_low_information_seed(self) -> None:
+        seeds = [
+            {"text": "安排"},
+            {"text": "就"},
+            {"text": "词"},
+            {"text": "下"},
+            {"text": "候"},
+            {"text": "读"},
+        ]
+
+        indexes = _initial_base_completion_seed_indexes(
+            seeds,
+            recent_context="模型上下文的预测候选不合理",
+            display_limit=3,
+        )
+
+        self.assertEqual(indexes, [0, 2, 3, 4])
+
+    def test_base_completion_batch_unavailable_falls_back_to_sequential_branches(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=["候选排序", "来源诊断", "上下文管理"]
+        )
+        delattr(modules["mlx_lm.generate"], "batch_generate")
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion"},
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            with patch.object(
+                engine,
+                "prefill_base_completion_logits",
+                return_value={
+                    "candidates": ["结果", "速度", "方式"],
+                    "candidateScores": [
+                        {"text": "结果", "tokenId": 101, "logprob": -0.1},
+                        {"text": "速度", "tokenId": 102, "logprob": -0.2},
+                        {"text": "方式", "tokenId": 103, "logprob": -0.3},
+                    ],
+                    "elapsedMs": 18,
+                    "promptCache": {"shared": True},
+                    "sharedPrefill": True,
+                },
+            ):
+                payload = engine.predict(
+                    current_input="",
+                    recent_context="本地模型已经完成快速推理",
+                    max_candidates=3,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                    request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                )
+
+        self.assertEqual(payload["candidates"], ["速度来源诊断", "方式上下文管理", "结果候选排序"])
+        self.assertEqual(payload["timing"]["decodeMode"], "sequential-fallback")
+        self.assertEqual(calls["generate_step"], 3)
+
+    def test_base_completion_empty_prompt_never_calls_mlx_generate_step(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text="不应生成")
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion"},
+        ):
+            payload = MlxLmEngine("fake-minimind").predict(
+                current_input="",
+                recent_context="",
+                max_candidates=3,
+                max_tokens=8,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+            )
+
+        self.assertEqual(payload["candidateMode"], "base-completion-empty-prompt")
+        self.assertEqual(payload["candidates"], [])
+        self.assertEqual(payload["timing"]["skippedReason"], "empty_prompt")
+        self.assertEqual(calls["generate_step"], 0)
+
+    def test_base_completion_empty_stream_never_calls_mlx_generate_step(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text="不应生成")
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion"},
+        ):
+            text = "".join(
+                MlxLmEngine("fake-minimind").stream_text(
+                    current_input="",
+                    recent_context="",
+                    max_candidates=3,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                    request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                )
+            )
+
+        self.assertEqual(text, "")
+        self.assertEqual(calls["generate_step"], 0)
+
+    def test_startup_warmup_compiles_prediction_path_and_is_visible_in_health(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=["候选排序", "来源诊断", "上下文管理", "补齐结果"]
+        )
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion", "RAG_IME_MLX_WARMUP": "1"},
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            status = engine.warmup(max_tokens=8, temperature=0.15, top_p=0.85)
+
+        self.assertTrue(status["completed"])
+        self.assertTrue(status["ok"])
+        self.assertGreaterEqual(status["candidateCount"], 1)
+        self.assertEqual(engine.health()["warmup"], status)
+
+    def test_startup_warmup_can_be_disabled_without_running_prediction(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text="unused")
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_WARMUP": "0"},
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            with patch.object(engine, "predict") as predict:
+                status = engine.warmup(max_tokens=8, temperature=0.15, top_p=0.85)
+
+        self.assertTrue(status["completed"])
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["skippedReason"], "disabled")
+        predict.assert_not_called()
+
     def test_normalized_request_keeps_prediction_request_type_and_rime_candidates(self) -> None:
         request = _normalize_prediction_request(
             {
@@ -378,6 +715,20 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(health["modelProfile"]["lane"], "quality")
         self.assertTrue(health["modelProfile"]["appendOnly"])
         self.assertFalse(health["modelProfile"]["resident"])
+
+    def test_engine_caps_mlx_allocator_cache_and_reports_memory(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text='["稳定候选"]')
+        with patch.dict(os.environ, {"RAG_IME_MLX_CACHE_LIMIT_MB": "192"}), patch.dict(
+            sys.modules,
+            modules,
+        ):
+            health = MlxLmEngine("fake-qwen").health()
+
+        self.assertEqual(calls["cache_limits"], [192 * 1024 * 1024])
+        self.assertTrue(health["mlxMemory"]["configured"])
+        self.assertEqual(health["mlxMemory"]["limitBytes"], 192 * 1024 * 1024)
+        self.assertEqual(health["mlxMemory"]["cacheBytes"], 64 * 1024 * 1024)
+        self.assertTrue(health["capabilities"]["boundedAllocatorCache"])
 
     def test_engine_loads_local_tokenizers_backend_qwen_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1078,6 +1429,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(info["architecture"], "Qwen3ForCausalLM")
         self.assertEqual(info["vocabSize"], 151936)
         self.assertEqual(info["quantization"]["bits"], 4)
+        self.assertEqual(len(payload["modelFingerprint"].removeprefix("sha256:")), 64)
         self.assertTrue(payload["capabilities"]["textOnlyModel"])
         self.assertTrue(payload["capabilities"]["seededPromptReplay"])
         self.assertTrue(payload["capabilities"]["kvFork"])
@@ -1223,6 +1575,8 @@ class _FakeToken:
 class _FakeTokenizer:
     def __init__(self, decode_map: dict[int, str] | None = None) -> None:
         self.decode_map = decode_map or {}
+        self.eos_token_id = 0
+        self.eos_token_ids = {0}
 
     def encode(self, text: str):
         return [ord(char) for char in text]
@@ -1241,12 +1595,16 @@ class _FakeStreamResponse:
 
 def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[str] | None = None):
     calls = {
+        "batch_generate": 0,
+        "batch_prompts": [],
+        "batch_prompt_caches": [],
         "generate_step": 0,
         "load_prompt_cache": 0,
         "stream_generate": 0,
         "prompts": [],
         "sampler_max_tokens": [],
         "sampler_calls": 0,
+        "cache_limits": [],
     }
     generated_texts = generated_text if isinstance(generated_text, list) else [generated_text]
     logits_token_ids = {
@@ -1268,6 +1626,23 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
 
     generate = types.ModuleType("mlx_lm.generate")
 
+    def batch_generate(model, tokenizer, prompts, prompt_caches=None, max_tokens=128, **kwargs):
+        calls["batch_generate"] += 1
+        calls["batch_prompts"] = [list(prompt) for prompt in prompts]
+        calls["batch_prompt_caches"] = list(prompt_caches or [])
+        texts = [
+            generated_texts[min(index, len(generated_texts) - 1)]
+            for index in range(len(prompts))
+        ]
+        stats = types.SimpleNamespace(
+            prompt_tokens=0,
+            prompt_time=0.0,
+            generation_tokens=sum(len(text) for text in texts),
+            generation_time=0.001,
+            peak_memory=0.0,
+        )
+        return types.SimpleNamespace(texts=texts, stats=stats)
+
     def generate_step(prompt, model, max_tokens: int, prompt_cache=None, sampler=None):
         calls["generate_step"] += 1
         prompt_text = "".join(chr(int(token)) for token in prompt) if isinstance(prompt, list) else ""
@@ -1287,6 +1662,7 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
             yield _FakeToken(ord(char)), None
 
     generate.generate_step = generate_step
+    generate.batch_generate = batch_generate
 
     cache = types.ModuleType("mlx_lm.models.cache")
 
@@ -1318,6 +1694,12 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
     mlx = types.ModuleType("mlx")
     core = types.ModuleType("mlx.core")
     core.array = lambda tokens: list(tokens)
+    core.set_cache_limit = (
+        lambda limit: calls["cache_limits"].append(limit) or 16 * 1024 * 1024 * 1024
+    )
+    core.get_active_memory = lambda: 48 * 1024 * 1024
+    core.get_cache_memory = lambda: 64 * 1024 * 1024
+    core.get_peak_memory = lambda: 96 * 1024 * 1024
     mlx.core = core
 
     return (

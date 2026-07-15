@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS Squirrel tooling")
 class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
     def _create_minimal_squirrel_upstream(self, tmp_path: Path) -> tuple[Path, Path]:
         upstream = tmp_path / "upstream-squirrel"
@@ -19,24 +20,30 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
         subprocess.run(["git", "config", "user.name", "RAG IME Test"], cwd=upstream, check=True)
         (upstream / "README.md").write_text("fake squirrel\n", encoding="utf-8")
         (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
-            "import Foundation\nstruct RagImeSidecarRequest: Codable {}\n"
+            "import Foundation\nstruct RagImeSidecarRequest: Codable { let privacyDisposition: String }\n"
             "struct RagImeDisplayCandidate { let displayLayout: String? }\n",
             encoding="utf-8",
         )
         (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
             "import Foundation\nstruct RagImeSidecarClient {\n"
             "  init?(config: SquirrelConfig?) {}\n"
-            "  func call() { _ = \"rime-suggest\"; _ = \"rime-select\" }\n"
+            "  func call() { _ = \"rime-suggest\"; _ = \"rime-select\"; _ = \"rime-rank-feedback\" }\n"
+            "  // request.privacyDisposition == \"allowed\"\n"
             "}\n",
             encoding="utf-8",
         )
         (upstream / "sources" / "RagImeSelectedTextProvider.swift").write_text(
-            "import ApplicationServices\nfinal class RagImeSelectedTextProvider {\n"
+            "import ApplicationServices\nfinal class RagImeForegroundContextResolver {}\n"
+            "final class RagImeSelectedTextProvider {\n"
             "  func captureForegroundTextForSidecar() {\n"
             "    _ = kAXSelectedTextRangeAttribute\n"
             "    _ = kAXStringForRangeParameterizedAttribute\n"
             "    _ = kAXValueAttribute\n"
             "  }\n"
+            '  // privacy_unknown_app_bundle_missing; isSensitive: false, reason: "privacy_unknown_ax_not_trusted"\n'
+            "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed\n"
+            "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle\n"
+            "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens\n"
             "}\n",
             encoding="utf-8",
         )
@@ -48,13 +55,37 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func ragImeRequestFingerprint() {}",
                     "  func mergedRagImePanelCandidates() {}",
                     "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
+                    "  func ragImePanelUsesSideDisplay() -> Bool { false }",
+                    '  // ragImePrivacyDisposition == "allowed"; privacyDisposition: ragImePrivacyDisposition',
                     "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                     "  func traceRagImeFrontendEvent() {}",
+                    "  // guard ragImeSidecarClient?.frontendTrace == true else { return }",
+                    "  // guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }",
+                    "  // ragImePrepareFrontendTraceLog .posixPermissions: 0o600 appendingPathExtension(\"1\")",
+                    "  // let contextAnchor = ragImeStableTextHash(context)",
+                    "  // queryAnchor: contextAnchor displayAnchor: contextAnchor",
                     "  func traceRagImePanelTextLayout() { _ = \"panel_text_layout\" }",
                     "  func traceSidecarRequestScheduled() { _ = \"sidecar_request_scheduled\" }",
                     "  func traceSidecarEmptyResponseCleared() { _ = \"sidecar_empty_response_cleared\" }",
                     "  func traceV2() { _ = \"rag-ime.foreground-trace.v2\" }",
+                    "  func suppressCompositionAi() { _ = \"composition_ai_suppressed\" }",
+                    "  func traceRimeComposition() { _ = \"rime_composition_started\"; _ = \"rime_composition_candidates_visible\" }",
+                    "  func controlCenterMenu() { _ = \"打开 RAG-IME 控制中心...\"; _ = \"com.rag-ime.control\" }",
+                    "  func suppressPostCommitOverlay() { _ = \"RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING\"; _ = \"assistant_overlay_local_placeholder_suppressed\" }",
                     "  func foregroundSnapshot() { _ = \"ragImeSelectedTextProvider.captureForegroundTextForSidecar\" }",
+                    "  func queuedForegroundSnapshot() { _ = \"ragImeForegroundContextResolver.captureFromAccessibility(\" }",
+                    "  func probeRagImeForegroundPrivacyAndContext() { _ = \"privacy_probe_timeout\" }",
+                    "  func foregroundCaptureResolved() { _ = \"foreground_context_capture_resolved\" }",
+                    "  func foregroundCaptureFailed() { _ = \"foreground_context_capture_failed\" }",
+                    "  func sideCandidateFeedbackRecorded() { _ = \"side_candidate_feedback_recorded\" }",
+                    "  // ragImeNativeSelectionSnapshot native_rime_rank_feedback_recorded",
+                    "  // guard !enforceRagImeFastPrivacyGuard() else { return }",
+                    "  // discardRagImeSensitiveNativeLearningTransaction",
+                    "  // guard rimeAPI.get_status(session, &status) else { return false }",
+                    "  // guard !isComposing else { return false } return !backspaceHandled",
+                    "  // rimeAPI.process_key(session, Int32(XK_BackSpace), 0)",
+                    '  // "forwardedToClient": false',
+                    "  func assistantOverlayCandidateVisible() { _ = \"assistant_overlay_candidate_visible\" }",
                     "  func ragImeDisplayComment() { _ = \"candidate.sourceType == \\\"model\\\"\" }",
                     "}",
                 ]
@@ -64,6 +95,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
         )
         (upstream / "sources" / "SquirrelPanel.swift").write_text(
             "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; "
+            "var ragImePanelUsesSideDisplay: Bool { false }; "
+            "func nonGlassBackground() { _ = \"return NSView()\" }; "
             "func candidateSeparator(before index: Int) -> String { \"\\n\" }; "
             "func traceRagImePanelTextLayout() {} }\n",
             encoding="utf-8",
@@ -133,6 +166,11 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             )
         self.assertIn(f"workdir={workdir}", result.stdout)
         self.assertIn("base_ref=2158538", result.stdout)
+        self.assertIn("runtime_profile=foreground-rag-proof", result.stdout)
+        self.assertIn("latency_budget_ms=900", result.stdout)
+        self.assertIn("timeout_ms=1200", result.stdout)
+        self.assertIn("max_side_candidates=5", result.stdout)
+        self.assertIn("post_commit_idle_ms=420", result.stdout)
         self.assertIn("sidecar_url=http://127.0.0.1:18766/api", result.stdout)
         self.assertIn(f"repo_root={root}", result.stdout)
         self.assertIn(
@@ -196,7 +234,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "base"], cwd=upstream, check=True, capture_output=True, text=True)
 
             (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
-                "import CryptoKit\nimport Foundation\nstruct RagImeSidecarRequest: Codable {}\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
+                "import CryptoKit\nimport Foundation\nstruct RagImeSidecarRequest: Codable { let privacyDisposition: String }\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
                 encoding="utf-8",
             )
             (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
@@ -208,6 +246,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func call() {",
                         '    _ = "rime-suggest"',
                         '    _ = "rime-select"',
+                        '    _ = "rime-rank-feedback"',
+                        '    // request.privacyDisposition == "allowed"',
                         "  }",
                         "}",
                     ]
@@ -219,12 +259,17 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 "\n".join(
                     [
                         "import ApplicationServices",
+                        "final class RagImeForegroundContextResolver {}",
                         "final class RagImeSelectedTextProvider {",
                         "  func captureForegroundTextForSidecar() {",
                         "    _ = kAXSelectedTextRangeAttribute",
                         "    _ = kAXStringForRangeParameterizedAttribute",
                         "    _ = kAXValueAttribute",
                         "  }",
+                        '  // privacy_unknown_app_bundle_missing; isSensitive: false, reason: "privacy_unknown_ax_not_trusted"',
+                        "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed",
+                        "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle",
+                        "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens",
                         "}",
                     ]
                 )
@@ -239,13 +284,37 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func ragImeRequestFingerprint() {}",
                         "  func mergedRagImePanelCandidates() {}",
                         "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
+                        "  func ragImePanelUsesSideDisplay() -> Bool { false }",
+                        '  // ragImePrivacyDisposition == "allowed"; privacyDisposition: ragImePrivacyDisposition',
                         "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                         "  func traceRagImeFrontendEvent() {}",
+                        "  // guard ragImeSidecarClient?.frontendTrace == true else { return }",
+                        "  // guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }",
+                        '  // ragImePrepareFrontendTraceLog .posixPermissions: 0o600 appendingPathExtension("1")',
+                        "  // let contextAnchor = ragImeStableTextHash(context)",
+                        "  // queryAnchor: contextAnchor displayAnchor: contextAnchor",
                         '  func traceRagImePanelTextLayout() { _ = "panel_text_layout" }',
                         '  func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }',
                         '  func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }',
                         '  func traceV2() { _ = "rag-ime.foreground-trace.v2" }',
+                        '  func suppressCompositionAi() { _ = "composition_ai_suppressed" }',
+                        '  func traceRimeComposition() { _ = "rime_composition_started"; _ = "rime_composition_candidates_visible" }',
+                        '  func controlCenterMenu() { _ = "打开 RAG-IME 控制中心..."; _ = "com.rag-ime.control" }',
+                        '  func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }',
                         '  func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }',
+                        '  func queuedForegroundSnapshot() { _ = "ragImeForegroundContextResolver.captureFromAccessibility(" }',
+                        '  func probeRagImeForegroundPrivacyAndContext() { _ = "privacy_probe_timeout" }',
+                        '  func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }',
+                        '  func foregroundCaptureFailed() { _ = "foreground_context_capture_failed" }',
+                        '  func sideCandidateFeedbackRecorded() { _ = "side_candidate_feedback_recorded" }',
+                        '  // ragImeNativeSelectionSnapshot native_rime_rank_feedback_recorded',
+                        '  // guard !enforceRagImeFastPrivacyGuard() else { return }',
+                        '  // discardRagImeSensitiveNativeLearningTransaction',
+                        '  // guard rimeAPI.get_status(session, &status) else { return false }',
+                        '  // guard !isComposing else { return false } return !backspaceHandled',
+                        '  // rimeAPI.process_key(session, Int32(XK_BackSpace), 0)',
+                        '  // "forwardedToClient": false',
+                        '  func assistantOverlayCandidateVisible() { _ = "assistant_overlay_candidate_visible" }',
                         '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",
                     ]
@@ -269,7 +338,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (upstream / "sources" / "SquirrelPanel.swift").write_text(
-                "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \"\\n\" }; func traceRagImePanelTextLayout() {} }\n",
+                "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; var ragImePanelUsesSideDisplay: Bool { false }; func nonGlassBackground() { _ = \"return NSView()\" }; func candidateSeparator(before index: Int) -> String { \"\\n\" }; func traceRagImePanelTextLayout() {} }\n",
                 encoding="utf-8",
             )
             (upstream / "sources" / "InputSource.swift").write_text(
@@ -375,7 +444,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             config = (workdir / "rag-ime.squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn("sidecar_url: http://127.0.0.1:19866/api", config)
             self.assertIn("project: offline-test", config)
-            self.assertIn("frontend_trace: true", config)
+            self.assertIn("frontend_trace: false", config)
 
 
 if __name__ == "__main__":

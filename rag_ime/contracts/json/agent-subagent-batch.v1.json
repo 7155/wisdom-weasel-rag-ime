@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-subagent-batch.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "id", "parentSessionId", "parentRunId", "contextMode",
+    "state", "depth", "maxDepth", "abortRequested", "createdAtMs",
+    "updatedAtMs", "completedAtMs", "runs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-subagent-batch.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "parentSessionId": {"type": "string", "minLength": 1},
+    "parentRunId": {"type": "string"},
+    "contextMode": {"type": "string", "enum": ["fresh", "fork"]},
+    "state": {"type": "string", "enum": ["queued", "running", "completed", "failed", "aborted", "timed_out"]},
+    "depth": {"type": "integer", "minimum": 1, "maximum": 2},
+    "maxDepth": {"type": "integer", "minimum": 1, "maximum": 2},
+    "abortRequested": {"type": "boolean"},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "completedAtMs": {"type": ["integer", "null"], "minimum": 0},
+    "runs": {
+      "type": "array", "minItems": 1, "maxItems": 2,
+      "items": {"type": "object"}
+    }
+  }
+}

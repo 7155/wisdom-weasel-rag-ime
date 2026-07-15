@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
 import threading
 import uuid
-from dataclasses import dataclass, field
+import re
+import time
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Callable
 
 from .active_rag_candidate_compiler import (
     ActiveRagCandidate,
@@ -11,18 +16,102 @@ from .active_rag_candidate_compiler import (
 )
 from .active_rag_models import ActiveRagEvidence, ActiveRagFrame, ACTIVE_RAG_MODE, active_rag_key_policy
 from .active_rag_retriever import retrieve_active_rag_evidence
-from .deepseek_completion import DeepSeekCompletionRequest, fallback_deepseek_completion_candidates
+from .contracts.context_observability import (
+    ACTIVE_RAG_ROUTE_STATUS_SCHEMA_VERSION,
+    build_context_injection_trace,
+    evidence_injection_diagnostics,
+    text_fingerprint,
+)
+from .deepseek_completion import (
+    CompletionCandidateDelta,
+    DeepSeekCompletionError,
+    DeepSeekCompletionRequest,
+    active_rag_text_is_complete,
+    build_deepseek_completion_messages,
+    resolved_active_rag_current_request,
+)
 from .local_sqlite_core import LocalSqliteCoreClient
 from .prediction_status import thinking_animation_frame, thinking_animation_suffix
 from .runtime_flags import assert_deepseek_scene_allowed
 from .smart_rag_context_packet import build_active_rag_context_packet
-from .text_utils import compact_whitespace, now_ms, stable_text_hash
-from .timeline_context import timeline_evidence_pack_from_core
+from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
+from .timeline_context import timeline_context_preferences, timeline_evidence_pack_from_core
 
 
 ACTIVE_RAG_SERVICE_SCHEMA_VERSION = "rag-ime.active-rag-service.v1"
-ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS = 15_000
-ACTIVE_RAG_DEFAULT_MAX_CHARS = 120
+ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS = 120_000
+ACTIVE_RAG_DEFAULT_MAX_CHARS = 0
+ACTIVE_RAG_LOCAL_EVIDENCE_MAX_CHARS = 120
+ACTIVE_RAG_CHAIN_TRACE_SCHEMA_VERSION = "rag-ime.active-rag-chain-trace.v1"
+ACTIVE_RAG_CHAIN_TRACE_MAX_BYTES = 8_000_000
+ACTIVE_RAG_CHAIN_TRACE_TEXT_LIMIT = 24_000
+SENSITIVE_FIELD_BLOCK_REASON = "sensitive_field_blocked"
+
+_TRACE_SECRET_FIELD_TOKENS = (
+    "authorization",
+    "api_key",
+    "apikey",
+    "access_token",
+    "accesstoken",
+    "secret",
+    "password",
+    "cookie",
+)
+_TRACE_TEXT_FIELD_TOKENS = (
+    "candidate",
+    "content",
+    "label",
+    "message",
+    "prompt",
+    "query",
+    "response",
+    "summary",
+    "tag",
+    "text",
+    "title",
+    "value",
+)
+
+
+def _local_evidence_max_chars(requested_max_chars: int) -> int:
+    requested = int(requested_max_chars or 0)
+    return requested if requested > 0 else ACTIVE_RAG_LOCAL_EVIDENCE_MAX_CHARS
+
+_TIMELINE_GENERIC_TERMS = {
+    "这里",
+    "当前",
+    "前台",
+    "上下文",
+    "测试",
+    "内容",
+    "应该",
+    "没有",
+    "功能",
+    "一下",
+    "一个",
+    "这个",
+    "那个",
+    "目前",
+    "现在",
+    "可以",
+    "需要",
+    "进行",
+    "问题",
+    "输入",
+    "输出",
+    "输入法",
+    "候选",
+    "rag",
+    "ime",
+    "squirrel",
+    "codex",
+}
+# ``token_terms`` emits CJK bigrams/trigrams. A literal stop-word check alone
+# therefore lets fragments such as ``下文`` or ``台上`` manufacture relevance
+# for an unrelated memory book. Drop n-grams made entirely from generic UI words.
+_TIMELINE_GENERIC_CJK_CHARS = frozenset(
+    "这里当前前台上下文测试内容应该没有功能一下一个这个那个目前现在可以需要进行问题输入输出法候选用于"
+)
 
 
 @dataclass(frozen=True)
@@ -38,12 +127,27 @@ class ActiveRagStartRequest:
     intent: str = "rewrite"
     placement: str = "replace_selection"
     context: str = ""
+    context_source: str = ""
+    frontend_context_hash: str = ""
+    frontend_context_chars: int = 0
+    frontend_selected_text_chars: int = 0
     evidence_pack: tuple[dict[str, object], ...] = ()
     project: str = "wisdom-weasel-rag-ime"
     app: str = ""
     max_candidates: int = 1
     max_chars: int = ACTIVE_RAG_DEFAULT_MAX_CHARS
-    latency_budget_ms: int = 15000
+    latency_budget_ms: int = ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS
+    remote_model_allowed: bool | None = None
+    remote_model_skip_reason: str = ""
+    remote_model_gates: dict[str, bool] = field(default_factory=dict)
+    sensitive_field: bool = False
+    secure_input: bool = False
+    sensitive_text_guard_enabled: bool = True
+    sensitive_text_guard_hit: bool = False
+    local_retrieval_allowed: bool = True
+    local_retrieval_skip_reason: str = ""
+    rag_enabled_lanes: tuple[tuple[str, bool], ...] = ()
+    rag_lane_weights: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass
@@ -54,43 +158,90 @@ class ActiveRagSession:
     evidence: tuple[ActiveRagEvidence, ...] = ()
     candidates: tuple[ActiveRagCandidate, ...] = ()
     error: str = ""
+    diagnostics: dict[str, object] = field(default_factory=dict)
+    trace_events: list[dict[str, object]] = field(default_factory=list)
+    trace_partial_chars: int = 0
     created_at_ms: int = field(default_factory=now_ms)
     updated_at_ms: int = field(default_factory=now_ms)
 
 
 class ActiveRagService:
-    def __init__(self, *, core: LocalSqliteCoreClient | None = None, completion_provider=None):
+    def __init__(
+        self,
+        *,
+        core: LocalSqliteCoreClient | None = None,
+        completion_provider=None,
+        trace_path: Path | None = None,
+        trace_include_text: bool | Callable[[], bool] = False,
+    ):
         self.core = core
         if self.core is not None:
             self.core.initialize()
         self.completion_provider = completion_provider
+        self.trace_path = Path(trace_path).expanduser() if trace_path is not None else None
+        self.trace_include_text = trace_include_text
         self._lock = threading.RLock()
+        self._trace_lock = threading.RLock()
         self._sessions: dict[str, ActiveRagSession] = {}
+        self._blocked_responses: dict[str, dict[str, object]] = {}
 
     def start(self, request: ActiveRagStartRequest) -> dict[str, object]:
+        sensitive_reason = active_rag_sensitive_block_reason(request)
+        if sensitive_reason:
+            session_id = f"active-rag:blocked:{uuid.uuid4().hex[:12]}"
+            response = _sensitive_blocked_payload(session_id=session_id, reason=sensitive_reason)
+            with self._lock:
+                self._blocked_responses[session_id] = response
+                while len(self._blocked_responses) > 16:
+                    self._blocked_responses.pop(next(iter(self._blocked_responses)))
+            return dict(response)
         _validate_selected_text_hash(request)
-        session = ActiveRagSession(session_id=f"active-rag:{uuid.uuid4().hex[:16]}", request=request)
+        session = ActiveRagSession(
+            session_id=f"active-rag:{uuid.uuid4().hex[:16]}",
+            request=request,
+            diagnostics=_initial_session_diagnostics(request, completion_provider=self.completion_provider),
+        )
+        _append_trace_event(session, "active_rag_context_captured", requestCapture=session.diagnostics["requestCapture"])
         with self._lock:
             self._drop_stale_sessions_locked(request)
             self._sessions[session.session_id] = session
+            self._persist_session_trace_locked(session, phase="started")
         thread = threading.Thread(target=self._run_session, args=(session.session_id,), daemon=True)
         thread.start()
         return self.status(session.session_id)
 
     def preview(self, request: ActiveRagStartRequest, *, local_only: bool = True) -> dict[str, object]:
+        sensitive_reason = active_rag_sensitive_block_reason(request)
+        if sensitive_reason:
+            return {
+                "dryRun": True,
+                **_sensitive_blocked_payload(
+                    session_id="active-rag:blocked-preview",
+                    reason=sensitive_reason,
+                ),
+            }
         _validate_selected_text_hash(request)
-        evidence = self._retrieve_local_evidence(request)
+        diagnostics = _initial_session_diagnostics(request, completion_provider=self.completion_provider)
+        trace_events: list[dict[str, object]] = []
+        evidence = self._retrieve_local_evidence(request, diagnostics=diagnostics)
+        trace_events.append(_trace_event("active_rag_retrieval_completed", retrieval=diagnostics.get("retrieval", {})))
         local_candidates = compile_active_rag_candidates_from_evidence(
             evidence,
             frame=_frame_from_request(request),
             max_candidates=request.max_candidates,
-            max_chars=request.max_chars,
+            max_chars=_local_evidence_max_chars(request.max_chars),
         )
         if not local_only:
-            deepseek_candidates = self._deepseek_candidates(request, evidence=evidence)
+            route = _remote_active_rag_route(self.completion_provider, request=request)
+            diagnostics["route"] = route
+            deepseek_candidates = (
+                self._deepseek_candidates(request, evidence=evidence, diagnostics=diagnostics, trace_events=trace_events)
+                if route["ready"]
+                else ()
+            )
             candidates = (
                 deepseek_candidates
-                if _remote_active_rag_model_enabled(self.completion_provider)
+                if route["ready"]
                 else _merge_candidates(
                     local_candidates,
                     deepseek_candidates,
@@ -99,13 +250,39 @@ class ActiveRagService:
                 )
             )
         else:
+            diagnostics["route"] = {
+                **_remote_active_rag_route(self.completion_provider, request=request),
+                "ready": False,
+                "attempted": False,
+                "skipReason": "local_only_request",
+            }
+            diagnostics["remoteModel"] = {
+                **dict(diagnostics.get("remoteModel") or {}),
+                "requested": False,
+                "allowed": False,
+                "skipReason": "local_only_request",
+            }
             candidates = local_candidates
+        diagnostics["generation"] = {
+            **dict(diagnostics.get("generation") or {}),
+            "localCandidateCount": len(local_candidates),
+            "displayedCandidateCount": len(candidates),
+        }
+        trace_events.append(
+            _trace_event(
+                "active_rag_candidates_displayed",
+                candidateCount=len(candidates),
+                sourceCounts=_candidate_source_counts(candidates),
+            )
+        )
         session = ActiveRagSession(
             session_id="active-rag:preview",
             request=request,
             status="ready",
             evidence=evidence,
             candidates=candidates,
+            diagnostics=diagnostics,
+            trace_events=trace_events,
         )
         return {"ok": True, "dryRun": True, **_session_payload(session)}
 
@@ -113,10 +290,88 @@ class ActiveRagService:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
+                blocked = self._blocked_responses.get(session_id)
+                if blocked is not None:
+                    return dict(blocked)
                 return {"schemaVersion": ACTIVE_RAG_SERVICE_SCHEMA_VERSION, "sessionId": session_id, "status": "missing"}
             if session.status == "pending" and _should_force_visible_fallback(session):
                 self._force_visible_fallback_locked(session, reason="visible_timeout")
+                self._persist_session_trace_locked(session, phase=session.status)
             return _session_payload(session)
+
+    def diagnostics(self, session_id: str) -> dict[str, object]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                blocked = self._blocked_responses.get(session_id)
+                if blocked is not None:
+                    return {
+                        "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
+                        "ok": False,
+                        "sessionId": session_id,
+                        "status": "blocked",
+                        "diagnostics": dict(blocked.get("diagnostics") or {}),
+                        "traceEvents": list(blocked.get("traceEvents") or []),
+                        "error": SENSITIVE_FIELD_BLOCK_REASON,
+                    }
+                return {
+                    "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
+                    "ok": False,
+                    "sessionId": session_id,
+                    "status": "missing",
+                    "error": "Active RAG session not found",
+                }
+            return {
+                "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
+                "ok": True,
+                "sessionId": session.session_id,
+                "status": session.status,
+                "diagnostics": dict(session.diagnostics),
+                "traceEvents": list(session.trace_events),
+                "error": session.error,
+            }
+
+    def trace_records(self, *, limit: int = 50, session_id: str = "") -> dict[str, object]:
+        path = self.trace_path
+        if path is None:
+            return {
+                "schemaVersion": ACTIVE_RAG_CHAIN_TRACE_SCHEMA_VERSION,
+                "enabled": False,
+                "rawTextIncluded": self._trace_include_text_enabled(),
+                "records": [],
+            }
+        bounded_limit = max(1, min(500, int(limit or 50)))
+        records: list[dict[str, object]] = []
+        with self._trace_lock:
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else []
+            except OSError as exc:
+                return {
+                    "schemaVersion": ACTIVE_RAG_CHAIN_TRACE_SCHEMA_VERSION,
+                    "enabled": True,
+                    "rawTextIncluded": self._trace_include_text_enabled(),
+                    "records": [],
+                    "error": _safe_failure_reason(exc),
+                }
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            if session_id and str(record.get("sessionId") or "") != session_id:
+                continue
+            records.append(record)
+            if len(records) >= bounded_limit:
+                break
+        records.reverse()
+        return {
+            "schemaVersion": ACTIVE_RAG_CHAIN_TRACE_SCHEMA_VERSION,
+            "enabled": True,
+            "rawTextIncluded": self._trace_include_text_enabled(),
+            "records": records,
+        }
 
     def cancel(self, session_id: str) -> dict[str, object]:
         with self._lock:
@@ -125,6 +380,7 @@ class ActiveRagService:
                 session.status = "cancelled"
                 session.updated_at_ms = now_ms()
                 self._record_cancel_feedback(session=session)
+                self._persist_session_trace_locked(session, phase="cancelled")
             return _session_payload(session) if session is not None else {"sessionId": session_id, "status": "missing"}
 
     def accept(
@@ -164,22 +420,84 @@ class ActiveRagService:
                 "placement": session.request.placement,
             }
 
+    def _trace_include_text_enabled(self) -> bool:
+        configured = self.trace_include_text
+        if callable(configured):
+            try:
+                return bool(configured())
+            except Exception:
+                return False
+        return bool(configured)
+
+    def _persist_session_trace_locked(self, session: ActiveRagSession, *, phase: str) -> None:
+        """Persist one bounded, replayable snapshot of the explicit RAG chain.
+
+        This journal is deliberately independent from the in-memory diagnostics
+        endpoint. A Sidecar restart must not erase the only explanation for a
+        paid generation failure. Sensitive-field requests never reach this
+        method; normal requests keep text fingerprint-only unless the explicit
+        trace-text switch is enabled.
+        """
+
+        path = self.trace_path
+        if path is None or active_rag_sensitive_block_reason(session.request):
+            return
+        include_text = self._trace_include_text_enabled()
+        record = _active_rag_chain_trace_record(session, phase=phase, include_text=include_text)
+        try:
+            with self._trace_lock:
+                _append_active_rag_chain_trace(path, record)
+            session.diagnostics["tracePersistence"] = {
+                "enabled": True,
+                "lastPhase": phase,
+                "lastWrittenAtMs": int(record["timestampMs"]),
+                "rawTextIncluded": include_text,
+                "error": "",
+            }
+        except OSError as exc:
+            session.diagnostics["tracePersistence"] = {
+                "enabled": True,
+                "lastPhase": phase,
+                "rawTextIncluded": include_text,
+                "error": _safe_failure_reason(exc),
+            }
+
     def _run_session(self, session_id: str) -> None:
         with self._lock:
             session = self._sessions.get(session_id)
         if session is None:
             return
         try:
-            evidence = self._retrieve_local_evidence(session.request)
+            evidence = self._retrieve_local_evidence(session.request, diagnostics=session.diagnostics)
+            _append_trace_event(
+                session,
+                "active_rag_retrieval_completed",
+                retrieval=session.diagnostics.get("retrieval", {}),
+            )
             with self._lock:
                 current = self._sessions.get(session_id)
                 if current is None or current.status != "pending":
                     return
                 current.evidence = evidence
                 current.updated_at_ms = now_ms()
-            remote_model_enabled = _remote_active_rag_model_enabled(self.completion_provider)
+                self._persist_session_trace_locked(current, phase="retrieval_complete")
+            route = _remote_active_rag_route(self.completion_provider, request=session.request)
+            session.diagnostics["route"] = route
+            remote_model_enabled = bool(route["ready"])
+            _seed_active_rag_context_diagnostics(
+                session.diagnostics,
+                request=session.request,
+                evidence=evidence,
+                remote_model_ready=remote_model_enabled,
+            )
             if remote_model_enabled:
-                candidates = self._deepseek_candidates(session.request, evidence=evidence)
+                candidates = self._deepseek_candidates(
+                    session.request,
+                    evidence=evidence,
+                    diagnostics=session.diagnostics,
+                    trace_events=session.trace_events,
+                    stream_sink=lambda text: self._publish_deepseek_partial(session_id, text),
+                )
             else:
                 candidates = self._local_candidates(session.request, evidence=evidence)
             with self._lock:
@@ -187,124 +505,474 @@ class ActiveRagService:
                 if current is None or current.status != "pending":
                     return
                 current.evidence = evidence
-                if remote_model_enabled and not candidates:
-                    candidates = self._fallback_candidates(session.request, evidence=evidence, reason="empty_remote_content")
-                current.candidates = candidates
-                self._record_shown_feedback(session=current, candidates=candidates)
-                if candidates or not remote_model_enabled:
+                if candidates:
+                    current.candidates = candidates
                     current.status = "ready"
+                    current.error = ""
                 else:
-                    current.status = "error"
-                    current.error = "DeepSeek returned no governed candidates"
+                    empty_reason = (
+                        "remote_generation_returned_no_insertable_content"
+                        if remote_model_enabled
+                        else "local_rag_returned_no_insertable_content"
+                    )
+                    if not self._recover_streamed_partial_locked(current, reason=empty_reason):
+                        self._mark_no_suitable_suggestion_locked(current, reason=empty_reason)
+                current.diagnostics["generation"] = {
+                    **dict(current.diagnostics.get("generation") or {}),
+                    "displayedCandidateCount": len(current.candidates),
+                    "displayedSourceCounts": _candidate_source_counts(current.candidates),
+                }
+                _append_trace_event(
+                    current,
+                    "active_rag_candidates_displayed",
+                    candidateCount=len(current.candidates),
+                    sourceCounts=_candidate_source_counts(current.candidates),
+                )
+                if current.status == "ready":
+                    self._record_shown_feedback(session=current, candidates=current.candidates)
                 current.updated_at_ms = now_ms()
+                self._persist_session_trace_locked(current, phase=current.status)
         except Exception as exc:
             with self._lock:
                 current = self._sessions.get(session_id)
                 if current is not None and current.status == "pending":
-                    self._force_visible_fallback_locked(current, reason=type(exc).__name__)
-                    if current.status == "error":
-                        current.error = str(exc)
+                    current.diagnostics["failure"] = {
+                        "stage": "active_rag_session",
+                        "errorType": type(exc).__name__,
+                        "reason": _safe_failure_reason(exc),
+                    }
+                    if not self._recover_streamed_partial_locked(current, reason=type(exc).__name__):
+                        if _no_suitable_generation_error(exc, diagnostics=current.diagnostics):
+                            self._mark_no_suitable_suggestion_locked(
+                                current,
+                                reason=_no_suitable_generation_reason(exc),
+                            )
+                        else:
+                            self._force_visible_fallback_locked(current, reason=type(exc).__name__)
+                            if current.status == "error":
+                                current.error = _safe_failure_reason(exc)
                     current.updated_at_ms = now_ms()
+                    self._persist_session_trace_locked(current, phase=current.status)
 
-    def _retrieve_local_evidence(self, request: ActiveRagStartRequest) -> tuple[ActiveRagEvidence, ...]:
+    def _retrieve_local_evidence(
+        self,
+        request: ActiveRagStartRequest,
+        *,
+        diagnostics: dict[str, object] | None = None,
+    ) -> tuple[ActiveRagEvidence, ...]:
+        started = time.perf_counter()
         evidence: tuple[ActiveRagEvidence, ...] = ()
-        if self.core is not None:
+        primary_raw_count = 0
+        primary_count = 0
+        timeline_count = 0
+        retrieval_error = ""
+        retrieval_allowed = self.core is not None and request.local_retrieval_allowed
+        if retrieval_allowed:
             try:
-                evidence = retrieve_active_rag_evidence(self.core, _frame_from_request(request))
-            except Exception:
+                evidence = retrieve_active_rag_evidence(
+                    self.core,
+                    _frame_from_request(request),
+                    enabled_lanes=request.rag_enabled_lanes,
+                    lane_weights=request.rag_lane_weights,
+                )
+                primary_raw_count = len(evidence)
+                evidence = _filter_primary_active_rag_evidence(
+                    evidence,
+                    query=_resolved_active_rag_request_text(request),
+                )
+                primary_count = len(evidence)
+            except Exception as exc:
+                retrieval_error = f"{type(exc).__name__}: {_safe_failure_reason(exc)}"
                 evidence = ()
-            evidence = _merge_evidence(evidence, _timeline_evidence_from_core(self.core, request))
-        if evidence:
-            return evidence
-        return _evidence_from_pack(request.evidence_pack)
+            try:
+                timeline_evidence = _timeline_evidence_from_core(self.core, request)
+                timeline_count = len(timeline_evidence)
+                evidence = _merge_evidence(evidence, timeline_evidence)
+            except Exception as exc:
+                if not retrieval_error:
+                    retrieval_error = f"{type(exc).__name__}: {_safe_failure_reason(exc)}"
+        fallback_used = not _grounding_evidence(evidence) and bool(request.evidence_pack)
+        result = (
+            _merge_evidence(evidence, _evidence_from_pack(request.evidence_pack))
+            if fallback_used
+            else evidence
+        )
+        if diagnostics is not None:
+            evidence_payloads = tuple(_evidence_payload(item) for item in result)
+            evidence_diagnostics = evidence_injection_diagnostics(evidence_payloads)
+            diagnostics["retrieval"] = {
+                "called": retrieval_allowed,
+                "attempted": retrieval_allowed,
+                "coreAvailable": self.core is not None,
+                "skipReason": request.local_retrieval_skip_reason if not retrieval_allowed else "",
+                "primaryRawRetrievedCount": primary_raw_count,
+                "primaryRetrievedCount": primary_count,
+                "timelineRetrievedCount": timeline_count,
+                "requestEvidenceCount": len(request.evidence_pack),
+                "fallbackToRequestEvidence": fallback_used,
+                "retrievedCount": len(result),
+                "evidenceCount": len(_grounding_evidence(result)),
+                "contextEvidenceCount": sum(1 for item in result if _is_context_only_evidence(item)),
+                "surfaceCandidateCount": sum(
+                    1 for item in result if item.source_type in {"phrase", "surface_phrase"}
+                ),
+                "error": retrieval_error,
+                **evidence_diagnostics,
+                "lanes": evidence_diagnostics["sourceLaneCounts"],
+                "configuredLanes": dict(request.rag_enabled_lanes),
+                "configuredWeights": dict(request.rag_lane_weights),
+                "embeddingProvider": getattr(getattr(self.core, "embedding_provider", None), "fingerprint", "none")
+                if self.core is not None
+                else "none",
+                "elapsedMs": round((time.perf_counter() - started) * 1000, 2),
+            }
+        return result
 
     def _deepseek_candidates(
         self,
         request: ActiveRagStartRequest,
         *,
         evidence: tuple[ActiveRagEvidence, ...],
+        diagnostics: dict[str, object] | None = None,
+        trace_events: list[dict[str, object]] | None = None,
+        stream_sink=None,
     ) -> tuple[ActiveRagCandidate, ...]:
         provider = self.completion_provider
         if provider is None:
             return ()
         try:
             assert_deepseek_scene_allowed("active_rag")
-        except RuntimeError:
+        except RuntimeError as exc:
+            if diagnostics is not None:
+                diagnostics["route"] = {
+                    **_remote_active_rag_route(provider, request=request),
+                    "ready": False,
+                    "skipReason": "scene_flag_disabled",
+                    "reason": str(exc),
+                }
             return ()
+        model_evidence = _deepseek_evidence_pack(request=request, evidence=evidence)
+        effective_context, effective_source, effective_context_meta = _effective_active_rag_context(
+            request,
+            evidence=evidence,
+        )
+        grounding_evidence = _grounding_evidence(evidence)
+        recent_input_history = _recent_input_history_evidence(evidence)
+        context_preferences = timeline_context_preferences(self.core) if self.core is not None else {}
+        context_packet = build_active_rag_context_packet(
+            scene="active_rag",
+            current_context=effective_context,
+            selected_text=request.selected_text,
+            selected_text_hash=request.selected_text_hash,
+            frontend_revision=request.frontend_revision,
+            selection_epoch=request.selection_epoch,
+            panel_session_id=request.panel_session_id,
+            project=request.project,
+            app=request.app or request.front_app_bundle_id,
+            evidence=grounding_evidence,
+            recent_input_history=recent_input_history,
+            intent=request.intent,
+            placement=request.placement,
+            max_candidates=request.max_candidates,
+            max_chars=request.max_chars,
+            latency_budget_ms=request.latency_budget_ms,
+            remote_model_allowed=True,
+            context_token_budget=int(context_preferences.get("tokenBudget") or 4096),
+            reserved_output_tokens=int(context_preferences.get("reservedOutputTokens") or 1024),
+            recent_input_baseline=int(context_preferences.get("recentInputBaseline") or 20),
+            recent_input_maximum=int(context_preferences.get("recentInputMaximum") or 80),
+        )
+        packet_current_input = context_packet.get("currentInput") if isinstance(context_packet.get("currentInput"), dict) else {}
+        injected_context = compact_whitespace(str(packet_current_input.get("committedTail") or effective_context))
+        effective_context_meta["effectiveContextChars"] = len(injected_context)
+        effective_context_meta["contextTruncatedToBudget"] = injected_context != effective_context
         completion_request = DeepSeekCompletionRequest(
             scene="active_rag",
-            current_context=request.context,
+            current_context=injected_context,
             selected_text=request.selected_text,
-            evidence_pack=_deepseek_evidence_pack(request=request, evidence=evidence),
-            context_packet=build_active_rag_context_packet(
-                scene="active_rag",
-                current_context=request.context or request.surrounding_before,
-                selected_text=request.selected_text,
-                selected_text_hash=request.selected_text_hash,
-                frontend_revision=request.frontend_revision,
-                selection_epoch=request.selection_epoch,
-                panel_session_id=request.panel_session_id,
-                project=request.project,
-                app=request.app or request.front_app_bundle_id,
-                evidence=evidence,
-                intent=request.intent,
-                placement=request.placement,
-                max_candidates=request.max_candidates,
-                max_chars=request.max_chars,
-                latency_budget_ms=request.latency_budget_ms,
-                remote_model_allowed=True,
-            ),
+            evidence_pack=model_evidence,
+            context_packet=context_packet,
             max_candidates=request.max_candidates,
             max_chars=request.max_chars,
             latency_budget_ms=_remote_completion_budget_ms(request),
         )
-        return compile_active_rag_candidates(
-            provider.stream_candidates(completion_request),
-            selected_text=request.selected_text,
-            max_candidates=request.max_candidates,
-            max_chars=request.max_chars,
-        )
+        resolved_model_request = resolved_active_rag_current_request(completion_request)
+        messages = build_deepseek_completion_messages(completion_request)
+        include_trace_text = self._trace_include_text_enabled()
+        if diagnostics is not None:
+            context_trace = build_context_injection_trace(
+                current_context=completion_request.current_context,
+                selected_text=completion_request.selected_text,
+                surrounding_before=request.surrounding_before,
+                surrounding_after=request.surrounding_after,
+                evidence_pack=model_evidence,
+                context_packet=context_packet,
+                messages=messages,
+                include_text=include_trace_text,
+            )
+            context_fingerprint = text_fingerprint(completion_request.current_context)
+            selected_fingerprint = text_fingerprint(completion_request.selected_text)
+            injection = context_trace.get("injection") if isinstance(context_trace.get("injection"), dict) else {}
+            missing = list(injection.get("missing") or []) if isinstance(injection, dict) else []
+            warnings = [
+                *missing,
+                *_capture_validation_warnings(request, context_text=request.context or request.surrounding_before),
+            ]
+            if not request.context and request.surrounding_before:
+                warnings.append("used_surrounding_before_fallback")
+            if effective_context_meta["augmentedWithTimelineRecentInput"]:
+                warnings.append("augmented_with_timeline_recent_input")
+            if effective_context_meta["timelineRecentInputUsedForGeneration"]:
+                warnings.append("recent_input_history_injected_as_secondary_context")
+            diagnostics["contextInjection"] = {
+                "applied": bool(injection.get("success")) if isinstance(injection, dict) else False,
+                "source": effective_source,
+                "contextChars": context_fingerprint["chars"],
+                "foregroundContextChars": effective_context_meta["foregroundContextChars"],
+                "effectiveContextChars": effective_context_meta["effectiveContextChars"],
+                "timelineRecentInputChars": effective_context_meta["timelineRecentInputChars"],
+                "timelineRecentInputRecordCount": effective_context_meta["timelineRecentInputRecordCount"],
+                "augmentedWithTimelineRecentInput": effective_context_meta["augmentedWithTimelineRecentInput"],
+                "timelineRecentInputUsedForGeneration": effective_context_meta[
+                    "timelineRecentInputUsedForGeneration"
+                ],
+                "contextPolicy": effective_context_meta["contextPolicy"],
+                "contextTruncatedToBudget": effective_context_meta["contextTruncatedToBudget"],
+                "contextBudget": dict(context_packet.get("trace") or {}),
+                "contextHash": stable_text_hash(completion_request.current_context),
+                "selectedTextChars": selected_fingerprint["chars"],
+                "selectedTextHash": request.selected_text_hash,
+                "resolvedRequestChars": len(resolved_model_request),
+                "resolvedRequestHash": stable_text_hash(resolved_model_request),
+                "shortForegroundCapture": effective_context_meta["foregroundContextChars"] < 8,
+                "fullForegroundDocumentCaptured": False,
+                "warnings": warnings,
+                "trace": context_trace,
+            }
+            diagnostics["modelRequest"] = {
+                "provider": _provider_name(provider),
+                "model": _provider_model(provider),
+                "scene": "active_rag",
+                "attempted": True,
+                "completed": False,
+                "latencyBudgetMs": completion_request.latency_budget_ms,
+                "requestedCandidateCount": completion_request.max_candidates,
+                "stream": True,
+                "evidenceRetrievedCount": len(grounding_evidence),
+                "evidenceInjectedCount": len(model_evidence),
+                "recentInputHistoryCount": len(recent_input_history),
+                "evidenceGovernedOutCount": max(0, len(request.evidence_pack) + len(evidence[:10]) - len(model_evidence)),
+            }
+            diagnostics["modelInput"] = _active_rag_model_input_trace(
+                resolved_request=resolved_model_request,
+                context_packet=context_packet,
+                evidence_pack=model_evidence,
+                messages=messages,
+                include_text=include_trace_text,
+            )
+            diagnostics["remoteModel"] = {
+                "requested": True,
+                "allowed": True,
+                "provider": _provider_name(provider),
+                "model": _provider_model(provider),
+                "skipReason": "",
+                "elapsedMs": 0.0,
+            }
+        if trace_events is not None:
+            trace_events.append(
+                _trace_event(
+                    "deepseek_request_context_built",
+                    injection=(diagnostics or {}).get("contextInjection", {}),
+                )
+            )
+            trace_events.append(
+                _trace_event("deepseek_request_started", provider=_provider_name(provider), model=_provider_model(provider))
+            )
+        model_started = time.perf_counter()
+        retry_attempted = False
+        retry_reason = ""
+        initial_attempt_transport: dict[str, object] = {}
 
-    def _fallback_candidates(
-        self,
-        request: ActiveRagStartRequest,
-        *,
-        evidence: tuple[ActiveRagEvidence, ...],
-        reason: str,
-    ) -> tuple[ActiveRagCandidate, ...]:
-        completion_request = DeepSeekCompletionRequest(
-            scene="active_rag",
-            current_context=request.context or request.surrounding_before,
-            selected_text=request.selected_text,
-            evidence_pack=_deepseek_evidence_pack(request=request, evidence=evidence),
-            context_packet=build_active_rag_context_packet(
-                scene="active_rag",
-                current_context=request.context or request.surrounding_before,
+        def run_completion(active_request: DeepSeekCompletionRequest) -> tuple[CompletionCandidateDelta, ...]:
+            if stream_sink is not None and bool(getattr(provider, "supports_text_delta_callback", False)):
+                return tuple(provider.stream_candidates(active_request, on_text_delta=stream_sink))
+            return tuple(provider.stream_candidates(active_request))
+
+        recovery_selected_text = (
+            request.selected_text
+            if request.placement == "replace_selection" and len(compact_whitespace(request.selected_text)) >= 8
+            else ""
+        )
+        recovery_context_packet = dict(context_packet)
+        recovery_current_input = (
+            dict(recovery_context_packet.get("currentInput"))
+            if isinstance(recovery_context_packet.get("currentInput"), dict)
+            else {}
+        )
+        if not recovery_selected_text:
+            recovery_current_input.pop("selectedText", None)
+        recovery_context_packet["currentInput"] = recovery_current_input
+        recovery_request = replace(
+            completion_request,
+            selected_text=recovery_selected_text,
+            evidence_pack=(),
+            context_packet=recovery_context_packet,
+            recovery_mode=True,
+        )
+        if diagnostics is not None:
+            diagnostics["modelInput"] = {
+                **dict(diagnostics.get("modelInput") or {}),
+                "recovery": _active_rag_model_input_trace(
+                    resolved_request=resolved_active_rag_current_request(recovery_request),
+                    context_packet=recovery_context_packet,
+                    evidence_pack=(),
+                    messages=build_deepseek_completion_messages(recovery_request),
+                    include_text=include_trace_text,
+                ),
+            }
+
+        try:
+            try:
+                raw_deltas = run_completion(completion_request)
+            except DeepSeekCompletionError as exc:
+                initial_attempt_transport = _completion_error_trace(exc, include_text=include_trace_text)
+                if not _retryable_empty_generation_error(exc):
+                    raise
+                retry_attempted = True
+                retry_reason = _safe_failure_reason(exc)
+                if trace_events is not None:
+                    trace_events.append(_trace_event("deepseek_context_only_retry_started", reason=retry_reason))
+                raw_deltas = run_completion(recovery_request)
+            candidates = compile_active_rag_candidates(
+                raw_deltas,
                 selected_text=request.selected_text,
-                selected_text_hash=request.selected_text_hash,
-                frontend_revision=request.frontend_revision,
-                selection_epoch=request.selection_epoch,
-                panel_session_id=request.panel_session_id,
-                project=request.project,
-                app=request.app or request.front_app_bundle_id,
-                evidence=evidence,
-                intent=request.intent,
-                placement=request.placement,
                 max_candidates=request.max_candidates,
                 max_chars=request.max_chars,
-                latency_budget_ms=request.latency_budget_ms,
-                remote_model_allowed=False,
-            ),
-            max_candidates=request.max_candidates,
-            max_chars=request.max_chars,
-            latency_budget_ms=request.latency_budget_ms,
-        )
-        return compile_active_rag_candidates(
-            fallback_deepseek_completion_candidates(completion_request, fallback_reason=reason),
-            selected_text=request.selected_text,
-            max_candidates=request.max_candidates,
-            max_chars=request.max_chars,
-        )
+            )
+            if not candidates and not retry_attempted:
+                retry_attempted = True
+                retry_reason = "empty_or_governed_remote_candidates"
+                if trace_events is not None:
+                    trace_events.append(_trace_event("deepseek_context_only_retry_started", reason=retry_reason))
+                raw_deltas = run_completion(recovery_request)
+                candidates = compile_active_rag_candidates(
+                    raw_deltas,
+                    selected_text=request.selected_text,
+                    max_candidates=request.max_candidates,
+                    max_chars=request.max_chars,
+                )
+        except Exception as exc:
+            if diagnostics is not None:
+                transport = _completion_error_trace(exc, include_text=include_trace_text)
+                diagnostics["modelRequest"] = {
+                    **dict(diagnostics.get("modelRequest") or {}),
+                    "completed": False,
+                    "errorType": type(exc).__name__,
+                    "failureReason": _safe_failure_reason(exc),
+                    "contentRetryAttempted": retry_attempted,
+                    "contentRetryReason": retry_reason,
+                    "contentRetryCompleted": False,
+                    "transport": transport,
+                    "initialAttemptTransport": initial_attempt_transport,
+                }
+                diagnostics["remoteModel"] = {
+                    **dict(diagnostics.get("remoteModel") or {}),
+                    "skipReason": type(exc).__name__,
+                    "failureReason": _safe_failure_reason(exc),
+                    "elapsedMs": round((time.perf_counter() - model_started) * 1000, 2),
+                }
+            if trace_events is not None:
+                trace_events.append(
+                    _trace_event(
+                        "deepseek_request_failed",
+                        errorType=type(exc).__name__,
+                        failureReason=_safe_failure_reason(exc),
+                        contentRetryAttempted=retry_attempted,
+                    )
+                )
+            raise
+        completion_transport = _completion_delta_diagnostics(raw_deltas, provider=provider)
+        if diagnostics is not None:
+            diagnostics["modelRequest"] = {
+                **dict(diagnostics.get("modelRequest") or {}),
+                "completed": True,
+                "rawCandidateCount": len(raw_deltas),
+                "governedCandidateCount": len(candidates),
+                "candidateFilteredCount": max(0, len(raw_deltas) - len(candidates)),
+                "contentRetryAttempted": retry_attempted,
+                "contentRetryReason": retry_reason,
+                "contentRetryCompleted": bool(retry_attempted and candidates),
+                "initialAttemptTransport": initial_attempt_transport,
+                "fallbackReasons": sorted(
+                    {
+                        str(item.metadata.get("fallbackReason"))
+                        for item in raw_deltas
+                        if item.metadata.get("fallbackReason")
+                    }
+                ),
+                **completion_transport,
+            }
+            diagnostics["remoteModel"] = {
+                **dict(diagnostics.get("remoteModel") or {}),
+                "skipReason": "",
+                "elapsedMs": round((time.perf_counter() - model_started) * 1000, 2),
+            }
+        if trace_events is not None:
+            trace_events.append(
+                _trace_event(
+                    "deepseek_request_completed",
+                    rawCandidateCount=len(raw_deltas),
+                    governedCandidateCount=len(candidates),
+                    **completion_transport,
+                )
+            )
+            trace_events.append(
+                _trace_event(
+                    "active_rag_evidence_governed",
+                    retrievedCount=len(grounding_evidence),
+                    injectedCount=len(model_evidence),
+                    candidateFilteredCount=max(0, len(raw_deltas) - len(candidates)),
+                    contentRetryAttempted=retry_attempted,
+                    contentRetryCompleted=bool(retry_attempted and candidates),
+                )
+            )
+        return candidates
+
+    def _publish_deepseek_partial(self, session_id: str, text: str) -> None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or session.status != "pending":
+                return
+            partial = compile_active_rag_candidates(
+                (
+                    CompletionCandidateDelta(
+                        text=text,
+                        insert_text=text,
+                        done=False,
+                        metadata={"streamingPartial": True},
+                    ),
+                ),
+                selected_text=session.request.selected_text,
+                max_candidates=1,
+                max_chars=session.request.max_chars,
+            )
+            if not partial:
+                return
+            session.candidates = partial
+            model_request = dict(session.diagnostics.get("modelRequest") or {})
+            model_request.update(
+                {
+                    "stream": True,
+                    "partialVisible": True,
+                    "partialChars": len(partial[0].text),
+                }
+            )
+            session.diagnostics["modelRequest"] = model_request
+            session.updated_at_ms = now_ms()
+            partial_chars = len(partial[0].text)
+            if session.trace_partial_chars == 0 or partial_chars - session.trace_partial_chars >= 128:
+                session.trace_partial_chars = partial_chars
+                self._persist_session_trace_locked(session, phase="stream_partial")
 
     def _local_candidates(
         self,
@@ -318,32 +986,111 @@ class ActiveRagService:
             evidence,
             frame=_frame_from_request(request),
             max_candidates=request.max_candidates,
-            max_chars=request.max_chars,
+            max_chars=_local_evidence_max_chars(request.max_chars),
         )
-        fallback_candidates = self._fallback_candidates(request, evidence=evidence, reason="remote_model_disabled")
-        if fallback_candidates and _should_prefer_model_fallback(request, evidence=evidence):
-            return fallback_candidates
-        return local_candidates or fallback_candidates
+        return local_candidates
 
     def _force_visible_fallback_locked(self, session: ActiveRagSession, *, reason: str) -> None:
+        if self._recover_streamed_partial_locked(session, reason=reason):
+            return
         evidence = session.evidence or _evidence_from_pack(session.request.evidence_pack)
-        candidates = self._fallback_candidates(session.request, evidence=evidence, reason=reason)
-        if not candidates:
-            candidates = compile_active_rag_candidates_from_evidence(
-                evidence,
-                frame=_frame_from_request(session.request),
-                max_candidates=session.request.max_candidates,
-                max_chars=session.request.max_chars,
-            )
         session.evidence = evidence
-        session.candidates = candidates
-        self._record_shown_feedback(session=session, candidates=candidates)
-        if candidates:
-            session.status = "ready"
-            session.error = f"DeepSeek fallback: {reason}"
-        else:
-            session.status = "error"
-            session.error = f"DeepSeek returned no visible candidate: {reason}"
+        # Keep the explicit generation surface alive and retriable. Transport,
+        # timeout and provider errors remain available in diagnostics, but the
+        # foreground must not collapse into the alarming generic "生成失败"
+        # card after the user has already waited for a paid request.
+        self._mark_no_suitable_suggestion_locked(
+            session,
+            reason=compact_whitespace(reason) or "generation_not_completed",
+        )
+
+    def _recover_streamed_partial_locked(self, session: ActiveRagSession, *, reason: str) -> bool:
+        """Keep only a complete sentence after an interrupted visible stream.
+
+        The candidate governor validates content but cannot prove that a stream
+        reached a semantic boundary. A clause such as ``...同时避免`` must stay
+        non-final and non-insertable even when it was briefly visible while the
+        provider was streaming.
+        """
+
+        visible_partials = tuple(
+            candidate
+            for candidate in session.candidates
+            if bool(candidate.metadata.get("streamingPartial")) and compact_whitespace(candidate.text)
+            and _streamed_partial_is_complete(candidate.text)
+        )
+        if not visible_partials:
+            return False
+        recovered = tuple(
+            replace(
+                candidate,
+                metadata={
+                    **candidate.metadata,
+                    "streamingPartial": False,
+                    "streamInterrupted": True,
+                    "partialRecovered": True,
+                    "fallbackReason": compact_whitespace(reason) or "stream_interrupted",
+                },
+            )
+            for candidate in visible_partials
+        )
+        session.candidates = recovered
+        session.status = "ready"
+        session.error = ""
+        session.diagnostics["modelRequest"] = {
+            **dict(session.diagnostics.get("modelRequest") or {}),
+            "completed": True,
+            "partialVisible": True,
+            "partialRecovered": True,
+            "streamInterrupted": True,
+            "failureReason": compact_whitespace(reason) or "stream_interrupted",
+        }
+        session.diagnostics["generation"] = {
+            **dict(session.diagnostics.get("generation") or {}),
+            "displayedCandidateCount": len(recovered),
+            "displayedSourceCounts": _candidate_source_counts(recovered),
+            "partialRecovered": True,
+        }
+        _append_trace_event(
+            session,
+            "active_rag_partial_recovered",
+            candidateCount=len(recovered),
+            reason=compact_whitespace(reason) or "stream_interrupted",
+        )
+        session.updated_at_ms = now_ms()
+        return True
+
+    def _mark_no_suitable_suggestion_locked(self, session: ActiveRagSession, *, reason: str) -> None:
+        """Finish a valid request without pretending governance was a transport failure."""
+
+        normalized_reason = compact_whitespace(reason) or "no_insertable_content"
+        session.candidates = ()
+        session.status = "ready"
+        session.error = ""
+        session.diagnostics.pop("failure", None)
+        session.diagnostics["generation"] = {
+            **dict(session.diagnostics.get("generation") or {}),
+            "displayedCandidateCount": 0,
+            "displayedSourceCounts": {},
+            "noSuitableSuggestion": True,
+            "noSuitableReason": normalized_reason,
+        }
+        session.diagnostics["modelRequest"] = {
+            **dict(session.diagnostics.get("modelRequest") or {}),
+            "completed": True,
+            "noSuitableSuggestion": True,
+            "outcome": "no_suitable_suggestion",
+        }
+        session.diagnostics["remoteModel"] = {
+            **dict(session.diagnostics.get("remoteModel") or {}),
+            "skipReason": "",
+            "outcome": "no_suitable_suggestion",
+        }
+        _append_trace_event(
+            session,
+            "active_rag_no_suitable_suggestion",
+            reason=normalized_reason,
+        )
         session.updated_at_ms = now_ms()
 
     def _record_accept_feedback(self, *, session: ActiveRagSession, candidate: ActiveRagCandidate) -> None:
@@ -441,6 +1188,7 @@ class ActiveRagService:
             ):
                 session.status = "stale_dropped"
                 session.updated_at_ms = now_ms()
+                self._persist_session_trace_locked(session, phase="stale_dropped")
 
 
 def _validate_selected_text_hash(request: ActiveRagStartRequest) -> None:
@@ -449,14 +1197,255 @@ def _validate_selected_text_hash(request: ActiveRagStartRequest) -> None:
         raise ValueError("selectedTextHash does not match selectedText")
 
 
+def active_rag_sensitive_block_reason(request: ActiveRagStartRequest) -> str:
+    if request.sensitive_field or request.secure_input or request.sensitive_text_guard_hit:
+        return SENSITIVE_FIELD_BLOCK_REASON
+    if _looks_like_sensitive_account_text(
+        request.selected_text,
+        request.context,
+        request.surrounding_before,
+        request.surrounding_after,
+    ):
+        return SENSITIVE_FIELD_BLOCK_REASON
+    return ""
+
+
+def active_rag_sensitive_text_blocked(*texts: str, guard_enabled: bool = True) -> bool:
+    _ = guard_enabled
+    # Credential-shaped text is a non-overridable backend boundary. The setting
+    # may tune broader heuristics later, but it cannot permit passwords/tokens.
+    return _looks_like_sensitive_account_text(*texts)
+
+
+def _looks_like_sensitive_account_text(*texts: str) -> bool:
+    combined = " ".join(str(text or "") for text in texts)
+    if not combined:
+        return False
+    return bool(
+        re.search(
+            r"(?i)(?:password|passwd|passcode|credential|api[ _-]?key|access[ _-]?token|bearer\s+|"
+            r"secret|one[ _-]?time[ _-]?code|账号|帐号|密码|口令|验证码|银行卡|信用卡)",
+            combined,
+        )
+    )
+
+
+def _sensitive_blocked_payload(*, session_id: str, reason: str) -> dict[str, object]:
+    diagnostics = {
+        "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
+        "privacy": {
+            "rawTextIncluded": False,
+            "hashAlgorithm": "none_for_sensitive_fields",
+            "sensitiveFieldBlocked": True,
+        },
+        "contextInjection": {
+            "applied": False,
+            "source": "sensitive_field",
+            "contextChars": 0,
+            "contextHash": "",
+            "selectedTextChars": 0,
+            "selectedTextHash": "",
+            "warnings": [reason],
+        },
+        "retrieval": {
+            "called": False,
+            "attempted": False,
+            "retrievedCount": 0,
+            "evidenceCount": 0,
+            "lanes": {},
+            "elapsedMs": 0.0,
+            "error": reason,
+        },
+        "remoteModel": {
+            "requested": False,
+            "allowed": False,
+            "provider": "",
+            "model": "",
+            "skipReason": reason,
+            "elapsedMs": 0.0,
+        },
+        "generation": {"displayedCandidateCount": 0},
+    }
+    trace_events = [
+        {
+            "name": "active_rag_sensitive_field_blocked",
+            "atMs": now_ms(),
+            "fields": {"reason": reason, "textRecorded": False, "hashRecorded": False},
+        }
+    ]
+    return {
+        "schemaVersion": ACTIVE_RAG_SERVICE_SCHEMA_VERSION,
+        "ok": False,
+        "sessionId": session_id,
+        "status": "blocked",
+        "thinkingRow": False,
+        "uiMode": ACTIVE_RAG_MODE,
+        "keyPolicy": active_rag_key_policy(ready=False),
+        "selectedTextHash": "",
+        "frontendRevision": 0,
+        "selectionEpoch": 0,
+        "panelSessionId": "",
+        "frontAppBundleId": "",
+        "placement": "show_only",
+        "intent": "blocked",
+        "evidenceCount": 0,
+        "candidateCount": 0,
+        "candidates": [],
+        "evidence": [],
+        "diagnostics": diagnostics,
+        "traceEvents": trace_events,
+        "error": reason,
+        "createdAtMs": now_ms(),
+        "updatedAtMs": now_ms(),
+        "elapsedMs": 0,
+        "pollAfterMs": 0,
+    }
+
+
+def _resolved_active_rag_request_text(request: ActiveRagStartRequest) -> str:
+    """Resolve the live request without trusting a stale semantic anchor."""
+
+    selected = compact_whitespace(request.selected_text)
+    context = compact_whitespace(request.context or request.surrounding_before)
+    if request.placement == "replace_selection" or not context:
+        return selected[-240:]
+    if selected and selected in context:
+        return selected[-240:]
+    clauses = [
+        compact_whitespace(item)
+        for item in re.split(r"(?<=[。！？!?；;])|\n+", context)
+        if compact_whitespace(item)
+    ]
+    return (clauses[-1] if clauses else context)[-240:]
+
+
+def _timeline_item_relevant(item: dict[str, object], query: str) -> bool:
+    if not query:
+        return False
+    surface_hints = item.get("surfaceHints") if isinstance(item.get("surfaceHints"), list) else []
+    tags = item.get("tags") if isinstance(item.get("tags"), list) else []
+    haystack = compact_whitespace(
+        " ".join(
+            [
+                str(item.get("title") or ""),
+                str(item.get("summary") or item.get("evidencePreview") or ""),
+                *(str(value) for value in surface_hints),
+                *(str(value) for value in tags),
+            ]
+        )
+    ).lower()
+    matches = {
+        term
+        for term in token_terms(query, max_terms=48)
+        if len(term) >= 2
+        and term not in _TIMELINE_GENERIC_TERMS
+        and not (
+            all("\u3400" <= char <= "\u9fff" for char in term)
+            and all(char in _TIMELINE_GENERIC_CJK_CHARS for char in term)
+        )
+        and term.lower() in haystack
+    }
+    return bool(matches)
+
+
+def _is_context_only_evidence(item: ActiveRagEvidence) -> bool:
+    return item.source_type == "recent_input_context" or item.source_lane == "timeline_recent_input"
+
+
+def _grounding_evidence(evidence: tuple[ActiveRagEvidence, ...]) -> tuple[ActiveRagEvidence, ...]:
+    return tuple(
+        item
+        for item in evidence
+        if not _is_context_only_evidence(item) and item.source_type not in {"phrase", "surface_phrase"}
+    )
+
+
+def _filter_primary_active_rag_evidence(
+    evidence: tuple[ActiveRagEvidence, ...],
+    *,
+    query: str,
+) -> tuple[ActiveRagEvidence, ...]:
+    result: list[ActiveRagEvidence] = []
+    for item in evidence:
+        if item.source_type in {"phrase", "surface_phrase"}:
+            continue
+        if item.source_lane.startswith("vector_"):
+            result.append(item)
+            continue
+        metadata = item.metadata if isinstance(item.metadata, dict) else {}
+        surface_hints = metadata.get("surfaceHints") if isinstance(metadata.get("surfaceHints"), list) else []
+        haystack = compact_whitespace(
+            " ".join(
+                [
+                    item.text,
+                    item.preview,
+                    " ".join(item.tags),
+                    str(metadata.get("title") or metadata.get("summary") or ""),
+                    *(str(value) for value in surface_hints),
+                ]
+            )
+        )
+        synthetic_item = {"summary": haystack, "surfaceHints": [], "tags": []}
+        if _timeline_item_relevant(synthetic_item, query):
+            result.append(item)
+    return tuple(result)
+
+
+def _evidence_pack_item_is_context_only(item: dict[str, object]) -> bool:
+    source_type = compact_whitespace(str(item.get("sourceType") or ""))
+    source_lane = compact_whitespace(str(item.get("sourceLane") or ""))
+    return source_type == "recent_input_context" or source_lane == "timeline_recent_input"
+
+
+def _evidence_pack_item_echoes_request(item: dict[str, object], request_text: str) -> bool:
+    request_value = compact_whitespace(request_text).lower()
+    if not request_value:
+        return False
+    hints = item.get("surfaceHints") if isinstance(item.get("surfaceHints"), list) else []
+    values = [
+        str(item.get("text") or ""),
+        str(item.get("candidateText") or ""),
+        str(item.get("evidencePreview") or item.get("preview") or ""),
+        *(str(value) for value in hints),
+    ]
+    normalized_values = [compact_whitespace(value).lower() for value in values if compact_whitespace(value)]
+    return bool(normalized_values) and all(
+        value == request_value or (len(value) >= 12 and request_value.endswith(value))
+        for value in normalized_values
+    )
+
+
+def _retryable_empty_generation_error(exc: DeepSeekCompletionError) -> bool:
+    reason = compact_whitespace(str(exc)).lower()
+    return reason.startswith("active_rag_no_insertable_content:")
+
+
+def _no_suitable_generation_reason(error: BaseException) -> str:
+    details = dict(getattr(error, "diagnostics", {}) or {})
+    terminal = compact_whitespace(str(details.get("terminalReason") or "")).lower()
+    if terminal:
+        return terminal
+    message = compact_whitespace(str(error)).lower()
+    prefix = "active_rag_no_insertable_content:"
+    return message[len(prefix) :] if message.startswith(prefix) else message
+
+
+def _no_suitable_generation_error(error: BaseException, *, diagnostics: dict[str, object]) -> bool:
+    """Keep provider failures observable without turning them into a dead UI."""
+
+    _ = diagnostics
+    return isinstance(error, DeepSeekCompletionError)
+
+
 def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRagStartRequest) -> tuple[ActiveRagEvidence, ...]:
+    resolved_query = _resolved_active_rag_request_text(request)
     items = timeline_evidence_pack_from_core(
         core,
         project=request.project,
         app=request.app or request.front_app_bundle_id,
         current_context=request.context or request.surrounding_before,
         selected_text=request.selected_text,
-        max_items=4,
+        max_items=96,
     )
     result: list[ActiveRagEvidence] = []
     for index, item in enumerate(items, start=1):
@@ -464,8 +1453,12 @@ def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRag
         source_lane = compact_whitespace(str(item.get("sourceLane") or "timeline_context"))
         title = compact_whitespace(str(item.get("title") or ""))
         summary = compact_whitespace(str(item.get("summary") or item.get("evidencePreview") or ""))
+        if source_type not in {"recent_input_context", "daily_plan", "todo", "goal"} and not _timeline_item_relevant(
+            item, resolved_query
+        ):
+            continue
         if source_type == "recent_input_context":
-            text = summary
+            text = _timeline_recent_input_text(summary)
         else:
             surface_hints = item.get("surfaceHints") if isinstance(item.get("surfaceHints"), list) else []
             text = compact_whitespace(str(surface_hints[0])) if surface_hints else (summary or title)
@@ -500,6 +1493,124 @@ def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRag
     return tuple(result)
 
 
+def _timeline_recent_input_text(summary: str) -> str:
+    """Keep committed text and useful field context from recent-input rows.
+
+    ``recent_input_context`` serializes each row as
+    ``committed | context: surrounding | preedit: ...``.  Dropping everything
+    after the first context marker makes a two-character commit look like the
+    whole foreground request.  Preedit is not semantic context, but the
+    surrounding field text is, so preserve it as a separate clause.
+    """
+
+    clauses: list[str] = []
+    for raw_segment in summary.split(" / "):
+        segment = compact_whitespace(raw_segment.split(" | preedit:", 1)[0])
+        committed, marker, surrounding = segment.partition(" | context:")
+        committed = compact_whitespace(committed)
+        values = (committed, surrounding if marker and len(committed) < 8 else "")
+        for value in values:
+            text = compact_whitespace(value)
+            if text and text not in clauses:
+                clauses.append(text)
+    return compact_whitespace("。".join(clauses))
+
+
+def _effective_active_rag_context(
+    request: ActiveRagStartRequest,
+    *,
+    evidence: tuple[ActiveRagEvidence, ...],
+) -> tuple[str, str, dict[str, object]]:
+    foreground = compact_whitespace(request.context or request.surrounding_before)
+    recent_items = _recent_input_history_evidence(evidence)
+    recent_chars = sum(len(compact_whitespace(item.text)) for item in recent_items)
+    # Explicit generation must never silently replace the live editable field
+    # with an older Timeline row.  A short foreground capture is degraded
+    # evidence, not permission to promote recent input into CurrentInput.
+    # Recent input is injected separately as continuity context. It never
+    # replaces CurrentInput and never becomes grounding evidence.
+    effective = foreground or compact_whitespace(request.selected_text)
+    augmented = False
+    effective = compact_whitespace(effective)
+    source = _active_rag_context_source(request)
+    if not foreground and effective:
+        source = "selected_text_fallback"
+    return effective, source, {
+        "foregroundContextChars": len(foreground),
+        "effectiveContextChars": len(effective),
+        "timelineRecentInputChars": recent_chars,
+        "timelineRecentInputRecordCount": len(recent_items),
+        "augmentedWithTimelineRecentInput": augmented,
+        "timelineRecentInputUsedForGeneration": bool(recent_items),
+        "contextPolicy": "foreground_primary_history_secondary",
+        "contextTruncatedToBudget": False,
+    }
+
+
+def _seed_active_rag_context_diagnostics(
+    diagnostics: dict[str, object],
+    *,
+    request: ActiveRagStartRequest,
+    evidence: tuple[ActiveRagEvidence, ...],
+    remote_model_ready: bool,
+) -> None:
+    """Expose foreground and history truth before a remote request is built."""
+
+    effective, source, meta = _effective_active_rag_context(request, evidence=evidence)
+    existing = dict(diagnostics.get("contextInjection") or {})
+    warnings = [str(item) for item in existing.get("warnings") or []]
+    history_available = bool(meta["timelineRecentInputRecordCount"])
+    history_used = bool(remote_model_ready and history_available)
+    if history_available and not remote_model_ready:
+        warnings.append("recent_input_history_available_not_injected")
+    diagnostics["contextInjection"] = {
+        **existing,
+        "applied": False,
+        "source": source,
+        "contextChars": len(effective),
+        "foregroundContextChars": meta["foregroundContextChars"],
+        "effectiveContextChars": meta["effectiveContextChars"],
+        "timelineRecentInputChars": meta["timelineRecentInputChars"],
+        "timelineRecentInputRecordCount": meta["timelineRecentInputRecordCount"],
+        "augmentedWithTimelineRecentInput": False,
+        "timelineRecentInputUsedForGeneration": history_used,
+        "contextPolicy": meta["contextPolicy"],
+        "contextHash": stable_text_hash(effective) if effective else "",
+        "selectedTextChars": len(request.selected_text),
+        "selectedTextHash": request.selected_text_hash,
+        "resolvedRequestChars": len(effective),
+        "shortForegroundCapture": int(meta["foregroundContextChars"]) < 8,
+        "fullForegroundDocumentCaptured": False,
+        "remoteModelReady": remote_model_ready,
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+def _recent_input_history_evidence(
+    evidence: tuple[ActiveRagEvidence, ...],
+) -> tuple[ActiveRagEvidence, ...]:
+    result: list[ActiveRagEvidence] = []
+    seen: set[str] = set()
+    for item in evidence:
+        if item.source_type != "recent_input_context" and item.source_lane != "timeline_recent_input":
+            continue
+        text = compact_whitespace(item.text)
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return tuple(result[-80:])
+
+
+def _recent_context_overlap(recent: str, foreground: str) -> int:
+    maximum = min(len(recent), len(foreground), 120)
+    for width in range(maximum, 7, -1):
+        if recent.endswith(foreground[:width]):
+            return width
+    return 0
+
+
 def _merge_evidence(
     primary: tuple[ActiveRagEvidence, ...],
     secondary: tuple[ActiveRagEvidence, ...],
@@ -522,8 +1633,11 @@ def _deepseek_evidence_pack(
 ) -> tuple[dict[str, object], ...]:
     result: list[dict[str, object]] = []
     seen: set[str] = set()
+    resolved_query = _resolved_active_rag_request_text(request)
     for item in (*request.evidence_pack, *(_evidence_payload(evidence_item) for evidence_item in evidence[:10])):
         if not isinstance(item, dict):
+            continue
+        if _evidence_pack_item_is_context_only(item) or _evidence_pack_item_echoes_request(item, resolved_query):
             continue
         key = compact_whitespace(
             "|".join(
@@ -550,8 +1664,15 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
     ]
     if session.status == "pending" and not candidates:
         candidates = [_active_rag_thinking_candidate_payload(session)]
+    if (
+        session.status == "ready"
+        and not candidates
+        and bool((session.diagnostics.get("generation") or {}).get("noSuitableSuggestion"))
+    ):
+        candidates = [_active_rag_no_suggestion_candidate_payload(session)]
     if session.status == "error" and not candidates:
         candidates = [_active_rag_error_candidate_payload(session)]
+    grounding_evidence = _grounding_evidence(session.evidence)
     return {
         "schemaVersion": ACTIVE_RAG_SERVICE_SCHEMA_VERSION,
         "sessionId": session.session_id,
@@ -566,10 +1687,12 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
         "frontAppBundleId": session.request.front_app_bundle_id,
         "placement": session.request.placement,
         "intent": session.request.intent,
-        "evidenceCount": len(session.evidence),
+        "evidenceCount": len(grounding_evidence),
         "candidateCount": len(session.candidates),
         "candidates": candidates,
-        "evidence": [_redacted_evidence_payload(item) for item in session.evidence[:8]],
+        "evidence": [_redacted_evidence_payload(item) for item in grounding_evidence[:8]],
+        "diagnostics": dict(session.diagnostics),
+        "traceEvents": list(session.trace_events),
         "error": session.error,
         "createdAtMs": session.created_at_ms,
         "updatedAtMs": session.updated_at_ms,
@@ -581,13 +1704,11 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
 def _active_rag_poll_after_ms(*, status: str, elapsed_ms: int) -> int:
     if status != "pending":
         return 0
-    if elapsed_ms < 1_000:
-        return 180
-    if elapsed_ms < 6_000:
-        return 360
-    if elapsed_ms < 15_000:
-        return 700
-    return 1_000
+    # The status payload is local and lightweight. Poll at UI-frame-friendly
+    # cadence so streamed text does not arrive in two-to-three-second jumps.
+    if elapsed_ms < 30_000:
+        return 100
+    return 160
 
 
 def _should_force_visible_fallback(session: ActiveRagSession) -> bool:
@@ -602,57 +1723,426 @@ def _remote_completion_budget_ms(request: ActiveRagStartRequest) -> int:
     return min(ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS, max(1_200, request_budget))
 
 
-def _remote_active_rag_model_enabled(provider: object | None) -> bool:
-    if provider is None:
-        return False
+def _remote_active_rag_route(
+    provider: object | None,
+    *,
+    request: ActiveRagStartRequest,
+) -> dict[str, object]:
+    request_allowed = request.remote_model_allowed is not False
+    provider_available = provider is not None
+    credentials_configured = _provider_credentials_configured(provider)
+    scene_enabled = True
+    scene_reason = ""
     try:
         assert_deepseek_scene_allowed("active_rag")
-    except RuntimeError:
-        return False
-    return True
+    except RuntimeError as exc:
+        scene_enabled = False
+        scene_reason = str(exc)
+    gates = {
+        "explicitActiveRagOnly": True,
+        "requestAllowsRemoteModel": request_allowed,
+        "sceneEnvEnabled": scene_enabled,
+        "providerAvailable": provider_available,
+        "credentialsConfigured": credentials_configured,
+    }
+    skip_reason = ""
+    if not request_allowed:
+        skip_reason = request.remote_model_skip_reason or "settings_remote_model_disabled"
+    elif not provider_available:
+        skip_reason = "provider_unavailable"
+    elif not scene_enabled:
+        skip_reason = "scene_flag_disabled"
+    elif not credentials_configured:
+        skip_reason = "credentials_missing"
+    return {
+        "schemaVersion": ACTIVE_RAG_ROUTE_STATUS_SCHEMA_VERSION,
+        "route": "explicit_active_rag_knowledge_provider",
+        "provider": _provider_name(provider),
+        "model": _provider_model(provider),
+        "ready": all(gates.values()),
+        "attempted": False,
+        "skipReason": skip_reason,
+        "reason": scene_reason if not scene_enabled else "",
+        "gates": gates,
+        "managementGates": dict(request.remote_model_gates),
+        "stream": True,
+        "passivePostCommitRemoteAllowed": False,
+    }
 
 
-def _should_prefer_model_fallback(
+def _initial_session_diagnostics(
     request: ActiveRagStartRequest,
     *,
-    evidence: tuple[ActiveRagEvidence, ...],
-) -> bool:
-    request_text = compact_whitespace(" ".join((request.context, request.surrounding_before, request.selected_text)))
-    haystack = compact_whitespace(
-        " ".join(
-            (
-                request_text,
-                *(
-                    compact_whitespace(
-                        " ".join(
-                            (
-                                item.text,
-                                item.preview,
-                                str(item.metadata.get("title") or "") if isinstance(item.metadata, dict) else "",
-                                str(item.metadata.get("summary") or "") if isinstance(item.metadata, dict) else "",
-                            )
-                        )
-                    )
-                    for item in evidence[:6]
-                ),
+    completion_provider: object | None,
+) -> dict[str, object]:
+    route = _remote_active_rag_route(completion_provider, request=request)
+    context_text = request.context or request.surrounding_before
+    context_fingerprint = text_fingerprint(context_text)
+    selected_fingerprint = text_fingerprint(request.selected_text)
+    capture_warnings = _capture_validation_warnings(request, context_text=context_text)
+    return {
+        "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
+        "privacy": {"rawTextIncluded": False, "hashAlgorithm": "sha256-16"},
+        "requestCapture": {
+            "contextSource": _active_rag_context_source(request),
+            "selectedText": text_fingerprint(request.selected_text),
+            "currentContext": text_fingerprint(request.context),
+            "surroundingBefore": text_fingerprint(request.surrounding_before),
+            "surroundingAfter": text_fingerprint(request.surrounding_after),
+            "providedEvidenceCount": len(request.evidence_pack),
+            "frontendContextChars": request.frontend_context_chars,
+            "frontendContextHash": request.frontend_context_hash,
+            "captureWarnings": capture_warnings,
+        },
+        "route": route,
+        "contextInjection": {
+            "applied": False,
+            "source": _active_rag_context_source(request),
+            "contextChars": context_fingerprint["chars"],
+            "contextHash": stable_text_hash(context_text) if context_text else "",
+            "selectedTextChars": selected_fingerprint["chars"],
+            "selectedTextHash": request.selected_text_hash,
+            "warnings": ["model_request_not_built", *capture_warnings],
+        },
+        "retrieval": {
+            "called": False,
+            "attempted": False,
+            "retrievedCount": 0,
+            "evidenceCount": 0,
+            "lanes": {},
+            "elapsedMs": 0.0,
+            "requestEvidenceCount": len(request.evidence_pack),
+        },
+        "remoteModel": {
+            "requested": request.remote_model_allowed is True,
+            "allowed": bool(route["ready"]),
+            "provider": route["provider"],
+            "model": route["model"],
+            "skipReason": route["skipReason"],
+            "elapsedMs": 0.0,
+        },
+        "generation": {"displayedCandidateCount": 0},
+    }
+
+
+def _active_rag_context_source(request: ActiveRagStartRequest) -> str:
+    if request.context_source:
+        return request.context_source
+    sources: list[str] = []
+    if request.context:
+        sources.append("currentContext")
+    if request.surrounding_before:
+        sources.append("surroundingBefore")
+    if request.surrounding_after:
+        sources.append("surroundingAfter")
+    if request.selected_text:
+        sources.append("selectedText")
+    if request.evidence_pack:
+        sources.append("requestEvidencePack")
+    return "+".join(sources) or "none"
+
+
+def _capture_validation_warnings(request: ActiveRagStartRequest, *, context_text: str) -> list[str]:
+    warnings: list[str] = []
+    if request.frontend_context_chars and request.frontend_context_chars != len(context_text):
+        warnings.append("frontend_context_chars_mismatch")
+    if request.frontend_context_hash and request.frontend_context_hash != stable_text_hash(context_text):
+        warnings.append("frontend_context_hash_mismatch")
+    if request.frontend_selected_text_chars and request.frontend_selected_text_chars != len(request.selected_text):
+        warnings.append("frontend_selected_text_chars_mismatch")
+    return warnings
+
+
+def _active_rag_model_input_trace(
+    *,
+    resolved_request: str,
+    context_packet: dict[str, object],
+    evidence_pack: tuple[dict[str, object], ...] | list[dict[str, object]],
+    messages: list[dict[str, str]],
+    include_text: bool,
+) -> dict[str, object]:
+    packet_json = json.dumps(context_packet, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    evidence_items = tuple(dict(item) for item in evidence_pack)
+    messages_json = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload: dict[str, object] = {
+        "resolvedRequest": _trace_text_snapshot(resolved_request, include_text=include_text),
+        "contextPacket": {
+            "fingerprint": _trace_text_snapshot(packet_json, include_text=False),
+            "sectionCounts": {
+                key: len(value.get("items") or value.get("events") or value.get("recentDecisions") or [])
+                for key in ("oneRing", "notebook", "timeline")
+                if isinstance((value := context_packet.get(key)), dict)
+            },
+        },
+        "evidencePack": evidence_injection_diagnostics(evidence_items, include_text=include_text),
+        "messages": {
+            "count": len(messages),
+            "fingerprint": _trace_text_snapshot(messages_json, include_text=False),
+            "roles": [str(item.get("role") or "") for item in messages],
+        },
+    }
+    if include_text:
+        payload["contextPacket"]["value"] = _bounded_trace_value(context_packet, include_text=True)
+        payload["evidencePack"]["value"] = _bounded_trace_value(evidence_items, include_text=True)
+        payload["messages"]["value"] = _bounded_trace_value(messages, include_text=True)
+    return payload
+
+
+def _completion_error_trace(error: BaseException, *, include_text: bool) -> dict[str, object]:
+    details = dict(getattr(error, "diagnostics", {}) or {})
+    if not include_text:
+        details.pop("responsePreview", None)
+    return {
+        "errorType": type(error).__name__,
+        "failureReason": _safe_failure_reason(error),
+        **_bounded_trace_value(details, include_text=include_text),
+    }
+
+
+def _active_rag_chain_trace_record(
+    session: ActiveRagSession,
+    *,
+    phase: str,
+    include_text: bool,
+) -> dict[str, object]:
+    request = session.request
+    diagnostics = dict(session.diagnostics or {})
+    evidence = [_trace_evidence_item(item, include_text=include_text) for item in session.evidence]
+    candidates = [_trace_candidate_item(item, include_text=include_text) for item in session.candidates]
+    return {
+        "schemaVersion": ACTIVE_RAG_CHAIN_TRACE_SCHEMA_VERSION,
+        "timestampMs": now_ms(),
+        "phase": compact_whitespace(phase),
+        "sessionId": session.session_id,
+        "status": session.status,
+        "error": session.error,
+        "elapsedMs": max(0, now_ms() - int(session.created_at_ms)),
+        "privacy": {
+            "rawTextIncluded": include_text,
+            "sensitiveFieldBlocked": False,
+            "hashAlgorithm": "sha256-16",
+        },
+        "request": {
+            "frontendRevision": request.frontend_revision,
+            "selectionEpoch": request.selection_epoch,
+            "panelSessionId": request.panel_session_id,
+            "frontAppBundleId": request.front_app_bundle_id,
+            "project": request.project,
+            "app": request.app,
+            "intent": request.intent,
+            "placement": request.placement,
+            "contextSource": request.context_source,
+            "maxCandidates": request.max_candidates,
+            "maxChars": request.max_chars,
+            "latencyBudgetMs": request.latency_budget_ms,
+            "selectedText": _trace_text_snapshot(request.selected_text, include_text=include_text),
+            "currentContext": _trace_text_snapshot(request.context, include_text=include_text),
+            "surroundingBefore": _trace_text_snapshot(request.surrounding_before, include_text=include_text),
+            "surroundingAfter": _trace_text_snapshot(request.surrounding_after, include_text=include_text),
+            "providedEvidenceCount": len(request.evidence_pack),
+        },
+        "retrieval": {
+            "diagnostics": _bounded_trace_value(diagnostics.get("retrieval") or {}, include_text=include_text),
+            "evidenceCount": len(evidence),
+            "evidence": evidence,
+        },
+        "model": {
+            "route": _bounded_trace_value(diagnostics.get("route") or {}, include_text=include_text),
+            "contextInjection": _bounded_trace_value(
+                diagnostics.get("contextInjection") or {}, include_text=include_text
+            ),
+            "modelInput": _bounded_trace_value(diagnostics.get("modelInput") or {}, include_text=include_text),
+            "request": _bounded_trace_value(diagnostics.get("modelRequest") or {}, include_text=include_text),
+            "remote": _bounded_trace_value(diagnostics.get("remoteModel") or {}, include_text=include_text),
+        },
+        "generation": {
+            "diagnostics": _bounded_trace_value(diagnostics.get("generation") or {}, include_text=include_text),
+            "candidateCount": len(candidates),
+            "candidates": candidates,
+        },
+        "failure": _bounded_trace_value(diagnostics.get("failure") or {}, include_text=include_text),
+        "traceEvents": _bounded_trace_value(session.trace_events, include_text=include_text),
+    }
+
+
+def _trace_text_snapshot(text: str, *, include_text: bool) -> dict[str, object]:
+    value = str(text or "")
+    payload = text_fingerprint(value)
+    if include_text:
+        payload["text"] = value[:ACTIVE_RAG_CHAIN_TRACE_TEXT_LIMIT]
+        payload["truncated"] = len(value) > ACTIVE_RAG_CHAIN_TRACE_TEXT_LIMIT
+    return payload
+
+
+def _trace_evidence_item(item: ActiveRagEvidence, *, include_text: bool) -> dict[str, object]:
+    return {
+        "evidenceId": item.evidence_id,
+        "sourceType": item.source_type,
+        "sourceLane": item.source_lane,
+        "score": item.score,
+        "confidence": item.confidence,
+        "tags": _bounded_trace_value(list(item.tags), include_text=include_text, field_name="tags"),
+        "memoryIds": list(item.memory_ids),
+        "atomIds": list(item.atom_ids),
+        "bookIds": list(item.book_ids),
+        "sourceEventIds": list(item.evidence_event_ids),
+        "text": _trace_text_snapshot(item.text, include_text=include_text),
+        "preview": _trace_text_snapshot(item.preview, include_text=include_text),
+        "metadata": _bounded_trace_value(item.metadata, include_text=include_text),
+    }
+
+
+def _trace_candidate_item(item: ActiveRagCandidate, *, include_text: bool) -> dict[str, object]:
+    return {
+        "candidateId": item.candidate_id,
+        "sourceType": item.source_type,
+        "sourceLane": item.source_lane,
+        "text": _trace_text_snapshot(item.text, include_text=include_text),
+        "insertText": _trace_text_snapshot(item.insert_text, include_text=include_text),
+        "metadata": _bounded_trace_value(item.metadata, include_text=include_text),
+    }
+
+
+def _bounded_trace_value(
+    value: object,
+    *,
+    include_text: bool,
+    field_name: str = "",
+) -> object:
+    normalized_field = re.sub(r"[^a-z0-9]", "", field_name.lower())
+    if not include_text and _trace_field_matches(normalized_field, _TRACE_SECRET_FIELD_TOKENS):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        result: dict[str, object] = {}
+        for key, item in list(value.items())[:160]:
+            name = str(key)
+            result[name] = _bounded_trace_value(
+                item,
+                include_text=include_text,
+                field_name=name,
             )
-        )
+        return result
+    if isinstance(value, (list, tuple)):
+        return [
+            _bounded_trace_value(
+                item,
+                include_text=include_text,
+                field_name=field_name,
+            )
+            for item in list(value)[:160]
+        ]
+    if isinstance(value, str):
+        structural_string = normalized_field.endswith("hash") or "reason" in normalized_field
+        if (
+            not include_text
+            and not structural_string
+            and _trace_field_matches(normalized_field, _TRACE_TEXT_FIELD_TOKENS)
+        ):
+            return _trace_text_snapshot(value, include_text=False)
+        return value[:ACTIVE_RAG_CHAIN_TRACE_TEXT_LIMIT]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:1000]
+
+
+def _trace_field_matches(normalized_field: str, tokens: tuple[str, ...]) -> bool:
+    return any(re.sub(r"[^a-z0-9]", "", token.lower()) in normalized_field for token in tokens)
+
+
+def _append_active_rag_chain_trace(path: Path, record: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    current_size = path.stat().st_size if path.exists() else 0
+    if current_size and current_size + len(encoded) > ACTIVE_RAG_CHAIN_TRACE_MAX_BYTES:
+        rotated = Path(f"{path}.1")
+        rotated.unlink(missing_ok=True)
+        path.replace(rotated)
+    with path.open("ab") as handle:
+        handle.write(encoded)
+
+
+def _provider_model(provider: object | None) -> str:
+    config = getattr(provider, "config", None)
+    model = getattr(config, "model", "") if config is not None else ""
+    return compact_whitespace(str(model)) or ("test-or-custom-provider" if provider is not None else "")
+
+
+def _provider_name(provider: object | None) -> str:
+    config = getattr(provider, "config", None)
+    value = getattr(config, "provider_name", "") if config is not None else ""
+    return compact_whitespace(str(value)) or ("custom" if provider is not None else "")
+
+
+def _completion_delta_diagnostics(
+    deltas: tuple[CompletionCandidateDelta, ...],
+    *,
+    provider: object | None,
+) -> dict[str, object]:
+    metadata = [dict(item.metadata or {}) for item in deltas]
+    summary: dict[str, object] = {
+        "parseModes": sorted(
+            {compact_whitespace(str(item.get("parseMode") or "")) for item in metadata}
+            - {""}
+        ),
+        "finishReasons": sorted(
+            {compact_whitespace(str(item.get("finishReason") or "")) for item in metadata}
+            - {""}
+        ),
+        "doneMarkerSeen": any(bool(item.get("doneMarkerSeen")) for item in metadata),
+        "streamInterrupted": any(bool(item.get("streamInterrupted")) for item in metadata),
+        "continuationAttempted": any(bool(item.get("continuationAttempted")) for item in metadata),
+        "continuationAdvanced": any(bool(item.get("continuationAdvanced")) for item in metadata),
+        "continuationCompleted": any(bool(item.get("continuationCompleted")) for item in metadata),
+        "continuationRounds": max((int(item.get("continuationRounds") or 0) for item in metadata), default=0),
+    }
+    transport_modes = sorted(
+        {compact_whitespace(str(item.get("transportMode") or "")) for item in metadata}
+        - {""}
     )
-    if not haystack:
+    if transport_modes:
+        summary["transportModes"] = transport_modes
+    proxy_values = [bool(item.get("proxyBypassed")) for item in metadata if "proxyBypassed" in item]
+    if proxy_values:
+        summary["proxyBypassed"] = all(proxy_values)
+    elif hasattr(provider, "proxy_bypassed"):
+        summary["proxyBypassed"] = bool(getattr(provider, "proxy_bypassed"))
+    return summary
+
+
+def _streamed_partial_is_complete(text: str) -> bool:
+    return active_rag_text_is_complete(text)
+
+
+def _provider_credentials_configured(provider: object | None) -> bool:
+    if provider is None:
         return False
-    problem_terms = ("不显示", "没显示", "无输出", "没输出", "消失", "重复", "卡顿", "只有一个框")
-    generation_terms = ("生成", "预测", "候选", "按钮", "输出")
-    if ("LLM" in request_text or "模型" in request_text) and any(term in request_text for term in (*problem_terms, *generation_terms)):
+    config = getattr(provider, "config", None)
+    if config is None or not hasattr(config, "api_key"):
         return True
-    if ("DeepSeek" in request_text or "DS" in request_text) and any(term in request_text for term in (*problem_terms, *generation_terms)):
-        return True
-    if "RAG" in request_text and any(term in request_text for term in ("命中", "检索", "上下文", "笔记本", "记忆")):
-        return True
-    if ("笔记本" in request_text or "Notebook" in request_text or "记忆" in request_text) and any(
-        term in request_text for term in ("DeepSeek", "DS", "预测", "上下文")
-    ):
-        return True
-    return False
+    return bool(compact_whitespace(str(getattr(config, "api_key", ""))))
+
+
+def _candidate_source_counts(candidates: tuple[ActiveRagCandidate, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in candidates:
+        key = item.source_lane or item.source_type or "unknown"
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _trace_event(name: str, **fields: object) -> dict[str, object]:
+    return {"name": name, "atMs": now_ms(), "fields": fields}
+
+
+def _append_trace_event(session: ActiveRagSession, name: str, **fields: object) -> None:
+    session.trace_events.append(_trace_event(name, **fields))
+
+
+def _safe_failure_reason(error: BaseException) -> str:
+    message = compact_whitespace(str(error))[:240]
+    message = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", message)
+    message = re.sub(r"(?:/Users/|/Volumes/|/var/folders/)[^\s，。；;]+", "[REDACTED_PATH]", message)
+    return message or type(error).__name__
 
 
 def _active_rag_thinking_candidate_payload(session: ActiveRagSession) -> dict[str, object]:
@@ -683,7 +2173,7 @@ def _active_rag_thinking_candidate_payload(session: ActiveRagSession) -> dict[st
         "candidateStableId": f"{session.session_id}:thinking",
         "snapshotId": session.session_id,
         "snapshotGeneration": 1,
-        "text": f"DeepSeek 思考中{suffix}",
+        "text": f"正在生成{suffix}",
         "insertText": "",
         "sourceType": "status",
         "sourceLane": "active_rag_status",
@@ -739,7 +2229,7 @@ def _active_rag_error_candidate_payload(session: ActiveRagSession) -> dict[str, 
         "candidateStableId": f"{session.session_id}:error",
         "snapshotId": session.session_id,
         "snapshotGeneration": 1,
-        "text": "DeepSeek 无有效候选",
+        "text": "暂未完成，可以重试",
         "insertText": "",
         "sourceType": "status",
         "sourceLane": "active_rag_status",
@@ -771,13 +2261,83 @@ def _active_rag_error_candidate_payload(session: ActiveRagSession) -> dict[str, 
     }
 
 
+def _active_rag_no_suggestion_candidate_payload(session: ActiveRagSession) -> dict[str, object]:
+    reason = str((session.diagnostics.get("generation") or {}).get("noSuitableReason") or "")
+    status_text = (
+        "这次没有合适建议"
+        if reason
+        in {
+            "empty_remote_content",
+            "governor_rejected_content",
+            "no_insertable_content",
+            "remote_generation_returned_no_insertable_content",
+            "local_rag_returned_no_insertable_content",
+        }
+        else "暂未完成，可以重试"
+    )
+    metadata = {
+        "activeRag": True,
+        "activeRagNoSuggestion": True,
+        "activeRagSessionId": session.session_id,
+        "selectedTextHash": session.request.selected_text_hash,
+        "frontendRevision": session.request.frontend_revision,
+        "selectionEpoch": session.request.selection_epoch,
+        "panelSessionId": session.request.panel_session_id,
+        "frontAppBundleId": session.request.front_app_bundle_id,
+        "candidateOrdinal": 0,
+        "visibleLabel": "",
+        "reason": reason,
+    }
+    return {
+        "candidateId": f"{session.session_id}:no-suggestion",
+        "label": "",
+        "visibleLabel": "",
+        "selectionKey": None,
+        "selectionRank": 0,
+        "candidateOrdinal": 0,
+        "candidateStableId": f"{session.session_id}:no-suggestion",
+        "snapshotId": session.session_id,
+        "snapshotGeneration": 1,
+        "text": status_text,
+        "insertText": "",
+        "sourceType": "status",
+        "sourceLane": "active_rag_status",
+        "selectionAction": "none",
+        "sourceIndex": 0,
+        "comment": "active_rag_no_suggestion",
+        "badge": "查忆",
+        "sourceBadge": "查忆",
+        "colorToken": "statusGray",
+        "sourceStability": "fresh",
+        "hardContextAnchor": "",
+        "queryAnchor": "",
+        "displayAnchor": "",
+        "expiresAtMs": 0,
+        "minVisibleUntilMs": 0,
+        "evidencePreview": "",
+        "expandedEvidence": "",
+        "suggestionId": "",
+        "memoryId": "",
+        "sourceEventId": None,
+        "rimeIndex": None,
+        "displayLayout": "status_row",
+        "displayLane": "active_rag_status",
+        "group": "status",
+        "groupLabel": "状态",
+        "isSelectable": False,
+        "isStatus": True,
+        "metadata": metadata,
+    }
+
+
 def _active_rag_display_candidate_payload(
     item: ActiveRagCandidate,
     *,
     session: ActiveRagSession,
     index: int,
 ) -> dict[str, object]:
-    label = str(index % 10 or 0)
+    streaming_partial = bool(item.metadata.get("streamingPartial")) or session.status == "pending"
+    label = "" if streaming_partial else str(index % 10 or 0)
     metadata = {
         **dict(item.metadata),
         "activeRag": True,
@@ -792,8 +2352,11 @@ def _active_rag_display_candidate_payload(
         "committedContextHash": "",
         "candidateOrdinal": index,
         "visibleLabel": label,
-        "sourceBadge": "生成" if item.source_type == "model" else "忆",
-        "candidateStableId": f"active_rag:{stable_text_hash(item.text)}",
+        "sourceBadge": "模" if item.source_type == "model" else "忆",
+        # A streaming candidate changes text several times before it is final.
+        # Keep its UI identity tied to the session slot so AppKit can update the
+        # row in place instead of treating every delta as a different choice.
+        "candidateStableId": f"{session.session_id}:result:{index}",
         "placement": session.request.placement,
         "intent": session.request.intent,
     }
@@ -801,8 +2364,8 @@ def _active_rag_display_candidate_payload(
         "candidateId": item.candidate_id,
         "label": label,
         "visibleLabel": label,
-        "selectionKey": label,
-        "selectionRank": index,
+        "selectionKey": None if streaming_partial else label,
+        "selectionRank": 0 if streaming_partial else index,
         "candidateOrdinal": index,
         "candidateStableId": metadata["candidateStableId"],
         "snapshotId": session.session_id,
@@ -811,7 +2374,7 @@ def _active_rag_display_candidate_payload(
         "insertText": item.insert_text,
         "sourceType": item.source_type,
         "sourceLane": item.source_lane,
-        "selectionAction": "commit_side_candidate",
+        "selectionAction": "none" if streaming_partial else "commit_side_candidate",
         "sourceIndex": index - 1,
         "comment": item.source_lane,
         "badge": metadata["sourceBadge"],
@@ -833,7 +2396,10 @@ def _active_rag_display_candidate_payload(
         "displayLane": item.source_lane or "active_rag",
         "group": "prediction",
         "groupLabel": "预测",
-        "isSelectable": True,
+        # Streaming text is feedback, not a commit-ready answer. Its stable row
+        # may update smoothly while pending, but Tab becomes active only after
+        # the provider and semantic-boundary governor finalize the document.
+        "isSelectable": not streaming_partial,
         "isStatus": False,
         "metadata": metadata,
     }
@@ -841,7 +2407,7 @@ def _active_rag_display_candidate_payload(
 
 def _frame_from_request(request: ActiveRagStartRequest) -> ActiveRagFrame:
     return ActiveRagFrame(
-        selected_text=compact_whitespace(request.selected_text),
+        selected_text=_resolved_active_rag_request_text(request),
         selected_text_hash=request.selected_text_hash,
         frontend_revision=int(request.frontend_revision),
         selection_epoch=int(request.selection_epoch),

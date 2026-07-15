@@ -19,3 +19,11 @@ def feature_has_panel_trace_event(feature: Mapping[str, object]) -> bool:
     if not isinstance(events, list):
         return False
     return "panel_display_candidates" in {str(event) for event in events}
+
+
+def feature_has_visible_prediction_trace_event(feature: Mapping[str, object]) -> bool:
+    events = feature.get("foregroundTraceEvents")
+    if not isinstance(events, list):
+        return False
+    event_names = {str(event) for event in events}
+    return bool(event_names & {"panel_display_candidates", "assistant_overlay_candidate_visible"})

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "rag-ime.agent-media.v1",
+  "mediaId": "media-1234",
+  "sessionId": "agent-session-1",
+  "mimeType": "image/png",
+  "byteSize": 2048,
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "width": 512,
+  "height": 512,
+  "durationMs": null,
+  "thumbnailMediaId": null,
+  "origin": "tool_result",
+  "originTool": "image_generate",
+  "originReceiptId": "receipt-1",
+  "createdAtMs": 1783950000000
+}

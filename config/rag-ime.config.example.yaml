@@ -1,0 +1,139 @@
+# RAG-IME 用户配置模板
+# 1. 复制为 rag-ime.config.yaml 后按需修改；不要提交包含 API Key 的本地文件。
+# 2. 控制中心导入时会先校验，不会覆盖未写入的设置。
+# 3. 文件含密钥时会自动收紧为 0600；密钥写入 macOS Keychain，不写入备份包。
+
+schemaVersion: rag-ime.user-config.v1
+
+settings:
+  interaction:
+    composition:
+      showPrediction: false       # 拼音组词阶段仅显示 Rime，避免模型抢键盘焦点
+      showOnlyRime: true
+    postCommit:
+      enabled: true               # 提交文字后再触发本地补全
+      showPendingStatus: false
+      idleTriggerMs: 420
+      minDeltaChars: 2
+      maxCallsPer10s: 2
+      cooldownMs: 1500
+      pendingStatusDelayMs: 600
+      panelTtlMs: 8500
+      numberKeys: pass_through    # pass_through | select_prediction
+      tabAction: accept_top_prediction  # accept_top_prediction | rime_default | disabled
+
+  display:
+    showSourceBadge: true
+    showDiagnosticsInline: false
+    maxPostCommitCandidates: 5
+    badges:
+      model: "模"
+      rag: "查"
+      memory: "忆"
+      status: "查忆"
+      action: "生成"
+    panelStyle: compact           # compact | expanded
+    candidateFontSize: 14
+    fadeAnimation: true
+    maxWidth: 520
+
+  rag:
+    hybrid:
+      enabled: true
+      budgetMs: 400
+    lanes:
+      bm25Raw: true
+      bm25Tags: true
+      vectorRaw: true
+      tagMemo: true
+      timeDailyBook: true
+
+  models:
+    hot: minimind_ime_v2          # 输入法热路径模型注册名
+    activeRag: deepseek-v4        # 显式生成模型注册名
+    offlineCleanup: deepseek-v4   # 离线记忆整理模型注册名
+
+  activeRag:
+    enabled: true
+    shortcut: "ctrl+."
+    capture:
+      accessibility: true
+      clipboardFallback: true
+      manualClipboardFallback: true
+    defaultPlacement: replace_selection  # replace_selection | insert_after_selection | show_only
+    maxCandidates: 1
+    latencyBudgetMs: 120000
+    localOnlyDefault: true
+    allowRemoteModel: true
+
+  memory:
+    enabled: true
+    shortTermItems: 20
+    shortTermTtlMinutes: 30
+    allowProjectFallback: true
+    allowAppFallback: true
+    allowGlobalMemory: true
+    archiveInactiveDays: 60       # 仅归档长期不活跃主题书，不限制主题书总数
+    timeDecay:
+      temporaryHalfLifeDays: 14
+      projectHalfLifeDays: 120
+      topicBookHalfLifeDays: 180
+      stablePreferenceHalfLifeDays: 365
+
+  context:
+    recentInputBaseline: 20       # 10-20 是基线，不是硬上限
+    recentInputMaximum: 80        # 预算允许时可超过 20 条
+    tokenBudget: 4096             # 上下文软预算；当前输入始终优先
+    reservedOutputTokens: 1024
+    temporalRecall: true          # 识别“昨天”“上周”等时间表达
+
+  planning:
+    enabled: true
+    injectIntoContext: true
+    detectExplicitCompletion: true
+
+  pinyin:
+    fuzzyProfile: sichuan-mild    # sichuan-mild | none
+    rimeManagedPatch: true
+    rerankUsesFuzzy: true
+    pairs:
+      zZh: true
+      cCh: true
+      sSh: true
+      enEng: true
+      inIng: true
+      ongOn: true
+      nL: false
+      fH: false
+
+  privacy:
+    debugIncludeText: false
+    traceIncludeText: false
+    allowRemoteModelForActiveRag: true
+
+  managementSecurity:
+    requireToken: false           # 本机多用户或端口暴露时建议设为 true
+
+providers:
+  instant:
+    provider: mlx                 # mlx | ollama | openai_compatible
+    endpoint: http://127.0.0.1:8767
+    model: ""
+    apiKey: ""                    # 可在本地文件填写，导入后进入 Keychain
+    headers: {}
+
+  knowledge:
+    provider: deepseek
+    endpoint: https://api.deepseek.com
+    model: deepseek-v4-flash
+    apiKey: ""
+    headers: {}
+
+  voice:
+    provider: native_streaming    # native_streaming | realtime_websocket | http_transcription
+    appID: ""
+    accessToken: ""
+    resourceID: volc.seedasr.sauc.duration
+    endpoint: ""
+    model: ""
+    headers: {}

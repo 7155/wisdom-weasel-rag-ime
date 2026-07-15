@@ -28,14 +28,8 @@ while [[ "${1:-}" == --* ]]; do
       ;;
   esac
 done
-INPUT_SOURCE_ID="${1:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}}"
-if [[ -n "${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-}" ]]; then
-  INPUT_SOURCE_BUNDLE_ID="$RAG_IME_INPUT_SOURCE_BUNDLE_ID"
-elif [[ -n "${RAG_IME_MACOS_INPUT_SOURCE_ID:-}" && "$INPUT_SOURCE_ID" == "$RAG_IME_MACOS_INPUT_SOURCE_ID" ]]; then
-  INPUT_SOURCE_BUNDLE_ID="${RAG_IME_MACOS_BUNDLE_ID:-dev.local.inputmethod.RagImeMac}"
-else
-  INPUT_SOURCE_BUNDLE_ID="${INPUT_SOURCE_ID%.*}"
-fi
+INPUT_SOURCE_ID="${1:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}"
+INPUT_SOURCE_BUNDLE_ID="${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-${INPUT_SOURCE_ID%.*}}"
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -96,12 +90,19 @@ for key in [
     "current",
     "hitoolboxEnabled",
     "thirdPartyEnabled",
+    "preferenceEnabled",
+    "matchCount",
 ]:
     match = re.search(rf"(?:^|\s){re.escape(key)}=([^\n]+?)(?=\s+[A-Za-z][A-Za-z0-9]*=|$)", stdout_text)
     if not match:
         continue
     value = match.group(1).strip()
-    if value == "true":
+    if key == "matchCount":
+        try:
+            fields[key] = int(value)
+        except ValueError:
+            fields[key] = value
+    elif value == "true":
         fields[key] = True
     elif value == "false":
         fields[key] = False
@@ -117,16 +118,21 @@ elif fields.get("missing") == target:
     failure_kind = "input-source-missing"
     manual_required.append("Install/register the patched Squirrel.app before foreground verification.")
     commands.append("scripts/build_patched_squirrel.sh install")
+elif exit_code == 5 or (isinstance(fields.get("matchCount"), int) and fields["matchCount"] > 1):
+    failure_kind = "duplicate-input-source"
+    manual_required.append("Normalize Squirrel preferences and remove stale LaunchServices registrations before selecting it again.")
+    commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh")
+    commands.append("RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh")
 elif require_selected and fields.get("selected") is False:
     failure_kind = "not-selected"
     manual_required.append("Select Squirrel - Simplified from the macOS input menu.")
     commands.append("scripts/wait_squirrel_typing_ready.sh")
-elif require_hitoolbox and fields.get("thirdPartyEnabled") is False:
+elif require_hitoolbox and not bundle_id.startswith("com.apple.") and fields.get("thirdPartyEnabled") is False:
     failure_kind = "third-party-missing"
     manual_required.append("Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified.")
     commands.append("scripts/open_squirrel_input_source_settings.sh --wait")
     commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json")
-elif require_hitoolbox and fields.get("hitoolboxEnabled") is False:
+elif require_hitoolbox and bundle_id.startswith("com.apple.") and fields.get("hitoolboxEnabled") is False:
     failure_kind = "hitoolbox-missing"
     manual_required.append("Repair HIToolbox input-source preferences or add Squirrel in System Settings.")
     commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json")
@@ -180,22 +186,29 @@ func currentInputSourceID() -> String? {
 let target = CommandLine.arguments[1]
 let currentID = currentInputSourceID()
 let list = TISCreateInputSourceList(nil, true).takeRetainedValue() as NSArray
-var matched = false
+var matchCount = 0
+var firstMatch = ""
 for item in list {
   let source = item as! TISInputSource
   guard let id = cfStringProperty(source, kTISPropertyInputSourceID) else { continue }
   guard id == target else { continue }
-  matched = true
+  matchCount += 1
   let name = cfStringProperty(source, kTISPropertyLocalizedName) ?? "<unnamed>"
   let enabled = cfBoolProperty(source, kTISPropertyInputSourceIsEnabled)
   let selectable = cfBoolProperty(source, kTISPropertyInputSourceIsSelectCapable)
   let tisSelected = cfBoolProperty(source, kTISPropertyInputSourceIsSelected)
   let currentSelected = currentID == id
-  print("id=\(id) name=\(name) enabled=\(enabled) selectable=\(selectable) selected=\(currentSelected) tisSelected=\(tisSelected) current=\(currentID ?? "<none>")")
+  if firstMatch.isEmpty {
+    firstMatch = "id=\(id) name=\(name) enabled=\(enabled) selectable=\(selectable) selected=\(currentSelected) tisSelected=\(tisSelected) current=\(currentID ?? "<none>")"
+  }
 }
-if !matched {
+if matchCount == 0 {
   print("missing \(target)")
   exit(2)
+}
+print("\(firstMatch) matchCount=\(matchCount)")
+if matchCount > 1 {
+  exit(5)
 }
 SWIFT
 
@@ -244,7 +257,15 @@ third_party_value=false
 if [[ "$third_party_ok" == "1" ]]; then
   third_party_value=true
 fi
-sed "s/$/ hitoolboxEnabled=$hitoolbox_value thirdPartyEnabled=$third_party_value/" "$out" >"$annotated_out"
+preference_ok="$hitoolbox_ok"
+if [[ "$INPUT_SOURCE_BUNDLE_ID" != com.apple.* ]]; then
+  preference_ok="$third_party_ok"
+fi
+preference_value=false
+if [[ "$preference_ok" == "1" ]]; then
+  preference_value=true
+fi
+sed "s/$/ hitoolboxEnabled=$hitoolbox_value thirdPartyEnabled=$third_party_value preferenceEnabled=$preference_value/" "$out" >"$annotated_out"
 cat "$annotated_out"
 if [[ "$tis_ok" == "1" ]]; then
   if [[ "$REQUIRE_SELECTED" == "1" || "$REQUIRE_SELECTED" == "true" || "$REQUIRE_SELECTED" == "TRUE" ]]; then
@@ -259,7 +280,7 @@ if [[ "$tis_ok" == "1" ]]; then
   fi
   if [[ "$REQUIRE_HITOOLBOX_ENABLED" == "1" || "$REQUIRE_HITOOLBOX_ENABLED" == "true" || "$REQUIRE_HITOOLBOX_ENABLED" == "TRUE" ]]; then
     set +e
-    [[ "$hitoolbox_ok" == "1" && "$third_party_ok" == "1" ]]
+    [[ "$preference_ok" == "1" ]]
     enabled_status=$?
     set -e
     write_report "$enabled_status"

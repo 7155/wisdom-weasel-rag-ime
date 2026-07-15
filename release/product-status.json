@@ -1,0 +1,175 @@
+{
+  "schemaVersion": "rag-ime.product-status.v1",
+  "sourceCommit": "fb4ef14",
+  "verificationScope": {
+    "kind": "working_tree",
+    "baseCommit": "fb4ef14",
+    "includesUncommittedChanges": true,
+    "automatedEvidenceThrough": "2026-07-11",
+    "foregroundPermissionActionsRun": false,
+    "note": "Status includes the current uncommitted working tree. Automated tests/builds do not replace a user-authorized foreground IME or microphone acceptance run."
+  },
+  "productStatus": "backend_only",
+  "releaseStatus": "blocked",
+  "releaseEvidence": {
+    "manifestSchema": "rag-ime.release-manifest.v2",
+    "manifestPath": "output/release/release-manifest.json",
+    "currentAuditResult": "release_manifest_missing",
+    "requiredArtifactKinds": [
+      "macos_release",
+      "corresponding_source"
+    ],
+    "requiredEvidence": [
+      "codesign",
+      "notarization",
+      "stapling",
+      "correspondingSource",
+      "projectLicense",
+      "thirdPartyNotices",
+      "foregroundAcceptance"
+    ],
+    "note": "Release flags are declarations only. scripts/check_public_release.py recalculates artifact/evidence hashes and blocks while the real manifest or any listed file is absent or mismatched."
+  },
+  "runtimeProfile": "v1-proof",
+  "lastVerifiedDate": "2026-07-11",
+  "resolvedBlockers": [
+    {
+      "id": "duplicate_system_squirrel_bundle",
+      "evidence": "canonical bundle audit found exactly one patched bundle in the user Input Methods directory"
+    },
+    {
+      "id": "input_source_preferences_incomplete",
+      "evidence": "HIToolbox and third-party input-source entries are complete; Squirrel is selectable and was selected successfully for the controlled soak"
+    },
+    {
+      "id": "minimind_three_candidate_count_gate",
+      "evidence": "The configured 34-case model count gate passed with minimum 3 and average 3.0 candidates; 25 warm installed-service probes had a 100% three-candidate rate."
+    },
+    {
+      "id": "minimind_backend_latency_gate",
+      "evidence": "The current 20-sample complete-response benchmark returned three candidates for every sample at p50 117 ms and p95 251 ms. This is backend service evidence, not foreground first-visible or semantic-quality proof."
+    },
+    {
+      "id": "minimind_quality_baseline_captured",
+      "evidence": "A reviewed production-candidate run, explicitly separated from raw checkpoint output, scored semantic judgment coverage 1.0, Top-1/Top-3 0.0, boundary validity 0.833333, continuous-Tab 0.0, p50 92 ms, and p95 187 ms. The gate itself preserves candidates; the production provider may parse/filter before this stage."
+    },
+    {
+      "id": "public_generated_artifacts_removed",
+      "evidence": "The obsolete 20k template corpus, its generators, stale handoff files, archived agent-process subtree, browser console, and duplicate InputMethodKit frontend were removed in the history-rewritten baseline fb4ef14; the public audit reports no forbidden tracked artifacts."
+    },
+    {
+      "id": "top_level_project_license_selected",
+      "evidence": "Project-authored source is now GPL-3.0-only with a canonical top-level LICENSE, SPDX package metadata, a recorded copyright holder/year, and a release-manifest evidence slot that hashes the license file."
+    }
+  ],
+  "blockers": [
+    {
+      "id": "strict_foreground_soak_not_green",
+      "detail": "Current trace does not prove the full Rime composition, delete resync, app-switch invalidation, and follow-up-after-selection matrix."
+    },
+    {
+      "id": "foreground_first_visible_latency_unverified",
+      "detail": "The latest backend benchmark completed three candidates for every sample at p50 117 ms and p95 251 ms, but backend response time is not foreground first-visible latency and the current Squirrel build still needs a fresh measured run."
+    },
+    {
+      "id": "rag_memory_foreground_selection_missing",
+      "detail": "A real foreground overlay now shows separate model and RAG candidates, but RAG or memory selection and feedback remain unverified."
+    },
+    {
+      "id": "active_rag_selection_replacement_unverified",
+      "detail": "Selected-text capture, replacement, stale rejection, and commit still need a real foreground proof."
+    },
+    {
+      "id": "candidate_relevance_not_signed_off",
+      "detail": "The active MiniMind deployment passes backend latency and three-candidate count, but the reviewed production-candidate baseline scored semantic Top-1/Top-3 0.0, boundary validity 0.833333, and continuous-Tab 0.0 at full human-judgment coverage. Raw checkpoint output still needs its separate gate. Retraining or a network/checkpoint change and real single-user evaluation are required."
+    },
+    {
+      "id": "assistant_overlay_v3_foreground_screenshot_pending",
+      "detail": "The working-tree Squirrel overlay has native popover material, source-aware rows, bounded animation/TTL, and Reduce Motion handling, but no fresh real-foreground screenshot of v3 has been accepted. Static source/build checks and debug fixtures do not satisfy this gate."
+    },
+    {
+      "id": "voice_foreground_acceptance_pending",
+      "detail": "The Keychain-backed Doubao PCM probe passes, but partial replacement, finalization, cancellation, and sensitive-field blocking still need one user-authorized foreground microphone run."
+    },
+    {
+      "id": "rime_native_rank_feedback_foreground_pending",
+      "detail": "The native Rime-only selection endpoint, patched Squirrel hook, review-only export, and automated tests pass, but a fresh real composition selection has not yet produced the foreground feedback trace and reviewed deployment proof."
+    },
+    {
+      "id": "native_control_center_user_acceptance_pending",
+      "detail": "RagImeControl builds and is the only settings/status UI, RagImeVoice is headless, and the legacy browser console has been removed; a fresh user-facing release acceptance run is still pending."
+    },
+    {
+      "id": "working_tree_dirty",
+      "detail": "The verification scope includes a large uncommitted working tree, so the exact public artifact set is not reproducible from HEAD."
+    },
+    {
+      "id": "patched_squirrel_distribution_compliance_pending",
+      "detail": "Any distributed patched Squirrel source or binary must include the pinned corresponding source, GPL-3.0 license and notices, plus retained librime notices; release packaging has not yet proven that bundle."
+    },
+    {
+      "id": "developer_id_signing_and_notarization_pending",
+      "detail": "Current local native builds use development/ad-hoc signing evidence only. A public macOS release still needs an owned bundle/version plan, Developer ID signing, notarization, stapling, and clean-machine Gatekeeper verification."
+    },
+    {
+      "id": "public_release_package_not_assembled",
+      "detail": "A deterministic unsigned engineering staging archive now combines patched Squirrel, the one RagImeControl control center, headless RagImeVoice, and corresponding source. It is deliberately releaseEligible=false and is not a public package: hash-bound license/notices/source evidence, clean commit, foreground evidence, Developer ID signing, notarization, stapling, installation/rollback acceptance, and output/release/release-manifest.json remain missing."
+    }
+  ],
+  "runtime": {
+    "canonicalBundleCount": 1,
+    "canonicalBundlePath": "~/Library/Input Methods/Squirrel.app",
+    "compositionAi": false,
+    "showOnlyRimeDuringComposition": true,
+    "currentInputSourceSelected": false,
+    "inputSourcePreferencesComplete": true,
+    "postCommitModel": "local-runtime-registry (active deployment: mlx)",
+    "remoteModelInPassivePath": false
+  },
+  "features": {
+    "rime-core-stability": "backend_only",
+    "group-aware-memory-completion": "backend_only",
+    "post-commit-local-completion": "backend_only",
+    "curated-rag-memory-candidates": "backend_only",
+    "rime-native-rank-feedback": "backend_only",
+    "native-control-center": "backend_only",
+    "streaming-voice-input": "backend_only",
+    "active-rag-selected-text-bridge": "backend_only",
+    "dsv4-cleanup-to-curated-memory": "offline_tool",
+    "rime-export-bridge": "offline_tool",
+    "mlx-provider-health": "backend_only",
+    "generic-frontend-gateway": "backend_only",
+    "ime-first-demo-pack": "offline_tool",
+    "minimind-retraining-quality-gate": "offline_tool"
+  },
+  "foregroundEvidence": {
+    "strictSoakPassed": false,
+    "modelCandidateVisible": true,
+    "modelCandidateAccepted": true,
+    "hostCommitObserved": true,
+    "feedbackRecorded": true,
+    "nextPredictionScheduled": true,
+    "rimeCompositionProven": false,
+    "deleteResyncProven": false,
+    "appSwitchInvalidationProven": false,
+    "followupAfterSelectionProven": false,
+    "ragOrMemoryCandidateVisible": true,
+    "ragOrMemoryCandidateSelected": false,
+    "nativeRimeRankFeedbackForegroundObserved": false,
+    "nativeControlCenterBuildPassed": true,
+    "nativeControlCenterUserAccepted": false,
+    "voiceProviderProbePassed": true,
+    "voiceForegroundAccepted": false,
+    "minimindBackendLatencyGatePassed": true,
+    "minimindThreeCandidateCountGatePassed": true,
+    "minimindSemanticGatePassed": false,
+    "minimindSemanticBaselineCaptured": true,
+    "assistantOverlayV3SourceVerified": true,
+    "assistantOverlayV3ForegroundScreenshotAccepted": false,
+    "genericFrontendGatewayContractPassed": true,
+    "imeFirstDemoPackVerified": true,
+    "publicForbiddenTrackedArtifactsRemoved": true,
+    "publicReleaseAuditPassed": false,
+    "releaseSignedAndNotarized": false
+  }
+}

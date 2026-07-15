@@ -68,9 +68,13 @@ class SichuanFuzzyProfileScriptTests(unittest.TestCase):
             self.assertTrue(backup.exists())
             self.assertIn("translator/dictionary: luna_pinyin", text)
             self.assertIn("rag-ime-managed-sichuan-fuzzy-pinyin: begin", text)
+            self.assertIn("translator/enable_user_dict: true", text)
+            self.assertIn("translator/enable_sentence: true", text)
+            self.assertIn("translator/encode_commit_history: true", text)
             self.assertIn("derive/^zh/z/", text)
             self.assertIn("derive/eng$/en/", text)
             self.assertIn("derive/ing$/in/", text)
+            self.assertIn("derive/ong$/on/", text)
             self.assertNotIn("derive/^n/l/", text)
             self.assertNotIn("derive/^f/h/", text)
 
@@ -103,10 +107,25 @@ class SichuanFuzzyProfileScriptTests(unittest.TestCase):
         self.assertTrue(payload["enabled"]["s_sh"])
         self.assertTrue(payload["enabled"]["en_eng"])
         self.assertTrue(payload["enabled"]["in_ing"])
+        self.assertTrue(payload["enabled"]["ong_on"])
         self.assertTrue(payload["disabled"]["n_l"])
         self.assertTrue(payload["disabled"]["f_h"])
         self.assertEqual(payload["missingRules"], [])
         self.assertEqual(payload["forbiddenRulesPresent"], [])
+
+        apply_payload = json.loads(
+            subprocess.run(
+                ["bash", str(root / "scripts" / "apply_sichuan_fuzzy_profile.sh"), "--dry-run"],
+                cwd=root,
+                env={**os.environ, "RAG_IME_RIME_USER_DIR": str(rime_dir)},
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout
+        )
+        self.assertTrue(apply_payload["nativeRanking"]["enableUserDict"])
+        self.assertTrue(apply_payload["nativeRanking"]["enableSentence"])
+        self.assertTrue(apply_payload["nativeRanking"]["encodeCommitHistory"])
 
 
 if __name__ == "__main__":

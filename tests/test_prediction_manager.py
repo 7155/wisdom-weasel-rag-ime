@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
 from rag_ime.models import FrontendTransaction, InputSuggestion, ModelPrediction, RimeCandidate, RimeContextSnapshot
 from rag_ime.prediction_first import PredictionSessionPhase
@@ -9,6 +11,19 @@ from rag_ime.text_utils import stable_text_hash
 
 
 class PredictionManagerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.env = patch.dict(
+            os.environ,
+            {
+                "RAG_IME_AI_AFTER_COMMIT_ONLY": "0",
+                "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "1",
+            },
+        )
+        self.env.start()
+
+    def tearDown(self) -> None:
+        self.env.stop()
+
     def test_post_commit_uses_fresh_candidate_sources(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1200)
         result = manager.render(

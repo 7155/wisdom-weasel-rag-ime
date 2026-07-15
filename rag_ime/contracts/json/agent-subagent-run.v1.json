@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-subagent-run.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "id", "batchId", "childSessionId", "templateId",
+    "templateVersion", "ordinal", "task", "state", "budget", "usage",
+    "result", "error", "createdAtMs", "startedAtMs", "updatedAtMs", "completedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-subagent-run.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "batchId": {"type": "string", "minLength": 1},
+    "childSessionId": {"type": "string", "minLength": 1},
+    "templateId": {"type": "string", "enum": ["researcher", "planner", "worker", "reviewer", "delegate"]},
+    "templateVersion": {"type": "string", "const": "1"},
+    "ordinal": {"type": "integer", "minimum": 0, "maximum": 1},
+    "task": {"type": "string", "minLength": 1, "maxLength": 8000},
+    "state": {"type": "string", "enum": ["queued", "running", "completed", "failed", "aborted", "timed_out"]},
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["maxTurns", "maxToolCalls", "maxTotalTokens", "maxDurationMs", "maxOutputChars"],
+      "properties": {
+        "maxTurns": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maxToolCalls": {"type": "integer", "minimum": 0, "maximum": 64},
+        "maxTotalTokens": {"type": "integer", "minimum": 256, "maximum": 262144},
+        "maxDurationMs": {"type": "integer", "minimum": 1000, "maximum": 900000},
+        "maxOutputChars": {"type": "integer", "minimum": 256, "maximum": 100000}
+      }
+    },
+    "usage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["turnCount", "toolCount", "totalTokens"],
+      "properties": {
+        "turnCount": {"type": "integer", "minimum": 0},
+        "toolCount": {"type": "integer", "minimum": 0},
+        "totalTokens": {"type": "integer", "minimum": 0}
+      }
+    },
+    "result": {"type": "object"},
+    "error": {"type": "string", "maxLength": 500},
+    "artifact": {
+      "type": "object",
+      "required": ["schemaVersion", "artifactId", "ownerKind", "ownerId", "kind", "sha256"],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.agent-artifact-ref.v1"},
+        "artifactId": {"type": "string", "minLength": 1},
+        "ownerKind": {"type": "string", "const": "subagent_run"},
+        "ownerId": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "const": "lifecycle"},
+        "sha256": {"type": "string"}
+      }
+    },
+    "supervision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "reason", "requestedAtMs", "graceMs"],
+      "properties": {
+        "phase": {"type": "string", "enum": ["none", "soft", "hard", "forced"]},
+        "reason": {"type": "string", "maxLength": 240},
+        "requestedAtMs": {"type": ["integer", "null"], "minimum": 0},
+        "graceMs": {"type": "integer", "minimum": 0, "maximum": 30000}
+      }
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "startedAtMs": {"type": ["integer", "null"], "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "completedAtMs": {"type": ["integer", "null"], "minimum": 0}
+  }
+}

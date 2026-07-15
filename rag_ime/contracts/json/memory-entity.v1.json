@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.memory-entity.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "ok",
+    "settingsRevision",
+    "runtimeRevision",
+    "kind",
+    "entityId",
+    "entityRevision",
+    "project",
+    "entity",
+    "attributes",
+    "connections",
+    "members",
+    "limits"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.memory-entity.v1"},
+    "ok": {"type": "boolean", "const": true},
+    "settingsRevision": {"type": "string", "minLength": 1},
+    "runtimeRevision": {"type": "integer", "minimum": 0},
+    "kind": {"type": "string", "enum": ["tag", "group", "book"]},
+    "entityId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "entityRevision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "project": {"type": "string", "maxLength": 128},
+    "entity": {"$ref": "#/$defs/node"},
+    "attributes": {"$ref": "#/$defs/attributes"},
+    "connections": {"$ref": "#/$defs/page"},
+    "members": {"$ref": "#/$defs/page"},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connectionsLimit", "membersLimit"],
+      "properties": {
+        "connectionsLimit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "membersLimit": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    }
+  },
+  "$defs": {
+    "nodeKind": {
+      "type": "string",
+      "enum": ["tag", "group", "atom", "book", "phrase", "memory"]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "entityId",
+        "kind",
+        "label",
+        "description",
+        "color",
+        "status",
+        "source",
+        "project",
+        "qualityScore",
+        "memberCount",
+        "edgeCount",
+        "updatedAtMs"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "entityId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "kind": {"$ref": "#/$defs/nodeKind"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "description": {"type": "string", "maxLength": 240},
+        "color": {
+          "type": "string",
+          "enum": ["blue", "teal", "green", "orange", "pink", "purple", "gray"]
+        },
+        "status": {"type": "string", "minLength": 1, "maxLength": 32},
+        "source": {"type": "string", "maxLength": 64},
+        "project": {"type": "string", "maxLength": 128},
+        "qualityScore": {"type": "number", "minimum": 0, "maximum": 1},
+        "memberCount": {"type": "integer", "minimum": 0},
+        "edgeCount": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "attributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "aliases", "tags"],
+      "properties": {
+        "type": {"type": "string", "minLength": 1, "maxLength": 64},
+        "aliases": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "sourceId",
+        "targetId",
+        "sourceKind",
+        "targetKind",
+        "relation",
+        "weight",
+        "directionBias",
+        "evidenceCount",
+        "source",
+        "updatedAtMs"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 512},
+        "kind": {"type": "string", "enum": ["tagRelation", "groupMember", "tagMember"]},
+        "sourceId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "targetId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "sourceKind": {"$ref": "#/$defs/nodeKind"},
+        "targetKind": {"$ref": "#/$defs/nodeKind"},
+        "relation": {"type": "string", "minLength": 1, "maxLength": 64},
+        "weight": {"type": "number", "minimum": 0, "maximum": 1},
+        "directionBias": {"type": "number", "minimum": -1, "maximum": 1},
+        "evidenceCount": {"type": "integer", "minimum": 0},
+        "source": {"type": "string", "maxLength": 64},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "related": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "edge"],
+      "properties": {
+        "node": {"$ref": "#/$defs/node"},
+        "edge": {"$ref": "#/$defs/edge"}
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "nextCursor", "limit", "hasMore"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/related"}
+        },
+        "nextCursor": {"type": "string", "maxLength": 7},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "hasMore": {"type": "boolean"}
+      }
+    }
+  }
+}

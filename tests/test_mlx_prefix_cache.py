@@ -30,8 +30,52 @@ class MlxPrefixCacheTests(unittest.TestCase):
 
         self.assertEqual(cache.stats()["entries"], 1)
 
+    def test_reused_prefix_survives_newer_one_shot_entry(self) -> None:
+        cache = MlxPrefixCache(max_entries=2)
+        cache.put(_entry("reused", (1, 2)))
+        self.assertIsNotNone(
+            cache.lookup_longest_prefix(profile_id="hot", prompt_format="IMEV1", token_ids=(1, 2, 3))
+        )
+        cache.put(_entry("one-shot-a", (4,), last_used_at_ms=2))
+        cache.put(_entry("one-shot-b", (5,), last_used_at_ms=3))
 
-def _entry(cache_id: str, tokens: tuple[int, ...], *, profile: str = "hot") -> PrefixCacheEntry:
+        self.assertIsNotNone(
+            cache.lookup_longest_prefix(profile_id="hot", prompt_format="IMEV1", token_ids=(1, 2, 9))
+        )
+        stats = cache.stats()
+        self.assertEqual(stats["lookups"], 2)
+        self.assertEqual(stats["misses"], 0)
+        self.assertEqual(stats["hitRatePermille"], 1000)
+        self.assertEqual(stats["evictions"], 1)
+
+    def test_single_oversized_entry_is_rejected_by_byte_budget(self) -> None:
+        cache = MlxPrefixCache(max_entries=8, max_bytes=32)
+        cache.put(_entry("oversized", (1, 2), bytes_estimate=64))
+
+        self.assertEqual(cache.stats()["entries"], 0)
+        self.assertEqual(cache.stats()["bytesEstimate"], 0)
+        self.assertEqual(cache.stats()["evictions"], 1)
+
+    def test_miss_metrics_are_reported_without_exposing_tokens(self) -> None:
+        cache = MlxPrefixCache(max_entries=8)
+
+        self.assertIsNone(
+            cache.lookup_longest_prefix(profile_id="hot", prompt_format="IMEV1", token_ids=(7, 8, 9))
+        )
+
+        self.assertEqual(cache.stats()["lookups"], 1)
+        self.assertEqual(cache.stats()["misses"], 1)
+        self.assertEqual(cache.stats()["hitRatePermille"], 0)
+
+
+def _entry(
+    cache_id: str,
+    tokens: tuple[int, ...],
+    *,
+    profile: str = "hot",
+    last_used_at_ms: int = 1,
+    bytes_estimate: int = 0,
+) -> PrefixCacheEntry:
     return PrefixCacheEntry(
         cache_id=cache_id,
         profile_id=profile,
@@ -40,7 +84,8 @@ def _entry(cache_id: str, tokens: tuple[int, ...], *, profile: str = "hot") -> P
         token_count=len(tokens),
         cache_obj=None,
         created_at_ms=1,
-        last_used_at_ms=1,
+        last_used_at_ms=last_used_at_ms,
+        bytes_estimate=bytes_estimate,
     )
 
 

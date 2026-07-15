@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.knowledge-graph.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kbId",
+    "revision",
+    "sourceRevision",
+    "status",
+    "updatedAtMs",
+    "nodes",
+    "edges",
+    "stats",
+    "truncated"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.knowledge-graph.v1"},
+    "kbId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "revision": {"type": "integer", "minimum": 0},
+    "sourceRevision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "status": {"type": "string", "enum": ["ready", "building", "stale", "failed"]},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "jobId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "error": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "extractor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "model", "configured", "degraded"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["deterministic", "model"]},
+        "model": {"type": "string", "maxLength": 160},
+        "configured": {"type": "boolean"},
+        "degraded": {"type": "boolean"},
+        "fingerprint": {"type": "string", "maxLength": 160},
+        "processedChunkCount": {"type": "integer", "minimum": 0},
+        "cachedChunkCount": {"type": "integer", "minimum": 0},
+        "modelChunkCount": {"type": "integer", "minimum": 0},
+        "fallbackChunkCount": {"type": "integer", "minimum": 0},
+        "errorCount": {"type": "integer", "minimum": 0},
+        "batchSize": {"type": "integer", "minimum": 1, "maximum": 8},
+        "batchCount": {"type": "integer", "minimum": 0},
+        "extractionConcurrency": {"type": "integer", "minimum": 1, "maximum": 4},
+        "effectiveExtractionConcurrency": {"type": "integer", "minimum": 0, "maximum": 4},
+        "entityCount": {"type": "integer", "minimum": 0},
+        "termCount": {"type": "integer", "minimum": 0},
+        "topicCount": {"type": "integer", "minimum": 0},
+        "relationCount": {"type": "integer", "minimum": 0},
+        "lastError": {"type": "string", "maxLength": 500}
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {"$ref": "#/$defs/node"}
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 3000,
+      "items": {"$ref": "#/$defs/edge"}
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeCount", "edgeCount", "documentCount", "chunkCount", "indexedDocumentCount", "pendingDocumentCount"],
+      "properties": {
+        "nodeCount": {"type": "integer", "minimum": 0},
+        "edgeCount": {"type": "integer", "minimum": 0},
+        "documentCount": {"type": "integer", "minimum": 0},
+        "chunkCount": {"type": "integer", "minimum": 0},
+        "indexedDocumentCount": {"type": "integer", "minimum": 0},
+        "pendingDocumentCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "truncated": {"type": "boolean"}
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "kind", "weight"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "label": {"type": "string", "minLength": 1, "maxLength": 160},
+        "kind": {"type": "string", "enum": ["document", "chunk", "topic", "entity", "term"]},
+        "documentId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "documentName": {"type": "string", "minLength": 1, "maxLength": 512},
+        "documentIds": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 160}
+        },
+        "chunkId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "heading": {"type": "string", "minLength": 1, "maxLength": 500},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 240},
+        "page": {"type": "integer", "minimum": 0},
+        "weight": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "target", "kind", "weight"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "source": {"type": "string", "minLength": 1, "maxLength": 160},
+        "target": {"type": "string", "minLength": 1, "maxLength": 160},
+        "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "weight": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    }
+  }
+}

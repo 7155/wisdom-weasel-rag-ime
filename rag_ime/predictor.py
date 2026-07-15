@@ -7,7 +7,6 @@ import os
 import re
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass
@@ -15,10 +14,15 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .models import ModelPrediction
+from .model_registry import is_local_network_endpoint
 from .model_profiles import profile_by_id
 from .pinyin_index import build_pinyin_metadata
 from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
+from .keychain_secrets import MODEL_INSTANT_ACCOUNT, MODEL_KEYCHAIN_SERVICE, read_keychain_secret
 from .text_utils import compact_whitespace
+
+
+_LOOPBACK_URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 PREDICTION_REQUEST_NO_INPUT = "no_input_prediction"
@@ -390,7 +394,7 @@ class OpenAICompatiblePredictionProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -432,7 +436,7 @@ class OpenAICompatiblePredictionProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -541,7 +545,7 @@ class OllamaPredictionProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -736,7 +740,7 @@ class MlxPredictionServiceProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -791,7 +795,7 @@ class MlxPredictionServiceProvider:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(max(self.config.timeout_s, 0.05), 1.0)) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=min(max(self.config.timeout_s, 0.05), 1.0)) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             return {
@@ -828,6 +832,7 @@ class MlxPredictionServiceProvider:
             "providerName": self.config.provider_name,
             "provider": payload.get("provider"),
             "model": payload.get("model"),
+            "modelFingerprint": payload.get("modelFingerprint"),
             "modelLoaded": bool(payload.get("modelLoaded")),
             "modelInfo": model_info,
             "promptCache": prompt_cache,
@@ -929,7 +934,7 @@ class CooldownPredictionProvider:
 def prediction_provider_from_env(env: dict[str, str] | None = None) -> PredictionProvider:
     source = _prediction_env_with_predictor_file(env)
     provider = source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
-    base_url = _canonical_x1api_base_url(source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip())
+    base_url = compact_whitespace(source.get("RAG_IME_PREDICTOR_BASE_URL", ""))
     model = (
         source.get("RAG_IME_PREDICTOR_MODEL", "").strip()
         or source.get("RAG_IME_MLX_MODEL", "").strip()
@@ -979,11 +984,14 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             )
         )
     else:
+        predictor_api_key = source.get("RAG_IME_PREDICTOR_API_KEY", "").strip()
+        if not predictor_api_key and env is None:
+            predictor_api_key = read_keychain_secret(MODEL_KEYCHAIN_SERVICE, MODEL_INSTANT_ACCOUNT)
         configured_provider = OpenAICompatiblePredictionProvider(
             OpenAICompatiblePredictionConfig(
-            base_url=base_url,
+            base_url=_openai_base_url(base_url),
             model=model,
-            api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
+            api_key=predictor_api_key,
             profile=profile,
             prompt_mode=source.get("RAG_IME_PREDICTOR_PROMPT_MODE", defaults.prompt_mode).strip(),
             timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
@@ -1009,6 +1017,9 @@ def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str,
     source = dict(os.environ if env is None else env)
     env_path = source.get("RAG_IME_PREDICTOR_ENV", "").strip()
     if not env_path:
+        default_path = Path.home() / "Library" / "Application Support" / "RagIme" / "predictor.env"
+        env_path = str(default_path) if default_path.exists() else ""
+    if not env_path:
         return source
     path = Path(env_path).expanduser()
     if not path.exists():
@@ -1020,41 +1031,11 @@ def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str,
             continue
         key, value = line.split("=", 1)
         file_values[key.strip()] = value.strip().strip('"').strip("'")
-    merged = {**file_values, **source}
-    for key in ("RAG_IME_PREDICTOR_BASE_URL",):
-        if merged.get(key):
-            merged[key] = _canonical_x1api_base_url(str(merged[key]))
-    return merged
-
-
-def _canonical_x1api_base_url(value: str) -> str:
-    cleaned = compact_whitespace(value)
-    if not cleaned:
-        return ""
-    parsed = urllib.parse.urlsplit(cleaned)
-    netloc = parsed.netloc.lower()
-    if netloc not in {"x1api.top", "x2app.top"}:
-        return cleaned
-    path = parsed.path.rstrip("/")
-    if path == "/v1":
-        path = ""
-    return urllib.parse.urlunsplit((parsed.scheme or "https", "x1api.top", path, parsed.query, parsed.fragment))
+    return {**source, **file_values} if env is None else {**file_values, **source}
 
 
 def _is_loopback_realtime_predictor_url(value: str) -> bool:
-    cleaned = compact_whitespace(value)
-    if not cleaned:
-        return False
-    try:
-        parsed = urllib.parse.urlsplit(cleaned)
-    except ValueError:
-        return False
-    host = (parsed.hostname or "").lower()
-    if not host:
-        return False
-    if host in {"localhost", "127.0.0.1", "::1"}:
-        return True
-    return host.startswith("127.")
+    return is_local_network_endpoint(compact_whitespace(value))
 
 
 def prediction_provider_status(provider: PredictionProvider, *, probe_capabilities: bool = False) -> dict[str, object]:
@@ -1396,7 +1377,7 @@ def _measure_ollama_stream_ttft(
     full_text = ""
     candidates: list[str] = []
     try:
-        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+        with _LOOPBACK_URL_OPENER.open(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             for raw_line in response:
                 if not raw_line.strip():
                     continue
@@ -1499,7 +1480,7 @@ def _measure_mlx_stream_ttft(
     prompt_cache: dict[str, Any] = {}
     server_timing: dict[str, Any] = {}
     try:
-        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+        with _LOOPBACK_URL_OPENER.open(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             for raw_line in response:
                 if not raw_line.strip():
                     continue
@@ -2402,6 +2383,10 @@ def _rime_reorder_tokens_from_json(value: Any) -> list[str]:
 
 
 def _parse_streaming_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[str]:
+    if re.search(r"<\|im_end\|>.*<\|im_start\|>\s*user", text, flags=re.DOTALL):
+        # A tiny decoder can run past its answer and begin echoing the next
+        # prompt turn. Never promote that partial prefix as a candidate.
+        return []
     cleaned = _clean_prediction_output(text)
     if not cleaned:
         return []
@@ -2427,7 +2412,7 @@ def _plain_streaming_candidate_ready(text: str) -> bool:
         return False
     cjk_count = len(re.findall(r"[\u3400-\u9fff]", compacted))
     visible_len = len(re.sub(r"\s+", "", compacted))
-    if cjk_count >= 4:
+    if cjk_count >= 2:
         return True
     if cjk_count == 0:
         return visible_len >= 3
@@ -2587,6 +2572,13 @@ def _status_prompt_mode(mode: str) -> str:
 
 
 def _ollama_base_url(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if normalized.endswith("/v1"):
+        return normalized[:-3].rstrip("/")
+    return normalized
+
+
+def _openai_base_url(base_url: str) -> str:
     normalized = base_url.strip().rstrip("/")
     if normalized.endswith("/v1"):
         return normalized[:-3].rstrip("/")
@@ -3100,7 +3092,7 @@ def _probe_openai_compatible_models(provider: PredictionProvider) -> dict[str, A
         method="GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+        with _LOOPBACK_URL_OPENER.open(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             payload = json.loads(response.read().decode("utf-8"))
             status_code = getattr(response, "status", 200)
     except urllib.error.HTTPError as exc:

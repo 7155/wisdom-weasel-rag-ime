@@ -7,16 +7,20 @@ SQUIRREL_BASE_REF="${RAG_IME_SQUIRREL_BASE_REF:-2158538}"
 SQUIRREL_WORKDIR="${RAG_IME_SQUIRREL_WORKDIR:-/tmp/rag-ime-squirrel}"
 PATCH_FILE="${RAG_IME_SQUIRREL_PATCH:-$ROOT/squirrel-patches/0001-add-rag-ime-sidecar.patch}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
+RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-foreground-rag-proof}"
+eval "$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_EXECUTABLE" -m rag_ime.runtime_profile --profile "$RUNTIME_PROFILE" --format shell)"
 DB_PATH="${RAG_IME_DB_PATH:-$HOME/Library/Application Support/RagIme/rag-ime.sqlite}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 SIDECAR_HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
 SIDECAR_PORT="${RAG_IME_SIDECAR_PORT:-8766}"
 MAX_VISIBLE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_VISIBLE_CANDIDATES:-8}"
+# Three MiniMind rows, one direct RAG row, and one explicit DeepSeek action.
 MAX_SIDE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_SIDE_CANDIDATES:-5}"
-LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-300}"
+LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-$RAG_IME_PROFILE_SQUIRREL_LATENCY_BUDGET_MS}"
 DEBOUNCE_MS="${RAG_IME_SQUIRREL_DEBOUNCE_MS:-80}"
-TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-250}"
-FRONTEND_TRACE="${RAG_IME_SQUIRREL_FRONTEND_TRACE:-true}"
+POST_COMMIT_IDLE_MS="${RAG_IME_SQUIRREL_POST_COMMIT_IDLE_MS:-420}"
+TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-$RAG_IME_PROFILE_SQUIRREL_TIMEOUT_MS}"
+FRONTEND_TRACE="${RAG_IME_SQUIRREL_FRONTEND_TRACE:-false}"
 RESET="${RAG_IME_SQUIRREL_RESET:-0}"
 DRY_RUN="${RAG_IME_SQUIRREL_DRY_RUN:-0}"
 
@@ -29,6 +33,7 @@ if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "TRUE" ]]; then
   cat <<EOF
 repo_url=$SQUIRREL_REPO_URL
 base_ref=$SQUIRREL_BASE_REF
+runtime_profile=$RUNTIME_PROFILE
 workdir=$SQUIRREL_WORKDIR
 patch=$PATCH_FILE
 sidecar_url=http://$SIDECAR_HOST:$SIDECAR_PORT/api
@@ -40,6 +45,7 @@ max_visible_candidates=$MAX_VISIBLE_CANDIDATES
 max_side_candidates=$MAX_SIDE_CANDIDATES
 latency_budget_ms=$LATENCY_BUDGET_MS
 debounce_ms=$DEBOUNCE_MS
+post_commit_idle_ms=$POST_COMMIT_IDLE_MS
 timeout_ms=$TIMEOUT_MS
 frontend_trace=$FRONTEND_TRACE
 EOF
@@ -91,6 +97,189 @@ git -C "$SQUIRREL_WORKDIR" reset --hard "$SQUIRREL_BASE_REF" --quiet
 git -C "$SQUIRREL_WORKDIR" clean -fd --quiet
 git -C "$SQUIRREL_WORKDIR" apply --recount --check "$PATCH_FILE"
 git -C "$SQUIRREL_WORKDIR" apply --recount "$PATCH_FILE"
+
+install_assistant_overlay_v2_sources() {
+  local source_dir="$ROOT/squirrel-patches/sources"
+  local project_file="$SQUIRREL_WORKDIR/Squirrel.xcodeproj/project.pbxproj"
+  local files=(
+    RagImeAssistantSurfaceState.swift
+    RagImeSuggestionCardView.swift
+    RagImeSuggestionRowView.swift
+    RagImeNonActivatingPanel.swift
+    RagImeAssistantPanelController.swift
+  )
+  for file in "${files[@]}"; do
+    if [[ ! -f "$source_dir/$file" ]]; then
+      echo "assistant overlay v2 source missing: $source_dir/$file" >&2
+      exit 1
+    fi
+    cp "$source_dir/$file" "$SQUIRREL_WORKDIR/sources/$file"
+  done
+
+  if [[ ! -f "$project_file" ]]; then
+    return 0
+  fi
+  "$PYTHON_EXECUTABLE" - "$project_file" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+def insert_after(needle: str, addition: str) -> None:
+    global text
+    if addition.strip() in text:
+        return
+    if needle not in text:
+        raise SystemExit(f"Squirrel project did not contain expected Assistant Overlay marker: {needle.strip()}")
+    text = text.replace(needle, needle + addition, 1)
+
+insert_after(
+    '\t\tB3A777082F330001009D156B /* RagImeAssistantPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777072F330001009D156B /* RagImeAssistantPanelController.swift */; };\n',
+    '\t\tB3A778022F330001009D156B /* RagImeAssistantSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778012F330001009D156B /* RagImeAssistantSurfaceState.swift */; };\n'
+    '\t\tB3A778042F330001009D156B /* RagImeSuggestionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778032F330001009D156B /* RagImeSuggestionCardView.swift */; };\n'
+    '\t\tB3A778062F330001009D156B /* RagImeSuggestionRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778052F330001009D156B /* RagImeSuggestionRowView.swift */; };\n'
+    '\t\tB3A778082F330001009D156B /* RagImeNonActivatingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */; };\n',
+)
+insert_after(
+    '\t\tB3A777072F330001009D156B /* RagImeAssistantPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeAssistantPanelController.swift; path = sources/RagImeAssistantPanelController.swift; sourceTree = "<group>"; };\n',
+    '\t\tB3A778012F330001009D156B /* RagImeAssistantSurfaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeAssistantSurfaceState.swift; path = sources/RagImeAssistantSurfaceState.swift; sourceTree = "<group>"; };\n'
+    '\t\tB3A778032F330001009D156B /* RagImeSuggestionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSuggestionCardView.swift; path = sources/RagImeSuggestionCardView.swift; sourceTree = "<group>"; };\n'
+    '\t\tB3A778052F330001009D156B /* RagImeSuggestionRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSuggestionRowView.swift; path = sources/RagImeSuggestionRowView.swift; sourceTree = "<group>"; };\n'
+    '\t\tB3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeNonActivatingPanel.swift; path = sources/RagImeNonActivatingPanel.swift; sourceTree = "<group>"; };\n',
+)
+insert_after(
+    '\t\t\t\tB3A777072F330001009D156B /* RagImeAssistantPanelController.swift */,\n',
+    '\t\t\t\tB3A778012F330001009D156B /* RagImeAssistantSurfaceState.swift */,\n'
+    '\t\t\t\tB3A778032F330001009D156B /* RagImeSuggestionCardView.swift */,\n'
+    '\t\t\t\tB3A778052F330001009D156B /* RagImeSuggestionRowView.swift */,\n'
+    '\t\t\t\tB3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */,\n',
+)
+insert_after(
+    '\t\t\t\tB3A777082F330001009D156B /* RagImeAssistantPanelController.swift in Sources */,\n',
+    '\t\t\t\tB3A778022F330001009D156B /* RagImeAssistantSurfaceState.swift in Sources */,\n'
+    '\t\t\t\tB3A778042F330001009D156B /* RagImeSuggestionCardView.swift in Sources */,\n'
+    '\t\t\t\tB3A778062F330001009D156B /* RagImeSuggestionRowView.swift in Sources */,\n'
+    '\t\t\t\tB3A778082F330001009D156B /* RagImeNonActivatingPanel.swift in Sources */,\n',
+)
+path.write_text(text, encoding="utf-8")
+PY
+}
+
+wire_assistant_overlay_v2_controller() {
+  local controller_file="$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift"
+  if ! grep -Fq "ragImeAssistantOverlayController.update(payload, anchor: currentRagImeInputAnchor())" "$controller_file"; then
+    return 0
+  fi
+  "$PYTHON_EXECUTABLE" - "$controller_file" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+old_key = '''      if isRagImeDeleteKey(keyCode, modifiers: modifiers) {
+'''
+new_key = '''      if keyCode == 125
+        && modifiers.contains(.option)
+        && !modifiers.contains(.command)
+        && !modifiers.contains(.control)
+        && ragImeAssistantOverlayController.expandPredictions() {
+        traceRagImeFrontendEvent("assistant_surface_state_changed", fields: [
+          "surfaceState": "expandedPredictions",
+          "reason": "option_down",
+        ])
+        return true
+      }
+      if isRagImeDeleteKey(keyCode, modifiers: modifiers) {
+'''
+if new_key not in text:
+    if old_key not in text:
+        raise SystemExit("SquirrelInputController.swift missing key route insertion marker")
+    text = text.replace(old_key, new_key, 1)
+
+old_update = '''    ragImeAssistantOverlayController.update(payload, anchor: currentRagImeInputAnchor()) { [weak self] candidate, index in
+      _ = self?.commitRagImeAssistantCandidate(candidate, route: "click", index: index)
+    }
+'''
+new_update = '''    ragImeAssistantOverlayController.update(
+      payload,
+      anchor: currentRagImeInputAnchor(),
+      onSelect: { [weak self] candidate, index in
+        _ = self?.commitRagImeAssistantCandidate(candidate, route: "click", index: index)
+      },
+      onAction: { [weak self] action in
+        guard let self else { return }
+        switch action {
+        case .stop:
+          self.ragImeActiveRagSelectedTextHash = ""
+          self.dismissRagImeAssistantOverlay(reason: "explicit_generation_stopped")
+        case .retry:
+          self.dismissRagImeAssistantOverlay(reason: "explicit_generation_retry")
+          _ = self.startRagImeActiveRagAssistFromShortcut()
+        default:
+          break
+        }
+      },
+      onTrace: { [weak self] event, fields in
+        self?.traceRagImeFrontendEvent(event, fields: fields)
+      }
+    )
+'''
+if new_update not in text:
+    if old_update not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay update marker")
+    text = text.replace(old_update, new_update, 1)
+
+old_accept = '''    dismissRagImeAssistantOverlay(reason: "candidate_accepted")
+    rimeUpdate(clearReservedComments: false, requestSidecar: false)
+'''
+new_accept = '''    ragImeAssistantOverlayController.showConfirmation()
+    clearRagImeAssistantOverlayState()
+    rimeUpdate(clearReservedComments: false, requestSidecar: false)
+'''
+if new_accept not in text:
+    if old_accept not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay acceptance marker")
+    text = text.replace(old_accept, new_accept, 1)
+
+old_dismiss = '''  func dismissRagImeAssistantOverlay(reason: String) {
+    ragImeAssistantOverlayController.dismiss(reason: reason)
+    ragImeOverlayCandidates = []
+'''
+new_dismiss = '''  func dismissRagImeAssistantOverlay(reason: String) {
+    ragImeAssistantOverlayController.dismiss(reason: reason)
+    clearRagImeAssistantOverlayState()
+    traceRagImeFrontendEvent("assistant_overlay_dismissed", fields: [
+      "reason": reason,
+    ])
+  }
+
+  func clearRagImeAssistantOverlayState() {
+    ragImeOverlayCandidates = []
+'''
+if new_dismiss not in text:
+    if old_dismiss not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay dismiss marker")
+    text = text.replace(old_dismiss, new_dismiss, 1)
+    old_tail = '''    ragImeOverlayExpiresAt = nil
+    traceRagImeFrontendEvent("assistant_overlay_dismissed", fields: [
+      "reason": reason,
+    ])
+  }
+
+  func ragImeLocalDeepSeekActionCandidate'''
+    new_tail = '''    ragImeOverlayExpiresAt = nil
+  }
+
+  func ragImeLocalDeepSeekActionCandidate'''
+    if old_tail not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay dismiss tail")
+    text = text.replace(old_tail, new_tail, 1)
+
+path.write_text(text, encoding="utf-8")
+PY
+}
 
 make_input_source_prefix_brandable() {
   local input_source_file="$SQUIRREL_WORKDIR/sources/InputSource.swift"
@@ -254,16 +443,11 @@ for old, new in replacements:
         main = main.replace(old, new, 1)
 main_path.write_text(main, encoding="utf-8")
 
-if controller_path.is_file():
-    controller = controller_path.read_text(encoding="utf-8")
-    controller = controller.replace(
-        '    guard ragImeSidecarClient?.frontendTrace == true || event == "sidecar_not_configured" else { return }\n',
-        '',
-    )
-    controller_path.write_text(controller, encoding="utf-8")
 PY
 }
 
+install_assistant_overlay_v2_sources
+wire_assistant_overlay_v2_controller
 make_input_source_prefix_brandable
 add_process_trace_hooks
 git -C "$SQUIRREL_WORKDIR" diff --check
@@ -289,29 +473,85 @@ require_patch_text() {
 require_patch_file "sources/RagImeSidecarModels.swift"
 require_patch_file "sources/RagImeSidecarClient.swift"
 require_patch_file "sources/RagImeSelectedTextProvider.swift"
+require_patch_file "sources/RagImeAssistantSurfaceState.swift"
+require_patch_file "sources/RagImeSuggestionCardView.swift"
+require_patch_file "sources/RagImeSuggestionRowView.swift"
+require_patch_file "sources/RagImeNonActivatingPanel.swift"
+require_patch_file "sources/RagImeAssistantPanelController.swift"
 require_patch_file "sources/SquirrelInputController.swift"
 require_patch_file "sources/SquirrelPanel.swift"
 require_patch_text "sources/RagImeSidecarClient.swift" "rime-suggest" "sidecar suggestion request hook"
 require_patch_text "sources/RagImeSidecarClient.swift" "rime-select" "side candidate selection writeback hook"
+require_patch_text "sources/RagImeSidecarClient.swift" "rime-rank-feedback" "native Rime selection feedback hook"
+require_patch_text "sources/RagImeSidecarModels.swift" "let privacyDisposition: String" "explicit foreground privacy disposition contract"
+require_patch_text "sources/RagImeSidecarClient.swift" 'request.privacyDisposition == "allowed"' "sidecar allowed-transaction send gate"
+require_patch_text "sources/SquirrelInputController.swift" 'ragImePrivacyDisposition == "allowed"' "foreground privacy assessment propagation"
+require_patch_text "sources/SquirrelInputController.swift" "privacyDisposition: ragImePrivacyDisposition" "foreground request privacy disposition"
 require_patch_text "sources/RagImeSidecarModels.swift" "displayLayout" "per-candidate display layout metadata"
 require_patch_text "sources/SquirrelInputController.swift" "selectRagImeSideCandidate" "number-key side-candidate routing"
 require_patch_text "sources/SquirrelInputController.swift" "ragImeRequestFingerprint" "stale response fingerprint guard"
 require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCandidates" "Rime and side candidate display merge"
 require_patch_text "sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "LLM horizontal-lane layout guard"
+require_patch_text "sources/SquirrelInputController.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel marker"
 require_patch_text "sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
+require_patch_text "sources/SquirrelInputController.swift" "guard ragImeSidecarClient?.frontendTrace == true else { return }" "frontend trace configuration gate"
+require_patch_text "sources/SquirrelInputController.swift" "guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }" "sensitive-field trace suppression"
+require_patch_text "sources/SquirrelInputController.swift" "ragImePrepareFrontendTraceLog" "bounded frontend trace log"
+require_patch_text "sources/SquirrelInputController.swift" ".posixPermissions: 0o600" "private frontend trace permissions"
+require_patch_text "sources/SquirrelInputController.swift" "appendingPathExtension(\"1\")" "frontend trace rotation"
+require_patch_text "sources/SquirrelInputController.swift" "let contextAnchor = ragImeStableTextHash(context)" "hashed local action context anchor"
+require_patch_text "sources/SquirrelInputController.swift" "queryAnchor: contextAnchor" "hashed query anchor"
+require_patch_text "sources/SquirrelInputController.swift" "displayAnchor: contextAnchor" "hashed display anchor"
 require_patch_text "sources/SquirrelInputController.swift" "panel_text_layout" "actual frontend mixed-layout trace event"
 require_patch_text "sources/SquirrelInputController.swift" "sidecar_request_scheduled" "real foreground sidecar request trace event"
 require_patch_text "sources/SquirrelInputController.swift" "sidecar_empty_response_cleared" "empty sidecar response guard"
 require_patch_text "sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_patch_text "sources/SquirrelInputController.swift" "let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty" "foreground post-commit-only LLM/RAG candidate request"
 require_patch_text "sources/SquirrelInputController.swift" "forceSideCandidates: forceSideCandidates" "foreground dynamic LLM/RAG candidate request"
-require_patch_text "sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"
+require_patch_text "sources/SquirrelInputController.swift" "composition_ai_suppressed" "composition-phase AI overlay suppression"
+require_patch_text "sources/SquirrelInputController.swift" "rime_composition_started" "composition ownership trace"
+require_patch_text "sources/SquirrelInputController.swift" "rime_composition_candidates_visible" "Rime composition candidate trace"
+require_patch_text "sources/SquirrelInputController.swift" "打开 RAG-IME 控制中心..." "native control center menu entry"
+require_patch_text "sources/SquirrelInputController.swift" "com.rag-ime.control" "native control center bundle launch"
+require_patch_text "sources/SquirrelInputController.swift" "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING" "post-commit assistant overlay opt-in guard"
+require_patch_text "sources/SquirrelInputController.swift" "assistant_overlay_local_placeholder_suppressed" "post-commit local placeholder suppression"
+require_patch_text "sources/SquirrelInputController.swift" "ragImeForegroundContextResolver.captureFromAccessibility(" "queued foreground Accessibility snapshot request"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXSelectedTextRangeAttribute" "focused text selected range accessibility capture"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXStringForRangeParameterizedAttribute" "focused text surrounding range accessibility capture"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "RagImeForegroundContextResolver" "delayed IMK to Accessibility foreground context resolver"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_app_bundle_missing" "missing app identity privacy fail-closed guard"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "isSensitive: false, reason: \"privacy_unknown_ax_not_trusted\"" "optional accessibility metadata fallback"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_focused_element_missing" "missing focused element privacy fail-closed guard"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_metadata_read_failed" "accessibility metadata privacy fail-closed guard"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_text_field_metadata_missing" "empty text-field metadata privacy fail-closed guard"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "sensitive_application_bundle" "sensitive app bundle denylist"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "RAG_IME_SENSITIVE_APP_BUNDLE_IDS" "sensitive app bundle environment configuration"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "RagImeSensitiveAppBundleTokens" "sensitive app bundle defaults configuration"
+require_patch_text "sources/SquirrelInputController.swift" "foreground_context_capture_resolved" "foreground context capture success trace"
+require_patch_text "sources/SquirrelInputController.swift" "foreground_context_capture_failed" "foreground context capture failure trace"
+require_patch_text "sources/SquirrelInputController.swift" "side_candidate_feedback_recorded" "selection feedback receipt trace"
+require_patch_text "sources/SquirrelInputController.swift" "ragImeNativeSelectionSnapshot" "native Rime selection snapshot"
+require_patch_text "sources/SquirrelInputController.swift" "native_rime_rank_feedback_recorded" "native Rime selection feedback trace"
+require_patch_text "sources/SquirrelInputController.swift" "guard !enforceRagImeFastPrivacyGuard()" "native Rime feedback non-blocking privacy guard"
+require_patch_text "sources/SquirrelInputController.swift" "probeRagImeForegroundPrivacyAndContext" "background Accessibility privacy probe"
+require_patch_text "sources/SquirrelInputController.swift" "privacy_probe_timeout" "background privacy timeout fail-closed path"
+require_patch_text "sources/SquirrelInputController.swift" "discardRagImeSensitiveNativeLearningTransaction" "sensitive native Rime learning rollback"
+require_patch_text "sources/SquirrelInputController.swift" "guard rimeAPI.get_status(session, &status) else { return false }" "native learning rollback composition-state check"
+require_patch_text "sources/SquirrelInputController.swift" "guard !isComposing else { return false }" "native learning rollback requires completed commit"
+require_patch_text "sources/SquirrelInputController.swift" "rimeAPI.process_key(session, Int32(XK_BackSpace), 0)" "isolated librime pending-transaction rollback"
+require_patch_text "sources/SquirrelInputController.swift" "return !backspaceHandled" "native learning rollback requires unhandled BackSpace"
+require_patch_text "sources/SquirrelInputController.swift" '"forwardedToClient": false' "native learning rollback is not forwarded to IMK"
+require_patch_text "sources/SquirrelInputController.swift" "assistant_overlay_candidate_visible" "assistant overlay candidate trace"
+require_patch_text "sources/RagImeAssistantPanelController.swift" "same_snapshot_stable_ids" "assistant overlay snapshot diff"
+require_patch_text "sources/RagImeAssistantPanelController.swift" "assistant_panel_created" "assistant overlay lifecycle trace"
+require_patch_text "sources/RagImeSuggestionCardView.swift" "preferredPredictionWidth" "stable prediction panel width"
+require_patch_text "sources/RagImeSuggestionRowView.swift" "shortcutPlate" "stable shortcut keycap lane"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXValueAttribute" "focused text whole-value fallback"
 require_patch_text "sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate layout"
 require_patch_text "sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal panel layout for LLM inline candidates"
+require_patch_text "sources/SquirrelPanel.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel clamp"
+require_patch_text "sources/SquirrelPanel.swift" "return NSView()" "plain non-glass macOS 26 panel background"
 require_patch_text "sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
 require_patch_text "sources/Main.swift" "static let appDir = Bundle.main.bundleURL" "dynamic input-source registration bundle path"
 require_patch_text "sources/Main.swift" "traceRagImeProcessEvent" "foreground process trace hook"
@@ -331,6 +571,7 @@ MAX_VISIBLE_CANDIDATES="$MAX_VISIBLE_CANDIDATES" \
 MAX_SIDE_CANDIDATES="$MAX_SIDE_CANDIDATES" \
 LATENCY_BUDGET_MS="$LATENCY_BUDGET_MS" \
 DEBOUNCE_MS="$DEBOUNCE_MS" \
+POST_COMMIT_IDLE_MS="$POST_COMMIT_IDLE_MS" \
 TIMEOUT_MS="$TIMEOUT_MS" \
 FRONTEND_TRACE="$FRONTEND_TRACE" \
 "$PYTHON_EXECUTABLE" - <<'PY'
@@ -349,6 +590,7 @@ rag_ime:
   max_side_candidates: {os.environ["MAX_SIDE_CANDIDATES"]}
   latency_budget_ms: {os.environ["LATENCY_BUDGET_MS"]}
   debounce_ms: {os.environ["DEBOUNCE_MS"]}
+  post_commit_idle_ms: {os.environ["POST_COMMIT_IDLE_MS"]}
   timeout_ms: {os.environ["TIMEOUT_MS"]}
   frontend_trace: {os.environ["FRONTEND_TRACE"]}
 """
@@ -366,6 +608,16 @@ if command -v swiftc >/dev/null 2>&1; then
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" \
     "$stubfile"
+  if grep -Fq "struct RagImeAssistantOverlayPayload" "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift"; then
+    swiftc -typecheck \
+      -module-cache-path "$module_cache" \
+      "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeAssistantSurfaceState.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeNonActivatingPanel.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeSuggestionRowView.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift"
+  fi
   rm -rf "$tmpdir"
 fi
 

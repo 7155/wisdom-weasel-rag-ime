@@ -1,0 +1,3755 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import time
+from collections.abc import Mapping
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from .agent_tool_ids import CONTROL_TOOL_IDS
+from .agent_sessions import AgentSessionStore
+from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
+from .contracts.json_schema import validate_contract
+from .management_service import ManagementService, page_request
+from .settings_schema import default_settings, flatten_settings, settings_schema
+
+
+_TOOL_SPECS: tuple[dict[str, object], ...] = (
+    {
+        "id": "ime_overview",
+        "domain": "overview",
+        "displayName": "控制中心概览",
+        "description": "查看输入法、模型、记忆和最近活动的整体状态",
+        "operations": ("status", "capabilities", "recent_activity"),
+        "resultPresentation": "status",
+    },
+    {
+        "id": "ime_input",
+        "domain": "input",
+        "displayName": "输入法",
+        "description": "查看输入设置、方案、候选解释，并在原生批准后调整设置或词表",
+        "operations": (
+            "get_settings",
+            "preview_settings",
+            "apply_settings",
+            "rollback_settings",
+            "profile",
+            "candidate_explain",
+            "lexicon_review",
+            "lexicon_apply",
+            "lexicon_rollback",
+        ),
+        "operationRisks": {
+            "apply_settings": "R1",
+            "rollback_settings": "R1",
+            "lexicon_apply": "R1",
+            "lexicon_rollback": "R1",
+        },
+        "resultPresentation": "table",
+    },
+    {
+        "id": "ime_voice",
+        "domain": "voice",
+        "displayName": "语音输入",
+        "description": "查看语音状态，并在原生批准后切换已配置的语音 Provider",
+        "operations": (
+            "status",
+            "privacy_policy",
+            "provider_status",
+            "provider_preview",
+            "provider_apply",
+            "provider_rollback",
+        ),
+        "operationRisks": {"provider_apply": "R1", "provider_rollback": "R1"},
+        "resultPresentation": "status",
+    },
+    {
+        "id": "ime_planning",
+        "domain": "planning",
+        "displayName": "规划与任务",
+        "description": "查看每日计划，并在原生确认后更新任务状态",
+        "operations": ("dashboard", "task_action", "undo_task_event"),
+        "operationRisks": {"dashboard": "R0", "task_action": "R1", "undo_task_event": "R1"},
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "ime_memory",
+        "domain": "memory",
+        "displayName": "记忆与工具书",
+        "description": "渐进查询 Memory Book，并通过可审阅草案维护长期记忆",
+        "operations": (
+            "catalog",
+            "read",
+            "recent",
+            "trace",
+            "maintenance_status",
+            "maintenance_preview",
+            "maintenance_review",
+            "maintenance_apply",
+            "maintenance_rollback",
+            "list",
+            "search",
+        ),
+        "operationRisks": {
+            "maintenance_apply": "R1",
+            "maintenance_rollback": "R1",
+        },
+        "resultPresentation": "citation",
+    },
+    {
+        "id": "ime_knowledge",
+        "domain": "knowledge",
+        "displayName": "文档知识库",
+        "description": "渐进检索用户明确加载并授权给 Agent 的文档知识库",
+        "operations": ("list_bases", "search", "find", "open", "status"),
+        "resultPresentation": "citation",
+    },
+    {
+        "id": "ime_models",
+        "domain": "models",
+        "displayName": "模型",
+        "description": "查看模型与 Provider，并在原生批准后调整不含密钥的 Provider 配置",
+        "operations": (
+            "status",
+            "profiles",
+            "probe",
+            "cache_stats",
+            "profile_preview",
+            "profile_apply",
+            "profile_rollback",
+        ),
+        "operationRisks": {"profile_apply": "R1", "profile_rollback": "R1"},
+        "resultPresentation": "status",
+    },
+    {
+        "id": "ime_runtime",
+        "domain": "runtime",
+        "displayName": "诊断与运行时",
+        "description": "查看运行组件，并在原生批准后暂停 AI、重启 Sidecar 或预测器、重新部署 Rime",
+        "operations": (
+            "health",
+            "components",
+            "diagnose",
+            "pause_ai",
+            "resume_ai",
+            "restart_sidecar",
+            "restart_predictor",
+            "redeploy_rime",
+        ),
+        "operationRisks": {
+            "pause_ai": "R1",
+            "resume_ai": "R1",
+            "restart_sidecar": "R2",
+            "restart_predictor": "R2",
+            "redeploy_rime": "R2",
+        },
+        "resultPresentation": "status",
+    },
+    {
+        "id": "ime_configuration",
+        "domain": "configuration",
+        "displayName": "历史与配置",
+        "description": "查看隐私化历史与审计，并通过原生审批导出或恢复不含密钥的便携备份",
+        "operations": (
+            "history",
+            "audit",
+            "export_preview",
+            "export",
+            "restore_preview",
+            "restore_apply",
+        ),
+        "operationRisks": {"export": "R1", "restore_apply": "R3"},
+        "resultPresentation": "table",
+    },
+    {
+        "id": "ime_agents",
+        "domain": "agents",
+        "displayName": "多 Agent 协作",
+        "description": "管理有界任务委派，并在同一 Room 内进行可审计的 Agent 通信",
+        "operations": (
+            "catalog",
+            "delegate",
+            "status",
+            "artifact",
+            "abort",
+            "room_send",
+            "room_ask",
+            "room_reply",
+            "room_mailbox",
+        ),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "ime_plugins",
+        "domain": "agents",
+        "displayName": "插件制作与安装",
+        "description": "制作、校验并提交插件安装提议；最终应用必须由用户在控制中心批准",
+        "operations": ("list", "create_draft", "validate", "propose_install"),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "workspace_list",
+        "domain": "workspace",
+        "displayName": "工作区浏览",
+        "description": "浏览当前运行协调 Session 明确授权的工作区",
+        "operations": ("list",),
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "table",
+    },
+    {
+        "id": "workspace_read",
+        "domain": "workspace",
+        "displayName": "工作区读取",
+        "description": "读取授权工作区内的非敏感 UTF-8 文本",
+        "operations": ("read",),
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "workspace_shell",
+        "domain": "workspace",
+        "displayName": "受控命令",
+        "description": "经原生批准后，在授权工作区的 macOS 沙箱中运行有界命令",
+        "operations": ("run",),
+        "operationRisks": {"run": "R2"},
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "terminal",
+    },
+)
+_TOOL_SPEC_BY_ID = {str(item["id"]): item for item in _TOOL_SPECS}
+
+_PLANNING_TARGET_STATUS = {
+    "complete": "done",
+    "start": "in_progress",
+    "reopen": "todo",
+    "cancel": "cancelled",
+}
+_PLANNING_ACTION_LABELS = {
+    "complete": "标记为已完成",
+    "start": "标记为进行中",
+    "reopen": "重新打开",
+    "cancel": "取消任务",
+}
+_PLANNING_STATUS_LABELS = {
+    "todo": "待办",
+    "in_progress": "进行中",
+    "done": "已完成",
+    "completed": "已完成",
+    "cancelled": "已取消",
+}
+
+# Agent writes intentionally cover only ordinary, non-secret input settings.
+# Provider, privacy, management-token and Pi-runtime changes remain outside this
+# tool until their own preview/restart contracts exist.
+_INPUT_SETTING_FIELDS: dict[str, dict[str, object]] = {
+    "interaction.postCommit.enabled": {"label": "提交后预测"},
+    "interaction.postCommit.showPendingStatus": {"label": "立即显示处理状态"},
+    "interaction.postCommit.idleTriggerMs": {"label": "停顿触发时间", "min": 100, "max": 5_000},
+    "interaction.postCommit.minDeltaChars": {"label": "最少新增字数", "min": 1, "max": 100},
+    "interaction.postCommit.maxCallsPer10s": {"label": "10 秒最大调用数", "min": 1, "max": 20},
+    "interaction.postCommit.cooldownMs": {"label": "空结果冷却时间", "min": 0, "max": 30_000},
+    "interaction.postCommit.pendingStatusDelayMs": {"label": "状态显示延迟", "min": 0, "max": 5_000},
+    "interaction.postCommit.panelTtlMs": {"label": "预测面板停留时间", "min": 1_000, "max": 60_000},
+    "interaction.postCommit.tabAction": {"label": "Tab 行为"},
+    "display.showSourceBadge": {"label": "显示来源标记"},
+    "display.showDiagnosticsInline": {"label": "候选行内诊断"},
+    "display.maxPostCommitCandidates": {"label": "预测候选数量", "min": 1, "max": 10},
+    "display.panelStyle": {"label": "候选面板样式"},
+    "display.candidateFontSize": {"label": "候选字号", "min": 10, "max": 28},
+    "display.fadeAnimation": {"label": "候选动画"},
+    "display.maxWidth": {"label": "候选面板宽度", "min": 280, "max": 1_200},
+    "activeRag.enabled": {"label": "知识生成入口"},
+    "activeRag.localOnlyDefault": {"label": "预览默认仅本地检索"},
+    "pinyin.fuzzyProfile": {"label": "模糊音方案"},
+    "pinyin.rimeManagedPatch": {"label": "Rime 模糊音补丁"},
+    "pinyin.rerankUsesFuzzy": {"label": "重排使用模糊音"},
+    "pinyin.pairs.zZh": {"label": "z / zh 模糊音"},
+    "pinyin.pairs.cCh": {"label": "c / ch 模糊音"},
+    "pinyin.pairs.sSh": {"label": "s / sh 模糊音"},
+    "pinyin.pairs.enEng": {"label": "en / eng 模糊音"},
+    "pinyin.pairs.inIng": {"label": "in / ing 模糊音"},
+    "pinyin.pairs.ongOn": {"label": "on / ong 模糊音"},
+    "pinyin.pairs.nL": {"label": "n / l 模糊音"},
+    "pinyin.pairs.fH": {"label": "f / h 模糊音"},
+}
+_SETTING_DEFAULTS = flatten_settings(default_settings())
+_SETTING_SCHEMA_FIELDS = {
+    str(field.get("key") or ""): dict(field)
+    for section in settings_schema().get("sections", [])
+    if isinstance(section, Mapping)
+    for field in section.get("fields", [])
+    if isinstance(field, Mapping) and str(field.get("key") or "")
+}
+
+
+class ControlToolGateway:
+    """Capability-scoped gateway over the existing control-plane services.
+
+    Pi never receives a database handle. Each operation is an explicit adapter
+    over the same management/core services used by the native control center.
+    R1+ operations stop at a hash-bound preview until the native UI approves.
+    """
+
+    def __init__(
+        self,
+        *,
+        sessions: AgentSessionStore,
+        management: ManagementService,
+        core: object,
+        project: str,
+        facade: object | None = None,
+        knowledge_client: object | None = None,
+        workspace_harness: WorkspaceHarness | None = None,
+        delegation: object | None = None,
+        collaboration: object | None = None,
+        extensions: object | None = None,
+    ) -> None:
+        self.sessions = sessions
+        self.management = management
+        self.core = core
+        self.project = project
+        self.facade = facade
+        self.knowledge_client = knowledge_client
+        self.workspace_harness = workspace_harness or WorkspaceHarness()
+        self.delegation = delegation
+        self.collaboration = collaboration
+        self.extensions = extensions
+
+    def manifests(self, *, session_id: str = "") -> dict[str, object]:
+        session = self.sessions.get(session_id) if session_id else None
+        manifests = self._manifest_items(session)
+        response: dict[str, object] = {
+            "schemaVersion": "rag-ime.control-tool-list.v1",
+            "ok": True,
+            "items": manifests,
+        }
+        if session is not None:
+            response["sessionPolicy"] = {
+                "sessionId": session["id"],
+                "mode": session["mode"],
+                "toolProfileVersion": session["toolProfileVersion"],
+                "toolAllowlistMode": session.get("toolAllowlistMode", "profile"),
+                "allowedTools": list(session.get("allowedTools") or []),
+            }
+        return response
+
+    def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
+        manifests: list[Mapping[str, object]] = []
+        for manifest in self._manifest_items(session):
+            if manifest.get("enabled") is not True:
+                continue
+            operations = list(manifest.get("effectiveOperations") or [])
+            manifests.append(
+                {
+                    "name": manifest["id"],
+                    "description": manifest["description"],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "op": {"type": "string", "enum": operations},
+                        },
+                        "required": ["op"],
+                        # Operation-specific arguments stay backend-validated so the
+                        # runtime host never becomes a second product schema authority.
+                        "additionalProperties": True,
+                    },
+                    "profile": session.get("toolProfileVersion") or "control-center-v1",
+                    "risk": manifest.get("riskLevel") or "R0",
+                }
+            )
+        return manifests
+
+    def _manifest_items(
+        self,
+        session: Mapping[str, object] | None,
+    ) -> list[dict[str, object]]:
+        manifests = []
+        for spec in _TOOL_SPECS:
+            operations = list(spec["operations"])
+            operation_risks = {
+                operation: str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
+                for operation in operations
+            }
+            manifest = {
+                "schemaVersion": "rag-ime.control-tool-manifest.v1",
+                "id": spec["id"],
+                "domain": spec["domain"],
+                "displayName": spec["displayName"],
+                "description": spec["description"],
+                "category": spec["domain"],
+                "riskLevel": _highest_risk(operation_risks.values()),
+                "sessionModes": list(spec.get("sessionModes") or ("assistant", "coordinator")),
+                "operations": operations,
+                "operationRisks": operation_risks,
+                "resultPresentation": spec["resultPresentation"],
+                "availability": "online",
+                "version": "1",
+            }
+            validate_contract(manifest, "control-tool-manifest.v1.json")
+            if session is not None:
+                mode_compatible = str(session.get("mode") or "assistant") in manifest["sessionModes"]
+                manifest["profileOperations"] = {
+                    profile: [
+                        operation
+                        for operation in operations
+                        if _tool_profile_allows(
+                            {
+                                **session,
+                                "toolProfileVersion": profile,
+                                "toolAllowlistMode": "profile",
+                                "allowedTools": [],
+                            },
+                            tool=str(spec["id"]),
+                            operation=operation,
+                            spec=spec,
+                        )
+                    ]
+                    for profile in ("control-center-v1", "subagent-readonly-v1")
+                }
+                effective_operations = [
+                    operation
+                    for operation in operations
+                    if mode_compatible
+                    and _tool_profile_allows(
+                        session,
+                        tool=str(spec["id"]),
+                        operation=operation,
+                        spec=spec,
+                    )
+                ]
+                manifest["enabled"] = bool(effective_operations)
+                manifest["effectiveOperations"] = effective_operations
+                manifest["explicitlyAllowed"] = (
+                    str(session.get("toolAllowlistMode") or "profile") != "explicit"
+                    or str(spec["id"]) in {str(value) for value in session.get("allowedTools") or []}
+                )
+            manifests.append(manifest)
+        return manifests
+
+    def execute(self, payload: Mapping[str, object]) -> dict[str, object]:
+        request = dict(payload)
+        validate_contract(request, "agent-tool-call.v1.json")
+        session_id = str(request["sessionId"])
+        session = self.sessions.get(session_id)
+        if session.get("status") == "archived":
+            raise ValueError("archived sessions cannot execute tools")
+        tool = str(request["tool"])
+        spec = _TOOL_SPEC_BY_ID.get(tool)
+        if spec is None:
+            raise ValueError("tool is not enabled for this session")
+        session_modes = tuple(spec.get("sessionModes") or ("assistant", "coordinator"))
+        if str(session.get("mode") or "assistant") not in session_modes:
+            raise ValueError("tool is not enabled for this session mode")
+        args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
+        operation = str(args.get("op") or "")
+        if operation not in spec["operations"]:
+            raise ValueError(f"unsupported {tool} operation")
+        if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
+            raise ValueError("tool operation is not enabled for this session tool profile")
+        handlers = {
+            "ime_overview": self._overview,
+            "ime_input": self._input,
+            "ime_voice": self._voice,
+            "ime_planning": self._planning,
+            "ime_memory": self._memory,
+            "ime_knowledge": self._knowledge,
+            "ime_models": self._models,
+            "ime_runtime": self._runtime,
+            "ime_configuration": self._configuration,
+            "ime_agents": self._agents,
+            "ime_plugins": self._plugins,
+        }
+        risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
+        if risk_level == "R0":
+            if tool == "workspace_list":
+                result = self.workspace_harness.list(session, args)
+            elif tool == "workspace_read":
+                result = self.workspace_harness.read(session, args)
+            else:
+                handler_args = dict(args)
+                handler_args["_sessionId"] = session_id
+                if tool == "ime_agents" and operation == "delegate":
+                    runtime_context = request.get("runtimeContext")
+                    if isinstance(runtime_context, Mapping):
+                        handler_args["_runtimeContext"] = dict(runtime_context)
+                result = handlers[tool](operation, handler_args)
+        else:
+            result = self._prepare_approval(
+                session_id=session_id,
+                tool=tool,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        response = {
+            "schemaVersion": "rag-ime.agent-tool-result.v1",
+            "ok": True,
+            "tool": tool,
+            "operation": operation,
+            "result": result,
+        }
+        validate_contract(response, "agent-tool-result.v1.json")
+        return response
+
+    def _plugins(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if self.extensions is None:
+            raise ValueError("managed plugin lifecycle is unavailable")
+        if operation == "list":
+            return dict(self.extensions.list())  # type: ignore[attr-defined]
+        if operation == "create_draft":
+            return dict(self.extensions.create_draft(args))  # type: ignore[attr-defined]
+        if operation == "validate":
+            return dict(self.extensions.validate(args))  # type: ignore[attr-defined]
+        if operation == "propose_install":
+            return dict(
+                self.extensions.preview(  # type: ignore[attr-defined]
+                    {
+                        "action": "install",
+                        "validationToken": args.get("validationToken"),
+                        "enable": args.get("enable") is True,
+                    }
+                )
+            )
+        raise ValueError("unsupported ime_plugins operation")
+
+    def _agents(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation in {"catalog", "delegate", "status", "artifact", "abort"} and self.delegation is None:
+            raise ValueError("managed delegation is unavailable")
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        if not session_id:
+            raise ValueError("agent collaboration session is missing")
+        if operation == "catalog":
+            return dict(self.delegation.catalog())  # type: ignore[attr-defined]
+        if operation == "delegate":
+            return dict(self.delegation.delegate(session_id, args))  # type: ignore[attr-defined]
+        if operation == "status":
+            return dict(self.delegation.status(session_id, args))  # type: ignore[attr-defined]
+        if operation == "artifact":
+            return dict(
+                self.delegation.inspect_artifact(  # type: ignore[attr-defined]
+                    session_id,
+                    _bounded_text(args.get("artifactId"), maximum=240),
+                    limit=_bounded_int(args.get("limit"), default=50, minimum=1, maximum=500),
+                )
+            )
+        if operation == "abort":
+            return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
+        if operation in {"room_send", "room_ask", "room_reply"}:
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            kind = operation.removeprefix("room_")
+            request = {
+                "kind": kind,
+                "content": args.get("content"),
+                "clientMessageId": args.get("clientMessageId"),
+            }
+            if kind == "reply":
+                request["replyTo"] = args.get("replyTo")
+            else:
+                request["targetParticipantId"] = args.get("targetParticipantId")
+            return dict(
+                self.collaboration.send_room_intercom(  # type: ignore[attr-defined]
+                    session_id,
+                    request,
+                )
+            )
+        if operation == "room_mailbox":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.list_room_intercom(  # type: ignore[attr-defined]
+                    session_id,
+                    {
+                        "status": args.get("status"),
+                        "limit": args.get("limit"),
+                    },
+                )
+            )
+        raise ValueError("unsupported ime_agents operation")
+
+    def apply_approval(self, approval: Mapping[str, object]) -> dict[str, object]:
+        """Execute one already-approved operation after revalidating its preview."""
+
+        if str(approval.get("state") or "") != "approved":
+            raise ValueError("approval must be in approved state before execution")
+        tool = str(approval.get("toolId") or "")
+        operation = str(approval.get("operation") or "")
+        if (tool, operation) == ("workspace_shell", "run"):
+            return self._apply_workspace_command(approval)
+        if (tool, operation) == ("ime_planning", "undo_task_event"):
+            return self._apply_planning_undo(approval)
+        if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
+            return self._apply_memory_mutation(approval)
+        if tool == "ime_input" and operation in {"apply_settings", "rollback_settings"}:
+            return self._apply_input_settings(approval)
+        if tool == "ime_input" and operation in {"lexicon_apply", "lexicon_rollback"}:
+            return self._apply_lexicon_mutation(approval)
+        if tool == "ime_runtime" and operation in {
+            "pause_ai",
+            "resume_ai",
+            "restart_sidecar",
+            "restart_predictor",
+            "redeploy_rime",
+        }:
+            return self._apply_runtime_mutation(approval)
+        if tool == "ime_models" and operation in {"profile_apply", "profile_rollback"}:
+            return self._apply_model_profile_mutation(approval)
+        if tool == "ime_voice" and operation in {"provider_apply", "provider_rollback"}:
+            return self._apply_voice_provider_mutation(approval)
+        if (tool, operation) == ("ime_configuration", "export"):
+            return self._apply_configuration_export(approval)
+        if (tool, operation) == ("ime_configuration", "restore_apply"):
+            return self._apply_configuration_restore(approval)
+        if (tool, operation) != ("ime_planning", "task_action"):
+            raise ValueError("approved operation is not enabled")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool=tool,
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+
+        task_id = _bounded_text(action_payload.get("taskId"), maximum=240)
+        action = _bounded_text(action_payload.get("action"), maximum=40)
+        plan_date = _bounded_text(action_payload.get("date"), maximum=24)
+        if not task_id or action not in _PLANNING_TARGET_STATUS or not plan_date:
+            raise ValueError("approved task action payload is invalid")
+        task = self._planning_task(task_id=task_id, plan_date=plan_date)
+        if (
+            str(task.get("status") or "") != str(base_state.get("status") or "")
+            or _safe_int(task.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+        ):
+            raise ValueError("task changed after the approval preview was created")
+
+        target_status = _PLANNING_TARGET_STATUS[action]
+        try:
+            result = self.management.planning_task_action({"taskId": task_id, "action": action})
+        except Exception as exc:
+            # The task mutation and audit use separate service calls. If an audit
+            # write fails after the task commit, report the observed mutation so
+            # Pi cannot retry and duplicate the action.
+            observed = self._planning_task(task_id=task_id, plan_date=plan_date)
+            if (
+                str(observed.get("status") or "") == target_status
+                and _safe_int(observed.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+            ):
+                return self._planning_receipt(
+                    approval=approval,
+                    action=action,
+                    result={"task": observed, "undoAvailable": False},
+                    audit_persisted=False,
+                    warning=_bounded_text(exc, maximum=240),
+                )
+            raise
+        return self._planning_receipt(
+            approval=approval,
+            action=action,
+            result=result,
+            audit_persisted=True,
+        )
+
+    def _prepare_approval(
+        self,
+        *,
+        session_id: str,
+        tool: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        if (tool, operation) == ("workspace_shell", "run"):
+            return self._prepare_workspace_command(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("ime_planning", "undo_task_event"):
+            return self._prepare_planning_undo(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
+            return self._prepare_memory_mutation(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "ime_input" and operation in {"apply_settings", "rollback_settings"}:
+            return self._prepare_input_settings(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "ime_input" and operation in {"lexicon_apply", "lexicon_rollback"}:
+            return self._prepare_lexicon_mutation(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "ime_runtime" and operation in {
+            "pause_ai",
+            "resume_ai",
+            "restart_sidecar",
+            "restart_predictor",
+            "redeploy_rime",
+        }:
+            return self._prepare_runtime_mutation(
+                session_id=session_id,
+                operation=operation,
+                risk_level=risk_level,
+            )
+        if tool == "ime_models" and operation in {"profile_apply", "profile_rollback"}:
+            return self._prepare_model_profile_mutation(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "ime_voice" and operation in {"provider_apply", "provider_rollback"}:
+            return self._prepare_voice_provider_mutation(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("ime_configuration", "export"):
+            return self._prepare_configuration_export(
+                session_id=session_id,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("ime_configuration", "restore_apply"):
+            return self._prepare_configuration_restore(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) != ("ime_planning", "task_action"):
+            raise ValueError("write operation is not enabled")
+        task_id = _bounded_text(args.get("taskId"), maximum=240)
+        action = _bounded_text(args.get("action"), maximum=40).lower()
+        plan_date = _bounded_text(args.get("date"), maximum=24)
+        if not task_id:
+            raise ValueError("taskId is required for ime_planning.task_action")
+        if action not in _PLANNING_TARGET_STATUS:
+            raise ValueError("action must be complete, start, reopen, or cancel")
+        task = self._planning_task(task_id=task_id, plan_date=plan_date)
+        previous_status = str(task.get("status") or "todo")
+        target_status = _PLANNING_TARGET_STATUS[action]
+        if previous_status == target_status:
+            raise ValueError("task is already in the requested state")
+        action_payload = {
+            "taskId": task_id,
+            "action": action,
+            "date": str(task.get("date") or plan_date),
+            "project": str(task.get("project") or ""),
+        }
+        base_state = {
+            "status": previous_status,
+            "updatedAtMs": _safe_int(task.get("updatedAtMs")),
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool=tool,
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        title = _bounded_text(task.get("title"), maximum=160) or "未命名任务"
+        action_label = _PLANNING_ACTION_LABELS[action]
+        preview = {
+            "title": "确认更新任务",
+            "summary": f"将《{title}》{action_label}",
+            "operationLabel": action_label,
+            "changes": [
+                {
+                    "label": "任务状态",
+                    "before": _planning_status_label(previous_status),
+                    "after": _planning_status_label(target_status),
+                }
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name=tool,
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _prepare_memory_mutation(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        run_id = _bounded_text(args.get("runId"), maximum=240)
+        if not run_id:
+            raise ValueError(f"runId is required for ime_memory.{operation}")
+        review = self._facade_call(
+            "agent_memory_maintenance_run",
+            {"runId": run_id, "project": self.project},
+        )
+        run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
+        applying = operation == "maintenance_apply"
+        if applying and review.get("canApply") is not True:
+            raise ValueError("memory draft is not currently applicable")
+        if not applying and review.get("canRollback") is not True:
+            raise ValueError("memory run is not currently rollbackable")
+        revision_hash = _bounded_text(review.get("revisionHash"), maximum=96)
+        if not revision_hash:
+            raise ValueError("memory run revision is unavailable")
+        action_payload = {"runId": run_id, "project": self.project}
+        base_state = {
+            "revisionHash": revision_hash,
+            "status": _bounded_text(run.get("status"), maximum=40),
+            "bundleHash": _bounded_text(run.get("bundleHash"), maximum=96),
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_memory",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        pending_count = _safe_int(run.get("pendingDiffCount"))
+        applied_count = _safe_int(run.get("appliedDiffCount"))
+        diff_count = _safe_int(run.get("diffCount"))
+        before_status = _memory_run_status_label(str(run.get("status") or ""))
+        after_status = "已应用" if applying else "已回滚"
+        operation_label = "应用记忆草案" if applying else "回滚记忆整理"
+        summary = (
+            f"将应用草案 {run_id} 的 {pending_count} 项已选差异"
+            if applying
+            else f"将回滚整理 {run_id} 的 {applied_count} 项已应用差异"
+        )
+        source_cursor = run.get("sourceCursor") if isinstance(run.get("sourceCursor"), Mapping) else {}
+        from_event = _safe_int(source_cursor.get("fromEventId"))
+        to_event = _safe_int(source_cursor.get("toEventId"))
+        changes = [
+            {"label": "整理状态", "before": before_status, "after": after_status},
+            {
+                "label": "记忆差异",
+                "before": f"{diff_count} 项草案",
+                "after": f"{pending_count if applying else applied_count} 项{after_status}",
+            },
+        ]
+        if to_event > 0:
+            changes.append(
+                {
+                    "label": "证据范围",
+                    "before": f"事件 {from_event or 1}",
+                    "after": f"事件 {to_event}",
+                }
+            )
+        review_changes = run.get("changes") if isinstance(run.get("changes"), list) else []
+        for item in review_changes[:3]:
+            if not isinstance(item, Mapping) or item.get("selected") is False:
+                continue
+            title = _bounded_text(item.get("title"), maximum=80) or "记忆差异"
+            label = _bounded_text(item.get("operationLabel"), maximum=40) or "整理记忆"
+            changes.append(
+                {
+                    "label": title,
+                    "before": "待审阅" if applying else "已应用",
+                    "after": label if applying else "恢复应用前状态",
+                }
+            )
+        preview = {
+            "title": f"确认{operation_label}",
+            "summary": summary,
+            "operationLabel": operation_label,
+            "changes": changes,
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_memory",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{summary}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_memory_mutation(self, approval: Mapping[str, object]) -> dict[str, object]:
+        tool = str(approval.get("toolId") or "")
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool=tool,
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        run_id = _bounded_text(action_payload.get("runId"), maximum=240)
+        project = _bounded_text(action_payload.get("project"), maximum=160)
+        if not run_id or project != self.project:
+            raise ValueError("approved memory action payload is invalid")
+        current = self._facade_call(
+            "agent_memory_maintenance_run",
+            {"runId": run_id, "project": self.project},
+        )
+        if (
+            _bounded_text(current.get("revisionHash"), maximum=96)
+            != _bounded_text(base_state.get("revisionHash"), maximum=96)
+            or _bounded_text(_mapping_value(current, "run", "status"), maximum=40)
+            != _bounded_text(base_state.get("status"), maximum=40)
+        ):
+            raise ValueError("memory draft changed after the approval preview was created")
+        applying = operation == "maintenance_apply"
+        if applying and current.get("canApply") is not True:
+            raise ValueError("memory draft is no longer applicable")
+        if not applying and current.get("canRollback") is not True:
+            raise ValueError("memory run is no longer rollbackable")
+        action_result = self._facade_call(
+            "knowledge_workbench_database_apply" if applying else "knowledge_workbench_database_rollback",
+            {"runId": run_id, "confirm": "apply" if applying else "rollback"},
+        )
+        if action_result.get("ok") is not True:
+            raise ValueError(_bounded_text(action_result.get("error"), maximum=240) or "memory action failed")
+        after = self._facade_call(
+            "agent_memory_maintenance_run",
+            {"runId": run_id, "project": self.project},
+        )
+        after_run = after.get("run") if isinstance(after.get("run"), Mapping) else {}
+        after_status = _bounded_text(after_run.get("status"), maximum=40)
+        mutation_applied = (
+            after_status in {"applied", "partial"}
+            if applying
+            else after_status == "rolled_back"
+        )
+        if not mutation_applied:
+            raise ValueError(f"memory action ended in unexpected status: {after_status or 'unknown'}")
+        diff_count = (
+            _safe_int(after_run.get("appliedDiffCount"))
+            if applying
+            else _safe_int(_mapping_value(current, "run", "appliedDiffCount"))
+        )
+        receipt = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": tool,
+            "operation": operation,
+            "auditId": str(approval.get("approvalId") or ""),
+            "runId": run_id,
+            "status": after_status,
+            "diffCount": diff_count,
+            "summary": (
+                f"已应用记忆草案，共写入 {diff_count} 项差异"
+                if applying
+                else f"已回滚记忆整理，共恢复 {diff_count} 项差异"
+            ),
+            "undoAvailable": applying,
+        }
+        if applying:
+            receipt["rollback"] = {
+                "tool": "ime_memory",
+                "operation": "maintenance_rollback",
+                "args": {"runId": run_id},
+            }
+        else:
+            receipt["revertedRunId"] = run_id
+        return receipt
+
+    def _prepare_input_settings(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        snapshot = self._input_settings_snapshot()
+        current_flat = flatten_settings(snapshot["settings"])
+        source_approval_id = ""
+        if operation == "rollback_settings":
+            source = self._settings_rollback_source(
+                session_id=session_id,
+                source_approval_id=_bounded_text(args.get("sourceApprovalId"), maximum=240),
+            )
+            receipt = source.get("receipt") if isinstance(source.get("receipt"), Mapping) else {}
+            previous_values = (
+                receipt.get("beforeValues") if isinstance(receipt.get("beforeValues"), Mapping) else {}
+            )
+            applied_values = (
+                receipt.get("afterValues") if isinstance(receipt.get("afterValues"), Mapping) else {}
+            )
+            if not previous_values or set(previous_values) != set(applied_values):
+                raise ValueError("settings rollback receipt is incomplete")
+            for key, value in applied_values.items():
+                if current_flat.get(str(key)) != value:
+                    raise ValueError("input settings changed after the source operation")
+            normalized = _normalize_input_setting_changes(
+                [{"key": key, "value": value} for key, value in previous_values.items()]
+            )
+            source_approval_id = str(source.get("approvalId") or "")
+        else:
+            normalized = _normalize_input_setting_changes(args.get("changes"))
+
+        actual = [
+            item
+            for item in normalized
+            if current_flat.get(str(item["key"])) != item["value"]
+        ]
+        if not actual:
+            raise ValueError("input settings already match the requested values")
+        before_values = {str(item["key"]): current_flat.get(str(item["key"])) for item in actual}
+        after_values = {str(item["key"]): item["value"] for item in actual}
+        action_payload: dict[str, object] = {"changes": actual}
+        if source_approval_id:
+            action_payload["sourceApprovalId"] = source_approval_id
+        base_state = {
+            "settingsHash": snapshot["settingsHash"],
+            "values": before_values,
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_input",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        rolling_back = operation == "rollback_settings"
+        operation_label = "撤销输入设置变更" if rolling_back else "应用输入设置"
+        preview = {
+            "title": f"确认{operation_label}",
+            "summary": (
+                f"将恢复 {len(actual)} 项输入设置"
+                if rolling_back
+                else f"将更新 {len(actual)} 项输入设置"
+            ),
+            "operationLabel": operation_label,
+            "changes": [
+                {
+                    "label": _input_setting_label(str(item["key"])),
+                    "path": str(item["key"]),
+                    "before": before_values[str(item["key"])],
+                    "after": item["value"],
+                }
+                for item in actual
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_input",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_input_settings(self, approval: Mapping[str, object]) -> dict[str, object]:
+        tool = str(approval.get("toolId") or "")
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool=tool,
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        normalized = _normalize_input_setting_changes(action_payload.get("changes"))
+        snapshot = self._input_settings_snapshot()
+        if snapshot["settingsHash"] != str(base_state.get("settingsHash") or ""):
+            raise ValueError("input settings changed after the approval preview was created")
+        current_flat = flatten_settings(snapshot["settings"])
+        before_values = base_state.get("values") if isinstance(base_state.get("values"), Mapping) else {}
+        if not before_values or any(current_flat.get(str(key)) != value for key, value in before_values.items()):
+            raise ValueError("input settings no longer match the approval preview")
+        source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
+        if operation == "rollback_settings":
+            self._settings_rollback_source(
+                session_id=str(approval.get("sessionId") or ""),
+                source_approval_id=source_approval_id,
+            )
+
+        updates = {str(item["key"]): item["value"] for item in normalized}
+        result = self._facade_call(
+            "settings_update",
+            {**updates, "updatedBy": "pi-control-agent"},
+        )
+        if result.get("ok") is False:
+            raise ValueError(_bounded_text(result.get("error"), maximum=240) or "settings update failed")
+        changed_keys = sorted(str(value) for value in result.get("changedKeys", []) if str(value))
+        expected_keys = sorted(updates)
+        if changed_keys != expected_keys:
+            raise ValueError("settings update did not apply the exact approved keys")
+        after_snapshot = self._input_settings_snapshot()
+        after_flat = flatten_settings(after_snapshot["settings"])
+        if any(after_flat.get(key) != value for key, value in updates.items()):
+            raise ValueError("settings update could not be verified")
+
+        rolling_back = operation == "rollback_settings"
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_input",
+            "operation": operation,
+            "auditId": _safe_int(result.get("auditId")),
+            "summary": (
+                f"已恢复 {len(expected_keys)} 项输入设置"
+                if rolling_back
+                else f"已更新 {len(expected_keys)} 项输入设置"
+            ),
+            "settingKeys": expected_keys,
+            "changeCount": len(expected_keys),
+            "beforeValues": {key: before_values[key] for key in expected_keys},
+            "afterValues": {key: updates[key] for key in expected_keys},
+            "settingsHash": after_snapshot["settingsHash"],
+            "settingsRevision": _bounded_text(result.get("settingsRevision"), maximum=96),
+            "runtimeRevision": _safe_int(result.get("runtimeRevision")),
+            "undoAvailable": not rolling_back,
+        }
+        if rolling_back:
+            receipt["revertedSettingsApprovalId"] = source_approval_id
+        else:
+            receipt["rollback"] = {
+                "toolId": "ime_input",
+                "operation": "rollback_settings",
+                "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
+                "requiresApproval": True,
+            }
+        return receipt
+
+    def _input_settings_snapshot(self) -> dict[str, object]:
+        payload = self._facade_call("settings")
+        settings = payload.get("settings") if isinstance(payload.get("settings"), Mapping) else {}
+        settings_hash = _bounded_text(payload.get("settingsHash"), maximum=96)
+        if not settings_hash:
+            settings_hash = hashlib.sha256(
+                json.dumps(settings, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+        return {"settings": dict(settings), "settingsHash": settings_hash}
+
+    def _settings_rollback_source(
+        self,
+        *,
+        session_id: str,
+        source_approval_id: str,
+    ) -> dict[str, object]:
+        if not source_approval_id:
+            raise ValueError("sourceApprovalId is required for ime_input.rollback_settings")
+        approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if str(receipt.get("revertedSettingsApprovalId") or "") == source_approval_id:
+                raise ValueError("settings change has already been rolled back")
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if (
+                str(item.get("approvalId") or "") == source_approval_id
+                and str(item.get("toolId") or "") == "ime_input"
+                and str(item.get("operation") or "") == "apply_settings"
+                and receipt.get("undoAvailable") is True
+            ):
+                return item
+        raise ValueError("settings change is not backed by an applied approval receipt")
+
+    def _prepare_lexicon_mutation(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        if operation == "lexicon_rollback":
+            source = self._lexicon_rollback_source(
+                session_id=session_id,
+                source_approval_id=_bounded_text(args.get("sourceApprovalId"), maximum=240),
+            )
+            receipt = source.get("receipt") if isinstance(source.get("receipt"), Mapping) else {}
+            rollback_id = _bounded_text(receipt.get("rollbackId"), maximum=240)
+            entry_count = _safe_int(receipt.get("entryCount"))
+            if not rollback_id:
+                raise ValueError("lexicon rollback receipt is incomplete")
+            action_payload = {
+                "sourceApprovalId": str(source.get("approvalId") or ""),
+                "rollbackId": rollback_id,
+            }
+            base_state = {
+                "rollbackIdSha256": _sha256_text(rollback_id),
+                "entryCount": entry_count,
+            }
+            summary = f"将恢复应用前的词表，并撤销 {entry_count} 条个人词条"
+            changes = [
+                {
+                    "label": "个人词表",
+                    "before": f"已应用 {entry_count} 条建议",
+                    "after": "恢复应用前版本",
+                }
+            ]
+            operation_label = "回滚个人词表"
+        else:
+            limit = _bounded_int(args.get("limit"), default=100, minimum=1, maximum=100)
+            selected_keys = _review_key_list(args.get("selectedKeys"), limit=100)
+            if not selected_keys:
+                raise ValueError("selectedKeys is required for ime_input.lexicon_apply")
+            review = self._facade_call(
+                "rime_lexicon_review",
+                {"project": self.project, "limit": limit},
+            )
+            entries = review.get("entries") if isinstance(review.get("entries"), list) else []
+            entry_by_key = {
+                str(item.get("reviewKey") or f"{item.get('text', '')}\t{item.get('pinyin', '')}"): item
+                for item in entries
+                if isinstance(item, Mapping)
+            }
+            unknown = [key for key in selected_keys if key not in entry_by_key]
+            if unknown:
+                raise ValueError("selected lexicon entries changed; review them again")
+            token = str(review.get("reviewToken") or "")
+            if not token:
+                raise ValueError("lexicon review token is unavailable")
+            selected_entries = [entry_by_key[key] for key in selected_keys]
+            action_payload = {
+                "project": self.project,
+                "limit": limit,
+                "selectedKeys": selected_keys,
+            }
+            base_state = {
+                "reviewTokenSha256": _sha256_text(token),
+                "selectedEntriesSha256": _sha256_json(selected_entries),
+            }
+            summary = f"将把 {len(selected_entries)} 条已审阅建议增量加入个人词表"
+            changes = [
+                {
+                    "label": _bounded_text(item.get("text"), maximum=80) or "个人词条",
+                    "before": "未加入",
+                    "after": _bounded_text(item.get("pinyin"), maximum=120) or "加入个人词表",
+                }
+                for item in selected_entries[:8]
+            ]
+            operation_label = "应用已审词条并重新部署"
+
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_input",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        preview = {
+            "title": f"确认{operation_label}",
+            "summary": summary,
+            "operationLabel": operation_label,
+            "changes": changes,
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_input",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{summary}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_lexicon_mutation(self, approval: Mapping[str, object]) -> dict[str, object]:
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_input",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+
+        rolling_back = operation == "lexicon_rollback"
+        source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
+        if rolling_back:
+            source = self._lexicon_rollback_source(
+                session_id=str(approval.get("sessionId") or ""),
+                source_approval_id=source_approval_id,
+            )
+            source_receipt = source.get("receipt") if isinstance(source.get("receipt"), Mapping) else {}
+            rollback_id = _bounded_text(action_payload.get("rollbackId"), maximum=240)
+            if (
+                not rollback_id
+                or rollback_id != _bounded_text(source_receipt.get("rollbackId"), maximum=240)
+                or _sha256_text(rollback_id) != str(base_state.get("rollbackIdSha256") or "")
+            ):
+                raise ValueError("lexicon rollback no longer matches its source receipt")
+            result = self._facade_call("rime_lexicon_rollback", {"rollbackId": rollback_id})
+            if result.get("ok") is not True or result.get("rolledBack") is not True:
+                raise ValueError(
+                    _bounded_text(result.get("reason") or result.get("error"), maximum=240)
+                    or "lexicon rollback failed"
+                )
+            entry_count = _safe_int(source_receipt.get("entryCount"))
+        else:
+            limit = _bounded_int(action_payload.get("limit"), default=100, minimum=1, maximum=100)
+            selected_keys = _review_key_list(action_payload.get("selectedKeys"), limit=100)
+            review = self._facade_call(
+                "rime_lexicon_review",
+                {"project": self.project, "limit": limit},
+            )
+            token = str(review.get("reviewToken") or "")
+            entries = review.get("entries") if isinstance(review.get("entries"), list) else []
+            entry_by_key = {
+                str(item.get("reviewKey") or f"{item.get('text', '')}\t{item.get('pinyin', '')}"): item
+                for item in entries
+                if isinstance(item, Mapping)
+            }
+            selected_entries = [entry_by_key[key] for key in selected_keys if key in entry_by_key]
+            if (
+                not token
+                or _sha256_text(token) != str(base_state.get("reviewTokenSha256") or "")
+                or len(selected_entries) != len(selected_keys)
+                or _sha256_json(selected_entries) != str(base_state.get("selectedEntriesSha256") or "")
+            ):
+                raise ValueError("lexicon review changed after the approval preview was created")
+            result = self._facade_call(
+                "rime_lexicon_apply",
+                {
+                    "project": self.project,
+                    "limit": limit,
+                    "reviewToken": token,
+                    "selectedKeys": selected_keys,
+                    "confirmText": str(review.get("confirmText") or ""),
+                },
+            )
+            if result.get("ok") is not True or result.get("applied") is not True:
+                raise ValueError(
+                    _bounded_text(result.get("reason") or result.get("error"), maximum=240)
+                    or "lexicon apply failed"
+                )
+            rollback_id = _bounded_text(result.get("rollbackId"), maximum=240)
+            entry_count = _safe_int(result.get("entryCount"))
+            if not rollback_id:
+                raise ValueError("lexicon apply returned no rollback receipt")
+
+        deployment = self._redeploy_rime_and_wait()
+        deployment_status = _bounded_text(deployment.get("status"), maximum=80)
+        deployed = deployment_status == "succeeded"
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_input",
+            "operation": operation,
+            "auditId": str(approval.get("approvalId") or ""),
+            "summary": (
+                f"已回滚个人词表并重新部署，共恢复 {entry_count} 条词条"
+                if rolling_back and deployed
+                else f"已应用并重新部署 {entry_count} 条个人词条"
+                if deployed
+                else f"词表文件已更新，但重新部署未完成；共 {entry_count} 条词条"
+            ),
+            "entryCount": entry_count,
+            "rollbackId": rollback_id,
+            "deploymentJobId": _bounded_text(deployment.get("jobId"), maximum=240),
+            "deploymentStatus": deployment_status or "unknown",
+            "status": "applied" if deployed else "partial",
+            "undoAvailable": not rolling_back,
+        }
+        if not deployed:
+            receipt["warning"] = _bounded_text(
+                deployment.get("error") or "Rime 重新部署未成功，请在诊断页处理后再验证候选",
+                maximum=240,
+            )
+        if rolling_back:
+            receipt["revertedLexiconApprovalId"] = source_approval_id
+        else:
+            receipt["rollback"] = {
+                "toolId": "ime_input",
+                "operation": "lexicon_rollback",
+                "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
+                "requiresApproval": True,
+            }
+        return receipt
+
+    def _lexicon_rollback_source(
+        self,
+        *,
+        session_id: str,
+        source_approval_id: str,
+    ) -> dict[str, object]:
+        if not source_approval_id:
+            raise ValueError("sourceApprovalId is required for ime_input.lexicon_rollback")
+        approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if str(receipt.get("revertedLexiconApprovalId") or "") == source_approval_id:
+                raise ValueError("lexicon change has already been rolled back")
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if (
+                str(item.get("approvalId") or "") == source_approval_id
+                and str(item.get("toolId") or "") == "ime_input"
+                and str(item.get("operation") or "") == "lexicon_apply"
+                and receipt.get("undoAvailable") is True
+                and _bounded_text(receipt.get("rollbackId"), maximum=1)
+            ):
+                return item
+        raise ValueError("lexicon change is not backed by an applied approval receipt")
+
+    def _voice_provider_snapshot(self) -> dict[str, object]:
+        payload = self.management.provider_configuration()
+        providers = payload.get("providers") if isinstance(payload.get("providers"), Mapping) else {}
+        voice = providers.get("voice") if isinstance(providers.get("voice"), Mapping) else {}
+        provider = _bounded_text(voice.get("provider"), maximum=80) or "native_streaming"
+        return {
+            "configurationHash": _bounded_text(payload.get("configurationHash"), maximum=96),
+            "provider": provider,
+            "settingsRevision": _bounded_text(payload.get("settingsRevision"), maximum=96),
+            "runtimeRevision": _safe_int(payload.get("runtimeRevision")),
+        }
+
+    @staticmethod
+    def _normalize_voice_provider(value: object) -> str:
+        provider = _bounded_text(value, maximum=80)
+        if provider not in {"native_streaming", "realtime_websocket", "http_transcription"}:
+            raise ValueError("voice provider is unsupported")
+        return provider
+
+    def _prepare_voice_provider_mutation(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        snapshot = self._voice_provider_snapshot()
+        current = str(snapshot["provider"])
+        source_approval_id = ""
+        if operation == "provider_rollback":
+            source = self._voice_provider_rollback_source(
+                session_id=session_id,
+                source_approval_id=_bounded_text(args.get("sourceApprovalId"), maximum=240),
+            )
+            receipt = source.get("receipt") if isinstance(source.get("receipt"), Mapping) else {}
+            if current != str(receipt.get("afterProvider") or ""):
+                raise ValueError("voice provider changed after the source operation")
+            desired = self._normalize_voice_provider(receipt.get("beforeProvider"))
+            source_approval_id = str(source.get("approvalId") or "")
+        else:
+            allowed = {"op", "provider"}
+            unknown = sorted(str(key) for key in set(args) - allowed)
+            if unknown:
+                raise ValueError(f"unsupported voice provider field: {unknown[0]}")
+            desired = self._normalize_voice_provider(args.get("provider"))
+        if desired == current:
+            raise ValueError("voice provider already matches the requested value")
+        action_payload: dict[str, object] = {"provider": desired}
+        if source_approval_id:
+            action_payload["sourceApprovalId"] = source_approval_id
+        base_state = {
+            "configurationHash": snapshot["configurationHash"],
+            "provider": current,
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_voice",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        rolling_back = operation == "provider_rollback"
+        preview = {
+            "title": "确认恢复语音 Provider" if rolling_back else "确认切换语音 Provider",
+            "summary": "只切换已配置的语音服务；不会读取、写入或显示任何凭据",
+            "operationLabel": "恢复语音 Provider" if rolling_back else "切换语音 Provider",
+            "changes": [
+                {
+                    "label": "语音服务",
+                    "path": "voice.provider",
+                    "before": current,
+                    "after": desired,
+                }
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+            "secretsPreserved": True,
+            "restartComponent": "voice",
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_voice",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_voice_provider_mutation(self, approval: Mapping[str, object]) -> dict[str, object]:
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_voice",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        snapshot = self._voice_provider_snapshot()
+        if (
+            snapshot["configurationHash"] != str(base_state.get("configurationHash") or "")
+            or snapshot["provider"] != str(base_state.get("provider") or "")
+        ):
+            raise ValueError("voice provider changed after the approval preview was created")
+        desired = self._normalize_voice_provider(action_payload.get("provider"))
+        source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
+        if operation == "provider_rollback":
+            self._voice_provider_rollback_source(
+                session_id=str(approval.get("sessionId") or ""),
+                source_approval_id=source_approval_id,
+            )
+        result = self.management.provider_configuration_apply(
+            {
+                "slot": "voice",
+                "provider": desired,
+                "expectedConfigurationHash": snapshot["configurationHash"],
+            }
+        )
+        after = result.get("after") if isinstance(result.get("after"), Mapping) else {}
+        if str(after.get("provider") or "") != desired:
+            raise ValueError("voice provider update could not be verified")
+        rolling_back = operation == "provider_rollback"
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_voice",
+            "operation": operation,
+            "auditId": result.get("auditId") or str(approval.get("approvalId") or ""),
+            "summary": (
+                "语音 Provider 已恢复；重新启动语音代理后激活"
+                if rolling_back
+                else "语音 Provider 已保存；重新启动语音代理后激活"
+            ),
+            "beforeProvider": snapshot["provider"],
+            "afterProvider": desired,
+            "configurationHash": _bounded_text(result.get("configurationHash"), maximum=96),
+            "restartComponent": "voice",
+            "activationStatus": "pending_external_restart",
+            "secretsPreserved": result.get("existingSecretPreserved") is True,
+            "undoAvailable": not rolling_back,
+        }
+        if rolling_back:
+            receipt["revertedVoiceProviderApprovalId"] = source_approval_id
+        else:
+            receipt["rollback"] = {
+                "toolId": "ime_voice",
+                "operation": "provider_rollback",
+                "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
+                "requiresApproval": True,
+            }
+        return receipt
+
+    def _voice_provider_rollback_source(
+        self,
+        *,
+        session_id: str,
+        source_approval_id: str,
+    ) -> dict[str, object]:
+        if not source_approval_id:
+            raise ValueError("sourceApprovalId is required for ime_voice.provider_rollback")
+        approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if str(receipt.get("revertedVoiceProviderApprovalId") or "") == source_approval_id:
+                raise ValueError("voice provider change has already been rolled back")
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if (
+                str(item.get("approvalId") or "") == source_approval_id
+                and str(item.get("toolId") or "") == "ime_voice"
+                and str(item.get("operation") or "") == "provider_apply"
+                and receipt.get("undoAvailable") is True
+            ):
+                return item
+        raise ValueError("voice provider change is not backed by an applied approval receipt")
+
+    def _model_profile_snapshot(self) -> dict[str, object]:
+        payload = self.management.provider_configuration()
+        configuration_hash = _bounded_text(payload.get("configurationHash"), maximum=96)
+        providers = payload.get("providers") if isinstance(payload.get("providers"), Mapping) else {}
+        profiles: dict[str, dict[str, str]] = {}
+        for slot in ("instant", "knowledge"):
+            raw = providers.get(slot) if isinstance(providers.get(slot), Mapping) else {}
+            profiles[slot] = {
+                "provider": _bounded_text(raw.get("provider"), maximum=80),
+                "endpoint": _bounded_text(raw.get("endpoint"), maximum=320),
+                "model": _bounded_text(raw.get("model"), maximum=200),
+            }
+        if not configuration_hash:
+            configuration_hash = "sha256:" + _sha256_text(
+                json.dumps(profiles, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            )
+        return {
+            "configurationHash": configuration_hash,
+            "profiles": profiles,
+            "settingsRevision": _bounded_text(payload.get("settingsRevision"), maximum=96),
+            "runtimeRevision": _safe_int(payload.get("runtimeRevision")),
+        }
+
+    def _normalize_model_profile(
+        self,
+        *,
+        slot: str,
+        requested: Mapping[str, object],
+        current: Mapping[str, object],
+    ) -> dict[str, str]:
+        if slot not in {"instant", "knowledge"}:
+            raise ValueError("slot must be instant or knowledge")
+        forbidden = {"apiKey", "accessToken", "headers", "headersJSON", "token", "secret"}
+        if forbidden.intersection(requested):
+            raise ValueError("model profile changes cannot include secrets or custom headers")
+        profile = {
+            key: _bounded_text(
+                requested.get(key) if key in requested else current.get(key),
+                maximum=320 if key == "endpoint" else 200,
+            )
+            for key in ("provider", "endpoint", "model")
+        }
+        allowed_providers = {
+            "instant": {"mlx", "ollama", "openai-compatible"},
+            "knowledge": {"deepseek", "openai-compatible"},
+        }[slot]
+        if profile["provider"] not in allowed_providers:
+            raise ValueError(f"unsupported {slot} provider")
+        try:
+            parsed = urlsplit(profile["endpoint"])
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("provider endpoint is invalid") from exc
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or port is not None and not (1 <= port <= 65_535)
+        ):
+            raise ValueError("provider endpoint must be a plain HTTP(S) URL without credentials or query")
+        if profile["provider"] == "mlx" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("the managed MLX provider must use a loopback endpoint")
+        if profile["provider"] != "mlx" and not profile["model"]:
+            raise ValueError("model is required for the selected provider")
+        return profile
+
+    def _prepare_model_profile_mutation(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        snapshot = self._model_profile_snapshot()
+        profiles = snapshot["profiles"] if isinstance(snapshot.get("profiles"), Mapping) else {}
+        source_approval_id = ""
+        if operation == "profile_rollback":
+            source = self._model_profile_rollback_source(
+                session_id=session_id,
+                source_approval_id=_bounded_text(args.get("sourceApprovalId"), maximum=240),
+            )
+            receipt = source.get("receipt") if isinstance(source.get("receipt"), Mapping) else {}
+            slot = _bounded_text(receipt.get("slot"), maximum=40)
+            before = receipt.get("beforeProfile") if isinstance(receipt.get("beforeProfile"), Mapping) else {}
+            after = receipt.get("afterProfile") if isinstance(receipt.get("afterProfile"), Mapping) else {}
+            current = profiles.get(slot) if isinstance(profiles.get(slot), Mapping) else {}
+            if not before or not after or dict(current) != dict(after):
+                raise ValueError("model provider profile changed after the source operation")
+            desired = self._normalize_model_profile(slot=slot, requested=before, current=current)
+            source_approval_id = str(source.get("approvalId") or "")
+        else:
+            allowed = {"op", "slot", "provider", "endpoint", "model"}
+            unknown = sorted(str(key) for key in set(args) - allowed)
+            if unknown:
+                raise ValueError(f"unsupported model profile field: {unknown[0]}")
+            slot = _bounded_text(args.get("slot"), maximum=40)
+            current = profiles.get(slot) if isinstance(profiles.get(slot), Mapping) else {}
+            desired = self._normalize_model_profile(slot=slot, requested=args, current=current)
+
+        changes = [
+            {
+                "label": {"provider": "服务", "endpoint": "服务地址", "model": "模型"}[key],
+                "path": f"{slot}.{key}",
+                "before": current.get(key, ""),
+                "after": desired[key],
+            }
+            for key in ("provider", "endpoint", "model")
+            if current.get(key, "") != desired[key]
+        ]
+        if not changes:
+            raise ValueError("model provider profile already matches the requested values")
+        action_payload: dict[str, object] = {"slot": slot, "profile": desired}
+        if source_approval_id:
+            action_payload["sourceApprovalId"] = source_approval_id
+        base_state = {
+            "configurationHash": snapshot["configurationHash"],
+            "profile": dict(current),
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_models",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        rolling_back = operation == "profile_rollback"
+        slot_label = "即时补全" if slot == "instant" else "知识模型"
+        preview = {
+            "title": "确认恢复模型 Provider" if rolling_back else "确认更新模型 Provider",
+            "summary": f"将{'恢复' if rolling_back else '更新'}{slot_label}的非密钥配置",
+            "operationLabel": "恢复 Provider 配置" if rolling_back else "更新 Provider 配置",
+            "changes": changes,
+            "actionPayload": action_payload,
+            "baseState": base_state,
+            "secretsPreserved": True,
+            "restartComponent": "predictor" if slot == "instant" else "sidecar",
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_models",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_model_profile_mutation(self, approval: Mapping[str, object]) -> dict[str, object]:
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_models",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        slot = _bounded_text(action_payload.get("slot"), maximum=40)
+        desired_raw = action_payload.get("profile") if isinstance(action_payload.get("profile"), Mapping) else {}
+        snapshot = self._model_profile_snapshot()
+        profiles = snapshot["profiles"] if isinstance(snapshot.get("profiles"), Mapping) else {}
+        current = profiles.get(slot) if isinstance(profiles.get(slot), Mapping) else {}
+        if (
+            snapshot["configurationHash"] != str(base_state.get("configurationHash") or "")
+            or dict(current) != dict(base_state.get("profile") or {})
+        ):
+            raise ValueError("model provider profile changed after the approval preview was created")
+        desired = self._normalize_model_profile(slot=slot, requested=desired_raw, current=current)
+        source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
+        if operation == "profile_rollback":
+            self._model_profile_rollback_source(
+                session_id=str(approval.get("sessionId") or ""),
+                source_approval_id=source_approval_id,
+            )
+        result = self.management.provider_configuration_apply(
+            {
+                "slot": slot,
+                **desired,
+                "expectedConfigurationHash": snapshot["configurationHash"],
+            }
+        )
+        after = result.get("after") if isinstance(result.get("after"), Mapping) else {}
+        if any(str(after.get(key) or "") != desired[key] for key in desired):
+            raise ValueError("model provider update could not be verified")
+
+        restart_component = _bounded_text(result.get("restartComponent"), maximum=40)
+        activation_status = "pending_external_restart"
+        activation_error = ""
+        job_id = ""
+        if restart_component == "predictor":
+            job = self._run_runtime_action_and_wait("restart_predictor")
+            activation_status = _bounded_text(job.get("status"), maximum=80) or "unknown"
+            activation_error = _bounded_text(job.get("error"), maximum=240)
+            job_id = _bounded_text(job.get("jobId"), maximum=240)
+
+        rolling_back = operation == "profile_rollback"
+        slot_label = "即时补全" if slot == "instant" else "知识模型"
+        summary = f"已{'恢复' if rolling_back else '保存'}{slot_label} Provider 配置"
+        if activation_status == "succeeded":
+            summary += "并重启本地预测器"
+        elif activation_status == "pending_external_restart":
+            summary += "；需由外部 Supervisor 重启 Sidecar 后激活"
+        else:
+            summary += "；预测器重启未完成"
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_models",
+            "operation": operation,
+            "auditId": result.get("auditId") or str(approval.get("approvalId") or ""),
+            "summary": summary,
+            "slot": slot,
+            "beforeProfile": dict(current),
+            "afterProfile": dict(after),
+            "configurationHash": _bounded_text(result.get("configurationHash"), maximum=96),
+            "restartComponent": restart_component,
+            "activationStatus": activation_status,
+            "jobId": job_id,
+            "secretsPreserved": result.get("existingSecretPreserved") is True,
+            "undoAvailable": not rolling_back,
+        }
+        if activation_error:
+            receipt["warning"] = activation_error
+        if rolling_back:
+            receipt["revertedModelProfileApprovalId"] = source_approval_id
+        else:
+            receipt["rollback"] = {
+                "toolId": "ime_models",
+                "operation": "profile_rollback",
+                "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
+                "requiresApproval": True,
+            }
+        return receipt
+
+    def _model_profile_rollback_source(
+        self,
+        *,
+        session_id: str,
+        source_approval_id: str,
+    ) -> dict[str, object]:
+        if not source_approval_id:
+            raise ValueError("sourceApprovalId is required for ime_models.profile_rollback")
+        approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if str(receipt.get("revertedModelProfileApprovalId") or "") == source_approval_id:
+                raise ValueError("model provider change has already been rolled back")
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if (
+                str(item.get("approvalId") or "") == source_approval_id
+                and str(item.get("toolId") or "") == "ime_models"
+                and str(item.get("operation") or "") == "profile_apply"
+                and receipt.get("undoAvailable") is True
+            ):
+                return item
+        raise ValueError("model provider change is not backed by an applied approval receipt")
+
+    def _prepare_runtime_mutation(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        risk_level: str,
+    ) -> dict[str, object]:
+        status = self.management.overview()
+        ai_paused = status.get("aiPaused") is True
+        if operation == "pause_ai" and ai_paused:
+            raise ValueError("AI assistance is already paused")
+        if operation == "resume_ai" and not ai_paused:
+            raise ValueError("AI assistance is already running")
+        management_action = {
+            "pause_ai": "stop_ai",
+            "resume_ai": "resume_ai",
+            "restart_sidecar": "restart_sidecar",
+            "restart_predictor": "restart_predictor",
+            "redeploy_rime": "redeploy_rime",
+        }[operation]
+        labels = {
+            "pause_ai": ("暂停 AI 辅助", "运行中", "已暂停"),
+            "resume_ai": ("恢复 AI 辅助", "已暂停", "运行中"),
+            "restart_sidecar": ("重启 Sidecar", "当前服务进程", "外部监督器启动的新进程"),
+            "restart_predictor": ("重启本地预测器", "当前进程", "新进程"),
+            "redeploy_rime": ("重新部署 Rime 配置", "当前部署", "重新编译并加载"),
+        }
+        operation_label, before_label, after_label = labels[operation]
+        action_payload = {"action": management_action}
+        base_state = {
+            "settingsRevision": _bounded_text(status.get("settingsRevision"), maximum=96),
+            "runtimeRevision": _safe_int(status.get("runtimeRevision")),
+            "aiPaused": ai_paused,
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_runtime",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        preview = {
+            "title": f"确认{operation_label}",
+            "summary": (
+                "暂停期间普通拼音仍可使用，AI 候选与生成入口暂不工作"
+                if operation == "pause_ai"
+                else "恢复提交后预测和 AI 生成能力"
+                if operation == "resume_ai"
+                else "先让当前 Pi 回合完成，再由控制中心的外部监督器重启 Sidecar；普通 Rime 拼音继续可用"
+                if operation == "restart_sidecar"
+                else "预测器会短暂不可用，普通 Rime 拼音不受影响"
+                if operation == "restart_predictor"
+                else "将重新编译并加载当前 Rime 配置，输入法可能短暂刷新"
+            ),
+            "operationLabel": operation_label,
+            "changes": [
+                {
+                    "label": "AI 辅助" if operation in {"pause_ai", "resume_ai"} else "运行组件",
+                    "before": before_label,
+                    "after": after_label,
+                }
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_runtime",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{operation_label}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_runtime_mutation(self, approval: Mapping[str, object]) -> dict[str, object]:
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_runtime",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        current = self.management.overview()
+        if (
+            _bounded_text(current.get("settingsRevision"), maximum=96)
+            != _bounded_text(base_state.get("settingsRevision"), maximum=96)
+            or _safe_int(current.get("runtimeRevision")) != _safe_int(base_state.get("runtimeRevision"))
+            or (current.get("aiPaused") is True) != bool(base_state.get("aiPaused"))
+        ):
+            raise ValueError("runtime state changed after the approval preview was created")
+        action = _bounded_text(action_payload.get("action"), maximum=80)
+        expected_action = {
+            "pause_ai": "stop_ai",
+            "resume_ai": "resume_ai",
+            "restart_sidecar": "restart_sidecar",
+            "restart_predictor": "restart_predictor",
+            "redeploy_rime": "redeploy_rime",
+        }.get(operation)
+        if not expected_action or action != expected_action:
+            raise ValueError("approved runtime action is invalid")
+        job = self._run_runtime_action_and_wait(action)
+        status = _bounded_text(job.get("status"), maximum=80)
+        succeeded = status == "succeeded"
+        after = self.management.overview()
+        summaries = {
+            "pause_ai": "AI 辅助已暂停，普通 Rime 拼音仍可使用",
+            "resume_ai": "AI 辅助已恢复",
+            "restart_sidecar": "Sidecar 已重启",
+            "restart_predictor": "本地预测器已重启",
+            "redeploy_rime": "Rime 配置已重新部署",
+        }
+        if operation == "restart_sidecar" and status == "external-supervisor-required":
+            external_command = job.get("externalCommand")
+            if not isinstance(external_command, list) or not external_command:
+                raise ValueError("Sidecar restart returned no external supervisor command")
+            command = [_bounded_text(value, maximum=300) for value in external_command]
+            if any(not value for value in command):
+                raise ValueError("Sidecar restart returned an invalid external supervisor command")
+            expected_command = [
+                "launchctl",
+                "kickstart",
+                "-k",
+                f"gui/{os.getuid()}/com.rag-ime.sidecar",
+            ]
+            if command != expected_command:
+                raise ValueError("Sidecar restart command does not match the fixed supervisor policy")
+            return {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": False,
+                "externalActionPending": True,
+                "approvalId": str(approval.get("approvalId") or ""),
+                "toolId": "ime_runtime",
+                "operation": operation,
+                "auditId": job.get("auditId") or str(approval.get("approvalId") or ""),
+                "summary": "Sidecar 重启已批准；Pi 完成当前回答后，由控制中心外部监督器执行",
+                "jobId": _bounded_text(job.get("jobId"), maximum=240),
+                "status": status,
+                "externalAction": "restart_sidecar",
+                "externalCommand": command,
+                "externalCommandSha256": _sha256_json(command),
+                "runtimeRevision": _safe_int(after.get("runtimeRevision")),
+                "settingsRevision": _bounded_text(after.get("settingsRevision"), maximum=96),
+                "aiPaused": after.get("aiPaused") is True,
+                "undoAvailable": False,
+            }
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": succeeded,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_runtime",
+            "operation": operation,
+            "auditId": job.get("auditId") or str(approval.get("approvalId") or ""),
+            "summary": summaries[operation] if succeeded else f"{summaries[operation]}失败",
+            "jobId": _bounded_text(job.get("jobId"), maximum=240),
+            "status": status or "unknown",
+            "runtimeRevision": _safe_int(after.get("runtimeRevision")),
+            "settingsRevision": _bounded_text(after.get("settingsRevision"), maximum=96),
+            "aiPaused": after.get("aiPaused") is True,
+            "undoAvailable": False,
+        }
+        if not succeeded:
+            receipt["reason"] = "runtime_action_failed"
+            receipt["error"] = _bounded_text(job.get("error"), maximum=240) or "运行组件没有成功完成操作"
+        return receipt
+
+    def _redeploy_rime_and_wait(self) -> dict[str, object]:
+        return self._run_runtime_action_and_wait("redeploy_rime")
+
+    def _run_runtime_action_and_wait(self, action: str) -> dict[str, object]:
+        starter = getattr(self.management, "start_runtime_action", None)
+        reader = getattr(self.management, "runtime_job", None)
+        if not callable(starter) or not callable(reader):
+            raise ValueError("runtime action service is unavailable")
+        queued = starter({"action": action, "requestedBy": "pi-control-agent"})
+        job_id = _bounded_text(queued.get("jobId"), maximum=240)
+        if not job_id:
+            raise ValueError("runtime action returned no jobId")
+        deadline = time.monotonic() + 95.0
+        while time.monotonic() < deadline:
+            report = reader(job_id)
+            job = report.get("job") if isinstance(report.get("job"), Mapping) else {}
+            status = _bounded_text(job.get("status"), maximum=80)
+            if status in {"succeeded", "failed", "timed_out", "external-supervisor-required"}:
+                result = job.get("result") if isinstance(job.get("result"), Mapping) else {}
+                external_command = result.get("externalCommand")
+                return {
+                    "jobId": job_id,
+                    "status": status,
+                    "error": _bounded_text(job.get("error"), maximum=240),
+                    "auditId": queued.get("auditId"),
+                    "externalCommand": list(external_command)
+                    if isinstance(external_command, list)
+                    else [],
+                }
+            time.sleep(0.1)
+        return {
+            "jobId": job_id,
+            "status": "timed_out",
+            "error": "runtime action timed out",
+            "auditId": queued.get("auditId"),
+        }
+
+    def _prepare_configuration_export(
+        self,
+        *,
+        session_id: str,
+        risk_level: str,
+    ) -> dict[str, object]:
+        overview = self.management.overview()
+        export_id = f"agent-{int(time.time() * 1000)}-{_sha256_text(session_id)[:8]}"
+        relative_path = f"Backups/{export_id}.ragime-backup"
+        action_payload = {"exportId": export_id, "managedRelativePath": relative_path}
+        base_state = {
+            "scopeVersion": "portable-backup-v1",
+            "secretsIncluded": False,
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_configuration",
+            operation="export",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        memory = overview.get("memory") if isinstance(overview.get("memory"), Mapping) else {}
+        preview = {
+            "title": "确认导出便携备份",
+            "summary": "导出当前数据库、非敏感设置和安全的 Rime 配置；不会包含 API Key 或模型文件",
+            "operationLabel": "导出无密钥备份",
+            "changes": [
+                {
+                    "label": "备份内容",
+                    "before": "仅保存在当前设备",
+                    "after": "数据库 + 设置 + Rime 配置",
+                },
+                {
+                    "label": "敏感信息",
+                    "before": "Keychain / API Key",
+                    "after": "不导出",
+                },
+                {
+                    "label": "记忆工具书",
+                    "before": "当前数据库",
+                    "after": f"备份 {_safe_int(memory.get('memoryBookCount'))} 本工具书",
+                },
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_configuration",
+            operation="export",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": "等待确认：导出不含密钥的便携备份",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_configuration_export(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_configuration",
+            operation="export",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        if base_state.get("secretsIncluded") is not False or base_state.get("scopeVersion") != "portable-backup-v1":
+            raise ValueError("approved backup scope is invalid")
+        relative_path = _bounded_text(action_payload.get("managedRelativePath"), maximum=300)
+        target = self._managed_backup_target(relative_path)
+        if target.exists() or target.is_symlink():
+            raise ValueError("managed backup target already exists")
+        result = self.management.portable_backup_export({"destination": str(target)})
+        if result.get("ok") is False or result.get("secretsIncluded") is not False:
+            raise ValueError(_bounded_text(result.get("error"), maximum=240) or "portable backup export failed")
+        if Path(str(result.get("path") or "")).expanduser().resolve() != target.resolve():
+            raise ValueError("portable backup was written outside the approved managed path")
+        return {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_configuration",
+            "operation": "export",
+            "auditId": result.get("auditId") or str(approval.get("approvalId") or ""),
+            "summary": f"已导出无密钥备份 {target.name}",
+            "exportId": _bounded_text(action_payload.get("exportId"), maximum=120),
+            "fileName": target.name,
+            "managedRelativePath": relative_path,
+            "sizeBytes": _safe_int(result.get("sizeBytes")),
+            "databaseCounts": _safe_payload(result.get("databaseCounts")),
+            "rimeFileCount": _safe_int(result.get("rimeFileCount")),
+            "secretsIncluded": False,
+            "undoAvailable": False,
+        }
+
+    def _prepare_configuration_restore(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        source_approval_id = _bounded_text(args.get("sourceApprovalId"), maximum=240)
+        _source, target = self._configuration_export_source(
+            session_id=session_id,
+            source_approval_id=source_approval_id,
+        )
+        restored = self.management.portable_restore_preview({"path": str(target)})
+        if restored.get("valid") is not True or restored.get("requiresRestart") is not True:
+            raise ValueError("managed backup is not eligible for an external restore")
+        archive_revision = _bounded_text(restored.get("restoreToken"), maximum=96)
+        if len(archive_revision) != 64:
+            raise ValueError("managed backup preview returned an invalid archive revision")
+        action_payload = {"sourceApprovalId": source_approval_id}
+        base_state = {
+            "archiveRevision": archive_revision,
+            "createdAtMs": _safe_int(restored.get("createdAtMs")),
+            "databaseMigrationVersion": _safe_int(restored.get("databaseMigrationVersion")),
+            "databaseCounts": _safe_payload(restored.get("databaseCounts")),
+            "rimeFileCount": _safe_int(restored.get("rimeFileCount")),
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_configuration",
+            operation="restore_apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        counts = restored.get("databaseCounts") if isinstance(restored.get("databaseCounts"), Mapping) else {}
+        preview = {
+            "title": "强确认：恢复便携备份",
+            "summary": (
+                "Pi 当前回合结束后，原生监督器会停止 Sidecar、恢复数据库与安全配置，"
+                "再启动新 Sidecar；恢复前会自动生成回滚包"
+            ),
+            "operationLabel": "停止 Sidecar 并恢复备份",
+            "changes": [
+                {
+                    "label": "本地数据库",
+                    "before": "当前数据",
+                    "after": f"备份中的 {_safe_int(counts.get('input_events'))} 条输入事件",
+                },
+                {
+                    "label": "Memory Book",
+                    "before": "当前工具书",
+                    "after": f"备份中的 {_safe_int(counts.get('memory_books'))} 本工具书",
+                },
+                {
+                    "label": "Rime 配置",
+                    "before": "当前安全配置",
+                    "after": f"备份中的 {_safe_int(restored.get('rimeFileCount'))} 个文件",
+                },
+            ],
+            "warnings": [
+                "恢复会替换当前数据库和安全配置；API Key、Keychain 与模型文件不在备份内",
+                "普通 Rime 拼音在 Sidecar 停止期间仍可使用，AI 能力会短暂离线",
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_configuration",
+            operation="restore_apply",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=120_000,
+        )
+        return {
+            "summary": "等待强确认：停止 Sidecar 并恢复受管备份",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_configuration_restore(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_configuration",
+            operation="restore_apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
+        _source, target = self._configuration_export_source(
+            session_id=str(approval.get("sessionId") or ""),
+            source_approval_id=source_approval_id,
+        )
+        current = self.management.portable_restore_preview({"path": str(target)})
+        if (
+            current.get("valid") is not True
+            or _bounded_text(current.get("restoreToken"), maximum=96)
+            != _bounded_text(base_state.get("archiveRevision"), maximum=96)
+            or _safe_int(current.get("databaseMigrationVersion"))
+            != _safe_int(base_state.get("databaseMigrationVersion"))
+        ):
+            raise ValueError("managed backup changed after the restore approval preview")
+
+        support = self._managed_support_directory()
+        database = Path(getattr(self.management, "db_path", support / "rag-ime.sqlite")).expanduser().resolve()
+        rime_directory = Path(
+            os.environ.get("RAG_IME_RIME_USER_DIR") or Path.home() / "Library" / "Rime"
+        ).expanduser().resolve()
+        return {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": False,
+            "externalActionPending": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_configuration",
+            "operation": "restore_apply",
+            "auditId": str(approval.get("approvalId") or ""),
+            "summary": (
+                "数据库恢复已批准；Pi 完成当前回答后，由原生监督器停止 Sidecar、恢复并重新启动"
+            ),
+            "status": "external-supervisor-required",
+            "externalAction": "restore_backup",
+            "undoAvailable": False,
+            "_externalPlanPayload": {
+                "archivePath": str(target),
+                "databasePath": str(database),
+                "restoreToken": str(current.get("restoreToken") or ""),
+                "rimeUserDirectory": str(rime_directory),
+                "supportDirectory": str(support),
+                "launchAgentPlist": str(
+                    Path.home() / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+                ),
+                "launchAgentTarget": f"gui/{os.getuid()}/com.rag-ime.sidecar",
+            },
+        }
+
+    @staticmethod
+    def _managed_support_directory() -> Path:
+        raw = Path(
+            os.environ.get("RAG_IME_APP_SUPPORT_DIR")
+            or Path.home() / "Library" / "Application Support" / "RagIme"
+        ).expanduser()
+        if raw.is_symlink():
+            raise ValueError("managed application support directory must not be a symlink")
+        return raw.resolve()
+
+    def _managed_backup_target(self, relative_path: str) -> Path:
+        if not relative_path or Path(relative_path).is_absolute():
+            raise ValueError("managed backup path is invalid")
+        support = self._managed_support_directory()
+        raw_backup_root = support / "Backups"
+        if raw_backup_root.is_symlink():
+            raise ValueError("managed backup directory must not be a symlink")
+        backup_root = raw_backup_root.resolve()
+        target = (support / relative_path).resolve()
+        if target.parent != backup_root or target.suffix != ".ragime-backup":
+            raise ValueError("managed backup path escaped its approved directory")
+        return target
+
+    def _configuration_export_source(
+        self,
+        *,
+        session_id: str,
+        source_approval_id: str,
+    ) -> tuple[dict[str, object], Path]:
+        if not source_approval_id:
+            raise ValueError("sourceApprovalId is required for ime_configuration.restore_preview")
+        approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
+        for item in approvals:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if (
+                str(item.get("approvalId") or "") == source_approval_id
+                and str(item.get("toolId") or "") == "ime_configuration"
+                and str(item.get("operation") or "") == "export"
+                and receipt.get("secretsIncluded") is False
+            ):
+                relative_path = _bounded_text(receipt.get("managedRelativePath"), maximum=300)
+                target = self._managed_backup_target(relative_path)
+                if not target.is_file() or target.is_symlink():
+                    raise ValueError("managed backup file is no longer available")
+                return item, target
+        raise ValueError("backup is not backed by an applied export receipt")
+
+    def _prepare_workspace_command(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        prepared = self.workspace_harness.prepare_command(session, args)
+        preview = self.workspace_harness.preview(prepared)
+        action_payload = preview.get("actionPayload")
+        base_state = preview.get("baseState")
+        assert isinstance(action_payload, Mapping)
+        assert isinstance(base_state, Mapping)
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_shell",
+            operation="run",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": "等待确认：运行受沙箱保护的工作区命令",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_workspace_command(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="workspace_shell",
+            operation="run",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        session = self.sessions.get(str(approval.get("sessionId") or ""))
+        prepared: PreparedWorkspaceCommand = self.workspace_harness.prepare_command(
+            session,
+            action_payload,
+        )
+        if prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or ""):
+            raise ValueError("authorized workspace changed after approval preview")
+        receipt = self.workspace_harness.execute(prepared)
+        return {
+            **receipt,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "workspace_shell",
+            "operation": "run",
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+
+    def _prepare_planning_undo(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        event_id = _bounded_text(args.get("eventId"), maximum=240)
+        if not event_id:
+            raise ValueError("eventId is required for ime_planning.undo_task_event")
+        source_approval = self._rollback_source_approval(session_id=session_id, event_id=event_id)
+        source_receipt = (
+            source_approval.get("receipt") if isinstance(source_approval.get("receipt"), Mapping) else {}
+        )
+        source_preview = (
+            source_approval.get("preview") if isinstance(source_approval.get("preview"), Mapping) else {}
+        )
+        source_base = (
+            source_preview.get("baseState") if isinstance(source_preview.get("baseState"), Mapping) else {}
+        )
+        task = source_receipt.get("task") if isinstance(source_receipt.get("task"), Mapping) else {}
+        task_id = _bounded_text(task.get("id"), maximum=240)
+        plan_date = _bounded_text(task.get("date"), maximum=24)
+        target_status = _bounded_text(source_base.get("status"), maximum=40)
+        if not task_id or not plan_date or not target_status:
+            raise ValueError("rollback receipt does not contain a complete task snapshot")
+        current = self._planning_task(task_id=task_id, plan_date=plan_date)
+        expected_current_status = _bounded_text(task.get("status"), maximum=40)
+        if str(current.get("status") or "") != expected_current_status:
+            raise ValueError("task no longer matches the rollback receipt")
+        action_payload = {
+            "eventId": event_id,
+            "taskId": task_id,
+            "date": plan_date,
+            "targetStatus": target_status,
+            "sourceApprovalId": str(source_approval.get("approvalId") or ""),
+        }
+        base_state = {
+            "status": str(current.get("status") or ""),
+            "updatedAtMs": _safe_int(current.get("updatedAtMs")),
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_planning",
+            operation="undo_task_event",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        title = _bounded_text(current.get("title"), maximum=160) or "未命名任务"
+        preview = {
+            "title": "确认撤销任务变更",
+            "summary": f"把《{title}》恢复为{_planning_status_label(target_status)}",
+            "operationLabel": "撤销上一次任务变更",
+            "changes": [
+                {
+                    "label": "任务状态",
+                    "before": _planning_status_label(str(current.get("status") or "")),
+                    "after": _planning_status_label(target_status),
+                }
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_planning",
+            operation="undo_task_event",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_planning_undo(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_planning",
+            operation="undo_task_event",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        event_id = _bounded_text(action_payload.get("eventId"), maximum=240)
+        task_id = _bounded_text(action_payload.get("taskId"), maximum=240)
+        plan_date = _bounded_text(action_payload.get("date"), maximum=24)
+        target_status = _bounded_text(action_payload.get("targetStatus"), maximum=40)
+        source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
+        if not event_id or not task_id or not plan_date or not target_status or not source_approval_id:
+            raise ValueError("approved rollback payload is invalid")
+        self._rollback_source_approval(
+            session_id=str(approval.get("sessionId") or ""),
+            event_id=event_id,
+            expected_approval_id=source_approval_id,
+        )
+        task = self._planning_task(task_id=task_id, plan_date=plan_date)
+        if (
+            str(task.get("status") or "") != str(base_state.get("status") or "")
+            or _safe_int(task.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+        ):
+            raise ValueError("task changed after the rollback preview was created")
+        try:
+            result = self.management.planning_undo_task_event({"eventId": event_id})
+        except Exception as exc:
+            observed = self._planning_task(task_id=task_id, plan_date=plan_date)
+            if (
+                str(observed.get("status") or "") == target_status
+                and _safe_int(observed.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+            ):
+                return self._planning_undo_receipt(
+                    approval=approval,
+                    result={"task": observed},
+                    event_id=event_id,
+                    source_approval_id=source_approval_id,
+                    audit_persisted=False,
+                    warning=_bounded_text(exc, maximum=240),
+                )
+            raise
+        return self._planning_undo_receipt(
+            approval=approval,
+            result=result,
+            event_id=event_id,
+            source_approval_id=source_approval_id,
+            audit_persisted=True,
+        )
+
+    def _rollback_source_approval(
+        self,
+        *,
+        session_id: str,
+        event_id: str,
+        expected_approval_id: str = "",
+    ) -> dict[str, object]:
+        applied = self.sessions.list_approvals(session_id=session_id, state="applied", limit=200)
+        for item in applied:
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            if str(receipt.get("revertedTaskEventId") or "") == event_id:
+                raise ValueError("task event has already been rolled back")
+        for item in applied:
+            if expected_approval_id and str(item.get("approvalId") or "") != expected_approval_id:
+                continue
+            receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
+            rollback = receipt.get("rollback") if isinstance(receipt.get("rollback"), Mapping) else {}
+            if (
+                str(receipt.get("taskEventId") or "") == event_id
+                and str(rollback.get("operation") or "") == "undo_task_event"
+                and receipt.get("undoAvailable") is True
+            ):
+                return item
+        raise ValueError("task event is not backed by an applied approval receipt")
+
+    def _planning_undo_receipt(
+        self,
+        *,
+        approval: Mapping[str, object],
+        result: Mapping[str, object],
+        event_id: str,
+        source_approval_id: str,
+        audit_persisted: bool,
+        warning: str = "",
+    ) -> dict[str, object]:
+        task = result.get("task") if isinstance(result.get("task"), Mapping) else {}
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_planning",
+            "operation": "undo_task_event",
+            "summary": f"已撤销《{_bounded_text(task.get('title'), maximum=160) or '任务'}》的上一次状态变更",
+            "auditId": _safe_int(result.get("auditId")),
+            "auditPersisted": audit_persisted,
+            "task": _safe_payload(task),
+            "revertedTaskEventId": event_id,
+            "sourceApprovalId": source_approval_id,
+            "undoAvailable": False,
+        }
+        if warning:
+            receipt["warning"] = warning
+        return receipt
+
+    def _planning_task(self, *, task_id: str, plan_date: str) -> dict[str, object]:
+        dashboard = self.management.planning_dashboard(
+            plan_date=plan_date,
+            project=self.project,
+        )
+        tasks = dashboard.get("tasks") if isinstance(dashboard.get("tasks"), list) else []
+        for item in tasks:
+            if isinstance(item, Mapping) and str(item.get("id") or "") == task_id:
+                return dict(item)
+        raise ValueError("task is not visible in the current planning scope")
+
+    def _planning_receipt(
+        self,
+        *,
+        approval: Mapping[str, object],
+        action: str,
+        result: Mapping[str, object],
+        audit_persisted: bool,
+        warning: str = "",
+    ) -> dict[str, object]:
+        task = result.get("task") if isinstance(result.get("task"), Mapping) else {}
+        event_id = _bounded_text(result.get("eventId"), maximum=240)
+        undo_available = bool(result.get("undoAvailable")) and bool(event_id)
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_planning",
+            "operation": "task_action",
+            "summary": f"已将《{_bounded_text(task.get('title'), maximum=160) or '任务'}》{_PLANNING_ACTION_LABELS[action]}",
+            "auditId": _safe_int(result.get("auditId")),
+            "auditPersisted": audit_persisted,
+            "taskEventId": event_id,
+            "task": _safe_payload(task),
+            "undoAvailable": undo_available,
+        }
+        if undo_available:
+            receipt["rollback"] = {
+                "toolId": "ime_planning",
+                "operation": "undo_task_event",
+                "args": {"eventId": event_id},
+                "requiresApproval": True,
+            }
+        if warning:
+            receipt["warning"] = warning
+        return receipt
+
+    def _overview(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation == "status":
+            payload = self.management.overview()
+            components = payload.get("components") if isinstance(payload.get("components"), Mapping) else {}
+            unhealthy = [
+                str(key)
+                for key, value in components.items()
+                if isinstance(value, Mapping) and value.get("ok") is not True
+            ]
+            return {
+                "summary": "控制中心运行正常" if not unhealthy else f"发现 {len(unhealthy)} 个未就绪组件",
+                "components": _safe_payload(components),
+                "memory": _safe_payload(payload.get("memory")),
+                "lastPrediction": _safe_payload(payload.get("lastPrediction")),
+                "unhealthyComponents": unhealthy,
+            }
+        if operation == "capabilities":
+            return {
+                "summary": "已连接 9 个控制中心领域；运行协调会话另有 3 个受 Harness 保护的工作区工具",
+                "readOnly": False,
+                "toolCount": len(_TOOL_SPECS),
+                "tools": [
+                    {
+                        "id": spec["id"],
+                        "displayName": spec["displayName"],
+                        "operations": list(spec["operations"]),
+                    }
+                    for spec in _TOOL_SPECS
+                ],
+                "approvalGatedOperations": [
+                    "ime_input.apply_settings",
+                    "ime_input.rollback_settings",
+                    "ime_input.lexicon_apply",
+                    "ime_input.lexicon_rollback",
+                    "ime_planning.task_action",
+                    "ime_memory.maintenance_apply",
+                    "ime_memory.maintenance_rollback",
+                    "ime_runtime.pause_ai",
+                    "ime_runtime.resume_ai",
+                    "ime_runtime.restart_sidecar",
+                    "ime_runtime.restart_predictor",
+                    "ime_runtime.redeploy_rime",
+                    "ime_configuration.export",
+                ],
+                "writePolicy": "R1 以上操作必须生成差异、校验快照、原生确认并保存 receipt",
+            }
+        limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=20)
+        query = _bounded_text(args.get("query"), maximum=240)
+        history = self.management.history_page(page_request({"query": query, "limit": limit}))
+        items = history.get("items", []) if isinstance(history, Mapping) else []
+        return {
+            "summary": f"读取 {len(items)} 条近期活动摘要",
+            "items": _safe_payload(items),
+            "nextCursor": _bounded_text(history.get("nextCursor"), maximum=80),
+        }
+
+    def _input(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation == "get_settings":
+            payload = self._facade_call("settings")
+            settings = payload.get("settings") if isinstance(payload.get("settings"), Mapping) else {}
+            visible = {
+                key: settings[key]
+                for key in ("interaction", "pinyin", "privacy", "memory", "activeRag", "agent")
+                if key in settings
+            }
+            return {
+                "summary": "已读取输入法的非敏感设置",
+                "settings": _safe_payload(visible),
+                "runtimeConfig": _safe_payload(payload.get("runtimeConfig")),
+            }
+        if operation == "preview_settings":
+            snapshot = self._input_settings_snapshot()
+            current_flat = flatten_settings(snapshot["settings"])
+            normalized = _normalize_input_setting_changes(args.get("changes"))
+            actual = [
+                item
+                for item in normalized
+                if current_flat.get(str(item["key"])) != item["value"]
+            ]
+            return {
+                "summary": (
+                    f"有 {len(actual)} 项输入设置会发生变化"
+                    if actual
+                    else "输入设置已经符合请求，无需修改"
+                ),
+                "changeCount": len(actual),
+                "changes": [
+                    {
+                        "label": _input_setting_label(str(item["key"])),
+                        "path": str(item["key"]),
+                        "before": current_flat.get(str(item["key"])),
+                        "after": item["value"],
+                    }
+                    for item in actual
+                ],
+                "approvalRequiredForApply": True,
+            }
+        if operation == "profile":
+            capabilities = self._facade_call("frontend_capabilities")
+            source = self._facade_call("input_source_status")
+            return {
+                "summary": "已读取当前输入方案和前端能力",
+                "inputSource": _safe_payload(source),
+                "frontend": _safe_payload(capabilities),
+            }
+        if operation == "candidate_explain":
+            query = _bounded_text(args.get("query") or args.get("currentInput"), maximum=240)
+            if not query:
+                raise ValueError("query is required for ime_input.candidate_explain")
+            payload = self._facade_call(
+                "candidate_explain",
+                {
+                    "query": query,
+                    "recentContext": _bounded_text(args.get("recentContext"), maximum=800),
+                    "project": self.project,
+                    "topK": _bounded_int(args.get("topK"), default=5, minimum=1, maximum=10),
+                },
+            )
+            return {"summary": "已解释当前候选的来源与排序", **_safe_mapping_payload(payload)}
+        review = self._facade_call(
+            "rime_lexicon_review",
+            {"project": self.project, "limit": _bounded_int(args.get("limit"), default=50, minimum=1, maximum=100)},
+        )
+        entries = review.get("entries") if isinstance(review.get("entries"), list) else []
+        return {
+            "summary": f"有 {len(entries)} 条词表建议等待用户审阅",
+            "entryCount": len(entries),
+            "reviewRequired": True,
+            "entries": [
+                _safe_lexicon_review_entry(item)
+                for item in entries[:100]
+                if isinstance(item, Mapping)
+            ],
+            "safety": "应用前必须经过词表质量 harness、原生批准和可回滚快照",
+        }
+
+    def _voice(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation == "privacy_policy":
+            return {
+                "summary": "语音只把用户确认的最终文本送入对话",
+                "partialStored": False,
+                "rawAudioStoredByRagIme": False,
+                "automaticSend": False,
+                "memorySource": "用户发送后的 final/canonical 文本",
+                "sensitiveFields": "安全输入框不启动语音写入",
+            }
+        if operation == "provider_preview":
+            allowed = {"op", "provider", "_sessionId"}
+            unknown = sorted(str(key) for key in set(args) - allowed)
+            if unknown:
+                raise ValueError(f"unsupported voice provider field: {unknown[0]}")
+            snapshot = self._voice_provider_snapshot()
+            desired = self._normalize_voice_provider(args.get("provider"))
+            changed = desired != snapshot["provider"]
+            return {
+                "summary": "语音 Provider 已匹配，无需修改" if not changed else "将切换语音 Provider",
+                "changes": (
+                    [
+                        {
+                            "label": "语音服务",
+                            "path": "voice.provider",
+                            "before": snapshot["provider"],
+                            "after": desired,
+                        }
+                    ]
+                    if changed
+                    else []
+                ),
+                "configurationHash": snapshot["configurationHash"],
+                "approvalRequiredForApply": changed,
+                "requiresVoiceRestart": changed,
+                "secretsPreserved": True,
+            }
+        status = _read_voice_agent_status()
+        if operation == "provider_status":
+            snapshot = self._voice_provider_snapshot()
+            return {
+                "summary": "语音 Provider 已就绪" if status.get("credentialsConfigured") else "语音 Provider 尚未就绪",
+                "provider": snapshot["provider"],
+                "running": bool(status.get("running")),
+                "credentialsConfigured": bool(status.get("credentialsConfigured")),
+                "networkState": _bounded_text(_mapping_value(status, "telemetry", "networkState"), maximum=80),
+                "updatedAtMs": _safe_int(status.get("updatedAtMs")),
+            }
+        return {
+            "summary": "语音输入正在运行" if status.get("running") else "语音输入当前未运行",
+            "status": _safe_payload(status),
+        }
+
+    def _planning(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation != "dashboard":
+            raise ValueError("planning write operations require native approval")
+        dashboard = self.management.planning_dashboard(
+            plan_date=_bounded_text(args.get("date"), maximum=24),
+            project=self.project,
+        )
+        tasks = dashboard.get("tasks") if isinstance(dashboard.get("tasks"), list) else []
+        open_count = sum(
+            1
+            for item in tasks
+            if isinstance(item, Mapping) and str(item.get("status") or "") not in {"done", "completed", "cancelled"}
+        )
+        return {
+            "summary": f"当前有 {open_count} 个未完成任务",
+            "dashboard": _safe_payload(dashboard),
+        }
+
+    def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation == "catalog":
+            return self._catalog(args)
+        if operation == "read":
+            return self._read(args)
+        if operation == "recent":
+            return self._recent(args)
+        if operation == "trace":
+            trace_id = _bounded_text(args.get("traceId"), maximum=240)
+            if not trace_id:
+                raise ValueError("traceId is required for ime_memory.trace")
+            payload = self._facade_call("memory_optimizer_trace", {"traceId": trace_id})
+            return {"summary": "已读取记忆整理追溯信息", "trace": _safe_payload(payload)}
+        if operation == "maintenance_status":
+            payload = self._facade_call(
+                "agent_memory_maintenance_status",
+                {
+                    "project": self.project,
+                    "limit": _bounded_int(args.get("limit"), default=10, minimum=1, maximum=30),
+                },
+            )
+            draft_count = _safe_int(payload.get("pendingDraftCount"))
+            pending_count = _safe_int(
+                _mapping_value(payload, "compileState", "pendingEventCount")
+            )
+            return {
+                "summary": f"有 {pending_count} 条来源待整理、{draft_count} 份草案待审阅",
+                "maintenance": _safe_payload(payload),
+            }
+        if operation == "maintenance_preview":
+            payload = self._facade_call(
+                "agent_memory_maintenance_prepare",
+                {
+                    "project": self.project,
+                    "instruction": _bounded_text(args.get("instruction"), maximum=800),
+                },
+            )
+            if payload.get("ok") is not True or payload.get("storedDraft") is not True:
+                raise ValueError(
+                    _bounded_text(_mapping_value(payload, "validation", "errors"), maximum=240)
+                    or "memory draft generation failed validation"
+                )
+            stored = payload.get("storedRun") if isinstance(payload.get("storedRun"), Mapping) else {}
+            run_id = _bounded_text(stored.get("runId"), maximum=240)
+            if not run_id:
+                raise ValueError("memory draft generation returned no runId")
+            review = self._facade_call(
+                "agent_memory_maintenance_run",
+                {"runId": run_id, "project": self.project},
+            )
+            run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
+            diff_count = _safe_int(run.get("diffCount"))
+            reused = payload.get("reusedDraft") is True
+            return {
+                "summary": (
+                    f"已复用现有记忆草案，共 {diff_count} 项差异"
+                    if reused
+                    else f"已生成记忆草案，共 {diff_count} 项差异"
+                ),
+                "reviewRequired": True,
+                "storedDraft": True,
+                "reusedDraft": reused,
+                "source": _safe_payload(payload.get("source")),
+                "run": _safe_payload(run),
+            }
+        if operation == "maintenance_review":
+            run_id = _bounded_text(args.get("runId"), maximum=240)
+            if not run_id:
+                raise ValueError("runId is required for ime_memory.maintenance_review")
+            review = self._facade_call(
+                "agent_memory_maintenance_run",
+                {"runId": run_id, "project": self.project},
+            )
+            run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
+            return {
+                "summary": f"已读取记忆草案 {run_id} 的 {_safe_int(run.get('diffCount'))} 项差异",
+                "reviewRequired": True,
+                "canApply": review.get("canApply") is True,
+                "canRollback": review.get("canRollback") is True,
+                "stale": review.get("stale") is True,
+                "run": _safe_payload(run),
+            }
+        kind = _bounded_text(args.get("kind"), maximum=40) or "atoms"
+        if kind not in {"books", "atoms", "tags", "phrases", "groups", "negative"}:
+            raise ValueError("unsupported memory list kind")
+        query = _bounded_text(args.get("query"), maximum=240)
+        limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=20)
+        page = self.management.memory_page(kind, page_request({"query": query, "limit": limit}))
+        items = page.get("items", []) if isinstance(page, Mapping) else []
+        return {
+            "summary": f"检索到 {len(items)} 条 {kind} 记忆记录",
+            "kind": kind,
+            "query": query,
+            "items": _safe_payload(items),
+            "nextCursor": _bounded_text(page.get("nextCursor"), maximum=80),
+        }
+
+    def _knowledge(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation == "status" and self.knowledge_client is None:
+            return {
+                "summary": "文档知识库当前不可用",
+                "available": False,
+                "state": "unavailable",
+                "reason": "knowledge_client_not_configured",
+            }
+        client = self.knowledge_client
+        if client is None:
+            raise ValueError("document knowledge library is unavailable")
+
+        payload: dict[str, object] = {}
+        if operation in {"search", "find", "open"}:
+            base_id = _bounded_text(args.get("kbId") or args.get("baseId"), maximum=240)
+            if not base_id:
+                raise ValueError(f"kbId is required for ime_knowledge.{operation}")
+            payload["kbId"] = base_id
+        if operation == "search":
+            query = _bounded_text(args.get("query"), maximum=500)
+            if not query:
+                raise ValueError("query is required for ime_knowledge.search")
+            search_mode = _bounded_text(args.get("searchMode"), maximum=24) or "hybrid"
+            if search_mode not in {"hybrid", "lexical", "dense"}:
+                raise ValueError("searchMode must be hybrid, lexical, or dense")
+            payload.update(
+                {
+                    "query": query,
+                    "topK": _bounded_int(args.get("topK"), default=6, minimum=1, maximum=12),
+                    "mode": search_mode,
+                }
+            )
+            file_name = _bounded_text(args.get("fileName"), maximum=240)
+            if file_name:
+                payload["fileName"] = file_name
+        elif operation == "find":
+            file_id = _bounded_text(args.get("fileId"), maximum=240)
+            raw_patterns = args.get("patterns")
+            if isinstance(raw_patterns, str):
+                patterns = [_bounded_text(raw_patterns, maximum=240)]
+            elif isinstance(raw_patterns, (list, tuple)):
+                patterns = [_bounded_text(item, maximum=240) for item in raw_patterns[:10]]
+            else:
+                patterns = []
+            patterns = [item for item in patterns if item]
+            if not file_id:
+                raise ValueError("fileId is required for ime_knowledge.find")
+            if not patterns:
+                raise ValueError("patterns are required for ime_knowledge.find")
+            payload.update(
+                {
+                    "fileId": file_id,
+                    "patterns": patterns,
+                    "useRegex": args.get("useRegex") is True,
+                    "caseSensitive": args.get("caseSensitive") is True,
+                    "maxWindows": _bounded_int(
+                        args.get("maxWindows"), default=8, minimum=1, maximum=20
+                    ),
+                    "windowSize": _bounded_int(
+                        args.get("windowSize"), default=24, minimum=4, maximum=120
+                    ),
+                    "offset": _bounded_int(args.get("offset"), default=0, minimum=0, maximum=1_000_000),
+                }
+            )
+        elif operation == "open":
+            file_id = _bounded_text(args.get("fileId"), maximum=240)
+            if not file_id:
+                raise ValueError("fileId is required for ime_knowledge.open")
+            payload.update(
+                {
+                    "fileId": file_id,
+                    "line": _bounded_int(args.get("line"), default=1, minimum=1, maximum=50_000_000),
+                    "offset": _bounded_int(
+                        args.get("offset"), default=0, minimum=0, maximum=50_000_000
+                    ),
+                    "windowSize": _bounded_int(
+                        args.get("windowSize"), default=180, minimum=1, maximum=300
+                    ),
+                }
+            )
+
+        handler = getattr(client, operation, None)
+        if not callable(handler):
+            raise ValueError(f"document knowledge operation {operation} is unavailable")
+        result = handler(payload)
+        if not isinstance(result, Mapping):
+            raise ValueError("document knowledge client returned an invalid result")
+        safe_result = _safe_knowledge_payload(result)
+        if "summary" not in safe_result:
+            counts = safe_result.get("items")
+            count = len(counts) if isinstance(counts, list) else 0
+            summaries = {
+                "list_bases": f"已列出 {count} 个可供 Agent 使用的文档知识库",
+                "search": f"文档知识库返回 {count} 条引用证据",
+                "find": f"在文档内找到 {count} 个匹配窗口",
+                "open": "已读取文档引用窗口",
+                "status": "已读取文档知识库状态",
+            }
+            safe_result["summary"] = summaries[operation]
+        safe_result.setdefault("untrustedData", True)
+        return safe_result
+
+    def _models(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation == "status":
+            payload = self._facade_call("models_status")
+            return {"summary": _model_status_summary(payload), "status": _safe_payload(payload)}
+        if operation == "profiles":
+            snapshot = self._model_profile_snapshot()
+            return {
+                "summary": "已读取即时补全与知识模型的非密钥 Provider 配置",
+                "profiles": _safe_payload(snapshot["profiles"]),
+                "configurationHash": snapshot["configurationHash"],
+                "secretsVisible": False,
+            }
+        if operation == "profile_preview":
+            allowed = {"op", "slot", "provider", "endpoint", "model", "_sessionId"}
+            unknown = sorted(str(key) for key in set(args) - allowed)
+            if unknown:
+                raise ValueError(f"unsupported model profile field: {unknown[0]}")
+            snapshot = self._model_profile_snapshot()
+            profiles = snapshot["profiles"] if isinstance(snapshot.get("profiles"), Mapping) else {}
+            slot = _bounded_text(args.get("slot"), maximum=40)
+            current = profiles.get(slot) if isinstance(profiles.get(slot), Mapping) else {}
+            desired = self._normalize_model_profile(slot=slot, requested=args, current=current)
+            changes = [
+                {
+                    "label": {"provider": "服务", "endpoint": "服务地址", "model": "模型"}[key],
+                    "path": f"{slot}.{key}",
+                    "before": current.get(key, ""),
+                    "after": desired[key],
+                }
+                for key in ("provider", "endpoint", "model")
+                if current.get(key, "") != desired[key]
+            ]
+            return {
+                "summary": "配置已匹配，无需修改" if not changes else f"将更新 {len(changes)} 项 Provider 配置",
+                "slot": slot,
+                "changes": changes,
+                "configurationHash": snapshot["configurationHash"],
+                "restartComponent": "predictor" if slot == "instant" else "sidecar",
+                "approvalRequiredForApply": bool(changes),
+                "secretsPreserved": True,
+            }
+        if operation == "probe":
+            payload = self._facade_call("model_probe", {})
+            return {"summary": "已完成只读模型能力探测", "probe": _safe_payload(payload)}
+        stats = getattr(self.core, "suggestion_cache_stats", None)
+        payload = stats() if callable(stats) else {"available": False}
+        return {"summary": "已读取本地候选缓存统计", "cache": _safe_payload(payload)}
+
+    def _runtime(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        del args
+        if operation == "components":
+            payload = self.management.runtime_components()
+            return {"summary": "已读取运行组件列表", "runtime": _safe_payload(payload)}
+        status = self.management.runtime_status()
+        components = status.get("components") if isinstance(status.get("components"), Mapping) else {}
+        unhealthy = [
+            str(key)
+            for key, value in components.items()
+            if isinstance(value, Mapping) and value.get("ok") is not True
+        ]
+        if operation == "diagnose":
+            return {
+                "summary": "未发现异常" if not unhealthy else f"发现 {len(unhealthy)} 个未就绪组件",
+                "unhealthyComponents": unhealthy,
+                "components": _safe_payload(components),
+                "mutationsAvailable": False,
+            }
+        return {"summary": "运行时状态已读取", "runtime": _safe_payload(status)}
+
+    def _configuration(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        limit = _bounded_int(args.get("limit"), default=20, minimum=1, maximum=50)
+        query = _bounded_text(args.get("query"), maximum=240)
+        if operation == "history":
+            history = self.management.history_page(page_request({"query": query, "limit": limit}))
+            items = history.get("items", []) if isinstance(history, Mapping) else []
+            return {
+                "summary": f"读取 {len(items)} 条隐私化历史摘要",
+                "items": _safe_payload(items),
+                "rawTextVisible": False,
+                "nextCursor": _bounded_text(history.get("nextCursor"), maximum=80),
+            }
+        if operation == "export_preview":
+            overview = self.management.overview()
+            memory = overview.get("memory") if isinstance(overview.get("memory"), Mapping) else {}
+            return {
+                "summary": "可导出数据库、非敏感设置和安全的 Rime 配置",
+                "scope": ["database", "redacted_settings", "safe_rime_configuration"],
+                "memoryBookCount": _safe_int(memory.get("memoryBookCount")),
+                "secretsIncluded": False,
+                "modelFilesIncluded": False,
+                "approvalRequiredForExport": True,
+            }
+        if operation == "restore_preview":
+            source_approval_id = _bounded_text(args.get("sourceApprovalId"), maximum=240)
+            _source, target = self._configuration_export_source(
+                session_id=_bounded_text(args.get("sessionId"), maximum=240)
+                or _bounded_text(args.get("_sessionId"), maximum=240),
+                source_approval_id=source_approval_id,
+            )
+            payload = self.management.portable_restore_preview({"path": str(target)})
+            return {
+                "summary": f"已验证备份 {target.name}，恢复会替换数据库、设置和 Rime 配置",
+                "sourceApprovalId": source_approval_id,
+                "fileName": target.name,
+                "valid": payload.get("valid") is True,
+                "createdAtMs": _safe_int(payload.get("createdAtMs")),
+                "databaseCounts": _safe_payload(payload.get("databaseCounts")),
+                "databaseMigrationVersion": _safe_int(payload.get("databaseMigrationVersion")),
+                "rimeFileCount": _safe_int(payload.get("rimeFileCount")),
+                "requiresRestart": payload.get("requiresRestart") is True,
+                "restoreApplyAvailable": True,
+                "restoreApplyRisk": "R3",
+                "externalSupervisorRequired": True,
+            }
+        payload = self._facade_call(
+            "management_audit",
+            {"limit": limit, "action": _bounded_text(args.get("action"), maximum=120)},
+        )
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        return {"summary": f"读取 {len(items)} 条管理审计记录", "items": _safe_payload(items)}
+
+    def _facade_call(self, name: str, payload: Mapping[str, object] | None = None) -> dict[str, object]:
+        target = getattr(self.facade, name, None)
+        if not callable(target):
+            raise ValueError(f"control capability is unavailable: {name}")
+        result = target(dict(payload)) if payload is not None else target()
+        if not isinstance(result, Mapping):
+            raise ValueError(f"control capability returned an invalid payload: {name}")
+        return dict(result)
+
+    def _catalog(self, args: Mapping[str, object]) -> dict[str, object]:
+        query = _bounded_text(args.get("query"), maximum=240)
+        limit = _bounded_int(args.get("limit"), default=5, minimum=1, maximum=8)
+        request = page_request({"query": query, "limit": limit})
+        books = self.management.memory_page("books", request).get("items", [])
+        groups = self.management.memory_page("groups", request).get("items", [])
+        tags = self.management.memory_page("tags", request).get("items", [])
+        safe_books = [_catalog_book(item) for item in books if isinstance(item, Mapping)]
+        safe_groups = [_catalog_group(item) for item in groups if isinstance(item, Mapping)]
+        safe_tags = [_catalog_tag(item) for item in tags if isinstance(item, Mapping)]
+        items = [*safe_books, *safe_groups, *safe_tags]
+        return {
+            "summary": (
+                f"查询到 {len(safe_books)} 本工具书、"
+                f"{len(safe_groups)} 个 Group、{len(safe_tags)} 个 Tag"
+            ),
+            "query": query,
+            "counts": {
+                "books": len(safe_books),
+                "groups": len(safe_groups),
+                "tags": len(safe_tags),
+            },
+            "items": items,
+        }
+
+    def _read(self, args: Mapping[str, object]) -> dict[str, object]:
+        book_id = _bounded_text(args.get("bookId"), maximum=240)
+        if not book_id:
+            raise ValueError("bookId is required for ime_memory.read")
+        report = self.management.memory_page("books", page_request({"limit": 500}))
+        match = next(
+            (
+                item
+                for item in report.get("items", [])
+                if isinstance(item, Mapping) and str(item.get("id") or "") == book_id
+            ),
+            None,
+        )
+        if match is None:
+            raise ValueError("memory book not found")
+        memories = [
+            {
+                "type": _bounded_text(item.get("type"), maximum=80),
+                "text": _bounded_text(item.get("text"), maximum=1200),
+                "updatedAtMs": _safe_int(item.get("updatedAtMs")),
+            }
+            for item in match.get("memories", [])
+            if isinstance(item, Mapping)
+        ][:20]
+        title = _bounded_text(match.get("title"), maximum=180)
+        return {
+            "summary": f"已读取工具书《{title or '未命名'}》，包含 {len(memories)} 条相关记忆",
+            "book": {
+                "bookId": book_id,
+                "title": title,
+                "summary": _bounded_text(match.get("summary"), maximum=1600),
+                "type": _bounded_text(match.get("type"), maximum=80),
+                "tags": _string_list(match.get("tags"), limit=20),
+                "sourceStartMs": _safe_int(match.get("sourceStartMs")),
+                "sourceEndMs": _safe_int(match.get("sourceEndMs")),
+                "memories": memories,
+            },
+            "items": [{"title": title, "kind": "book"}],
+        }
+
+    def _recent(self, args: Mapping[str, object]) -> dict[str, object]:
+        query = _bounded_text(args.get("query"), maximum=240)
+        limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=12)
+        reader = getattr(self.core, "list_memory_events", None)
+        if not callable(reader):
+            raise ValueError("recent memory is unavailable for this core")
+        report = reader(project=self.project, query=query, limit=limit)
+        raw_items = report.get("items", []) if isinstance(report, Mapping) else []
+        items = [
+            {
+                "sourceId": f"event:{_safe_int(item.get('eventId'))}",
+                "createdAtMs": _safe_int(item.get("createdAtMs")),
+                "source": _bounded_text(item.get("source"), maximum=80),
+                "text": _bounded_text(item.get("text"), maximum=1200),
+                "app": _bounded_text(item.get("app"), maximum=160),
+                "project": _bounded_text(item.get("project"), maximum=160),
+                "tags": _string_list(item.get("tags"), limit=20),
+            }
+            for item in raw_items
+            if isinstance(item, Mapping) and _bounded_text(item.get("text"), maximum=1)
+        ][:limit]
+        return {
+            "summary": f"召回 {len(items)} 段近期最终输入",
+            "query": query,
+            "count": len(items),
+            "items": items,
+        }
+
+
+def _catalog_book(item: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "kind": "book",
+        "bookId": _bounded_text(item.get("id"), maximum=240),
+        "title": _bounded_text(item.get("title"), maximum=180),
+        "summary": _bounded_text(item.get("summary"), maximum=800),
+        "tags": _string_list(item.get("tags"), limit=20),
+        "atomCount": _safe_int(item.get("atomCount")),
+        "updatedAtMs": _safe_int(item.get("updated_at_ms") or item.get("updatedAtMs")),
+    }
+
+
+def _catalog_group(item: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "kind": "group",
+        "title": _bounded_text(item.get("title"), maximum=180),
+        "summary": _bounded_text(item.get("note"), maximum=600),
+        "tags": _string_list(item.get("tags"), limit=20),
+        "itemCount": _safe_int(item.get("event_count")),
+        "updatedAtMs": _safe_int(item.get("updated_at_ms") or item.get("latestAtMs")),
+    }
+
+
+def _catalog_tag(item: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "kind": "tag",
+        "title": _bounded_text(item.get("tag"), maximum=180),
+        "summary": _bounded_text(item.get("description"), maximum=600),
+        "itemCount": _safe_int(item.get("item_count")),
+        "updatedAtMs": _safe_int(item.get("updated_at_ms") or item.get("updatedAtMs")),
+    }
+
+
+def _safe_lexicon_review_entry(item: Mapping[str, object]) -> dict[str, object]:
+    text = _bounded_text(item.get("text"), maximum=120)
+    pinyin = _bounded_text(item.get("pinyin"), maximum=240)
+    review_key = str(item.get("reviewKey") or f"{text}\t{pinyin}").strip()[:300]
+    return {
+        "text": text,
+        "pinyin": pinyin,
+        "reviewKey": review_key,
+        "selected": item.get("selected") is not False,
+        "weight": _safe_int(item.get("weight")),
+        "positiveCount": _safe_int(item.get("positiveCount")),
+        "reviewSource": _bounded_text(item.get("reviewSource"), maximum=80),
+        "reviewReason": _bounded_text(item.get("reviewReason"), maximum=240),
+    }
+
+
+def _bounded_text(value: object, *, maximum: int) -> str:
+    text = " ".join(str(value or "").split())
+    text = re.sub(r"\[L:[^\]]+\]", "", text)
+    return " ".join(text.split())[:maximum]
+
+
+def _normalize_input_setting_changes(value: object) -> list[dict[str, object]]:
+    if isinstance(value, Mapping):
+        raw_items = [{"key": key, "value": child} for key, child in value.items()]
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raise ValueError("changes must be an array of setting key/value pairs")
+    if not raw_items:
+        raise ValueError("at least one input setting change is required")
+    if len(raw_items) > 12:
+        raise ValueError("at most 12 input settings may change in one approval")
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        if not isinstance(raw, Mapping):
+            raise ValueError("each input setting change must be an object")
+        key = str(raw.get("key") or "").strip()
+        if key not in _INPUT_SETTING_FIELDS:
+            raise ValueError(f"input setting is not agent-manageable: {key or 'missing key'}")
+        if key in seen:
+            raise ValueError(f"duplicate input setting: {key}")
+        if "value" not in raw:
+            raise ValueError(f"input setting value is required: {key}")
+        result.append({"key": key, "value": _normalize_input_setting_value(key, raw["value"])})
+        seen.add(key)
+    return sorted(result, key=lambda item: str(item["key"]))
+
+
+def _normalize_input_setting_value(key: str, value: object) -> object:
+    default = _SETTING_DEFAULTS[key]
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            raise ValueError(f"setting {key} must be a boolean")
+        normalized: object = value
+    elif isinstance(default, int):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"setting {key} must be an integer")
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"setting {key} must be an integer")
+        normalized = int(value)
+    elif isinstance(default, str):
+        if not isinstance(value, str):
+            raise ValueError(f"setting {key} must be a string")
+        normalized = value.strip()
+    else:
+        raise ValueError(f"setting {key} has an unsupported value type")
+    schema_field = _SETTING_SCHEMA_FIELDS.get(key, {})
+    options = schema_field.get("options")
+    if isinstance(options, list) and normalized not in options:
+        raise ValueError(f"setting {key} must be one of: {', '.join(str(item) for item in options)}")
+    bounds = _INPUT_SETTING_FIELDS[key]
+    if isinstance(normalized, int) and not isinstance(normalized, bool):
+        minimum = bounds.get("min")
+        maximum = bounds.get("max")
+        if isinstance(minimum, int) and normalized < minimum:
+            raise ValueError(f"setting {key} must be >= {minimum}")
+        if isinstance(maximum, int) and normalized > maximum:
+            raise ValueError(f"setting {key} must be <= {maximum}")
+    return normalized
+
+
+def _input_setting_label(key: str) -> str:
+    return str(_INPUT_SETTING_FIELDS.get(key, {}).get("label") or key)
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_json(value: object) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _approval_payload_digest(
+    *,
+    session_id: str,
+    tool: str,
+    operation: str,
+    action_payload: Mapping[str, object],
+    base_state: Mapping[str, object],
+) -> str:
+    material = {
+        "schemaVersion": "rag-ime.agent-approved-operation.v1",
+        "sessionId": session_id,
+        "tool": tool,
+        "operation": operation,
+        "actionPayload": dict(action_payload),
+        "baseState": dict(base_state),
+    }
+    encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _highest_risk(values: object) -> str:
+    priority = {"R0": 0, "R1": 1, "R2": 2, "R3": 3}
+    normalized = [str(value) for value in values] if values is not None else ["R0"]
+    return max(normalized or ["R0"], key=lambda value: priority.get(value, 3))
+
+
+def _planning_status_label(value: str) -> str:
+    return _PLANNING_STATUS_LABELS.get(value, value or "未知")
+
+
+def _memory_run_status_label(value: str) -> str:
+    return {
+        "draft": "待审草案",
+        "applied": "已应用",
+        "partial": "部分应用",
+        "rolled_back": "已回滚",
+        "superseded": "已被新草案替代",
+    }.get(value, value or "未知")
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(maximum, max(minimum, parsed))
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _string_list(value: object, *, limit: int) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [_bounded_text(item, maximum=120) for item in value[:limit] if _bounded_text(item, maximum=1)]
+
+
+def _review_key_list(value: object, *, limit: int) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[str] = []
+    for item in value[:limit]:
+        key = str(item or "").strip()[:300]
+        if key and key not in result:
+            result.append(key)
+    return result
+
+
+def _safe_mapping_payload(value: Mapping[str, object]) -> dict[str, object]:
+    safe = _safe_payload(value)
+    return safe if isinstance(safe, dict) else {}
+
+
+def _safe_payload(value: object, *, depth: int = 0) -> object:
+    if depth > 6:
+        return "[truncated]"
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        for raw_key, child in list(value.items())[:100]:
+            key = _bounded_text(raw_key, maximum=120)
+            if not key or _secret_key(key):
+                continue
+            result[key] = _safe_payload(child, depth=depth + 1)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_safe_payload(item, depth=depth + 1) for item in value[:100]]
+    if isinstance(value, str):
+        return _bounded_text(value, maximum=2000)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _bounded_text(value, maximum=500)
+
+
+def _safe_knowledge_payload(value: Mapping[str, object]) -> dict[str, object]:
+    """Bound document evidence without exposing worker or filesystem details."""
+
+    blocked_keys = {
+        "absolutepath",
+        "localpath",
+        "sourcepath",
+        "storedpath",
+        "workertoken",
+        "workerurl",
+        "endpoint",
+    }
+
+    def visit(item: object, *, depth: int = 0) -> object:
+        if depth > 6:
+            return "[truncated]"
+        if isinstance(item, Mapping):
+            result: dict[str, object] = {}
+            for raw_key, child in list(item.items())[:100]:
+                key = _bounded_text(raw_key, maximum=120)
+                normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+                if not key or normalized in blocked_keys or _secret_key(key):
+                    continue
+                result[key] = visit(child, depth=depth + 1)
+            return result
+        if isinstance(item, (list, tuple)):
+            return [visit(child, depth=depth + 1) for child in item[:100]]
+        if isinstance(item, str):
+            return _bounded_text(item, maximum=2000)
+        if item is None or isinstance(item, (bool, int, float)):
+            return item
+        return _bounded_text(item, maximum=500)
+
+    safe = visit(value)
+    return safe if isinstance(safe, dict) else {}
+
+
+def _secret_key(key: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+    return any(
+        token in normalized
+        for token in ("apikey", "token", "secret", "password", "authorization", "cookie", "credential")
+    )
+
+
+def _tool_profile_allows(
+    session: Mapping[str, object],
+    *,
+    tool: str,
+    operation: str,
+    spec: Mapping[str, object],
+) -> bool:
+    if (
+        str(session.get("toolAllowlistMode") or "profile") == "explicit"
+        and tool not in {str(value) for value in session.get("allowedTools") or []}
+    ):
+        return False
+    profile = str(session.get("toolProfileVersion") or "control-center-v1")
+    if profile in {"control-center-v1", "subagent-worker-v1"}:
+        return True
+    if profile != "subagent-readonly-v1":
+        return not profile.startswith("subagent-")
+    allowed: dict[str, frozenset[str]] = {
+        "ime_overview": frozenset({"status", "capabilities", "recent_activity"}),
+        "ime_memory": frozenset({"catalog", "read", "recent", "trace", "maintenance_status", "list", "search"}),
+        "ime_knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
+        "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
+        "ime_runtime": frozenset({"health", "components", "diagnose"}),
+        "ime_agents": frozenset({"catalog", "delegate", "status", "artifact", "abort"}),
+    }
+    operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
+    return operation_risk == "R0" and operation in allowed.get(tool, frozenset())
+
+
+def _read_voice_agent_status() -> dict[str, object]:
+    app_support = Path(
+        os.environ.get("RAG_IME_APP_SUPPORT_DIR")
+        or Path.home() / "Library" / "Application Support" / "RagIme"
+    ).expanduser()
+    path = app_support / "voice-agent-status.json"
+    if not path.is_file() or path.is_symlink():
+        return {
+            "available": False,
+            "running": False,
+            "state": "unavailable",
+            "statusText": "语音代理没有可用状态",
+        }
+    try:
+        if path.stat().st_size > 256 * 1024:
+            raise ValueError("voice status is too large")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return {
+            "available": False,
+            "running": False,
+            "state": "invalid",
+            "statusText": "语音代理状态不可解析",
+        }
+    if not isinstance(raw, Mapping):
+        return {"available": False, "running": False, "state": "invalid"}
+    allowed = (
+        "schemaVersion",
+        "running",
+        "accessibilityTrusted",
+        "microphoneAuthorization",
+        "credentialsConfigured",
+        "hotkeyMode",
+        "hotwordsEnabled",
+        "hotwordCount",
+        "hotkeyInstalled",
+        "state",
+        "statusText",
+        "updatedAtMs",
+    )
+    result = {key: raw.get(key) for key in allowed if key in raw}
+    telemetry = raw.get("telemetry")
+    if isinstance(telemetry, Mapping):
+        result["telemetry"] = {
+            key: telemetry.get(key)
+            for key in (
+                "networkState",
+                "sessionActive",
+                "sessionStartedAtMs",
+                "firstPartialLatencyMs",
+                "finalLatencyMs",
+                "pcmFrameCount",
+                "droppedPCMFrameCount",
+                "partialRevisionCount",
+                "finalReceived",
+            )
+            if key in telemetry
+        }
+    result["available"] = True
+    return result
+
+
+def _mapping_value(value: Mapping[str, object], parent: str, child: str) -> object:
+    nested = value.get(parent)
+    return nested.get(child) if isinstance(nested, Mapping) else None
+
+
+def _memory_evidence(value: object) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        getter = value.get
+    else:
+        getter = lambda key, default=None: getattr(value, key, default)
+    source_event_id = getter("source_event_id", "")
+    return {
+        "kind": "source",
+        "sourceId": f"event:{source_event_id}" if source_event_id else "",
+        "text": _bounded_text(getter("text", ""), maximum=1600),
+        "evidence": _bounded_text(getter("evidence_preview", ""), maximum=1200),
+        "score": max(0.0, float(getter("score", 0.0) or 0.0)),
+        "reason": _bounded_text(getter("reason", ""), maximum=300),
+        "project": _bounded_text(getter("project", ""), maximum=160),
+        "tags": _string_list(getter("tags", ()), limit=20),
+        "createdAtMs": _safe_int(getter("created_at_ms", 0)),
+    }
+
+
+def _model_status_summary(payload: Mapping[str, object]) -> str:
+    predictor = payload.get("predictor") if isinstance(payload.get("predictor"), Mapping) else {}
+    active = payload.get("activeRagRoute") if isinstance(payload.get("activeRagRoute"), Mapping) else {}
+    predictor_ready = predictor.get("ok") is True or predictor.get("available") is True
+    remote_ready = active.get("remoteReady") is True
+    if predictor_ready and remote_ready:
+        return "本地预测与深度知识模型均已就绪"
+    if predictor_ready:
+        return "本地预测已就绪，深度知识模型当前不可用"
+    return "模型运行链路当前未就绪"

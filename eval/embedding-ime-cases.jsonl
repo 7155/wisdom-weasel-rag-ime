@@ -1,0 +1,120 @@
+{"type":"document","id":"ime-stale","group":"ime-runtime","text":"应用切换或上下文过期后必须丢弃 stale fingerprint 对应的候选，不能把旧输入重新显示出来。"}
+{"type":"document","id":"ime-delete","group":"ime-runtime","text":"用户按下 Backspace 或 Delete 后应立即使旧的前台上下文失效，再基于删除后的文本重新预测。"}
+{"type":"document","id":"ime-tab","group":"ime-runtime","text":"用户按 Tab 接受侧边候选后，应提交新增后缀并立刻安排下一轮连续补全。"}
+{"type":"document","id":"ime-number","group":"ime-runtime","text":"数字键用于选择当前可见的侧边候选，不应向编辑器插入字面数字。"}
+{"type":"document","id":"ime-foreground","group":"ime-runtime","text":"真实前台输入法行为是验收标准，后端接口返回候选并不代表 Squirrel 候选窗已经可用。"}
+{"type":"document","id":"rag-query","group":"retrieval","text":"向量检索 query 应由清理后的当前输入和新鲜的最近上下文共同构造，避免混入调试字段。"}
+{"type":"document","id":"rag-source","group":"retrieval","text":"RAG 记忆候选必须显示来源、证据摘要和 memory id，并与本地模型候选明确区分。"}
+{"type":"document","id":"rag-group","group":"retrieval","text":"检索时优先限制在当前 Context Group，跨项目记忆只能在明确需要时降权召回。"}
+{"type":"document","id":"rag-echo","group":"retrieval","text":"候选不能照抄刚刚提交的原文，需执行 anti-echo 检查并只返回有新增信息的后缀。"}
+{"type":"document","id":"rag-index","group":"retrieval","text":"更换 embedding provider 后需要按新的 fingerprint 重建向量索引，旧向量不能混用。"}
+{"type":"document","id":"memory-dedup","group":"memory","text":"Memory Book 编译器应合并语义重复的记忆，保留更清晰且证据更完整的一条。"}
+{"type":"document","id":"memory-delete","group":"memory","text":"删除或隐藏记忆时必须同步清理 FTS、标签关系和向量记录，防止幽灵召回。"}
+{"type":"document","id":"memory-feedback","group":"memory","text":"接受、跳过和删除反馈应进入排序特征，但不能让单次点击永久支配结果。"}
+{"type":"document","id":"memory-private","group":"memory","text":"密码框、隐私模式和敏感应用中的文本不得写入个人记忆数据库或远程服务。"}
+{"type":"document","id":"memory-atom","group":"memory","text":"Memory Atom 应短小、单一主题、带来源和上下文标签，适合作为输入法候选材料。"}
+{"type":"document","id":"model-local","group":"model","text":"实时补全默认使用本机常驻的小模型，保证断网可用并控制首候选延迟。"}
+{"type":"document","id":"model-api","group":"model","text":"Qwen3 Embedding API 只作为显式高质量上限，不进入输入法本地常驻路径。"}
+{"type":"document","id":"model-prefix","group":"model","text":"Piccolo 非对称检索使用 查询： 作为 query 前缀，使用 结果： 作为 document 前缀。"}
+{"type":"document","id":"model-int8","group":"model","text":"本机 embedding 最终部署需要比较 FP32 与 ONNX INT8 的质量、延迟和常驻内存。"}
+{"type":"document","id":"model-mixed","group":"model","text":"中文夹杂 Squirrel、fingerprint、RAG lane 和代码标识符时要单独衡量中英文技术词召回。"}
+{"type":"query","id":"q-ime-stale-1","group":"ime-runtime","query":"切换到另一个应用后为什么还出现上一处的建议","relevant":["ime-stale"]}
+{"type":"query","id":"q-ime-stale-2","group":"ime-runtime","query":"旧 fingerprint 的候选怎么处理","relevant":["ime-stale"]}
+{"type":"query","id":"q-ime-stale-3","group":"ime-runtime","query":"上下文已经过期却仍然展示补全","relevant":["ime-stale"]}
+{"type":"query","id":"q-ime-stale-4","group":"ime-runtime","query":"discard stale suggestions after app switch","relevant":["ime-stale"]}
+{"type":"query","id":"q-ime-stale-5","group":"ime-runtime","query":"如何防止输入法显示先前窗口的内容","relevant":["ime-stale"]}
+{"type":"query","id":"q-ime-delete-1","group":"ime-runtime","query":"按退格以后预测还是基于删除前的句子","relevant":["ime-delete"]}
+{"type":"query","id":"q-ime-delete-2","group":"ime-runtime","query":"Delete 应该让哪个上下文失效","relevant":["ime-delete"]}
+{"type":"query","id":"q-ime-delete-3","group":"ime-runtime","query":"删字之后旧候选没有消失","relevant":["ime-delete"]}
+{"type":"query","id":"q-ime-delete-4","group":"ime-runtime","query":"backspace invalidation behavior","relevant":["ime-delete"]}
+{"type":"query","id":"q-ime-delete-5","group":"ime-runtime","query":"编辑文本后怎样重新触发预测","relevant":["ime-delete"]}
+{"type":"query","id":"q-ime-tab-1","group":"ime-runtime","query":"接受一次补全后继续给下一段建议","relevant":["ime-tab"]}
+{"type":"query","id":"q-ime-tab-2","group":"ime-runtime","query":"Tab 连续补全链怎么触发","relevant":["ime-tab"]}
+{"type":"query","id":"q-ime-tab-3","group":"ime-runtime","query":"选中侧边建议后安排 follow-up","relevant":["ime-tab"]}
+{"type":"query","id":"q-ime-tab-4","group":"ime-runtime","query":"accepted candidate should schedule next prediction","relevant":["ime-tab"]}
+{"type":"query","id":"q-ime-tab-5","group":"ime-runtime","query":"提交新增后缀后下一步是什么","relevant":["ime-tab"]}
+{"type":"query","id":"q-ime-number-1","group":"ime-runtime","query":"按数字却直接打出了 2 没有选候选","relevant":["ime-number"]}
+{"type":"query","id":"q-ime-number-2","group":"ime-runtime","query":"数字键选择侧栏候选的规则","relevant":["ime-number"]}
+{"type":"query","id":"q-ime-number-3","group":"ime-runtime","query":"候选窗口里 number key 不应输入字符","relevant":["ime-number"]}
+{"type":"query","id":"q-ime-number-4","group":"ime-runtime","query":"select visible side candidate with numeric key","relevant":["ime-number"]}
+{"type":"query","id":"q-ime-number-5","group":"ime-runtime","query":"如何拦截候选激活时的字面数字","relevant":["ime-number"]}
+{"type":"query","id":"q-ime-foreground-1","group":"ime-runtime","query":"接口有结果为什么真实输入框看不到","relevant":["ime-foreground"]}
+{"type":"query","id":"q-ime-foreground-2","group":"ime-runtime","query":"输入法功能应以什么作为最终验收","relevant":["ime-foreground"]}
+{"type":"query","id":"q-ime-foreground-3","group":"ime-runtime","query":"后台 JSON 成功是否说明产品可用","relevant":["ime-foreground"]}
+{"type":"query","id":"q-ime-foreground-4","group":"ime-runtime","query":"Squirrel candidate window is the acceptance gate","relevant":["ime-foreground"]}
+{"type":"query","id":"q-ime-foreground-5","group":"ime-runtime","query":"要在前台打字验证侧边候选","relevant":["ime-foreground"]}
+{"type":"query","id":"q-rag-query-1","group":"retrieval","query":"embedding 查询到底从哪些文本生成","relevant":["rag-query"]}
+{"type":"query","id":"q-rag-query-2","group":"retrieval","query":"当前输入要不要和最近上下文一起向量化","relevant":["rag-query"]}
+{"type":"query","id":"q-rag-query-3","group":"retrieval","query":"检索请求不应该带调试元数据","relevant":["rag-query"]}
+{"type":"query","id":"q-rag-query-4","group":"retrieval","query":"construct clean embedding query from foreground context","relevant":["rag-query"]}
+{"type":"query","id":"q-rag-query-5","group":"retrieval","query":"语义搜索的 queryBasis 怎么选","relevant":["rag-query"]}
+{"type":"query","id":"q-rag-source-1","group":"retrieval","query":"怎样知道这条记忆候选来自哪里","relevant":["rag-source"]}
+{"type":"query","id":"q-rag-source-2","group":"retrieval","query":"RAG 和模型建议需要视觉上分开","relevant":["rag-source"]}
+{"type":"query","id":"q-rag-source-3","group":"retrieval","query":"候选应展示 evidence 和 memory id","relevant":["rag-source"]}
+{"type":"query","id":"q-rag-source-4","group":"retrieval","query":"show provenance for retrieved memory","relevant":["rag-source"]}
+{"type":"query","id":"q-rag-source-5","group":"retrieval","query":"如何追溯输入法给出的个人知识","relevant":["rag-source"]}
+{"type":"query","id":"q-rag-group-1","group":"retrieval","query":"A 项目的记忆不要跑到 B 项目","relevant":["rag-group"]}
+{"type":"query","id":"q-rag-group-2","group":"retrieval","query":"跨 Context Group 错召回怎么限制","relevant":["rag-group"]}
+{"type":"query","id":"q-rag-group-3","group":"retrieval","query":"检索优先使用当前项目的内容","relevant":["rag-group"]}
+{"type":"query","id":"q-rag-group-4","group":"retrieval","query":"downweight memories from another context group","relevant":["rag-group"]}
+{"type":"query","id":"q-rag-group-5","group":"retrieval","query":"避免不同工作空间的知识互相污染","relevant":["rag-group"]}
+{"type":"query","id":"q-rag-echo-1","group":"retrieval","query":"候选又重复了一遍我刚输入的话","relevant":["rag-echo"]}
+{"type":"query","id":"q-rag-echo-2","group":"retrieval","query":"怎么做旧输入 anti echo","relevant":["rag-echo"]}
+{"type":"query","id":"q-rag-echo-3","group":"retrieval","query":"补全应该只包含新增的后缀","relevant":["rag-echo"]}
+{"type":"query","id":"q-rag-echo-4","group":"retrieval","query":"reject candidates copying the committed text","relevant":["rag-echo"]}
+{"type":"query","id":"q-rag-echo-5","group":"retrieval","query":"避免建议照抄上文","relevant":["rag-echo"]}
+{"type":"query","id":"q-rag-index-1","group":"retrieval","query":"换了向量模型以后为什么召回混乱","relevant":["rag-index"]}
+{"type":"query","id":"q-rag-index-2","group":"retrieval","query":"provider fingerprint 变化时要重建什么","relevant":["rag-index"]}
+{"type":"query","id":"q-rag-index-3","group":"retrieval","query":"旧模型生成的向量不能继续混用","relevant":["rag-index"]}
+{"type":"query","id":"q-rag-index-4","group":"retrieval","query":"rebuild vector index after embedding migration","relevant":["rag-index"]}
+{"type":"query","id":"q-rag-index-5","group":"retrieval","query":"怎样区分不同版本的本地向量","relevant":["rag-index"]}
+{"type":"query","id":"q-memory-dedup-1","group":"memory","query":"记忆库里同一个意思出现了很多次","relevant":["memory-dedup"]}
+{"type":"query","id":"q-memory-dedup-2","group":"memory","query":"Memory Book 如何合并重复条目","relevant":["memory-dedup"]}
+{"type":"query","id":"q-memory-dedup-3","group":"memory","query":"语义重复时保留证据更好的一条","relevant":["memory-dedup"]}
+{"type":"query","id":"q-memory-dedup-4","group":"memory","query":"deduplicate equivalent personal memories","relevant":["memory-dedup"]}
+{"type":"query","id":"q-memory-dedup-5","group":"memory","query":"编译个人知识时如何去重","relevant":["memory-dedup"]}
+{"type":"query","id":"q-memory-delete-1","group":"memory","query":"删除后搜索还能找到那条记忆","relevant":["memory-delete"]}
+{"type":"query","id":"q-memory-delete-2","group":"memory","query":"隐藏内容需要同步清掉哪些索引","relevant":["memory-delete"]}
+{"type":"query","id":"q-memory-delete-3","group":"memory","query":"FTS 没有记录但向量还会召回","relevant":["memory-delete"]}
+{"type":"query","id":"q-memory-delete-4","group":"memory","query":"remove orphan vectors for deleted memory","relevant":["memory-delete"]}
+{"type":"query","id":"q-memory-delete-5","group":"memory","query":"防止已删除知识幽灵般重新出现","relevant":["memory-delete"]}
+{"type":"query","id":"q-memory-feedback-1","group":"memory","query":"候选接受记录怎样影响以后排序","relevant":["memory-feedback"]}
+{"type":"query","id":"q-memory-feedback-2","group":"memory","query":"一次误点不能永久改变偏好","relevant":["memory-feedback"]}
+{"type":"query","id":"q-memory-feedback-3","group":"memory","query":"跳过和删除算什么反馈信号","relevant":["memory-feedback"]}
+{"type":"query","id":"q-memory-feedback-4","group":"memory","query":"rank retrieved items using bounded feedback","relevant":["memory-feedback"]}
+{"type":"query","id":"q-memory-feedback-5","group":"memory","query":"个人候选如何从选择行为学习","relevant":["memory-feedback"]}
+{"type":"query","id":"q-memory-private-1","group":"memory","query":"密码框里的内容会不会进入记忆库","relevant":["memory-private"]}
+{"type":"query","id":"q-memory-private-2","group":"memory","query":"隐私模式必须禁用持久化","relevant":["memory-private"]}
+{"type":"query","id":"q-memory-private-3","group":"memory","query":"敏感应用的文字不能发到远程","relevant":["memory-private"]}
+{"type":"query","id":"q-memory-private-4","group":"memory","query":"never store secure field input","relevant":["memory-private"]}
+{"type":"query","id":"q-memory-private-5","group":"memory","query":"输入法在哪些场景不记录历史","relevant":["memory-private"]}
+{"type":"query","id":"q-memory-atom-1","group":"memory","query":"一条 Memory Atom 应该包含什么","relevant":["memory-atom"]}
+{"type":"query","id":"q-memory-atom-2","group":"memory","query":"个人记忆片段不应该写得太长","relevant":["memory-atom"]}
+{"type":"query","id":"q-memory-atom-3","group":"memory","query":"候选材料要有单一主题和来源","relevant":["memory-atom"]}
+{"type":"query","id":"q-memory-atom-4","group":"memory","query":"small provenance-aware memory unit","relevant":["memory-atom"]}
+{"type":"query","id":"q-memory-atom-5","group":"memory","query":"适合输入法召回的知识颗粒度","relevant":["memory-atom"]}
+{"type":"query","id":"q-model-local-1","group":"model","query":"断网的时候补全仍然要能工作","relevant":["model-local"]}
+{"type":"query","id":"q-model-local-2","group":"model","query":"实时预测为什么要本机小模型常驻","relevant":["model-local"]}
+{"type":"query","id":"q-model-local-3","group":"model","query":"输入法首候选延迟不能依赖云端","relevant":["model-local"]}
+{"type":"query","id":"q-model-local-4","group":"model","query":"resident local model for realtime completion","relevant":["model-local"]}
+{"type":"query","id":"q-model-local-5","group":"model","query":"离线可用的热路径模型","relevant":["model-local"]}
+{"type":"query","id":"q-model-api-1","group":"model","query":"云端 Qwen embedding 在矩阵里扮演什么角色","relevant":["model-api"]}
+{"type":"query","id":"q-model-api-2","group":"model","query":"API 只用来测质量上限","relevant":["model-api"]}
+{"type":"query","id":"q-model-api-3","group":"model","query":"不要让远程向量服务进入常驻热路径","relevant":["model-api"]}
+{"type":"query","id":"q-model-api-4","group":"model","query":"explicit cloud embedding quality ceiling","relevant":["model-api"]}
+{"type":"query","id":"q-model-api-5","group":"model","query":"本地测试是否应把 Qwen API 当默认","relevant":["model-api"]}
+{"type":"query","id":"q-model-prefix-1","group":"model","query":"Piccolo 查询和文档分别加什么前缀","relevant":["model-prefix"]}
+{"type":"query","id":"q-model-prefix-2","group":"model","query":"查询：结果：用于哪种 embedding","relevant":["model-prefix"]}
+{"type":"query","id":"q-model-prefix-3","group":"model","query":"非对称中文检索 instruction 设置","relevant":["model-prefix"]}
+{"type":"query","id":"q-model-prefix-4","group":"model","query":"query and document prefixes for Piccolo","relevant":["model-prefix"]}
+{"type":"query","id":"q-model-prefix-5","group":"model","query":"如何编码当前输入和 Memory Atom","relevant":["model-prefix"]}
+{"type":"query","id":"q-model-int8-1","group":"model","query":"本机向量模型量化后要比较哪些指标","relevant":["model-int8"]}
+{"type":"query","id":"q-model-int8-2","group":"model","query":"ONNX INT8 是否会损失检索质量","relevant":["model-int8"]}
+{"type":"query","id":"q-model-int8-3","group":"model","query":"FP32 与八位模型的延迟内存对照","relevant":["model-int8"]}
+{"type":"query","id":"q-model-int8-4","group":"model","query":"benchmark quantized embedding runtime","relevant":["model-int8"]}
+{"type":"query","id":"q-model-int8-5","group":"model","query":"最终部署前验证模型压缩效果","relevant":["model-int8"]}
+{"type":"query","id":"q-model-mixed-1","group":"model","query":"中文项目记忆里夹了很多英文类名","relevant":["model-mixed"]}
+{"type":"query","id":"q-model-mixed-2","group":"model","query":"stale fingerprint 被丢弃这类句子谁召回好","relevant":["model-mixed"]}
+{"type":"query","id":"q-model-mixed-3","group":"model","query":"Squirrel foreground context 和 RAG lane 混合文本","relevant":["model-mixed"]}
+{"type":"query","id":"q-model-mixed-4","group":"model","query":"Chinese queries containing code identifiers","relevant":["model-mixed"]}
+{"type":"query","id":"q-model-mixed-5","group":"model","query":"技术词中英混写的向量能力","relevant":["model-mixed"]}

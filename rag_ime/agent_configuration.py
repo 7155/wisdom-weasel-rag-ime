@@ -1,0 +1,695 @@
+from __future__ import annotations
+
+import copy
+import json
+import queue
+import re
+import sqlite3
+import threading
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+from .agent_runtime_driver import AgentRuntimePolicy
+from .contracts.json_schema import validate_contract
+from .db import apply_database_migrations
+
+
+_CONTROL_STREAM_ID = "agent-control"
+_EVENT_RETENTION = 2_048
+_RUNTIME_KEYS = frozenset(
+    {
+        "runtime.enabled",
+        "runtime.startup",
+        "runtime.idleTimeoutSeconds",
+    }
+)
+_STRING_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class AgentConfigurationConflict(ValueError):
+    """Raised when a client writes from a stale multi-device snapshot."""
+
+
+@dataclass(frozen=True)
+class AgentConfigurationUpdate:
+    snapshot: dict[str, object]
+    event: dict[str, object] | None
+    changed_keys: tuple[str, ...]
+    runtime_sync_required: bool
+
+
+def default_agent_configuration(
+    *,
+    enabled: bool = False,
+    idle_timeout_seconds: int = 900,
+    role_id: str = "zhiyou-v1",
+    role_version: str = "1",
+    model_profile: str = "pi/default",
+    tool_profile_version: str = "control-center-v1",
+    resume_last_session: bool = True,
+    coordinator_enabled: bool = False,
+) -> dict[str, object]:
+    configuration = {
+        "runtime": {
+            "enabled": bool(enabled),
+            "startup": "lazy",
+            "idleTimeoutSeconds": _bounded_integer(
+                idle_timeout_seconds,
+                field="runtime.idleTimeoutSeconds",
+                minimum=0,
+                maximum=86_400,
+            ),
+        },
+        "sessionDefaults": {
+            "resumeLastSession": bool(resume_last_session),
+            "roleId": _identifier(role_id, field="sessionDefaults.roleId", maximum=80),
+            "roleVersion": _identifier(
+                role_version,
+                field="sessionDefaults.roleVersion",
+                maximum=32,
+            ),
+            "modelProfile": _model_profile(model_profile),
+            "toolProfileVersion": _identifier(
+                tool_profile_version,
+                field="sessionDefaults.toolProfileVersion",
+                maximum=80,
+            ),
+        },
+        "coordination": {"enabled": bool(coordinator_enabled)},
+    }
+    _validate_configuration(configuration)
+    return configuration
+
+
+def runtime_policy_from_configuration(
+    configuration: Mapping[str, object],
+) -> AgentRuntimePolicy:
+    runtime = _mapping(configuration.get("runtime"), field="runtime")
+    return AgentRuntimePolicy(
+        enabled=_boolean(runtime.get("enabled"), field="runtime.enabled"),
+        startup=_string(runtime.get("startup"), field="runtime.startup"),
+        idle_timeout_seconds=_bounded_integer(
+            runtime.get("idleTimeoutSeconds"),
+            field="runtime.idleTimeoutSeconds",
+            minimum=0,
+            maximum=86_400,
+        ),
+    )
+
+
+class AgentConfigurationStore:
+    """Durable Agent-Kernel desired state with optimistic concurrency."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        self.db_path = Path(db_path)
+        self._initialize_lock = threading.RLock()
+        self._initialized = False
+
+    def initialize(self, seed: Mapping[str, object]) -> None:
+        if self._initialized:
+            return
+        configuration = copy.deepcopy(dict(seed))
+        _validate_configuration(configuration)
+        with self._initialize_lock:
+            if self._initialized:
+                return
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._connect() as conn:
+                apply_database_migrations(conn)
+                row = conn.execute(
+                    "SELECT singleton_id FROM agent_configuration_state WHERE singleton_id = 1"
+                ).fetchone()
+                if row is None:
+                    now = _now_ms()
+                    conn.execute(
+                        """
+                        INSERT INTO agent_configuration_state(
+                            singleton_id, revision, configuration_json,
+                            applied_revision, sync_state, sync_error,
+                            updated_at_ms, updated_by
+                        ) VALUES (1, 1, ?, 1, 'synchronized', '', ?, 'bootstrap')
+                        """,
+                        (_json(configuration), now),
+                    )
+            self._initialized = True
+
+    def snapshot(self) -> dict[str, object]:
+        self._require_initialized()
+        with self._connect() as conn:
+            row = self._state_row(conn)
+            last_sequence = self._last_sequence(conn)
+        return _snapshot_payload(row, last_sequence=last_sequence)
+
+    def update(
+        self,
+        changes: Mapping[str, object],
+        *,
+        expected_revision: int,
+        updated_by: str,
+    ) -> AgentConfigurationUpdate:
+        self._require_initialized()
+        normalized = _normalize_changes(changes)
+        actor = _bounded_actor(updated_by)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._state_row(conn)
+            current_revision = int(row["revision"])
+            if int(expected_revision) != current_revision:
+                raise AgentConfigurationConflict(
+                    f"agent configuration revision changed: expected {expected_revision}, "
+                    f"current {current_revision}"
+                )
+            before = _configuration_from_row(row)
+            after = copy.deepcopy(before)
+            for key, value in normalized.items():
+                _set_dotted(after, key, value)
+            _validate_configuration(after)
+            changed_keys = tuple(
+                sorted(key for key in normalized if _get_dotted(before, key) != _get_dotted(after, key))
+            )
+            if not changed_keys:
+                return AgentConfigurationUpdate(
+                    snapshot=_snapshot_payload(row, last_sequence=self._last_sequence(conn)),
+                    event=None,
+                    changed_keys=(),
+                    runtime_sync_required=False,
+                )
+
+            revision = current_revision + 1
+            runtime_sync_required = bool(_RUNTIME_KEYS.intersection(changed_keys))
+            if runtime_sync_required:
+                sync_state = "pending"
+                applied_revision = int(row["applied_revision"])
+            elif str(row["sync_state"]) == "synchronized":
+                sync_state = "synchronized"
+                applied_revision = revision
+            else:
+                sync_state = str(row["sync_state"])
+                applied_revision = int(row["applied_revision"])
+            now = _now_ms()
+            conn.execute(
+                """
+                UPDATE agent_configuration_state
+                SET revision = ?, configuration_json = ?, applied_revision = ?,
+                    sync_state = ?, sync_error = '', updated_at_ms = ?, updated_by = ?
+                WHERE singleton_id = 1
+                """,
+                (revision, _json(after), applied_revision, sync_state, now, actor),
+            )
+            event = self._append_event(
+                conn,
+                "configuration_changed",
+                {
+                    "revision": revision,
+                    "revisionToken": _revision_token(revision),
+                    "changedKeys": list(changed_keys),
+                    "updatedBy": actor,
+                    "syncState": sync_state,
+                },
+                created_at_ms=now,
+            )
+            updated_row = self._state_row(conn)
+            snapshot = _snapshot_payload(updated_row, last_sequence=int(event["sequence"]))
+        return AgentConfigurationUpdate(
+            snapshot=snapshot,
+            event=event,
+            changed_keys=changed_keys,
+            runtime_sync_required=runtime_sync_required,
+        )
+
+    def mark_applied(
+        self,
+        revision: int,
+        *,
+        runtime_status: Mapping[str, object],
+    ) -> tuple[dict[str, object], dict[str, object] | None]:
+        return self._mark_sync(
+            revision,
+            state="synchronized",
+            error="",
+            runtime_status=runtime_status,
+        )
+
+    def mark_failed(
+        self,
+        revision: int,
+        *,
+        error: str,
+        runtime_status: Mapping[str, object],
+    ) -> tuple[dict[str, object], dict[str, object] | None]:
+        return self._mark_sync(
+            revision,
+            state="failed",
+            error=" ".join(str(error).split())[:500],
+            runtime_status=runtime_status,
+        )
+
+    def list_events(
+        self,
+        *,
+        after_sequence: int = 0,
+        limit: int = _EVENT_RETENTION,
+    ) -> list[dict[str, object]]:
+        self._require_initialized()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_control_events
+                WHERE sequence > ?
+                ORDER BY sequence ASC
+                LIMIT ?
+                """,
+                (max(0, int(after_sequence)), max(1, min(int(limit), _EVENT_RETENTION))),
+            ).fetchall()
+        return [_event_payload(row) for row in rows]
+
+    def event_bounds(self) -> tuple[int, int]:
+        self._require_initialized()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MIN(sequence), MAX(sequence) FROM agent_control_events"
+            ).fetchone()
+        if row is None or row[0] is None:
+            return 0, 0
+        return int(row[0]), int(row[1])
+
+    def _mark_sync(
+        self,
+        revision: int,
+        *,
+        state: str,
+        error: str,
+        runtime_status: Mapping[str, object],
+    ) -> tuple[dict[str, object], dict[str, object] | None]:
+        self._require_initialized()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._state_row(conn)
+            if int(row["revision"]) != int(revision):
+                return _snapshot_payload(row, last_sequence=self._last_sequence(conn)), None
+            applied_revision = int(revision) if state == "synchronized" else int(row["applied_revision"])
+            conn.execute(
+                """
+                UPDATE agent_configuration_state
+                SET applied_revision = ?, sync_state = ?, sync_error = ?
+                WHERE singleton_id = 1
+                """,
+                (applied_revision, state, error),
+            )
+            event_type = "configuration_applied" if state == "synchronized" else "configuration_failed"
+            event = self._append_event(
+                conn,
+                event_type,
+                {
+                    "revision": int(revision),
+                    "revisionToken": _revision_token(int(revision)),
+                    "syncState": state,
+                    "error": error,
+                    "runtime": _safe_runtime_status(runtime_status),
+                },
+            )
+            updated = self._state_row(conn)
+            snapshot = _snapshot_payload(updated, last_sequence=int(event["sequence"]))
+        return snapshot, event
+
+    def _append_event(
+        self,
+        conn: sqlite3.Connection,
+        event_type: str,
+        payload: Mapping[str, object],
+        *,
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        sequence = self._last_sequence(conn) + 1
+        event_id = f"{_CONTROL_STREAM_ID}:{sequence}"
+        created = int(created_at_ms if created_at_ms is not None else _now_ms())
+        conn.execute(
+            """
+            INSERT INTO agent_control_events(
+                sequence, event_id, event_type, payload_json, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (sequence, event_id, event_type, _json(dict(payload)), created),
+        )
+        conn.execute(
+            "DELETE FROM agent_control_events WHERE sequence <= ?",
+            (max(0, sequence - _EVENT_RETENTION),),
+        )
+        event = {
+            "schemaVersion": "rag-ime.agent-control-event.v1",
+            "eventId": event_id,
+            "sequence": sequence,
+            "eventType": event_type,
+            "createdAtMs": created,
+            "payload": dict(payload),
+            "resumeToken": event_id,
+        }
+        validate_contract(event, "agent-control-event.v1.json")
+        return event
+
+    @staticmethod
+    def _state_row(conn: sqlite3.Connection) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM agent_configuration_state WHERE singleton_id = 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("agent configuration store is not initialized")
+        return row
+
+    @staticmethod
+    def _last_sequence(conn: sqlite3.Connection) -> int:
+        row = conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM agent_control_events").fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def _require_initialized(self) -> None:
+        if not self._initialized:
+            raise RuntimeError("agent configuration store is not initialized")
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+class AgentControlEventHub:
+    """Persistent global Agent control stream for every UI or gateway client."""
+
+    def __init__(self, store: AgentConfigurationStore) -> None:
+        self.store = store
+        self._lock = threading.RLock()
+        self._subscribers: set[queue.Queue[dict[str, object]]] = set()
+
+    def fan_out(self, event: Mapping[str, object] | None) -> None:
+        if event is None:
+            return
+        item = dict(event)
+        with self._lock:
+            subscribers = tuple(self._subscribers)
+        for subscriber in subscribers:
+            try:
+                subscriber.put_nowait(item)
+            except queue.Full:
+                try:
+                    subscriber.get_nowait()
+                    subscriber.put_nowait(item)
+                except (queue.Empty, queue.Full):
+                    pass
+
+    def subscribe(
+        self,
+        *,
+        after_event_id: str = "",
+        heartbeat_seconds: float = 10.0,
+    ) -> Iterator[bytes]:
+        after_sequence = _control_event_sequence(after_event_id)
+        if after_event_id and after_sequence is None:
+            gap = True
+            after_sequence = 0
+        else:
+            first, last = self.store.event_bounds()
+            gap = bool(
+                after_sequence
+                and (
+                    after_sequence > last
+                    or (first > 0 and after_sequence < first - 1)
+                )
+            )
+        subscriber: queue.Queue[dict[str, object]] = queue.Queue(maxsize=128)
+        with self._lock:
+            if gap:
+                snapshot = self.store.snapshot()
+                replay = [
+                    _snapshot_required_event(
+                        after_event_id=after_event_id,
+                        last_event_id=str(snapshot["lastEventId"]),
+                    )
+                ]
+            else:
+                replay = self.store.list_events(after_sequence=after_sequence or 0)
+            self._subscribers.add(subscriber)
+        delivered = 0 if gap else (after_sequence or 0)
+        try:
+            yield b": connected\n\n"
+            for event in replay:
+                delivered = max(delivered, int(event["sequence"]))
+                yield _event_sse(event)
+            while True:
+                try:
+                    event = subscriber.get(timeout=heartbeat_seconds)
+                    if int(event["sequence"]) <= delivered:
+                        continue
+                    delivered = int(event["sequence"])
+                    yield _event_sse(event)
+                except queue.Empty:
+                    yield b": heartbeat\n\n"
+        finally:
+            with self._lock:
+                self._subscribers.discard(subscriber)
+
+    @property
+    def subscriber_count(self) -> int:
+        with self._lock:
+            return len(self._subscribers)
+
+
+def _snapshot_payload(row: sqlite3.Row, *, last_sequence: int) -> dict[str, object]:
+    revision = int(row["revision"])
+    configuration = _configuration_from_row(row)
+    payload = {
+        "schemaVersion": "rag-ime.agent-configuration.v1",
+        "revision": revision,
+        "revisionToken": _revision_token(revision),
+        "configuration": configuration,
+        "sync": {
+            "state": str(row["sync_state"]),
+            "appliedRevision": int(row["applied_revision"]),
+            "error": str(row["sync_error"] or ""),
+        },
+        "updatedAtMs": int(row["updated_at_ms"]),
+        "updatedBy": str(row["updated_by"]),
+        "lastEventId": f"{_CONTROL_STREAM_ID}:{last_sequence}" if last_sequence else "",
+    }
+    validate_contract(payload, "agent-configuration.v1.json")
+    return payload
+
+
+def _event_payload(row: sqlite3.Row) -> dict[str, object]:
+    raw = json.loads(str(row["payload_json"]))
+    payload = {
+        "schemaVersion": "rag-ime.agent-control-event.v1",
+        "eventId": str(row["event_id"]),
+        "sequence": int(row["sequence"]),
+        "eventType": str(row["event_type"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "payload": raw if isinstance(raw, dict) else {},
+        "resumeToken": str(row["event_id"]),
+    }
+    validate_contract(payload, "agent-control-event.v1.json")
+    return payload
+
+
+def _snapshot_required_event(*, after_event_id: str, last_event_id: str) -> dict[str, object]:
+    last_sequence = _control_event_sequence(last_event_id) or 0
+    event = {
+        "schemaVersion": "rag-ime.agent-control-event.v1",
+        "eventId": f"{_CONTROL_STREAM_ID}:snapshot",
+        "sequence": last_sequence,
+        "eventType": "snapshot_required",
+        "createdAtMs": _now_ms(),
+        "payload": {
+            "reason": "agent_control_event_replay_gap",
+            "afterEventId": after_event_id,
+            "snapshotEndpoint": "/api/agent/configuration",
+        },
+        "resumeToken": last_event_id,
+    }
+    validate_contract(event, "agent-control-event.v1.json")
+    return event
+
+
+def _event_sse(event: Mapping[str, object]) -> bytes:
+    event_id = str(event.get("eventId") or "")
+    event_type = str(event.get("eventType") or "message")
+    body = json.dumps(dict(event), ensure_ascii=False, separators=(",", ":"))
+    return f"id: {event_id}\nevent: {event_type}\ndata: {body}\n\n".encode("utf-8")
+
+
+def _configuration_from_row(row: sqlite3.Row) -> dict[str, object]:
+    raw = json.loads(str(row["configuration_json"]))
+    if not isinstance(raw, dict):
+        raise RuntimeError("agent configuration row is invalid")
+    _validate_configuration(raw)
+    return raw
+
+
+def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(changes, Mapping):
+        raise ValueError("agent configuration changes must be an object")
+    if not 1 <= len(changes) <= 16:
+        raise ValueError("agent configuration update requires between 1 and 16 changes")
+    normalized: dict[str, object] = {}
+    for raw_key, value in changes.items():
+        key = str(raw_key)
+        if key == "runtime.enabled":
+            normalized[key] = _boolean(value, field=key)
+        elif key == "runtime.startup":
+            startup = _string(value, field=key)
+            if startup != "lazy":
+                raise ValueError("runtime.startup only supports lazy")
+            normalized[key] = startup
+        elif key == "runtime.idleTimeoutSeconds":
+            normalized[key] = _bounded_integer(value, field=key, minimum=0, maximum=86_400)
+        elif key in {"sessionDefaults.resumeLastSession", "coordination.enabled"}:
+            normalized[key] = _boolean(value, field=key)
+        elif key in {
+            "sessionDefaults.roleId",
+            "sessionDefaults.roleVersion",
+            "sessionDefaults.toolProfileVersion",
+        }:
+            maximum = 32 if key.endswith("roleVersion") else 80
+            normalized[key] = _identifier(value, field=key, maximum=maximum)
+        elif key == "sessionDefaults.modelProfile":
+            normalized[key] = _model_profile(value)
+        else:
+            raise ValueError(f"unsupported agent configuration key: {key}")
+    return normalized
+
+
+def _validate_configuration(configuration: Mapping[str, object]) -> None:
+    if set(configuration) != {"runtime", "sessionDefaults", "coordination"}:
+        raise ValueError("agent configuration sections are invalid")
+    runtime = _mapping(configuration.get("runtime"), field="runtime")
+    defaults = _mapping(configuration.get("sessionDefaults"), field="sessionDefaults")
+    coordination = _mapping(configuration.get("coordination"), field="coordination")
+    if set(runtime) != {"enabled", "startup", "idleTimeoutSeconds"}:
+        raise ValueError("agent runtime configuration fields are invalid")
+    if set(defaults) != {
+        "resumeLastSession",
+        "roleId",
+        "roleVersion",
+        "modelProfile",
+        "toolProfileVersion",
+    }:
+        raise ValueError("agent session default fields are invalid")
+    if set(coordination) != {"enabled"}:
+        raise ValueError("agent coordination configuration fields are invalid")
+    runtime_policy_from_configuration(configuration)
+    _boolean(defaults.get("resumeLastSession"), field="sessionDefaults.resumeLastSession")
+    _identifier(defaults.get("roleId"), field="sessionDefaults.roleId", maximum=80)
+    _identifier(defaults.get("roleVersion"), field="sessionDefaults.roleVersion", maximum=32)
+    _model_profile(defaults.get("modelProfile"))
+    _identifier(
+        defaults.get("toolProfileVersion"),
+        field="sessionDefaults.toolProfileVersion",
+        maximum=80,
+    )
+    _boolean(coordination.get("enabled"), field="coordination.enabled")
+
+
+def _set_dotted(target: dict[str, object], key: str, value: object) -> None:
+    section, leaf = key.split(".", 1)
+    branch = target.get(section)
+    if not isinstance(branch, dict):
+        raise ValueError(f"agent configuration section is invalid: {section}")
+    branch[leaf] = value
+
+
+def _get_dotted(target: Mapping[str, object], key: str) -> object:
+    section, leaf = key.split(".", 1)
+    branch = target.get(section)
+    return branch.get(leaf) if isinstance(branch, Mapping) else None
+
+
+def _mapping(value: object, *, field: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field} must be an object")
+    return value
+
+
+def _boolean(value: object, *, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a boolean")
+    return value
+
+
+def _bounded_integer(value: object, *, field: str, minimum: int, maximum: int) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field} must be an integer")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{field} must be between {minimum} and {maximum}")
+    return value
+
+
+def _string(value: object, *, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    return value.strip()
+
+
+def _identifier(value: object, *, field: str, maximum: int) -> str:
+    text = _string(value, field=field)
+    if not text or len(text) > maximum or not _STRING_ID.fullmatch(text):
+        raise ValueError(f"{field} must be a stable identifier")
+    return text
+
+
+def _model_profile(value: object) -> str:
+    text = _string(value, field="sessionDefaults.modelProfile")
+    if not text or len(text) > 200 or any(character.isspace() for character in text):
+        raise ValueError("sessionDefaults.modelProfile must be a stable model reference")
+    return text
+
+
+def _bounded_actor(value: object) -> str:
+    text = " ".join(str(value or "unknown-client").split())[:120]
+    return text or "unknown-client"
+
+
+def _safe_runtime_status(value: Mapping[str, object]) -> dict[str, object]:
+    return {
+        key: value.get(key)
+        for key in (
+            "driverId",
+            "runtimeKind",
+            "runtimeVersion",
+            "enabled",
+            "status",
+            "idleTimeoutSeconds",
+        )
+        if key in value
+    }
+
+
+def _control_event_sequence(event_id: str) -> int | None:
+    if not event_id:
+        return 0
+    prefix = f"{_CONTROL_STREAM_ID}:"
+    if not event_id.startswith(prefix):
+        return None
+    try:
+        return int(event_id[len(prefix) :])
+    except ValueError:
+        return None
+
+
+def _revision_token(revision: int) -> str:
+    return f"agent-config:{revision}"
+
+
+def _json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)

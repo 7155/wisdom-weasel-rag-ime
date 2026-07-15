@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 OFFLINE_CLEANUP_PROVIDERS = (
-    "x1top",
-    "deepseek",
+    "deepseek-v4",
 )
 
 DOWNSTREAM_SOURCE_TYPES = (
@@ -22,6 +21,5 @@ CURATED_MEMORY_REQUIRED_SIGNALS = (
 
 FORBIDDEN_REALTIME_PROVIDER_HINTS = (
     "remote typing inference",
-    "x1top realtime prediction",
-    "deepseek realtime prediction",
+    "deepseek-v4 realtime prediction",
 )

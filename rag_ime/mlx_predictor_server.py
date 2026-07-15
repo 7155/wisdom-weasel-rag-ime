@@ -33,6 +33,7 @@ from .anti_echo import candidate_has_self_repetition, collapse_repeated_tail
 from .ime_candidate_stream import ImeCandidateStreamParser
 from .model_lane_scheduler import LatestWinsModelScheduler, model_request_token_from_metadata
 from .model_profiles import profile_by_id
+from .model_registry import fingerprint_model_artifact
 from .mlx_prefix_cache import MlxPrefixCache, PrefixCacheEntry
 from .predictor_latency import (
     append_latency_trace,
@@ -131,6 +132,77 @@ _LOW_VALUE_LOGITS_CANDIDATES = {
     "和",
     "是",
 }
+_COMPLETION_DOMAIN_TERMS = (
+    "rag",
+    "llm",
+    "ui",
+    "ds",
+    "模型",
+    "上下文",
+    "预测",
+    "候选",
+    "输入法",
+    "前端",
+    "后端",
+    "接口",
+    "缓存",
+    "数据",
+    "样本",
+    "延迟",
+    "推理",
+    "过滤",
+    "生成",
+    "配置",
+    "日志",
+    "脚本",
+    "代码",
+    "错误",
+    "问题",
+    "效果",
+    "测试",
+    "结果",
+    "流程",
+    "状态",
+    "内存",
+    "质量",
+    "诊断",
+    "来源",
+    "管理",
+    "优化",
+    "调整",
+    "训练",
+    "速度",
+    "方式",
+)
+_COMPLETION_HIGH_SIGNAL_TERMS = {
+    "rag",
+    "llm",
+    "ui",
+    "ds",
+    "模型",
+    "上下文",
+    "预测",
+    "候选",
+    "输入法",
+    "前端",
+    "后端",
+    "接口",
+    "缓存",
+}
+_LOW_INFORMATION_COMPLETION_SEEDS = {
+    "就",
+    "的",
+    "了",
+    "是",
+    "和",
+    "也",
+    "还",
+    "再",
+    "能",
+    "要",
+    "会",
+    "把",
+}
 
 
 @dataclass(frozen=True)
@@ -154,10 +226,73 @@ class _ContinuationBranchSpec:
     max_candidate_chars: int
 
 
+def _mlx_warmup_enabled() -> bool:
+    return os.environ.get("RAG_IME_MLX_WARMUP", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def _mlx_cache_limit_bytes() -> int:
+    raw_limit = os.environ.get("RAG_IME_MLX_CACHE_LIMIT_MB", "256").strip()
+    try:
+        limit_mb = int(raw_limit)
+    except ValueError:
+        limit_mb = 256
+    return min(max(0, limit_mb), 4096) * 1024 * 1024
+
+
+def _configure_mlx_allocator_cache() -> tuple[dict[str, Any], Any | None]:
+    limit_bytes = _mlx_cache_limit_bytes()
+    status: dict[str, Any] = {
+        "enabled": limit_bytes > 0,
+        "configured": False,
+        "limitBytes": limit_bytes,
+    }
+    if limit_bytes <= 0:
+        return status, None
+    try:
+        import mlx.core as mx  # type: ignore
+
+        set_cache_limit = getattr(mx, "set_cache_limit", None)
+        if not callable(set_cache_limit):
+            status["unsupported"] = True
+            return status, mx
+        previous_limit = set_cache_limit(limit_bytes)
+        status["configured"] = True
+        if previous_limit is not None:
+            status["previousLimitBytes"] = int(previous_limit)
+    except Exception as exc:  # pragma: no cover - depends on the installed MLX runtime
+        status["error"] = type(exc).__name__
+        return status, None
+    return status, mx
+
+
+def _mlx_memory_status(cache_status: dict[str, Any], mx: Any | None) -> dict[str, Any]:
+    status = dict(cache_status)
+    if mx is None:
+        return status
+    try:
+        for field, getter_name in (
+            ("activeBytes", "get_active_memory"),
+            ("cacheBytes", "get_cache_memory"),
+            ("peakBytes", "get_peak_memory"),
+        ):
+            getter = getattr(mx, getter_name, None)
+            if callable(getter):
+                status[field] = int(getter())
+    except Exception as exc:  # pragma: no cover - depends on the installed MLX runtime
+        status.setdefault("error", type(exc).__name__)
+    return status
+
+
 class _LocalTokenizersBackendWrapper:
     def __init__(self, tokenizer: Any, *, eos_token_id: int | None = None) -> None:
         self._tokenizer = tokenizer
         self.eos_token_id = eos_token_id
+        self.eos_token_ids = {int(eos_token_id)} if eos_token_id is not None else set()
 
     def encode(self, text: str) -> list[int]:
         encoded = self._tokenizer.encode(str(text))
@@ -236,7 +371,11 @@ class MlxLmEngine:
         self.model_id = model_id
         self.profile = profile_by_id(profile_id)
         self.model_info = _inspect_local_mlx_model(model_id)
+        # MLX otherwise defaults to a multi-gigabyte Metal allocator cache. Cap
+        # it before model loading so varied IME requests cannot grow indefinitely.
+        self._mlx_allocator_cache, self._mlx_core = _configure_mlx_allocator_cache()
         self.model, self.tokenizer = _load_mlx_model_and_tokenizer(model_id)
+        self.model_fingerprint = _local_model_fingerprint(model_id)
         self._base_completion_mode = _is_base_completion_model(model_id, self.model_info)
         self._prompt_cache = _PromptCacheState(
             enabled=bool(enable_prompt_cache) and not self._base_completion_mode,
@@ -264,8 +403,58 @@ class MlxLmEngine:
             "cacheHitTokens": 0,
             "cacheMissTokens": 0,
         }
+        self._warmup_status: dict[str, Any] = {
+            "enabled": _mlx_warmup_enabled(),
+            "completed": False,
+            "ok": False,
+            "elapsedMs": 0,
+            "candidateCount": 0,
+        }
         if self._prompt_cache.enabled:
             self._prepare_prompt_cache()
+
+    def warmup(self, *, max_tokens: int, temperature: float, top_p: float) -> dict[str, Any]:
+        """Compile the resident MLX graph before the first foreground keystroke."""
+
+        if not _mlx_warmup_enabled():
+            self._warmup_status = {
+                "enabled": False,
+                "completed": True,
+                "ok": True,
+                "elapsedMs": 0,
+                "candidateCount": 0,
+                "skippedReason": "disabled",
+            }
+            return dict(self._warmup_status)
+        started = time.perf_counter()
+        try:
+            payload = self.predict(
+                current_input="",
+                recent_context="输入法本地三候选已经准备，接下来",
+                max_candidates=3,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                request_metadata={"requestId": "mlx-startup-warmup", "profileId": self.profile.id},
+            )
+            self._warmup_status = {
+                "enabled": True,
+                "completed": True,
+                "ok": bool(payload.get("ok")),
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "candidateCount": len(payload.get("candidates") or []),
+            }
+        except Exception as exc:
+            self._warmup_status = {
+                "enabled": True,
+                "completed": True,
+                "ok": False,
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "candidateCount": 0,
+                "error": type(exc).__name__,
+            }
+        return dict(self._warmup_status)
 
     def health(self) -> dict[str, Any]:
         prompt_cache = self.prompt_cache_status()
@@ -273,14 +462,18 @@ class MlxLmEngine:
             "ok": True,
             "provider": "mlx-lm",
             "model": self.model_id,
+            "modelFingerprint": self.model_fingerprint,
             "modelProfile": self.profile.to_payload(),
             "modelLoaded": True,
             "modelInfo": self.model_info,
+            "warmup": dict(self._warmup_status),
             "promptCache": prompt_cache,
             "prefixCache": self.prefix_cache_status(),
+            "mlxMemory": _mlx_memory_status(self._mlx_allocator_cache, self._mlx_core),
             "capabilities": {
                 "streaming": True,
                 "residentModel": True,
+                "boundedAllocatorCache": bool(self._mlx_allocator_cache.get("configured")),
                 "promptCache": _prompt_cache_used_for_generation(prompt_cache),
                 "prefixCache": bool(self._prefix_cache_enabled),
                 "textOnlyModel": bool(self.model_info.get("textOnly")),
@@ -362,11 +555,75 @@ class MlxLmEngine:
             return payload
 
         if self._base_completion_mode:
+            display_candidate_limit = max(1, min(3, int(max_candidates)))
+            prompt = _build_base_completion_prompt(
+                current_input=current_input,
+                recent_context=recent_context,
+            )
+            try:
+                prompt_tokens = self.tokenizer.encode(prompt) if prompt else []
+            except Exception:
+                prompt_tokens = []
+            if not prompt_tokens:
+                return finalize({
+                    "ok": True,
+                    "model": self.model_id,
+                    "rawText": "",
+                    "candidates": [],
+                    "candidateScores": [],
+                    "candidateMode": "base-completion-empty-prompt",
+                    "requestType": resolved_request_type,
+                    "totalMs": int((time.perf_counter() - started) * 1000),
+                    "promptCache": self.prompt_cache_status(),
+                    "timing": {
+                        "candidateMode": "base-completion-empty-prompt",
+                        "logitsMs": 0,
+                        "fallbackJson": False,
+                        "requestType": resolved_request_type,
+                        "skippedReason": "empty_prompt",
+                    },
+                    "requestMeta": dict(metadata),
+                })
+
+            # This checkpoint is a bare next-token completion model. Top-k
+            # logits are branch seeds, not complete user-facing candidates.
+            # Decode each seed into its own short continuation so the three
+            # rows are genuine alternatives rather than three isolated tokens.
+            probe_candidate_limit = max(16, min(32, display_candidate_limit * 8))
+            logits_payload = self.prefill_base_completion_logits(
+                prompt_tokens=prompt_tokens,
+                max_candidates=probe_candidate_limit,
+            )
+            if not logits_payload.get("candidateScores"):
+                logits_payload = self.predict_next_token_logits(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    max_candidates=probe_candidate_limit,
+                    request_type=resolved_request_type,
+                    rime_candidates=rime_candidate_tuple,
+                    request_metadata=metadata,
+                )
+            branch_payload = self.predict_base_completion_branches(
+                current_input=current_input,
+                recent_context=recent_context,
+                prompt=prompt,
+                max_candidates=display_candidate_limit,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                started=started,
+                request_type=resolved_request_type,
+                logits_candidates=logits_payload,
+                request_metadata=metadata,
+            )
+            if branch_payload is not None:
+                return finalize(branch_payload)
+
             raw_text = "".join(
                 self.stream_text(
                     current_input=current_input,
                     recent_context=recent_context,
-                    max_candidates=max_candidates,
+                    max_candidates=display_candidate_limit,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
@@ -381,7 +638,7 @@ class MlxLmEngine:
                 raw_text,
                 current_input=current_input,
                 recent_context=recent_context,
-                max_candidates=max_candidates,
+                max_candidates=display_candidate_limit,
             )
             return finalize({
                 "ok": True,
@@ -394,8 +651,9 @@ class MlxLmEngine:
                 "promptCache": self.prompt_cache_status(),
                 "timing": {
                     "candidateMode": "base-completion",
-                    "logitsMs": 0,
+                    "logitsMs": int(logits_payload.get("elapsedMs") or 0),
                     "fallbackJson": False,
+                    "fallbackReason": "base_completion_branches_empty",
                     "requestType": resolved_request_type,
                 },
                 "requestMeta": dict(metadata),
@@ -812,6 +1070,354 @@ class MlxLmEngine:
             "requestMeta": dict(request_metadata or {}),
         }
 
+    def predict_base_completion_branches(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        prompt: str,
+        max_candidates: int,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        started: float,
+        request_type: str,
+        logits_candidates: dict[str, Any],
+        request_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Expand top-logit seeds into distinct short base-model completions."""
+
+        display_limit = max(1, min(3, int(max_candidates)))
+        seeds = _seed_replay_specs_from_logits(
+            logits_candidates.get("candidateScores"),
+            # Filtering malformed, echoed, or one-character branches can
+            # consume more than half of MiniMind's top logits. Keep a wider
+            # seed reserve so a request for three rows is not routinely
+            # returned as only one or two candidates.
+            max_seeds=max(6, display_limit * 4),
+            allow_single_cjk=True,
+        )
+        if not seeds:
+            return None
+        # Four tokens regularly cut MiniMind in the middle of a phrase (for
+        # example, `短候`). Six keeps the branch compact while giving the model
+        # enough room to finish the thought in the same batched decode.
+        per_seed_max_tokens = max(4, min(6, int(max_tokens)))
+        branch_temperature = max(0.0, min(float(temperature), 0.10))
+        metadata = dict(request_metadata or {})
+        cancel_request_id = str(metadata.get("requestId") or "")
+        candidates: list[str] = []
+        raw_texts: list[str] = []
+        branch_timings: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        processed_seed_indexes: set[int] = set()
+        failed_seed_indexes: set[int] = set()
+        batch_elapsed_ms = 0
+        batch_calls = 0
+        batch_error = ""
+        batch_stats: dict[str, Any] = {}
+        shared_prompt_cache = logits_candidates.get("promptCache")
+
+        def record_branch(
+            *,
+            seed_index: int,
+            raw_text: str,
+            decode_mode: str,
+            elapsed_ms: int = 0,
+        ) -> bool:
+            seed = seeds[seed_index]
+            seed_text = compact_whitespace(str(seed.get("text") or ""))
+            if not seed_text:
+                return False
+            candidate = _seeded_replay_candidate(
+                seed_text=seed_text,
+                raw_text=raw_text,
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidate_chars=max(8, min(18, per_seed_max_tokens * 2 + len(seed_text))),
+            )
+            branch_candidates = [candidate] if candidate else []
+            raw_texts.append(f"{seed_text}{raw_text}")
+            branch_timings.append(
+                {
+                    "label": f"seed:{seed_text}",
+                    "branchRank": seed_index + 1,
+                    "branchCount": 0,
+                    "seedPoolCount": len(seeds),
+                    "seedText": seed_text,
+                    "seedTokenId": seed.get("tokenId"),
+                    "logprob": seed.get("logprob"),
+                    "probability": seed.get("probability"),
+                    "maxTokens": per_seed_max_tokens,
+                    "elapsedMs": max(0, int(elapsed_ms)),
+                    "decodeMode": decode_mode,
+                    "candidates": branch_candidates,
+                }
+            )
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+            return bool(candidate)
+
+        # The common path computes the context once, retains its KV cache, and
+        # decodes the seed tokens together. MiniMind exposes no native
+        # multi-candidate API; this is a decoding-layer fork over one prefill.
+        # Plan four branches before decoding instead of blindly expanding the
+        # first six logits. A seed that begins a domain term in the current
+        # context (for example `候` -> `候选`) outranks a high-probability
+        # function word such as `就`. Unselected seeds remain available to the
+        # sequential underfill fallback below.
+        pending_indexes = _initial_base_completion_seed_indexes(
+            seeds,
+            recent_context=recent_context,
+            display_limit=display_limit,
+        )
+        planned_seed_indexes = list(pending_indexes)
+        while pending_indexes and len(candidates) < display_limit:
+            if cancel_request_id and self._scheduler.is_cancelled(cancel_request_id):
+                break
+            batch_result = self._batch_base_completion_seed_continuations(
+                prompt=prompt,
+                seeds=[seeds[index] for index in pending_indexes],
+                prompt_cache=shared_prompt_cache,
+                max_tokens=per_seed_max_tokens,
+                temperature=branch_temperature,
+                top_p=top_p,
+            )
+            if batch_result is None:
+                batch_error = "batch_generate_unavailable"
+                break
+            batch_calls += 1
+            batch_elapsed_ms += int(batch_result.get("elapsedMs") or 0)
+            if isinstance(batch_result.get("stats"), dict):
+                batch_stats = dict(batch_result["stats"])
+            batch_error = str(batch_result.get("error") or "")
+            texts = batch_result.get("texts") if isinstance(batch_result.get("texts"), list) else []
+            for offset, seed_index in enumerate(pending_indexes):
+                processed_seed_indexes.add(seed_index)
+                candidate_ok = record_branch(
+                    seed_index=seed_index,
+                    raw_text=str(texts[offset]) if offset < len(texts) else "",
+                    decode_mode=str(batch_result.get("decodeMode") or "batch"),
+                )
+                if not candidate_ok:
+                    failed_seed_indexes.add(seed_index)
+            if len(candidates) >= display_limit:
+                break
+            pending_indexes = [
+                index
+                for index in range(len(seeds))
+                if index not in processed_seed_indexes
+            ][: max(1, display_limit - len(candidates))]
+
+        # Older mlx-lm builds and unsupported cache types retain the proven
+        # sequential replay path. It is also a last-resort backfill if a batch
+        # produces an unusable branch after filtering.
+        for seed_index, seed in enumerate(seeds):
+            if len(candidates) >= display_limit:
+                break
+            if seed_index in processed_seed_indexes and seed_index not in failed_seed_indexes:
+                continue
+            if cancel_request_id and self._scheduler.is_cancelled(cancel_request_id):
+                break
+            seed_text = compact_whitespace(str(seed.get("text") or ""))
+            if not seed_text:
+                continue
+            branch_started = time.perf_counter()
+            raw_text = "".join(
+                self._stream_text_with_generate_step(
+                    prompt=f"{prompt}{seed_text}",
+                    max_tokens=per_seed_max_tokens,
+                    temperature=branch_temperature,
+                    top_p=top_p,
+                    cancel_request_id=cancel_request_id,
+                )
+            )
+            record_branch(
+                seed_index=seed_index,
+                raw_text=raw_text,
+                decode_mode="sequential-fallback",
+                elapsed_ms=int((time.perf_counter() - branch_started) * 1000),
+            )
+
+        if not candidates:
+            return None
+        executed_branch_count = len(branch_timings)
+        for item in branch_timings:
+            item["branchCount"] = executed_branch_count
+        ranked_candidates, rerank_meta = _rank_base_completion_candidates(
+            candidates,
+            recent_context=recent_context,
+        )
+        displayed = ranked_candidates[:display_limit]
+        return {
+            "ok": True,
+            "model": self.model_id,
+            "rawText": "\n".join(raw_texts),
+            "candidates": displayed,
+            "candidateScores": _seeded_prompt_replay_candidate_scores(
+                displayed,
+                branch_timings=branch_timings,
+                mode="base-completion-branches",
+            ),
+            "candidateMode": "base-completion-branches",
+            "requestType": request_type,
+            "totalMs": int((time.perf_counter() - started) * 1000),
+            "promptCache": self.prompt_cache_status(),
+            "timing": {
+                "candidateMode": "base-completion-branches",
+                "logitsMs": int(logits_candidates.get("elapsedMs") or 0),
+                "fallbackJson": False,
+                "requestType": request_type,
+                "seedReplayReason": "top_logits_seed_continuation",
+                "branchCount": len(branch_timings),
+                "displayCandidateLimit": display_limit,
+                "underfilled": len(displayed) < display_limit,
+                **rerank_meta,
+                "decodeMode": (
+                    "shared-prefill-batch"
+                    if bool(logits_candidates.get("sharedPrefill")) and batch_calls
+                    else "batch-full-prompt"
+                    if batch_calls
+                    else "sequential-fallback"
+                ),
+                "sharedPrefill": bool(logits_candidates.get("sharedPrefill")),
+                "prefillMs": int(logits_candidates.get("elapsedMs") or 0),
+                "batchCalls": batch_calls,
+                "batchMs": batch_elapsed_ms,
+                "batchError": batch_error,
+                "batchStats": batch_stats,
+                "plannedSeedIndexes": planned_seed_indexes,
+                "branches": branch_timings,
+            },
+            "requestMeta": metadata,
+        }
+
+    def prefill_base_completion_logits(
+        self,
+        *,
+        prompt_tokens: list[int],
+        max_candidates: int,
+    ) -> dict[str, Any]:
+        """Prefill once and retain the KV cache used by seeded batch decode."""
+
+        started = time.perf_counter()
+        try:
+            from mlx_lm.models.cache import make_prompt_cache  # type: ignore
+            import mlx.core as mx  # type: ignore
+
+            cache = make_prompt_cache(self.model)
+            model_output = self.model(mx.array(prompt_tokens)[None], cache=cache)
+            logits = getattr(model_output, "logits", model_output)[:, -1, :]
+            logprobs = (logits - mx.logsumexp(logits, keepdims=True)).squeeze(0)
+            mx.eval(logprobs, [item.state for item in cache])
+            candidate_scores = self._candidate_scores_from_logprobs(
+                logprobs,
+                max_candidates=max_candidates,
+                scan_limit=max(64, int(max_candidates) * 24),
+            )
+            return {
+                "candidates": [item["text"] for item in candidate_scores],
+                "candidateScores": candidate_scores,
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "promptCache": cache,
+                "promptTokens": len(prompt_tokens),
+                "sharedPrefill": True,
+            }
+        except Exception as exc:  # pragma: no cover - depends on local MLX-LM internals
+            return {
+                "candidates": [],
+                "candidateScores": [],
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "error": exc.__class__.__name__,
+                "sharedPrefill": False,
+            }
+
+    def _batch_base_completion_seed_continuations(
+        self,
+        *,
+        prompt: str,
+        seeds: list[dict[str, Any]],
+        prompt_cache: Any | None,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+    ) -> dict[str, Any] | None:
+        try:
+            from mlx_lm.generate import batch_generate  # type: ignore
+            from mlx_lm.sample_utils import make_sampler  # type: ignore
+        except (ImportError, AttributeError):
+            return None
+
+        started = time.perf_counter()
+        try:
+            prompts: list[list[int]] = []
+            for seed in seeds:
+                seed_text = compact_whitespace(str(seed.get("text") or ""))
+                token_id = seed.get("tokenId")
+                if prompt_cache is not None and token_id is not None:
+                    prompts.append([int(token_id)])
+                else:
+                    prompts.append([int(item) for item in self.tokenizer.encode(f"{prompt}{seed_text}")])
+            if not prompts or any(not item for item in prompts):
+                return None
+
+            eos_token_ids = _tokenizer_eos_token_ids(self.tokenizer)
+
+            def keep_early_continuation_visible(tokens: Any, logits: Any) -> Any:
+                # A base checkpoint often ranks EOS immediately after a good
+                # seed. Suppress EOS for two continuation steps so every row is
+                # a phrase rather than the isolated top-logit token itself.
+                shape = getattr(tokens, "shape", ())
+                token_count = int(shape[-1]) if shape else len(tokens)
+                if token_count <= 2:
+                    for token_id in eos_token_ids:
+                        logits[:, int(token_id)] = -1e9
+                return logits
+
+            kwargs: dict[str, Any] = {
+                "max_tokens": max(1, min(64, int(max_tokens))),
+                "sampler": make_sampler(
+                    temp=max(0.0, float(temperature)),
+                    top_p=max(0.0, float(top_p)),
+                ),
+            }
+            if prompt_cache is not None:
+                # batch_generate merges these read-only snapshots into one
+                # batched cache and does not mutate the retained base cache.
+                kwargs["prompt_caches"] = [prompt_cache] * len(prompts)
+            if eos_token_ids:
+                kwargs["logits_processors"] = [keep_early_continuation_visible]
+            response = batch_generate(self.model, self.tokenizer, prompts, **kwargs)
+            texts = getattr(response, "texts", None)
+            if not isinstance(texts, list):
+                return None
+            stats = getattr(response, "stats", None)
+            stats_payload = {
+                key: getattr(stats, key)
+                for key in (
+                    "prompt_tokens",
+                    "prompt_time",
+                    "generation_tokens",
+                    "generation_time",
+                    "peak_memory",
+                )
+                if stats is not None and isinstance(getattr(stats, key, None), (int, float))
+            }
+            return {
+                "texts": [str(item) for item in texts],
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "decodeMode": "shared-prefill-batch" if prompt_cache is not None else "batch-full-prompt",
+                "stats": stats_payload,
+            }
+        except Exception as exc:  # pragma: no cover - optional mlx-lm batch path
+            return {
+                "texts": [],
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "decodeMode": "batch-error",
+                "error": exc.__class__.__name__,
+            }
+
     def predict_no_input_seeded_prompt_replay(
         self,
         *,
@@ -1203,7 +1809,7 @@ class MlxLmEngine:
                 item["logprob"] = logprob
                 item["probability"] = max(0.0, min(1.0, math.exp(max(-60.0, min(0.0, logprob)))))
             result.append(item)
-            if len(result) >= max(1, min(10, int(max_candidates))):
+            if len(result) >= max(1, min(64, int(max_candidates))):
                 break
         return result
 
@@ -1231,6 +1837,8 @@ class MlxLmEngine:
             rime_candidates=rime_candidates,
             stream_first_candidate=stream_first_candidate,
         )
+        if not compact_whitespace(prompt):
+            return
         self._record_prefix_cache(prompt=prompt, request_metadata=metadata)
         if self._prompt_cache.ready_for_generation() and not stream_first_candidate and not self._base_completion_mode:
             try:
@@ -1378,7 +1986,7 @@ class MlxLmEngine:
         sampler = make_sampler(temp=max(0.0, float(temperature)), top_p=max(0.0, float(top_p)))
         emitted = ""
         generated_tokens: list[int] = []
-        for token, _logprobs in generate_step(
+        for token, logprobs in generate_step(
             mx.array(tokens),
             self.model,
             max_tokens=max(1, min(64, int(max_tokens))),
@@ -1388,8 +1996,15 @@ class MlxLmEngine:
             if cancel_request_id and self._scheduler.is_cancelled(cancel_request_id):
                 break
             token_id = _token_to_int(token)
-            if _token_is_eos(self.tokenizer, token_id):
-                break
+            first_token_visible = _token_decodes_visible_text(self.tokenizer, token_id)
+            if _token_is_eos(self.tokenizer, token_id) or (not generated_tokens and not first_token_visible):
+                if self._base_completion_mode and len(emitted.strip()) < 2:
+                    forced_token_id = _best_non_eos_token_id(logprobs, self.tokenizer)
+                    if forced_token_id is None:
+                        break
+                    token_id = forced_token_id
+                else:
+                    break
             generated_tokens.append(token_id)
             decoded = self.tokenizer.decode(generated_tokens)
             if isinstance(decoded, bytes):
@@ -1678,6 +2293,11 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
         prompt_cache_max_kv_size=config.prompt_cache_max_kv_size,
         profile_id=config.profile_id,
     )
+    warmup = engine.warmup(
+        max_tokens=config.max_tokens,
+        temperature=config.temperature,
+        top_p=config.top_p,
+    )
     server = ThreadingHTTPServer((config.host, config.port), make_mlx_predictor_handler(engine))
     print(
         json.dumps(
@@ -1687,6 +2307,7 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
                 "model": config.model,
                 "profile": config.profile_id,
                 "maxTokens": config.max_tokens,
+                "warmup": warmup,
                 "promptCache": engine.prompt_cache_status(),
             },
             ensure_ascii=False,
@@ -1764,6 +2385,13 @@ def _predict_error_payload(
         model_id=engine.model_id,
     ).to_payload()
     return payload
+
+
+def _local_model_fingerprint(model_id: str) -> str:
+    path = Path(model_id).expanduser()
+    if not path.exists():
+        return "runtime:mlx:unverified"
+    return fingerprint_model_artifact(path)
 
 
 def _inspect_local_mlx_model(model_id: str) -> dict[str, Any]:
@@ -2196,6 +2824,28 @@ def _is_low_value_base_candidate(text: str) -> bool:
         return True
     if normalized.endswith("候选") and len(normalized) <= 6:
         return True
+    if normalized in {"短候", "长候"}:
+        return True
+    if re.search(r"[太先再又还更很最不没就也都才只要会能可得的地和或与并但而为从向在对被将把给让]$", normalized):
+        return True
+    if re.search(r"(?:可以|应该|需要|继续|先|再)(?:先|再)?(?:拿|把)$", normalized):
+        return True
+    if re.search(r"(?:太|很|更|最)(?:快|慢|远|近|长|短)路(?:上|线|径)?$", normalized):
+        return True
+    if re.search(r"(?:加|建|写|做)新事$", normalized):
+        return True
+    if re.search(r"(?:同步|导|拿|取|抽|提|找|列|移|搬|拷|复制|发|传)出$", normalized):
+        return True
+    if re.search(r"^(?:先|再)?把.{1,16}(?:放|写|改|存|移|传|发|拿|给)$", normalized):
+        return True
+    if re.search(r"^(?:过来)?等(?:会儿|一下)(?:再)?(?:跑|看|做|改)$", normalized):
+        return True
+    if re.search(r"^[去来回到]再(?:说|改|看|做)$", normalized):
+        return True
+    if re.search(r"([能再先在给把要可很就让还都也并])\1", normalized):
+        return True
+    if candidate_has_self_repetition(normalized):
+        return True
     if _looks_like_meta_completion_candidate(normalized):
         return True
     return False
@@ -2372,19 +3022,61 @@ def _token_to_int(token: object) -> int:
     return int(token)  # type: ignore[arg-type]
 
 
-def _token_is_eos(tokenizer: Any, token_id: int) -> bool:
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is None:
-        return False
-    if isinstance(eos_token_id, (list, tuple, set)):
+def _tokenizer_eos_token_ids(tokenizer: Any) -> set[int]:
+    values = getattr(tokenizer, "eos_token_ids", None)
+    if values is None:
+        values = getattr(tokenizer, "eos_token_id", None)
+    if values is None:
+        return set()
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+    result: set[int] = set()
+    for value in values:
         try:
-            return int(token_id) in {int(item) for item in eos_token_id}
+            result.add(int(value))
         except (TypeError, ValueError):
-            return False
+            continue
+    return result
+
+
+def _token_is_eos(tokenizer: Any, token_id: int) -> bool:
     try:
-        return int(token_id) == int(eos_token_id)
+        return int(token_id) in _tokenizer_eos_token_ids(tokenizer)
     except (TypeError, ValueError):
         return False
+
+
+def _best_non_eos_token_id(logprobs: Any, tokenizer: Any) -> int | None:
+    """Enforce one visible token for bare completion when EOS ranks first."""
+    try:
+        values = logprobs.tolist() if hasattr(logprobs, "tolist") else list(logprobs)
+    except (TypeError, ValueError):
+        return None
+    if values and isinstance(values[0], list):
+        values = values[0]
+    ranked = sorted(range(len(values)), key=lambda token_id: float(values[token_id]), reverse=True)
+    for token_id in ranked[:64]:
+        if _token_is_eos(tokenizer, token_id):
+            continue
+        try:
+            decoded = tokenizer.decode([token_id])
+        except Exception:
+            continue
+        if isinstance(decoded, bytes):
+            decoded = decoded.decode("utf-8", errors="ignore")
+        if isinstance(decoded, str) and decoded.strip() and "\ufffd" not in decoded:
+            return int(token_id)
+    return None
+
+
+def _token_decodes_visible_text(tokenizer: Any, token_id: int) -> bool:
+    try:
+        decoded = tokenizer.decode([token_id])
+    except Exception:
+        return False
+    if isinstance(decoded, bytes):
+        decoded = decoded.decode("utf-8", errors="ignore")
+    return isinstance(decoded, str) and bool(decoded.strip()) and "\ufffd" not in decoded
 
 
 def _truncate_at_generation_stop(text: str) -> tuple[str, bool]:
@@ -2429,6 +3121,35 @@ def _logprob_at(logprobs: Any, token_id: int) -> float | None:
         return float(item() if callable(item) else value)
     except Exception:
         return None
+
+
+def _candidate_scores_for_texts(
+    candidates: list[str],
+    raw_scores: Any,
+    *,
+    source: str,
+) -> list[dict[str, Any]]:
+    by_text: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_scores, list):
+        for item in raw_scores:
+            if not isinstance(item, dict):
+                continue
+            text = compact_whitespace(str(item.get("text") or ""))
+            if text and text not in by_text:
+                by_text[text] = dict(item)
+    result: list[dict[str, Any]] = []
+    for rank, text in enumerate(candidates, start=1):
+        item = dict(by_text.get(text) or {})
+        item.update(
+            {
+                "text": text,
+                "rank": rank,
+                "source": source,
+                "mode": source,
+            }
+        )
+        result.append(item)
+    return result
 
 
 def _array_to_list(value: Any) -> list[Any]:
@@ -2640,7 +3361,12 @@ def _continuation_branch_specs(*, temperature: float, max_tokens: int) -> list[_
     ]
 
 
-def _seed_replay_specs_from_logits(candidate_scores: Any, *, max_seeds: int) -> list[dict[str, Any]]:
+def _seed_replay_specs_from_logits(
+    candidate_scores: Any,
+    *,
+    max_seeds: int,
+    allow_single_cjk: bool = False,
+) -> list[dict[str, Any]]:
     if not isinstance(candidate_scores, list):
         return []
     result: list[dict[str, Any]] = []
@@ -2649,12 +3375,14 @@ def _seed_replay_specs_from_logits(candidate_scores: Any, *, max_seeds: int) -> 
         if not isinstance(item, dict):
             continue
         text = compact_whitespace(str(item.get("text") or ""))
-        if (
-            not text
-            or text in seen
-            or _is_low_value_base_candidate(text)
-            or _looks_like_meta_completion_candidate(text)
-        ):
+        low_value_seed = (
+            text in _LOW_VALUE_LOGITS_CANDIDATES
+            if allow_single_cjk
+            else _is_low_value_base_candidate(text)
+        )
+        if not text or text in seen or low_value_seed or _looks_like_meta_completion_candidate(text):
+            continue
+        if allow_single_cjk and not _CJK_RE.search(text):
             continue
         if len(text) > 6:
             continue
@@ -2670,6 +3398,69 @@ def _seed_replay_specs_from_logits(candidate_scores: Any, *, max_seeds: int) -> 
         if len(result) >= max(1, int(max_seeds)):
             break
     return result
+
+
+def _initial_base_completion_seed_indexes(
+    seeds: list[dict[str, Any]],
+    *,
+    recent_context: str,
+    display_limit: int,
+) -> list[int]:
+    if not seeds:
+        return []
+    batch_limit = min(len(seeds), max(1, int(display_limit)) + 1)
+    context = compact_whitespace(recent_context).lower()
+    context_terms = {term for term in _COMPLETION_DOMAIN_TERMS if term in context}
+    domain_context = bool(context_terms.intersection(_COMPLETION_HIGH_SIGNAL_TERMS)) or len(context_terms) >= 2
+    if not domain_context:
+        return list(range(batch_limit))
+
+    def seed_score(index: int) -> tuple[int, int]:
+        seed_text = compact_whitespace(str(seeds[index].get("text") or "")).lower()
+        affinity = sum(
+            1
+            for term in context_terms
+            if seed_text and (term.startswith(seed_text) or seed_text.startswith(term))
+        )
+        low_information_penalty = 1 if seed_text in _LOW_INFORMATION_COMPLETION_SEEDS else 0
+        return affinity * 100 - low_information_penalty * 50, -index
+
+    chosen = sorted(range(len(seeds)), key=seed_score, reverse=True)[:batch_limit]
+    return sorted(chosen)
+
+
+def _rank_base_completion_candidates(
+    candidates: list[str],
+    *,
+    recent_context: str,
+) -> tuple[list[str], dict[str, Any]]:
+    context = compact_whitespace(recent_context).lower()
+    context_terms = {term for term in _COMPLETION_DOMAIN_TERMS if term in context}
+    domain_context = bool(context_terms.intersection(_COMPLETION_HIGH_SIGNAL_TERMS)) or len(context_terms) >= 2
+    if not domain_context or len(candidates) <= 1:
+        return list(candidates), {
+            "qualityReranked": False,
+            "contextDomainTermCount": len(context_terms),
+        }
+
+    indexed = list(enumerate(candidates))
+
+    def candidate_score(item: tuple[int, str]) -> tuple[int, int, int]:
+        index, candidate = item
+        normalized = compact_whitespace(candidate).lower()
+        candidate_terms = {term for term in _COMPLETION_DOMAIN_TERMS if term in normalized}
+        shared_terms = candidate_terms.intersection(context_terms)
+        generic_personal_lead = normalized.startswith(("我", "先", "晚点", "明天", "等晚上"))
+        score = len(shared_terms) * 6 + len(candidate_terms) * 2
+        if generic_personal_lead and not shared_terms:
+            score -= 2
+        return score, len(shared_terms), -index
+
+    ranked = [candidate for _, candidate in sorted(indexed, key=candidate_score, reverse=True)]
+    return ranked, {
+        "qualityReranked": ranked != candidates,
+        "contextDomainTermCount": len(context_terms),
+    }
 
 
 def _branch_continuation_candidate(
@@ -2746,11 +3537,23 @@ def _seeded_replay_candidate(
         combined = continuation
     else:
         combined = compact_whitespace(f"{seed}{continuation}")
-    direct = _normalize_base_candidate(combined)
+    normalized_direct = _normalize_base_candidate(combined)
+    direct = _repair_base_completion_candidate(normalized_direct)
+    repaired = bool(direct and direct != normalized_direct)
+    if direct and (
+        _is_low_value_base_candidate(direct)
+        or _looks_like_meta_completion_candidate(direct)
+    ):
+        # Do not let the generic parser rescue a malformed full branch by
+        # slicing off its bad ending. That previously turned
+        # `调整不要一开始就改太` into the deceptively clean `调整不要一开`.
+        return ""
     if (
         direct
-        and direct.startswith(seed)
-        and len(direct) > len(seed)
+        and (
+            (repaired and len(direct) > 1)
+            or (direct.startswith(seed) and len(direct) > len(seed))
+        )
         and len(direct) <= max(2, int(max_candidate_chars))
         and not _is_low_value_base_candidate(direct)
         and not _looks_like_meta_completion_candidate(direct)
@@ -2776,6 +3579,26 @@ def _seeded_replay_candidate(
         ):
             return normalized
     return ""
+
+
+def _repair_base_completion_candidate(text: str) -> str:
+    """Repair a few deterministic truncation shapes from the tiny checkpoint."""
+
+    surface = compact_whitespace(text)
+    if not surface:
+        return ""
+    surface = re.sub(r"加新事$", "加新内容", surface)
+    surface = re.sub(r"定反$", "定方案", surface)
+    adjective_first = re.fullmatch(r"(?:太|很|更|最)?(?:复杂|快|慢|难|多|长|远)先(.{2,12})", surface)
+    if adjective_first:
+        surface = compact_whitespace(f"先{adjective_first.group(1)}")
+    surface = re.sub(r"最重要的([两三几])$", r"最重要的\1项", surface)
+    if surface == "一版再说":
+        surface = "先做一版再说"
+    simple_object = re.fullmatch(r"(.{2,10}?)(?:最好)?加个简单", surface)
+    if simple_object:
+        return compact_whitespace(f"先补一个简单的{simple_object.group(1)}")
+    return surface
 
 
 def _expand_continuation_candidates_from_model_output(

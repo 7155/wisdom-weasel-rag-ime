@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from rag_ime.models import InputSuggestion, ModelPrediction, RimeCandidate, RimeContextSnapshot
 from rag_ime.prediction_first import (
@@ -119,6 +120,7 @@ class PredictionFirstTests(unittest.TestCase):
                     metadata={"initials": "bbdjy zr agent scyx sxw"},
                 ),
             ],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         self.assertEqual(result.mode, InputMode.PREFIX_CONSTRAINED_COMPOSING)
@@ -203,7 +205,7 @@ class PredictionFirstTests(unittest.TestCase):
                 ModelPrediction(
                     text="继续优化候选展示",
                     rank=1,
-                    provider_name="x1api",
+                    provider_name="deepseek-v4",
                     latency_ms=1200,
                     metadata={"initials": "jx yhhxzs"},
                 )
@@ -219,6 +221,7 @@ class PredictionFirstTests(unittest.TestCase):
                     metadata={"source_type": "rag", "initials": "sjyg hxzsfs"},
                 )
             ],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         self.assertEqual(result.mode, InputMode.PREFIX_CONSTRAINED_COMPOSING)
@@ -405,6 +408,7 @@ class PredictionFirstTests(unittest.TestCase):
                     metadata={"source_type": "memory", "initials": "sjwd hxtc ywd"},
                 ),
             ],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         self.assertEqual(
@@ -439,6 +443,68 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual([item.source_type for item in result.display_candidates], ["model", "model", "model"])
         self.assertEqual(result.policy["sideInserted"], 3)
         self.assertEqual(result.policy["maxModelSideCandidates"], 3)
+
+    def test_post_commit_keeps_three_model_candidates_plus_rag(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=49,
+            committed_context="明天上午开会以后",
+            candidates=(),
+            max_visible_candidates=8,
+            max_side_candidates=5,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(text=f"模型补全{i}", rank=i, provider_name="mlx", latency_ms=20)
+                for i in range(1, 5)
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="rag-1",
+                    surface_text="等确认以后再发",
+                    suggestion_type="rag",
+                    source_event_id=1,
+                    evidence_preview="RAG memory",
+                    confidence=0.9,
+                    metadata={"source_type": "rag"},
+                )
+            ],
+        )
+
+        self.assertEqual(
+            [item.source_type for item in result.display_candidates],
+            ["model", "model", "model", "rag"],
+        )
+        self.assertEqual(result.policy["maxModelSideCandidates"], 3)
+        self.assertEqual(result.policy["ragBlockReserve"], 1)
+
+    def test_post_commit_hides_connector_punctuation_but_commits_it(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=49,
+            committed_context="模型可能是语料问题",
+            candidates=(),
+            max_visible_candidates=4,
+            max_side_candidates=3,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(
+                    text="，需要重新训练",
+                    rank=1,
+                    provider_name="minimind",
+                    latency_ms=80,
+                )
+            ],
+            suggestions=[],
+        )
+
+        self.assertEqual(result.display_candidates[0].text, "需要重新训练")
+        self.assertEqual(result.display_candidates[0].insert_text, "，需要重新训练")
 
     def test_long_rag_evidence_is_not_rendered_as_candidate_text(self) -> None:
         snapshot = RimeContextSnapshot(
@@ -502,6 +568,7 @@ class PredictionFirstTests(unittest.TestCase):
                 )
             ],
             suggestions=[],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         model_item = result.display_candidates[0]
@@ -625,8 +692,15 @@ class PredictionFirstTests(unittest.TestCase):
             infer_input_mode(
                 RimeContextSnapshot(session_id="s", request_seq=2, preedit="sj", committed_context="我想")
             ),
-            InputMode.PREFIX_CONSTRAINED_COMPOSING,
+            InputMode.ANCHOR_COMPOSING,
         )
+        with patch.dict("os.environ", {"RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "1"}):
+            self.assertEqual(
+                infer_input_mode(
+                    RimeContextSnapshot(session_id="s", request_seq=22, preedit="sj", committed_context="我想")
+                ),
+                InputMode.PREFIX_CONSTRAINED_COMPOSING,
+            )
         self.assertEqual(
             infer_input_mode(RimeContextSnapshot(session_id="s", request_seq=3, committed_context="我想")),
             InputMode.POST_COMMIT_PREDICTING,

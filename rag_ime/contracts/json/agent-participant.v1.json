@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-participant.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "roomId",
+    "sessionId",
+    "roleId",
+    "roleVersion",
+    "displayName",
+    "status",
+    "ordinal",
+    "createdAtMs",
+    "lastSpokeAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-participant.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "roleId": {"type": "string", "minLength": 1},
+    "roleVersion": {"type": "string", "minLength": 1},
+    "displayName": {"type": "string", "minLength": 1, "maxLength": 40},
+    "status": {"type": "string", "enum": ["active", "muted", "removed"]},
+    "ordinal": {"type": "integer", "minimum": 0, "maximum": 3},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "lastSpokeAtMs": {"type": ["integer", "null"]}
+  }
+}

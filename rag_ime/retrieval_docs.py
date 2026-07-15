@@ -20,7 +20,17 @@ def rebuild_retrieval_docs(
     include_items: bool = True,
 ) -> dict[str, object]:
     ensure_memory_v2_schema(conn)
-    conn.execute("DELETE FROM memory_retrieval_docs")
+    existing = {
+        str(row["doc_id"]): tuple(str(row[key] or "") for key in (
+            "raw_text", "tags_text", "aliases_text", "surface_hints_text",
+            "query_expansions_text", "project", "app", "metadata_json",
+        ))
+        for row in conn.execute(
+            """SELECT doc_id, raw_text, tags_text, aliases_text, surface_hints_text,
+                      query_expansions_text, project, app, metadata_json
+               FROM memory_retrieval_docs"""
+        ).fetchall()
+    }
     conn.execute("DELETE FROM memory_retrieval_docs_fts")
     docs: list[dict[str, object]] = []
     tombstones = _active_tombstone_sets(conn)
@@ -32,9 +42,18 @@ def rebuild_retrieval_docs(
         docs.extend(_memory_book_docs(conn, project=project, tombstones=tombstones))
     timestamp = now_ms()
     counts = {"item": 0, "phrase": 0, "atom": 0, "book": 0}
+    active_doc_ids: set[str] = set()
     for doc in docs:
+        active_doc_ids.add(str(doc["doc_id"]))
         doc_type = str(doc["doc_type"])
         counts[doc_type] = counts.get(doc_type, 0) + 1
+        metadata_json = json.dumps(doc.get("metadata") or {}, ensure_ascii=False, sort_keys=True)
+        signature = tuple(str(doc[key] or "") for key in (
+            "raw_text", "tags_text", "aliases_text", "surface_hints_text",
+            "query_expansions_text", "project", "app",
+        )) + (metadata_json,)
+        if existing.get(str(doc["doc_id"])) not in {None, signature}:
+            conn.execute("DELETE FROM memory_retrieval_doc_vectors WHERE doc_id = ?", (doc["doc_id"],))
         cur = conn.execute(
             """
             INSERT INTO memory_retrieval_docs(
@@ -43,6 +62,13 @@ def rebuild_retrieval_docs(
                 status, updated_at_ms, metadata_json
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            ON CONFLICT(doc_id) DO UPDATE SET
+                doc_type=excluded.doc_type, source_id=excluded.source_id,
+                raw_text=excluded.raw_text, tags_text=excluded.tags_text,
+                aliases_text=excluded.aliases_text, surface_hints_text=excluded.surface_hints_text,
+                query_expansions_text=excluded.query_expansions_text, time_key=excluded.time_key,
+                project=excluded.project, app=excluded.app, status='active',
+                updated_at_ms=excluded.updated_at_ms, metadata_json=excluded.metadata_json
             """,
             (
                 doc["doc_id"],
@@ -57,10 +83,10 @@ def rebuild_retrieval_docs(
                 doc["project"],
                 doc["app"],
                 timestamp,
-                json.dumps(doc.get("metadata") or {}, ensure_ascii=False, sort_keys=True),
+                metadata_json,
             ),
         )
-        rowid = int(cur.lastrowid)
+        rowid = int(conn.execute("SELECT rowid FROM memory_retrieval_docs WHERE doc_id = ?", (doc["doc_id"],)).fetchone()[0])
         conn.execute(
             """
             INSERT INTO memory_retrieval_docs_fts(
@@ -82,6 +108,9 @@ def rebuild_retrieval_docs(
                 str(doc["app"]),
             ),
         )
+    stale_ids = set(existing) - active_doc_ids
+    if stale_ids:
+        conn.executemany("DELETE FROM memory_retrieval_docs WHERE doc_id = ?", ((doc_id,) for doc_id in stale_ids))
     return {
         "schemaVersion": RETRIEVAL_DOCS_REBUILD_SCHEMA_VERSION,
         "project": project,
@@ -97,7 +126,8 @@ def rebuild_retrieval_docs(
 def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dict[str, set[str]]) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT id, memory_id, kind, text, normalized_text, summary, source_event_id, project, app, status, privacy_class, metadata_json
+        SELECT id, memory_id, kind, text, normalized_text, summary, source_event_id,
+               project, app, status, privacy_class, metadata_json, updated_at_ms
         FROM memory_items
         WHERE status IN ('active', 'approved')
           AND privacy_class != 'sensitive'
@@ -116,6 +146,10 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             continue
         tags = _memory_item_tags(conn, memory_item_pk=int(row["id"]))
         doc_type = "phrase" if str(row["kind"]) == "phrase" else "item"
+        metadata = _json_object(row["metadata_json"])
+        context_group_id = compact_whitespace(str(metadata.get("contextGroupId") or ""))
+        if not context_group_id and int(row["source_event_id"] or 0) > 0:
+            context_group_id = _event_context_group(conn, int(row["source_event_id"]))
         docs.append(
             {
                 "doc_id": f"{doc_type}:{memory_id}",
@@ -130,10 +164,13 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
                 "metadata": {
+                    **metadata,
                     "kind": str(row["kind"]),
                     "sourceEventId": int(row["source_event_id"] or 0),
                     "memoryId": memory_id,
                     "source": "memory_items",
+                    "contextGroupId": context_group_id,
+                    "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                 },
             }
         )
@@ -143,7 +180,8 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
 def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dict[str, set[str]]) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT id, kind, text, canonical_text, source_event_ids_json, scope_project, scope_app, status, quality_score, confidence
+        SELECT id, kind, text, canonical_text, source_event_ids_json, scope_project,
+               scope_app, status, quality_score, confidence, updated_at_ms
         FROM memory_atoms
         WHERE status IN ('active', 'approved')
           AND privacy_level != 'sensitive'
@@ -159,6 +197,7 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         if not raw_text or _is_tombstoned(memory_id=atom_id, text=raw_text, normalized_text="", tombstones=tombstones):
             continue
         aliases = _atom_aliases(conn, atom_id=atom_id)
+        source_event_ids = _json_list(row["source_event_ids_json"])
         docs.append(
             {
                 "doc_id": f"atom:{atom_id}",
@@ -175,8 +214,10 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "metadata": {
                     "kind": str(row["kind"]),
                     "atomId": atom_id,
-                    "sourceEventIds": _json_list(row["source_event_ids_json"]),
+                    "sourceEventIds": source_event_ids,
                     "source": "memory_atoms",
+                    "contextGroupId": _first_event_context_group(conn, source_event_ids),
+                    "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                 },
             }
         )
@@ -188,9 +229,10 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         """
         SELECT book_id, book_type, book_key, title, summary, project, app, tags_json,
                surface_hints_json, query_expansions_json, source_event_ids_json, memory_atom_ids_json,
-               status, confidence, quality_score
+               status, confidence, quality_score, metadata_json, updated_at_ms,
+               archived_at_ms, last_active_at_ms, archive_reason
         FROM memory_books
-        WHERE status IN ('active', 'approved')
+        WHERE status IN ('active', 'approved', 'archived')
           AND (? = '' OR project = ? OR project = '')
         ORDER BY updated_at_ms DESC
         """,
@@ -204,6 +246,8 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             continue
         book_type = str(row["book_type"] or "")
         book_key = str(row["book_key"] or "")
+        source_event_ids = _json_list(row["source_event_ids_json"])
+        stored_metadata = _json_object(row["metadata_json"])
         docs.append(
             {
                 "doc_id": f"book:{book_id}",
@@ -218,12 +262,21 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
                 "metadata": {
+                    **stored_metadata,
                     "bookType": book_type,
                     "bookKey": book_key,
                     "bookTitle": compact_whitespace(str(row["title"] or "")),
-                    "sourceEventIds": _json_list(row["source_event_ids_json"]),
+                    "sourceEventIds": source_event_ids,
                     "memoryAtomIds": _json_list(row["memory_atom_ids_json"]),
                     "source": "memory_books",
+                    "bookStatus": str(row["status"] or "active"),
+                    "archived": str(row["status"] or "") == "archived",
+                    "archivedAtMs": int(row["archived_at_ms"] or 0),
+                    "lastActiveAtMs": int(row["last_active_at_ms"] or 0),
+                    "archiveReason": str(row["archive_reason"] or ""),
+                    "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
+                    "contextGroupId": compact_whitespace(str(stored_metadata.get("contextGroupId") or ""))
+                    or _first_event_context_group(conn, source_event_ids),
                 },
             }
         )
@@ -239,6 +292,8 @@ def _memory_item_tags(conn: sqlite3.Connection, *, memory_item_pk: int) -> list[
             FROM memory_item_tags it
             JOIN memory_tags t ON t.id = it.tag_id
             WHERE it.memory_item_id = ?
+              AND t.status = 'active'
+              AND t.source IN ('curated_import', 'dsv4', 'user')
             ORDER BY it.position ASC, it.weight DESC
             """,
             (memory_item_pk,),
@@ -256,6 +311,8 @@ def _memory_atom_tags(conn: sqlite3.Connection, *, atom_id: str) -> list[str]:
             FROM memory_atom_tags at
             JOIN memory_tags t ON CAST(t.id AS TEXT) = CAST(at.tag_id AS TEXT)
             WHERE at.memory_atom_id = ?
+              AND t.status = 'active'
+              AND t.source IN ('curated_import', 'dsv4', 'user')
             ORDER BY at.weight DESC, t.tag ASC
             """,
             (atom_id,),
@@ -280,6 +337,34 @@ def _atom_aliases(conn: sqlite3.Connection, *, atom_id: str) -> dict[str, list[s
         if alias and alias_type in result:
             result[alias_type].append(alias)
     return result
+
+
+def _event_context_group(conn: sqlite3.Connection, event_id: int) -> str:
+    row = conn.execute(
+        "SELECT context_group_id FROM input_events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+    return "" if row is None else compact_whitespace(str(row["context_group_id"] or ""))
+
+
+def _first_event_context_group(conn: sqlite3.Connection, event_ids: list[object]) -> str:
+    for value in event_ids:
+        try:
+            event_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        group_id = _event_context_group(conn, event_id)
+        if group_id:
+            return group_id
+    return ""
+
+
+def _json_object(raw: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
 
 
 def _active_tombstone_sets(conn: sqlite3.Connection) -> dict[str, set[str]]:

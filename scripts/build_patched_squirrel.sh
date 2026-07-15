@@ -20,20 +20,29 @@ SKIP_CODESIGN="${RAG_IME_SQUIRREL_SKIP_CODESIGN:-0}"
 CODESIGN_IDENTITY="${RAG_IME_SQUIRREL_CODESIGN_IDENTITY:--}"
 ENABLE_PREF_REPAIR="${RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR:-0}"
 AUTO_SELECT="${RAG_IME_SQUIRREL_AUTO_SELECT:-0}"
+CANONICALIZE_INPUT_METHODS="${RAG_IME_SQUIRREL_CANONICALIZE_INPUT_METHODS:-1}"
+CANONICAL_INPUT_METHOD_ALIASES="${RAG_IME_SQUIRREL_CANONICAL_INPUT_METHOD_ALIASES:-RAG-IME.app:RagIme.app:Squirrel.app}"
+CANONICAL_QUARANTINE_DIR="${RAG_IME_SQUIRREL_CANONICAL_QUARANTINE_DIR:-$HOME/Library/Application Support/RagIme/disabled-input-method-backups}"
+SYSTEM_INPUT_METHOD_DIR="${RAG_IME_SQUIRREL_SYSTEM_INPUT_METHOD_DIR:-/Library/Input Methods}"
+LSREGISTER="${RAG_IME_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
 DEFAULT_BUNDLE_ID="im.rime.inputmethod.Squirrel"
 BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
 HANT_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID:-$BUNDLE_ID.Hant}"
 if [[ "$BUNDLE_ID" == "$DEFAULT_BUNDLE_ID" && "$INSTALL_APP_NAME" == "Squirrel" ]]; then
-  DEFAULT_DISPLAY_NAME="Squirrel"
+  DEFAULT_DISPLAY_NAME="智鼬输入法"
+  DEFAULT_HANS_DISPLAY_NAME="智鼬输入法"
+  DEFAULT_HANT_DISPLAY_NAME="智鼬输入法（繁体）"
   DEFAULT_CONNECTION_NAME="Squirrel_Connection"
 else
   DEFAULT_DISPLAY_NAME="$INSTALL_APP_NAME"
+  DEFAULT_HANS_DISPLAY_NAME="$INSTALL_APP_NAME - Simplified"
+  DEFAULT_HANT_DISPLAY_NAME="$INSTALL_APP_NAME - Traditional"
   DEFAULT_CONNECTION_NAME="RagIme_Connection"
 fi
 DISPLAY_NAME="${RAG_IME_SQUIRREL_DISPLAY_NAME:-$DEFAULT_DISPLAY_NAME}"
-HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DISPLAY_NAME - Simplified}"
-HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DISPLAY_NAME - Traditional}"
+HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DEFAULT_HANS_DISPLAY_NAME}"
+HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DEFAULT_HANT_DISPLAY_NAME}"
 CONNECTION_NAME="${RAG_IME_SQUIRREL_CONNECTION_NAME:-$DEFAULT_CONNECTION_NAME}"
 BUILD_SETTINGS_EXTRA="${RAG_IME_SQUIRREL_BUILD_SETTINGS:-CODE_SIGNING_ALLOWED=NO}"
 
@@ -59,7 +68,7 @@ Environment:
   RAG_IME_SQUIRREL_INSTALL_DIR   install target (default: ~/Library/Input Methods)
   RAG_IME_SQUIRREL_INSTALL_APP_NAME installed app bundle name (default: Squirrel)
   RAG_IME_SQUIRREL_BUNDLE_ID     app/input-source bundle prefix (default: im.rime.inputmethod.Squirrel)
-  RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: Squirrel or install app name)
+  RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: 智鼬输入法)
   RAG_IME_SQUIRREL_CONNECTION_NAME input method connection name (default: Squirrel_Connection or RagIme_Connection)
   RAG_IME_SQUIRREL_PREINSTALL    auto|1|0, run Squirrel action-install when dependencies are missing
   RAG_IME_SQUIRREL_NO_DOWNLOAD   set no_download=1 for action-install
@@ -69,6 +78,9 @@ Environment:
   RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip user-data bootstrap and Squirrel scripts/postinstall after install
   RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR allow direct HIToolbox/inputsource plist repair after branded install
   RAG_IME_SQUIRREL_AUTO_SELECT select the branded input source after install
+  RAG_IME_SQUIRREL_CANONICALIZE_INPUT_METHODS quarantine old RAG-IME/RagIme/Squirrel aliases before install
+  RAG_IME_SQUIRREL_CANONICAL_INPUT_METHOD_ALIASES colon-separated app names to keep unique in install dir
+  RAG_IME_SQUIRREL_SYSTEM_INPUT_METHOD_DIR system Input Methods directory scanned for same-bundle conflicts
   RAG_IME_SQUIRREL_INPUT_SOURCE_ID input source checked after install
   RAG_IME_XCODEBUILD             xcodebuild executable override
   RAG_IME_SQUIRREL_BUILD_DRY_RUN print resolved commands without requiring Xcode/workdir
@@ -118,6 +130,10 @@ codesign_identity=$CODESIGN_IDENTITY
 skip_codesign=$SKIP_CODESIGN
 enable_pref_repair=$ENABLE_PREF_REPAIR
 auto_select=$AUTO_SELECT
+canonicalize_input_methods=$CANONICALIZE_INPUT_METHODS
+canonical_input_method_aliases=$CANONICAL_INPUT_METHOD_ALIASES
+canonical_quarantine_dir=$CANONICAL_QUARANTINE_DIR
+system_input_method_dir=$SYSTEM_INPUT_METHOD_DIR
 bundle_id=$BUNDLE_ID
 input_source_id=$INPUT_SOURCE_ID
 hant_input_source_id=$HANT_INPUT_SOURCE_ID
@@ -137,6 +153,20 @@ require_file() {
     echo "$message: $path" >&2
     exit 1
   fi
+}
+
+ensure_assistant_overlay_v2_sources() {
+  local source_dir="$ROOT/squirrel-patches/sources"
+  local file
+  for file in \
+    RagImeAssistantSurfaceState.swift \
+    RagImeSuggestionCardView.swift \
+    RagImeSuggestionRowView.swift \
+    RagImeNonActivatingPanel.swift \
+    RagImeAssistantPanelController.swift; do
+    [[ -f "$source_dir/$file" ]] || continue
+    cp "$source_dir/$file" "$SQUIRREL_WORKDIR/sources/$file"
+  done
 }
 
 sha256_file() {
@@ -163,6 +193,7 @@ write_rag_ime_build_marker() {
   local git_branch="unknown"
   local git_dirty="unknown"
   local patch_sha256="missing"
+  local overlay_sha256="missing"
   local generated_at
 
   mkdir -p "$(dirname "$marker_path")"
@@ -179,6 +210,32 @@ write_rag_ime_build_marker() {
   if [[ -f "$patch_path" ]]; then
     patch_sha256="$(sha256_file "$patch_path")"
   fi
+  overlay_sha256="$($PYTHON_BIN - "$ROOT/squirrel-patches/sources" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+names = (
+    "RagImeAssistantSurfaceState.swift",
+    "RagImeSuggestionCardView.swift",
+    "RagImeSuggestionRowView.swift",
+    "RagImeNonActivatingPanel.swift",
+    "RagImeAssistantPanelController.swift",
+)
+digest = hashlib.sha256()
+for name in names:
+    path = root / name
+    if not path.is_file():
+        print("missing")
+        raise SystemExit(0)
+    digest.update(name.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+)"
 
   "$PYTHON_BIN" - "$marker_path" <<PY
 import json
@@ -186,7 +243,7 @@ import sys
 from pathlib import Path
 
 payload = {
-    "schemaVersion": "rag-ime.squirrel-build-marker.v1",
+    "schemaVersion": "rag-ime.squirrel-build-marker.v2",
     "generatedAt": "$generated_at",
     "repoRoot": "$ROOT",
     "gitCommit": "$git_commit",
@@ -194,6 +251,7 @@ payload = {
     "gitDirty": "$git_dirty",
     "patchPath": "squirrel-patches/0001-add-rag-ime-sidecar.patch",
     "patchSha256": "$patch_sha256",
+    "overlaySha256": "$overlay_sha256",
     "installAppName": "$INSTALL_APP_NAME",
     "bundleId": "$BUNDLE_ID",
     "inputSourceId": "$INPUT_SOURCE_ID",
@@ -258,35 +316,94 @@ if [[ ! -d "$PROJECT_PATH" || ! -f "$PROJECT_PATH/project.pbxproj" ]]; then
   exit 1
 fi
 
+ensure_assistant_overlay_v2_sources
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "patched Squirrel workdir is missing RAG-IME model file"
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "patched Squirrel workdir is missing RAG-IME client file"
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "patched Squirrel workdir is missing RAG-IME selected text provider file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeAssistantSurfaceState.swift" "patched Squirrel workdir is missing Assistant Overlay state file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" "patched Squirrel workdir is missing Assistant Overlay card file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeSuggestionRowView.swift" "patched Squirrel workdir is missing Assistant Overlay row file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeNonActivatingPanel.swift" "patched Squirrel workdir is missing non-activating panel file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "patched Squirrel workdir is missing Assistant Overlay controller file"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "patched Squirrel workdir is missing patched SquirrelInputController"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "patched Squirrel workdir is missing patched SquirrelPanel"
 require_file "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" "patched Squirrel workdir is missing generated config snippet"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "rime-rank-feedback" "native Rime selection feedback hook"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "let privacyDisposition: String" "explicit foreground privacy disposition contract"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" 'request.privacyDisposition == "allowed"' "sidecar allowed-transaction send gate"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" 'ragImePrivacyDisposition == "allowed"' "foreground privacy assessment propagation"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "privacyDisposition: ragImePrivacyDisposition" "foreground request privacy disposition"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "mixed LLM horizontal-lane guard"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard ragImeSidecarClient?.frontendTrace == true else { return }" "frontend trace configuration gate"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }" "sensitive-field trace suppression"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePrepareFrontendTraceLog" "bounded frontend trace log"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" ".posixPermissions: 0o600" "private frontend trace permissions"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "appendingPathExtension(\"1\")" "frontend trace rotation"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "let contextAnchor = ragImeStableTextHash(context)" "hashed local action context anchor"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "queryAnchor: contextAnchor" "hashed query anchor"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "displayAnchor: contextAnchor" "hashed display anchor"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "panel_text_layout" "actual frontend mixed-layout trace event"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_request_scheduled" "real foreground sidecar request trace event"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_empty_response_cleared" "empty sidecar response guard"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty" "foreground post-commit-only LLM/RAG candidate request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "forceSideCandidates: forceSideCandidates" "foreground dynamic LLM/RAG candidate request"
-require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"
-require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_local_thinking_placeholder_displayed" '"selectedTextChars": request.selectedTextChars' "Active RAG selected-text count trace anchor"
-require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_local_thinking_placeholder_displayed" '"frontAppBundleId": request.frontAppBundleId' "Active RAG front-app trace anchor"
-require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_local_thinking_placeholder_displayed" '"traceIncludesText": false' "Active RAG privacy trace marker"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "composition_ai_suppressed" "composition-phase AI overlay suppression"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rime_composition_started" "composition ownership trace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rime_composition_candidates_visible" "Rime composition candidate trace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "打开 RAG-IME 控制中心..." "native control center menu entry"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "com.rag-ime.control" "native control center bundle launch"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING" "post-commit assistant overlay opt-in guard"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "assistant_overlay_local_placeholder_suppressed" "post-commit local placeholder suppression"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImeForegroundContextResolver.captureFromAccessibility(" "queued foreground Accessibility snapshot request"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "assistant_overlay_active_rag_thinking" "Active RAG assistant overlay thinking event"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_thinking_displayed" '"selectedTextChars": request.selectedTextChars' "Active RAG selected-text count trace anchor"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_thinking_displayed" '"frontAppBundleId": currentApp' "Active RAG front-app trace anchor"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_thinking_displayed" '"traceIncludesText": false' "Active RAG privacy trace marker"
 require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_status_poll_scheduled" '"selectedTextChars": request.selectedTextChars' "Active RAG poll selected-text count trace anchor"
 require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_status_poll_scheduled" '"frontAppBundleId": request.frontAppBundleId' "Active RAG poll front-app trace anchor"
 require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_status_poll_scheduled" '"traceIncludesText": false' "Active RAG poll privacy trace marker"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXSelectedTextRangeAttribute" "focused text selected range accessibility capture"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXStringForRangeParameterizedAttribute" "focused text surrounding range accessibility capture"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "RagImeForegroundContextResolver" "delayed IMK to Accessibility foreground context resolver"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_app_bundle_missing" "missing app identity privacy fail-closed guard"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "isSensitive: false, reason: \"privacy_unknown_ax_not_trusted\"" "optional accessibility metadata fallback"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_focused_element_missing" "missing focused element privacy fail-closed guard"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_metadata_read_failed" "accessibility metadata privacy fail-closed guard"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_text_field_metadata_missing" "empty text-field metadata privacy fail-closed guard"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "sensitive_application_bundle" "sensitive app bundle denylist"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "RAG_IME_SENSITIVE_APP_BUNDLE_IDS" "sensitive app bundle environment configuration"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "RagImeSensitiveAppBundleTokens" "sensitive app bundle defaults configuration"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "foreground_context_capture_resolved" "foreground context capture success trace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "foreground_context_capture_failed" "foreground context capture failure trace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "side_candidate_feedback_recorded" "selection feedback receipt trace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImeNativeSelectionSnapshot" "native Rime selection snapshot"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "native_rime_rank_feedback_recorded" "native Rime selection feedback trace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard !enforceRagImeFastPrivacyGuard()" "native Rime feedback non-blocking privacy guard"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "probeRagImeForegroundPrivacyAndContext" "background Accessibility privacy probe"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "privacy_probe_timeout" "background privacy timeout fail-closed path"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "discardRagImeSensitiveNativeLearningTransaction" "sensitive native Rime learning rollback"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard rimeAPI.get_status(session, &status) else { return false }" "native learning rollback composition-state check"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard !isComposing else { return false }" "native learning rollback requires completed commit"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rimeAPI.process_key(session, Int32(XK_BackSpace), 0)" "isolated librime pending-transaction rollback"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "return !backspaceHandled" "native learning rollback requires unhandled BackSpace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" '"forwardedToClient": false' "native learning rollback is not forwarded to IMK"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "assistant_overlay_candidate_visible" "assistant overlay candidate trace"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXValueAttribute" "focused text whole-value fallback"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_text "$SQUIRREL_WORKDIR/sources/Main.swift" "traceRagImeProcessEvent" "foreground process trace hook"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate separator"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal layout for inline LLM candidates"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel clamp"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "return NSView()" "plain non-glass macOS 26 panel background"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "same_snapshot_stable_ids" "Assistant Overlay snapshot diff"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "passive_mouse_fallback" "passive missing-anchor fallback"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "assistant_panel_created" "Assistant Overlay lifecycle tracing"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" "preferredPredictionWidth" "stable prediction panel width"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSuggestionRowView.swift" "shortcutPlate" "stable shortcut keycap lane"
 if [[ -f "$SQUIRREL_WORKDIR/sources/InputSource.swift" ]]; then
   require_text "$SQUIRREL_WORKDIR/sources/InputSource.swift" "static var inputSourceIDPrefix: String" "brandable input-source prefix"
 fi
@@ -371,25 +488,32 @@ prepare_squirrel_dependencies() {
 
 ensure_squirrel_input_source_enabled() {
   local app="$1"
-  local attempt
   local output
 
   if [[ ! -x "$app/Contents/MacOS/Squirrel" ]]; then
     printf '[WARN] Squirrel executable missing; cannot verify input source: %s\n' "$app" >&2
     return 0
   fi
-  for attempt in 1 2 3 4 5; do
-    "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-    sleep 0.5
-    "$app/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 || true
-    if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
-      printf '[OK] macOS input source enabled for real use: %s\n' "$output"
-      return 0
-    fi
-    sleep 0.5
-  done
+  if output="$(RAG_IME_SQUIRREL_APP="$app" \
+    RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+    RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+    "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" 2>&1)"; then
+    printf '[OK] macOS input source enabled for real use: %s\n' "$output"
+    return 0
+  fi
   printf '[WARN] macOS input source not confirmed for real use after install: %s\n' "$output" >&2
   printf '[WARN] If thirdPartyEnabled=false, add %s from System Settings -> Keyboard -> Input Sources.\n' "$DISPLAY_NAME" >&2
+}
+
+prevent_build_product_registration() {
+  local info="$PRODUCT_APP/Contents/Info.plist"
+  [[ -f "$info" ]] || return 0
+  /usr/libexec/PlistBuddy -c "Set :LSRegisterProhibited true" "$info" >/dev/null 2>&1 ||
+    /usr/libexec/PlistBuddy -c "Add :LSRegisterProhibited bool true" "$info"
+  if [[ -x "$LSREGISTER" ]]; then
+    "$LSREGISTER" -u "$PRODUCT_APP" >/dev/null 2>&1 || true
+  fi
+  printf '[OK] prevented temporary build product from registering as a second input method\n'
 }
 
 should_brand_app() {
@@ -399,6 +523,52 @@ should_brand_app() {
     "$HANT_INPUT_SOURCE_ID" != "$DEFAULT_BUNDLE_ID.Hant" ||
     "$DISPLAY_NAME" != "Squirrel" ||
     "$CONNECTION_NAME" != "Squirrel_Connection" ]]
+}
+
+canonicalize_input_method_bundles() {
+  bool_true "$CANONICALIZE_INPUT_METHODS" || return 0
+
+  local target_base
+  local timestamp
+  local quarantine_dir
+  local moved_count=0
+  target_base="$(basename "$TARGET_APP")"
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  quarantine_dir="$CANONICAL_QUARANTINE_DIR/$timestamp"
+
+  local aliases=()
+  IFS=':' read -r -a aliases <<< "$CANONICAL_INPUT_METHOD_ALIASES"
+  for alias in "${aliases[@]}"; do
+    [[ -n "$alias" ]] || continue
+    [[ "$alias" == *.app ]] || alias="$alias.app"
+    [[ "$alias" != "$target_base" ]] || continue
+
+    local candidate="$INSTALL_DIR/$alias"
+    [[ -d "$candidate" ]] || continue
+
+    mkdir -p "$quarantine_dir"
+    local destination="$quarantine_dir/${alias%.app}.disabled.zip"
+    if [[ -e "$destination" ]]; then
+      destination="$quarantine_dir/${alias%.app}.$$.disabled.zip"
+    fi
+    pkill -f "$candidate/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
+    if [[ -x "$LSREGISTER" ]]; then
+      "$LSREGISTER" -u "$candidate" >/dev/null 2>&1 || true
+    fi
+    /usr/bin/ditto -c -k --keepParent "$candidate" "$destination"
+    rm -rf "$candidate"
+    moved_count=$((moved_count + 1))
+    printf '[OK] archived noncanonical input method app: %s -> %s\n' "$candidate" "$destination"
+
+    if [[ -x "$LSREGISTER" ]]; then
+      "$LSREGISTER" -u "$destination" >/dev/null 2>&1 || true
+    fi
+  done
+
+  if [[ "$moved_count" -gt 0 ]]; then
+    killall TextInputMenuAgent TextInputSwitcher imklaunchagent cfprefsd >/dev/null 2>&1 || true
+    printf '[OK] canonical input method bundle enforced: %s\n' "$TARGET_APP"
+  fi
 }
 
 run_branded_postinstall() {
@@ -445,9 +615,70 @@ install_squirrel_app() {
     echo "built Squirrel.app not found: $PRODUCT_APP" >&2
     exit 1
   fi
+
+  sign_target_app() {
+    local phase="$1"
+    if bool_true "$SKIP_CODESIGN"; then
+      printf '[WARN] skipped Squirrel %s codesign; input source registration may fail\n' "$phase" >&2
+      return 0
+    fi
+    if command -v codesign >/dev/null 2>&1; then
+      if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+        # Keep the local designated requirement stable across rebuilds so
+        # Accessibility authorization is not tied to a changing cdhash.
+        # First repair every nested dylib/tool/framework, then sign only the
+        # outer bundle with the stable requirement. Applying the outer
+        # requirement recursively would leave existing nested signatures
+        # sealed against pre-bootstrap binaries.
+        codesign --force --deep --sign - "$TARGET_APP"
+        codesign --force --sign - \
+          --requirements "=designated => identifier \"$BUNDLE_ID\"" \
+          "$TARGET_APP"
+      else
+        codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
+      fi
+      printf '[OK] %s signed patched Squirrel.app with identity: %s\n' "$phase" "$CODESIGN_IDENTITY"
+    else
+      printf '[WARN] codesign not found during %s; input source registration may fail\n' "$phase" >&2
+    fi
+  }
+
+  final_registration_check() {
+    if should_brand_app; then
+      RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+        RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+        RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+        RAG_IME_SQUIRREL_AUTO_SELECT=0 \
+        "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" >/dev/null 2>&1 || true
+    else
+      ensure_squirrel_input_source_enabled "$TARGET_APP"
+    fi
+  }
+
   mkdir -p "$INSTALL_DIR"
+  "$PYTHON_BIN" "$ROOT/scripts/audit_canonical_squirrel_bundles.py" \
+    --preinstall \
+    --canonical-app "$TARGET_APP" \
+    --user-dir "$INSTALL_DIR" \
+    --system-dir "$SYSTEM_INPUT_METHOD_DIR" \
+    --bundle-id "$BUNDLE_ID" >/dev/null
+  printf '[OK] no conflicting same-bundle Squirrel app found before install\n'
+  canonicalize_input_method_bundles
+  # Replacing a live IMK bundle leaves macOS connected to the old executable.
+  # Stop it first so a source cannot appear in Settings yet refuse switching.
+  pkill -f "$TARGET_APP/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
+  killall imklaunchagent TextInputMenuAgent TextInputSwitcher >/dev/null 2>&1 || true
+  sleep 0.5
   rm -rf "$TARGET_APP"
   cp -R "$PRODUCT_APP" "$TARGET_APP"
+  mkdir -p "$TARGET_APP/Contents/Resources"
+  cp "$ROOT/macos/Shared/Assets/CompanionStates/"*.png "$TARGET_APP/Contents/Resources/"
+  "$ROOT/scripts/support/build_input_menu_icon.sh" \
+    "$TARGET_APP/Contents/Resources/RagImeInputMenuIcon.png"
+  /usr/libexec/PlistBuddy -c "Delete :LSRegisterProhibited" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || true
+  "$ROOT/scripts/support/build_app_icon.sh" "$TARGET_APP/Contents/Resources/RagImeIcon.icns"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile RagImeIcon" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || \
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string RagImeIcon" "$TARGET_APP/Contents/Info.plist"
   printf '[OK] installed patched Squirrel.app: %s\n' "$TARGET_APP"
 
   if should_brand_app; then
@@ -465,14 +696,7 @@ install_squirrel_app() {
 
   write_rag_ime_build_marker "$TARGET_APP"
 
-  if bool_true "$SKIP_CODESIGN"; then
-    printf '[WARN] skipped Squirrel codesign; input source registration may fail\n' >&2
-  elif command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
-    printf '[OK] signed patched Squirrel.app with identity: %s\n' "$CODESIGN_IDENTITY"
-  else
-    printf '[WARN] codesign not found; input source registration may fail\n' >&2
-  fi
+  sign_target_app "initial"
 
   RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
     RAG_IME_SQUIRREL_CONFIG_SNIPPET="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" \
@@ -483,6 +707,7 @@ install_squirrel_app() {
 
   if bool_true "$SKIP_POSTINSTALL"; then
     printf '[WARN] skipped Squirrel user-data bootstrap and postinstall; input source may need manual registration\n' >&2
+    sign_target_app "final"
     return 0
   fi
 
@@ -499,6 +724,13 @@ install_squirrel_app() {
   else
     printf '[WARN] Squirrel postinstall script not found; input source may need manual registration\n' >&2
   fi
+
+  # Squirrel postinstall can generate bundled SharedSupport/build files inside
+  # the app after the first signature. Seal the final bundle state and refresh
+  # registration again so System Settings does not hide an invalid app bundle.
+  sign_target_app "final"
+  final_registration_check
+  open -a "$TARGET_APP" >/dev/null 2>&1 || true
 }
 
 if [[ -z "$XCODEBUILD" || ! -x "$XCODEBUILD" ]]; then
@@ -549,6 +781,7 @@ prepare_squirrel_dependencies
 "$XCODEBUILD" "${xcodebuild_build_args[@]}"
 printf '[OK] xcodebuild build succeeded\n'
 printf '[OK] built patched Squirrel.app: %s\n' "$PRODUCT_APP"
+prevent_build_product_registration
 
 if [[ "$ACTION" == "install" ]]; then
   install_squirrel_app

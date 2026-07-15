@@ -6,7 +6,8 @@ This repository is being prepared for public inspection at
 ## Product Boundary
 
 - Product route: patched macOS Squirrel/Rime plus the local Python sidecar.
-- Debug-only route: `macos/RagImeMac`; do not treat it as the shipping IME.
+- Do not reintroduce an independent InputMethodKit frontend; use the patched
+  Squirrel sources and engine-neutral frontend contracts as the single route.
 - Base IME responsibility stays with Rime/Wanxiang: pinyin parsing, fuzzy pinyin,
   dictionary candidates, paging, and fallback.
 - RAG-IME adds side candidates from local model prediction and local
@@ -17,23 +18,25 @@ This repository is being prepared for public inspection at
 - Real foreground behavior matters more than backend JSON. A change is not done
   until the actual input source can show and select the candidates.
 - LLM, RAG/memory, and Rime dictionary candidates must remain distinguishable.
-- Number keys select live side candidates instead of inserting literal digits.
+- Ordinary number keys stay with Rime/the host; Tab and Option+number select
+  assistant candidates.
 - Backspace/Delete and app/context switches must invalidate stale context.
 - Selecting an LLM/RAG side candidate should immediately schedule the next
   prediction opportunity.
-- Realtime prediction uses a local small model. `x1api.top` is only for offline
-  memory, RAG, and lexicon cleanup.
+- Realtime prediction uses a local small model. High-intelligence generation,
+  memory organization, and lexicon cleanup use DeepSeek V4 only on explicit or
+  offline routes.
 
 ## Main Files
 
-- `docs/project-status.md`: current goal, user feedback, remaining work.
-- `docs/design-decisions.md`: stable architecture choices.
-- `docs/runtime-and-debug.md`: run, install, doctor, and evaluation commands.
+- `README.md`: public product boundary, setup, and validation entry points.
+- `release/`: public-safe machine-readable feature and release metadata.
+- `eval/`: synthetic public evaluation fixtures; never copy private input here.
 - `squirrel-patches/0001-add-rag-ime-sidecar.patch`: product frontend patch.
 - `rag_ime/rime_sidecar.py`: sidecar API and candidate merge path.
 - `rag_ime/mlx_predictor_server.py`: resident local MLX predictor.
 - `rag_ime/local_sqlite_core.py`: local RAG/memory storage and ranking.
-- `rag_ime/memory_generator.py`: offline x1api-compatible distillation.
+- `rag_ime/memory_generator.py`: offline DeepSeek V4 distillation.
 
 ## Current Priorities
 
@@ -43,12 +46,15 @@ This repository is being prepared for public inspection at
 3. Deduplicate and reorganize RAG memory so old input does not dominate.
 4. Improve local multi-word prediction toward top-3 logits seed branching with
    prompt/KV-cache reuse.
-5. Keep docs short: update existing root docs before adding new long notes.
+5. Keep public guidance concise in root files; `docs/` is local-only and must
+   never be committed.
 
 ## Safety
 
 - Do not commit API keys, local databases, model weights, built apps, logs, or
   personal input history.
+- `docs/` contains private local notes and screenshots and is intentionally
+  ignored in its entirety.
 - `.rag-ime-data/`, `.env*`, SQLite files, model files, build outputs, and
   archives are intentionally ignored.
 - Tests may use fake fixture keys such as `secret-value`; do not replace them

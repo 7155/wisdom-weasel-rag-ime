@@ -2,32 +2,89 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import ipaddress
 import json
-import mimetypes
 import os
 import re
+import signal
+import sqlite3
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Event, RLock
-from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from threading import Event, RLock, current_thread, main_thread
+from typing import Any, Mapping
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from .active_rag_service import ACTIVE_RAG_DEFAULT_MAX_CHARS, ActiveRagService, ActiveRagStartRequest
+from .active_rag_service import (
+    ACTIVE_RAG_DEFAULT_MAX_CHARS,
+    SENSITIVE_FIELD_BLOCK_REASON,
+    ActiveRagService,
+    ActiveRagStartRequest,
+    active_rag_sensitive_text_blocked,
+)
+from .agent_extensions import AgentExtensionService
+from .agent_service import AgentService, agent_service_from_settings
+from .agent_routes import (
+    agent_approval_route,
+    agent_artifact_route,
+    agent_media_route,
+    agent_room_route,
+    agent_session_route,
+    agent_subagent_route,
+)
+from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
+from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
+from .contracts.context_observability import build_context_injection_trace
+from .contracts.json_schema import validate_contract
+from .control_api import AgentKernelControlFacade
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
+from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from .embeddings import embed_query, embedding_provider_from_env
+from .foreground_privacy import assess_foreground_write, storage_receipt
+from .frontend_gateway import FrontendGateway
 from .history_context import build_prediction_context
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .local_sqlite_core import LocalSqliteCoreClient
-from .memory_book_compiler import build_memory_book_source_bundle
+from .knowledge_workbench import (
+    DeepSeekKnowledgeProvider,
+    KnowledgeWorkbenchRequest,
+    KnowledgeWorkbenchService,
+)
+from .knowledge_control import KnowledgeControlFacade
+from .knowledge_library import AssetBlob
+from .knowledge_worker_supervisor import KnowledgeWorkerSupervisor
+from .management_service import ManagementService, page_request
+from .management_work_contract import (
+    ManagementWorkError,
+    StoredReceipt,
+    WorkExecution,
+)
+from .memory_book_compiler import (
+    apply_stored_memory_book_run,
+    build_memory_book_source_bundle,
+    find_newer_applied_memory_book_run,
+    find_memory_book_draft_for_bundle,
+    memory_compile_due,
+    inspect_memory_book_plan,
+    memory_book_plan_from_compile_output,
+    memory_book_plan_from_stored_run,
+    memory_book_run_is_stale,
+    memory_book_run_payload,
+    rollback_memory_book_run,
+    store_memory_book_plan,
+    update_stored_memory_book_diff,
+)
 from .memory_generator import (
     MemoryGenerationError,
     VcpRebuildMemoryGenerator,
@@ -35,7 +92,10 @@ from .memory_generator import (
     generated_memory_dedupe_tag,
 )
 from .models import MemoryAction
+from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
 from .payloads import action_response_payload, suggestions_response_payload
+from .pi_provider_auth import PiProviderAuthError, PiProviderAuthService
+from .pi_runtime import PiRuntimeConfig
 from .prediction_anchors import build_prediction_anchors_from_snapshot
 from .predictor import (
     PredictionBenchmarkCase,
@@ -49,6 +109,7 @@ from .predictor_latency import latency_log_path_from_env, latency_report
 from .rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
+    configure_auto_prediction_trigger,
     decide_side_candidate_refresh,
     frontend_transaction_to_payload,
     parse_rime_context_payload,
@@ -56,12 +117,32 @@ from .rime_sidecar import (
     record_rime_side_candidate_selection,
     rime_context_to_payload,
     semantic_signal_length,
+    sensitive_input_requested,
 )
+from .rag_core_v3 import memory_candidates_v2_to_input_suggestions
 from .retrieval_docs import rebuild_retrieval_docs
-from .runtime_flags import assert_deepseek_scene_allowed
-from .settings_models import UserProfile, UserVocabularyItem
-from .settings_store import ManagementSettingsStore, settings_response
-from .text_utils import compact_whitespace, now_ms, stable_text_hash
+from .rime_native_feedback import record_native_rime_selection
+from .rime_rank_export import record_rime_rank_feedback
+from .rime_lexicon_review import (
+    apply_reviewed_rime_lexicon,
+    review_rime_lexicon,
+    rollback_reviewed_rime_lexicon,
+)
+from .runtime_config import RuntimeConfigResolver, RuntimeConfigSnapshot
+from .runtime_flags import load_hybrid_rag_runtime_flags
+from .settings_models import SettingsUpdateResult, UserProfile, UserVocabularyItem
+from .settings_schema import SENSITIVE_SETTING_SUFFIXES, flatten_settings, stable_settings_hash
+from .settings_store import ManagementSettingsStore, ensure_management_tables, settings_response
+from .temporal_query import TemporalQuery, parse_temporal_query
+from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
+from .voice_control import (
+    VoiceHotwordConfigStore,
+    read_voice_preferences,
+    read_voice_control_status,
+    resolve_voice_support_directory,
+    voice_hotword_config_from_settings,
+    write_voice_preferences_from_settings,
+)
 
 
 def _host_is_loopback(host: str) -> bool:
@@ -81,6 +162,105 @@ def _origin_matches_host(origin: str, host_header: str) -> bool:
     return bool(origin_host and request_host and origin_host == request_host)
 
 
+def _memory_book_operation_label(operation: str) -> str:
+    return {
+        "upsert_semantic_group": "更新主题分组",
+        "upsert_semantic_tag": "更新标签",
+        "upsert_memory_book": "更新工具书",
+        "upsert_memory_atom": "更新记忆条目",
+        "upsert_tag_edge": "更新标签关系",
+        "merge_semantic_tag": "合并标签",
+        "add_phrase_candidate": "新增词表提案",
+        "add_negative_phrase": "新增负向记忆",
+        "supersede_memory": "替代旧记忆",
+    }.get(operation, "整理记忆")
+
+
+def _knowledge_database_contract_state(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    project: str,
+) -> dict[str, object]:
+    run = memory_book_run_payload(conn, run_id=run_id)
+    if not run.get("provider"):
+        raise ManagementWorkError("domain_not_found", "The knowledge database run was not found.")
+    metadata = dict(run.get("metadata") or {})
+    if _string(metadata.get("project")) != project:
+        raise ManagementWorkError(
+            "domain_scope_mismatch",
+            "The knowledge database run is outside the current project.",
+        )
+    diffs = [dict(item) for item in list(run.get("diffs") or []) if isinstance(item, dict)]
+    pending_count = sum(1 for item in diffs if _string(item.get("status")) in {"pending", "approved"})
+    applied_count = sum(1 for item in diffs if _string(item.get("status")) == "applied")
+    stale = memory_book_run_is_stale(conn, run=run)
+    newer_applied_run = find_newer_applied_memory_book_run(conn, run_id=run_id)
+    status = _string(run.get("status"))
+    can_apply = status == "draft" and not stale and pending_count > 0
+    can_rollback = status in {"applied", "partial"} and applied_count > 0 and newer_applied_run is None
+    if stale:
+        apply_blocked_reason = "The knowledge database run is stale."
+    elif status != "draft":
+        apply_blocked_reason = "The knowledge database run is not a draft."
+    elif pending_count == 0:
+        apply_blocked_reason = "The knowledge database run has no selected pending changes."
+    else:
+        apply_blocked_reason = ""
+    rollback_blocked_reason = (
+        "A newer knowledge database apply must be rolled back first."
+        if newer_applied_run is not None
+        else "The knowledge database run is not rollbackable."
+    )
+    revision_hash = "sha256:" + hashlib.sha256(
+        json.dumps(run, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "run": run,
+        "revisionHash": revision_hash,
+        "summary": _string(run.get("summary")),
+        "pendingCount": pending_count,
+        "appliedCount": applied_count,
+        "canApply": can_apply,
+        "canRollback": can_rollback,
+        "applyBlockedReason": apply_blocked_reason,
+        "rollbackBlockedReason": rollback_blocked_reason,
+    }
+
+
+def _require_management_fields(
+    payload: Mapping[str, object],
+    *,
+    required: set[str],
+    optional: set[str],
+) -> None:
+    keys = {str(key) for key in payload}
+    missing = sorted(required - keys)
+    if missing:
+        raise ManagementWorkError("invalid_request", f"Missing required fields: {', '.join(missing)}.")
+    unknown = sorted(keys - required - optional)
+    if unknown:
+        raise ManagementWorkError("invalid_request", f"Unsupported fields: {', '.join(unknown)}.")
+
+
+def _strict_management_revision(value: object) -> int:
+    if isinstance(value, bool):
+        raise ManagementWorkError("invalid_request", "expectedRuntimeRevision must be an integer.")
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ManagementWorkError(
+            "invalid_request",
+            "expectedRuntimeRevision must be an integer.",
+        ) from exc
+    if parsed < 0:
+        raise ManagementWorkError(
+            "invalid_request",
+            "expectedRuntimeRevision must be non-negative.",
+        )
+    return parsed
+
+
 @dataclass(frozen=True)
 class DebugServerConfig:
     host: str = "127.0.0.1"
@@ -98,6 +278,14 @@ class DebugServerConfig:
     input_source_require_hitoolbox: bool = True
     vector_auto_rebuild_limit: int = 0
     include_raw_text: bool = False
+    runtime_command_runner: Any | None = None
+    rime_user_dir: Path = Path.home() / "Library" / "Rime"
+    rime_lexicon_backup_root: Path = Path.home() / "Library" / "Application Support" / "RagIme" / "LexiconBackups"
+    active_rag_trace_path: Path | None = None
+    agent_service: AgentService | None = None
+    pi_provider_auth_service: PiProviderAuthService | None = None
+    knowledge_client: object | None = None
+    knowledge_control: object | None = None
 
 
 @dataclass
@@ -122,11 +310,18 @@ class _PredictorStatusCacheEntry:
 
 
 class DebugImeService:
-    """Small local HTTP facade for browser-based IME debugging."""
+    """Local diagnostic and management API used by the native Control Center."""
 
     def __init__(self, config: DebugServerConfig):
         self.config = config
-        self.core = config.core or LocalSqliteCoreClient(config.db_path)
+        self.settings_store = ManagementSettingsStore(config.db_path)
+        self.settings_store.initialize()
+        self.voice_support_directory = resolve_voice_support_directory(config.db_path)
+        self.voice_hotwords = VoiceHotwordConfigStore(self.voice_support_directory)
+        self.core = config.core or LocalSqliteCoreClient(
+            config.db_path,
+            embedding_provider=embedding_provider_from_env(),
+        )
         self.predictor = config.predictor or prediction_provider_from_env()
         self.adapter = InputMethodAdapter(self.core, project=config.project)
         self.deepseek_completion_provider = DeepSeekV4FlashCompletionProvider(
@@ -136,8 +331,37 @@ class DebugImeService:
         self.active_rag = ActiveRagService(
             core=self.core if isinstance(self.core, LocalSqliteCoreClient) else None,
             completion_provider=self.deepseek_completion_provider,
+            trace_path=config.active_rag_trace_path,
+            trace_include_text=self._include_active_rag_trace_text,
         )
-        self.settings_store = ManagementSettingsStore(config.db_path)
+        self.knowledge_workbench = KnowledgeWorkbenchService(
+            evidence_retriever=self._knowledge_workbench_evidence,
+            generator=DeepSeekKnowledgeProvider(load_deepseek_config()),
+            database_organizer=self._knowledge_workbench_database_organizer,
+            notion_client=NotionAsyncKnowledgeClient(load_notion_knowledge_config()),
+        )
+        self.knowledge_worker = None
+        if config.knowledge_client is None:
+            self.knowledge_worker = KnowledgeWorkerSupervisor(
+                settings_provider=lambda: self.settings_store.get_settings(include_sensitive=True)
+            )
+            self.knowledge_client = self.knowledge_worker
+        else:
+            self.knowledge_client = config.knowledge_client
+        self._agent_managed_by_settings = config.agent_service is None
+        self.agent = config.agent_service or agent_service_from_settings(
+            config.db_path,
+            self.settings_store.get_settings(include_sensitive=True),
+            project=config.project,
+        )
+        runtime_factory_config = getattr(self.agent.runtime_factory, "config", None)
+        self.pi_provider_auth = config.pi_provider_auth_service or PiProviderAuthService.from_runtime(
+            runtime_factory_config
+            if isinstance(runtime_factory_config, PiRuntimeConfig)
+            else PiRuntimeConfig.from_environment(),
+            repo_root=Path(__file__).resolve().parents[1],
+        )
+        self._runtime_command_runner = config.runtime_command_runner or subprocess.run
         self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
         self._rime_inflight: dict[str, _RimeSuggestInflightEntry] = {}
         self._rime_cache_lock = RLock()
@@ -150,14 +374,80 @@ class DebugImeService:
         self._predictor_status_lock = RLock()
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
-        self.settings_store.initialize()
-        _apply_pinyin_settings_to_process_env(self.settings_store.get_settings(include_sensitive=True))
+        self._embedding_warmup_report = self._warm_embedding_provider()
+        self.runtime_config_resolver = RuntimeConfigResolver(self.settings_store, environ=os.environ)
+        self.management = ManagementService(
+            db_path=config.db_path,
+            project=config.project,
+            repo_root=Path(__file__).resolve().parents[1],
+            settings_store=self.settings_store,
+            health_provider=self.health,
+            input_source_provider=self.input_source_status,
+            predictor_provider=self.predictor_status,
+            runtime_config_provider=self.runtime_config_snapshot,
+            last_prediction_provider=self._last_management_prediction,
+            cache_invalidator=self._clear_rime_cache,
+            voice_support_directory=self.voice_support_directory,
+        )
+        self.knowledge_control = config.knowledge_control
+        if self.knowledge_control is None and isinstance(self.knowledge_worker, KnowledgeWorkerSupervisor):
+            self.knowledge_control = KnowledgeControlFacade(
+                worker=self.knowledge_worker,
+                work_contract=self.management.work_contract,
+            )
+        plugin_inbox = os.environ.get("RAG_IME_AGENT_PLUGIN_INBOX_DIR", "").strip()
+        self.agent_extensions = AgentExtensionService(
+            runtime_provider=lambda: self.agent.runtime,
+            inbox_root=(
+                Path(plugin_inbox).expanduser()
+                if plugin_inbox
+                else Path(config.db_path).expanduser().resolve(strict=False).parent
+                / "AgentPlugins"
+                / "inbox"
+            ),
+        )
+        self.agent_tools = ControlToolGateway(
+            sessions=self.agent.sessions,
+            management=self.management,
+            core=self.core,
+            project=config.project,
+            facade=self,
+            knowledge_client=self.knowledge_client,
+            delegation=self.agent.delegation,
+            collaboration=self.agent,
+            extensions=self.agent_extensions,
+        )
+        self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
+        self.control_api = AgentKernelControlFacade(
+            agent=self.agent,
+            capabilities=self.agent_tools,
+            platform_capabilities=lambda: {
+                "transport": "http",
+                "nativeBridge": False,
+                "filePicker": False,
+                "revealPath": False,
+                "approvedExternalActions": False,
+            },
+        )
+        self.agent.bind_approval_executor(self.agent_tools.apply_approval)
+        self.agent.bind_memory_maintenance_probe(self.agent_memory_maintenance_status)
+        self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
+        self.frontend_gateway = FrontendGateway(
+            suggest_handler=self.rime_suggest,
+            selection_handler=self.rime_select,
+            default_project=config.project,
+        )
+        initial_settings = self.settings_store.get_settings(include_sensitive=True)
+        initial_snapshot = self.runtime_config_snapshot(settings=initial_settings)
+        _apply_pinyin_settings_to_process_env(initial_snapshot.effective_settings(initial_settings))
         if config.seed_if_empty and self._event_count() == 0:
             seed_demo_memories(self.adapter, default_fixture_memories())
         self._vector_auto_rebuild_report = self._maybe_auto_rebuild_vector_index()
 
     def health(self) -> dict[str, object]:
         settings = self.settings_store.get_settings()
+        runtime_config = self.runtime_config_snapshot()
+        effective_settings = runtime_config.effective_settings(settings)
         return {
             "ok": True,
             "project": self.config.project,
@@ -167,9 +457,10 @@ class DebugImeService:
                 "schemaVersion": "rag-ime.debug-management.v1",
                 "localhostOnly": _host_is_loopback(self.config.host),
                 "rawTextVisible": self._include_raw_text(),
-                "settings": settings,
+                "settings": effective_settings,
+                "runtimeConfig": runtime_config.payload(),
             },
-            "pinyinRuntime": _pinyin_runtime_status(settings),
+            "pinyinRuntime": _pinyin_runtime_status(effective_settings),
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
             "rimeSuggestCache": {
@@ -184,8 +475,80 @@ class DebugImeService:
             "predictor": self._predictor_status(probe_capabilities=False),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
+            "embeddingWarmup": self._embedding_warmup_report,
             "vectorAutoRebuild": self._vector_auto_rebuild_status(),
         }
+
+    def _warm_embedding_provider(self) -> dict[str, object]:
+        provider = getattr(self.core, "embedding_provider", None)
+        fingerprint = str(getattr(provider, "fingerprint", "") or "")
+        enabled_value = os.environ.get("RAG_IME_EMBEDDING_WARMUP", "1").strip().lower()
+        enabled = fingerprint.startswith("mlx-bert:") and enabled_value not in {"0", "false", "no", "off"}
+        report: dict[str, object] = {
+            "schemaVersion": "rag-ime.embedding-warmup.v1",
+            "enabled": enabled,
+            "providerFingerprint": fingerprint,
+            "ok": False,
+            "elapsedMs": 0,
+            "modelElapsedMs": 0,
+            "vectorCacheElapsedMs": 0,
+            "vectorDocuments": 0,
+            "dimensions": 0,
+        }
+        if not enabled or provider is None:
+            report["skippedReason"] = "provider_not_local_mlx" if provider is not None else "provider_missing"
+            return report
+        started = time.perf_counter()
+        try:
+            vector = embed_query(provider, "输入法语义检索预热")
+            model_elapsed_ms = int((time.perf_counter() - started) * 1000)
+            vector_cache_report = (
+                self.core.warm_retrieval_vector_cache(project=self.config.project)
+                if isinstance(self.core, LocalSqliteCoreClient)
+                else {"ok": True, "elapsedMs": 0, "documents": 0}
+            )
+        except Exception as exc:  # pragma: no cover - fail-open runtime guard
+            report.update(
+                {
+                    "elapsedMs": int((time.perf_counter() - started) * 1000),
+                    "error": exc.__class__.__name__,
+                }
+            )
+            return report
+        report.update(
+            {
+                "ok": bool(vector) and bool(vector_cache_report.get("ok")),
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "modelElapsedMs": model_elapsed_ms,
+                "vectorCacheElapsedMs": int(vector_cache_report.get("elapsedMs") or 0),
+                "vectorDocuments": int(vector_cache_report.get("documents") or 0),
+                "dimensions": len(vector),
+            }
+        )
+        if not vector:
+            report["error"] = "empty_embedding"
+        elif not vector_cache_report.get("ok"):
+            report["error"] = "vector_cache_warmup_failed"
+        return report
+
+    def frontend_capabilities(self) -> dict[str, object]:
+        return self.frontend_gateway.capabilities()
+
+    def control_capabilities(self) -> dict[str, object]:
+        bootstrap = self.control_api.bootstrap()
+        return {
+            "schemaVersion": "rag-ime.control-capabilities.v1",
+            "apiVersion": bootstrap["apiVersion"],
+            "features": {},
+            "platform": bootstrap["platform"],
+            "routes": bootstrap["routes"],
+        }
+
+    def frontend_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.frontend_gateway.suggest(payload)
+
+    def frontend_select(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.frontend_gateway.select(payload)
 
     def predictor_status(self) -> dict[str, object]:
         return {
@@ -195,7 +558,28 @@ class DebugImeService:
         }
 
     def settings(self) -> dict[str, object]:
-        return settings_response(self.settings_store.get_settings())
+        settings = self._settings_with_agent_authority(
+            self._settings_with_voice_hotword_authority(
+                self.settings_store.get_settings()
+            )
+        )
+        snapshot = self.runtime_config_snapshot()
+        return {
+            **settings_response(settings),
+            "effectiveSettings": snapshot.effective_settings(settings),
+            "runtimeConfig": snapshot.payload(),
+            "voiceControl": read_voice_control_status(self.voice_support_directory),
+        }
+
+    def runtime_config_snapshot(
+        self,
+        *,
+        settings: dict[str, object] | None = None,
+    ) -> RuntimeConfigSnapshot:
+        return self.runtime_config_resolver.resolve(settings=settings)
+
+    def runtime_config(self) -> dict[str, object]:
+        return self.management.runtime_config()
 
     def management_security_settings(self) -> dict[str, object]:
         settings = self.settings_store.get_settings(include_sensitive=True)
@@ -206,29 +590,663 @@ class DebugImeService:
         return {"ok": True, **self.settings_store.schema_payload()}
 
     def settings_update(self, payload: dict[str, Any]) -> dict[str, object]:
+        updated_by = _string(payload.get("updatedBy")) or "local-console"
         result = self.settings_store.update_settings(
             payload,
-            updated_by=_string(payload.get("updatedBy")) or "local-console",
+            updated_by=updated_by,
             confirm_text=_string(payload.get("confirmText")),
         )
-        _apply_pinyin_settings_to_process_env(result.settings)
+        if any(key.startswith("voice.") for key in result.changed_keys):
+            persisted = self.settings_store.get_settings(include_sensitive=True)
+            self._write_voice_hotwords_from_settings(persisted)
+            result = SettingsUpdateResult(
+                settings=self._settings_with_voice_hotword_authority(result.settings),
+                audit_id=result.audit_id,
+                changed_keys=result.changed_keys,
+            )
+        return self._settings_update_response(result, updated_by=updated_by)
+
+    def configuration_settings_preview(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={"changes", "expectedRuntimeRevision"},
+                optional=set(),
+            )
+            expected_runtime = _strict_management_revision(
+                payload.get("expectedRuntimeRevision")
+            )
+            if expected_runtime != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The configuration snapshot revision is stale.",
+                    current_revision=current,
+                )
+            changes = self._configuration_settings_changes(payload.get("changes"))
+            with self.settings_store.connection() as conn:
+                settings = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(conn)
+                )
+                current_flat = flatten_settings(settings)
+                changed_keys = [
+                    key for key, value in changes.items() if current_flat.get(key) != value
+                ]
+                revision = self.management.management_work_revision(
+                    conn,
+                    subject_revision=stable_settings_hash(settings),
+                )
+            if not changed_keys:
+                raise ManagementWorkError(
+                    "domain_not_applicable",
+                    "The requested settings already have these values.",
+                    current_revision=revision,
+                )
+            restart_components = self._configuration_restart_components(changed_keys)
+            return self.management.work_contract.create_preview(
+                path_id="configuration.settings.apply",
+                payload={"changes": changes},
+                expected_revision=revision,
+                required_confirm="apply",
+                summary={
+                    "title": "应用控制中心设置",
+                    "items": [
+                        *(f"更新 {key}" for key in changed_keys[:8]),
+                        *(
+                            [f"另有 {len(changed_keys) - 8} 项设置"]
+                            if len(changed_keys) > 8
+                            else []
+                        ),
+                        *(
+                            [f"需要重载: {', '.join(restart_components)}"]
+                            if restart_components
+                            else []
+                        ),
+                    ],
+                    "risk": "R2" if restart_components else "R1",
+                },
+            )
+        except Exception as exc:
+            return self.management.work_contract.error_payload(
+                exc,
+                current_revision=current,
+            )
+
+    def configuration_settings_apply(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={
+                    "changes",
+                    "expectedRuntimeRevision",
+                    "previewToken",
+                    "payloadSha256",
+                    "confirmText",
+                },
+                optional=set(),
+            )
+            expected_runtime = _strict_management_revision(
+                payload.get("expectedRuntimeRevision")
+            )
+            if expected_runtime != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The configuration apply request revision is stale.",
+                    current_revision=current,
+                )
+            changes = self._configuration_settings_changes(payload.get("changes"))
+            applied_result: SettingsUpdateResult | None = None
+
+            def current_revision(conn: sqlite3.Connection) -> dict[str, object]:
+                settings = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(conn)
+                )
+                return self.management.management_work_revision(
+                    conn,
+                    subject_revision=stable_settings_hash(settings),
+                )
+
+            def execute(conn: sqlite3.Connection) -> WorkExecution:
+                nonlocal applied_result
+                before = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(
+                        conn,
+                        include_sensitive=True,
+                    )
+                )
+                before_flat = flatten_settings(before)
+                changed_keys = [
+                    key for key, value in changes.items() if before_flat.get(key) != value
+                ]
+                if not changed_keys:
+                    raise ManagementWorkError(
+                        "domain_not_applicable",
+                        "The requested settings already have these values.",
+                    )
+                before_values = {key: before_flat[key] for key in changed_keys}
+                stored_result = self.settings_store.update_settings_in_connection(
+                    conn,
+                    changes,
+                    updated_by="control-center-web",
+                    audit_action="configuration_settings_apply",
+                )
+                missing_db_changes = set(changed_keys) - set(stored_result.changed_keys)
+                if (
+                    not set(stored_result.changed_keys).issubset(changed_keys)
+                    or any(not key.startswith("voice.") for key in missing_db_changes)
+                ):
+                    raise ManagementWorkError(
+                        "revision_mismatch",
+                        "The settings changed after this preview was created.",
+                    )
+                persisted_after = self.settings_store.get_settings_from_connection(
+                    conn,
+                    include_sensitive=True,
+                )
+                if any(key.startswith("voice.") for key in changed_keys):
+                    self._write_voice_hotwords_from_settings(persisted_after)
+                after = self._settings_with_voice_hotword_authority(persisted_after)
+                after_flat = flatten_settings(after)
+                after_values = {key: after_flat[key] for key in changed_keys}
+                applied_result = SettingsUpdateResult(
+                    settings=after,
+                    audit_id=stored_result.audit_id,
+                    changed_keys=tuple(changed_keys),
+                )
+                after_revision = stable_settings_hash(after)
+                return WorkExecution(
+                    result={
+                        "schemaVersion": "rag-ime.configuration-settings-mutation.v1",
+                        "ok": True,
+                        "changedKeys": list(applied_result.changed_keys),
+                        "settingsHash": after_revision,
+                    },
+                    audit_action="configuration_settings_apply",
+                    target_type="settings",
+                    target_id=",".join(changed_keys),
+                    rollback_available=True,
+                    rollback_path_id="configuration.settings.rollback",
+                    rollback_confirm="rollback",
+                    rollback_authority={"settingKeys": changed_keys},
+                    rollback_data={
+                        "beforeValues": before_values,
+                        "afterValues": after_values,
+                        "afterRevision": after_revision,
+                    },
+                    restart_components=self._configuration_restart_components(changed_keys),
+                    audit_id=applied_result.audit_id,
+                )
+
+            response = self.management.work_contract.execute_apply(
+                path_id="configuration.settings.apply",
+                payload={"changes": changes},
+                preview_token=_string(payload.get("previewToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirmText")),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            if applied_result is not None:
+                self._attach_settings_update_effects(
+                    response,
+                    applied_result,
+                    updated_by="control-center-web",
+                )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(
+                exc,
+                current_revision=current,
+            )
+
+    def configuration_settings_rollback(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={"receiptId", "rollbackToken", "payloadSha256", "confirmText"},
+                optional=set(),
+            )
+            rollback_result: SettingsUpdateResult | None = None
+
+            def execute(
+                conn: sqlite3.Connection,
+                receipt: StoredReceipt,
+            ) -> WorkExecution:
+                nonlocal rollback_result
+                raw_keys = receipt.rollback_authority.get("settingKeys")
+                if not isinstance(raw_keys, list) or not raw_keys:
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback authority is invalid.",
+                    )
+                setting_keys = [str(key) for key in raw_keys]
+                if setting_keys != sorted(set(setting_keys)):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback authority is invalid.",
+                    )
+                before_values = receipt.rollback_data.get("beforeValues")
+                after_values = receipt.rollback_data.get("afterValues")
+                if not isinstance(before_values, Mapping) or not isinstance(after_values, Mapping):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback snapshot is invalid.",
+                    )
+                if set(before_values) != set(setting_keys) or set(after_values) != set(setting_keys):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The settings rollback snapshot does not match its authority.",
+                    )
+                current_settings = self._settings_with_voice_hotword_authority(
+                    self.settings_store.get_settings_from_connection(
+                        conn,
+                        include_sensitive=True,
+                    )
+                )
+                current_flat = flatten_settings(current_settings)
+                current_revision = stable_settings_hash(current_settings)
+                if (
+                    current_revision != receipt.rollback_data.get("afterRevision")
+                    or any(current_flat.get(key) != after_values[key] for key in setting_keys)
+                ):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The settings changed after the apply receipt was issued.",
+                        current_revision=self.management.management_work_revision(
+                            conn,
+                            subject_revision=current_revision,
+                        ),
+                    )
+                stored_result = self.settings_store.update_settings_in_connection(
+                    conn,
+                    dict(before_values),
+                    updated_by="control-center-web",
+                    audit_action="configuration_settings_rollback",
+                )
+                persisted_after = self.settings_store.get_settings_from_connection(
+                    conn,
+                    include_sensitive=True,
+                )
+                if any(key.startswith("voice.") for key in setting_keys):
+                    self._write_voice_hotwords_from_settings(persisted_after)
+                effective_after = self._settings_with_voice_hotword_authority(persisted_after)
+                rollback_result = SettingsUpdateResult(
+                    settings=effective_after,
+                    audit_id=stored_result.audit_id,
+                    changed_keys=tuple(setting_keys),
+                )
+                return WorkExecution(
+                    result={
+                        "schemaVersion": "rag-ime.configuration-settings-mutation.v1",
+                        "ok": True,
+                        "changedKeys": list(rollback_result.changed_keys),
+                        "settingsHash": stable_settings_hash(effective_after),
+                    },
+                    audit_action="configuration_settings_rollback",
+                    target_type="settings",
+                    target_id=",".join(setting_keys),
+                    restart_components=self._configuration_restart_components(setting_keys),
+                    audit_id=rollback_result.audit_id,
+                )
+
+            response = self.management.work_contract.execute_rollback(
+                path_id="configuration.settings.rollback",
+                receipt_id=_string(payload.get("receiptId")),
+                rollback_token=_string(payload.get("rollbackToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirmText")),
+                expected_apply_path_id="configuration.settings.apply",
+                executor=execute,
+            )
+            if rollback_result is not None:
+                self._attach_settings_update_effects(
+                    response,
+                    rollback_result,
+                    updated_by="control-center-web",
+                )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(
+                exc,
+                current_revision=current,
+            )
+
+    def _configuration_settings_changes(self, value: object) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            raise ManagementWorkError("invalid_request", "changes must be an object.")
+        transport_fields = {
+            "auditId",
+            "confirmText",
+            "previewToken",
+            "runtimeRevision",
+            "schemaVersion",
+            "settings",
+            "settingsRevision",
+            "updatedBy",
+        }
+        unsupported = sorted(transport_fields.intersection(str(key) for key in value))
+        if unsupported:
+            raise ManagementWorkError(
+                "invalid_request",
+                f"Unsupported changes fields: {', '.join(unsupported)}.",
+            )
+        try:
+            normalized = self.settings_store.normalize_updates(value)
+        except ValueError as exc:
+            raise ManagementWorkError("invalid_request", str(exc)) from exc
+        changes = {
+            key: item
+            for key, item in sorted(flatten_settings(normalized).items())
+        }
+        if not changes:
+            raise ManagementWorkError("invalid_request", "changes must not be empty.")
+        if len(changes) > 32:
+            raise ManagementWorkError(
+                "invalid_request",
+                "A settings mutation may contain at most 32 fields.",
+            )
+        for key in changes:
+            normalized_key = key.lower()
+            if normalized_key.startswith("managementsecurity.") or any(
+                normalized_key.endswith(suffix.lower())
+                for suffix in SENSITIVE_SETTING_SUFFIXES
+            ):
+                raise ManagementWorkError(
+                    "unsupported_mutation",
+                    f"Setting {key} must be changed through its dedicated secure flow.",
+                )
+        return changes
+
+    def _configuration_restart_components(
+        self,
+        changed_keys: list[str],
+    ) -> tuple[str, ...]:
+        fields = {
+            str(field.get("key")): field
+            for section in self.settings_store.schema_payload().get("sections", [])
+            if isinstance(section, Mapping)
+            for field in section.get("fields", [])
+            if isinstance(field, Mapping)
+        }
+        return tuple(
+            sorted(
+                {
+                    str(fields[key].get("restartComponent"))
+                    for key in changed_keys
+                    if key in fields and fields[key].get("restartComponent")
+                }
+            )
+        )
+
+    def _settings_update_response(
+        self,
+        result: SettingsUpdateResult,
+        *,
+        updated_by: str,
+    ) -> dict[str, object]:
+        persisted = self._settings_with_voice_hotword_authority(
+            self.settings_store.get_settings(include_sensitive=True)
+        )
+        agent_sync = None
+        if self._agent_managed_by_settings and any(key.startswith("agent.pi.") for key in result.changed_keys):
+            agent_sync = self._sync_agent_settings(
+                persisted,
+                updated_by=updated_by,
+            )
+        snapshot = self.runtime_config_snapshot(settings=persisted)
+        _apply_pinyin_settings_to_process_env(snapshot.effective_settings(persisted))
         self._clear_rime_cache()
-        return {
-            **settings_response(result.settings),
+        response = {
+            **settings_response(
+                self._settings_with_agent_authority(
+                    self._settings_with_voice_hotword_authority(result.settings)
+                )
+            ),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
+            **self.management.settings_changed(
+                audit_id=result.audit_id,
+                changed_keys=list(result.changed_keys),
+                snapshot=snapshot,
+            ),
         }
+        active_settings = (
+            result.settings.get("activeRag")
+            if isinstance(result.settings.get("activeRag"), dict)
+            else {}
+        )
+        response["runtimeSync"] = self._apply_active_rag_runtime_sync(
+            active_settings=active_settings,
+            changed_keys=tuple(result.changed_keys),
+        )
+        if agent_sync is not None:
+            response["agentSync"] = agent_sync
+        response["voiceControl"] = read_voice_control_status(self.voice_support_directory)
+        return response
+
+    def _attach_settings_update_effects(
+        self,
+        receipt: dict[str, object],
+        result: SettingsUpdateResult,
+        *,
+        updated_by: str,
+    ) -> None:
+        try:
+            effects = self._settings_update_response(result, updated_by=updated_by)
+        except Exception as exc:  # pragma: no cover - defensive post-commit boundary
+            receipt["runtimeSync"] = {
+                "attempted": True,
+                "applied": False,
+                "error": type(exc).__name__,
+            }
+            return
+        receipt["runtimeRevision"] = effects.get("runtimeRevision", 0)
+        receipt["settingsRevision"] = effects.get("settingsRevision", "")
+        receipt["runtimeConfig"] = effects.get("runtimeConfig", {})
+        receipt["runtimeSync"] = effects.get("runtimeSync", {})
+        receipt["voiceControl"] = effects.get("voiceControl", {})
+        if "agentSync" in effects:
+            receipt["agentSync"] = effects["agentSync"]
+        domain = receipt.get("result")
+        if isinstance(domain, dict):
+            domain["runtimeRevision"] = effects.get("runtimeRevision", 0)
+            domain["settingsRevision"] = effects.get("settingsRevision", "")
 
     def settings_reset_section(self, payload: dict[str, Any]) -> dict[str, object]:
         section = _string(payload.get("section"))
         result = self.settings_store.reset_section(section, updated_by=_string(payload.get("updatedBy")) or "local-console")
-        _apply_pinyin_settings_to_process_env(result.settings)
+        if section == "voice":
+            self._write_voice_hotwords_from_settings(
+                self.settings_store.get_settings(include_sensitive=True)
+            )
+            result = SettingsUpdateResult(
+                settings=self._settings_with_voice_hotword_authority(result.settings),
+                audit_id=result.audit_id,
+                changed_keys=result.changed_keys,
+            )
+        persisted = self.settings_store.get_settings(include_sensitive=True)
+        agent_sync = None
+        if self._agent_managed_by_settings and section == "agent":
+            agent_sync = self._sync_agent_settings(
+                persisted,
+                updated_by=_string(payload.get("updatedBy")) or "local-console",
+            )
+        snapshot = self.runtime_config_snapshot(settings=persisted)
+        _apply_pinyin_settings_to_process_env(snapshot.effective_settings(persisted))
         self._clear_rime_cache()
-        return {
-            **settings_response(result.settings),
+        response = {
+            **settings_response(self._settings_with_agent_authority(result.settings)),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
             "section": section,
+            **self.management.settings_changed(
+                audit_id=result.audit_id,
+                changed_keys=list(result.changed_keys),
+                snapshot=snapshot,
+            ),
+        }
+        active_settings = (
+            result.settings.get("activeRag")
+            if isinstance(result.settings.get("activeRag"), dict)
+            else {}
+        )
+        response["runtimeSync"] = self._apply_active_rag_runtime_sync(
+            active_settings=active_settings,
+            changed_keys=tuple(result.changed_keys),
+        )
+        if agent_sync is not None:
+            response["agentSync"] = agent_sync
+        response["voiceControl"] = read_voice_control_status(self.voice_support_directory)
+        return response
+
+    def _settings_with_agent_authority(
+        self,
+        settings: dict[str, object],
+    ) -> dict[str, object]:
+        result = copy.deepcopy(settings)
+        snapshot = self.agent.configuration()["configuration"]
+        configuration = snapshot["configuration"]
+        runtime = configuration["runtime"]
+        defaults = configuration["sessionDefaults"]
+        coordination = configuration["coordination"]
+        agent = result.setdefault("agent", {})
+        if not isinstance(agent, dict):
+            agent = {}
+            result["agent"] = agent
+        pi = agent.setdefault("pi", {})
+        if not isinstance(pi, dict):
+            pi = {}
+            agent["pi"] = pi
+        pi.update(
+            {
+                "enabled": runtime["enabled"],
+                "startup": runtime["startup"],
+                "idleTimeoutSeconds": runtime["idleTimeoutSeconds"],
+                "resumeLastSession": defaults["resumeLastSession"],
+                "defaultRoleId": defaults["roleId"],
+                "toolProfile": defaults["toolProfileVersion"],
+                "coordinatorEnabled": coordination["enabled"],
+            }
+        )
+        return result
+
+    def _settings_with_voice_hotword_authority(
+        self,
+        settings: dict[str, object],
+    ) -> dict[str, object]:
+        result = copy.deepcopy(settings)
+        status = self.voice_hotwords.read_status()
+        voice = result.setdefault("voice", {})
+        if not isinstance(voice, dict):
+            voice = {}
+            result["voice"] = voice
+        voice["hotwordsEnabled"] = status.get("enabled") is True
+        words = status.get("words")
+        voice["hotwords"] = list(words) if isinstance(words, list) else []
+        voice.update(read_voice_preferences(self.voice_support_directory))
+        return result
+
+    def _write_voice_hotwords_from_settings(
+        self,
+        settings: Mapping[str, object],
+    ) -> None:
+        self.voice_hotwords.write(voice_hotword_config_from_settings(settings))
+        write_voice_preferences_from_settings(self.voice_support_directory, settings)
+
+    def _sync_agent_settings(
+        self,
+        settings: dict[str, object],
+        *,
+        updated_by: str,
+    ) -> dict[str, object]:
+        agent = settings.get("agent") if isinstance(settings.get("agent"), dict) else {}
+        pi = agent.get("pi") if isinstance(agent.get("pi"), dict) else {}
+        snapshot = self.agent.configuration()["configuration"]
+        current = snapshot["configuration"]
+        desired = {
+            "runtime.enabled": bool(pi.get("enabled")),
+            "runtime.startup": _string(pi.get("startup")) or "lazy",
+            "runtime.idleTimeoutSeconds": _bounded_int(
+                pi.get("idleTimeoutSeconds"),
+                default=900,
+                minimum=0,
+                maximum=86_400,
+            ),
+            "sessionDefaults.resumeLastSession": bool(pi.get("resumeLastSession")),
+            "sessionDefaults.roleId": _string(pi.get("defaultRoleId")) or "zhiyou-v1",
+            "sessionDefaults.toolProfileVersion": (
+                _string(pi.get("toolProfile")) or "control-center-v1"
+            ),
+            "coordination.enabled": bool(pi.get("coordinatorEnabled")),
+        }
+        changes = {
+            key: value
+            for key, value in desired.items()
+            if _nested_agent_configuration_value(current, key) != value
+        }
+        if not changes:
+            return {
+                "schemaVersion": "rag-ime.agent-configuration-update.v1",
+                "ok": True,
+                "changedKeys": [],
+                "configuration": snapshot,
+                "event": None,
+            }
+        return self.agent.update_configuration(
+            {
+                "expectedRevision": snapshot["revision"],
+                "changes": changes,
+                "updatedBy": updated_by,
+            }
+        )
+
+    def _last_management_prediction(self) -> dict[str, object]:
+        if not self._prediction_live_trace:
+            return {}
+        item = next(
+            (
+                frame
+                for frame in reversed(self._prediction_live_trace)
+                if not _string(frame.get("sessionId")).startswith(("doctor", "native-doctor", "cache-probe"))
+            ),
+            None,
+        )
+        if item is None:
+            return {}
+        foreground = (
+            dict(item.get("foregroundContext"))
+            if isinstance(item.get("foregroundContext"), dict)
+            else {}
+        )
+        return {
+            "requestId": item.get("requestId", ""),
+            "triggerReason": item.get("triggerReason", item.get("reason", "")),
+            "contextSource": foreground.get("source", item.get("foregroundContextSource", "")),
+            "foregroundContext": foreground,
+            "contextInjection": {
+                "success": foreground.get("applied") is True,
+                "error": (
+                    foreground.get("captureFailureReason") or foreground.get("reason") or ""
+                    if foreground.get("applied") is not True
+                    else ""
+                ),
+            },
+            "sourceTypes": item.get("sourceTypes", []),
+            "visibleCandidate": item.get("visibleCandidate", ""),
+            "totalLatencyMs": item.get("totalLatencyMs", item.get("elapsedMs", 0)),
+            "providerCallCount": item.get("providerCallCount", 0),
+            "createdAtMs": item.get("createdAtMs", 0),
         }
 
     def profiles(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -317,9 +1335,11 @@ class DebugImeService:
             "ok": True,
             "settings": settings.get("models", {}),
             "predictor": self._predictor_status(probe_capabilities=True),
+            "activeRagRoute": self.active_rag_route_status(local_only=False),
         }
 
     def model_profiles(self) -> dict[str, object]:
+        active_rag_route = self.active_rag_route_status(local_only=False)
         return {
             "schemaVersion": "rag-ime.model-profiles.v3",
             "ok": True,
@@ -334,12 +1354,14 @@ class DebugImeService:
                     "enabled": True,
                 },
                 {
-                    "id": "deepseek_v4_flash_active_rag",
-                    "label": "DeepSeek V4 Flash Active RAG",
-                    "provider": "deepseek",
+                    "id": "knowledge_provider_active_rag",
+                    "label": "Knowledge Provider Active RAG",
+                    "provider": active_rag_route["provider"],
                     "lane": "active_rag",
-                    "enabled": False,
+                    "enabled": bool(active_rag_route["remoteReady"]),
                     "requiresExplicitOptIn": True,
+                    "skipReason": active_rag_route["skipReason"],
+                    "gates": active_rag_route["gates"],
                 },
             ],
         }
@@ -376,12 +1398,73 @@ class DebugImeService:
             "schemaVersion": "rag-ime.active-rag-settings.v3",
             "ok": True,
             "settings": settings.get("activeRag", {}),
+            "routeStatus": self.active_rag_route_status(local_only=False),
+            "previewRouteStatus": self.active_rag_route_status(),
+        }
+
+    def active_rag_route_status(
+        self,
+        *,
+        local_only: bool | None = None,
+    ) -> dict[str, object]:
+        settings = self.settings_store.get_settings(include_sensitive=True)
+        runtime_config = self.runtime_config_snapshot(settings=settings)
+        active = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        privacy = settings.get("privacy") if isinstance(settings.get("privacy"), dict) else {}
+        models = settings.get("models") if isinstance(settings.get("models"), dict) else {}
+        resolved_local_only = bool(active.get("localOnlyDefault", True)) if local_only is None else bool(local_only)
+        config = load_deepseek_config()
+        flags = load_hybrid_rag_runtime_flags()
+        gates = {
+            "featureEnabled": runtime_config.active_rag.enabled,
+            "notLocalOnly": not resolved_local_only,
+            "allowRemoteModel": bool(active.get("allowRemoteModel", False)),
+            "privacyOptIn": bool(privacy.get("allowRemoteModelForActiveRag", False)),
+            "sceneEnvEnabled": bool(flags.deepseek_active_rag),
+            "credentialsConfigured": bool(config.api_key),
+        }
+        skip_reason = ""
+        for key, reason in (
+            ("featureEnabled", "active_rag_disabled"),
+            ("notLocalOnly", "local_only"),
+            ("allowRemoteModel", "active_rag_remote_not_allowed"),
+            ("privacyOptIn", "privacy_remote_not_allowed"),
+            ("sceneEnvEnabled", "scene_flag_disabled"),
+            ("credentialsConfigured", "credentials_missing"),
+        ):
+            if not gates[key]:
+                skip_reason = reason
+                break
+        return {
+            "schemaVersion": "rag-ime.active-rag-route-status.v1",
+            "route": "explicit_active_rag_knowledge_provider",
+            "explicitOnly": True,
+            "localOnly": resolved_local_only,
+            "remoteReady": all(gates.values()),
+            "provider": config.provider_name,
+            "model": config.model,
+            "selectedModel": _string(models.get("activeRag")) or "local",
+            "shortcut": runtime_config.active_rag.shortcut,
+            "stream": True,
+            "skipReason": skip_reason,
+            "gates": gates,
+            "passivePostCommitRemoteAllowed": False,
         }
 
     def active_rag_settings_update(self, payload: dict[str, Any]) -> dict[str, object]:
-        settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
+        raw_settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
+        settings = {
+            key: value
+            for key, value in raw_settings.items()
+            if key not in {"confirmText", "updatedBy", "previewToken"}
+        }
+        update_payload = (
+            dict(settings)
+            if any(str(key).startswith("activeRag.") for key in settings)
+            else {"activeRag": dict(settings)}
+        )
         update_result = self.settings_store.update_settings(
-            {"activeRag": dict(settings)},
+            update_payload,
             updated_by=_string(payload.get("updatedBy")) or "local-console",
             confirm_text=_string(payload.get("confirmText")),
         )
@@ -391,13 +1474,80 @@ class DebugImeService:
             "auditId": update_result.audit_id,
             "changedKeys": list(update_result.changed_keys),
         }
-        result["runtimeSync"] = _active_rag_runtime_sync_payload(
-            active_settings=result.get("settings", {}).get("activeRag", {}) if isinstance(result.get("settings"), dict) else {},
+        result["runtimeSync"] = self._apply_active_rag_runtime_sync(
+            active_settings=(
+                result.get("settings", {}).get("activeRag", {})
+                if isinstance(result.get("settings"), dict)
+                else {}
+            ),
             changed_keys=tuple(str(item) for item in result.get("changedKeys", []) if item),
         )
+        result["routeStatus"] = self.active_rag_route_status(local_only=False)
+        result["previewRouteStatus"] = self.active_rag_route_status()
         return result
 
+    def _apply_active_rag_runtime_sync(
+        self,
+        *,
+        active_settings: object,
+        changed_keys: tuple[str, ...],
+    ) -> dict[str, object]:
+        payload = _active_rag_runtime_sync_payload(
+            active_settings=active_settings,
+            changed_keys=changed_keys,
+        )
+        commands = payload.get("commands") if isinstance(payload.get("commands"), list) else []
+        relevant = any(key in _ACTIVE_RAG_RUNTIME_SYNC_KEYS for key in changed_keys)
+        if not relevant:
+            return {**payload, "attempted": False, "applied": True, "results": []}
+        results: list[dict[str, object]] = []
+        for raw_command in commands:
+            command = [str(item) for item in raw_command] if isinstance(raw_command, list) else []
+            if not _active_rag_defaults_command_allowed(command):
+                results.append({"command": command, "ok": False, "error": "command_not_allowlisted"})
+                continue
+            try:
+                completed = self._runtime_command_runner(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                return_code = int(getattr(completed, "returncode", 1))
+                results.append(
+                    {
+                        "command": command,
+                        "ok": return_code == 0,
+                        "returnCode": return_code,
+                        "stdout": compact_whitespace(str(getattr(completed, "stdout", "")))[:240],
+                        "stderr": compact_whitespace(str(getattr(completed, "stderr", "")))[:240],
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - defensive OS boundary
+                results.append(
+                    {
+                        "command": command,
+                        "ok": False,
+                        "error": type(exc).__name__,
+                    }
+                )
+        applied = bool(results) and all(bool(item.get("ok")) for item in results)
+        return {
+            **payload,
+            "attempted": True,
+            "applied": applied,
+            "results": results,
+            "error": "" if applied else "one_or_more_defaults_writes_failed",
+        }
+
     def active_rag_management_preview(self, payload: dict[str, Any]) -> dict[str, object]:
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return self._active_rag_privacy_blocked_response(
+                privacy_assessment,
+                preview=True,
+            )
         settings = self.settings_store.get_settings()
         active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
         if not active_settings.get("enabled", True):
@@ -410,6 +1560,14 @@ class DebugImeService:
         )
         request_payload = {**payload, "maxCandidates": max_candidates}
         local_only = _bool(payload.get("localOnly"), default=bool(active_settings.get("localOnlyDefault", True)))
+        route_status = self.active_rag_route_status(local_only=local_only)
+        route_gates = route_status.get("gates") if isinstance(route_status.get("gates"), dict) else {}
+        request_payload["remoteModelAllowed"] = all(
+            bool(route_gates.get(key))
+            for key in ("featureEnabled", "notLocalOnly", "allowRemoteModel", "privacyOptIn")
+        )
+        request_payload["remoteModelSkipReason"] = _string(route_status.get("skipReason"))
+        request_payload["remoteModelGates"] = dict(route_gates)
         try:
             request = self._active_rag_request_from_payload(request_payload)
             preview = self.active_rag.preview(request, local_only=local_only)
@@ -419,11 +1577,26 @@ class DebugImeService:
             {
                 "schemaVersion": "rag-ime.active-rag-preview.v3",
                 "localOnly": local_only,
+                "routeStatus": route_status,
                 "latencyBudgetMs": _bounded_int(
                     payload.get("latencyBudgetMs"),
-                    default=_bounded_int(active_settings.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
+                    default=_bounded_int(
+                        active_settings.get("latencyBudgetMs"),
+                        default=120_000,
+                        minimum=100,
+                        maximum=300_000,
+                    ),
                     minimum=100,
-                    maximum=30000,
+                    maximum=300_000,
+                ),
+                "stored": False,
+                "noStore": False,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(
+                    privacy_assessment,
+                    stored=False,
+                    outcome="no_write",
+                    reason="active_rag_preview_is_read_only",
                 ),
                 **preview,
             },
@@ -475,8 +1648,27 @@ class DebugImeService:
         return self.active_rag_status({"sessionId": session_id}) if session_id else started
 
     def _active_rag_request_from_payload(self, payload: dict[str, Any]) -> ActiveRagStartRequest:
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return self._active_rag_privacy_blocked_request()
         selected_text = compact_whitespace(_string(payload.get("selectedText") or payload.get("selected_text")))
-        if not selected_text:
+        context = _string(payload.get("context") or payload.get("currentContext"))
+        surrounding_before = _string(payload.get("surroundingBefore"))
+        surrounding_after = _string(payload.get("surroundingAfter"))
+        sensitive_field, secure_input = _active_rag_secure_flags(payload)
+        settings = self.settings_store.get_settings()
+        active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        runtime_config = self.runtime_config_snapshot(settings=settings)
+        sensitive_guard_enabled = bool(active_settings.get("sensitiveTextGuard", True))
+        sensitive_guard_hit = _bool(payload.get("sensitiveTextGuardHit"), default=False) or active_rag_sensitive_text_blocked(
+            selected_text,
+            context,
+            surrounding_before,
+            surrounding_after,
+            guard_enabled=sensitive_guard_enabled,
+        )
+        sensitive_blocked = sensitive_field or secure_input or sensitive_guard_hit
+        if not selected_text and not sensitive_blocked:
             raise ValueError("selectedText is required for explicit Active RAG")
         evidence_pack = (
             tuple(item for item in payload.get("evidencePack", []) if isinstance(item, dict))
@@ -485,16 +1677,28 @@ class DebugImeService:
         )
         return ActiveRagStartRequest(
             selected_text=selected_text,
-            selected_text_hash=_string(payload.get("selectedTextHash") or payload.get("selected_text_hash")) or stable_text_hash(selected_text),
+            selected_text_hash=(
+                ""
+                if sensitive_blocked
+                else _string(payload.get("selectedTextHash") or payload.get("selected_text_hash")) or stable_text_hash(selected_text)
+            ),
             frontend_revision=_bounded_int(payload.get("frontendRevision"), default=1, minimum=0, maximum=1_000_000_000),
             selection_epoch=_bounded_int(payload.get("selectionEpoch"), default=1, minimum=0, maximum=1_000_000_000),
             panel_session_id=_string(payload.get("panelSessionId")),
             front_app_bundle_id=_string(payload.get("frontAppBundleId")),
-            surrounding_before=_string(payload.get("surroundingBefore")),
-            surrounding_after=_string(payload.get("surroundingAfter")),
+            surrounding_before=surrounding_before,
+            surrounding_after=surrounding_after,
             intent=_string(payload.get("intent")) or "rewrite",
             placement=_string(payload.get("placement")) or "replace_selection",
-            context=_string(payload.get("context") or payload.get("currentContext")),
+            context=context,
+            context_source=_string(payload.get("contextSource")),
+            frontend_context_hash=_string(payload.get("contextHash")),
+            frontend_context_chars=_bounded_int(
+                payload.get("contextChars"), default=0, minimum=0, maximum=1_000_000
+            ),
+            frontend_selected_text_chars=_bounded_int(
+                payload.get("selectedTextChars"), default=0, minimum=0, maximum=1_000_000
+            ),
             evidence_pack=evidence_pack,
             project=_string(payload.get("project")) or self.config.project,
             app=_string(payload.get("app")),
@@ -502,11 +1706,73 @@ class DebugImeService:
             max_chars=_bounded_int(
                 payload.get("maxChars"),
                 default=ACTIVE_RAG_DEFAULT_MAX_CHARS,
-                minimum=4,
-                maximum=180,
+                minimum=0,
+                maximum=12000,
             ),
-            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
+            latency_budget_ms=_bounded_int(
+                payload.get("latencyBudgetMs"),
+                default=120_000,
+                minimum=100,
+                maximum=300_000,
+            ),
+            remote_model_allowed=(
+                _bool(payload.get("remoteModelAllowed"), default=False)
+                if "remoteModelAllowed" in payload
+                else None
+            ),
+            remote_model_skip_reason=_string(payload.get("remoteModelSkipReason")),
+            remote_model_gates=(
+                {str(key): bool(value) for key, value in payload.get("remoteModelGates", {}).items()}
+                if isinstance(payload.get("remoteModelGates"), dict)
+                else {}
+            ),
+            sensitive_field=sensitive_field,
+            secure_input=secure_input,
+            sensitive_text_guard_enabled=sensitive_guard_enabled,
+            sensitive_text_guard_hit=sensitive_guard_hit,
+            local_retrieval_allowed=runtime_config.hybrid_rag.enabled and runtime_config.memory.enabled,
+            local_retrieval_skip_reason=(
+                "memory_disabled"
+                if not runtime_config.memory.enabled
+                else ("hybrid_rag_disabled" if not runtime_config.hybrid_rag.enabled else "")
+            ),
+            rag_enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+            rag_lane_weights=runtime_config.hybrid_rag.query_weights(),
         )
+
+    @staticmethod
+    def _active_rag_privacy_blocked_request() -> ActiveRagStartRequest:
+        return ActiveRagStartRequest(
+            selected_text="",
+            selected_text_hash="",
+            frontend_revision=0,
+            selection_epoch=0,
+            remote_model_allowed=False,
+            sensitive_field=True,
+            secure_input=True,
+            local_retrieval_allowed=False,
+            local_retrieval_skip_reason=SENSITIVE_FIELD_BLOCK_REASON,
+        )
+
+    def _active_rag_privacy_blocked_response(
+        self,
+        privacy_assessment: dict[str, object],
+        *,
+        preview: bool,
+    ) -> dict[str, object]:
+        request = self._active_rag_privacy_blocked_request()
+        response = (
+            self.active_rag.preview(request, local_only=True)
+            if preview
+            else self.active_rag.start(request)
+        )
+        return {
+            **response,
+            "stored": False,
+            "noStore": True,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+        }
 
     def _active_rag_error_payload(self, error: str) -> dict[str, object]:
         return {
@@ -516,11 +1782,48 @@ class DebugImeService:
         }
 
     def active_rag_start(self, payload: dict[str, Any]) -> dict[str, object]:
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return self._active_rag_privacy_blocked_response(
+                privacy_assessment,
+                preview=False,
+            )
         if not isinstance(self.core, LocalSqliteCoreClient):
             return self._active_rag_error_payload("Active RAG requires local SQLite core")
+        runtime_config = self.runtime_config_snapshot()
+        if not runtime_config.active_rag.enabled:
+            return self._active_rag_error_payload("Active RAG disabled by management settings")
+        # The foreground Ctrl+. request is explicit. localOnlyDefault only controls
+        # management previews; product start follows the two remote privacy opt-ins.
+        local_only = _bool(payload.get("localOnly"), default=False)
+        route_status = self.active_rag_route_status(local_only=local_only)
+        route_gates = route_status.get("gates") if isinstance(route_status.get("gates"), dict) else {}
+        settings_allow_remote = all(
+            bool(route_gates.get(key))
+            for key in ("featureEnabled", "notLocalOnly", "allowRemoteModel", "privacyOptIn")
+        )
         try:
-            request = self._active_rag_request_from_payload(payload)
-            return self.active_rag.start(request)
+            request = self._active_rag_request_from_payload(
+                {
+                    **payload,
+                    "remoteModelAllowed": settings_allow_remote,
+                    "remoteModelSkipReason": _string(route_status.get("skipReason")),
+                    "remoteModelGates": dict(route_gates),
+                }
+            )
+            return {
+                **self.active_rag.start(request),
+                "routeStatus": route_status,
+                "stored": False,
+                "noStore": False,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(
+                    privacy_assessment,
+                    stored=False,
+                    outcome="no_write",
+                    reason="active_rag_session_is_not_typing_history",
+                ),
+            }
         except ValueError as exc:
             return self._active_rag_error_payload(str(exc))
 
@@ -529,6 +1832,23 @@ class DebugImeService:
         if not session_id:
             return {"schemaVersion": "rag-ime.active-rag-service.v1", "status": "missing", "error": "sessionId is required"}
         return self.active_rag.status(session_id)
+
+    def active_rag_diagnostics(self, payload: dict[str, Any]) -> dict[str, object]:
+        session_id = _string(payload.get("sessionId") or payload.get("id"))
+        if not session_id:
+            return {
+                "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
+                "ok": False,
+                "status": "missing",
+                "error": "sessionId is required",
+            }
+        return self.active_rag.diagnostics(session_id)
+
+    def active_rag_traces(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.active_rag.trace_records(
+            limit=_bounded_int(payload.get("limit"), default=50, minimum=1, maximum=500),
+            session_id=_string(payload.get("sessionId") or payload.get("id")),
+        )
 
     def active_rag_cancel(self, payload: dict[str, Any]) -> dict[str, object]:
         session_id = _string(payload.get("sessionId") or payload.get("id"))
@@ -548,7 +1868,7 @@ class DebugImeService:
         )
 
     def predictor_benchmark(self, payload: dict[str, Any]) -> dict[str, object]:
-        cases_path = Path(_string(payload.get("cases")) or "docs/eval/predictor_latency_cases.jsonl")
+        cases_path = Path(_string(payload.get("cases")) or "eval/predictor_latency_cases.jsonl")
         cases = load_predictor_latency_cases(cases_path)
         return benchmark_predictor_latency(
             self.predictor,
@@ -705,9 +2025,918 @@ class DebugImeService:
         )
         return {"ok": True, **report}
 
+    def knowledge_workbench_route_status(self) -> dict[str, object]:
+        active_route = self.active_rag_route_status(local_only=False)
+        workbench_route = self.knowledge_workbench.route_status()
+        return {
+            **workbench_route,
+            "deepseekReady": bool(workbench_route.get("deepseekReady") and active_route.get("remoteReady")),
+            "deepseekRoute": active_route,
+        }
+
+    def knowledge_workbench_start(self, payload: dict[str, Any]) -> dict[str, object]:
+        mode = _string(payload.get("mode")).lower() or "knowledge_answer"
+        question = _string(payload.get("question") or payload.get("query"))
+        context = _string(payload.get("context"))
+        sensitive_field, secure_input = _active_rag_secure_flags(payload)
+        settings = self.settings_store.get_settings()
+        active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        sensitive_guard_enabled = bool(active_settings.get("sensitiveTextGuard", True))
+        if sensitive_field or secure_input or active_rag_sensitive_text_blocked(
+            question,
+            context,
+            guard_enabled=sensitive_guard_enabled,
+        ):
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "blocked",
+                "error": SENSITIVE_FIELD_BLOCK_REASON,
+                "retrieval": {"called": False},
+                "remoteModel": {"requested": False},
+            }
+        route = self.knowledge_workbench_route_status()
+        if not route.get("deepseekReady"):
+            deepseek_route = route.get("deepseekRoute") if isinstance(route.get("deepseekRoute"), dict) else {}
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "blocked",
+                "error": f"DeepSeek knowledge route blocked: {_string(deepseek_route.get('skipReason')) or 'not_configured'}",
+                "routeStatus": route,
+            }
+        request = KnowledgeWorkbenchRequest(
+            question=question,
+            mode=mode,
+            context=context,
+            project=_string(payload.get("project")) or self.config.project,
+            app=_string(payload.get("app")) or "com.rag-ime.control",
+            include_notion=_bool(payload.get("includeNotion"), default=False),
+            generation=_bounded_int(payload.get("generation"), default=1, minimum=0, maximum=1_000_000_000),
+            context_hash=_string(payload.get("contextHash")),
+            client_id=_string(payload.get("clientId")) or "native-control-center",
+            max_chars=_bounded_int(payload.get("maxChars"), default=0, minimum=0, maximum=8000),
+            latency_budget_ms=_bounded_int(
+                payload.get("latencyBudgetMs"),
+                default=120_000,
+                minimum=1_000,
+                maximum=300_000,
+            ),
+        )
+        try:
+            return {**self.knowledge_workbench.start(request), "routeStatus": route}
+        except ValueError as exc:
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "error",
+                "error": str(exc),
+                "routeStatus": route,
+            }
+
+    def knowledge_workbench_status(self, payload: dict[str, Any]) -> dict[str, object]:
+        session_id = _string(payload.get("sessionId") or payload.get("id"))
+        if not session_id:
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "missing",
+                "error": "sessionId is required",
+            }
+        return self.knowledge_workbench.status(session_id)
+
+    def knowledge_workbench_cancel(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.knowledge_workbench.cancel(_string(payload.get("sessionId") or payload.get("id")))
+
+    def knowledge_workbench_database_apply(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
+        run_id = _string(payload.get("runId"))
+        if _string(payload.get("confirm")) != "apply":
+            return {
+                "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                "ok": False,
+                "error": 'confirmation required: set confirm="apply"',
+                "requiredConfirm": "apply",
+            }
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = apply_stored_memory_book_run(conn, run_id=run_id)
+            retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-action.v1",
+            "ok": True,
+            "action": "apply",
+            "run": run,
+            "retrieval": retrieval,
+        }
+
+    def knowledge_workbench_database_apply_preview(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={"runId"},
+                optional={"expectedRuntimeRevision"},
+            )
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ManagementWorkError("unsupported_backend", "Local SQLite core is required.")
+            run_id = _string(payload.get("runId"))
+            if not run_id:
+                raise ManagementWorkError("invalid_request", "runId is required.")
+            if "expectedRuntimeRevision" in payload:
+                expected_runtime = _strict_management_revision(payload.get("expectedRuntimeRevision"))
+                if expected_runtime != current["runtimeRevision"]:
+                    raise ManagementWorkError(
+                        "revision_mismatch",
+                        "The knowledge workbench revision is stale.",
+                        current_revision=current,
+                    )
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+            if not state["canApply"]:
+                raise ManagementWorkError(
+                    "domain_not_applicable",
+                    str(state["applyBlockedReason"]),
+                    current_revision={
+                        **current,
+                        "subjectRevision": state["revisionHash"],
+                    },
+                )
+            expected_revision = {
+                **current,
+                "subjectRevision": state["revisionHash"],
+            }
+            return self.management.work_contract.create_preview(
+                path_id="knowledge.database.apply",
+                payload={"runId": run_id},
+                expected_revision=expected_revision,
+                required_confirm="apply",
+                summary={
+                    "title": "应用知识库整理草案",
+                    "items": [
+                        f"运行: {run_id}",
+                        f"待应用变更: {state['pendingCount']}",
+                        _string(state.get("summary"))[:160],
+                    ],
+                    "risk": "R2",
+                },
+            )
+        except Exception as exc:
+            return self.management.work_contract.error_payload(exc, current_revision=current)
+
+    def knowledge_workbench_database_apply_contract(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={
+                    "runId",
+                    "confirm",
+                    "previewToken",
+                    "payloadSha256",
+                    "expectedRuntimeRevision",
+                },
+                optional=set(),
+            )
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ManagementWorkError("unsupported_backend", "Local SQLite core is required.")
+            run_id = _string(payload.get("runId"))
+            expected_runtime = _strict_management_revision(payload.get("expectedRuntimeRevision"))
+            if expected_runtime != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The knowledge apply request revision is stale.",
+                    current_revision=current,
+                )
+
+            def current_revision(conn: sqlite3.Connection) -> dict[str, object]:
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                return self.management.management_work_revision(
+                    conn,
+                    subject_revision=str(state["revisionHash"]),
+                )
+
+            def execute(conn: sqlite3.Connection) -> WorkExecution:
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                if not state["canApply"]:
+                    raise ManagementWorkError(
+                        "domain_not_applicable",
+                        str(state["applyBlockedReason"]),
+                    )
+                run = apply_stored_memory_book_run(conn, run_id=run_id)
+                retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+                after_state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                result = {
+                    "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                    "ok": True,
+                    "action": "apply",
+                    "run": run,
+                    "retrieval": retrieval,
+                }
+                return WorkExecution(
+                    result=result,
+                    audit_action="knowledge_database_apply",
+                    target_type="memory_book_run",
+                    target_id=run_id,
+                    rollback_available=bool(after_state["canRollback"]),
+                    rollback_path_id="knowledge.database.rollback",
+                    rollback_confirm="rollback",
+                    rollback_authority={"runId": run_id},
+                    rollback_data={
+                        "runId": run_id,
+                        "afterRevision": after_state["revisionHash"],
+                    },
+                )
+
+            response = self.management.work_contract.execute_apply(
+                path_id="knowledge.database.apply",
+                payload={"runId": run_id},
+                preview_token=_string(payload.get("previewToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirm")),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            self._clear_rime_cache()
+            self.management.events.publish(
+                "knowledge_database_changed",
+                {"runId": run_id, "action": "apply", "receiptId": response.get("receiptId")},
+            )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(exc, current_revision=current)
+
+    def knowledge_workbench_database_draft_edit(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
+        run_id = _string(payload.get("runId"))
+        diff_id = _bounded_int(payload.get("diffId"), default=0, minimum=1, maximum=2_147_483_647)
+        raw_payload = payload.get("payload")
+        if raw_payload is not None and not isinstance(raw_payload, dict):
+            raise ValueError("draft payload must be an object")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = update_stored_memory_book_diff(
+                conn,
+                run_id=run_id,
+                diff_id=diff_id,
+                payload=dict(raw_payload) if isinstance(raw_payload, dict) else None,
+                selected=_bool(payload.get("selected"), default=True),
+            )
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-action.v1",
+            "ok": True,
+            "action": "draft_edit",
+            "run": run,
+        }
+
+    def knowledge_workbench_database_rollback(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
+        run_id = _string(payload.get("runId"))
+        if _string(payload.get("confirm")) != "rollback":
+            return {
+                "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                "ok": False,
+                "error": 'confirmation required: set confirm="rollback"',
+                "requiredConfirm": "rollback",
+            }
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = rollback_memory_book_run(conn, run_id=run_id)
+            retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-action.v1",
+            "ok": True,
+            "action": "rollback",
+            "run": run,
+            "retrieval": retrieval,
+        }
+
+    def knowledge_workbench_database_rollback_contract(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={
+                    "runId",
+                    "confirm",
+                    "receiptId",
+                    "rollbackToken",
+                    "payloadSha256",
+                },
+                optional=set(),
+            )
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ManagementWorkError("unsupported_backend", "Local SQLite core is required.")
+            run_id = _string(payload.get("runId"))
+
+            def execute(conn: sqlite3.Connection, receipt: StoredReceipt) -> WorkExecution:
+                authority = dict(receipt.rollback_authority)
+                if authority.get("runId") != run_id:
+                    raise ManagementWorkError(
+                        "rollback_authority_mismatch",
+                        "The knowledge run is not owned by this receipt.",
+                    )
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                if state["revisionHash"] != receipt.rollback_data.get("afterRevision"):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The knowledge run changed after the apply receipt was issued.",
+                        current_revision={
+                            **current,
+                            "subjectRevision": state["revisionHash"],
+                        },
+                    )
+                if not state["canRollback"]:
+                    raise ManagementWorkError(
+                        "rollback_unavailable",
+                        str(state["rollbackBlockedReason"]),
+                    )
+                run = rollback_memory_book_run(conn, run_id=run_id)
+                retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+                result = {
+                    "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                    "ok": True,
+                    "action": "rollback",
+                    "run": run,
+                    "retrieval": retrieval,
+                }
+                return WorkExecution(
+                    result=result,
+                    audit_action="knowledge_database_rollback",
+                    target_type="memory_book_run",
+                    target_id=run_id,
+                )
+
+            response = self.management.work_contract.execute_rollback(
+                path_id="knowledge.database.rollback",
+                receipt_id=_string(payload.get("receiptId")),
+                rollback_token=_string(payload.get("rollbackToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirm")),
+                expected_apply_path_id="knowledge.database.apply",
+                executor=execute,
+            )
+            self._clear_rime_cache()
+            self.management.events.publish(
+                "knowledge_database_changed",
+                {"runId": run_id, "action": "rollback", "receiptId": response.get("receiptId")},
+            )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(exc, current_revision=current)
+
+    def _knowledge_workbench_evidence(
+        self,
+        request: KnowledgeWorkbenchRequest,
+    ) -> tuple[dict[str, object], ...]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return ()
+        runtime_config = self.runtime_config_snapshot()
+        if not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled:
+            return ()
+        temporal_query = parse_temporal_query(request.question)
+        if temporal_query.matched:
+            return self._temporal_knowledge_evidence(request, temporal_query)
+        # The native workbench is a global knowledge surface rather than the
+        # app that originally produced a memory. Keeping com.rag-ime.control
+        # here would hide memories captured in Codex, TextEdit, terminals, and
+        # browsers before ranking even starts.
+        retrieval_app = "" if request.app.startswith("com.rag-ime.control") else request.app
+        query = HybridRagQuery(
+            query_text=request.question,
+            raw_input=request.question,
+            committed_tail=request.context,
+            project=request.project,
+            app=retrieval_app,
+            top_k=12,
+            latency_budget_ms=800,
+            enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+            lane_weights=runtime_config.hybrid_rag.query_weights(),
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            payload = retrieve_hybrid_rag_candidates(conn, query, self.core.embedding_provider)
+        lane_weights = dict(query.lane_weights)
+        fused_ranks: dict[str, int] = {}
+        for index, item in enumerate(payload.get("candidates", []), start=1):
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            doc_id = _string(metadata.get("docId"))
+            if doc_id and doc_id not in fused_ranks:
+                fused_ranks[doc_id] = index
+        combined: dict[str, dict[str, object]] = {}
+        for item in payload.get("hits", []):
+            if not isinstance(item, dict):
+                continue
+            doc_id = _string(item.get("doc_id") or item.get("docId"))
+            source_id = _string(item.get("source_id") or item.get("sourceId")) or doc_id
+            if not source_id:
+                continue
+            text = compact_whitespace(_string(item.get("text")))
+            metadata = dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}
+            current = combined.get(source_id)
+            lane = _string(item.get("source_lane") or item.get("sourceLane")) or "local"
+            rank = max(1, int(item.get("rank") or 1))
+            # SQLite BM25 values and cosine values are different units. Use
+            # weighted reciprocal rank here, just like the foreground fusion,
+            # so either score scale cannot drown out the other evidence.
+            lane_score = float(lane_weights.get(lane, 1.0)) / (60.0 + rank)
+            if current is None:
+                combined[source_id] = {
+                    "sourceId": source_id,
+                    "docId": doc_id,
+                    "docType": _string(item.get("doc_type") or item.get("docType")),
+                    "sourceLane": lane,
+                    "lanes": [lane],
+                    "title": _string(metadata.get("bookTitle")) or truncate_text(text, 60),
+                    "text": text,
+                    "tags": list(item.get("tags") or []),
+                    "score": lane_score,
+                    "rank": rank,
+                    "fusedRank": fused_ranks.get(doc_id, 0),
+                    "metadata": metadata,
+                }
+                continue
+            lanes = list(current.get("lanes") or [])
+            if lane not in lanes:
+                lanes.append(lane)
+            current["lanes"] = lanes
+            current["score"] = float(current.get("score") or 0.0) + lane_score
+            current["rank"] = min(int(current.get("rank") or rank), rank)
+            if len(text) > len(_string(current.get("text"))):
+                current["text"] = text
+                current["title"] = _string(metadata.get("bookTitle")) or truncate_text(text, 60)
+        for item in combined.values():
+            fused_rank = int(item.get("fusedRank") or 0)
+            if fused_rank > 0:
+                item["score"] = float(item.get("score") or 0.0) + 0.01 / fused_rank
+        ranked = sorted(
+            combined.values(),
+            key=lambda item: (float(item.get("score") or 0.0), -int(item.get("rank") or 0)),
+            reverse=True,
+        )
+        # A long-form knowledge answer needs the organized Memory Book/Atom
+        # contract, not twelve near-duplicate raw events. Reserve one relevant
+        # book and one atom when either ranked in the top twelve of a lane, then
+        # fill the remaining evidence slots by fused score.
+        selected: list[dict[str, object]] = []
+        for doc_type in ("book", "atom"):
+            structured = next(
+                (
+                    item
+                    for item in ranked
+                    if _string(item.get("docType")) == doc_type
+                    and int(item.get("rank") or 0) in range(1, 13)
+                ),
+                None,
+            )
+            if structured is not None:
+                selected.append(structured)
+        selected_ids = {_string(item.get("sourceId")) for item in selected}
+        for item in ranked:
+            if _string(item.get("sourceId")) in selected_ids:
+                continue
+            selected.append(item)
+            if len(selected) >= 12:
+                break
+        return tuple(self._annotate_knowledge_evidence_times(selected[:12]))
+
+    def _temporal_knowledge_evidence(
+        self,
+        request: KnowledgeWorkbenchRequest,
+        temporal_query: TemporalQuery,
+    ) -> tuple[dict[str, object], ...]:
+        range_clauses = " OR ".join("(e.created_at_ms >= ? AND e.created_at_ms < ?)" for _ in temporal_query.ranges)
+        range_params = [value for item in temporal_query.ranges for value in (item.start_ms, item.end_ms)]
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                f"""
+                SELECT e.id, e.created_at_ms, e.source, e.committed_text,
+                       e.app, e.project, e.tags_json
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE s.deleted = 0
+                  AND ({range_clauses})
+                  AND (? = '' OR e.project = ? OR e.project = '')
+                ORDER BY e.created_at_ms DESC, e.id DESC
+                LIMIT 1200
+                """,
+                (*range_params, request.project, request.project),
+            ).fetchall()
+
+        candidates: list[dict[str, object]] = []
+        seen_text: set[str] = set()
+        query_terms = set(re.sub(r"[^\w\u4e00-\u9fff]+", "", temporal_query.cleaned_query).lower())
+        for row in rows:
+            text = compact_whitespace(str(row["committed_text"] or ""))
+            normalized = re.sub(r"[\W_]+", "", text).lower()
+            if len(normalized) < 6 or normalized in seen_text:
+                continue
+            seen_text.add(normalized)
+            timestamp_ms = int(row["created_at_ms"] or 0)
+            local_time = datetime.fromtimestamp(timestamp_ms / 1000).astimezone().strftime("%H:%M")
+            matching_range = next(
+                (item for item in temporal_query.ranges if item.start_ms <= timestamp_ms < item.end_ms),
+                temporal_query.ranges[0],
+            )
+            try:
+                tags = list(json.loads(str(row["tags_json"] or "[]")))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                tags = []
+            candidates.append(
+                {
+                    "sourceId": f"event:{int(row['id'])}",
+                    "docId": f"event:{int(row['id'])}",
+                    "docType": "event",
+                    "sourceLane": "temporal_timeline",
+                    "lanes": ["temporal_timeline"],
+                    "title": f"{matching_range.label} {local_time}",
+                    "text": text,
+                    "tags": tags[:8],
+                    "score": (min(len(text), 240) / 240.0) + (len(query_terms & set(normalized)) / max(1, len(query_terms))),
+                    "rank": len(candidates) + 1,
+                    "fusedRank": len(candidates) + 1,
+                    "sourceCreatedAtMs": timestamp_ms,
+                    "app": str(row["app"] or ""),
+                    "project": str(row["project"] or ""),
+                    "source": str(row["source"] or ""),
+                }
+            )
+
+        # Like VCP's Time path, rank only inside the explicit range. Semantic
+        # terms may reorder the time lane, but cannot leak an old memory into it.
+        selected = sorted(candidates, key=lambda item: (float(item["score"]), int(item["sourceCreatedAtMs"])), reverse=True)[:12]
+        selected.sort(key=lambda item: int(item["sourceCreatedAtMs"]))
+        return tuple(selected)
+
+    def _annotate_knowledge_evidence_times(
+        self,
+        evidence: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        event_ids: set[int] = set()
+        item_event_ids: dict[int, list[int]] = {}
+        for index, item in enumerate(evidence):
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            raw_ids = list(metadata.get("sourceEventIds") or [])
+            raw_single_id = str(metadata.get("sourceEventId") or "")
+            single_id = int(raw_single_id) if raw_single_id.isdigit() else 0
+            ids = [int(value) for value in raw_ids if str(value).isdigit() and int(value) > 0]
+            if single_id > 0:
+                ids.append(single_id)
+            item_event_ids[index] = ids
+            event_ids.update(ids)
+        if not event_ids:
+            return evidence
+        placeholders = ",".join("?" for _ in event_ids)
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                f"SELECT id, created_at_ms FROM input_events WHERE id IN ({placeholders})",
+                tuple(sorted(event_ids)),
+            ).fetchall()
+        timestamps = {int(row["id"]): int(row["created_at_ms"] or 0) for row in rows}
+        for index, item in enumerate(evidence):
+            matched = [timestamps[event_id] for event_id in item_event_ids[index] if event_id in timestamps]
+            if matched:
+                item["sourceCreatedAtMs"] = max(matched)
+        return evidence
+
+    def _knowledge_workbench_database_organizer(
+        self,
+        request: KnowledgeWorkbenchRequest,
+    ) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            raise ValueError("database organization requires local SQLite core")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project=request.project,
+                since_days=30,
+                limit=120,
+            )
+            existing = find_memory_book_draft_for_bundle(
+                conn,
+                project=request.project,
+                bundle_hash=str(bundle.get("bundleHash") or ""),
+            )
+        if existing is not None:
+            plan = memory_book_plan_from_stored_run(existing)
+            validation = inspect_memory_book_plan(plan)
+            return {
+                "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+                "ok": bool(validation.get("ok")),
+                "dryRun": True,
+                "applySupported": True,
+                "applyRequiresReview": True,
+                "storedDraft": True,
+                "reusedDraft": True,
+                "source": {
+                    "bundleHash": bundle.get("bundleHash"),
+                    "eventCount": len(bundle.get("recentEvents") or []),
+                    "redactionStats": bundle.get("redactionStats"),
+                },
+                "plan": plan,
+                "validation": validation,
+                "storedRun": existing,
+            }
+        config = load_deepseek_config()
+        organizer = DeepSeekMemoryOrganizer(config)
+        compile_output = organizer.compile_memory_book(
+            bundle=bundle,
+            project=request.project,
+            instruction=request.question,
+        )
+        plan = memory_book_plan_from_compile_output(
+            compile_output,
+            project=request.project,
+            provider=organizer.provider_name,
+            model=config.model,
+            source_bundle=bundle,
+        )
+        validation = inspect_memory_book_plan(plan)
+        stored_run: dict[str, object] = {}
+        if validation.get("ok"):
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                stored_run = store_memory_book_plan(
+                    conn,
+                    plan,
+                    supersede_project_drafts=True,
+                )
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+            "ok": bool(validation.get("ok")),
+            "dryRun": True,
+            "applySupported": True,
+            "applyRequiresReview": True,
+            "storedDraft": bool(stored_run),
+            "reusedDraft": False,
+            "source": {
+                "bundleHash": bundle.get("bundleHash"),
+                "eventCount": len(bundle.get("recentEvents") or []),
+                "redactionStats": bundle.get("redactionStats"),
+            },
+            "plan": plan,
+            "validation": validation,
+            "storedRun": stored_run,
+        }
+
+    def agent_memory_maintenance_prepare(self, payload: dict[str, Any]) -> dict[str, object]:
+        instruction = compact_whitespace(_string(payload.get("instruction")))[:800] or (
+            "根据新增最终消息和已验证工具回执增量整理长期记忆；只生成可审阅草案，不自动应用。"
+        )
+        request = KnowledgeWorkbenchRequest(
+            question=instruction,
+            mode="database_organize",
+            project=_string(payload.get("project")) or self.config.project,
+            app="com.rag-ime.control.agent",
+            client_id="pi-control-agent",
+        )
+        return self._knowledge_workbench_database_organizer(request)
+
+    def agent_memory_maintenance_run(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-maintenance-run.v1",
+                "ok": False,
+                "error": "local SQLite core required",
+            }
+        run_id = _string(payload.get("runId"))
+        if not run_id:
+            raise ValueError("runId is required")
+        requested_project = _string(payload.get("project")) or self.config.project
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = memory_book_run_payload(conn, run_id=run_id)
+            if not run.get("provider"):
+                raise ValueError(f"memory book run not found: {run_id}")
+            metadata = dict(run.get("metadata") or {})
+            project = _string(metadata.get("project"))
+            if project != requested_project:
+                raise ValueError("memory book run is outside the current project")
+            stale = memory_book_run_is_stale(conn, run=run)
+            newer_applied_run = find_newer_applied_memory_book_run(conn, run_id=run_id)
+        diffs = [dict(item) for item in list(run.get("diffs") or []) if isinstance(item, dict)]
+        status_counts: dict[str, int] = {}
+        operation_counts: dict[str, int] = {}
+        changes: list[dict[str, object]] = []
+        for diff in diffs:
+            status = _string(diff.get("status")) or "unknown"
+            operation = _string(diff.get("op")) or "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
+            operation_counts[operation] = operation_counts.get(operation, 0) + 1
+            diff_payload = dict(diff.get("payload") or {})
+            title = next(
+                (
+                    compact_whitespace(_string(diff_payload.get(key)))
+                    for key in ("title", "name", "phrase", "bookKey", "tag", "text")
+                    if compact_whitespace(_string(diff_payload.get(key)))
+                ),
+                compact_whitespace(_string(diff.get("targetId"))) or operation,
+            )
+            detail = next(
+                (
+                    compact_whitespace(_string(diff_payload.get(key)))
+                    for key in ("summary", "description", "reason", "text")
+                    if compact_whitespace(_string(diff_payload.get(key)))
+                ),
+                "",
+            )
+            source_ids = diff_payload.get("sourceEventIds")
+            changes.append(
+                {
+                    "diffId": int(diff.get("diffId") or 0),
+                    "operation": operation,
+                    "operationLabel": _memory_book_operation_label(operation),
+                    "status": status,
+                    "selected": status != "rejected",
+                    "title": title[:120],
+                    "detail": detail[:240],
+                    "sourceCount": len(source_ids) if isinstance(source_ids, list) else 0,
+                }
+            )
+        revision_hash = "sha256:" + hashlib.sha256(
+            json.dumps(run, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        run_status = _string(run.get("status"))
+        pending_count = status_counts.get("pending", 0) + status_counts.get("approved", 0)
+        applied_count = status_counts.get("applied", 0)
+        return {
+            "schemaVersion": "rag-ime.agent-memory-maintenance-run.v1",
+            "ok": True,
+            "revisionHash": revision_hash,
+            "stale": stale,
+            "canApply": run_status == "draft" and not stale and pending_count > 0,
+            "canRollback": (
+                run_status in {"applied", "partial"}
+                and applied_count > 0
+                and newer_applied_run is None
+            ),
+            "newerAppliedRunId": "" if newer_applied_run is None else str(newer_applied_run["runId"]),
+            "rollbackBlockedReason": (
+                ""
+                if newer_applied_run is None
+                else "newer_applied_memory_run_must_be_rolled_back_first"
+            ),
+            "run": {
+                "runId": run_id,
+                "status": run_status,
+                "summary": _string(run.get("summary"))[:240],
+                "provider": _string(run.get("provider")),
+                "model": _string(run.get("model")),
+                "bundleHash": _string(metadata.get("bundleHash")),
+                "sourceCursor": dict(metadata.get("sourceCursor") or {}),
+                "diffCount": len(diffs),
+                "pendingDiffCount": pending_count,
+                "appliedDiffCount": applied_count,
+                "statusCounts": status_counts,
+                "operationCounts": operation_counts,
+                "changes": changes[:80],
+            },
+        }
+
+    def agent_memory_maintenance_status(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+                "ok": False,
+                "error": "local SQLite core required",
+            }
+        project = _string(payload.get("project")) or self.config.project
+        limit = _bounded_int(payload.get("limit"), default=8, minimum=1, maximum=30)
+        current_ms = int(time.time() * 1000)
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            last_event_row = conn.execute(
+                """
+                SELECT MAX(created_at_ms)
+                FROM input_events
+                WHERE (? = '' OR project = ? OR project = '')
+                """,
+                (project, project),
+            ).fetchone()
+            last_event_ms = int(last_event_row[0] or 0)
+            idle_ms = max(0, current_ms - last_event_ms) if last_event_ms else 0
+            due, reason, compile_state = memory_compile_due(
+                conn,
+                project=project,
+                idle_ms=idle_ms,
+                current_ms=current_ms,
+            )
+            rows = conn.execute(
+                """
+                SELECT r.run_id, r.created_at_ms, r.status, r.summary, r.metadata_json,
+                       (SELECT COUNT(*) FROM memory_cleanup_diffs d WHERE d.run_id = r.run_id) AS diff_count
+                FROM memory_cleanup_runs r
+                WHERE r.run_id LIKE 'memory_book_%'
+                ORDER BY r.created_at_ms DESC, r.id DESC
+                LIMIT 100
+                """
+            ).fetchall()
+        runs: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            if compact_whitespace(str(metadata.get("project") or "")) != project:
+                continue
+            source_cursor = dict(metadata.get("sourceCursor") or {})
+            run_status = str(row["status"] or "")
+            try:
+                to_event_id = int(source_cursor.get("toEventId") or 0)
+            except (TypeError, ValueError):
+                to_event_id = 0
+            if (
+                run_status == "draft"
+                and to_event_id > 0
+                and to_event_id <= int(compile_state.get("lastCompiledEventId") or 0)
+            ):
+                run_status = "superseded"
+            runs.append(
+                {
+                    "runId": str(row["run_id"]),
+                    "createdAtMs": int(row["created_at_ms"] or 0),
+                    "status": run_status,
+                    "summary": compact_whitespace(str(row["summary"] or ""))[:240],
+                    "diffCount": int(row["diff_count"] or 0),
+                    "bundleHash": str(metadata.get("bundleHash") or ""),
+                    "sourceCursor": source_cursor,
+                }
+            )
+            if len(runs) >= limit:
+                break
+        response = {
+            "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+            "ok": True,
+            "policy": "review",
+            "autoApply": False,
+            "scheduledDraftOnly": True,
+            "due": due,
+            "dueReason": reason,
+            "idleMs": idle_ms,
+            "compileState": compile_state,
+            "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
+            "runs": runs,
+        }
+        validate_contract(response, "agent-memory-maintenance-status.v1.json")
+        return response
+
     def rag_core_v3_query_preview(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
             return {"schemaVersion": "rag-ime.rag-core-v3-preview.v1", "ok": False, "error": "local SQLite core required"}
+        runtime_config = self.runtime_config_snapshot()
+        if not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled:
+            return {
+                "schemaVersion": "rag-ime.rag-core-v3-preview.v1",
+                "ok": True,
+                "retrieval": {"called": False},
+                "lanes": {
+                    _camel_lane_name(name): {
+                        "enabled": False,
+                        "configuredEnabled": enabled,
+                        "weight": runtime_config.hybrid_rag.lane_weight(name),
+                        "count": 0,
+                        "docIds": [],
+                    }
+                    for name, enabled in runtime_config.hybrid_rag.query_lanes()
+                },
+                "fusedCandidates": [],
+                "blocked": [{"reason": "memory_disabled" if not runtime_config.memory.enabled else "hybrid_rag_disabled"}],
+                "deepseekEvidencePack": [],
+                "deepseekCandidates": [],
+                "elapsedMs": 0,
+                "rawTextVisible": self._include_raw_text(),
+            }
         query = HybridRagQuery(
             query_text=_string(payload.get("query")) or _string(payload.get("currentInput")),
             raw_input=_string(payload.get("rawInput") or payload.get("currentInput")),
@@ -717,19 +2946,22 @@ class DebugImeService:
             project=_string(payload.get("project")) or self.config.project,
             app=_string(payload.get("app")),
             top_k=_bounded_int(payload.get("topK"), default=5, minimum=1, maximum=20),
-            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=25, minimum=1, maximum=5000),
+            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=400, minimum=1, maximum=5000),
+            enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+            lane_weights=runtime_config.hybrid_rag.query_weights(),
         )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
-            payload_result = retrieve_hybrid_rag_candidates(conn, query)
+            payload_result = retrieve_hybrid_rag_candidates(conn, query, self.core.embedding_provider)
         include_text = self._include_raw_text()
         candidates = list(payload_result.get("candidates") or [])
         fused = [_debug_redact_rag_candidate(item, include_text=include_text) for item in candidates if isinstance(item, dict)]
         evidence_pack = _debug_deepseek_evidence_pack(candidates, include_text=include_text)
-        settings = self.settings_store.get_settings(include_sensitive=True)
-        rag_settings = settings.get("rag") if isinstance(settings.get("rag"), dict) else {}
-        lane_settings = rag_settings.get("lanes") if isinstance(rag_settings.get("lanes"), dict) else {}
         lane_breakdown = _debug_lane_breakdown(payload_result.get("lanes"))
-        disabled_lanes = sorted(str(name) for name, enabled in lane_settings.items() if enabled is False)
+        disabled_lanes = sorted(
+            _camel_lane_name(name)
+            for name, enabled in runtime_config.hybrid_rag.query_lanes()
+            if not enabled
+        )
         for lane in disabled_lanes:
             lane_breakdown.setdefault(lane, {"count": 0})
             lane_breakdown[lane]["disabledBySettings"] = True
@@ -743,6 +2975,7 @@ class DebugImeService:
             "deepseekEvidencePack": evidence_pack,
             "deepseekCandidates": [],
             "elapsedMs": int(payload_result.get("elapsedMs") or 0),
+            "retrieval": {"called": True},
             "rawTextVisible": include_text,
         }
 
@@ -832,20 +3065,23 @@ class DebugImeService:
         }
 
     def deepseek_completion_preview(self, payload: dict[str, Any]) -> dict[str, object]:
-        try:
-            assert_deepseek_scene_allowed("active_rag")
-        except RuntimeError as exc:
-            expected_token = os.environ.get("RAG_IME_DEEPSEEK_PREVIEW_TOKEN", "")
-            provided_token = _string(payload.get("previewToken"))
-            if not (expected_token and provided_token and provided_token == expected_token):
-                return {
-                    "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
-                    "ok": False,
-                    "error": str(exc),
-                    "requires": "RAG_IME_DEEPSEEK_ACTIVE_RAG=1 or previewToken",
-                }
         current_context = _string(payload.get("currentContext") or payload.get("context"))
         selected_text = _string(payload.get("selectedText"))
+        sensitive_field, secure_input = _active_rag_secure_flags(payload)
+        settings = self.settings_store.get_settings()
+        active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        sensitive_guard_enabled = bool(active_settings.get("sensitiveTextGuard", True))
+        if (
+            sensitive_field
+            or secure_input
+            or _bool(payload.get("sensitiveTextGuardHit"), default=False)
+            or active_rag_sensitive_text_blocked(
+                current_context,
+                selected_text,
+                guard_enabled=sensitive_guard_enabled,
+            )
+        ):
+            return _sensitive_deepseek_preview_payload()
         evidence_pack = (
             tuple(item for item in payload.get("evidencePack", []) if isinstance(item, dict))
             if isinstance(payload.get("evidencePack"), list)
@@ -857,55 +3093,140 @@ class DebugImeService:
                 selected_text=selected_text,
                 payload=payload,
             )
+        config = load_deepseek_config(_string(payload.get("modelEnvPath")) or None)
+        route_status = self.active_rag_route_status(local_only=False)
+        route_status = {
+            **route_status,
+            "model": config.model,
+            "gates": {
+                **dict(route_status.get("gates") or {}),
+                "credentialsConfigured": bool(config.api_key),
+            },
+        }
+        expected_token = os.environ.get("RAG_IME_DEEPSEEK_PREVIEW_TOKEN", "")
+        provided_token = _string(payload.get("previewToken"))
+        debug_override = bool(expected_token and provided_token and provided_token == expected_token)
+        route_status["debugOverride"] = debug_override
+        route_status["remoteReady"] = bool(all(route_status["gates"].values()))  # type: ignore[union-attr]
+        if route_status["remoteReady"]:
+            route_status["skipReason"] = ""
+        elif not config.api_key:
+            route_status["skipReason"] = "credentials_missing"
+        context_packet = payload.get("contextPacket") if isinstance(payload.get("contextPacket"), dict) else None
         request = DeepSeekCompletionRequest(
             scene="active_rag",
             current_context=current_context,
             selected_text=selected_text,
             evidence_pack=evidence_pack,
+            context_packet=dict(context_packet) if context_packet else None,
             max_candidates=_bounded_int(payload.get("maxCandidates"), default=1, minimum=1, maximum=8),
             max_chars=_bounded_int(
                 payload.get("maxChars"),
                 default=ACTIVE_RAG_DEFAULT_MAX_CHARS,
-                minimum=4,
-                maximum=180,
+                minimum=0,
+                maximum=12000,
             ),
-            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=2500, minimum=100, maximum=15000),
+            latency_budget_ms=_bounded_int(
+                payload.get("latencyBudgetMs"),
+                default=120_000,
+                minimum=100,
+                maximum=300_000,
+            ),
         )
         messages = build_deepseek_completion_messages(request)
-        if _bool(payload.get("dryRun"), default=True):
+        include_text = self._include_raw_text()
+        request_diagnostics = build_context_injection_trace(
+            current_context=current_context,
+            selected_text=selected_text,
+            evidence_pack=evidence_pack,
+            context_packet=context_packet,
+            messages=messages,
+            include_text=include_text,
+        )
+        safe_messages: object
+        safe_evidence: object
+        if include_text:
+            safe_messages = messages
+            safe_evidence = list(evidence_pack)
+        else:
+            safe_messages = request_diagnostics["prompt"]["messages"]  # type: ignore[index]
+            safe_evidence = request_diagnostics["evidence"]["items"]  # type: ignore[index]
+        base_response: dict[str, object] = {
+            "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+            "routeStatus": route_status,
+            "requestDiagnostics": request_diagnostics,
+            "messages": safe_messages,
+            "evidencePack": safe_evidence,
+        }
+        authorized = bool(route_status["remoteReady"] or debug_override)
+        if not authorized:
             return {
-                "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
-                "ok": True,
-                "dryRun": True,
-                "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
-                "evidencePack": _redact_mapping({"items": list(evidence_pack)}, include_text=self._include_raw_text())["items"],
+                **base_response,
+                "ok": False,
+                "dryRun": _bool(payload.get("dryRun"), default=True),
+                "error": f"DeepSeek Active RAG route blocked: {route_status['skipReason']}",
+                "requires": (
+                    "activeRag.allowRemoteModel=true, privacy.allowRemoteModelForActiveRag=true, "
+                    "RAG_IME_DEEPSEEK_ACTIVE_RAG=1, configured credentials, or previewToken"
+                ),
                 "candidates": [],
             }
-        config = load_deepseek_config(_string(payload.get("modelEnvPath")) or None)
+        if _bool(payload.get("dryRun"), default=True):
+            return {
+                **base_response,
+                "ok": True,
+                "dryRun": True,
+                "candidates": [],
+            }
         provider = DeepSeekV4FlashCompletionProvider(config, enforce_runtime_flags=False)
         candidates: list[dict[str, object]] = []
         stream_events: list[dict[str, object]] = []
-        for item in provider.stream_candidates(request):
-            payload_item = item.__dict__
-            candidates.append(payload_item)
-            stream_events.append(
-                {
-                    "text": item.text,
-                    "insertText": item.insert_text,
-                    "sourceLane": item.source_lane,
-                    "done": item.done,
-                    "elapsedMs": item.metadata.get("elapsedMs"),
-                    "metadata": dict(item.metadata),
-                }
-            )
+        started = time.perf_counter()
+        try:
+            for item in provider.stream_candidates(request):
+                payload_item = item.__dict__
+                candidates.append(payload_item)
+                stream_events.append(
+                    {
+                        "text": item.text,
+                        "insertText": item.insert_text,
+                        "sourceLane": item.source_lane,
+                        "done": item.done,
+                        "elapsedMs": item.metadata.get("elapsedMs"),
+                        "metadata": dict(item.metadata),
+                    }
+                )
+        except Exception as exc:
+            return {
+                **base_response,
+                "ok": False,
+                "dryRun": False,
+                "remoteModel": {
+                    "requested": True,
+                    "allowed": authorized,
+                    "provider": "deepseek",
+                    "model": config.model,
+                    "skipReason": type(exc).__name__,
+                    "failureReason": _safe_debug_error(exc),
+                    "elapsedMs": round((time.perf_counter() - started) * 1000, 2),
+                },
+                "streamEvents": [],
+                "candidates": [],
+            }
         return {
-            "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+            **base_response,
             "ok": True,
             "dryRun": False,
-            "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
-            "evidencePack": _redact_mapping({"items": list(evidence_pack)}, include_text=self._include_raw_text())["items"],
-            "streamEvents": _redact_mapping({"items": stream_events}, include_text=self._include_raw_text())["items"],
-            "candidates": _redact_mapping({"items": candidates}, include_text=self._include_raw_text())["items"],
+            "remoteModel": {
+                "requested": True,
+                "allowed": authorized,
+                "provider": "deepseek",
+                "model": config.model,
+                "skipReason": "",
+                "elapsedMs": round((time.perf_counter() - started) * 1000, 2),
+            },
+            "streamEvents": _redact_mapping({"items": stream_events}, include_text=include_text)["items"],
+            "candidates": _redact_mapping({"items": candidates}, include_text=include_text)["items"],
         }
 
     def _deepseek_preview_evidence_pack(
@@ -918,17 +3239,54 @@ class DebugImeService:
         query = compact_whitespace(_string(payload.get("query")) or current_context or selected_text)
         if not query:
             return ()
+        runtime_config = self.runtime_config_snapshot()
+        if (
+            not runtime_config.active_rag.enabled
+            or not runtime_config.hybrid_rag.enabled
+            or not runtime_config.memory.enabled
+        ):
+            return ()
         top_k = _bounded_int(payload.get("evidenceTopK"), default=8, minimum=1, maximum=20)
         try:
-            suggestions = self.adapter.suggest(
-                SuggestionRequest(
+            if isinstance(self.core, LocalSqliteCoreClient):
+                candidates = self.core.retrieve_candidates_v3(
                     current_input=query,
                     recent_context=compact_whitespace(selected_text or current_context),
                     project=_string(payload.get("project")) or self.config.project,
                     app=_string(payload.get("app")),
                     top_k=top_k,
+                    source_budget_ms=runtime_config.hybrid_rag.budget_ms,
+                    enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+                    lane_weights=runtime_config.hybrid_rag.query_weights(),
                 )
-            )
+                suggestions = memory_candidates_v2_to_input_suggestions(candidates)
+                if not suggestions and all(
+                    enabled
+                    for lane, enabled in runtime_config.hybrid_rag.query_lanes()
+                    if lane not in {"vector_raw", "vector_tag_boost"}
+                ):
+                    # Preserve the established legacy evidence fallback only
+                    # when every implemented lane is enabled. A customized
+                    # lane policy must never be bypassed by that fallback.
+                    suggestions = self.adapter.suggest(
+                        SuggestionRequest(
+                            current_input=query,
+                            recent_context=compact_whitespace(selected_text or current_context),
+                            project=_string(payload.get("project")) or self.config.project,
+                            app=_string(payload.get("app")),
+                            top_k=top_k,
+                        )
+                    )
+            else:
+                suggestions = self.adapter.suggest(
+                    SuggestionRequest(
+                        current_input=query,
+                        recent_context=compact_whitespace(selected_text or current_context),
+                        project=_string(payload.get("project")) or self.config.project,
+                        app=_string(payload.get("app")),
+                        top_k=top_k,
+                    )
+                )
         except Exception:
             return ()
         return tuple(_deepseek_evidence_from_suggestion(item) for item in suggestions[:top_k])
@@ -1419,6 +3777,15 @@ class DebugImeService:
             or os.environ.get("RAG_IME_DEBUG_INCLUDE_TEXT") == "1"
         )
 
+    def _include_active_rag_trace_text(self) -> bool:
+        settings = self.settings_store.get_settings(include_sensitive=True)
+        privacy = settings.get("privacy") if isinstance(settings.get("privacy"), dict) else {}
+        return bool(
+            self.config.include_raw_text
+            or privacy.get("traceIncludeText") is True
+            or os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
+        )
+
     def _record_management_audit(
         self,
         *,
@@ -1530,6 +3897,7 @@ class DebugImeService:
                     recent_context=generated_memory_context(source_text, recent_context, item.reason),
                     project=project,
                     app=_string(payload.get("app")) or "debug-memory-console",
+                    privacy_disposition="allowed",
                     source="api_memory_generator",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -1811,9 +4179,25 @@ class DebugImeService:
         )
 
     def rime_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
-        settings = self.settings_store.get_settings(include_sensitive=True)
-        _apply_pinyin_settings_to_process_env(settings)
-        cache_key = self._rime_suggest_cache_key(payload, settings=settings)
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True or sensitive_input_requested(payload):
+            return build_rime_sidecar_response(
+                payload=payload,
+                adapter=self.adapter,
+                core=self.core,
+                predictor=self.predictor,
+                default_project=self.config.project,
+            )
+        persisted_settings = self.settings_store.get_settings(include_sensitive=True)
+        runtime_config = self.runtime_config_snapshot(settings=persisted_settings)
+        effective_settings = runtime_config.effective_settings(persisted_settings)
+        _apply_pinyin_settings_to_process_env(effective_settings)
+        configure_auto_prediction_trigger(
+            min_delta_chars=runtime_config.post_commit.min_delta_chars,
+            max_calls_per_10s=runtime_config.post_commit.max_calls_per_10s,
+            ignore_cooldown_ms=runtime_config.post_commit.cooldown_ms,
+        )
+        cache_key = self._rime_suggest_cache_key(payload, runtime_config=runtime_config)
         bypass_cache = self._rime_suggest_cache_bypass(payload)
         cached = None if bypass_cache else self._get_cached_rime_response(cache_key, payload)
         if cached is not None:
@@ -1831,12 +4215,18 @@ class DebugImeService:
                 core=self.core,
                 predictor=self.predictor,
                 default_project=self.config.project,
+                runtime_config=runtime_config,
             )
         except BaseException as exc:
             self._finish_rime_inflight(cache_key, error=exc)
             raise
         _attach_rime_ranking_diagnostics(response)
-        self._apply_management_settings_to_rime_response(response, request_payload=payload, settings=settings)
+        self._apply_management_settings_to_rime_response(
+            response,
+            request_payload=payload,
+            settings=effective_settings,
+            runtime_config=runtime_config,
+        )
         if self._rime_response_cacheable(response, request_payload=payload):
             self._store_rime_response(cache_key, response)
         self._finish_rime_inflight(cache_key, response=response)
@@ -1850,23 +4240,26 @@ class DebugImeService:
         response: dict[str, object],
         *,
         request_payload: dict[str, Any],
-        settings: dict[str, object] | None = None,
+        settings: dict[str, object],
+        runtime_config: RuntimeConfigSnapshot,
     ) -> None:
-        if settings is None:
-            settings = self.settings_store.get_settings(include_sensitive=True)
-        interaction = settings.get("interaction") if isinstance(settings.get("interaction"), dict) else {}
-        composition = interaction.get("composition") if isinstance(interaction.get("composition"), dict) else {}
-        post_commit = interaction.get("postCommit") if isinstance(interaction.get("postCommit"), dict) else {}
         display = settings.get("display") if isinstance(settings.get("display"), dict) else {}
-        badges = display.get("badges") if isinstance(display.get("badges"), dict) else {}
         colors = display.get("colors") if isinstance(display.get("colors"), dict) else {}
         active_composition = bool(compact_whitespace(_string(request_payload.get("rawInput")) or _string(request_payload.get("preedit"))))
+        debug_force_side_candidates = _bool(
+            request_payload.get("forceSideCandidates") or request_payload.get("force_side_candidates"),
+            default=False,
+        )
         items = [dict(item) for item in response.get("displayCandidates", []) if isinstance(item, dict)]
-        if active_composition and composition.get("showPrediction") is False:
+        if active_composition and not runtime_config.composition_ai and not debug_force_side_candidates:
             items = [item for item in items if _string(item.get("sourceType")) in {"rime", "raw_english", "status"}]
-        if post_commit.get("showPendingStatus") is False:
+        if not active_composition and not runtime_config.post_commit.enabled:
+            items = []
+        if (not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled) and not debug_force_side_candidates:
+            items = [item for item in items if _string(item.get("sourceType")) not in {"rag", "memory"}]
+        if not runtime_config.post_commit.show_pending_status:
             items = [item for item in items if _string(item.get("sourceType")) != "status" and _string(item.get("displayLayout")) != "status_row"]
-        max_post_commit = _bounded_int(display.get("maxPostCommitCandidates"), default=5, minimum=1, maximum=10)
+        max_post_commit = runtime_config.post_commit.max_candidates
         if not active_composition:
             kept: list[dict[str, object]] = []
             selectable_count = 0
@@ -1878,10 +4271,10 @@ class DebugImeService:
                 if selectable_count <= max_post_commit:
                     kept.append(item)
             items = kept
-        show_badges = display.get("showSourceBadge") is not False
+        show_badges = runtime_config.source_badges.enabled
         for item in items:
             source_type = _string(item.get("sourceType"))
-            custom_badge = _string(badges.get(source_type))
+            custom_badge = runtime_config.source_badges.badge_for(source_type)
             custom_color = _string(colors.get(source_type))
             if not show_badges:
                 item["badge"] = ""
@@ -1892,18 +4285,112 @@ class DebugImeService:
             if custom_color:
                 item["colorToken"] = custom_color
         response["displayCandidates"] = items
+        response["runtimeConfig"] = runtime_config.payload()
+        response["runtimeRevision"] = runtime_config.runtime_revision
+        response["settingsRevision"] = runtime_config.settings_revision
+        response["runtimeProfile"] = runtime_config.profile
         response["managementSettings"] = {
-            "settingsHash": _settings_hash(settings),
+            "settingsHash": runtime_config.settings_revision,
+            "settingsRevision": runtime_config.settings_revision,
+            "runtimeRevision": runtime_config.runtime_revision,
+            "snapshotHash": runtime_config.snapshot_hash,
+            "profile": runtime_config.profile,
+            "debugForceSideCandidates": debug_force_side_candidates,
             "interactionApplied": True,
             "displayApplied": True,
         }
-        if isinstance(response.get("keyPolicy"), dict) and post_commit.get("numberKeys"):
-            response["keyPolicy"]["numberKeys"] = post_commit.get("numberKeys")  # type: ignore[index]
+        if active_composition:
+            effective_key_policy = {
+                "numberKeys": runtime_config.key_policy.composition_number_keys,
+                "tab": runtime_config.key_policy.composition_tab,
+                "optionNumber": runtime_config.key_policy.composition_option_number,
+                "escape": runtime_config.key_policy.composition_escape,
+            }
+        else:
+            effective_key_policy = {
+                "numberKeys": runtime_config.key_policy.post_commit_number_keys,
+                "tab": runtime_config.key_policy.tab_action,
+                "optionNumber": runtime_config.key_policy.option_number,
+                "escape": runtime_config.key_policy.escape,
+            }
+        if isinstance(response.get("keyPolicy"), dict):
+            response["keyPolicy"].update(effective_key_policy)  # type: ignore[union-attr]
+            applied_key_policy = dict(response["keyPolicy"])  # type: ignore[arg-type]
+        else:
+            applied_key_policy = dict(effective_key_policy)
+            response["keyPolicy"] = applied_key_policy
         prediction_session = response.get("predictionSession")
         if isinstance(prediction_session, dict):
             policy = prediction_session.get("keyPolicy")
-            if isinstance(policy, dict) and post_commit.get("numberKeys"):
-                policy["numberKeys"] = post_commit.get("numberKeys")
+            if isinstance(policy, dict):
+                policy.update(effective_key_policy)
+            if not bool(prediction_session.get("shouldClearPredictionPanel")) and not active_composition:
+                prediction_session["expiresAfterMs"] = runtime_config.post_commit.panel_ttl_ms
+        input_mode = _string(response.get("inputMode"))
+        existing_overlay = response.get("assistantOverlay")
+        if not input_mode and isinstance(existing_overlay, dict):
+            input_mode = _string(existing_overlay.get("inputMode"))
+        response["candidatePanel"] = build_candidate_panel_payload(
+            input_mode=input_mode,
+            display_candidates=items,
+        )
+        rag_candidates = (
+            response.get("ragCandidates")
+            if runtime_config.hybrid_rag.enabled and runtime_config.memory.enabled
+            else []
+        )
+        response["assistantOverlay"] = build_assistant_overlay_payload(
+            ui_mode=_string(response.get("uiMode")),
+            input_mode=input_mode,
+            display_candidates=items,
+            rag_candidates=rag_candidates if isinstance(rag_candidates, list) else [],
+            prediction_session=prediction_session if isinstance(prediction_session, dict) else None,
+            key_policy=applied_key_policy,
+            progressive=response.get("progressive") if isinstance(response.get("progressive"), dict) else None,
+            frontend_transaction=(
+                response.get("frontendTransaction")
+                if isinstance(response.get("frontendTransaction"), dict)
+                else None
+            ),
+        )
+        overlay_config = {
+            **runtime_config.overlay.payload(
+                expires_after_ms=(
+                    runtime_config.post_commit.panel_ttl_ms
+                    if not active_composition
+                    and not (
+                        isinstance(prediction_session, dict)
+                        and bool(prediction_session.get("shouldClearPredictionPanel"))
+                    )
+                    else 0
+                )
+            ),
+            "maxCandidates": runtime_config.post_commit.max_candidates,
+            "showSourceBadge": runtime_config.source_badges.enabled,
+            "badges": dict(runtime_config.source_badges.items),
+            "colors": dict(runtime_config.source_colors),
+            "keyPolicy": dict(applied_key_policy),
+            "activeRag": runtime_config.active_rag.payload(),
+        }
+        response["overlayConfig"] = overlay_config
+        response["assistantOverlay"]["overlayConfig"] = overlay_config  # type: ignore[index]
+        trace_events = response.get("predictionTraceEvents")
+        if isinstance(trace_events, list):
+            trace_events.append(
+                {
+                    "event": "effective_runtime_config_applied",
+                    "fields": {
+                        "runtimeRevision": runtime_config.runtime_revision,
+                        "postCommitEnabled": runtime_config.post_commit.enabled,
+                        "memoryEnabled": runtime_config.memory.enabled,
+                        "hybridRagEnabled": runtime_config.hybrid_rag.enabled,
+                        "ragLanes": dict(runtime_config.hybrid_rag.query_lanes()),
+                        "ragWeights": dict(runtime_config.hybrid_rag.query_weights()),
+                        "activeRagEnabled": runtime_config.active_rag.enabled,
+                        "activeRagShortcut": runtime_config.active_rag.shortcut,
+                    },
+                }
+            )
 
     def rime_select(self, payload: dict[str, Any]) -> dict[str, object]:
         response = record_rime_side_candidate_selection(
@@ -1912,32 +4399,202 @@ class DebugImeService:
             core=self.core,
             default_project=self.config.project,
         )
-        if not response.get("dryRun"):
+        if response.get("stored") is True:
             self._clear_rime_cache()
         return response
+
+    def rime_rank_feedback(self, payload: dict[str, Any]) -> dict[str, object]:
+        return record_native_rime_selection(
+            payload,
+            db_path=self.config.db_path,
+            default_project=self.config.project,
+        )
+
+    def candidate_edit_feedback(self, payload: dict[str, Any]) -> dict[str, object]:
+        """Record a delete immediately following an accepted candidate.
+
+        Source isolation is intentional: every source can affect local memory
+        ranking, but only native Rime candidates can influence the Pinyin
+        lexicon review queue.
+        """
+
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.candidate-edit-feedback.v1",
+                "ok": True,
+                "recorded": False,
+                "rimeRecorded": False,
+                "noStore": True,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
+        source_type = compact_whitespace(_string(payload.get("sourceType"))).lower()
+        candidate_text = compact_whitespace(_string(payload.get("candidateText")))
+        candidate_id = compact_whitespace(_string(payload.get("candidateId")))
+        if not source_type:
+            raise ValueError("sourceType is required")
+        if not candidate_text:
+            raise ValueError("candidateText is required")
+        event_name = (
+            "backspace_after_active_rag_accept"
+            if source_type in {"rag", "memory", "active_rag", "deepseek"}
+            else "backspace_after_accept"
+        )
+        project = compact_whitespace(_string(payload.get("project"))) or self.config.project
+        app = compact_whitespace(_string(payload.get("app"))) or "squirrel"
+        context_hash = compact_whitespace(_string(payload.get("contextHash")))
+        self.core.record_memory_feedback(
+            {
+                "event": event_name,
+                "candidateId": candidate_id or f"accepted:{stable_text_hash(candidate_text)}",
+                "candidateText": candidate_text,
+                "sourceType": source_type,
+                "contextHash": context_hash,
+                "frontAppBundleId": app,
+                "project": project,
+                "metadata": {
+                    "source": "patched_squirrel_post_accept_delete",
+                    "deleteCount": max(1, min(32, _optional_int(payload.get("deleteCount")) or 1)),
+                    "acceptedAtMs": _optional_int(payload.get("acceptedAtMs")) or 0,
+                },
+            }
+        )
+        rime_event_id = 0
+        preedit = compact_whitespace(_string(payload.get("preedit")))
+        if source_type == "rime" and preedit:
+            rime_event_id = record_rime_rank_feedback(
+                self.config.db_path,
+                preedit=preedit,
+                accepted_text=candidate_text,
+                rejected_text=candidate_text,
+                action="backspace_downrank",
+                app=app,
+                project=project,
+                context_hash=context_hash,
+                metadata={
+                    "candidateSource": "rime",
+                    "selectionSource": "patched_squirrel_post_accept_delete",
+                },
+            )
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.candidate-edit-feedback.v1",
+            "ok": True,
+            "recorded": True,
+            "rimeRecorded": rime_event_id > 0,
+            "rimeEventId": rime_event_id,
+            "event": event_name,
+            "sourceType": source_type,
+            "noStore": False,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(privacy_assessment, stored=True),
+        }
+
+    def rime_lexicon_review(self, payload: dict[str, Any]) -> dict[str, object]:
+        return review_rime_lexicon(
+            self.config.db_path,
+            project=_string(payload.get("project")) or self.config.project,
+            limit=max(1, min(500, _optional_int(payload.get("limit")) or 200)),
+            rime_user_dir=self.config.rime_user_dir,
+        )
+
+    def rime_lexicon_apply(self, payload: dict[str, Any]) -> dict[str, object]:
+        selected_keys = payload.get("selectedKeys")
+        if not isinstance(selected_keys, list):
+            selected_keys = []
+        return apply_reviewed_rime_lexicon(
+            self.config.db_path,
+            rime_user_dir=self.config.rime_user_dir,
+            backup_root=self.config.rime_lexicon_backup_root,
+            project=_string(payload.get("project")) or self.config.project,
+            limit=max(1, min(500, _optional_int(payload.get("limit")) or 200)),
+            review_token=_string(payload.get("reviewToken")),
+            selected_keys=[_string(value) for value in selected_keys],
+            confirm_text=_string(payload.get("confirmText")),
+        )
+
+    def rime_lexicon_rollback(self, payload: dict[str, Any]) -> dict[str, object]:
+        return rollback_reviewed_rime_lexicon(
+            rollback_id=_string(payload.get("rollbackId")),
+            backup_root=self.config.rime_lexicon_backup_root,
+        )
 
     def commit(self, payload: dict[str, Any]) -> dict[str, object]:
         text = _string(payload.get("text")).strip()
         if not text:
             raise ValueError("text must not be empty")
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.foreground-commit.v1",
+                "ok": True,
+                "stored": False,
+                "noStore": True,
+                "eventId": "",
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
         event_id = self.adapter.commit_text(
             text,
             recent_context=_string(payload.get("recentContext")),
             preedit=_string(payload.get("preedit")),
             project=_string(payload.get("project")) or self.config.project,
+            app=_string(
+                payload.get("app")
+                or payload.get("frontAppBundleId")
+                or payload.get("frontmostApp")
+                or payload.get("bundleId")
+            )
+            or "squirrel",
+            privacy_disposition=str(privacy_assessment["disposition"]),
             candidate_rank=_optional_int(payload.get("candidateRank")),
             provider_name=_string(payload.get("providerName")) or "debug-page",
             tags=tuple(_string_list(payload.get("tags"))),
             source=_string(payload.get("source")) or "debug_page_commit",
+            context_group_id=_string(payload.get("contextGroupId")),
+            context_group_level=_string(payload.get("contextGroupLevel")) or "app",
         )
         self._clear_rime_cache()
-        return {"ok": True, "eventId": event_id, "eventCount": self._event_count()}
+        stored = bool(event_id) and not event_id.startswith("skipped:")
+        return {
+            "schemaVersion": "rag-ime.foreground-commit.v1",
+            "ok": True,
+            "stored": stored,
+            "noStore": False,
+            "eventId": event_id,
+            "eventCount": self._event_count(),
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(
+                privacy_assessment,
+                stored=stored,
+                event_id=event_id,
+            ),
+        }
 
     def action(self, payload: dict[str, Any]) -> dict[str, object]:
         action_type = _canonical_action(_string(payload.get("actionType")))
         memory_id = _string(payload.get("memoryId"))
         if not memory_id:
             raise ValueError("memoryId must not be empty")
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.action.v1",
+                "ok": True,
+                "actionId": None,
+                "createdAtMs": now_ms(),
+                "memoryId": memory_id,
+                "actionType": action_type,
+                "query": _string(payload.get("query")),
+                "suggestionId": _string(payload.get("suggestionId")),
+                "sourceEventId": _optional_int(payload.get("sourceEventId")),
+                "metadata": {},
+                "stored": False,
+                "noStore": True,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
         action = self.core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -1951,7 +4608,117 @@ class DebugImeService:
             )
         )
         self._clear_rime_cache()
-        return action_response_payload(action)
+        return {
+            **action_response_payload(action),
+            "ok": True,
+            "stored": True,
+            "noStore": False,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(privacy_assessment, stored=True),
+        }
+
+    def assistant_candidate_action(self, payload: dict[str, Any]) -> dict[str, object]:
+        action = _string(payload.get("action")).strip().lower()
+        if action not in {"remember", "suppress"}:
+            raise ValueError("assistant candidate action must be remember or suppress")
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.assistant-candidate-action.v1",
+                "ok": True,
+                "action": action,
+                "stored": False,
+                "noStore": True,
+                "memoryId": None,
+                "tombstoneId": None,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
+        candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+        assert isinstance(candidate, dict)
+        text = compact_whitespace(
+            _string(candidate.get("insertText")) or _string(candidate.get("text"))
+        )
+        if not text:
+            raise ValueError("assistant candidate text must not be empty")
+
+        source_type = _string(candidate.get("sourceType")) or "model"
+        memory_id = _string(candidate.get("memoryId"))
+        source_event_id = _optional_int(candidate.get("sourceEventId"))
+        query = _string(payload.get("query"))
+        project = _string(payload.get("project")) or self.config.project
+        app = _string(payload.get("app"))
+        tombstone_id: int | None = None
+        if action == "remember":
+            has_actionable_memory = (
+                source_type in {"rag", "memory"}
+                and bool(memory_id)
+                and source_event_id is not None
+            )
+            if not has_actionable_memory:
+                memory_id = self.adapter.commit_text(
+                    text,
+                    recent_context=query,
+                    project=project,
+                    app=app or "squirrel",
+                    privacy_disposition=str(privacy_assessment["disposition"]),
+                    source="squirrel_assistant_remember",
+                    provider_name=f"assistant-overlay:{source_type}",
+                    tags=("assistant-overlay", "remembered"),
+                )
+            pinned = self.core.apply_action(
+                MemoryAction(
+                    action_id=None,
+                    created_at_ms=now_ms(),
+                    memory_id=memory_id,
+                    action_type="pin",
+                    query=query,
+                    suggestion_id=_string(candidate.get("suggestionId")) or f"assistant:{stable_text_hash(text)}",
+                    source_event_id=source_event_id,
+                    metadata={"surface_text": text, "source_type": source_type, "app": app, "project": project},
+                )
+            )
+            result: dict[str, object] = {"pinned": action_response_payload(pinned)}
+        else:
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ValueError("assistant suppression requires the local SQLite core")
+            tombstone = self.core.add_memory_tombstone(
+                target_type="normalized_text",
+                target_value=text,
+                reason="assistant_overlay_suppress",
+                metadata={"sourceType": source_type, "app": app, "project": project},
+            )
+            tombstone_id = int(tombstone.get("id") or 0) or None
+            self.core.record_memory_feedback(
+                {
+                    "event": "hide",
+                    "candidateId": memory_id or _string(candidate.get("candidateStableId")),
+                    "candidateText": text,
+                    "sourceType": source_type,
+                    "contextHash": query,
+                    "frontAppBundleId": app,
+                    "project": project,
+                    "metadata": {"source": "assistant_overlay_suppress"},
+                }
+            )
+            result = {"tombstone": tombstone}
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.assistant-candidate-action.v1",
+            "ok": True,
+            "action": action,
+            "stored": True,
+            "noStore": False,
+            "memoryId": memory_id or None,
+            "tombstoneId": tombstone_id,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(
+                privacy_assessment,
+                stored=True,
+                event_id=memory_id or tombstone_id,
+            ),
+            **result,
+        }
 
     def _predictor_ttfc_cases(self, payload: dict[str, Any]) -> list[PredictionBenchmarkCase]:
         raw_cases = payload.get("cases")
@@ -2029,6 +4796,8 @@ class DebugImeService:
         return {
             "sessionId": "cache-probe",
             "requestSeq": 0,
+            # Cache probes operate on fixed synthetic text, never foreground input.
+            "privacyDisposition": "allowed",
             "rawInput": _string(payload.get("rawInput")) or current_input,
             "preedit": _string(payload.get("preedit")) or current_input,
             "committedContext": recent_context,
@@ -2119,7 +4888,13 @@ class DebugImeService:
         with self._rime_cache_lock:
             return len(self._rime_inflight)
 
-    def _rime_suggest_cache_key(self, payload: dict[str, Any], *, settings: dict[str, object] | None = None) -> str:
+    def _rime_suggest_cache_key(
+        self,
+        payload: dict[str, Any],
+        *,
+        runtime_config: RuntimeConfigSnapshot | None = None,
+    ) -> str:
+        runtime_config = runtime_config or self.runtime_config_snapshot()
         snapshot = parse_rime_context_payload(payload, default_project=self.config.project)
         semantic_query, query_basis = choose_semantic_query(snapshot)
         trigger_decision = decide_side_candidate_refresh(
@@ -2128,7 +4903,7 @@ class DebugImeService:
             query_basis=query_basis,
         )
         raw_sensitive_input = {}
-        if query_basis in ("preedit", "rawInputFallback") or snapshot.force_side_candidates:
+        if query_basis in ("preedit", "rawInputFallback"):
             raw_sensitive_input = {
                 "rawInput": snapshot.raw_input,
                 "preedit": snapshot.preedit,
@@ -2154,7 +4929,8 @@ class DebugImeService:
         material = {
             "snapshot": normalized_snapshot,
             "project": self.config.project,
-            "managementSettingsHash": _settings_hash(settings or self.settings_store.get_settings(include_sensitive=True)),
+            "runtimeConfigHash": runtime_config.snapshot_hash,
+            "runtimeRevision": runtime_config.runtime_revision,
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
             "vectorStats": self._vector_index_stats(),
@@ -2379,19 +5155,498 @@ class DebugImeService:
                 del self._prediction_live_trace[: len(self._prediction_live_trace) - 500]
 
 
+_MEMORY_ENTITY_PATH_PREFIX = "/api/memory/entities/"
+_KNOWLEDGE_BASES_PATH = "/api/knowledge-bases"
+_MAX_KNOWLEDGE_IMPORT_BYTES = 200 * 1024 * 1024
+_MEMORY_GRAPH_QUERY_FIELDS = frozenset(
+    {
+        "plane",
+        "project",
+        "status",
+        "query",
+        "focusId",
+        "depth",
+        "nodeLimit",
+        "edgeLimit",
+        "minWeight",
+    }
+)
+_MEMORY_ENTITY_QUERY_FIELDS = frozenset(
+    {
+        "project",
+        "connectionsLimit",
+        "connectionsCursor",
+        "membersLimit",
+        "membersCursor",
+    }
+)
+
+
+def _knowledge_route_parts(path: str) -> tuple[str, ...] | None:
+    normalized = path.rstrip("/") or "/"
+    if normalized == _KNOWLEDGE_BASES_PATH:
+        return ()
+    prefix = f"{_KNOWLEDGE_BASES_PATH}/"
+    if not normalized.startswith(prefix):
+        return None
+    return tuple(unquote(part) for part in normalized[len(prefix) :].split("/") if part)
+
+
 class DebugRequestHandler(BaseHTTPRequestHandler):
     service: DebugImeService
     static_dir: Path
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)
+        if parsed.path == "/api/events/stream":
+            self._stream_management_events()
+            return
+        if parsed.path == "/api/agent/events":
+            query = parse_qs(parsed.query or "")
+            self._stream_agent_control_events(
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                )
+            )
+            return
+        agent_session_id, agent_action = agent_session_route(parsed.path)
+        if agent_session_id and agent_action == "events":
+            query = parse_qs(parsed.query or "")
+            self._stream_agent_events(
+                agent_session_id,
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                ),
+            )
+            return
+        agent_room_id, room_action = agent_room_route(parsed.path)
+        subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
+        artifact_id = agent_artifact_route(parsed.path)
+        if agent_room_id and room_action == "events":
+            query = parse_qs(parsed.query or "")
+            self._stream_agent_room_events(
+                agent_room_id,
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                ),
+            )
+            return
         if parsed.path in ("/api/health", "/health"):
             self._write_json(HTTPStatus.OK, self.service.health())
+            return
+        if parsed.path in ("/api/frontend/v1/capabilities", "/frontend/v1/capabilities"):
+            response = self.service.frontend_capabilities()
+            validate_contract(response, "frontend-capabilities.v1.json")
+            self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path in ("/api/control/v1/bootstrap", "/api/agent/control/bootstrap"):
+            self._write_json(HTTPStatus.OK, self.service.control_api.bootstrap())
+            return
+        if parsed.path == "/api/agent/control/capabilities":
+            self._write_json(HTTPStatus.OK, self.service.control_capabilities())
             return
         if parsed.path in ("/api/input-source", "/input-source"):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        knowledge_parts = _knowledge_route_parts(parsed.path)
+        if knowledge_parts is not None:
+            try:
+                control = self._knowledge_control()
+                if knowledge_parts == ():
+                    response = control.list_bases()
+                elif knowledge_parts == ("health",):
+                    response = control.health()
+                elif knowledge_parts == ("parsers",):
+                    response = control.parsers()
+                elif len(knowledge_parts) == 1:
+                    response = control.get_base(knowledge_parts[0])
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "documents":
+                    response = control.list_documents(knowledge_parts[0])
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "jobs":
+                    response = control.jobs(knowledge_parts[0])
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "graph":
+                    response = control.graph(
+                        knowledge_parts[0],
+                        {
+                            "documentId": _query_first(query, "documentId"),
+                            "query": _query_first(query, "query"),
+                            "kinds": _query_first(query, "kinds"),
+                            "limit": _query_first(query, "limit"),
+                            "depth": _query_first(query, "depth"),
+                            "excludeChunks": _query_first(query, "excludeChunks"),
+                            "focusId": _query_first(query, "focusId"),
+                        },
+                    )
+                    validate_contract(response, "knowledge-graph.v1.json")
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "reindex-preview":
+                    response = control.reindex_preview(knowledge_parts[0])
+                elif len(knowledge_parts) == 3 and knowledge_parts[1] == "documents":
+                    response = control.document_detail(
+                        knowledge_parts[0],
+                        knowledge_parts[2],
+                        {
+                            "offset": _query_first(query, "offset"),
+                            "limit": _query_first(query, "limit"),
+                            "lineOffset": _query_first(query, "lineOffset"),
+                            "lineLimit": _query_first(query, "lineLimit"),
+                        },
+                    )
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "source":
+                    self._write_knowledge_binary(control.document_source(knowledge_parts[0], knowledge_parts[2]))
+                    return
+                elif len(knowledge_parts) == 5 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "assets":
+                    self._write_knowledge_binary(
+                        control.document_asset(knowledge_parts[0], knowledge_parts[2], knowledge_parts[4])
+                    )
+                    return
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "content":
+                    response = control.open(
+                        knowledge_parts[0],
+                        knowledge_parts[2],
+                        {
+                            "chunkId": _query_first(query, "chunkId"),
+                            "startLine": _query_first(query, "startLine"),
+                            "lines": _query_first(query, "lines"),
+                        },
+                    )
+                else:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(HTTPStatus.OK, response)
+            except Exception as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, self._knowledge_error(exc))
+            return
+        if parsed.path == "/api/agent/runtime":
+            self._write_json(HTTPStatus.OK, self.service.agent.runtime_status())
+            return
+        if parsed.path == "/api/agent/providers":
+            self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.catalog())
+            return
+        if parsed.path == "/api/agent/providers/oauth/status":
+            try:
+                response = self.service.pi_provider_auth.oauth_status(
+                    _query_first(query, "loginId")
+                )
+            except PiProviderAuthError as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.pi-provider-oauth-status.v1",
+                        "ok": False,
+                        "error": str(exc),
+                    },
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path == "/api/agent/sessions":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_sessions(
+                    {
+                        "includeArchived": _query_first(query, "includeArchived"),
+                        "includeInternal": _query_first(query, "includeInternal"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/rooms":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_rooms(
+                    {
+                        "includeArchived": _query_first(query, "includeArchived"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if agent_room_id and room_action == "snapshot":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_snapshot(agent_room_id),
+            )
+            return
+        if agent_room_id and not room_action:
+            self._write_json(HTTPStatus.OK, self.service.agent.room(agent_room_id))
+            return
+        if parsed.path == "/api/agent/tools":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent_tools.manifests(
+                    session_id=_query_first(query, "sessionId"),
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/extensions":
+            self._write_json(HTTPStatus.OK, self.service.agent_extensions.list())
+            return
+        if parsed.path == "/api/agent/extensions/proposals":
+            self._write_json(HTTPStatus.OK, self.service.agent_extensions.proposals())
+            return
+        if parsed.path == "/api/agent/roles":
+            self._write_json(HTTPStatus.OK, self.service.agent.list_roles())
+            return
+        if parsed.path == "/api/agent/subagents/templates":
+            self._write_json(HTTPStatus.OK, self.service.agent.list_agent_templates())
+            return
+        if parsed.path == "/api/agent/subagents/runs":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.delegation_status(
+                    _query_first(query, "sessionId"),
+                    {"limit": _query_first(query, "limit")},
+                ),
+            )
+            return
+        if subagent_run_id and not subagent_action:
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.delegation_status(
+                    _query_first(query, "sessionId"),
+                    {"runId": subagent_run_id},
+                ),
+            )
+            return
+        if artifact_id:
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.delegation_artifact(
+                    _query_first(query, "sessionId"),
+                    artifact_id,
+                    {"limit": _query_first(query, "limit")},
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/approvals":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_approvals(
+                    {
+                        "sessionId": _query_first(query, "sessionId"),
+                        "state": _query_first(query, "state"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/memory-sources":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_memory_sources(
+                    {
+                        "sessionId": _query_first(query, "sessionId"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/memory-maintenance":
+            run_id = _query_first(query, "runId")
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent_memory_maintenance_run(
+                    {
+                        "runId": run_id,
+                        "project": _query_first(query, "project"),
+                    }
+                )
+                if run_id
+                else self.service.agent_memory_maintenance_status(
+                    {
+                        "project": _query_first(query, "project"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/media":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_media(
+                    {
+                        "sessionId": _query_first(query, "sessionId"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        media_id, media_action = agent_media_route(parsed.path)
+        if media_id:
+            try:
+                session_id = _query_first(query, "sessionId")
+                if media_action == "content":
+                    receipt, content = self.service.agent.media_content(media_id, session_id=session_id)
+                    self._write_binary(
+                        HTTPStatus.OK,
+                        content,
+                        mime_type=str(receipt["mimeType"]),
+                        etag=str(receipt["sha256"]),
+                    )
+                else:
+                    self._write_json(
+                        HTTPStatus.OK,
+                        self.service.agent.media_receipt(media_id, session_id=session_id),
+                    )
+            except Exception as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        approval_id, approval_action = agent_approval_route(parsed.path)
+        if approval_id and not approval_action:
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "schemaVersion": "rag-ime.agent-approval-get.v1",
+                    "ok": True,
+                    "approval": self.service.agent.sessions.get_approval(approval_id),
+                },
+            )
+            return
+        if agent_session_id and agent_action == "messages":
+            self._write_json(HTTPStatus.OK, self.service.agent.messages(agent_session_id))
+            return
+        if agent_session_id and agent_action == "commands":
+            self._write_json(HTTPStatus.OK, self.service.agent.command_catalog(agent_session_id))
+            return
+        if agent_session_id and agent_action == "models":
+            self._write_json(HTTPStatus.OK, self.service.agent.model_catalog(agent_session_id))
+            return
+        if agent_session_id and agent_action == "intercom":
+            try:
+                response = self.service.agent.list_room_intercom(
+                    agent_session_id,
+                    {
+                        "status": _query_first(query, "status"),
+                        "limit": _query_first(query, "limit"),
+                    },
+                )
+            except ValueError as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.local-api-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_request",
+                        "error": " ".join(str(exc).split())[:256] or "invalid request",
+                    },
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path == "/api/agent/configuration":
+            self._write_json(HTTPStatus.OK, self.service.agent.configuration())
+            return
+        if parsed.path == "/api/overview":
+            self._write_json(HTTPStatus.OK, self.service.management.overview())
+            return
+        if parsed.path == "/api/runtime/status":
+            self._write_json(HTTPStatus.OK, self.service.management.runtime_status())
+            return
+        if parsed.path == "/api/runtime/config":
+            self._write_json(HTTPStatus.OK, self.service.runtime_config())
+            return
+        if parsed.path == "/api/runtime/components":
+            self._write_json(HTTPStatus.OK, self.service.management.runtime_components())
+            return
+        if parsed.path.startswith("/api/runtime/job/"):
+            job_id = unquote(parsed.path.rsplit("/", 1)[-1])
+            self._write_json(HTTPStatus.OK, self.service.management.runtime_job(job_id))
+            return
+        if parsed.path == "/api/memory/graph":
+            try:
+                query = parse_qs(parsed.query or "", keep_blank_values=True)
+                payload = _strict_read_query(query, _MEMORY_GRAPH_QUERY_FIELDS)
+                response = self.service.management.memory_graph(payload)
+                validate_contract(response, "memory-graph.v1.json")
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path.startswith(_MEMORY_ENTITY_PATH_PREFIX):
+            try:
+                kind, entity_id = _memory_entity_path(parsed.path)
+                query = parse_qs(parsed.query or "", keep_blank_values=True)
+                payload = _strict_read_query(query, _MEMORY_ENTITY_QUERY_FIELDS)
+                response = self.service.management.memory_entity(kind, entity_id, payload)
+                validate_contract(response, "memory-entity.v1.json")
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path == "/api/memory/summary":
+            self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
+            return
+        if parsed.path == "/api/planning/dashboard":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.planning_dashboard(
+                    plan_date=_query_first(query, "date"),
+                    project=_query_first(query, "project"),
+                ),
+            )
+            return
+        if parsed.path in {
+            "/api/memory/books",
+            "/api/memory/atoms",
+            "/api/memory/tags",
+            "/api/memory/phrases",
+            "/api/memory/groups",
+            "/api/memory/negative",
+        }:
+            kind = parsed.path.rsplit("/", 1)[-1]
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.memory_page(
+                    kind,
+                    page_request(
+                        {
+                            "limit": _query_first(query, "limit"),
+                            "cursor": _query_first(query, "cursor"),
+                            "query": _query_first(query, "query"),
+                            "status": _query_first(query, "status"),
+                        }
+                    ),
+                ),
+            )
+            return
+        if parsed.path == "/api/history/page":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.history_page(
+                    page_request(
+                        {
+                            "limit": _query_first(query, "limit"),
+                            "cursor": _query_first(query, "cursor"),
+                            "query": _query_first(query, "query"),
+                            "status": _query_first(query, "filter"),
+                        }
+                    )
+                ),
+            )
+            return
+        if parsed.path == "/api/history/detail":
+            try:
+                response = self.service.management.history_detail(
+                    _query_first(query, "eventId")
+                )
+            except ManagementWorkError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, exc.payload())
+                return
+            self._write_json(
+                HTTPStatus.OK if response.get("ok") is True else HTTPStatus.NOT_FOUND,
+                response,
+            )
+            return
         if parsed.path in ("/api/predictor/status",):
             self._write_json(HTTPStatus.OK, self.service.predictor_status())
             return
@@ -2435,6 +5690,26 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/active-rag/settings",):
             self._write_json(HTTPStatus.OK, self.service.active_rag_settings())
             return
+        if parsed.path in ("/api/active-rag/route-status",):
+            local_only_raw = _query_first(query, "localOnly")
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.active_rag_route_status(
+                    local_only=_bool(local_only_raw, default=True) if local_only_raw else None
+                ),
+            )
+            return
+        if parsed.path in ("/api/knowledge/route-status",):
+            self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_route_status())
+            return
+        if parsed.path in ("/api/knowledge/status", "/api/knowledge/session"):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.knowledge_workbench_status(
+                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
+                ),
+            )
+            return
         if parsed.path in ("/api/predictor/latency",):
             self._write_json(
                 HTTPStatus.OK,
@@ -2453,6 +5728,25 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(
                 HTTPStatus.OK,
                 self.service.active_rag_status({"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}),
+            )
+            return
+        if parsed.path in ("/api/active-rag/diagnostics",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.active_rag_diagnostics(
+                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
+                ),
+            )
+            return
+        if parsed.path in ("/api/active-rag/traces", "/api/active-rag/chain-trace"):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.active_rag_traces(
+                    {
+                        "sessionId": _query_first(query, "sessionId") or _query_first(query, "id"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
             )
             return
         if parsed.path.startswith("/api/active-rag/session/"):
@@ -2546,6 +5840,17 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if parsed.path == "/api/rime-lexicon/review":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.rime_lexicon_review(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "project": _query_first(query, "project"),
+                    }
+                ),
+            )
+            return
         if parsed.path in ("/api/cleanup-diff",):
             self._write_json(
                 HTTPStatus.OK,
@@ -2613,22 +5918,351 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        self._serve_static(parsed.path)
+        if parsed.path in ("", "/"):
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "schemaVersion": "rag-ime.local-api-root.v1",
+                    "ok": True,
+                    "service": self.service.config.server_name,
+                    "controlCenter": "RagImeControl.app",
+                    "browserUI": False,
+                },
+            )
+            return
+        self._write_json(
+            HTTPStatus.NOT_FOUND,
+            {"schemaVersion": "rag-ime.local-api-error.v1", "ok": False, "error": "route_not_found"},
+        )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
         try:
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
+            knowledge_parts = _knowledge_route_parts(path)
+            if (
+                knowledge_parts is not None
+                and len(knowledge_parts) == 3
+                and knowledge_parts[1:] == ("documents", "import")
+            ):
+                security_error = self._management_post_security_error(path, require_json=False)
+                if security_error is not None:
+                    self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                    return
+                if self.headers.get("Content-Encoding", "").strip():
+                    raise ValueError("compressed knowledge uploads are not accepted")
+                length = int(self.headers.get("Content-Length") or "0")
+                if length <= 0:
+                    raise ValueError("knowledge import requires a non-empty Content-Length")
+                if length > _MAX_KNOWLEDGE_IMPORT_BYTES:
+                    raise ValueError("knowledge document exceeds the 200 MiB limit")
+                data = self.rfile.read(length)
+                if len(data) != length:
+                    raise ValueError("knowledge upload ended before Content-Length")
+                query = parse_qs(parsed.query or "")
+                file_name = Path(unquote(_query_first(query, "fileName"))).name
+                mime_type = (
+                    _query_first(query, "mimeType")
+                    or self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                    or "application/octet-stream"
+                )
+                response = self._knowledge_control().import_document(
+                    knowledge_parts[0],
+                    data=data,
+                    file_name=file_name,
+                    mime_type=mime_type,
+                    parser_provider=_query_first(query, "parserProvider") or "auto",
+                )
+                self._write_json(HTTPStatus.CREATED, response)
+                return
+            if path == "/api/agent/media/import":
+                security_error = self._management_post_security_error(path, require_json=False)
+                if security_error is not None:
+                    self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                    return
+                query = parse_qs(parsed.query or "")
+                if self.headers.get("Content-Encoding", "").strip():
+                    raise ValueError("compressed agent media uploads are not accepted")
+                mime_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                maximum = self.service.agent.media.max_bytes_for_mime(mime_type)
+                length = int(self.headers.get("Content-Length") or "0")
+                if length <= 0:
+                    raise ValueError("agent media import requires a non-empty Content-Length")
+                if length > maximum:
+                    raise ValueError(f"agent media exceeds {maximum} byte limit")
+                data = self.rfile.read(length)
+                if len(data) != length:
+                    raise ValueError("agent media upload ended before Content-Length")
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.import_media(
+                        session_id=_query_first(query, "sessionId"),
+                        data=data,
+                        mime_type=mime_type,
+                        file_name=_query_first(query, "fileName"),
+                    ),
+                )
+                return
+            if path == "/api/agent/tool/execute":
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": "agent capability token required",
+                        },
+                    )
+                    return
+                self._write_json(HTTPStatus.OK, self.service.agent_tools.execute(self._read_json()))
+                return
+            if path == "/api/agent/tool/approval-result":
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": "agent capability token required",
+                        },
+                    )
+                    return
+                self._write_json(HTTPStatus.OK, self.service.agent.approval_result(self._read_json()))
+                return
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             payload = self._read_json()
-            if path in ("/api/suggest", "/suggest"):
+            if knowledge_parts is not None:
+                control = self._knowledge_control()
+                if knowledge_parts == ():
+                    response = control.create_base(payload)
+                    status = HTTPStatus.CREATED
+                elif len(knowledge_parts) == 3 and knowledge_parts[1:] == ("delete", "preview"):
+                    response = control.delete_preview(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 3 and knowledge_parts[1:] == ("delete", "apply"):
+                    response = control.delete_apply(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "retry":
+                    response = control.retry_document(knowledge_parts[0], knowledge_parts[2], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "jobs" and knowledge_parts[3] == "cancel":
+                    response = control.cancel_job(knowledge_parts[0], knowledge_parts[2])
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "chunk-preview":
+                    response = control.preview_chunking(knowledge_parts[0], knowledge_parts[2], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "search":
+                    response = control.search(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "rebuild":
+                    response = control.rebuild(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 3 and knowledge_parts[1:] == ("graph", "rebuild"):
+                    response = control.rebuild_graph(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "find":
+                    response = control.find(knowledge_parts[0], knowledge_parts[2], payload)
+                    status = HTTPStatus.OK
+                else:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(status, response)
+                return
+            agent_session_id, agent_action = agent_session_route(path)
+            agent_room_id, room_action = agent_room_route(path)
+            subagent_run_id, subagent_action = agent_subagent_route(path)
+            approval_id, approval_action = agent_approval_route(path)
+            if path == "/api/agent/runtime/ensure":
+                self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
+            elif path == "/api/agent/providers/auth/preview":
+                self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.preview(payload))
+            elif path == "/api/agent/providers/auth/apply":
+                self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.apply(payload))
+            elif path == "/api/agent/providers/oauth/cancel":
+                self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.oauth_cancel(payload))
+            elif path == "/api/agent/configuration":
+                self._write_json(HTTPStatus.OK, self.service.agent.update_configuration(payload))
+            elif path == "/api/agent/extensions/drafts":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent_extensions.create_draft(payload),
+                )
+            elif path == "/api/agent/extensions/validate":
+                self._write_json(HTTPStatus.OK, self.service.agent_extensions.validate(payload))
+            elif path == "/api/agent/extensions/preview":
+                self._write_json(HTTPStatus.OK, self.service.agent_extensions.preview(payload))
+            elif path == "/api/agent/extensions/apply":
+                self._write_json(HTTPStatus.OK, self.service.agent_extensions.apply(payload))
+            elif path == "/api/agent/deep-search":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
+            elif path == "/api/agent/sessions":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
+            elif path == "/api/agent/roles":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_role(payload))
+            elif path == "/api/agent/rooms":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_room(payload))
+            elif path == "/api/agent/subagents/runs":
+                session_id = str(payload.pop("sessionId", ""))
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.delegate_tasks(session_id, payload),
+                )
+            elif subagent_run_id and subagent_action == "abort":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.abort_delegation(
+                        str(payload.get("sessionId") or ""),
+                        {"runId": subagent_run_id},
+                    ),
+                )
+            elif agent_room_id and room_action == "messages":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.post_room_message(agent_room_id, payload),
+                )
+            elif agent_session_id and agent_action == "prompt":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
+            elif agent_session_id and agent_action == "abort":
+                self._write_json(HTTPStatus.OK, self.service.agent.abort(agent_session_id))
+            elif agent_session_id and agent_action == "review":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.resolve_review(agent_session_id, payload),
+                )
+            elif agent_session_id and agent_action == "compact":
+                self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
+            elif agent_session_id and agent_action == "model":
+                self._write_json(HTTPStatus.OK, self.service.agent.select_model(agent_session_id, payload))
+            elif agent_session_id and agent_action == "thinking":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.select_thinking_level(agent_session_id, payload),
+                )
+            elif agent_session_id and agent_action == "intercom":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.send_room_intercom(agent_session_id, payload),
+                )
+            elif approval_id and approval_action == "decision":
+                self._write_json(HTTPStatus.OK, self.service.agent.decide_approval(approval_id, payload))
+            elif approval_id and approval_action == "external-result":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.finalize_external_approval(approval_id, payload),
+                )
+            elif path in ("/api/suggest", "/suggest"):
                 self._write_json(HTTPStatus.OK, self.service.suggest(payload))
+            elif path in ("/api/frontend/v1/suggest", "/frontend/v1/suggest"):
+                validate_contract(payload, "frontend-suggest-request.v1.json")
+                response = self.service.frontend_suggest(payload)
+                validate_contract(response, "frontend-suggest-response.v1.json")
+                self._write_json(HTTPStatus.OK, response)
+            elif path in ("/api/frontend/v1/select", "/frontend/v1/select"):
+                validate_contract(payload, "frontend-selection.v1.json")
+                response = self.service.frontend_select(payload)
+                validate_contract(response, "frontend-selection-response.v1.json")
+                self._write_json(HTTPStatus.OK, response)
+            elif path == "/api/runtime/action":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.management.start_runtime_action(payload))
+            elif path == "/api/runtime/action/preview":
+                self._write_json(HTTPStatus.OK, self.service.management.runtime_action_preview(payload))
+            elif path == "/api/runtime/action/start":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.management.runtime_action_start(payload))
+            elif path == "/api/memory/action":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
+            elif path == "/api/memory/edit":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_edit(payload))
+            elif path == "/api/memory/book/archive-status":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
+            elif path == "/api/memory/book/archive/preview":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.memory_book_archive_preview(payload),
+                )
+            elif path == "/api/memory/book/archive/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.memory_book_archive_apply(payload),
+                )
+            elif path == "/api/memory/book/archive/rollback":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.memory_book_archive_rollback(payload),
+                )
+            elif path == "/api/memory/book/archive-maintenance":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_maintenance(payload))
+            elif path == "/api/planning/mutation/preview":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_preview(payload))
+            elif path == "/api/planning/mutation/rollback":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_rollback(payload))
+            elif path == "/api/planning/plan/save":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_save_plan(payload))
+            elif path == "/api/planning/goal/save":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_goal_save(payload))
+            elif path == "/api/planning/task/save":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_save(payload))
+            elif path == "/api/planning/task/action":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_action(payload))
+            elif path == "/api/planning/task-event/undo":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.planning_undo_task_event_contract(payload),
+                )
+            elif path == "/api/history/tombstone/preview":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.history_tombstone_preview(payload),
+                )
+            elif path == "/api/history/tombstone/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.history_tombstone_apply(payload),
+                )
+            elif path == "/api/history/tombstone/rollback":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.history_tombstone_rollback(payload),
+                )
+            elif path == "/api/planning/completion/resolve":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_resolve_completion(payload))
+            elif path == "/api/planning/assistant":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_assistant(payload))
+            elif path == "/api/settings/preview":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.configuration_settings_preview(payload),
+                )
+            elif path == "/api/settings/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.configuration_settings_apply(payload),
+                )
+            elif path == "/api/settings/rollback":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.configuration_settings_rollback(payload),
+                )
             elif path in ("/api/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.settings_update(payload))
             elif path in ("/api/settings/reset-section",):
                 self._write_json(HTTPStatus.OK, self.service.settings_reset_section(payload))
+            elif path == "/api/configuration/import-preview":
+                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_preview(payload))
+            elif path == "/api/configuration/import-apply":
+                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_apply(payload))
+            elif path == "/api/configuration/backup-export":
+                self._write_json(HTTPStatus.OK, self.service.management.portable_backup_export(payload))
+            elif path == "/api/configuration/restore-preview":
+                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_preview(payload))
+            elif path == "/api/configuration/restore-apply":
+                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_apply(payload))
             elif path in ("/api/profiles/save",):
                 self._write_json(HTTPStatus.OK, self.service.profile_save(payload))
             elif path in ("/api/profiles/activate-dry-run",):
@@ -2661,9 +6295,25 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/active-rag/preview",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
             elif path in ("/api/rime-suggest", "/rime-suggest"):
-                self._write_json(HTTPStatus.OK, self.service.rime_suggest(payload))
+                validate_contract(payload, "rime-suggest-request.v1.json")
+                response = self.service.rime_suggest(payload)
+                validate_contract(response, "rime-suggest-response.v1.json")
+                validate_contract(response.get("assistantOverlay"), "assistant-overlay.v1.json")
+                if isinstance(response.get("overlayConfig"), dict):
+                    validate_contract(response.get("overlayConfig"), "overlay-config.v1.json")
+                self._write_json(HTTPStatus.OK, response)
             elif path in ("/api/rime-select", "/rime-select"):
+                validate_contract(payload, "rime-select.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
+            elif path in ("/api/rime-rank-feedback", "/rime-rank-feedback"):
+                validate_contract(payload, "rime-rank-selection.v1.json")
+                self._write_json(HTTPStatus.OK, self.service.rime_rank_feedback(payload))
+            elif path in ("/api/candidate-edit-feedback", "/candidate-edit-feedback"):
+                self._write_json(HTTPStatus.OK, self.service.candidate_edit_feedback(payload))
+            elif path == "/api/rime-lexicon/apply":
+                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_apply(payload))
+            elif path == "/api/rime-lexicon/rollback":
+                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_rollback(payload))
             elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
                 self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
             elif path in ("/api/predictor/benchmark",):
@@ -2673,13 +6323,39 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/active-rag/preview",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
             elif path in ("/api/active-rag/start",):
+                validate_contract(payload, "active-rag-start.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.active_rag_start(payload))
             elif path in ("/api/active-rag/status", "/api/active-rag/session"):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_status(payload))
+            elif path in ("/api/active-rag/diagnostics",):
+                self._write_json(HTTPStatus.OK, self.service.active_rag_diagnostics(payload))
             elif path in ("/api/active-rag/cancel",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_cancel(payload))
             elif path in ("/api/active-rag/accept",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_accept(payload))
+            elif path in ("/api/knowledge/start",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_start(payload))
+            elif path in ("/api/knowledge/status", "/api/knowledge/session"):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_status(payload))
+            elif path in ("/api/knowledge/cancel",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_cancel(payload))
+            elif path in ("/api/knowledge/database/apply-preview",):
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.knowledge_workbench_database_apply_preview(payload),
+                )
+            elif path in ("/api/knowledge/database/apply",):
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.knowledge_workbench_database_apply_contract(payload),
+                )
+            elif path in ("/api/knowledge/database/draft-edit",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_draft_edit(payload))
+            elif path in ("/api/knowledge/database/rollback",):
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.knowledge_workbench_database_rollback_contract(payload),
+                )
             elif path in ("/api/cache-probe", "/cache-probe"):
                 self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
             elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):
@@ -2727,9 +6403,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/deepseek/completion-preview",):
                 self._write_json(HTTPStatus.OK, self.service.deepseek_completion_preview(payload))
             elif path in ("/api/commit", "/commit"):
+                validate_contract(payload, "foreground-commit.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):
                 self._write_json(HTTPStatus.OK, self.service.action(payload))
+            elif path in ("/api/assistant-candidate-action", "/assistant-candidate-action"):
+                validate_contract(payload, "assistant-candidate-action.v1.json")
+                self._write_json(HTTPStatus.OK, self.service.assistant_candidate_action(payload))
             elif path in ("/api/seed", "/seed"):
                 self._write_json(HTTPStatus.OK, self.service.seed())
             else:
@@ -2737,16 +6417,139 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # pragma: no cover - exercised through browser/manual debugging
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
 
+    def do_PATCH(self) -> None:  # noqa: N802 - stdlib API
+        try:
+            path = urlparse(self.path).path
+            security_error = self._management_post_security_error(path)
+            if security_error is not None:
+                self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                return
+            knowledge_parts = _knowledge_route_parts(path)
+            if knowledge_parts is not None:
+                if len(knowledge_parts) != 1:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(
+                    HTTPStatus.OK,
+                    self._knowledge_control().update_base(knowledge_parts[0], self._read_json()),
+                )
+                return
+            session_id, action = agent_session_route(path)
+            room_id, room_action = agent_room_route(path)
+            if room_id and not room_action:
+                self._write_json(HTTPStatus.OK, self.service.agent.update_room(room_id, self._read_json()))
+                return
+            if not session_id or action:
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                return
+            self._write_json(HTTPStatus.OK, self.service.agent.update_session(session_id, self._read_json()))
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+
+    def do_DELETE(self) -> None:  # noqa: N802 - stdlib API
+        try:
+            path = urlparse(self.path).path
+            security_error = self._management_post_security_error(path)
+            if security_error is not None:
+                self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                return
+            knowledge_parts = _knowledge_route_parts(path)
+            if knowledge_parts is not None:
+                if len(knowledge_parts) != 3 or knowledge_parts[1] != "documents":
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(
+                    HTTPStatus.OK,
+                    self._knowledge_control().delete_document(knowledge_parts[0], knowledge_parts[2]),
+                )
+                return
+            session_id, action = agent_session_route(path)
+            if not session_id or action:
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                return
+            self._write_json(HTTPStatus.OK, self.service.agent.delete_session(session_id))
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+
     def log_message(self, fmt: str, *args: object) -> None:
-        if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session")):
+        if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session", "/api/knowledge/status", "/api/knowledge/session")):
             return
         print(f"[rag-ime-debug] {self.address_string()} - {fmt % args}")
 
-    def _management_post_security_error(self, path: str) -> dict[str, object] | None:
+    def _stream_management_events(self) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        try:
+            for chunk in self.service.management.events.subscribe():
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _stream_agent_events(self, session_id: str, *, after_event_id: str = "") -> None:
+        stream = self.service.agent.subscribe_events(
+            session_id,
+            after_event_id=after_event_id,
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _stream_agent_control_events(self, *, after_event_id: str = "") -> None:
+        stream = self.service.agent.subscribe_control_events(after_event_id=after_event_id)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _stream_agent_room_events(self, room_id: str, *, after_event_id: str = "") -> None:
+        stream = self.service.agent.subscribe_room_events(
+            room_id,
+            after_event_id=after_event_id,
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _management_post_security_error(
+        self,
+        path: str,
+        *,
+        require_json: bool = True,
+    ) -> dict[str, object] | None:
         if not path.startswith("/api/"):
             return None
         settings = self.service.management_security_settings()
-        if settings.get("postRequiresJson") is True:
+        if require_json and settings.get("postRequiresJson") is True:
             content_type = self.headers.get("Content-Type", "")
             if "application/json" not in content_type.lower():
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "POST requires application/json"}
@@ -2760,6 +6563,22 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if not expected or provided != expected:
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "management token required"}
         return None
+
+    def _knowledge_control(self) -> Any:
+        control = self.service.knowledge_control
+        if control is None:
+            raise RuntimeError("document knowledge management is unavailable")
+        return control
+
+    @staticmethod
+    def _knowledge_error(exc: Exception) -> dict[str, object]:
+        code = str(getattr(exc, "code", "invalid_request") or "invalid_request")
+        return {
+            "schemaVersion": "rag-ime.knowledge-library.v1",
+            "ok": False,
+            "error": str(exc),
+            "errorCode": code,
+        }
 
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or "0")
@@ -2783,40 +6602,83 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
-    def _serve_static(self, request_path: str) -> None:
-        relative = "index.html" if request_path in ("", "/") else unquote(request_path.lstrip("/"))
-        candidate = (self.static_dir / relative).resolve()
-        static_root = self.static_dir.resolve()
-        if static_root not in candidate.parents and candidate != static_root:
-            self.send_error(HTTPStatus.FORBIDDEN)
+    def _write_knowledge_binary(self, blob: AssetBlob) -> None:
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", blob.media_type)
+            self.send_header("Content-Length", str(blob.byte_size))
+            self.send_header("ETag", f'"{blob.asset_id}"')
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{quote(blob.file_name, safe='')}")
+            self.end_headers()
+            self.wfile.write(blob.data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
             return
-        if not candidate.exists() or not candidate.is_file():
-            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def _write_binary(
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        *,
+        mime_type: str,
+        etag: str,
+    ) -> None:
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Content-Disposition", "inline")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("ETag", f'"{etag}"')
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
             return
-        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
-        body = candidate.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Ignore normal client disconnects without dumping multi-line tracebacks."""
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        error = sys.exc_info()[1]
+        if isinstance(error, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
 
 
 def run_debug_server(config: DebugServerConfig) -> None:
     service = DebugImeService(config)
-    static_dir = config.static_dir
 
     class Handler(DebugRequestHandler):
         pass
 
     Handler.service = service
-    Handler.static_dir = static_dir
-    server = ThreadingHTTPServer((config.host, config.port), Handler)
-    url = f"http://{config.host}:{config.port}/"
-    print(f"RAG IME {config.server_name}: {url}")
+    server = QuietThreadingHTTPServer((config.host, config.port), Handler)
+    url = f"http://{config.host}:{config.port}/api/health"
+    print(f"RAG IME {config.server_name} API: {url}")
     print(f"DB: {config.db_path}")
-    server.serve_forever()
+    previous_sigterm = signal.getsignal(signal.SIGTERM) if current_thread() is main_thread() else None
+
+    def stop_server(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    if previous_sigterm is not None:
+        signal.signal(signal.SIGTERM, stop_server)
+    try:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+        server.server_close()
+        if service.knowledge_worker is not None:
+            service.knowledge_worker.close()
+        service.pi_provider_auth.close()
+        service.agent.close()
 
 
 def _stable_debug_hash(text: str) -> str:
@@ -2826,8 +6688,11 @@ def _stable_debug_hash(text: str) -> str:
     return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
 
 
-def _settings_hash(settings: dict[str, object]) -> str:
-    return _stable_debug_hash(json.dumps(settings, ensure_ascii=False, sort_keys=True))
+def _safe_debug_error(error: BaseException) -> str:
+    value = compact_whitespace(str(error))[:240]
+    value = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", value)
+    value = re.sub(r"(?:/Users/|/Volumes/|/var/folders/)[^\s，。；;]+", "[REDACTED_PATH]", value)
+    return value or type(error).__name__
 
 
 _PINYIN_PAIR_ENV_NAMES = {
@@ -2836,6 +6701,7 @@ _PINYIN_PAIR_ENV_NAMES = {
     "sSh": "RAG_IME_PINYIN_FUZZY_S_SH",
     "enEng": "RAG_IME_PINYIN_FUZZY_EN_ENG",
     "inIng": "RAG_IME_PINYIN_FUZZY_IN_ING",
+    "ongOn": "RAG_IME_PINYIN_FUZZY_ONG_ON",
     "nL": "RAG_IME_PINYIN_FUZZY_N_L",
     "fH": "RAG_IME_PINYIN_FUZZY_F_H",
 }
@@ -2845,6 +6711,7 @@ _PINYIN_PAIR_DEFAULTS = {
     "sSh": True,
     "enEng": True,
     "inIng": True,
+    "ongOn": True,
     "nL": False,
     "fH": False,
 }
@@ -2888,15 +6755,27 @@ def _pinyin_runtime_status(settings: dict[str, object]) -> dict[str, object]:
     }
 
 
+_ACTIVE_RAG_RUNTIME_SYNC_KEYS = {
+    "activeRag.enabled",
+    "activeRag.shortcut",
+    "activeRag.capture.accessibility",
+    "activeRag.capture.clipboardFallback",
+}
+_ACTIVE_RAG_DEFAULTS_KEYS = {
+    "RagImeActiveRagEnabled": "-bool",
+    "RagImeActiveRagShortcut": "-string",
+    "RagImeActiveRagCaptureAccessibility": "-bool",
+    "RagImeActiveRagCaptureClipboardFallback": "-bool",
+}
+
+
 def _active_rag_runtime_sync_payload(*, active_settings: object, changed_keys: tuple[str, ...]) -> dict[str, object]:
     settings = dict(active_settings) if isinstance(active_settings, dict) else {}
     capture = settings.get("capture") if isinstance(settings.get("capture"), dict) else {}
-    shortcut = compact_whitespace(str(settings.get("shortcut") or "ctrl+shift+r")).lower().replace(" ", "")
-    domains = [
-        "im.rime.inputmethod.Squirrel",
-        "im.rag-ime.inputmethod.RagIme",
-    ]
+    shortcut = compact_whitespace(str(settings.get("shortcut") or "ctrl+.")).lower().replace(" ", "")
+    domains = ["im.rime.inputmethod.Squirrel"]
     defaults = {
+        "RagImeActiveRagEnabled": {"type": "bool", "value": bool(settings.get("enabled", True))},
         "RagImeActiveRagShortcut": {"type": "string", "value": shortcut},
         "RagImeActiveRagCaptureAccessibility": {"type": "bool", "value": bool(capture.get("accessibility", True))},
         "RagImeActiveRagCaptureClipboardFallback": {"type": "bool", "value": bool(capture.get("clipboardFallback", True))},
@@ -2921,6 +6800,96 @@ def _active_rag_runtime_sync_payload(*, active_settings: object, changed_keys: t
     }
 
 
+def _active_rag_defaults_command_allowed(command: list[str]) -> bool:
+    if len(command) != 6:
+        return False
+    executable, action, domain, key, value_type, value = command
+    if executable != "defaults" or action != "write" or domain != "im.rime.inputmethod.Squirrel":
+        return False
+    if _ACTIVE_RAG_DEFAULTS_KEYS.get(key) != value_type:
+        return False
+    if value_type == "-bool" and value not in {"true", "false"}:
+        return False
+    if value_type == "-string" and not (1 <= len(value) <= 80):
+        return False
+    return True
+
+
+def _active_rag_secure_flags(payload: dict[str, Any]) -> tuple[bool, bool]:
+    foreground = payload.get("foregroundText") if isinstance(payload.get("foregroundText"), dict) else {}
+    sensitive_field = _bool(
+        payload.get("sensitiveField")
+        or payload.get("isSensitiveField")
+        or foreground.get("sensitiveField")
+        or foreground.get("isSensitiveField"),
+        default=False,
+    )
+    secure_input = _bool(
+        payload.get("secureInput")
+        or payload.get("isSecureInput")
+        or foreground.get("secureInput")
+        or foreground.get("isSecureInput"),
+        default=False,
+    )
+    return sensitive_field, secure_input
+
+
+def _sensitive_deepseek_preview_payload() -> dict[str, object]:
+    empty_text = {"present": False, "chars": 0, "utf8Bytes": 0, "hash": ""}
+    diagnostics = {
+        "schemaVersion": "rag-ime.context-injection-trace.v1",
+        "privacy": {
+            "rawTextIncluded": False,
+            "hashAlgorithm": "none_for_sensitive_fields",
+            "sensitiveFieldBlocked": True,
+        },
+        "capturedContext": {
+            "currentContext": dict(empty_text),
+            "selectedText": dict(empty_text),
+            "surroundingBefore": dict(empty_text),
+            "surroundingAfter": dict(empty_text),
+        },
+        "evidence": {"count": 0, "sourceCounts": {}, "sourceLaneCounts": {}, "items": []},
+        "contextPacket": {"present": False, "packetIdHash": "", "sectionCounts": {}},
+        "prompt": {"messageCount": 0, "messages": []},
+        "injection": {
+            "promptBuilt": False,
+            "currentContextIncluded": False,
+            "selectedTextIncluded": False,
+            "contextPacketIncluded": False,
+            "evidenceIncluded": False,
+            "success": False,
+            "missing": [SENSITIVE_FIELD_BLOCK_REASON],
+        },
+    }
+    return {
+        "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+        "ok": False,
+        "dryRun": True,
+        "error": SENSITIVE_FIELD_BLOCK_REASON,
+        "routeStatus": {
+            "schemaVersion": "rag-ime.active-rag-route-status.v1",
+            "route": "explicit_active_rag_deepseek",
+            "remoteReady": False,
+            "skipReason": SENSITIVE_FIELD_BLOCK_REASON,
+            "gates": {"sensitiveFieldClear": False},
+            "passivePostCommitRemoteAllowed": False,
+        },
+        "requestDiagnostics": diagnostics,
+        "retrieval": {"called": False, "evidenceCount": 0, "lanes": {}, "elapsedMs": 0.0},
+        "remoteModel": {
+            "requested": False,
+            "allowed": False,
+            "provider": "",
+            "model": "",
+            "skipReason": SENSITIVE_FIELD_BLOCK_REASON,
+            "elapsedMs": 0.0,
+        },
+        "messages": [],
+        "evidencePack": [],
+        "streamEvents": [],
+        "candidates": [],
+    }
 def _debug_lane_breakdown(raw_lanes: object) -> dict[str, object]:
     if not isinstance(raw_lanes, dict):
         return {}
@@ -2929,6 +6898,13 @@ def _debug_lane_breakdown(raw_lanes: object) -> dict[str, object]:
         if not isinstance(payload, dict):
             continue
         result[_camel_lane_name(str(name))] = {
+            "enabled": bool(payload.get("enabled", True)),
+            "available": bool(payload.get("available", True)),
+            "implementation": _string(payload.get("implementation")),
+            "lexicalFallback": bool(payload.get("lexicalFallback")),
+            "fts5Bm25": bool(payload.get("fts5Bm25")),
+            "skippedReason": _string(payload.get("skippedReason")),
+            "weight": float(payload.get("weight") or 0.0),
             "count": int(payload.get("count") or 0),
             "docIds": list(payload.get("docIds") or []),
         }
@@ -3240,19 +7216,7 @@ def _management_action(raw: str) -> str:
 
 
 def _ensure_management_audit_schema(conn) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS management_audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at_ms INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            target_type TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            result_json TEXT NOT NULL DEFAULT '{}'
-        )
-        """
-    )
+    ensure_management_tables(conn)
 
 
 def _json_loads_dict(raw: object) -> dict[str, object]:
@@ -3296,6 +7260,51 @@ def _cleanup_diff_payload_for_debug(conn, *, diff_id: int) -> dict[str, object]:
 
 def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _nested_agent_configuration_value(
+    configuration: object,
+    dotted_key: str,
+) -> object:
+    if not isinstance(configuration, dict):
+        return None
+    section, leaf = dotted_key.split(".", 1)
+    branch = configuration.get(section)
+    return branch.get(leaf) if isinstance(branch, dict) else None
+
+
+def _strict_read_query(
+    query: Mapping[str, list[str]],
+    allowed: frozenset[str],
+) -> dict[str, object]:
+    unknown = sorted(set(query) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported query field: {unknown[0]}")
+    result: dict[str, object] = {}
+    for key, values in query.items():
+        if len(values) != 1:
+            raise ValueError(f"query field must appear once: {key}")
+        result[key] = values[0]
+    return result
+
+
+def _memory_entity_path(path: str) -> tuple[str, str]:
+    suffix = path.removeprefix(_MEMORY_ENTITY_PATH_PREFIX)
+    parts = suffix.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise ValueError("memory entity path must contain kind and id")
+    return unquote(parts[0]), unquote(parts[1])
+
+
+def _memory_read_error(message: str) -> dict[str, object]:
+    payload = {
+        "schemaVersion": "rag-ime.memory-read-error.v1",
+        "ok": False,
+        "errorCode": "invalid_request",
+        "error": message[:256],
+    }
+    validate_contract(payload, "memory-read-error.v1.json")
+    return payload
 
 
 def _query_first(query: dict[str, list[str]], key: str) -> str:
@@ -3533,13 +7542,22 @@ def _prediction_live_trace_frame(
     include_raw_text: bool,
 ) -> dict[str, object]:
     prediction_session = response.get("predictionSession") if isinstance(response.get("predictionSession"), dict) else {}
+    sensitive_response = _string(prediction_session.get("clearReason")) == "sensitive_field"
     rag_lane = response.get("ragLane") if isinstance(response.get("ragLane"), dict) else {}
     model_lane = response.get("modelLane") if isinstance(response.get("modelLane"), dict) else {}
     display_candidates = response.get("displayCandidates") if isinstance(response.get("displayCandidates"), list) else []
     trace_events = response.get("predictionTraceEvents") if isinstance(response.get("predictionTraceEvents"), list) else []
-    raw_input = _string(response.get("rawInput") or request_payload.get("rawInput"))
-    preedit = _string(response.get("preedit") or request_payload.get("preedit"))
-    committed_context = _string(response.get("committedContext") or request_payload.get("committedContext"))
+    raw_input = "" if sensitive_response else _string(response.get("rawInput") or request_payload.get("rawInput"))
+    preedit = "" if sensitive_response else _string(response.get("preedit") or request_payload.get("preedit"))
+    committed_context = "" if sensitive_response else _string(
+        response.get("committedContext") or request_payload.get("committedContext")
+    )
+    raw_foreground = (
+        model_lane.get("foregroundContext")
+        if isinstance(model_lane.get("foregroundContext"), dict)
+        else rag_lane.get("foregroundContext")
+    )
+    foreground_context = _foreground_context_trace_payload(raw_foreground)
     frame: dict[str, object] = {
         "schemaVersion": "rag-ime.prediction-frame.v1",
         "recordedAtMs": now_ms(),
@@ -3551,6 +7569,7 @@ def _prediction_live_trace_frame(
         "input": _redacted_text_snapshot(raw_input, include_raw_text=include_raw_text),
         "preedit": _redacted_text_snapshot(preedit, include_raw_text=include_raw_text),
         "committedContext": _redacted_text_snapshot(committed_context, include_raw_text=include_raw_text),
+        "foregroundContext": foreground_context,
         "predictionSession": {
             "phase": _string(prediction_session.get("phase")),
             "inputMode": _string(prediction_session.get("inputMode")),
@@ -3585,6 +7604,29 @@ def _prediction_live_trace_frame(
         "traceEvents": _prediction_trace_event_summaries(trace_events),
     }
     return frame
+
+
+def _foreground_context_trace_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    keep = (
+        "applied",
+        "source",
+        "confidence",
+        "freshnessMs",
+        "capturedAtMs",
+        "captureEpoch",
+        "captureFailureReason",
+        "reason",
+        "commitTextMatched",
+        "commitTextMatchDeclared",
+        "contextGroupLevel",
+        "contextGroupConfidence",
+        "selectedTextChars",
+        "surroundingBeforeChars",
+        "surroundingAfterChars",
+    )
+    return {key: value.get(key) for key in keep if value.get(key) not in (None, "")}
 
 
 def _redacted_text_snapshot(text: str, *, include_raw_text: bool) -> dict[str, object]:
@@ -3767,7 +7809,9 @@ def _parse_input_source_check_output(output: str) -> dict[str, object]:
 def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready: bool) -> dict[str, object]:
     enabled = parsed.get("enabled") is True
     selectable = parsed.get("selectable") is True
-    hitoolbox_enabled = parsed.get("hitoolboxEnabled") is not False
+    # Third-party input methods are canonically registered in
+    # com.apple.inputsources. Mirroring them into HIToolbox creates duplicate
+    # TIS rows on current macOS releases, so HIToolbox is diagnostic only.
     third_party_enabled = parsed.get("thirdPartyEnabled") is not False
     current = _string(parsed.get("current"))
     target = _string(parsed.get("id")) or "Squirrel"
@@ -3782,7 +7826,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
         },
         {
             "name": "third-party-list",
-            "passed": hitoolbox_enabled and third_party_enabled,
+            "passed": third_party_enabled,
             "hitoolboxEnabled": parsed.get("hitoolboxEnabled"),
             "thirdPartyEnabled": parsed.get("thirdPartyEnabled"),
         },
@@ -3802,7 +7846,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
             "verificationCommand": "scripts/wait_squirrel_typing_ready.sh",
             "readinessChecks": readiness_checks,
         }
-    if enabled and selectable and hitoolbox_enabled and third_party_enabled:
+    if enabled and selectable and third_party_enabled:
         return {
             "readinessState": "switch",
             "readinessMessage": f"{product_name} is installed; switch the menu bar input source",
@@ -3813,7 +7857,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
             "expectedInputSourceId": target,
             "currentInputSourceId": current,
         }
-    if not enabled or not selectable or not hitoolbox_enabled or not third_party_enabled:
+    if not enabled or not selectable or not third_party_enabled:
         return {
             "readinessState": "install",
             "readinessMessage": f"{product_name} is not enabled in every macOS input-source list",

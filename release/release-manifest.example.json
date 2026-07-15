@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "rag-ime.release-manifest.v2",
+  "templateOnly": true,
+  "releaseId": "vX.Y.Z",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "artifacts": [
+    {
+      "id": "macos-package",
+      "kind": "macos_release",
+      "path": "output/release/RAG-IME-vX.Y.Z.dmg",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sizeBytes": 0
+    },
+    {
+      "id": "patched-squirrel-source",
+      "kind": "corresponding_source",
+      "path": "output/release/RAG-IME-vX.Y.Z-squirrel-source.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sizeBytes": 0
+    }
+  ],
+  "evidence": {
+    "codesign": {
+      "result": "valid",
+      "artifactId": "macos-package",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "path": "output/release/evidence/codesign.txt",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "notarization": {
+      "result": "accepted",
+      "artifactId": "macos-package",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "path": "output/release/evidence/notarization.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "stapling": {
+      "result": "valid",
+      "artifactId": "macos-package",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "path": "output/release/evidence/stapler.txt",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "correspondingSource": {
+      "result": "verified",
+      "artifactId": "patched-squirrel-source",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "path": "output/release/evidence/corresponding-source.txt",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "projectLicense": {
+      "result": "verified",
+      "path": "LICENSE",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "thirdPartyNotices": {
+      "result": "verified",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "foregroundAcceptance": {
+      "result": "passed",
+      "artifactId": "macos-package",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "path": "output/release/evidence/foreground-acceptance.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}

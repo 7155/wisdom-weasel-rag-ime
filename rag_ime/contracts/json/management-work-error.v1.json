@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.management-work-error.v1",
+  "type": "object",
+  "required": ["schemaVersion", "ok", "errorCode", "error", "currentRevision"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.management-work-error.v1"},
+    "ok": {"type": "boolean", "const": false},
+    "errorCode": {
+      "type": "string",
+      "enum": [
+        "confirmation_mismatch",
+        "domain_not_applicable",
+        "domain_not_found",
+        "domain_rejected",
+        "domain_scope_mismatch",
+        "invalid_payload",
+        "invalid_request",
+        "payload_hash_mismatch",
+        "payload_too_large",
+        "preview_already_used",
+        "preview_expired",
+        "preview_not_found",
+        "preview_path_mismatch",
+        "receipt_already_rolled_back",
+        "receipt_not_found",
+        "receipt_path_mismatch",
+        "revision_mismatch",
+        "rollback_authority_mismatch",
+        "rollback_path_mismatch",
+        "rollback_state_changed",
+        "rollback_token_mismatch",
+        "rollback_unavailable",
+        "stored_contract_invalid",
+        "unsupported_backend",
+        "unsupported_mutation"
+      ]
+    },
+    "error": {"type": "string", "minLength": 1},
+    "currentRevision": {"type": "object"}
+  }
+}

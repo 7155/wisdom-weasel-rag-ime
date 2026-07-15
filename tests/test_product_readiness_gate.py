@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from rag_ime.cli import run_acceptance
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS product-readiness scripts")
 class ProductReadinessGateScriptTests(unittest.TestCase):
     _GATE_ENV_KEYS = (
         "RAG_IME_REQUIRE_MACOS_FRONTEND",
@@ -147,7 +149,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                 "--db-path",
                 "/tmp/rag-ime-product-gate.sqlite",
                 "--cases-file",
-                "docs/eval/codex-history-cases.example.jsonl",
+                "eval/codex-history-cases.example.jsonl",
             ],
             cwd=root,
             env=self._gate_env(),
@@ -251,9 +253,9 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("frontend_db_path=/tmp/rag-ime-frontend-runtime.sqlite", result.stdout)
         self.assertIn("foreground_readiness_report=/tmp/custom-rag-ime-foreground-readiness.json", result.stdout)
         self.assertIn("squirrel_app=", result.stdout)
-        self.assertIn("Input Methods/RAG-IME.app", result.stdout)
-        self.assertIn("squirrel_bundle_id=im.rag-ime.inputmethod.RagIme", result.stdout)
-        self.assertIn("squirrel_input_source_id=im.rag-ime.inputmethod.RagIme.Hans", result.stdout)
+        self.assertIn("Input Methods/Squirrel.app", result.stdout)
+        self.assertIn("squirrel_bundle_id=im.rime.inputmethod.Squirrel", result.stdout)
+        self.assertIn("squirrel_input_source_id=im.rime.inputmethod.Squirrel.Hans", result.stdout)
         self.assertIn("require_sichuan_fuzzy=1", result.stdout)
         self.assertIn("require_predictor_capability=seededPromptReplay", result.stdout)
         self.assertIn("require_model_candidate_count=3", result.stdout)
@@ -329,6 +331,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
             prepare_script.chmod(0o755)
             env = self._gate_env()
             env["RAG_IME_REQUIRE_MACOS_FRONTEND"] = "1"
+            env["RAG_IME_REQUIRE_SICHUAN_FUZZY"] = "0"
             env["RAG_IME_PREPARE_SQUIRREL_FOREGROUND_CHECK_SCRIPT"] = str(prepare_script)
 
             result = subprocess.run(
@@ -349,6 +352,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
             prepare_args = call_log.read_text(encoding="utf-8")
 
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Sichuan fuzzy profile check skipped", result.stdout)
         self.assertIn("foreground readiness preflight", result.stdout)
         self.assertIn("--summary-path", prepare_args)
         self.assertIn(str(summary_path), prepare_args)

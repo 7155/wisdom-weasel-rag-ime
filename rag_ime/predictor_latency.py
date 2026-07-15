@@ -23,6 +23,7 @@ class PredictorLatencyTrace:
     prefill_ms: float = 0.0
     first_token_ms: float = 0.0
     first_candidate_ms: float = 0.0
+    three_candidates_ms: float = 0.0
     decode_ms: float = 0.0
     branch_ms: float = 0.0
     parse_ms: float = 0.0
@@ -129,7 +130,16 @@ def trace_from_prediction_payload(
     branch_timings = timing.get("branches") if isinstance(timing.get("branches"), list) else []
     branch_ms = sum(_float(item.get("elapsedMs")) for item in branch_timings if isinstance(item, dict))
     total_ms = _float(payload.get("totalMs"))
-    first_candidate_ms = _float(timing.get("firstCandidateMs")) or _float(timing.get("logitsMs")) or (total_ms if candidates else 0.0)
+    candidate_mode = str(payload.get("candidateMode") or timing.get("candidateMode") or "")
+    logits_ms = _float(timing.get("logitsMs"))
+    if _is_non_streaming_full_phrase_branch(candidate_mode):
+        # Seed logits only choose continuation branches. No complete phrase is
+        # visible until this non-streaming response is ready.
+        first_candidate_ms = total_ms if candidates else 0.0
+        three_candidates_ms = total_ms if len(candidates) >= 3 else 0.0
+    else:
+        first_candidate_ms = _float(timing.get("firstCandidateMs")) or logits_ms or (total_ms if candidates else 0.0)
+        three_candidates_ms = _float(timing.get("threeCandidatesMs"))
     cache_hit_tokens = _int(prefix_cache.get("cacheHitTokens"))
     if cache_hit_tokens <= 0 and _cache_hit(prompt_cache):
         cache_hit_tokens = _int(prompt_cache.get("stablePrefixTokens"))
@@ -142,8 +152,9 @@ def trace_from_prediction_payload(
         tokenize_ms=_float(timing.get("tokenizeMs")),
         cache_lookup_ms=_float(timing.get("cacheLookupMs")),
         prefill_ms=_float(timing.get("prefillMs")),
-        first_token_ms=_float(timing.get("firstTokenMs")) or first_candidate_ms,
+        first_token_ms=_float(timing.get("firstTokenMs")) or logits_ms or first_candidate_ms,
         first_candidate_ms=first_candidate_ms,
+        three_candidates_ms=three_candidates_ms,
         decode_ms=max(0.0, total_ms - branch_ms - _float(timing.get("logitsMs"))),
         branch_ms=branch_ms,
         parse_ms=_float(timing.get("parseMs")),
@@ -159,6 +170,15 @@ def trace_from_prediction_payload(
         stale_dropped=bool(payload.get("staleDropped") or timing.get("staleDropped")),
         rss_mb=_rss_mb(),
     )
+
+
+def _is_non_streaming_full_phrase_branch(candidate_mode: str) -> bool:
+    return candidate_mode in {
+        "base-completion-branches",
+        "continuation-branches",
+        "seeded-prompt-replay",
+        "seeded-sequence-fork",
+    }
 
 
 def _cache_hit(prompt_cache: dict[str, Any]) -> bool:

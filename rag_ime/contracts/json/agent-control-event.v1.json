@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-control-event.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "sequence",
+    "eventType",
+    "createdAtMs",
+    "payload",
+    "resumeToken"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-control-event.v1"},
+    "eventId": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 0},
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "configuration_changed",
+        "configuration_applied",
+        "configuration_failed",
+        "snapshot_required"
+      ]
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "payload": {"type": "object"},
+    "resumeToken": {"type": "string"}
+  }
+}

@@ -40,7 +40,7 @@ def main() -> int:
         started = time.perf_counter()
         try:
             response = post_json(f"{base_url}/rime-suggest", case["payload"])
-            response = retry_post_commit_model_if_needed(
+            response = follow_post_commit_progressive_if_needed(
                 base_url=base_url,
                 case=case,
                 response=response,
@@ -71,7 +71,7 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     return parsed
 
 
-def retry_post_commit_model_if_needed(
+def follow_post_commit_progressive_if_needed(
     *,
     base_url: str,
     case: dict[str, Any],
@@ -80,33 +80,45 @@ def retry_post_commit_model_if_needed(
 ) -> dict[str, Any]:
     if case.get("caseId") != "post-commit-model-memory-panel":
         return response
-    if _has_model_candidate(response):
-        return response
-    model_lane = response.get("modelLane") if isinstance(response.get("modelLane"), dict) else {}
-    skipped_reason = str(model_lane.get("skippedReason") or "")
-    if skipped_reason not in {"model lane already running", "model lane exceeded latency budget"}:
-        return response
     payload = dict(case["payload"])
-    payload["sessionId"] = "verify-post-commit-model-retry"
     payload["requestSeq"] = int(payload.get("requestSeq") or 1) + 100
     payload["latencyBudgetMs"] = max(latency_budget_ms, 2000)
-    for attempt in range(2):
-        time.sleep(0.18 * (attempt + 1))
+    attempts = 0
+    for attempt in range(8):
+        source_types = {
+            str(item.get("sourceType") or "")
+            for item in response.get("displayCandidates", [])
+            if isinstance(item, dict)
+        }
+        if "model" in source_types and source_types.intersection({"rag", "memory"}):
+            break
+        progressive = response.get("progressive") if isinstance(response.get("progressive"), dict) else {}
+        model_lane = response.get("modelLane") if isinstance(response.get("modelLane"), dict) else {}
+        skipped_reason = str(model_lane.get("skippedReason") or "")
+        retryable_model_state = skipped_reason in {
+            "model lane already running",
+            "model lane exceeded latency budget",
+        }
+        if progressive.get("shouldFollowUp") is not True and not retryable_model_state:
+            break
+        delay_ms = int(progressive.get("retryAfterMs") or 180)
+        time.sleep(max(0.08, min(0.5, delay_ms / 1000)))
         retry_payload = dict(payload)
         retry_payload["requestSeq"] = int(payload["requestSeq"]) + attempt
-        retried = post_json(f"{base_url}/rime-suggest", retry_payload)
-        if _has_model_candidate(retried):
-            retried["verifyRetry"] = {
-                "reason": skipped_reason,
-                "attempt": attempt + 1,
-                "latencyBudgetMs": retry_payload["latencyBudgetMs"],
-            }
-            return retried
+        retry_payload["progressiveFollowUp"] = True
+        foreground = retry_payload.get("foregroundText")
+        if isinstance(foreground, dict):
+            retry_payload["foregroundText"] = {**foreground, "capturedAtMs": int(time.time() * 1000), "freshnessMs": 0}
+        response = post_json(f"{base_url}/rime-suggest", retry_payload)
+        attempts = attempt + 1
     response["verifyRetry"] = {
-        "reason": skipped_reason,
-        "attempt": 2,
+        "attempt": attempts,
         "latencyBudgetMs": payload["latencyBudgetMs"],
-        "modelStillMissing": True,
+        "modelStillMissing": not _has_model_candidate(response),
+        "ragStillMissing": not any(
+            isinstance(item, dict) and item.get("sourceType") in {"rag", "memory"}
+            for item in response.get("displayCandidates", [])
+        ),
     }
     return response
 
@@ -123,12 +135,13 @@ def patched_frontend_base(case_id: str, latency_budget_ms: int) -> dict[str, Any
     return {
         "sessionId": f"verify-{case_id}",
         "requestSeq": 1,
+        "privacyDisposition": "allowed",
         "frontendBuild": "rag-ime.foreground-trace.v2",
         "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "forceSideCandidates": True,
         "latencyBudgetMs": latency_budget_ms,
         "maxVisibleCandidates": 8,
-        "maxSideCandidates": 8,
+        "maxSideCandidates": 5,
     }
 
 
@@ -174,14 +187,31 @@ def weak_context_payload(latency_budget_ms: int) -> dict[str, Any]:
 
 def post_commit_payload(latency_budget_ms: int) -> dict[str, Any]:
     payload = patched_frontend_base("post-commit", latency_budget_ms)
+    context = "明天上午开会以后"
+    commit_text = "开会以后"
+    context_group_id = f"doc:verify-post-commit:{time.time_ns()}"
     payload.update(
         {
             "rawInput": "",
             "preedit": "",
-            "commitTextPreview": "",
+            "commitTextPreview": commit_text,
             "idleMs": 80,
             "forceSideCandidates": False,
-            "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+            "committedContext": context,
+            "commitBurstReady": True,
+            "commitBurstDeltaChars": len(commit_text),
+            "commitBurstTexts": [commit_text],
+            "foregroundText": {
+                "available": True,
+                "source": "text_input_client",
+                "surroundingBefore": context,
+                "surroundingAfter": "",
+                "capturedAtMs": int(time.time() * 1000),
+                "freshnessMs": 0,
+                "commitTextMatched": True,
+                "contextGroupId": context_group_id,
+                "contextGroupLevel": "document",
+            },
             "rimeContext": {"candidates": []},
         }
     )
@@ -218,8 +248,8 @@ def raw_path_payload(latency_budget_ms: int) -> dict[str, Any]:
     payload = patched_frontend_base("raw-path", latency_budget_ms)
     payload.update(
         {
-            "rawInput": "/Volumes/undo 4t/git/learnA",
-            "preedit": "/Volumes/undo 4t/git/learnA",
+            "rawInput": "/workspace/example-project",
+            "preedit": "/workspace/example-project",
             "committedContext": "正在调试 Codex 项目路径输入保护",
             "rimeContext": {"candidates": [{"label": "1", "text": "路径", "comment": "wanxiang", "index": 0}]},
         }
@@ -266,6 +296,8 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
         },
         "modelLane": response.get("modelLane"),
         "ragLane": response.get("ragLane"),
+        "progressive": response.get("progressive"),
+        "verifyRetry": response.get("verifyRetry"),
         "texts": texts,
         "sourceTypes": source_types,
         "displayLanes": lanes,
@@ -317,7 +349,7 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
     elif case_id == "raw-path-keeps-english-first":
         first = display[0] if display and isinstance(display[0], dict) else {}
         require(first.get("sourceType") == "raw_english", case_id, "raw path must stay first", failures)
-        require(first.get("insertText") == "/Volumes/undo 4t/git/learnA", case_id, "raw path insert text mismatch", failures)
+        require(first.get("insertText") == "/workspace/example-project", case_id, "raw path insert text mismatch", failures)
         require(len(display) == 1, case_id, "raw path must not mix model/RAG/Rime candidates", failures)
     elif case_id == "rime-fallback-when-no-context":
         require(source_types[:2] == ["rime", "rime"], case_id, "plain anchor should keep Rime fallback", failures)

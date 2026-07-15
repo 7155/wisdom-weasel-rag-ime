@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "rag-ime.agent-event.v1",
+  "eventId": "agent-session-1:7",
+  "sessionId": "agent-session-1",
+  "turnId": "turn-1",
+  "sequence": 7,
+  "createdAtMs": 1783950000000,
+  "eventType": "tool_progress",
+  "payload": {
+    "toolCallId": "tool-call-1",
+    "progress": 0.5,
+    "label": "正在检索记忆"
+  },
+  "resumeToken": "agent-session-1:7"
+}

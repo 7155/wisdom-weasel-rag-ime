@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "rag-ime.agent-message.v1",
+  "id": "message-1",
+  "sessionId": "agent-session-1",
+  "turnId": "turn-1",
+  "role": "assistant",
+  "status": "completed",
+  "blocks": [
+    {
+      "id": "block-text-1",
+      "type": "text",
+      "status": "completed",
+      "presentationKind": "markdown",
+      "data": {"text": "我找到了两条带来源的记录。"}
+    },
+    {
+      "id": "block-citation-1",
+      "type": "citation",
+      "status": "completed",
+      "presentationKind": "citation",
+      "data": {"citationId": "citation-1", "excerpt": "今天完成了输入法时间检索测试。"}
+    }
+  ],
+  "attachments": [],
+  "citations": ["citation-1"],
+  "createdAtMs": 1783950000000,
+  "completedAtMs": 1783950001200
+}

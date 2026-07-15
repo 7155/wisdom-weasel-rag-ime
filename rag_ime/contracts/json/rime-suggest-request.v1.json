@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.rime-suggest-request.v1",
+  "type": "object",
+  "required": ["sessionId", "requestSeq"],
+  "properties": {
+    "schemaVersion": {"type": "string"},
+    "sessionId": {"type": "string", "minLength": 1},
+    "requestSeq": {"type": "integer", "minimum": 0},
+    "rawInput": {"type": "string"},
+    "preedit": {"type": "string"},
+    "commitTextPreview": {"type": "string"},
+    "committedContext": {"type": "string"},
+    "project": {"type": "string"},
+    "app": {"type": "string"},
+    "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+    "sensitiveField": {"type": "boolean"},
+    "secureInput": {"type": "boolean"},
+    "progressiveFollowUp": {"type": "boolean"},
+    "frontendRevision": {"type": "integer", "minimum": 0},
+    "selectionEpoch": {"type": "integer", "minimum": 0},
+    "inputGeneration": {"type": "integer", "minimum": 0},
+    "foregroundText": {"$ref": "#/$defs/foregroundContext"}
+  },
+  "$defs": {
+    "foregroundContext": {
+      "type": "object",
+      "required": ["available", "source", "freshnessMs"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "source": {"type": "string"},
+        "freshnessMs": {"type": "integer", "minimum": 0},
+        "surroundingBefore": {"type": "string"},
+        "surroundingAfter": {"type": "string"},
+        "selectedText": {"type": "string"},
+        "canReplaceSelection": {"type": "boolean"},
+        "contextGroupId": {"type": "string"},
+        "contextGroupLevel": {"type": "string", "enum": ["document", "project", "app", "global", ""]}
+      }
+    }
+  }
+}

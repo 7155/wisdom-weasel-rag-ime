@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.management-work-receipt.v1",
+  "type": "object",
+  "required": ["schemaVersion", "ok", "receiptId", "pathId", "payloadSha256", "appliedAtMs", "auditId", "rollbackAvailable", "rollbackToken", "rollbackAuthority", "restartComponents", "result"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.management-work-receipt.v1"},
+    "ok": {"type": "boolean", "const": true},
+    "receiptId": {"type": "string", "minLength": 1},
+    "pathId": {"type": "string", "minLength": 1},
+    "payloadSha256": {"type": "string", "minLength": 71},
+    "appliedAtMs": {"type": "integer", "minimum": 1},
+    "auditId": {"type": "integer", "minimum": 1},
+    "rollbackAvailable": {"type": "boolean"},
+    "rollbackToken": {"type": "string"},
+    "rollbackAuthority": {"type": "object"},
+    "restartComponents": {"type": "array", "items": {"type": "string"}},
+    "result": {"type": "object"},
+    "rollbackOfReceiptId": {"type": "string", "minLength": 1}
+  }
+}

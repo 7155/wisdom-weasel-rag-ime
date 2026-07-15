@@ -1,0 +1,916 @@
+{
+  "candidateSourceContract": "unparsed decode branches from RawCompletionProvider",
+  "cases": [
+    {
+      "antiEchoValid": true,
+      "bareCompletionValid": true,
+      "boundaryValid": false,
+      "candidateCount": 3,
+      "candidates": [
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 2,
+          "boundaryValid": false,
+          "hardNegativeAvoided": true,
+          "latencyMs": 150,
+          "lexicalHardNegativeReferenceScore": 0.227179,
+          "lexicalPositiveReferenceScore": 0.287616,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.060437,
+          "provider": "local-mlx-raw-branch",
+          "rank": 1,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "broken word boundary after 随后",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "面再根据坏例继续调整"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 2,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 150,
+          "lexicalHardNegativeReferenceScore": 0.068421,
+          "lexicalPositiveReferenceScore": 0.304167,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.235746,
+          "provider": "local-mlx-raw-branch",
+          "rank": 2,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "does not complete the annotated thought",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "不要增加太多上下文"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 150,
+          "lexicalHardNegativeReferenceScore": 0.086667,
+          "lexicalPositiveReferenceScore": 0.118182,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.031515,
+          "provider": "local-mlx-raw-branch",
+          "rank": 3,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "vague and grammatically weak continuation",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "反复补几次"
+        }
+      ],
+      "caseId": "test-tech-model-chain-1",
+      "chainId": "test-tech-model-chain",
+      "diverse": true,
+      "domain": "technical",
+      "hardNegativeAvoided": true,
+      "latencyMs": 150,
+      "lexicalReferenceTop1": false,
+      "lexicalReferenceTop3": false,
+      "passed": false,
+      "prefix": "RAG memory 候选应该先稳定出现，模型候选随后",
+      "prefixMatchesTeacher": true,
+      "rawResponse": "面再根据坏例继续调整\n不要增加太多上下文\n反复补几次\n实实变化",
+      "reciprocalRank": 0.0,
+      "semanticJudgmentCount": 3,
+      "semanticTop1": false,
+      "semanticTop1Judged": true,
+      "semanticTop3": false,
+      "structuralPassed": false,
+      "teacherPrefix": "RAG memory 候选应该先稳定出现，模型候选随后",
+      "threeCandidates": true,
+      "turn": 1
+    },
+    {
+      "antiEchoValid": true,
+      "bareCompletionValid": true,
+      "boundaryValid": true,
+      "candidateCount": 3,
+      "candidates": [
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.0,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.0,
+          "provider": "local-mlx-raw-branch",
+          "rank": 1,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "generic unfinished branch",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "如果结果不错"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 3,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.199608,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.199608,
+          "provider": "local-mlx-raw-branch",
+          "rank": 2,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "drifts from the required second-round semantic check",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "我先跑一遍确认"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 3,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.188194,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.188194,
+          "provider": "local-mlx-raw-branch",
+          "rank": 3,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "unfinished and misses the annotated continuation",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "先看复读率有没有"
+        }
+      ],
+      "caseId": "test-tech-model-chain-2",
+      "chainId": "test-tech-model-chain",
+      "diverse": true,
+      "domain": "technical",
+      "hardNegativeAvoided": true,
+      "latencyMs": 40,
+      "lexicalReferenceTop1": false,
+      "lexicalReferenceTop3": false,
+      "passed": false,
+      "prefix": "RAG memory 候选应该先稳定出现，模型候选随后补充剩余细节。",
+      "prefixMatchesTeacher": true,
+      "rawResponse": "如果结果不错\n我先跑一遍确认\n先看复读率有没有\n我想先把这件事放",
+      "reciprocalRank": 0.0,
+      "semanticJudgmentCount": 3,
+      "semanticTop1": false,
+      "semanticTop1Judged": true,
+      "semanticTop3": false,
+      "structuralPassed": true,
+      "teacherPrefix": "RAG memory 候选应该先稳定出现，模型候选随后补充剩余细节。",
+      "threeCandidates": true,
+      "turn": 2
+    },
+    {
+      "antiEchoValid": true,
+      "bareCompletionValid": true,
+      "boundaryValid": true,
+      "candidateCount": 3,
+      "candidates": [
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 37,
+          "lexicalHardNegativeReferenceScore": 0.08125,
+          "lexicalPositiveReferenceScore": 0.0,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": -0.08125,
+          "provider": "local-mlx-raw-branch",
+          "rank": 1,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "unrelated unfinished conditional",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "如果语气放轻一点"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 37,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.152941,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.152941,
+          "provider": "local-mlx-raw-branch",
+          "rank": 2,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "generic and not a useful next step",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "这次主要看结果"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 37,
+          "lexicalHardNegativeReferenceScore": 0.144444,
+          "lexicalPositiveReferenceScore": 0.0,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": -0.144444,
+          "provider": "local-mlx-raw-branch",
+          "rank": 3,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "generic action that does not continue the annotated semantic check",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "我先跑一遍确认"
+        }
+      ],
+      "caseId": "test-tech-model-chain-3",
+      "chainId": "test-tech-model-chain",
+      "diverse": true,
+      "domain": "technical",
+      "hardNegativeAvoided": true,
+      "latencyMs": 37,
+      "lexicalReferenceTop1": false,
+      "lexicalReferenceTop3": false,
+      "passed": false,
+      "prefix": "RAG memory 候选应该先稳定出现，模型候选随后补充剩余细节。接着检查第二轮语义。",
+      "prefixMatchesTeacher": true,
+      "rawResponse": "如果语气放轻一点\n这次主要看结果\n我先跑一遍确认\n训练时先看复读率",
+      "reciprocalRank": 0.0,
+      "semanticJudgmentCount": 3,
+      "semanticTop1": false,
+      "semanticTop1Judged": true,
+      "semanticTop3": false,
+      "structuralPassed": true,
+      "teacherPrefix": "RAG memory 候选应该先稳定出现，模型候选随后补充剩余细节。接着检查第二轮语义。",
+      "threeCandidates": true,
+      "turn": 3
+    },
+    {
+      "antiEchoValid": true,
+      "bareCompletionValid": true,
+      "boundaryValid": true,
+      "candidateCount": 3,
+      "candidates": [
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 2,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.08125,
+          "lexicalPositiveReferenceScore": 0.1625,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.08125,
+          "provider": "local-mlx-raw-branch",
+          "rank": 1,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "message-editing phrase unrelated to packing and travel",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "我晚点再发一版"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.0,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.0,
+          "provider": "local-mlx-raw-branch",
+          "rank": 2,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "unfinished conditional and does not advance the travel plan",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "如果时间来得及的话"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 2,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.276078,
+          "lexicalPositiveReferenceScore": 0.076471,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": -0.199607,
+          "provider": "local-mlx-raw-branch",
+          "rank": 3,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "truncated phrase",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "今天先把手头这件"
+        }
+      ],
+      "caseId": "test-daily-travel-1",
+      "chainId": "test-daily-travel",
+      "diverse": true,
+      "domain": "daily",
+      "hardNegativeAvoided": true,
+      "latencyMs": 40,
+      "lexicalReferenceTop1": false,
+      "lexicalReferenceTop3": false,
+      "passed": false,
+      "prefix": "今晚我先把行李收好，",
+      "prefixMatchesTeacher": true,
+      "rawResponse": "我晚点再发一版\n如果时间来得及的话\n今天先把手头这件\n明天如果来得及再",
+      "reciprocalRank": 0.0,
+      "semanticJudgmentCount": 3,
+      "semanticTop1": false,
+      "semanticTop1Judged": true,
+      "semanticTop3": false,
+      "structuralPassed": true,
+      "teacherPrefix": "今晚我先把行李收好，",
+      "threeCandidates": true,
+      "turn": 1
+    },
+    {
+      "antiEchoValid": true,
+      "bareCompletionValid": true,
+      "boundaryValid": true,
+      "candidateCount": 3,
+      "candidates": [
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 2,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 33,
+          "lexicalHardNegativeReferenceScore": 0.152941,
+          "lexicalPositiveReferenceScore": 0.144444,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": -0.008497,
+          "provider": "local-mlx-raw-branch",
+          "rank": 1,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "unfinished condition after an already fixed departure plan",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "明天早上如果还有时间"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 2,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 33,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.086667,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.086667,
+          "provider": "local-mlx-raw-branch",
+          "rank": 2,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "technical-task phrase unrelated to travel",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "我准备先跑一遍"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 33,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.0,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.0,
+          "provider": "local-mlx-raw-branch",
+          "rank": 3,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "unrelated malformed conditional",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "如果你想吃那家不然"
+        }
+      ],
+      "caseId": "test-daily-travel-2",
+      "chainId": "test-daily-travel",
+      "diverse": true,
+      "domain": "daily",
+      "hardNegativeAvoided": true,
+      "latencyMs": 33,
+      "lexicalReferenceTop1": false,
+      "lexicalReferenceTop3": false,
+      "passed": false,
+      "prefix": "今晚我先把行李收好，明早直接去车站。",
+      "prefixMatchesTeacher": true,
+      "rawResponse": "明天早上如果还有时间\n我准备先跑一遍\n如果你想吃那家不然\n如果时间够就把剩下的",
+      "reciprocalRank": 0.0,
+      "semanticJudgmentCount": 3,
+      "semanticTop1": false,
+      "semanticTop1Judged": true,
+      "semanticTop3": false,
+      "structuralPassed": true,
+      "teacherPrefix": "今晚我先把行李收好，明早直接去车站。",
+      "threeCandidates": true,
+      "turn": 2
+    },
+    {
+      "antiEchoValid": true,
+      "bareCompletionValid": true,
+      "boundaryValid": true,
+      "candidateCount": 3,
+      "candidates": [
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 2,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.061905,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.061905,
+          "provider": "local-mlx-raw-branch",
+          "rank": 1,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "generic action that ignores the latency-versus-quality contrast",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "我准备先跑一个小测试"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 3,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.0,
+          "lexicalPositiveReferenceScore": 0.076471,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": 0.076471,
+          "provider": "local-mlx-raw-branch",
+          "rank": 2,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "generic unfinished branch",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "如果结果不错"
+        },
+        {
+          "antiEchoValid": true,
+          "bareCompletionValid": true,
+          "bestPositiveIndex": 1,
+          "boundaryValid": true,
+          "hardNegativeAvoided": true,
+          "latencyMs": 40,
+          "lexicalHardNegativeReferenceScore": 0.068421,
+          "lexicalPositiveReferenceScore": 0.0,
+          "lexicalReferenceAccepted": false,
+          "lexicalReferenceMargin": -0.068421,
+          "provider": "local-mlx-raw-branch",
+          "rank": 3,
+          "semanticAccepted": false,
+          "semanticJudgment": {
+            "accepted": false,
+            "note": "truncated and semantically off target",
+            "source": "minimind-ime-v2-q8-raw-20260711-human-review"
+          },
+          "text": "我想先把这个想法记"
+        }
+      ],
+      "caseId": "test-tech-latency-semantic",
+      "chainId": "test-tech-latency-semantic",
+      "diverse": true,
+      "domain": "technical",
+      "hardNegativeAvoided": true,
+      "latencyMs": 40,
+      "lexicalReferenceTop1": false,
+      "lexicalReferenceTop3": false,
+      "passed": false,
+      "prefix": "这轮推理只有五十毫秒，",
+      "prefixMatchesTeacher": true,
+      "rawResponse": "我准备先跑一个小测试\n如果结果不错\n我想先把这个想法记\n今天先把手头这件",
+      "reciprocalRank": 0.0,
+      "semanticJudgmentCount": 3,
+      "semanticTop1": false,
+      "semanticTop1Judged": true,
+      "semanticTop3": false,
+      "structuralPassed": true,
+      "teacherPrefix": "这轮推理只有五十毫秒，",
+      "threeCandidates": true,
+      "turn": 1
+    }
+  ],
+  "checkpoint": "minimind-ime-v2-q8-raw-20260711",
+  "checks": [
+    {
+      "actual": 1.0,
+      "expected": 1.0,
+      "metric": "semanticScorerConfigured",
+      "name": "semantic-scorer-configured",
+      "operator": ">=",
+      "passed": true
+    },
+    {
+      "actual": 1.0,
+      "expected": 1.0,
+      "metric": "semanticJudgmentCoverageRate",
+      "name": "semantic-judgment-coverage",
+      "operator": ">=",
+      "passed": true
+    },
+    {
+      "actual": 0.0,
+      "expected": 0.8,
+      "metric": "semanticTop1Rate",
+      "name": "semantic-top1",
+      "operator": ">=",
+      "passed": false
+    },
+    {
+      "actual": 0.0,
+      "expected": 1.0,
+      "metric": "semanticTop3Rate",
+      "name": "semantic-top3",
+      "operator": ">=",
+      "passed": false
+    },
+    {
+      "actual": 1.0,
+      "expected": 1.0,
+      "metric": "bareCompletionRate",
+      "name": "bare-completion",
+      "operator": ">=",
+      "passed": true
+    },
+    {
+      "actual": 0.833333,
+      "expected": 1.0,
+      "metric": "boundaryValidRate",
+      "name": "boundary-valid",
+      "operator": ">=",
+      "passed": false
+    },
+    {
+      "actual": 1.0,
+      "expected": 1.0,
+      "metric": "antiEchoRate",
+      "name": "anti-echo",
+      "operator": ">=",
+      "passed": true
+    },
+    {
+      "actual": 1.0,
+      "expected": 1.0,
+      "metric": "threeCandidateRate",
+      "name": "three-candidates",
+      "operator": ">=",
+      "passed": true
+    },
+    {
+      "actual": 1.0,
+      "expected": 1.0,
+      "metric": "hardNegativeAvoidanceRate",
+      "name": "hard-negative-avoidance",
+      "operator": ">=",
+      "passed": true
+    },
+    {
+      "actual": 1.0,
+      "expected": 0.9,
+      "metric": "diversityRate",
+      "name": "candidate-diversity",
+      "operator": ">=",
+      "passed": true
+    },
+    {
+      "actual": 0.0,
+      "expected": 1.0,
+      "metric": "tabChainPassRate",
+      "name": "continuous-tab",
+      "operator": ">=",
+      "passed": false
+    },
+    {
+      "actual": 0.0,
+      "expected": 0.8,
+      "metric": "meanReciprocalRank",
+      "name": "mean-reciprocal-rank",
+      "operator": ">=",
+      "passed": false
+    },
+    {
+      "actual": 150.0,
+      "expected": 500.0,
+      "metric": "p95LatencyMs",
+      "name": "latency-p95",
+      "operator": "<=",
+      "passed": true
+    }
+  ],
+  "datasetAudit": {
+    "caseCount": 19,
+    "chains": [
+      {
+        "chainId": "train-tech-resident",
+        "goldTransitionsValid": true,
+        "multiTurn": true,
+        "split": "train",
+        "turnCount": 2,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "train-tech-rag-source",
+        "goldTransitionsValid": true,
+        "multiTurn": false,
+        "split": "train",
+        "turnCount": 1,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "train-tech-stale-request",
+        "goldTransitionsValid": true,
+        "multiTurn": false,
+        "split": "train",
+        "turnCount": 1,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "train-daily-material",
+        "goldTransitionsValid": true,
+        "multiTurn": true,
+        "split": "train",
+        "turnCount": 2,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "train-daily-meeting",
+        "goldTransitionsValid": true,
+        "multiTurn": false,
+        "split": "train",
+        "turnCount": 1,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "train-daily-friend",
+        "goldTransitionsValid": true,
+        "multiTurn": false,
+        "split": "train",
+        "turnCount": 1,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "val-tech-rime",
+        "goldTransitionsValid": true,
+        "multiTurn": true,
+        "split": "val",
+        "turnCount": 2,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "val-daily-delivery",
+        "goldTransitionsValid": true,
+        "multiTurn": true,
+        "split": "val",
+        "turnCount": 2,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "val-tech-database",
+        "goldTransitionsValid": true,
+        "multiTurn": false,
+        "split": "val",
+        "turnCount": 1,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "test-tech-model-chain",
+        "goldTransitionsValid": true,
+        "multiTurn": true,
+        "split": "test",
+        "turnCount": 3,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "test-daily-travel",
+        "goldTransitionsValid": true,
+        "multiTurn": true,
+        "split": "test",
+        "turnCount": 2,
+        "turnsContiguous": true
+      },
+      {
+        "chainId": "test-tech-latency-semantic",
+        "goldTransitionsValid": true,
+        "multiTurn": false,
+        "split": "test",
+        "turnCount": 1,
+        "turnsContiguous": true
+      }
+    ],
+    "datasetFingerprint": "sha256:e3d266245fa92d84e88d197bc48e08f5a6b2ac42effed8db84f8430c09538e87",
+    "datasetId": "minimind-completion-v3-public",
+    "datasetRoot": "dataset/minimind_completion_v3_public",
+    "domainCounts": {
+      "daily": 8,
+      "technical": 11
+    },
+    "errors": [],
+    "hardNegativeCount": 57,
+    "multiTurnChainCount": 6,
+    "ok": true,
+    "positivePairCount": 57,
+    "schemaVersion": "rag-ime.minimind-dataset-audit.v1",
+    "splitCounts": {
+      "test": 6,
+      "train": 8,
+      "val": 5
+    },
+    "warnings": []
+  },
+  "datasetFingerprint": "sha256:e3d266245fa92d84e88d197bc48e08f5a6b2ac42effed8db84f8430c09538e87",
+  "datasetId": "minimind-completion-v3-public",
+  "evaluationStage": "raw_model_output",
+  "gatePassed": false,
+  "promotionEligible": false,
+  "provider": "_RawJsonlReplayProvider",
+  "schemaVersion": "rag-ime.minimind-quality-gate.v1",
+  "scoringContract": {
+    "antiEcho": "candidate must be a new suffix and must not repeat the prefix",
+    "boundary": "case-annotated forbidden starts and joined fragments",
+    "gateMutatesCandidateOutput": false,
+    "lexicalReference": "character-sequence and bigram overlap against positive and negative references",
+    "productionProviderMayParseOrFilter": false,
+    "semantic": "explicit local human-judgment fixture only; no implicit network or model judge"
+  },
+  "semanticScorer": {
+    "configured": true,
+    "datasetFingerprint": "sha256:e3d266245fa92d84e88d197bc48e08f5a6b2ac42effed8db84f8430c09538e87",
+    "implicitNetworkJudge": false,
+    "scorerId": "minimind-ime-v2-q8-raw-20260711-human-review"
+  },
+  "split": "test",
+  "summary": {
+    "antiEchoRate": 1.0,
+    "bareCompletionRate": 1.0,
+    "boundaryValidRate": 0.833333,
+    "caseCount": 6,
+    "diversityRate": 1.0,
+    "hardNegativeAvoidanceRate": 1.0,
+    "lexicalReferenceTop1Rate": 0.0,
+    "lexicalReferenceTop3Rate": 0.0,
+    "meanLexicalReferenceMargin": 0.018974,
+    "meanReciprocalRank": 0.0,
+    "p50LatencyMs": 40,
+    "p95LatencyMs": 150,
+    "passedCaseRate": 0.0,
+    "semanticJudgmentCoverageRate": 1.0,
+    "semanticTop1Rate": 0.0,
+    "semanticTop3Rate": 0.0,
+    "tabChainCount": 2,
+    "tabChainPassRate": 0.0,
+    "threeCandidateRate": 1.0
+  },
+  "tabChains": [
+    {
+      "chainId": "test-tech-model-chain",
+      "passed": false,
+      "preferredPathRollout": true,
+      "turnCount": 3,
+      "turns": [
+        {
+          "acceptedTop1": "面再根据坏例继续调整",
+          "caseId": "test-tech-model-chain-1",
+          "expectedNextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后补充剩余细节。",
+          "nextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整",
+          "passed": false,
+          "prefixMatchesTeacher": true,
+          "semanticTop1": false,
+          "transitionMatchesPreferredPath": false,
+          "turn": 1
+        },
+        {
+          "acceptedTop1": "所以先不要弄得太",
+          "caseId": "test-tech-model-chain-2",
+          "expectedNextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后补充剩余细节。接着检查第二轮语义。",
+          "nextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整所以先不要弄得太",
+          "passed": false,
+          "prefixMatchesTeacher": false,
+          "semanticTop1": false,
+          "transitionMatchesPreferredPath": false,
+          "turn": 2
+        },
+        {
+          "acceptedTop1": "复杂后面如果需要修改",
+          "caseId": "test-tech-model-chain-3",
+          "expectedNextPrefix": "",
+          "nextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整所以先不要弄得太复杂后面如果需要修改",
+          "passed": false,
+          "prefixMatchesTeacher": false,
+          "semanticTop1": false,
+          "transitionMatchesPreferredPath": true,
+          "turn": 3
+        }
+      ]
+    },
+    {
+      "chainId": "test-daily-travel",
+      "passed": false,
+      "preferredPathRollout": true,
+      "turnCount": 2,
+      "turns": [
+        {
+          "acceptedTop1": "我晚点再发一版",
+          "caseId": "test-daily-travel-1",
+          "expectedNextPrefix": "今晚我先把行李收好，明早直接去车站。",
+          "nextPrefix": "今晚我先把行李收好，我晚点再发一版",
+          "passed": false,
+          "prefixMatchesTeacher": true,
+          "semanticTop1": false,
+          "transitionMatchesPreferredPath": false,
+          "turn": 1
+        },
+        {
+          "acceptedTop1": "方便后面修改的样子",
+          "caseId": "test-daily-travel-2",
+          "expectedNextPrefix": "",
+          "nextPrefix": "今晚我先把行李收好，我晚点再发一版方便后面修改的样子",
+          "passed": false,
+          "prefixMatchesTeacher": false,
+          "semanticTop1": false,
+          "transitionMatchesPreferredPath": true,
+          "turn": 2
+        }
+      ]
+    }
+  ],
+  "thresholds": {
+    "lexicalReferenceMarginFloor": 0.08,
+    "lexicalReferenceScoreFloor": 0.42,
+    "maxP95LatencyMs": 500,
+    "minAntiEchoRate": 1.0,
+    "minBareCompletionRate": 1.0,
+    "minBoundaryValidRate": 1.0,
+    "minDiversityRate": 0.9,
+    "minHardNegativeAvoidanceRate": 1.0,
+    "minMeanReciprocalRank": 0.8,
+    "minSemanticJudgmentCoverageRate": 1.0,
+    "minSemanticTop1Rate": 0.8,
+    "minSemanticTop3Rate": 1.0,
+    "minTabChainPassRate": 1.0,
+    "minThreeCandidateRate": 1.0
+  }
+}

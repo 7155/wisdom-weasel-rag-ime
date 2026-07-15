@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.memory-catalog.v1",
+  "type": "object",
+  "required": ["schemaVersion", "project", "catalogVersion", "items"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.memory-catalog.v1"},
+    "project": {"type": "string", "minLength": 1},
+    "catalogVersion": {"type": "string", "minLength": 1},
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}}
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["bookId", "bookKey", "bookType", "title", "summary", "updatedAtMs", "sourceCount", "status"],
+      "properties": {
+        "bookId": {"type": "string", "minLength": 1},
+        "bookKey": {"type": "string", "minLength": 1},
+        "bookType": {"type": "string", "enum": ["daily", "topic", "project", "session"]},
+        "title": {"type": "string", "minLength": 1},
+        "summary": {"type": "string"},
+        "updatedAtMs": {"type": "integer", "minimum": 0},
+        "sourceCount": {"type": "integer", "minimum": 0},
+        "status": {"type": "string", "enum": ["active", "archived"]}
+      }
+    }
+  }
+}

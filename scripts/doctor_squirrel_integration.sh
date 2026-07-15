@@ -28,6 +28,7 @@ REQUIRE_SELECTED_INPUT_SOURCE="${RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE:-0
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 REFRESH_INPUT_SOURCE="${RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE:-1}"
+REFRESH_INPUT_SOURCE_SCRIPT="${RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT:-$ROOT/scripts/refresh_squirrel_input_source_registration.sh}"
 REQUIRE_PATCHED_APP_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_PATCHED_APP:-}"
 REQUIRE_PATCHED_APP="${REQUIRE_PATCHED_APP_CONFIGURED:-0}"
 SQUIRREL_APP_BASENAME="$(basename "$SQUIRREL_APP")"
@@ -103,12 +104,19 @@ same_path() {
 squirrel_app_has_mixed_frontend_trace() {
   local app="$1"
   local executable="$app/Contents/MacOS/Squirrel"
+  local marker
+  local marker_text
   [[ -x "$executable" ]] || return 1
-  strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
-    strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
-    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_cleared"
+  marker_text="$(strings "$executable" 2>/dev/null || true)"
+  for marker in \
+    "rag-ime.squirrel-frontend-trace.v1" \
+    "rag-ime.foreground-trace.v2" \
+    "composition_ai_suppressed" \
+    "foreground_context_capture_resolved" \
+    "assistant_overlay_candidate_visible" \
+    "side_candidate_feedback_recorded"; do
+    grep -Fq -- "$marker" <<< "$marker_text" || return 1
+  done
 }
 
 check_patched_squirrel_app() {
@@ -418,29 +426,58 @@ else:
         if not errors
         else "drift: " + "; ".join(errors[:6]),
     )
+    runtime_profile = str(env.get("RAG_IME_RUNTIME_PROFILE") or "")
+    supported_foreground_profiles = {
+        "v1-proof": "0",
+        "foreground-rag-proof": "1",
+        "production": "0",
+    }
+    expected_rag_direct_display = supported_foreground_profiles.get(runtime_profile)
     v1_defaults = {
         "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
         "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
         "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
         "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
-        "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
-        "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
+        "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "180",
+        "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "180",
         "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
+        "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "1",
+        "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": "700",
+        "RAG_IME_HYBRID_RAG_CORE": "1",
+        "RAG_IME_RAG_DIRECT_DISPLAY": expected_rag_direct_display or "0",
+        "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
+        "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
+        "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
     }
-    v1_errors = [
+    v1_errors = []
+    if expected_rag_direct_display is None:
+        v1_errors.append(
+            f"RAG_IME_RUNTIME_PROFILE={runtime_profile!r}, expected one of {sorted(supported_foreground_profiles)}"
+        )
+    v1_errors.extend(
         f"{key}={str(env.get(key) or '')!r}, expected {expected!r}"
         for key, expected in v1_defaults.items()
         if str(env.get(key) or "") != expected
-    ]
+    )
     emit(
         "sidecar LaunchAgent v1 foreground defaults",
         not v1_errors,
         require_plist,
-        "match post-commit 150/250ms and model UX budget 900ms"
+        f"match {runtime_profile} post-commit 180/180ms and model UX budget 900ms"
         if not v1_errors
         else "drift: " + "; ".join(v1_errors[:6]),
+    )
+    deepseek_post_commit = str(env.get("RAG_IME_DEEPSEEK_POST_COMMIT") or "").strip().lower()
+    deepseek_post_commit_ok = deepseek_post_commit not in ("1", "true", "yes", "on")
+    emit(
+        "sidecar LaunchAgent v1 DeepSeek passive gate",
+        deepseek_post_commit_ok,
+        require_plist,
+        "DeepSeek post-commit is not enabled for ordinary v1 candidates"
+        if deepseek_post_commit_ok
+        else "RAG_IME_DEEPSEEK_POST_COMMIT must not be enabled for ordinary v1 candidate lane",
     )
 
 mlx_required = require_plist and is_mlx_provider
@@ -464,7 +501,9 @@ elif mlx_plist is not None:
     if sidecar_port and mlx_port != sidecar_port:
         errors.append(f"RAG_IME_MLX_PORT={mlx_port!r}, expected sidecar base URL port {sidecar_port!r}")
     prompt_cache = str(env.get("RAG_IME_MLX_PROMPT_CACHE") or "")
-    if not truthy(prompt_cache) or "--prompt-cache" not in [str(item) for item in args]:
+    memory_profile = str(env.get("RAG_IME_MEMORY_PROFILE") or "").strip().lower()
+    prompt_cache_required = memory_profile not in {"low", "safe", "memory", "memory-safe", "minimal"}
+    if prompt_cache_required and (not truthy(prompt_cache) or "--prompt-cache" not in [str(item) for item in args]):
         errors.append("MLX prompt cache is not enabled in LaunchAgent")
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         if str(env.get(key) or ""):
@@ -474,7 +513,7 @@ elif mlx_plist is not None:
         "MLX predictor LaunchAgent plist",
         not errors,
         mlx_required,
-        "matches text-only MLX model and prompt-cache startup"
+        "matches text-only MLX model and memory-profile cache policy"
         if not errors
         else "drift: " + "; ".join(errors[:6]),
     )
@@ -623,12 +662,9 @@ check_macos_input_source() {
   check_duplicate_squirrel_apps "$app"
 
   if bool_true "$REFRESH_INPUT_SOURCE"; then
-    "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-    sleep 0.3
-    "$app/Contents/MacOS/Squirrel" --enable-input-source "$input_source_id" >/dev/null 2>&1 ||
-      "$app/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
-      true
-    sleep 0.3
+    RAG_IME_SQUIRREL_APP="$app" \
+      RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$input_source_id" \
+      "$REFRESH_INPUT_SOURCE_SCRIPT" >/dev/null 2>&1 || true
   fi
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-tis-input-source.out.XXXXXX")"
@@ -733,14 +769,30 @@ def validate_candidate_contract(result, *, require):
     rag_indices = []
     side_indices = []
     rime_indices = []
+    action_indices = []
+    selectable_index = 0
     for index, item in enumerate(display):
         if not isinstance(item, dict):
             errors.append(f"candidate {index + 1} is not an object")
             continue
+        source_type = str(item.get("sourceType") or "")
         label = str(item.get("label") or "")
         selection_key = str(item.get("selectionKey") or "")
         selection_rank = item.get("selectionRank")
-        expected_label = "0" if index == 9 else str(index + 1)
+        display_layout = str(item.get("displayLayout") or "")
+        display_lane = str(item.get("displayLane") or "")
+        selection_action = str(item.get("selectionAction") or "")
+        if source_type in {"action", "status"}:
+            if label or selection_key or selection_rank not in {None, 0}:
+                errors.append(f"{source_type} row {index + 1} must remain unnumbered")
+            if source_type == "action":
+                action_indices.append(index)
+                if selection_action != "start_active_rag_from_context" or display_lane != "active_rag":
+                    errors.append("DeepSeek action row has the wrong routing contract")
+            continue
+
+        selectable_index += 1
+        expected_label = "0" if selectable_index == 10 else str(selectable_index)
         if label != expected_label:
             errors.append(f"candidate {index + 1} label={label!r}, expected {expected_label!r}")
         if selection_key != label:
@@ -748,17 +800,13 @@ def validate_candidate_contract(result, *, require):
         if selection_rank != expected_rank_for_label(label):
             errors.append(f"candidate {index + 1} selectionRank={selection_rank!r}, expected rank for {label!r}")
 
-        source_type = str(item.get("sourceType") or "")
-        display_layout = str(item.get("displayLayout") or "")
-        display_lane = str(item.get("displayLane") or "")
-        selection_action = str(item.get("selectionAction") or "")
         if source_type in {"model", "rag"} and selection_action != "commit_side_candidate":
             errors.append(f"{source_type} candidate {label} does not commit side candidate")
         if source_type == "model":
             model_indices.append(index)
             side_indices.append(index)
-            if display_layout != "inline" or display_lane != "model":
-                errors.append(f"model candidate {label} is not inline/model")
+            if display_layout != "block" or display_lane != "model":
+                errors.append(f"model candidate {label} is not block/model")
         elif source_type == "rag":
             rag_indices.append(index)
             side_indices.append(index)
@@ -777,7 +825,7 @@ def validate_candidate_contract(result, *, require):
     if not side_indices:
         errors.append("no model/RAG side candidates")
     if model_indices and rag_indices and max(model_indices) > min(rag_indices):
-        errors.append("model inline candidates do not precede rag block candidates")
+        errors.append("model candidates do not precede rag block candidates")
     if rime_indices and side_indices and min(rime_indices) < max(side_indices):
         errors.append("Rime fallback appears before side candidates")
 
@@ -795,6 +843,7 @@ def validate_candidate_contract(result, *, require):
         "ragCount": len(rag_indices),
         "sideCount": len(side_indices),
         "rimeCount": len(rime_indices),
+        "actionCount": len(action_indices),
     }
 
 def post_rime_suggest(payload):
@@ -815,39 +864,93 @@ def doctor_prediction_payload(*, session_id="doctor", request_seq=1, latency_ms=
         # separate benchmark so a slow local MLX model does not look like a
         # broken LLM/RAG wiring path.
         effective_latency_ms = max(effective_latency_ms, 2000)
-    return {
+    context = "我想设计一个候选展示方式"
+    payload = {
         "sessionId": session_id,
         "requestSeq": request_seq,
+        "privacyDisposition": "allowed",
         "frontendBuild": "rag-ime.foreground-trace.v2",
         "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "rawInput": "",
         "preedit": "",
-        "commitTextPreview": "",
+        "commitTextPreview": "展示方式",
         "idleMs": 80,
-        "committedContext": "我想设计一个候选展示方式",
+        "committedContext": context,
         "maxVisibleCandidates": 8,
         "maxSideCandidates": 8,
         "latencyBudgetMs": effective_latency_ms,
         "forceSideCandidates": require_mixed_layout,
+        "frontendRevision": request_seq,
+        "selectionEpoch": request_seq,
+        "inputGeneration": request_seq,
+        "frontAppBundleId": "com.apple.TextEdit",
+        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+        "commitBurstReady": True,
+        "commitBurstDeltaChars": len(context),
+        "commitBurstTexts": ["展示方式"],
+        "foregroundText": reliable_foreground_text(
+            context=context,
+            request_seq=request_seq,
+            group_id="app:doctor-prediction",
+        ),
         "rimeContext": {"candidates": []},
     }
+    return payload
 
 def doctor_model_validation_payload(*, session_id="doctor-model-validation", request_seq=20, latency_ms=None):
     effective_latency_ms = max(latency_budget_ms, 2000) if latency_ms is None else max(latency_ms, 2000)
+    context = "我已经看完 Felix 的候选生命周期，下一步"
     return {
         "sessionId": session_id,
         "requestSeq": request_seq,
+        "privacyDisposition": "allowed",
         "frontendBuild": "rag-ime.foreground-trace.v2",
         "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "rawInput": "",
         "preedit": "",
+        "commitTextPreview": "下一步",
         "idleMs": 200,
-        "committedContext": "我已经看完 Felix 的候选生命周期，下一步",
+        "committedContext": context,
         "maxVisibleCandidates": 8,
         "maxSideCandidates": 8,
         "latencyBudgetMs": effective_latency_ms,
         "forceSideCandidates": True,
+        "frontendRevision": request_seq,
+        "selectionEpoch": request_seq,
+        "inputGeneration": request_seq,
+        "frontAppBundleId": "com.apple.TextEdit",
+        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+        "commitBurstReady": True,
+        "commitBurstDeltaChars": len(context),
+        "commitBurstTexts": ["下一步"],
+        "foregroundText": reliable_foreground_text(
+            context=context,
+            request_seq=request_seq,
+            group_id="app:doctor-model-validation",
+        ),
         "rimeContext": {"candidates": []},
+    }
+
+def reliable_foreground_text(*, context, request_seq, group_id):
+    return {
+        "available": True,
+        "source": "text_input_client",
+        "confidence": 0.92,
+        "freshnessMs": 0,
+        "selectedTextHash": "",
+        "selectedTextChars": 0,
+        "selectedTextPreview": "",
+        "surroundingBefore": context,
+        "surroundingAfter": "",
+        "wholeValueHash": "",
+        "wholeValueChars": len(context),
+        "canReplaceSelection": False,
+        "captureEpoch": request_seq,
+        "commitTextMatched": True,
+        "contextGroupId": group_id,
+        "contextGroupLevel": "app",
+        "contextGroupConfidence": 0.5,
+        "warnings": ["doctor_text_input_client_context"],
     }
 
 def extract_model_predictions(result, provider_name):
@@ -879,16 +982,16 @@ def retry_model_probe_if_needed(result, provider_name, *, force_validation_probe
         return result, model_predictions, skipped_reason
     last_result = result
     attempts = 4 if (skipped_reason in retry_reasons or force_validation_probe) else 1
+    probe_payload = doctor_model_validation_payload(
+        session_id=f"doctor-model-validation-{int(time.time() * 1000)}",
+        request_seq=20,
+        latency_ms=max(latency_budget_ms, 2000),
+    )
     for attempt in range(attempts):
-        if skipped_reason in retry_reasons or force_validation_probe:
-            time.sleep(0.18 * (attempt + 1))
-        probe = post_rime_suggest(
-            doctor_model_validation_payload(
-                session_id=f"doctor-model-validation-{int(time.time() * 1000)}-{attempt}",
-                request_seq=20 + attempt,
-                latency_ms=max(latency_budget_ms, 2000),
-            )
-        )
+        if attempt > 0:
+            time.sleep(0.18 * attempt)
+            probe_payload["progressiveFollowUp"] = True
+        probe = post_rime_suggest(probe_payload)
         model_predictions = extract_model_predictions(probe, provider_name)
         last_result = probe
         if model_predictions:
@@ -900,6 +1003,7 @@ def validate_raw_pinyin_guard():
     dirty = post_rime_suggest({
         "sessionId": "doctor-raw-pinyin",
         "requestSeq": 2,
+        "privacyDisposition": "allowed",
         "rawInput": "jiubiruwopinshishur",
         "preedit": "jiubiruwopinshishur",
         "maxVisibleCandidates": 6,
@@ -910,6 +1014,7 @@ def validate_raw_pinyin_guard():
     fallback = post_rime_suggest({
         "sessionId": "doctor-raw-context",
         "requestSeq": 3,
+        "privacyDisposition": "allowed",
         "rawInput": "asdioj",
         "preedit": "asdioj",
         "committedContext": "我想设计一个候选展示方式",
@@ -940,14 +1045,16 @@ def validate_raw_pinyin_guard():
     ) if isinstance(fallback_display, list) else 0
     if fallback.get("queryBasis") != "committedContext":
         errors.append(f"context fallback queryBasis={fallback.get('queryBasis')!r}, expected committedContext")
-    if fallback_trigger.get("shouldRefresh") is not True:
-        errors.append("context fallback did not refresh side lanes")
+    if fallback_trigger.get("shouldRefresh") is not False:
+        errors.append("composition with committed context refreshed side lanes")
+    if fallback_side_count != 0:
+        errors.append("composition with committed context returned AI side candidates")
 
     ok = not errors
     return {
         "ok": ok,
         "message": (
-            "raw pinyin guard: dirty raw input skips side lanes, committedContext fallback refreshes safely"
+            "raw pinyin guard: dirty raw input skips side lanes, including committedContext fallback during composition"
             if ok
             else "raw pinyin guard failed: " + "; ".join(errors[:5])
         ),
@@ -970,11 +1077,14 @@ def validate_model_generation_path(result, health):
     provider_name = str(predictor.get("providerName") or "")
     is_mlx = provider_matches("mlx", provider_name)
     if not require_logits_model and not is_mlx:
-        return {
-            "ok": True,
-            "checked": False,
-            "message": "model generation path: not required",
-        }
+        return (
+            {
+                "ok": True,
+                "checked": False,
+                "message": "model generation path: not required",
+            },
+            result,
+        )
 
     result, model_predictions, retry_reason = retry_model_probe_if_needed(
         result,
@@ -1047,26 +1157,30 @@ def validate_model_generation_path(result, health):
         message = "model generation path: model candidates available"
     else:
         message = "model generation path failed: " + "; ".join(errors[:5])
-    return {
-        "ok": ok,
-        "checked": True,
-        "message": message,
-        "providerName": provider_name,
-        "candidateModes": modes,
-        "fallbackJson": fallback_json_values,
-        "candidateScoreCounts": score_counts,
-        "promptCachePrepared": prompt_cache_prepared,
-        "logitsTopK": capabilities.get("logitsTopK"),
-    }
+    return (
+        {
+            "ok": ok,
+            "checked": True,
+            "message": message,
+            "providerName": provider_name,
+            "candidateModes": modes,
+            "fallbackJson": fallback_json_values,
+            "candidateScoreCounts": score_counts,
+            "promptCachePrepared": prompt_cache_prepared,
+            "logitsTopK": capabilities.get("logitsTopK"),
+        },
+        result,
+    )
 
 try:
     with urllib.request.urlopen(f"{base}/health", timeout=1.5) as response:
         health = json.loads(response.read().decode("utf-8"))
     result = post_rime_suggest(doctor_prediction_payload())
     raw_pinyin_guard = validate_raw_pinyin_guard()
-    model_generation_path = validate_model_generation_path(result, health)
+    model_generation_path, contract_result = validate_model_generation_path(result, health)
     select_payload = {
         "dryRun": True,
+        "privacyDisposition": "allowed",
         "candidate": {
             "label": "2",
             "text": "doctor side candidate",
@@ -1093,7 +1207,7 @@ try:
         and selection.get("schemaVersion") == "rag-ime.rime-selection.v1"
         and selection.get("ok") is not False
     ):
-        candidate_contract = validate_candidate_contract(result, require=require_mixed_layout)
+        candidate_contract = validate_candidate_contract(contract_result, require=require_mixed_layout)
         predictor = health.get("predictor") if isinstance(health.get("predictor"), dict) else {}
         provider_name = str(predictor.get("providerName") or "")
         model = str(predictor.get("model") or "")
@@ -1121,12 +1235,12 @@ try:
         print(json.dumps({
             "ok": True,
             "eventCount": health.get("eventCount"),
-            "displayCandidates": len(result.get("displayCandidates", [])),
+            "displayCandidates": len(contract_result.get("displayCandidates", [])),
             "rimeSelectOk": True,
             "candidateContract": candidate_contract,
             "rawPinyinGuard": raw_pinyin_guard,
             "modelGenerationPath": model_generation_path,
-            "rankingDiagnostics": result.get("rankingDiagnostics"),
+            "rankingDiagnostics": contract_result.get("rankingDiagnostics"),
             "predictorCheck": {
                 "ok": predictor_ok,
                 "message": "; ".join(messages),
@@ -1278,7 +1392,12 @@ PY
     require_or_warn "$REQUIRE_PREDICTOR" "$predictor_message"
   fi
 else
-  require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; run scripts/install_sidecar_launch_agent.sh"
+  sidecar_error_detail="$(tail -n 3 "$sidecar_err" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]$//')"
+  if [[ -n "$sidecar_error_detail" ]]; then
+    require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; integration probe: $sidecar_error_detail"
+  else
+    require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; integration probe produced no diagnostic output"
+  fi
 fi
 check_launch_agent_plist_drift "$sidecar_out" "$sidecar_status"
 rm -f "$sidecar_out" "$sidecar_err"

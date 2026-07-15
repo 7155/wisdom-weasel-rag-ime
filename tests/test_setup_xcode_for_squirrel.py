@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS Xcode tooling")
 class SetupXcodeForSquirrelScriptTests(unittest.TestCase):
     def test_setup_script_is_syntax_valid(self) -> None:
         root = Path(__file__).resolve().parents[1]

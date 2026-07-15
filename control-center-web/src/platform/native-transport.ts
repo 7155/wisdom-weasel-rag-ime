@@ -1,0 +1,907 @@
+import { parseAgentEvent, parseContract, parseRoomEvent } from '@/contracts/validators';
+
+import {
+  controlRoute,
+  isControlPathId,
+  type ControlPathId,
+  type ControlStreamKind,
+} from './routes';
+import type {
+  NativeBridgeError,
+  NativeBridgeMethod,
+  NativeBridgeOutboundEnvelope,
+  NativeBridgeRequestEnvelope,
+  RagImeNativeBridgeReceiver,
+  RagImeNativeMessageHandler,
+} from './native-bridge';
+import {
+  assertControlRequest,
+  assertControlSubscription,
+  controlRequestWirePayload,
+  controlSubscriptionWirePayload,
+  type AgentImagePasteOptions,
+  type ControlEventObserver,
+  type ControlRequest,
+  type ControlSubscription,
+  type ControlTransport,
+  type ExternalActionReceipt,
+  type ExternalActionRequest,
+  type FilePickOptions,
+  type FrontendCapabilities,
+  type KnowledgeDocumentImportInput,
+  type KnowledgeDocumentImportReceipt,
+  type KnowledgeAssetPayload,
+  type KnowledgeAssetReadInput,
+  type KnowledgeDocumentSourcePayload,
+  type KnowledgeDocumentSourceReadInput,
+  type PickedFile,
+  type VoiceCredentialSaveRequest,
+  type VoiceCredentialStatus,
+  type VoiceNativeActionId,
+  type VoiceNativeActionReceipt,
+  type VoiceNativeStatus,
+  type VoiceProviderId,
+} from './transport';
+
+export interface NativeControlTransportOptions {
+  bridgeWindow?: Window;
+  requestTimeoutMs?: number;
+  createId?: () => string;
+}
+
+interface PendingRequest {
+  resolve(value: unknown): void;
+  reject(error: Error): void;
+  timer?: ReturnType<typeof setTimeout>;
+  removeAbortListener?: () => void;
+}
+
+interface NativeSubscription {
+  request: ControlSubscription;
+  observer: ControlEventObserver<unknown>;
+  lastEventId: string;
+  reconnectAttempt: number;
+  reconnectTimer?: ReturnType<typeof setTimeout>;
+}
+
+export class NativeBridgeUnavailableError extends Error {
+  constructor(message = 'ragImeNativeBridge is unavailable') {
+    super(message);
+    this.name = 'NativeBridgeUnavailableError';
+  }
+}
+
+export class NativeBridgeCallError extends Error {
+  readonly code?: string;
+  readonly details?: unknown;
+
+  constructor(error: NativeBridgeError) {
+    const payload = typeof error === 'string' ? { message: error } : error;
+    super(payload.message);
+    this.name = 'NativeBridgeCallError';
+    this.code = payload.code;
+    this.details = payload.details;
+  }
+}
+
+export class NativeControlTransport implements ControlTransport {
+  readonly kind = 'native' as const;
+
+  private readonly bridgeWindow: Window;
+  private readonly handler: RagImeNativeMessageHandler;
+  private readonly requestTimeoutMs: number;
+  private readonly createId: () => string;
+  private readonly pending = new Map<string, PendingRequest>();
+  private readonly subscriptions = new Map<string, NativeSubscription>();
+  private readonly receiver: RagImeNativeBridgeReceiver;
+  private readonly previousReceiver: RagImeNativeBridgeReceiver | undefined;
+  private cancellationSequence = 0;
+  private disposed = false;
+
+  constructor(options: NativeControlTransportOptions = {}) {
+    this.bridgeWindow = options.bridgeWindow ?? window;
+    const handler = this.bridgeWindow.webkit?.messageHandlers?.ragImeNativeBridge;
+    if (!handler || typeof handler.postMessage !== 'function') {
+      throw new NativeBridgeUnavailableError();
+    }
+    this.handler = handler;
+    this.requestTimeoutMs = clamp(options.requestTimeoutMs ?? 15_000, 100, 120_000);
+    this.createId = options.createId ?? createBridgeId;
+    this.previousReceiver = this.bridgeWindow.__RAG_IME_NATIVE_BRIDGE__;
+    this.receiver = { receive: (envelope) => this.receive(envelope) };
+    this.bridgeWindow.__RAG_IME_NATIVE_BRIDGE__ = this.receiver;
+  }
+
+  async capabilities(): Promise<FrontendCapabilities> {
+    const raw = await this.call('capabilities', {});
+    return normalizeNativeCapabilities(raw);
+  }
+
+  async request<Response = unknown>(request: ControlRequest): Promise<Response> {
+    assertControlRequest(request);
+    const result = await this.call('request', controlRequestWirePayload(request), request.signal);
+    const contract = request.responseContract ?? controlRoute(request.pathId).responseContract;
+    return (contract ? parseContract(contract, result) : result) as Response;
+  }
+
+  subscribe<Event = unknown>(
+    request: ControlSubscription,
+    observer: ControlEventObserver<Event>,
+  ): () => void {
+    assertControlSubscription(request);
+    this.assertActive();
+    const subscriptionId = this.createId();
+    this.subscriptions.set(subscriptionId, {
+      request,
+      observer: observer as ControlEventObserver<unknown>,
+      lastEventId: request.lastEventId,
+      reconnectAttempt: 0,
+    });
+    void this.call('subscribe', {
+      subscriptionId,
+      request: controlSubscriptionWirePayload(request),
+    })
+      .then(() => observer.open?.(request.lastEventId))
+      .catch((error) => {
+        this.subscriptions.delete(subscriptionId);
+        observer.error?.(asError(error));
+      });
+
+    return () => this.cancelSubscription(subscriptionId);
+  }
+
+  async pickFiles(options: FilePickOptions): Promise<PickedFile[]> {
+    assertFilePickOptions(options);
+    const { signal, ...payload } = options;
+    const result = await this.call('pickFiles', payload, signal, null);
+    if (!Array.isArray(result)) throw new NativeBridgeCallError('pickFiles returned a non-array');
+    if (result.length > (options.maxFiles ?? (options.multiple ? 8 : 1))) {
+      throw new NativeBridgeCallError('pickFiles returned too many file receipts');
+    }
+    return result.map((value) => parsePickedFile(value, options));
+  }
+
+  async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
+    const maxFiles = assertAgentImagePasteOptions(options);
+    const result = await this.call('pasteImages', {
+      sessionId: options.sessionId,
+      maxFiles,
+    });
+    if (!Array.isArray(result) || result.length > maxFiles) {
+      throw new NativeBridgeCallError('pasteImages returned an invalid receipt list');
+    }
+    return result.map((value) => parsePickedFile(value, {
+      purpose: 'attachment',
+      sessionId: options.sessionId,
+      maxFiles,
+    }));
+  }
+
+  async importKnowledgeDocuments(
+    input: KnowledgeDocumentImportInput,
+  ): Promise<KnowledgeDocumentImportReceipt[]> {
+    const maxFiles = assertNativeKnowledgeDocumentImportInput(input);
+    const parserProvider = input.parserProvider ?? (input.parser === 'mineru' ? 'mineru_local_http' : input.parser);
+    const result = await this.call(
+      'pickFiles',
+      {
+        purpose: 'knowledge-import',
+        kbId: input.kbId,
+        accepts: input.accepts ?? [],
+        multiple: maxFiles > 1,
+        maxFiles,
+        ...(parserProvider ? { parserProvider } : {}),
+      },
+      input.signal,
+      null,
+    );
+    if (!Array.isArray(result) || result.length > maxFiles) {
+      throw new NativeBridgeCallError('knowledge import returned an invalid receipt list');
+    }
+    return result.map((value) => parseKnowledgeDocumentImportReceipt(value, input.kbId));
+  }
+
+  async readKnowledgeAsset(input: KnowledgeAssetReadInput): Promise<KnowledgeAssetPayload> {
+    assertNativeKnowledgeAssetReadInput(input);
+    const result = await this.call(
+      'readKnowledgeAsset',
+      { kbId: input.kbId, fileId: input.fileId, assetId: input.assetId },
+      input.signal,
+      120_000,
+    );
+    return parseNativeKnowledgeAsset(result, input);
+  }
+
+  async readKnowledgeDocumentSource(
+    input: KnowledgeDocumentSourceReadInput,
+  ): Promise<KnowledgeDocumentSourcePayload> {
+    assertNativeKnowledgeDocumentSourceReadInput(input);
+    const result = await this.call(
+      'readKnowledgeDocumentSource',
+      { kbId: input.kbId, fileId: input.fileId },
+      input.signal,
+      120_000,
+    );
+    return parseNativeKnowledgeDocumentSource(result, input);
+  }
+
+  async revealPath(path: string): Promise<void> {
+    if (!path || path.length > 4096 || path.includes('\u0000')) {
+      throw new TypeError('revealPath requires a bounded local path');
+    }
+    await this.call('revealPath', { path });
+  }
+
+  async runApprovedExternalAction(
+    request: ExternalActionRequest,
+  ): Promise<ExternalActionReceipt> {
+    const result = await this.call('runApprovedExternalAction', request);
+    if (!isRecord(result) || typeof result.receiptId !== 'string') {
+      throw new NativeBridgeCallError('external action returned an invalid receipt');
+    }
+    return result as unknown as ExternalActionReceipt;
+  }
+
+  async voiceCredentialStatus(provider: VoiceProviderId): Promise<VoiceCredentialStatus> {
+    const result = await this.call('voiceCredentialStatus', { provider });
+    return parseVoiceCredentialStatus(result, provider);
+  }
+
+  async saveVoiceCredentials(request: VoiceCredentialSaveRequest): Promise<VoiceCredentialStatus> {
+    assertVoiceCredentialSaveRequest(request);
+    const result = await this.call('voiceCredentialSave', request);
+    return parseVoiceCredentialStatus(result, request.provider);
+  }
+
+  async runVoiceAction(action: VoiceNativeActionId): Promise<VoiceNativeActionReceipt> {
+    assertVoiceNativeAction(action);
+    const result = await this.call('voiceAction', { action });
+    if (!isRecord(result) || result.action !== action || typeof result.accepted !== 'boolean') {
+      throw new NativeBridgeCallError('voice action returned an invalid receipt');
+    }
+    return {
+      action,
+      accepted: result.accepted,
+      status: parseVoiceNativeStatus(result.status),
+      ...(typeof result.error === 'string' && result.error ? { error: result.error } : {}),
+    };
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    for (const subscriptionId of [...this.subscriptions.keys()]) {
+      this.cancelSubscription(subscriptionId);
+    }
+    for (const [id, item] of this.pending) {
+      if (item.timer !== undefined) globalThis.clearTimeout(item.timer);
+      item.removeAbortListener?.();
+      this.postCancellation(id);
+      item.reject(new NativeBridgeUnavailableError('native transport was disposed'));
+      this.pending.delete(id);
+    }
+    this.disposed = true;
+    if (this.bridgeWindow.__RAG_IME_NATIVE_BRIDGE__ === this.receiver) {
+      this.bridgeWindow.__RAG_IME_NATIVE_BRIDGE__ = this.previousReceiver;
+    }
+  }
+
+  private call(
+    method: NativeBridgeMethod,
+    payload: unknown,
+    signal?: AbortSignal,
+    timeoutMs: number | null = this.requestTimeoutMs,
+  ): Promise<unknown> {
+    this.assertActive();
+    if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    const id = this.createId();
+
+    return new Promise((resolve, reject) => {
+      const timer = timeoutMs === null ? undefined : globalThis.setTimeout(() => {
+        const item = this.pending.get(id);
+        if (!item) return;
+        item.removeAbortListener?.();
+        this.pending.delete(id);
+        this.postCancellation(id);
+        reject(new NativeBridgeCallError({ code: 'timeout', message: `${method} timed out` }));
+      }, timeoutMs);
+
+      const pending: PendingRequest = { resolve, reject, timer };
+      if (signal) {
+        const abort = (): void => {
+          if (timer !== undefined) globalThis.clearTimeout(timer);
+          this.pending.delete(id);
+          this.postCancellation(id);
+          reject(new DOMException('Aborted', 'AbortError'));
+        };
+        signal.addEventListener('abort', abort, { once: true });
+        pending.removeAbortListener = () => signal.removeEventListener('abort', abort);
+      }
+      this.pending.set(id, pending);
+
+      const envelope: NativeBridgeRequestEnvelope = { id, method, payload };
+      try {
+        this.handler.postMessage(envelope);
+      } catch (error) {
+        if (timer !== undefined) globalThis.clearTimeout(timer);
+        pending.removeAbortListener?.();
+        this.pending.delete(id);
+        reject(asError(error));
+      }
+    });
+  }
+
+  private postCancellation(requestId: string): void {
+    this.cancellationSequence += 1;
+    try {
+      this.handler.postMessage({
+        id: `cancel:${this.cancellationSequence}`,
+        method: 'cancelRequest',
+        payload: { requestId },
+      });
+    } catch {
+      // Cancellation remains best effort if the native host is already gone.
+    }
+  }
+
+  private receive(envelope: NativeBridgeOutboundEnvelope): void {
+    if (this.disposed) return;
+    if ('id' in envelope) {
+      const pending = this.pending.get(envelope.id);
+      if (!pending) return;
+      if (pending.timer !== undefined) globalThis.clearTimeout(pending.timer);
+      pending.removeAbortListener?.();
+      this.pending.delete(envelope.id);
+      if (envelope.ok) pending.resolve(envelope.result);
+      else pending.reject(new NativeBridgeCallError(envelope.error));
+      return;
+    }
+    const subscription = this.subscriptions.get(envelope.subscriptionId);
+    if (!subscription) return;
+    if (envelope.kind === 'error') {
+      subscription.observer.error?.(new NativeBridgeCallError(envelope.error));
+      if (isRetryableBridgeError(envelope.error)) {
+        this.scheduleSubscriptionReconnect(envelope.subscriptionId, subscription);
+      } else {
+        this.subscriptions.delete(envelope.subscriptionId);
+      }
+      return;
+    }
+    if (envelope.kind === 'complete') {
+      subscription.lastEventId = envelope.lastEventId || subscription.lastEventId;
+      this.scheduleSubscriptionReconnect(envelope.subscriptionId, subscription);
+      return;
+    }
+    try {
+      const streamKind = controlRoute(subscription.request.pathId).subscription;
+      const event = parseNativeEvent(streamKind, envelope.event);
+      subscription.lastEventId = envelope.lastEventId || eventResumeToken(event);
+      subscription.reconnectAttempt = 0;
+      subscription.observer.next(event);
+      if (isSnapshotRequired(event)) subscription.observer.snapshotRequired?.(event);
+    } catch (error) {
+      subscription.observer.error?.(asError(error));
+    }
+  }
+
+  private cancelSubscription(subscriptionId: string): void {
+    const subscription = this.subscriptions.get(subscriptionId);
+    if (!subscription) return;
+    this.subscriptions.delete(subscriptionId);
+    if (subscription.reconnectTimer) globalThis.clearTimeout(subscription.reconnectTimer);
+    if (this.disposed) return;
+    void this.call('cancelSubscription', {
+      subscriptionId,
+      lastEventId: subscription.lastEventId,
+    }).catch(() => {
+      // Cancellation is idempotent and best-effort during host teardown.
+    });
+  }
+
+  private assertActive(): void {
+    if (this.disposed) throw new NativeBridgeUnavailableError('native transport was disposed');
+  }
+
+  private scheduleSubscriptionReconnect(
+    subscriptionId: string,
+    subscription: NativeSubscription,
+  ): void {
+    if (this.disposed || subscription.reconnectTimer) return;
+    subscription.reconnectAttempt += 1;
+    const delayMs = Math.min(5_000, 250 * 2 ** Math.min(5, subscription.reconnectAttempt - 1));
+    subscription.observer.reconnect?.({
+      attempt: subscription.reconnectAttempt,
+      delayMs,
+      lastEventId: subscription.lastEventId,
+    });
+    subscription.reconnectTimer = globalThis.setTimeout(() => {
+      subscription.reconnectTimer = undefined;
+      if (this.disposed || this.subscriptions.get(subscriptionId) !== subscription) return;
+      const request = { ...subscription.request, lastEventId: subscription.lastEventId };
+      void this.call('subscribe', {
+        subscriptionId,
+        request: controlSubscriptionWirePayload(request),
+      })
+        .then(() => subscription.observer.open?.(subscription.lastEventId))
+        .catch((error) => {
+          subscription.observer.error?.(asError(error));
+          this.scheduleSubscriptionReconnect(subscriptionId, subscription);
+        });
+    }, delayMs);
+  }
+}
+
+function parseNativeEvent(streamKind: ControlStreamKind | undefined, value: unknown): unknown {
+  switch (streamKind) {
+    case 'agent':
+      return parseAgentEvent(value);
+    case 'room':
+      return parseRoomEvent(value);
+    case 'control':
+      return value;
+    default:
+      throw new NativeBridgeCallError('event arrived for a non-subscription route');
+  }
+}
+
+function normalizeNativeCapabilities(value: unknown): FrontendCapabilities {
+  const payload = isRecord(value) ? value : {};
+  const rawRouteIds = Array.isArray(payload.routeIds)
+    ? payload.routeIds
+    : Array.isArray(payload.routes)
+      ? payload.routes.map((route) => (isRecord(route) ? route.pathId : undefined))
+      : [];
+  const routeIds = rawRouteIds.filter(isControlPathId);
+  const rawFeatures = isRecord(payload.features) ? payload.features : {};
+  const rawNative = isRecord(payload.native) ? payload.native : {};
+  return {
+    schemaVersion:
+      typeof payload.schemaVersion === 'string'
+        ? payload.schemaVersion
+        : 'rag-ime.control-frontend-capabilities.v1',
+    transport: 'native',
+    routeIds,
+    features: booleanRecord(rawFeatures),
+    native: {
+      pickFiles: rawNative.pickFiles === true || rawNative.filePicker === true,
+      managedAgentImageImport: rawNative.managedAgentImageImport === true,
+      knowledgeDocumentImport: rawNative.knowledgeDocumentImport === true,
+      knowledgeParserStatus: rawNative.knowledgeParserStatus === true,
+      knowledgeAssetRead: rawNative.knowledgeAssetRead === true,
+      knowledgeDocumentSourceRead: rawNative.knowledgeDocumentSourceRead === true,
+      revealPath: rawNative.revealPath === true,
+      approvedExternalActions: rawNative.approvedExternalActions === true,
+      keychain: rawNative.keychain === true || rawNative.keychainStatus === true,
+      tcc: rawNative.tcc === true || rawNative.tccStatus === true,
+    },
+    raw: value,
+  };
+}
+
+function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.name !== 'string' ||
+    typeof value.mimeType !== 'string' ||
+    typeof value.byteSize !== 'number'
+  ) {
+    throw new NativeBridgeCallError('pickFiles returned an invalid file receipt');
+  }
+  if (
+    !Number.isSafeInteger(value.byteSize)
+    || value.byteSize < 0
+    || (value.byteSize === 0 && options.purpose !== 'export-destination' && options.selection !== 'directory')
+  ) {
+    throw new NativeBridgeCallError('pickFiles returned an invalid byte size');
+  }
+  if (options.purpose === 'attachment') {
+    if (
+      !MANAGED_AGENT_IMAGE_MIME_TYPES.has(value.mimeType) ||
+      value.byteSize > MAX_MANAGED_AGENT_IMAGE_BYTES ||
+      typeof value.sessionId !== 'string' ||
+      value.sessionId !== options.sessionId ||
+      typeof value.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value.sha256) ||
+      !/^media_[A-Za-z0-9_-]{12,80}$/.test(value.id) ||
+      'path' in value
+    ) {
+      throw new NativeBridgeCallError('pickFiles returned an invalid managed image receipt');
+    }
+  } else if (
+    typeof value.path !== 'string'
+    || !value.path.startsWith('/')
+    || value.path.includes('\0')
+  ) {
+    throw new NativeBridgeCallError('pickFiles returned an invalid local path receipt');
+  }
+  return value as unknown as PickedFile;
+}
+
+function parseKnowledgeDocumentImportReceipt(
+  value: unknown,
+  kbId: string,
+): KnowledgeDocumentImportReceipt {
+  if (
+    !isRecord(value) ||
+    value.kbId !== kbId ||
+    typeof value.documentId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value.documentId) ||
+    typeof value.fileName !== 'string' ||
+    !value.fileName ||
+    value.fileName.length > 512 ||
+    typeof value.mimeType !== 'string' ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize <= 0 ||
+    value.byteSize > 200 * 1024 * 1024 ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.status !== 'string' ||
+    value.status.length === 0 ||
+    'path' in value
+  ) {
+    throw new NativeBridgeCallError('knowledge import returned an invalid receipt');
+  }
+  return value as unknown as KnowledgeDocumentImportReceipt;
+}
+
+const KNOWLEDGE_ASSET_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+]);
+const MAX_KNOWLEDGE_ASSET_BYTES = 25 * 1024 * 1024;
+const KNOWLEDGE_SOURCE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/tiff',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+const MAX_KNOWLEDGE_SOURCE_BYTES = 50 * 1024 * 1024;
+
+function assertNativeKnowledgeAssetReadInput(input: KnowledgeAssetReadInput): void {
+  if (!isRecord(input) || Object.keys(input).some((key) => !['kbId', 'fileId', 'assetId', 'signal'].includes(key))) {
+    throw new TypeError('Knowledge asset read input contained an unsupported field');
+  }
+  if (!isSafeKnowledgeId(input.kbId) || !isSafeKnowledgeId(input.fileId)) {
+    throw new TypeError('Knowledge asset read requires bounded kbId and fileId values');
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.assetId)) {
+    throw new TypeError('Knowledge asset read requires a sha256 assetId');
+  }
+}
+
+function parseNativeKnowledgeAsset(
+  value: unknown,
+  input: KnowledgeAssetReadInput,
+): KnowledgeAssetPayload {
+  if (
+    !isRecord(value) ||
+    value.kbId !== input.kbId ||
+    value.fileId !== input.fileId ||
+    value.assetId !== input.assetId ||
+    value.sha256 !== input.assetId ||
+    typeof value.mimeType !== 'string' ||
+    !KNOWLEDGE_ASSET_MIME_TYPES.has(value.mimeType) ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize <= 0 ||
+    value.byteSize > MAX_KNOWLEDGE_ASSET_BYTES ||
+    !(value.blob instanceof Blob) ||
+    value.blob.size !== value.byteSize ||
+    value.blob.type !== value.mimeType
+  ) {
+    throw new NativeBridgeCallError('knowledge asset returned an invalid binary receipt');
+  }
+  return value as unknown as KnowledgeAssetPayload;
+}
+
+function assertNativeKnowledgeDocumentSourceReadInput(
+  input: KnowledgeDocumentSourceReadInput,
+): void {
+  if (!isRecord(input) || Object.keys(input).some((key) => !['kbId', 'fileId', 'signal'].includes(key))) {
+    throw new TypeError('Knowledge document source input contained an unsupported field');
+  }
+  if (!isSafeKnowledgeId(input.kbId) || !isSafeKnowledgeId(input.fileId)) {
+    throw new TypeError('Knowledge document source requires bounded kbId and fileId values');
+  }
+}
+
+function parseNativeKnowledgeDocumentSource(
+  value: unknown,
+  input: KnowledgeDocumentSourceReadInput,
+): KnowledgeDocumentSourcePayload {
+  if (
+    !isRecord(value) ||
+    value.kbId !== input.kbId ||
+    value.fileId !== input.fileId ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.mimeType !== 'string' ||
+    !KNOWLEDGE_SOURCE_MIME_TYPES.has(value.mimeType) ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize <= 0 ||
+    value.byteSize > MAX_KNOWLEDGE_SOURCE_BYTES ||
+    !(value.blob instanceof Blob) ||
+    value.blob.size !== value.byteSize ||
+    value.blob.type !== value.mimeType
+  ) {
+    throw new NativeBridgeCallError('knowledge document source returned an invalid binary receipt');
+  }
+  return value as unknown as KnowledgeDocumentSourcePayload;
+}
+
+function isSafeKnowledgeId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value);
+}
+
+const MANAGED_AGENT_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+const MAX_MANAGED_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function assertAgentImagePasteOptions(options: AgentImagePasteOptions): number {
+  if (!isRecord(options) || Object.keys(options).some((key) => !['sessionId', 'files', 'maxFiles'].includes(key))) {
+    throw new TypeError('Agent image paste options contained an unsupported field');
+  }
+  if (typeof options.sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(options.sessionId)) {
+    throw new TypeError('Agent image paste requires a bounded sessionId');
+  }
+  const files = options.files;
+  if (files !== undefined && (!Array.isArray(files) || files.length < 1 || files.length > 8)) {
+    throw new TypeError('Agent image paste files must contain between 1 and 8 images');
+  }
+  const maxFiles = options.maxFiles ?? files?.length;
+  if (!Number.isSafeInteger(maxFiles) || !maxFiles || maxFiles < 1 || maxFiles > 8) {
+    throw new TypeError('Agent image paste requires maxFiles between 1 and 8');
+  }
+  if (files && files.length > maxFiles) {
+    throw new TypeError('Agent image paste files exceed maxFiles');
+  }
+  for (const file of files ?? []) {
+    if (
+      typeof file?.name !== 'string' ||
+      !file.name ||
+      file.name.length > 512 ||
+      file.name.includes('\u0000') ||
+      !MANAGED_AGENT_IMAGE_MIME_TYPES.has(String(file.type).toLowerCase()) ||
+      !Number.isSafeInteger(file.size) ||
+      file.size <= 0 ||
+      file.size > MAX_MANAGED_AGENT_IMAGE_BYTES
+    ) {
+      throw new TypeError('Agent image paste received an invalid image file');
+    }
+  }
+  return maxFiles;
+}
+
+function assertFilePickOptions(options: FilePickOptions): void {
+  const allowedKeys = new Set([
+    'accepts',
+    'multiple',
+    'purpose',
+    'selection',
+    'sessionId',
+    'kbId',
+    'parserProvider',
+    'maxFiles',
+    'signal',
+  ]);
+  for (const key of Object.keys(options)) {
+    if (!allowedKeys.has(key)) throw new TypeError(`FilePickOptions field is not allowed: ${key}`);
+  }
+  if (!['attachment', 'configuration-import', 'restore', 'export-destination', 'knowledge-import', 'plugin-source'].includes(options.purpose)) {
+    throw new TypeError('FilePickOptions purpose is not allowlisted');
+  }
+  if (options.selection !== undefined && !['file', 'directory'].includes(options.selection)) {
+    throw new TypeError('FilePickOptions selection is not allowlisted');
+  }
+  if (options.purpose === 'plugin-source' && options.selection !== 'directory') {
+    throw new TypeError('plugin-source selection must be a directory');
+  }
+  if (options.accepts !== undefined && (!Array.isArray(options.accepts) || options.accepts.some((value) => typeof value !== 'string'))) {
+    throw new TypeError('FilePickOptions accepts must contain strings');
+  }
+  if (options.multiple !== undefined && typeof options.multiple !== 'boolean') {
+    throw new TypeError('FilePickOptions multiple must be a boolean');
+  }
+  if (options.maxFiles !== undefined && (!Number.isSafeInteger(options.maxFiles) || options.maxFiles < 1 || options.maxFiles > 8)) {
+    throw new TypeError('FilePickOptions maxFiles must be between 1 and 8');
+  }
+  if (options.purpose === 'attachment') {
+    if (typeof options.sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(options.sessionId)) {
+      throw new TypeError('attachment file selection requires a bounded sessionId');
+    }
+    if (options.maxFiles === undefined) {
+      throw new TypeError('attachment file selection requires maxFiles');
+    }
+  } else if (options.sessionId !== undefined) {
+    throw new TypeError('sessionId is only accepted for Agent attachments');
+  }
+  if (options.purpose === 'knowledge-import') {
+    if (typeof options.kbId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(options.kbId)) {
+      throw new TypeError('knowledge-import file selection requires a bounded kbId');
+    }
+  } else if (options.kbId !== undefined || options.parserProvider !== undefined) {
+    throw new TypeError('kbId and parserProvider are only accepted for knowledge imports');
+  }
+}
+
+function assertNativeKnowledgeDocumentImportInput(
+  input: KnowledgeDocumentImportInput,
+): number {
+  if (!isRecord(input)) throw new TypeError('Knowledge import input is required');
+  const allowedKeys = new Set(['kbId', 'accepts', 'maxFiles', 'files', 'parserProvider', 'parser', 'signal']);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+    throw new TypeError('Knowledge import input contained an unsupported field');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(input.kbId)) {
+    throw new TypeError('Knowledge import requires a valid kbId');
+  }
+  if (input.files !== undefined) {
+    throw new TypeError('Native knowledge import does not accept browser paths or File objects');
+  }
+  if (input.accepts !== undefined && (!Array.isArray(input.accepts) || input.accepts.length > 32 || input.accepts.some((value) => typeof value !== 'string'))) {
+    throw new TypeError('Knowledge import accepts must be a bounded string array');
+  }
+  if (input.parserProvider !== undefined && !['auto', 'builtin', 'mineru_local_http'].includes(input.parserProvider)) {
+    throw new TypeError('Knowledge import parserProvider is not allowlisted');
+  }
+  if (input.parser !== undefined && !['auto', 'builtin', 'mineru'].includes(input.parser)) {
+    throw new TypeError('Knowledge import parser is not allowlisted');
+  }
+  if (input.parserProvider !== undefined && input.parser !== undefined) {
+    throw new TypeError('Knowledge import accepts only one parser selector');
+  }
+  const maxFiles = input.maxFiles ?? 8;
+  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 20) {
+    throw new TypeError('Native knowledge import maxFiles must be between 1 and 20');
+  }
+  return maxFiles;
+}
+
+const VOICE_PROVIDERS = new Set<VoiceProviderId>([
+  'native_streaming',
+  'realtime_websocket',
+  'http_transcription',
+]);
+const VOICE_NATIVE_ACTIONS = new Set<VoiceNativeActionId>([
+  'start_agent',
+  'stop_agent',
+  'reload_configuration',
+  'request_microphone_permission',
+  'request_accessibility_permission',
+  'open_microphone_settings',
+  'open_accessibility_settings',
+]);
+
+function parseVoiceCredentialStatus(
+  value: unknown,
+  provider: VoiceProviderId,
+): VoiceCredentialStatus {
+  if (!isRecord(value) || value.provider !== provider || typeof value.configured !== 'boolean') {
+    throw new NativeBridgeCallError('voice credential status returned an invalid receipt');
+  }
+  return { provider, configured: value.configured };
+}
+
+function assertVoiceCredentialSaveRequest(request: VoiceCredentialSaveRequest): void {
+  if (!isRecord(request)) throw new TypeError('Voice credentials are required');
+  const allowedKeys = new Set([
+    'provider',
+    'accessToken',
+    'appId',
+    'resourceId',
+    'endpoint',
+    'model',
+    'headersJson',
+  ]);
+  if (Object.keys(request).some((key) => !allowedKeys.has(key))) {
+    throw new TypeError('Voice credentials contained an unsupported field');
+  }
+  if (!VOICE_PROVIDERS.has(request.provider)) {
+    throw new TypeError('Voice provider is not allowlisted');
+  }
+  for (const [key, value, limit] of [
+    ['accessToken', request.accessToken ?? '', 16_384],
+    ['appId', request.appId, 512],
+    ['resourceId', request.resourceId, 512],
+    ['endpoint', request.endpoint, 2_048],
+    ['model', request.model, 512],
+    ['headersJson', request.headersJson, 16_384],
+  ] as const) {
+    if (typeof value !== 'string' || value.length > limit || value.includes('\u0000')) {
+      throw new TypeError(`Voice credential field ${key} is invalid`);
+    }
+  }
+  if (request.headersJson.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(request.headersJson);
+    } catch {
+      throw new TypeError('Voice request headers must be valid JSON');
+    }
+    if (!isRecord(parsed) || Object.values(parsed).some((value) => typeof value !== 'string')) {
+      throw new TypeError('Voice request headers must be a string dictionary');
+    }
+  }
+}
+
+function assertVoiceNativeAction(action: VoiceNativeActionId): void {
+  if (!VOICE_NATIVE_ACTIONS.has(action)) {
+    throw new TypeError('Voice action is not allowlisted');
+  }
+}
+
+function parseVoiceNativeStatus(value: unknown): VoiceNativeStatus {
+  if (
+    !isRecord(value)
+    || typeof value.running !== 'boolean'
+    || typeof value.state !== 'string'
+    || typeof value.statusText !== 'string'
+    || typeof value.microphoneAuthorization !== 'string'
+    || typeof value.accessibilityTrusted !== 'boolean'
+    || typeof value.hotkeyInstalled !== 'boolean'
+    || typeof value.hotkeyMode !== 'string'
+    || typeof value.updatedAtMs !== 'number'
+    || !Number.isSafeInteger(value.updatedAtMs)
+  ) {
+    throw new NativeBridgeCallError('voice action returned an invalid status');
+  }
+  return value as unknown as VoiceNativeStatus;
+}
+
+function booleanRecord(value: Record<string, unknown>): Record<string, boolean> {
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, boolean] => {
+      return typeof entry[1] === 'boolean';
+    }),
+  );
+}
+
+function eventResumeToken(event: unknown): string {
+  if (!isRecord(event)) return '';
+  if (typeof event.resumeToken === 'string') return event.resumeToken;
+  if (typeof event.eventId === 'string') return event.eventId;
+  return '';
+}
+
+function isSnapshotRequired(event: unknown): boolean {
+  return isRecord(event) && event.eventType === 'snapshot_required';
+}
+
+function isRetryableBridgeError(error: NativeBridgeError): boolean {
+  return typeof error === 'object' && error !== null && error.retryable === true;
+}
+
+function createBridgeId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}

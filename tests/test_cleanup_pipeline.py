@@ -27,16 +27,16 @@ class FakeCleanupCompilerGenerator:
 
     @property
     def provider_name(self) -> str:
-        return "x1api"
+        return "deepseek-v4"
 
     @classmethod
     def from_env_path(cls, env_path=None):
         cls.calls.append({"envPath": str(env_path or "")})
         return cls(
             VcpRebuildConfig(
-                api_base_url="https://x1api.top/v1",
+                api_base_url="https://api.example.com/v1",
                 api_key="fake-key",
-                model="fake-gpt",
+                model="deepseek-v4-flash",
             )
         )
 
@@ -60,7 +60,7 @@ class FakeCleanupCompilerGenerator:
             }
         )
         return CoreOptimizationReport(
-            provider="x1api",
+            provider="deepseek-v4",
             model=self.config.model,
             elapsed_ms=19,
             memories=(
@@ -108,6 +108,7 @@ class CleanupPipelineCliTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_001,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -129,6 +130,7 @@ class CleanupPipelineCliTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_003,
                 source="manual",
                 committed_text="这是一条很长且没有被接受过的历史输入，应该进入 cleanup tombstone",
+                privacy_disposition="allowed",
                 recent_context="old raw event",
                 project="wisdom-weasel-rag-ime",
                 tags=("user-input",),
@@ -182,8 +184,8 @@ class CleanupPipelineCliTests(unittest.TestCase):
             json.dumps(
                 {
                     "runId": "cleanup_invalid",
-                    "provider": "x1api",
-                    "model": "fake-gpt",
+                    "provider": "deepseek-v4",
+                    "model": "deepseek-v4-flash",
                     "summary": "stable=1",
                     "diffs": [
                         {
@@ -218,6 +220,7 @@ class CleanupPipelineCliTests(unittest.TestCase):
                 created_at_ms=1_900_000_200_001,
                 source="manual",
                 committed_text="噪声短语",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -302,7 +305,7 @@ class CleanupPipelineCliTests(unittest.TestCase):
             )
         )
 
-    def test_cleanup_preview_x1api_is_dry_run_and_surfaces_validation(self) -> None:
+    def test_cleanup_preview_deepseek_v4_is_dry_run_and_surfaces_validation(self) -> None:
         original = memory_compiler_module.VcpRebuildMemoryGenerator
         FakeCleanupCompilerGenerator.calls = []
         memory_compiler_module.VcpRebuildMemoryGenerator = FakeCleanupCompilerGenerator
@@ -313,19 +316,20 @@ class CleanupPipelineCliTests(unittest.TestCase):
                     created_at_ms=1_900_000_100_010,
                     source="manual",
                     committed_text="本地检索优先",
+                    privacy_disposition="allowed",
                     recent_context="这是项目里长期稳定的输入法偏好",
                     project="wisdom-weasel-rag-ime",
                     tags=("memory",),
                 )
             )
             fake_env = Path(self.tmp.name) / "fake.env"
-            fake_env.write_text("X1API_API_KEY=fake-key\nX1API_MODEL=fake-gpt\n", encoding="utf-8")
-            output_path = Path(self.tmp.name) / "cleanup-x1api.json"
+            fake_env.write_text("DEEPSEEK_API_KEY=fake-key\nRAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash\n", encoding="utf-8")
+            output_path = Path(self.tmp.name) / "cleanup-deepseek-v4.json"
 
             code, payload = self._run_cli_json(
                 "cleanup-preview",
                 "--provider",
-                "x1api",
+                "deepseek-v4",
                 "--project",
                 "wisdom-weasel-rag-ime",
                 "--model-env-path",
@@ -338,7 +342,7 @@ class CleanupPipelineCliTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertTrue(payload["dryRun"])
-        self.assertEqual(payload["provider"], "x1api")
+        self.assertEqual(payload["provider"], "deepseek-v4")
         self.assertTrue(output_path.exists())
         self.assertEqual(self.core.list_memory_cleanup_runs(limit=10)["items"], [])
         self.assertTrue(payload["validation"]["ok"])
@@ -354,8 +358,8 @@ class CleanupPipelineCliTests(unittest.TestCase):
             json.dumps(
                 {
                     "runId": "cleanup_weak_source",
-                    "provider": "x1api",
-                    "model": "fake-gpt",
+                    "provider": "deepseek-v4",
+                    "model": "deepseek-v4-flash",
                     "summary": "stable=1",
                     "diffs": [
                         {

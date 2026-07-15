@@ -1,0 +1,2 @@
+{"id":"post-commit-short","requestType":"ime_post_commit","contextTail":"这个输入法目前最影响体验的是","rimeCandidates":["稳定性","候选","显示"],"ragHints":["候选稳定性","显示状态机","刷新和显示解耦"],"mustProduceAtLeast":1,"maxFirstCandidateMs":500,"maxThreeCandidatesMs":900}
+{"id":"hot-context-continuation","requestType":"ime_hot","contextTail":"RAG memory 候选应该先稳定出现，模型候选随后","rimeCandidates":["补充","排序","状态"],"mustProduceAtLeast":1,"maxFirstCandidateMs":500,"maxThreeCandidatesMs":900}

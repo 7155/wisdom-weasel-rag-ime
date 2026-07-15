@@ -32,6 +32,7 @@ from .codex_history import (
 )
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
 from .embeddings import embedding_provider_from_env
+from .foreground_privacy import assess_foreground_write, storage_receipt
 from .history_context import build_prediction_context
 from .hybrid_rag_eval import run_hybrid_rag_eval
 from .local_sqlite_core import LocalSqliteCoreClient
@@ -44,10 +45,13 @@ from .memory_book_compiler import (
     MEMORY_BOOK_VALIDATE_SCHEMA_VERSION,
     apply_memory_book_plan,
     build_memory_book_source_bundle,
+    find_memory_book_draft_for_bundle,
     inspect_memory_book_plan,
     load_memory_book_plan,
     memory_book_plan_from_compile_output,
+    memory_book_plan_from_stored_run,
     rollback_memory_book_run,
+    store_memory_book_plan,
 )
 from .memory_cleanup import cleanup_plan_from_payload, cleanup_plan_to_payload, inspect_cleanup_plan, load_cleanup_run_from_file
 from .memory_compiler import (
@@ -85,6 +89,12 @@ from .predictor_benchmark import (
 from .predictor_latency import latency_log_path_from_env, latency_report
 from .renderer import render_agent_injection, render_terminal_panel
 from .retrieval_docs import rebuild_retrieval_docs
+from .rime_rank_export import (
+    apply_rime_rank_export,
+    preview_rime_rank_export,
+    record_rime_rank_feedback,
+    rollback_rime_rank_export,
+)
 from .reranker import rerank_candidate_dicts
 from .rime_sidecar import (
     build_rime_sidecar_response,
@@ -162,7 +172,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--embedding-provider",
-        choices=("none", "local-hash", "openai-compatible", "openai"),
+        choices=("none", "local-hash", "local-bge", "sentence-transformers", "openai-compatible", "openai"),
         default=os.environ.get("RAG_IME_EMBEDDING_PROVIDER", "none"),
         help="Optional local-core vector provider. Defaults to none.",
     )
@@ -181,6 +191,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db", help="Initialize the local SQLite/FTS5 database")
+
+    rime_rank_preview = subparsers.add_parser("rime-rank-export-preview", help="Preview a Rime custom dictionary from rank feedback")
+    rime_rank_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
+    rime_rank_preview.add_argument("--limit", type=int, default=200)
+    rime_rank_preview.add_argument("--dict-name", default="rag_ime_user")
+
+    rime_rank_apply = subparsers.add_parser("rime-rank-export-apply", help="Apply a reviewed Rime rank export YAML")
+    rime_rank_apply.add_argument("--target-file", required=True)
+    rime_rank_apply.add_argument("--project", default="wisdom-weasel-rag-ime")
+    rime_rank_apply.add_argument("--limit", type=int, default=200)
+    rime_rank_apply.add_argument("--dict-name", default="rag_ime_user")
+    rime_rank_apply.add_argument("--confirm-text", default="")
+
+    rime_rank_rollback = subparsers.add_parser("rime-rank-export-rollback", help="Rollback a Rime rank export from a backup file")
+    rime_rank_rollback.add_argument("--target-file", required=True)
+    rime_rank_rollback.add_argument("--backup-file", required=True)
+
+    rime_rank_record = subparsers.add_parser("rime-rank-feedback", help="Record one Rime ranking feedback event")
+    rime_rank_record.add_argument("--preedit", required=True)
+    rime_rank_record.add_argument("--accepted-text", default="")
+    rime_rank_record.add_argument("--rejected-text", default="")
+    rime_rank_record.add_argument(
+        "--action",
+        choices=("accepted", "backspace_downrank", "correction_pair", "boost", "downrank"),
+        default="accepted",
+    )
+    rime_rank_record.add_argument("--app", default="")
+    rime_rank_record.add_argument("--project", default="wisdom-weasel-rag-ime")
+    rime_rank_record.add_argument("--candidate-rank", type=int)
+    rime_rank_record.add_argument("--context-hash", default="")
+    rime_rank_record.add_argument("--metadata-json", default="{}")
 
     memory_inspect = subparsers.add_parser("memory-inspect", help="Inspect v2 memory items")
     memory_inspect.add_argument("--project", default="")
@@ -289,7 +330,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cleanup_rollback.add_argument("--run-id", required=True)
 
     cleanup_preview = subparsers.add_parser("cleanup-preview", help="Build an offline cleanup diff preview without modifying the DB")
-    cleanup_preview.add_argument("--provider", choices=("local-rule", "x1api", "x1top", "openai-compatible", "model-api"), default="local-rule")
+    cleanup_preview.add_argument("--provider", choices=("local-rule", "deepseek-v4"), default="local-rule")
     cleanup_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
     cleanup_preview.add_argument("--since-days", type=int, default=90)
     cleanup_preview.add_argument("--recent-limit", type=int, default=80)
@@ -302,8 +343,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     cleanup_preview.add_argument("--model", default="")
     cleanup_preview.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
     )
     cleanup_preview.add_argument("--allow-private-paths", action="store_true")
@@ -335,12 +376,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     memory_compile.add_argument("--max-memories", type=int, default=4)
     memory_compile.add_argument("--max-lexicon-phrases", type=int, default=8)
     memory_compile.add_argument("--max-hide-suggestions", type=int, default=12)
-    memory_compile.add_argument("--provider", default="")
+    memory_compile.add_argument("--provider", choices=("deepseek-v4",), default="deepseek-v4")
     memory_compile.add_argument("--model", default="")
     memory_compile.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
     )
     memory_compile.add_argument("--output", default="", help="Optional JSON path. When set, writes the dry-run diff plan.")
@@ -371,6 +412,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     memory_book_preview.add_argument("--model", default="")
     memory_book_preview.add_argument("--model-env-path", default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "") or os.environ.get("RAG_IME_MODEL_ENV", ""))
     memory_book_preview.add_argument("--output", default="")
+    memory_book_preview.add_argument(
+        "--save-draft",
+        action="store_true",
+        help="Store a validated review draft without applying memory changes.",
+    )
 
     memory_book_validate = subparsers.add_parser("memory-book-validate", help="Validate a Memory Book compile preview before apply")
     memory_book_validate.add_argument("--run", required=True, help="JSON Memory Book run file")
@@ -413,11 +459,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     commit.add_argument("--source", default="manual_commit")
     commit.add_argument("--tag", action="append", default=[])
     commit.add_argument("--sensitive", action="store_true", help="Do not record this input")
+    commit.add_argument(
+        "--privacy-disposition",
+        choices=("allowed", "sensitive", "unknown"),
+        default="unknown",
+        help="Explicit foreground privacy assessment; missing defaults to no-store",
+    )
     commit.add_argument("--recording-disabled", action="store_true", help="Skip recording for this commit")
 
     generate_memory = subparsers.add_parser(
         "generate-memory",
-        help="Distill stable long-term memory from text through x1top/x1api-compatible config",
+        help="Distill stable long-term memory from text through DeepSeek V4",
     )
     generate_memory.add_argument("text")
     generate_memory.add_argument("--recent-context", default="")
@@ -428,16 +480,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     generate_memory.add_argument("--allow-duplicates", action="store_true")
     generate_memory.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
-        help="x1top/x1api-compatible env file. Prefer this over the legacy --vcp-env-path.",
+        help="DeepSeek V4 env file. Prefer this over the legacy --vcp-env-path.",
     )
     generate_memory.add_argument("--vcp-env-path", default="", help=argparse.SUPPRESS)
 
     optimize_core = subparsers.add_parser(
         "optimize-core",
-        help="Use x1top/x1api-compatible config to optimize RAG memory and lexicon phrases from local history",
+        help="Use DeepSeek V4 to optimize RAG memory and lexicon phrases from local history",
     )
     optimize_core.add_argument("--project", default="wisdom-weasel-rag-ime")
     optimize_core.add_argument("--app", default="manual")
@@ -450,8 +502,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     optimize_core.add_argument("--allow-duplicates", action="store_true")
     optimize_core.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
     )
 
@@ -484,7 +536,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     active_rag_demo.add_argument("--frontend-revision", type=int, default=1)
     active_rag_demo.add_argument("--selection-epoch", type=int, default=1)
     active_rag_demo.add_argument("--max-candidates", type=int, default=5)
-    active_rag_demo.add_argument("--max-chars", type=int, default=120)
+    active_rag_demo.add_argument(
+        "--max-chars",
+        type=int,
+        default=0,
+        help="Optional local output character cap; 0 keeps the full multi-paragraph result",
+    )
     active_rag_demo.add_argument("--wait-ms", type=int, default=3000)
 
     rime_suggest_json = subparsers.add_parser(
@@ -514,6 +571,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     action_json.add_argument("--source-event-id", type=int, default=0)
     action_json.add_argument("--query", default="")
     action_json.add_argument("--surface-text", default="")
+    action_json.add_argument(
+        "--privacy-disposition",
+        choices=("allowed", "sensitive", "unknown"),
+        default="unknown",
+        help="Explicit foreground privacy assessment; missing defaults to no-store",
+    )
 
     demo = subparsers.add_parser("demo", help="Render one or all UI scenarios")
     demo.add_argument("--scenario", choices=[item.scenario_id for item in SCENARIOS], default="")
@@ -553,6 +616,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     import_codex.add_argument("--sample-size", type=int, default=3)
     import_codex.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing memory")
     import_codex.add_argument("--allow-duplicates", action="store_true", help="Import records even if their stable record tag already exists")
+    import_codex.add_argument(
+        "--curated",
+        action="store_true",
+        help="Treat the import as pre-reviewed retrieval material. Default imports stay raw until DSV4 organizes them.",
+    )
 
     prune_codex = subparsers.add_parser(
         "prune-codex-history-noise",
@@ -631,6 +699,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_hybrid_rag_core.add_argument("--repeat", type=int, default=1)
     eval_hybrid_rag_core.add_argument("--top-k", type=int, default=5)
     eval_hybrid_rag_core.add_argument("--latency-budget-ms", type=int, default=25)
+    eval_hybrid_rag_core.add_argument(
+        "--skip-latency-check",
+        action="store_true",
+        help="Run correctness-only evaluation; never use this for a release/performance gate",
+    )
     eval_hybrid_rag_core.add_argument("--summary-only", action="store_true", help="Omit per-case details from the JSON report")
 
     eval_active_rag = subparsers.add_parser(
@@ -660,7 +733,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Run the IME model inference acceleration benchmark and write a gate report",
     )
     benchmark_predictor.add_argument("--profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "qwen3_06b_ime_hot"))
-    benchmark_predictor.add_argument("--cases", default="docs/eval/predictor_latency_cases.jsonl")
+    benchmark_predictor.add_argument("--cases", default="eval/predictor_latency_cases.jsonl")
     benchmark_predictor.add_argument("--repeat", type=int, default=20)
     benchmark_predictor.add_argument("--max-candidates", type=int, default=3)
     benchmark_predictor.add_argument("--report", default="/tmp/rag-ime-predictor-bench.json")
@@ -805,7 +878,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "quality-gate",
         help="Run the local acceptance, RAG eval, Rime sidecar eval, and cache-hit gates",
     )
-    quality_gate.add_argument("--cases-file", default="docs/eval/codex-history-cases.example.jsonl")
+    quality_gate.add_argument("--cases-file", default="eval/codex-history-cases.example.jsonl")
     quality_gate.add_argument("--project", default="wisdom-weasel-rag-ime")
     quality_gate.add_argument("--top-k", type=int, default=5)
     quality_gate.add_argument("--match", choices=("any", "all"), default="any")
@@ -822,7 +895,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--max-sidecar-model-timeout-rate", type=float, default=1.0)
     quality_gate.add_argument("--max-old-input-echo-rate", type=float, default=1.0)
     quality_gate.add_argument("--require-model-ttfc", action="store_true")
-    quality_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
+    quality_gate.add_argument("--model-ttfc-cases-file", default="eval/ime-ttfc-cases.example.jsonl")
     quality_gate.add_argument(
         "--model-ttfc-provider",
         default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"),
@@ -905,7 +978,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "squirrel-tryout-gate",
         help="Run the real macOS Squirrel tryout readiness gate and quality gate",
     )
-    squirrel_tryout_gate.add_argument("--cases-file", default="docs/eval/codex-history-cases.example.jsonl")
+    squirrel_tryout_gate.add_argument("--cases-file", default="eval/codex-history-cases.example.jsonl")
     squirrel_tryout_gate.add_argument(
         "--quality-db-path",
         default="",
@@ -986,7 +1059,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument("--skip-launch-agent", action="store_true")
     squirrel_tryout_gate.add_argument("--skip-sidecar-health", action="store_true")
     squirrel_tryout_gate.add_argument("--require-model-ttfc", action="store_true")
-    squirrel_tryout_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
+    squirrel_tryout_gate.add_argument("--model-ttfc-cases-file", default="eval/ime-ttfc-cases.example.jsonl")
     squirrel_tryout_gate.add_argument("--model-ttfc-provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"))
     squirrel_tryout_gate.add_argument("--model-ttfc-base-url", default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434"))
     squirrel_tryout_gate.add_argument("--model-ttfc-models", default=os.environ.get("RAG_IME_PREDICTOR_MODEL", "qwen3.5:0.8b-mlx"))
@@ -1016,11 +1089,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument("--include-cases", action="store_true")
     squirrel_tryout_gate.add_argument("--report-path", default="")
 
-    debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
+    debug_server = subparsers.add_parser("debug-server", help="Run the local diagnostic/management API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
     debug_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_DEBUG_PORT", "8765")))
     debug_server.add_argument("--project", default="wisdom-weasel-rag-ime")
-    debug_server.add_argument("--static-dir", default=os.environ.get("RAG_IME_DEBUG_STATIC_DIR", "debug"))
+    debug_server.add_argument("--static-dir", default="", help=argparse.SUPPRESS)
     debug_server.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
     debug_server.add_argument(
         "--rime-cache-ttl-ms",
@@ -1033,6 +1106,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=int(os.environ.get("RAG_IME_VECTOR_AUTO_REBUILD_LIMIT", "0")),
         help="Backfill this many recent vectors at startup when an embedding provider is enabled and no active vectors exist.",
+    )
+    debug_server.add_argument(
+        "--active-rag-trace-log",
+        default=os.environ.get(
+            "RAG_IME_ACTIVE_RAG_CHAIN_TRACE_LOG",
+            str(Path.home() / "Library" / "Logs" / "RagIme" / "active-rag-chain.jsonl"),
+        ),
+        help="Persistent JSONL journal for explicit Active RAG request chains. Empty disables it.",
     )
 
     sidecar_server = subparsers.add_parser("sidecar-server", help="Run the local HTTP sidecar for Squirrel/Rime")
@@ -1052,6 +1133,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=int(os.environ.get("RAG_IME_VECTOR_AUTO_REBUILD_LIMIT", "0")),
         help="Backfill this many recent vectors at startup when an embedding provider is enabled and no active vectors exist.",
     )
+    sidecar_server.add_argument(
+        "--active-rag-trace-log",
+        default=os.environ.get(
+            "RAG_IME_ACTIVE_RAG_CHAIN_TRACE_LOG",
+            str(Path.home() / "Library" / "Logs" / "RagIme" / "active-rag-chain.jsonl"),
+        ),
+        help="Persistent JSONL journal for explicit Active RAG request chains. Empty disables it.",
+    )
+
+    agent_gateway = subparsers.add_parser("agent-gateway", help="Run the isolated Agent Gateway on port 8768")
+    agent_gateway.add_argument("--host", default=os.environ.get("RAG_IME_AGENT_GATEWAY_HOST", "127.0.0.1"))
+    agent_gateway.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_AGENT_GATEWAY_PORT", "8768")))
+    agent_gateway.add_argument("--project", default="wisdom-weasel-rag-ime")
+    agent_gateway.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
 
     mlx_predictor_server = subparsers.add_parser(
         "mlx-predictor-server",
@@ -1115,6 +1210,73 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit("init-db requires --core-mode local")
         core.initialize()
         print(json.dumps({"db_path": str(core.db_path), "initialized": True}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "rime-rank-export-preview":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rime-rank-export-preview requires --core-mode local")
+        core.initialize()
+        print(
+            json.dumps(
+                preview_rime_rank_export(
+                    core.db_path,
+                    project=args.project,
+                    limit=max(1, int(args.limit)),
+                    dict_name=args.dict_name,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-rank-export-apply":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rime-rank-export-apply requires --core-mode local")
+        core.initialize()
+        print(
+            json.dumps(
+                apply_rime_rank_export(
+                    core.db_path,
+                    target_file=args.target_file,
+                    project=args.project,
+                    limit=max(1, int(args.limit)),
+                    dict_name=args.dict_name,
+                    confirm_text=args.confirm_text,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-rank-export-rollback":
+        print(
+            json.dumps(
+                rollback_rime_rank_export(target_file=args.target_file, backup_file=args.backup_file),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-rank-feedback":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rime-rank-feedback requires --core-mode local")
+        core.initialize()
+        event_id = record_rime_rank_feedback(
+            core.db_path,
+            preedit=args.preedit,
+            accepted_text=args.accepted_text,
+            rejected_text=args.rejected_text,
+            action=args.action,
+            app=args.app,
+            project=args.project,
+            candidate_rank=args.candidate_rank,
+            context_hash=args.context_hash,
+            metadata=_json_object_arg(args.metadata_json, flag="--metadata-json"),
+        )
+        print(json.dumps({"schemaVersion": "rag-ime.rime-rank-feedback.v1", "id": event_id}, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "memory-inspect":
@@ -1548,22 +1710,48 @@ def main(argv: Sequence[str] | None = None) -> int:
                     since_days=max(1, int(args.since_days)),
                     limit=max(1, int(args.recent_limit)),
                 )
-            config = load_deepseek_config(args.model_env_path or None)
-            if args.model:
-                config = replace(config, model=args.model)
-            organizer = DeepSeekMemoryOrganizer(config)
-            compile_output = organizer.compile_memory_book(bundle=bundle, project=args.project)
-            plan = memory_book_plan_from_compile_output(
-                compile_output,
-                project=args.project,
-                provider=organizer.provider_name,
-                model=config.model,
-                source_bundle=bundle,
-            )
+                existing_draft = (
+                    find_memory_book_draft_for_bundle(
+                        conn,
+                        project=args.project,
+                        bundle_hash=str(bundle.get("bundleHash") or ""),
+                    )
+                    if bool(args.save_draft)
+                    else None
+                )
+            reused_draft = existing_draft is not None
+            stored_run: dict[str, object] | None = None
+            if existing_draft is not None:
+                plan = memory_book_plan_from_stored_run(existing_draft)
+                stored_run = existing_draft
+                provider_name = str(existing_draft.get("provider") or "")
+                model_name = str(existing_draft.get("model") or "")
+            else:
+                config = load_deepseek_config(args.model_env_path or None)
+                if args.model:
+                    config = replace(config, model=args.model)
+                organizer = DeepSeekMemoryOrganizer(config)
+                compile_output = organizer.compile_memory_book(bundle=bundle, project=args.project)
+                provider_name = organizer.provider_name
+                model_name = config.model
+                plan = memory_book_plan_from_compile_output(
+                    compile_output,
+                    project=args.project,
+                    provider=provider_name,
+                    model=model_name,
+                    source_bundle=bundle,
+                )
         except (DeepSeekMemoryOrganizerError, ValueError) as exc:
             print(json.dumps({"schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION, "ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         validation = inspect_memory_book_plan(plan)
+        if bool(args.save_draft) and validation.get("ok") and stored_run is None:
+            with _connect_local_sqlite(core.db_path) as conn:
+                stored_run = store_memory_book_plan(
+                    conn,
+                    plan,
+                    supersede_project_drafts=True,
+                )
         if args.output:
             Path(args.output).parent.mkdir(parents=True, exist_ok=True)
             Path(args.output).write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -1573,16 +1761,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION,
                     "ok": bool(validation.get("ok")),
                     "dryRun": True,
+                    "memoryApplied": False,
+                    "storedDraft": stored_run is not None,
+                    "reusedDraft": reused_draft,
                     "project": args.project,
-                    "provider": organizer.provider_name,
-                    "model": config.model,
+                    "provider": provider_name,
+                    "model": model_name,
                     "source": {
                         "sinceDays": max(1, int(args.since_days)),
                         "recentLimit": max(1, int(args.recent_limit)),
                         "eventCount": len(bundle.get("recentEvents") or []),
+                        "bundleHash": str(bundle.get("bundleHash") or ""),
                     },
                     "validation": validation,
                     "run": plan,
+                    "storedRun": stored_run or {},
                     "outputPath": str(args.output or ""),
                 },
                 ensure_ascii=False,
@@ -1716,6 +1909,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "commit":
+        privacy_disposition = "sensitive" if args.sensitive else args.privacy_disposition
         event_id = adapter.commit_text(
             args.text,
             recent_context=args.recent_context,
@@ -1724,7 +1918,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             source=args.source,
             tags=tuple(args.tag),
             recording_enabled=not args.recording_disabled,
-            field_is_sensitive=args.sensitive,
+            privacy_disposition=privacy_disposition,
         )
         print(
             json.dumps(
@@ -1779,6 +1973,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     recent_context=generated_memory_context(args.text, args.recent_context, item.reason),
                     project=args.project,
                     app=args.app,
+                    privacy_disposition="allowed",
                     source="api_memory_generator",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -1875,6 +2070,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     recent_context=generated_memory_context("core optimization snapshot", "", item.reason),
                     project=args.project,
                     app=args.app,
+                    privacy_disposition="allowed",
                     source="api_core_optimizer",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -1911,6 +2107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     recent_context=f"API lexicon optimization | reason: {compact_whitespace(phrase.reason)}",
                     project=args.project,
                     app=args.app,
+                    privacy_disposition="allowed",
                     source="api_lexicon_optimizer",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -2025,7 +2222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project=args.project,
             app=args.app,
             max_candidates=max(1, args.max_candidates),
-            max_chars=max(4, args.max_chars),
+            max_chars=max(0, args.max_chars),
         )
         started = service.start(request)
         ready = _wait_active_rag_status(service, str(started["sessionId"]), wait_ms=max(1, args.wait_ms))
@@ -2079,6 +2276,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "action-json":
+        privacy_assessment = assess_foreground_write(
+            {"privacyDisposition": args.privacy_disposition}
+        )
+        if privacy_assessment["storeAllowed"] is not True:
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "stored": False,
+                        "noStore": True,
+                        "privacyAssessment": privacy_assessment,
+                        "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         action = core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -2187,7 +2402,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if not args.allow_duplicates and _core_has_event_tag(core, record_tag):
                     duplicate_skipped += 1
                     continue
-                event_ids.append(core.record_event(input_event_from_codex_record(record, project=args.project)))
+                event_ids.append(
+                    core.record_event(
+                        input_event_from_codex_record(
+                            record,
+                            project=args.project,
+                            curated=bool(args.curated),
+                        )
+                    )
+                )
         print(
             json.dumps(
                 {
@@ -2195,6 +2418,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "path": str(Path(args.path)),
                     "project": args.project,
                     "dryRun": args.dry_run,
+                    "retrievalMode": "curated" if args.curated else "raw_pending_dsv4",
                     "roles": "any" if role_filter is None else list(role_filter),
                     "records": len(records),
                     "imported": 0 if args.dry_run else len(event_ids),
@@ -2295,6 +2519,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             top_k=max(1, args.top_k),
             latency_budget_ms=max(1, args.latency_budget_ms),
             include_cases=not bool(args.summary_only),
+            enforce_latency=not bool(args.skip_latency_check),
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if bool(report.get("gatePassed")) else 1
@@ -2801,11 +3026,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 port=args.port,
                 db_path=Path(args.db_path),
                 project=args.project,
-                static_dir=Path(args.static_dir),
+                static_dir=Path(args.static_dir or "."),
                 seed_if_empty=not args.no_seed,
                 core=core,
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
                 vector_auto_rebuild_limit=args.vector_auto_rebuild_limit,
+                active_rag_trace_path=Path(args.active_rag_trace_log) if args.active_rag_trace_log else None,
             )
         )
         return 0
@@ -2819,12 +3045,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                 port=args.port,
                 db_path=Path(args.db_path),
                 project=args.project,
-                static_dir=Path("debug"),
+                static_dir=Path("."),
                 seed_if_empty=not args.no_seed,
                 core=core,
                 server_name="sidecar server",
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
                 vector_auto_rebuild_limit=args.vector_auto_rebuild_limit,
+                active_rag_trace_path=Path(args.active_rag_trace_log) if args.active_rag_trace_log else None,
+            )
+        )
+        return 0
+
+    if args.command == "agent-gateway":
+        from .debug_server import DebugServerConfig, run_debug_server
+
+        run_debug_server(
+            DebugServerConfig(
+                host=args.host,
+                port=args.port,
+                db_path=Path(args.db_path),
+                project=args.project,
+                static_dir=Path("."),
+                seed_if_empty=not args.no_seed,
+                core=core,
+                server_name="agent gateway",
+                rime_cache_ttl_ms=0,
+                vector_auto_rebuild_limit=0,
+                active_rag_trace_path=None,
             )
         )
         return 0
@@ -2849,6 +3096,7 @@ def seed_demo_memories(adapter: InputMethodAdapter, memories: list[CoreMemory]) 
                 created_at_ms=created_at + index,
                 source="demo_seed",
                 committed_text=memory.text,
+                privacy_disposition="allowed",
                 recent_context=memory.evidence_preview,
                 preedit="",
                 schema_id="demo",
@@ -2893,6 +3141,7 @@ def seed_eval_case_memories(adapter: InputMethodAdapter, cases: list[CodexEvalCa
                 created_at_ms=created_at + index,
                 source="eval_case_seed",
                 committed_text=committed_text,
+                privacy_disposition="allowed",
                 recent_context=compact_whitespace(f"eval_case:{case.case_id} expected:{expected}"),
                 preedit="",
                 schema_id="eval_case",
@@ -3853,6 +4102,7 @@ def _tryout_sidecar_rime_suggest(base_url: str) -> dict[str, object]:
     request_payload = {
         "sessionId": "tryout-gate",
         "requestSeq": 1,
+        "privacyDisposition": "allowed",
         "rawInput": "bendi",
         "preedit": "bendi",
         "committedContext": "Squirrel tryout gate",
@@ -4815,6 +5065,7 @@ def _rime_eval_payload(
     return {
         "sessionId": f"eval-rime-sidecar:{case.case_id}",
         "requestSeq": request_seq,
+        "privacyDisposition": "allowed",
         "rawInput": "",
         "preedit": "",
         "committedContext": case.recent_context,
@@ -4823,6 +5074,7 @@ def _rime_eval_payload(
         "maxSideCandidates": max_side_candidates,
         "latencyBudgetMs": max(30, int(latency_budget_ms)),
         "forceSideCandidates": force_side_candidates,
+        "debugUseLegacyRagFallback": True,
         "rimeContext": {
             "candidates": [
                 {
@@ -5477,12 +5729,8 @@ def _cleanup_provider_alias(provider: str) -> str:
     normalized = compact_whitespace(provider).lower()
     if normalized in {"", "local-rule"}:
         return "local-rule"
-    if normalized in {"openai-compatible"}:
-        return "openai-compatible"
-    if normalized in {"model-api"}:
-        return "model-api"
-    if normalized in {"x1api", "x1top", "x2app"}:
-        return "x1api"
+    if normalized in {"deepseek", "deepseek-v4", "dsv4"}:
+        return "deepseek-v4"
     return normalized
 
 
@@ -5543,7 +5791,7 @@ def _cleanup_preview_payload(*, core: LocalSqliteCoreClient, args) -> dict[str, 
         }
     generator = compiler_generator_from_env(
         env_path=args.model_env_path or None,
-        provider="" if provider == "openai-compatible" else provider,
+        provider=provider,
         model=args.model,
     )
     bundle = build_memory_compile_bundle(

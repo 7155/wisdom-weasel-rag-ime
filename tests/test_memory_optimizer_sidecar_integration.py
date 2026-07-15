@@ -90,7 +90,11 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             "RAG_IME_MEMORY_OPTIMIZER",
             "RAG_IME_MEMORY_OPTIMIZER_TRACE",
             "RAG_IME_MEMORY_OPTIMIZER_MAX_MS",
+            "RAG_IME_AI_AFTER_COMMIT_ONLY",
+            "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL",
         )}
+        os.environ["RAG_IME_AI_AFTER_COMMIT_ONLY"] = "0"
+        os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
 
     def tearDown(self) -> None:
         for key, value in self.original.items():
@@ -106,6 +110,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-off",
                 "requestSeq": 1,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想做一个输入法",
                 "maxVisibleCandidates": 4,
@@ -128,6 +133,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-off",
                 "requestSeq": 11,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想做一个输入法",
                 "maxVisibleCandidates": 4,
@@ -151,6 +157,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-on",
                 "requestSeq": 2,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "rawInput": "sj",
                 "preedit": "sj",
@@ -178,6 +185,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-delegate",
                 "requestSeq": 21,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "rawInput": "sj",
                 "preedit": "sj",
@@ -207,6 +215,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-fail-closed",
                 "requestSeq": 29,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -233,6 +242,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-trace-write-fail",
                 "requestSeq": 30,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -257,6 +267,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-degraded",
                 "requestSeq": 32,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -284,6 +295,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-feedback-write-fail",
                 "requestSeq": 33,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -304,6 +316,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "selection-feedback-write-fail",
                 "requestSeq": 34,
+                "privacyDisposition": "allowed",
                 "project": "wisdom-weasel-rag-ime",
                 "query": "连续",
                 "committedContext": "我们继续写 RAG 输入法",
@@ -339,15 +352,15 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["insertText"], "连续预测")
 
-    def test_realtime_sidecar_does_not_call_x1top_or_http_when_optimizer_enabled(self) -> None:
+    def test_realtime_sidecar_does_not_call_deepseek_v4_or_http_when_optimizer_enabled(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-no-cloud-realtime-") as tmp:
-            env_path = Path(tmp) / ".rag-ime-x1api.env"
+            env_path = Path(tmp) / "deepseek.env"
             env_path.write_text(
                 "\n".join(
                     [
-                        "X1API_BASE_URL=https://x1api.top/v1",
-                        "X1API_API_KEY=secret-value",
-                        "X1API_MODEL=x1top",
+                        "RAG_IME_DEEPSEEK_BASE_URL=https://api.example.com/v1",
+                        "DEEPSEEK_API_KEY=secret-value",
+                        "RAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash",
                     ]
                 ),
                 encoding="utf-8",
@@ -359,6 +372,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 "本地检索优先",
                 recent_context="输入法 RAG 和记忆优化需要保持 local-first",
                 project="wisdom-weasel-rag-ime",
+                privacy_disposition="allowed",
                 tags=("phrase-memory",),
             )
 
@@ -368,9 +382,9 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     "RAG_IME_MEMORY_OPTIMIZER": "1",
                     "RAG_IME_MEMORY_OPTIMIZER_TRACE": "1",
                     "RAG_IME_MODEL_ENV": str(env_path),
-                    "X1API_BASE_URL": "https://x1api.top/v1",
-                    "X1API_API_KEY": "secret-value",
-                    "X1API_MODEL": "x1top",
+                    "RAG_IME_DEEPSEEK_BASE_URL": "https://api.example.com/v1",
+                    "DEEPSEEK_API_KEY": "secret-value",
+                    "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
                 },
                 clear=False,
             ), patch(
@@ -378,7 +392,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 side_effect=AssertionError("/rime-suggest must not make external HTTP calls"),
             ), patch(
                 "rag_ime.memory_generator.VcpRebuildMemoryGenerator.from_env_path",
-                side_effect=AssertionError("/rime-suggest must not load the x1top generator"),
+                side_effect=AssertionError("/rime-suggest must not load the DeepSeek V4 generator"),
             ), patch(
                 "rag_ime.memory_compiler.VcpRebuildMemoryGenerator.from_env_path",
                 side_effect=AssertionError("/rime-suggest must not load the offline compiler"),
@@ -387,6 +401,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     payload={
                         "sessionId": "optimizer-no-cloud",
                         "requestSeq": 31,
+                        "privacyDisposition": "allowed",
                         "forceSideCandidates": True,
                         "committedContext": "我想优化 RAG 和记忆候选",
                         "maxVisibleCandidates": 4,
@@ -412,6 +427,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 "连续预测",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
+                privacy_disposition="allowed",
                 tags=("phrase-memory",),
             )
             with closing(sqlite3.connect(core.db_path)) as conn, conn:
@@ -427,6 +443,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 payload={
                     "sessionId": "optimizer-suppressed",
                     "requestSeq": 3,
+                    "privacyDisposition": "allowed",
                     "forceSideCandidates": True,
                     "committedContext": "我想继续写连续",
                     "maxVisibleCandidates": 4,
@@ -459,12 +476,36 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 "连续预测",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
+                privacy_disposition="allowed",
                 tags=("phrase-memory",),
             )
+            with core._connect() as conn:
+                upsert_memory_item(
+                    conn,
+                    memory_id="phrase:连续预测",
+                    kind="phrase",
+                    text="连续预测",
+                    normalized_text=normalize_text("连续预测"),
+                    summary="DSV4 compiled phrase",
+                    source_event_id=1,
+                    project="wisdom-weasel-rag-ime",
+                    app="",
+                    confidence=0.85,
+                    quality_score=0.85,
+                    status="approved",
+                    privacy_class="local",
+                    created_at_ms=1_900_000_200_000,
+                    updated_at_ms=1_900_000_200_000,
+                    metadata={"direct_candidate_allowed": True, "source": "memory_book_compile"},
+                    tags=("输入法",),
+                    embedding_provider=core.embedding_provider,
+                    tag_source="dsv4",
+                )
             response = build_rime_sidecar_response(
                 payload={
                     "sessionId": "optimizer-trace",
                     "requestSeq": 4,
+                    "privacyDisposition": "allowed",
                     "forceSideCandidates": True,
                     "committedContext": "我想继续写连续",
                     "maxVisibleCandidates": 4,
@@ -520,6 +561,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     metadata={"direct_candidate_allowed": True},
                     tags=("输入法", "候选排序"),
                     embedding_provider=core.embedding_provider,
+                    tag_source="dsv4",
                 )
                 upsert_memory_item(
                     conn,
@@ -540,6 +582,18 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     metadata={"direct_candidate_allowed": True},
                     tags=("候选排序", "能量传播"),
                     embedding_provider=core.embedding_provider,
+                    tag_source="dsv4",
+                )
+                input_method_tag = int(conn.execute("SELECT id FROM memory_tags WHERE tag = '输入法'").fetchone()[0])
+                ranking_tag = int(conn.execute("SELECT id FROM memory_tags WHERE tag = '候选排序'").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO memory_tag_edges(
+                        src_tag_id, dst_tag_id, edge_type, weight, direction_bias,
+                        evidence_count, updated_at_ms, metadata_json
+                    ) VALUES (?, ?, 'related', 0.9, 0.0, 2, ?, '{"source":"dsv4"}')
+                    """,
+                    (input_method_tag, ranking_tag, created_at + 2),
                 )
             core.recompute_memory_tags(project="wisdom-weasel-rag-ime")
 
@@ -547,6 +601,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 payload={
                     "sessionId": "optimizer-tag-explain",
                     "requestSeq": 35,
+                    "privacyDisposition": "allowed",
                     "forceSideCandidates": True,
                     "rawInput": "shurufa",
                     "preedit": "shurufa",

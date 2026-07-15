@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.frontend-suggest-request.v1",
+  "type": "object",
+  "required": ["schemaVersion", "frontend", "session", "privacy", "input"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.frontend-suggest-request.v1"},
+    "frontend": {"$ref": "#/$defs/frontend"},
+    "session": {"$ref": "#/$defs/session"},
+    "privacy": {"$ref": "#/$defs/privacy"},
+    "input": {"$ref": "#/$defs/input"},
+    "context": {"type": "object"},
+    "nativeCandidates": {"type": "array", "items": {"$ref": "#/$defs/nativeCandidate"}},
+    "nativeState": {"type": "object"},
+    "limits": {"type": "object"},
+    "flags": {"type": "object"}
+  },
+  "$defs": {
+    "frontend": {
+      "type": "object",
+      "required": ["id", "platform", "inputEngine"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "build": {"type": "string"},
+        "platform": {"type": "string", "minLength": 1},
+        "inputFramework": {"type": "string"},
+        "inputEngine": {"type": "string", "minLength": 1}
+      }
+    },
+    "session": {
+      "type": "object",
+      "required": ["id", "requestSeq", "inputGeneration"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "requestSeq": {"type": "integer", "minimum": 0},
+        "inputGeneration": {"type": "integer", "minimum": 0}
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["disposition"],
+      "properties": {
+        "disposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+        "reason": {"type": "string"},
+        "sensitiveField": {"type": "boolean"},
+        "secureInput": {"type": "boolean"}
+      }
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "raw": {"type": "string"},
+        "preedit": {"type": "string"},
+        "commitPreview": {"type": "string"},
+        "committedContext": {"type": "string"},
+        "idleMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "nativeCandidate": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "id": {"type": "string"},
+        "label": {"type": "string"},
+        "text": {"type": "string", "minLength": 1},
+        "annotation": {"type": "string"},
+        "rank": {"type": "integer", "minimum": 1},
+        "nativeIndex": {"type": "integer", "minimum": 0},
+        "metadata": {"type": "object"}
+      }
+    }
+  }
+}

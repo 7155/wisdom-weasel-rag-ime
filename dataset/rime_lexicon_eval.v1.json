@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "rag-ime.rime-lexicon-eval.v1",
+  "description": "Public-safe deployed librime regression cases; no personal user dictionary contents.",
+  "cases": [
+    {"id": "dropped-g-yon", "category": "fuzzy_typo", "input": "yon", "expectedTop1": "用", "equivalenceGroup": "yong"},
+    {"id": "canonical-yong", "category": "exact", "input": "yong", "expectedTop1": "用", "equivalenceGroup": "yong"},
+    {"id": "continuous-optimize", "category": "phrase", "input": "chixuyouhua", "expectedTop1": "持续优化"},
+    {"id": "input-method", "category": "phrase", "input": "shurufa", "expectedTop1": "输入法"},
+    {"id": "model", "category": "phrase", "input": "moxing", "expectedTop1": "模型"},
+    {"id": "sichuan-person", "category": "phrase", "input": "sichuanren", "expectedTop1": "四川人"},
+    {"id": "how-is-it", "category": "phrase", "input": "zenmeyang", "expectedTop1": "怎么样"},
+    {"id": "this-system", "category": "phrase", "input": "zhegexitong", "expectedTop1": "这个系统"},
+    {"id": "can-only", "category": "phrase", "input": "zhineng", "expectedTop1": "只能"},
+    {"id": "always-can", "category": "phrase", "input": "zongneng", "expectedTop1": "总能"}
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-control-bootstrap.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "apiVersion",
+    "configuration",
+    "runtime",
+    "capabilities",
+    "platform",
+    "routes"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-control-bootstrap.v1"},
+    "apiVersion": {"type": "string", "const": "control-api.v1"},
+    "configuration": {"type": "object"},
+    "runtime": {"type": "object"},
+    "capabilities": {
+      "type": "object",
+      "required": ["schemaVersion", "items"],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.control-capability-list.v1"},
+        "items": {"type": "array"}
+      }
+    },
+    "platform": {"type": "object"},
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "pathId",
+          "method",
+          "remoteSafe",
+          "subscription",
+          "params",
+          "query",
+          "target"
+        ],
+        "properties": {
+          "pathId": {"type": "string", "minLength": 1},
+          "method": {"type": "string", "enum": ["GET", "POST", "PATCH", "DELETE"]},
+          "remoteSafe": {"type": "boolean"},
+          "subscription": {"type": "boolean"},
+          "params": {"type": "array", "items": {"type": "string"}},
+          "query": {"type": "array", "items": {"type": "string"}},
+          "remoteScopes": {"type": "array", "items": {"type": "string"}},
+          "remoteQuery": {"type": "array", "items": {"type": "string"}},
+          "target": {
+            "type": "object",
+            "required": ["8766", "8768"],
+            "properties": {
+              "8766": {"type": "string", "minLength": 1},
+              "8768": {"type": ["string", "null"], "minLength": 1}
+            }
+          }
+        }
+      }
+    }
+  }
+}

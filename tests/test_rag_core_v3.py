@@ -56,7 +56,8 @@ class RagCoreV3Tests(unittest.TestCase):
         )
         texts = [item.text for item in candidates]
 
-        self.assertIn("RAG 输入法多路召回方案", texts)
+        self.assertIn("多路召回", texts)
+        self.assertNotIn("RAG 输入法多路召回方案", texts)
         self.assertNotIn("用户希望借鉴 VCP 的 BM25、向量、TagMemo 和 Time。", texts)
         self.assertTrue(all("用户希望借鉴" not in text for text in texts))
 
@@ -67,12 +68,29 @@ class RagCoreV3Tests(unittest.TestCase):
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text=text,
+                privacy_disposition="allowed",
                 recent_context=recent_context,
                 project="wisdom-weasel-rag-ime",
                 tags=tags,
             )
         )
-        return int(memory_id.split(":", 1)[1])
+        event_id = int(memory_id.split(":", 1)[1])
+        if 2 <= len(text) <= 18:
+            with self.core._connect() as conn:
+                apply_memory_book_plan(
+                    conn,
+                    memory_book_plan_from_compile_output(
+                        {
+                            "phraseCandidates": [
+                                {"text": text, "tags": list(tags), "sourceEventIds": [event_id], "weight": 0.8}
+                            ]
+                        },
+                        project="wisdom-weasel-rag-ime",
+                        provider="deepseek",
+                        model="deepseek-v4-flash",
+                    ),
+                )
+        return event_id
 
 
 def _book_compile_output(event_id: int) -> dict[str, object]:

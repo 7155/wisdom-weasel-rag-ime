@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python, schemas, and contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Product provenance verifies that its evidence commit is an
+          # ancestor of HEAD; a depth-1 checkout cannot answer that safely.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile Python
+        run: python -m compileall -q rag_ime scripts tests
+      - name: Check package boundaries
+        run: python scripts/check_import_boundaries.py
+      - name: Validate product status
+        run: python scripts/check_product_status.py --json
+      - name: Audit public MiniMind completion contract
+        run: python scripts/minimind_retraining.py audit
+      - name: Inspect public release blockers
+        run: python scripts/check_public_release.py --allow-blocked
+      - name: Run unit suite
+        env:
+          PYTHONWARNINGS: "error::ResourceWarning"
+        run: python -m unittest discover -s tests
+      - name: Check shell syntax
+        run: |
+          find scripts -type f -name '*.sh' -print0 \
+            | xargs -0 -n1 bash -n
+
+  macos:
+    name: Native control and Squirrel release
+    # The pinned Squirrel source uses typed throws, which requires the Swift 6
+    # compiler shipped with Xcode 16 rather than macOS 14's Xcode 15.4.
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Enable pinned pnpm for the Web control build
+        run: corepack enable && corepack prepare pnpm@11.9.0 --activate
+      - name: Run full macOS unit suite
+        env:
+          PYTHONWARNINGS: "error::ResourceWarning"
+        run: python -m unittest discover -s tests
+      - name: Build native control center
+        run: scripts/build_control_center.sh
+      - name: Build headless voice agent
+        run: scripts/build_voice_input.sh
+      - name: Prepare pinned Squirrel source
+        env:
+          RAG_IME_SQUIRREL_WORKDIR: ${{ runner.temp }}/rag-ime-squirrel
+        run: scripts/prepare_squirrel_workspace.sh
+      - name: Build patched Squirrel Release
+        env:
+          RAG_IME_SQUIRREL_WORKDIR: ${{ runner.temp }}/rag-ime-squirrel
+          RAG_IME_SQUIRREL_DERIVED_DATA: ${{ runner.temp }}/rag-ime-squirrel-derived-data
+          RAG_IME_SQUIRREL_PREINSTALL: auto
+          RAG_IME_SQUIRREL_SKIP_CODESIGN: "1"
+        run: scripts/build_patched_squirrel.sh build
+      - name: Verify native signatures
+        run: |
+          codesign --verify --deep --strict build/RagImeControl.app
+          codesign --verify --deep --strict build/RagImeVoice.app

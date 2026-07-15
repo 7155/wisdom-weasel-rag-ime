@@ -10,7 +10,7 @@ SELECTED_TEXT_BRIDGE_FIELDS = (
 
 REQUIRED_FOREGROUND_PROOF_EVENTS = (
     "selected_text_context_captured",
-    "panel_display_candidates",
+    "assistant_overlay_candidate_visible",
     "candidate_snapshot_selection_accepted",
 )
 

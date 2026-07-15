@@ -71,8 +71,20 @@ def benchmark_predictor_latency(
             )
             wall_ms = int((time.perf_counter() - started) * 1000)
             trace = _first_latency_trace(predictions)
-            first_candidate_ms = _int(trace.get("firstCandidateMs")) or _first_candidate_ms(predictions, wall_ms)
             total_ms = _int(trace.get("totalMs")) or wall_ms
+            candidate_mode = _first_candidate_mode(predictions)
+            if _is_non_streaming_full_phrase_branch(candidate_mode):
+                # The provider returns branch completions in one JSON response.
+                # Seed-logit timing is not a user-visible candidate milestone.
+                total_ms = max(total_ms, wall_ms)
+                first_candidate_ms = total_ms if predictions else 0
+                three_candidates_ms = total_ms if len(predictions) >= 3 else 0
+            else:
+                first_candidate_ms = _int(trace.get("firstCandidateMs")) or _first_candidate_ms(predictions, wall_ms)
+                three_candidates_ms = (
+                    _int(trace.get("threeCandidatesMs"))
+                    or (first_candidate_ms if len(predictions) >= 3 else total_ms)
+                )
             candidate_texts = [item.text for item in predictions]
             samples.append(
                 {
@@ -81,7 +93,7 @@ def benchmark_predictor_latency(
                     "requestType": request_type,
                     "candidateCount": len(candidate_texts),
                     "firstCandidateMs": first_candidate_ms,
-                    "threeCandidatesMs": first_candidate_ms if len(candidate_texts) >= 3 else total_ms,
+                    "threeCandidatesMs": three_candidates_ms,
                     "totalMs": total_ms,
                     "prefillMs": _float(trace.get("prefillMs")),
                     "decodeMs": _float(trace.get("decodeMs")),
@@ -138,6 +150,29 @@ def _first_candidate_ms(predictions: list[Any], fallback_ms: int) -> int:
             if parsed > 0:
                 return parsed
     return fallback_ms if predictions else 0
+
+
+def _first_candidate_mode(predictions: list[Any]) -> str:
+    for prediction in predictions:
+        metadata = getattr(prediction, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+        mode = metadata.get("candidate_mode") or metadata.get("candidateMode")
+        if mode:
+            return str(mode)
+        timing = metadata.get("server_timing") or metadata.get("serverTiming")
+        if isinstance(timing, dict) and timing.get("candidateMode"):
+            return str(timing["candidateMode"])
+    return ""
+
+
+def _is_non_streaming_full_phrase_branch(candidate_mode: str) -> bool:
+    return candidate_mode in {
+        "base-completion-branches",
+        "continuation-branches",
+        "seeded-prompt-replay",
+        "seeded-sequence-fork",
+    }
 
 
 def _summary(samples: list[dict[str, Any]]) -> dict[str, Any]:

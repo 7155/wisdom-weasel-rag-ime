@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REGISTRY_PATH = ROOT / "docs" / "feature-registry.md"
-PROJECT_STATUS_PATH = ROOT / "docs" / "project-status.md"
+REGISTRY_PATH = ROOT / "release" / "feature-registry.json"
 
 ALLOWED_V1_STATUS = {
     "foreground_verified",
@@ -33,13 +31,12 @@ REQUIRED_FIELDS = {
     "tests",
     "v1Status",
 }
-DEBUG_OR_OFFLINE_PROJECT_STATUS_ROWS = {
-    "Management console": "C",
-    "Active RAG preview / selected text assist": "C",
-    "`x1top` / x1api cleanup": "C",
-    "Rime export apply/rollback": "C",
-    "`macos/RagImeMac` preview": "C",
-    "MLX benchmark/model matrix": "C",
+NON_FOREGROUND_FEATURES = {
+    "active-rag-selected-text-bridge": "blocked_by_bug",
+    "dsv4-cleanup-to-curated-memory": "offline_tool",
+    "rime-export-bridge": "offline_tool",
+    "ime-first-demo-pack": "offline_tool",
+    "minimind-retraining-quality-gate": "offline_tool",
 }
 
 
@@ -74,35 +71,27 @@ class FeatureRegistryTests(unittest.TestCase):
             command = str(feature["acceptanceCommand"])
             events = " ".join(str(item) for item in feature["foregroundTraceEvents"])
             self.assertRegex(command, r"(verify_squirrel_foreground_trace|check_squirrel_soak_report)")
-            self.assertIn("panel_display_candidates", events)
+            self.assertRegex(events, r"(panel_display_candidates|assistant_overlay_candidate_visible)")
 
     def test_debug_preview_and_offline_tools_are_not_marked_product_complete(self) -> None:
-        project_status = PROJECT_STATUS_PATH.read_text(encoding="utf-8")
-        for label, expected_status in DEBUG_OR_OFFLINE_PROJECT_STATUS_ROWS.items():
-            pattern = rf"\| {re.escape(label)} \| {expected_status} \|"
-            self.assertRegex(project_status, pattern)
-            self.assertNotRegex(project_status, rf"\| {re.escape(label)} \| A \|")
-
-        for feature in _load_registry():
+        by_id = {feature["featureId"]: feature for feature in _load_registry()}
+        for feature_id, expected_status in NON_FOREGROUND_FEATURES.items():
+            self.assertEqual(by_id[feature_id]["v1Status"], expected_status)
+        for feature in by_id.values():
             if feature["v1Status"] in {"debug_preview", "offline_tool"}:
                 self.assertNotEqual(feature["v1Status"], "foreground_verified", feature["featureId"])
 
     def test_remote_or_preview_lanes_are_explicitly_bridged_not_realtime(self) -> None:
         by_id = {feature["featureId"]: feature for feature in _load_registry()}
-        self.assertEqual(by_id["x1top-cleanup-to-curated-memory"]["v1Status"], "offline_tool")
-        self.assertIn("curated", by_id["x1top-cleanup-to-curated-memory"]["dataSource"])
-        self.assertEqual(by_id["ragimemac-debug-harness"]["v1Status"], "debug_preview")
-        self.assertIn("patched Squirrel/Rime", by_id["ragimemac-debug-harness"]["realImeTrigger"])
+        self.assertEqual(by_id["dsv4-cleanup-to-curated-memory"]["v1Status"], "offline_tool")
+        self.assertIn("curated", by_id["dsv4-cleanup-to-curated-memory"]["dataSource"])
+        self.assertNotIn("ragimemac-debug-harness", by_id)
         self.assertIn("local MLX", by_id["mlx-provider-health"]["dataSource"])
         self.assertIn("remote/OpenAI-compatible providers are offline", by_id["mlx-provider-health"]["dataSource"])
 
 
 def _load_registry() -> list[dict[str, object]]:
-    text = REGISTRY_PATH.read_text(encoding="utf-8")
-    match = re.search(r"```json\s*(.*?)\s*```", text, flags=re.DOTALL)
-    if not match:
-        raise AssertionError("docs/feature-registry.md must contain a JSON code block")
-    payload = json.loads(match.group(1))
+    payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
         raise AssertionError("feature registry JSON must be a list")
     for item in payload:

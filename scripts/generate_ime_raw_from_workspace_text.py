@@ -191,7 +191,7 @@ def write_report(path: Path, rows: list[str], seed: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=Path("/Volumes/undo 4t/git/learnA"))
+    parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--count", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=20260720)
     parser.add_argument("--output", type=Path, default=Path("dataset/ime_raw_from_workspace_20k.jsonl"))

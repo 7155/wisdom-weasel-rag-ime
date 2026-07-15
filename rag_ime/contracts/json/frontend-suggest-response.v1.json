@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.frontend-suggest-response.v1",
+  "type": "object",
+  "required": ["schemaVersion", "gatewayVersion", "frontend", "session", "input", "candidates", "presentation", "selectionPolicy", "predictionSession", "privacy"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.frontend-suggest-response.v1"},
+    "gatewayVersion": {"type": "string", "const": "rag-ime.frontend-gateway.v1"},
+    "frontend": {"type": "object"},
+    "session": {"$ref": "#/$defs/session"},
+    "input": {"type": "object"},
+    "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "presentation": {"type": "object"},
+    "selectionPolicy": {"type": "object"},
+    "predictionSession": {"type": "object"},
+    "progressive": {"type": "object"},
+    "privacy": {"type": "object"},
+    "diagnostics": {"type": "object"}
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": ["id", "snapshotId", "snapshotGeneration", "inputGeneration", "text", "insertText", "origin", "rank", "selectionAction"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "snapshotId": {"type": "string", "minLength": 1},
+        "snapshotGeneration": {"type": "integer", "minimum": 0},
+        "inputGeneration": {"type": "integer", "minimum": 0},
+        "label": {"type": "string"},
+        "text": {"type": "string"},
+        "insertText": {"type": "string"},
+        "origin": {"type": "string", "enum": ["native", "model", "retrieval", "memory", "action", "status", "literal", "assistant"]},
+        "provider": {"type": "string"},
+        "rank": {"type": "integer", "minimum": 1},
+        "nativeIndex": {"type": ["integer", "null"]},
+        "selectionAction": {"type": "string"},
+        "metadata": {"type": "object"}
+      }
+    },
+    "session": {
+      "type": "object",
+      "required": ["id", "requestSeq", "inputGeneration"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "requestSeq": {"type": "integer", "minimum": 0},
+        "inputGeneration": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

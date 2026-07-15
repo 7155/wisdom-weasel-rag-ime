@@ -9,7 +9,7 @@ from rag_ime.active_rag_eval import run_active_rag_eval
 class ActiveRagEvalTests(unittest.TestCase):
     def test_active_rag_eval_gate_passes_with_seeded_cases(self) -> None:
         report = run_active_rag_eval(
-            cases_file=Path("docs/eval/active_rag_cases.jsonl"),
+            cases_file=Path("eval/active_rag_cases.jsonl"),
             project="wisdom-weasel-rag-ime",
             repeat=1,
             max_candidates=5,

@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from check_squirrel_frontend_trace import (
+    ASSISTANT_OVERLAY_COLOR_ALIASES,
     DEFAULT_LOG_PATH,
     SOURCE_BADGES,
     SOURCE_COLOR_TOKENS,
@@ -45,6 +46,8 @@ from rag_ime.contracts.trace import (
 
 
 DEFAULT_REPORT_PATH = Path("/tmp/rag-ime-squirrel-soak-report.json")
+OVERLAY_SURFACE_EVENTS = {"assistant_overlay_candidate_visible", "assistant_overlay_updated"}
+PREDICTION_SURFACE_EVENTS = {"panel_display_candidates", *OVERLAY_SURFACE_EVENTS}
 
 
 def main() -> int:
@@ -72,9 +75,24 @@ def main() -> int:
         help="Require proof that composition-time Rime candidates remained owned by Rime, not the post-commit predictor.",
     )
     parser.add_argument(
+        "--require-no-ai-during-composition",
+        action="store_true",
+        help="Require that composition panels contain no AI/model/RAG/memory/action candidates.",
+    )
+    parser.add_argument(
+        "--require-assistant-overlay-post-commit",
+        action="store_true",
+        help="Require post-commit AI output to be shown through assistant overlay trace events.",
+    )
+    parser.add_argument(
+        "--require-assistant-overlay-key-policy",
+        action="store_true",
+        help="Require overlay Tab/Option-number acceptance or accepted overlay candidate trace evidence.",
+    )
+    parser.add_argument(
         "--require-post-commit-visible",
         action="store_true",
-        help="Require at least one real non-status post-commit prediction panel in the foreground trace.",
+        help="Require at least one real non-status post-commit prediction surface in the foreground trace.",
     )
     parser.add_argument(
         "--require-source-badges",
@@ -84,7 +102,7 @@ def main() -> int:
     parser.add_argument(
         "--require-post-commit-key-policy",
         action="store_true",
-        help="Require evidence that post-commit panels route number keys to Rime and side picks through tab/option-number.",
+        help="Require evidence that post-commit surfaces pass number keys through and route prediction picks through Tab/Option-number.",
     )
     parser.add_argument(
         "--require-app-switch-stale-drop",
@@ -187,6 +205,9 @@ def main() -> int:
             require_modern_prediction_session=args.require_modern_prediction_session,
             require_balanced_quota=args.require_balanced_quota,
             require_rime_composition_ok=args.require_rime_composition_ok,
+            require_no_ai_during_composition=args.require_no_ai_during_composition,
+            require_assistant_overlay_post_commit=args.require_assistant_overlay_post_commit,
+            require_assistant_overlay_key_policy=args.require_assistant_overlay_key_policy,
             require_post_commit_visible=args.require_post_commit_visible,
             require_source_badges=args.require_source_badges,
             require_post_commit_key_policy=args.require_post_commit_key_policy,
@@ -238,6 +259,9 @@ def build_soak_report(
     require_modern_prediction_session: bool,
     require_balanced_quota: bool,
     require_rime_composition_ok: bool,
+    require_no_ai_during_composition: bool,
+    require_assistant_overlay_post_commit: bool,
+    require_assistant_overlay_key_policy: bool,
     require_post_commit_visible: bool,
     require_source_badges: bool,
     require_post_commit_key_policy: bool,
@@ -268,6 +292,9 @@ def build_soak_report(
     post_commit_followups = collect_post_commit_followups(events)
     chain = summarize_chaining(events)
     stale_applied = collect_stale_applied_responses(events)
+    composition_ai_violations = collect_composition_ai_candidate_violations(events)
+    assistant_overlay_post_commit_ok = has_assistant_overlay_post_commit(events)
+    assistant_overlay_key_policy_ok = has_assistant_overlay_key_policy(events)
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
     display_quality = summarize_display_quality(
@@ -280,6 +307,8 @@ def build_soak_report(
         events,
         paired_side_commit_count=len(side_commit_pairs),
     )
+    commit_burst = summarize_commit_burst(events)
+    assistant_surface = summarize_assistant_surface(events)
     v1_foreground = summarize_v1_foreground(
         events,
         frontend_report=frontend_report,
@@ -328,6 +357,9 @@ def build_soak_report(
         "maxFirstVisibleMs": max_first_visible_ms,
         "maxContextEchoCount": max_context_echo_count,
         "requireRimeCompositionOk": require_rime_composition_ok,
+        "requireNoAiDuringComposition": require_no_ai_during_composition,
+        "requireAssistantOverlayPostCommit": require_assistant_overlay_post_commit,
+        "requireAssistantOverlayKeyPolicy": require_assistant_overlay_key_policy,
         "requirePostCommitVisible": require_post_commit_visible,
         "requireSourceBadges": require_source_badges,
         "requirePostCommitKeyPolicy": require_post_commit_key_policy,
@@ -358,6 +390,9 @@ def build_soak_report(
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
         "minVisibleViolations": int(prediction_stability["minVisibleViolationCount"]) <= max_min_visible_violations,
         "ragEmptyClearedPanel": int(lane_stability["ragEmptyClearedPanelCount"]) <= max_rag_empty_cleared_panel,
+        "noAiDuringComposition": not require_no_ai_during_composition or not composition_ai_violations,
+        "assistantOverlayPostCommit": not require_assistant_overlay_post_commit or assistant_overlay_post_commit_ok,
+        "assistantOverlayKeyPolicy": not require_assistant_overlay_key_policy or assistant_overlay_key_policy_ok,
         "snapshotSelectionTrace": (
             not require_snapshot_selection_trace
             or int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) == 0
@@ -561,6 +596,15 @@ def build_soak_report(
         )
     v1_violation_checks = [
         (require_rime_composition_ok and not v1_foreground["rimeCompositionOk"], "rime_composition_not_proven"),
+        (require_no_ai_during_composition and composition_ai_violations, "ai_candidate_during_composition"),
+        (
+            require_assistant_overlay_post_commit and not assistant_overlay_post_commit_ok,
+            "assistant_overlay_post_commit_not_proven",
+        ),
+        (
+            require_assistant_overlay_key_policy and not assistant_overlay_key_policy_ok,
+            "assistant_overlay_key_policy_not_proven",
+        ),
         (require_post_commit_visible and not v1_foreground["postCommitVisible"], "post_commit_visible_not_proven"),
         (require_post_commit_key_policy and not v1_foreground["postCommitKeyPolicyOk"], "post_commit_key_policy_not_proven"),
         (require_app_switch_stale_drop and not v1_foreground["appSwitchStaleDropOk"], "app_switch_stale_drop_not_proven"),
@@ -625,6 +669,9 @@ def build_soak_report(
             "modernPredictionSession": require_modern_prediction_session,
             "balancedQuota": require_balanced_quota,
             "rimeCompositionOk": require_rime_composition_ok,
+            "noAiDuringComposition": require_no_ai_during_composition,
+            "assistantOverlayPostCommit": require_assistant_overlay_post_commit,
+            "assistantOverlayKeyPolicy": require_assistant_overlay_key_policy,
             "postCommitVisible": require_post_commit_visible,
             "sourceBadges": require_source_badges,
             "postCommitKeyPolicy": require_post_commit_key_policy,
@@ -649,11 +696,24 @@ def build_soak_report(
             "deleteResyncObserved": bool(frontend_report.get("latestDeleteResync")),
             "postDeleteContextUseObserved": bool(frontend_report.get("latestPostDeleteContextUse")),
             "postCommitBarrierViolationCount": len(post_commit_barrier_violations),
+            "compositionAiViolationCount": len(composition_ai_violations),
+            "assistantOverlayPostCommit": assistant_overlay_post_commit_ok,
+            "assistantOverlayKeyPolicy": assistant_overlay_key_policy_ok,
             "staleAppliedResponseCount": len(stale_applied),
             "staleResponseDropCount": int(event_counts.get("sidecar_response_dropped_stale", 0))
             + int(event_counts.get("sidecar_response_dropped", 0)),
             "staleSelectionRejectedCount": int(event_counts.get("stale_candidate_selection_rejected", 0)),
+            "commitBurstCommitCount": commit_burst["commitCount"],
+            "commitBurstCoalescedCount": commit_burst["coalescedCount"],
+            "predictorCallCount": commit_burst["predictorCallCount"],
+            "directMemoryHitCount": commit_burst["directMemoryHitCount"],
+            "remoteDeepSeekAutoCallCount": commit_burst["remoteDeepSeekAutoCallCount"],
+            "assistantPanelCreateCount": assistant_surface["panelCreateCount"],
+            "assistantPanelSameSnapshotNoopCount": assistant_surface["sameSnapshotNoopCount"],
+            "assistantPanelPassivePendingVisibleCount": assistant_surface["passivePendingVisibleCount"],
         },
+        "assistantSurface": assistant_surface,
+        "commitBurst": commit_burst,
         "predictionStability": prediction_stability,
         "laneStability": lane_stability,
         "displayQuality": display_quality,
@@ -670,6 +730,49 @@ def build_soak_report(
         "violations": violations,
         "frontendTrace": frontend_report,
         "passed": passed,
+    }
+
+
+def summarize_assistant_surface(events: list[dict[str, Any]]) -> dict[str, Any]:
+    state_events = [event for event in events if event.get("event") == "assistant_surface_state_changed"]
+    update_values = [
+        float(event.get("updateDurationMs") or 0)
+        for event in events
+        if event.get("event") == "assistant_panel_content_updated"
+    ]
+    position_values = [
+        float(event.get("positionDurationMs") or 0)
+        for event in events
+        if event.get("event") == "assistant_panel_positioned"
+    ]
+    visible_by_snapshot = Counter(
+        str(event.get("snapshotId") or "")
+        for event in events
+        if event.get("event") == "assistant_panel_first_visible"
+    )
+    return {
+        "panelCreateCount": sum(
+            int(event.get("createCount") or 1)
+            for event in events
+            if event.get("event") == "assistant_panel_created"
+        ),
+        "panelReuseCount": sum(1 for event in events if event.get("event") == "assistant_panel_reused"),
+        "sameSnapshotNoopCount": sum(
+            1
+            for event in events
+            if event.get("event") == "assistant_panel_reused"
+            and event.get("reason") == "same_snapshot_stable_ids"
+        ),
+        "passivePendingVisibleCount": sum(
+            1
+            for event in state_events
+            if event.get("surfaceState") in {"postCommitPending", "passivePending"}
+        ),
+        "maxVisibleTransitionsPerSnapshot": max(visible_by_snapshot.values(), default=0),
+        "stateChangeCount": len(state_events),
+        "updateDurationMs": summarize_numeric(update_values),
+        "positionDurationMs": summarize_numeric(position_values),
+        "uiApplyP95Within16Ms": percentile(update_values, 0.95) <= 16 if update_values else False,
     }
 
 
@@ -706,6 +809,30 @@ def load_input_source_selection_report(path_value: str) -> dict[str, Any] | None
     return payload
 
 
+def summarize_commit_burst(events: list[dict[str, Any]]) -> dict[str, Any]:
+    event_counts = Counter(str(event.get("event") or "") for event in events if isinstance(event, dict))
+    commit_count = int(event_counts.get("prediction_trigger_dirty", 0)) + int(
+        event_counts.get("prediction_trigger_coalesced", 0)
+    )
+    remote_calls = sum(
+        max(0, int(event.get("remoteDeepSeekAutoCallCount") or 0))
+        for event in events
+        if str(event.get("event") or "").startswith("prediction_trigger_")
+        or str(event.get("event") or "") == "prediction_provider_called"
+    )
+    return {
+        "commitCount": commit_count,
+        "coalescedCount": int(event_counts.get("prediction_trigger_coalesced", 0)),
+        "firedCount": int(event_counts.get("prediction_trigger_fired", 0)),
+        "skippedCount": int(event_counts.get("prediction_trigger_skipped", 0)),
+        "rateLimitedCount": int(event_counts.get("prediction_trigger_rate_limited", 0)),
+        "predictorCallCount": int(event_counts.get("prediction_provider_called", 0)),
+        "directMemoryHitCount": int(event_counts.get("prediction_trigger_direct_memory_hit", 0)),
+        "remoteDeepSeekAutoCallCount": remote_calls,
+        "remoteDeepSeekAutoDisabled": remote_calls == 0,
+    }
+
+
 def summarize_v1_foreground(
     events: list[dict[str, Any]],
     *,
@@ -716,7 +843,9 @@ def summarize_v1_foreground(
     post_commit_followup_count: int,
     stale_applied_count: int,
 ) -> dict[str, Any]:
-    first_visible_ms = first_post_commit_visible_latency_ms(events)
+    first_candidate_ms = first_post_commit_visible_latency_ms(events)
+    first_feedback_ms = first_post_commit_feedback_latency_ms(events)
+    first_visible_ms = first_feedback_ms if first_feedback_ms >= 0 else first_candidate_ms
     context_echoes = collect_context_echo_candidates(events)
     source_counts = summarize_visible_source_counts(events)
     source_badge_coverage = summarize_source_badge_coverage(events)
@@ -739,10 +868,12 @@ def summarize_v1_foreground(
         "appSwitchStaleDropOk": int(foreground_coverage.get("appSwitchCount") or 0) > 0
         and (stale_drop_count + stale_reject_count) > 0,
         "followupAfterSelectOk": post_commit_followup_count > 0
-        and int(selection_quality.get("snapshotSelectionAcceptedCount") or 0) > 0,
+        and int(selection_quality.get("snapshotSelectionAcceptedCount") or 0) > 0
+        and int(selection_quality.get("feedbackRecordedCount") or 0) > 0,
         "firstPostCommitVisibleMs": first_visible_ms,
         "firstVisibleMs": first_visible_ms,
-        "firstUsefulCandidateMs": first_visible_ms,
+        "firstFeedbackVisibleMs": first_feedback_ms,
+        "firstUsefulCandidateMs": first_candidate_ms,
         "modelCandidateCount": source_counts["modelCandidateCount"],
         "ragMemoryCandidateCount": source_counts["ragMemoryCandidateCount"],
         "rimeCandidateCount": source_counts["rimeCandidateCount"],
@@ -755,26 +886,79 @@ def summarize_v1_foreground(
         "pendingPanelClearCount": pending_panel_clear_count,
         "followupRestartCount": followup_restart_count,
         "selectionAcceptedCount": int(selection_quality.get("snapshotSelectionAcceptedCount") or 0),
+        "feedbackRecordedCount": int(selection_quality.get("feedbackRecordedCount") or 0),
         "deleteResyncObserved": bool(foreground_coverage.get("deleteResyncCount")),
         "appSwitchInvalidationObserved": bool(foreground_coverage.get("appSwitchCount")),
     }
 
 
 def has_post_commit_visible_panel(events: list[dict[str, Any]]) -> bool:
-    return any(event_is_visible_post_commit_panel(event) for event in events)
+    return any(event_is_visible_post_commit_surface(event) for event in events)
 
 
-def event_is_visible_post_commit_panel(event: dict[str, Any]) -> bool:
-    if event.get("event") != "panel_display_candidates":
+def has_assistant_overlay_post_commit(events: list[dict[str, Any]]) -> bool:
+    return any(
+        str(event.get("event") or "") in OVERLAY_SURFACE_EVENTS
+        and event_is_visible_post_commit_surface(event)
+        for event in events
+    )
+
+
+def has_assistant_overlay_key_policy(events: list[dict[str, Any]]) -> bool:
+    for event in events:
+        name = str(event.get("event") or "")
+        if name == "assistant_overlay_candidate_accepted":
+            return True
+        if name in {"tab_key_route", "option_number_route"} and bool(event.get("overlay")):
+            return True
+    return False
+
+
+def collect_composition_ai_candidate_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        if not panel_is_composition_event(event):
+            continue
+        for candidate in event_candidates(event):
+            if not isinstance(candidate, dict):
+                continue
+            source_type = str(candidate.get("sourceType") or "")
+            if source_type and source_type != SOURCE_RIME:
+                violations.append(
+                    {
+                        "event": event.get("event"),
+                        "sourceType": source_type,
+                        "text": candidate_display_text(candidate),
+                        "snapshotId": candidate.get("snapshotId"),
+                    }
+                )
+    return violations
+
+
+def event_is_visible_post_commit_surface(event: dict[str, Any]) -> bool:
+    if str(event.get("event") or "") not in PREDICTION_SURFACE_EVENTS:
         return False
-    if not panel_is_post_commit_event(event):
+    if not surface_is_post_commit_event(event):
         return False
     return any(candidate_is_real_side_candidate(candidate) for candidate in event_candidates(event))
 
 
+def event_is_visible_post_commit_panel(event: dict[str, Any]) -> bool:
+    return event_is_visible_post_commit_surface(event)
+
+
 def panel_is_post_commit_event(event: dict[str, Any]) -> bool:
+    return surface_is_post_commit_event(event)
+
+
+def surface_is_post_commit_event(event: dict[str, Any]) -> bool:
+    phase = str(event.get("phase") or "")
+    if phase in {"post_commit", "active_rag"}:
+        return True
     ui_mode = str(event.get("uiMode") or "")
-    if ui_mode in {"post_commit_prediction", "post_commit_pending"}:
+    if ui_mode.startswith(("post_commit", "active_rag")):
         return True
     session = event.get("predictionSession")
     if isinstance(session, dict):
@@ -784,11 +968,28 @@ def panel_is_post_commit_event(event: dict[str, Any]) -> bool:
     return False
 
 
+def panel_is_composition_event(event: dict[str, Any]) -> bool:
+    ui_mode = str(event.get("uiMode") or "")
+    if ui_mode == "composition_rime":
+        return True
+    prediction_session = event.get("predictionSession")
+    if isinstance(prediction_session, dict):
+        phase = str(prediction_session.get("phase") or "")
+        owned = bool(prediction_session.get("rimeCompositionOwnedByRime"))
+        return phase == "composition" or owned
+    return False
+
+
 def candidate_is_real_side_candidate(candidate: Any) -> bool:
     if not isinstance(candidate, dict) or is_status_candidate(candidate):
         return False
     text = candidate_display_text(candidate) or str(candidate.get("insertText") or "").strip()
-    return bool(text) and str(candidate.get("sourceType") or "") in REALTIME_SIDE_SOURCE_TYPES
+    has_surface = bool(text) or int(candidate.get("textChars") or 0) > 0 or bool(candidate.get("textHash"))
+    return (
+        has_surface
+        and str(candidate.get("sourceType") or "") in REALTIME_SIDE_SOURCE_TYPES
+        and str(candidate.get("selectionAction") or "") == "commit_side_candidate"
+    )
 
 
 def first_post_commit_visible_latency_ms(events: list[dict[str, Any]]) -> int:
@@ -802,11 +1003,49 @@ def first_post_commit_visible_latency_ms(events: list[dict[str, Any]]) -> int:
             "side_candidate_commit_observed",
             "post_commit_prediction_scheduled",
             "side_candidate_continuation_scheduled",
+            "prediction_trigger_fired",
         }:
             timestamp = event_timestamp_ms(event)
             if timestamp > 0 and (anchor_ms < 0 or name != "post_commit_prediction_scheduled"):
                 anchor_ms = timestamp
-        if not event_is_visible_post_commit_panel(event) or anchor_ms < 0:
+        if not event_is_visible_post_commit_surface(event) or anchor_ms < 0:
+            continue
+        latency = max(0, event_timestamp_ms(event) - anchor_ms)
+        best_ms = latency if best_ms is None else min(best_ms, latency)
+    return -1 if best_ms is None else best_ms
+
+
+def first_post_commit_feedback_latency_ms(events: list[dict[str, Any]]) -> int:
+    """Measure the first visible acknowledgement, not only the first final row.
+
+    The product deliberately renders a pending companion before model/RAG work
+    completes. Treating that state as invisible made a responsive UI look eight
+    seconds late whenever an explicit generation was triggered afterwards.
+    Candidate readiness remains a separate metric below.
+    """
+    anchor_ms = -1
+    best_ms: int | None = None
+    for event in events:
+        name = str(event.get("event") or "")
+        if name in {
+            "commit_observed",
+            "side_candidate_commit",
+            "side_candidate_commit_observed",
+            "post_commit_prediction_scheduled",
+            "side_candidate_continuation_scheduled",
+            "prediction_trigger_fired",
+        }:
+            timestamp = event_timestamp_ms(event)
+            if timestamp > 0 and (anchor_ms < 0 or name != "post_commit_prediction_scheduled"):
+                anchor_ms = timestamp
+        if anchor_ms < 0:
+            continue
+        pending_visible = (
+            name == "assistant_overlay_post_commit_pending"
+            and str(event.get("phase") or "") == "post_commit"
+            and bool(str(event.get("statusText") or "").strip())
+        )
+        if not pending_visible and not event_is_visible_post_commit_surface(event):
             continue
         latency = max(0, event_timestamp_ms(event) - anchor_ms)
         best_ms = latency if best_ms is None else min(best_ms, latency)
@@ -816,7 +1055,7 @@ def first_post_commit_visible_latency_ms(events: list[dict[str, Any]]) -> int:
 def collect_context_echo_candidates(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     echoes: list[dict[str, Any]] = []
     for event in events:
-        if not event_is_visible_post_commit_panel(event):
+        if not event_is_visible_post_commit_surface(event):
             continue
         contexts = event_context_strings(event)
         if not contexts:
@@ -838,9 +1077,7 @@ def collect_context_echo_candidates(events: list[dict[str, Any]]) -> list[dict[s
 
 def summarize_visible_source_counts(events: list[dict[str, Any]]) -> dict[str, int]:
     max_counts = {"modelCandidateCount": 0, "ragMemoryCandidateCount": 0, "rimeCandidateCount": 0}
-    for event in events:
-        if event.get("event") != "panel_display_candidates":
-            continue
+    for event in iter_prediction_surface_events(events, include_composition=True):
         counts = source_family_counts(event_candidates(event))
         max_counts["modelCandidateCount"] = max(max_counts["modelCandidateCount"], counts["model"])
         max_counts["ragMemoryCandidateCount"] = max(max_counts["ragMemoryCandidateCount"], counts["ragMemory"])
@@ -853,7 +1090,7 @@ def summarize_source_badge_coverage(events: list[dict[str, Any]]) -> dict[str, A
     valid = 0
     missing_by_source: dict[str, int] = {}
     seen_by_source: dict[str, int] = {}
-    for candidate in iter_panel_candidates(events):
+    for candidate in iter_visible_prediction_candidates(events, include_composition=True):
         source_type = str(candidate.get("sourceType") or "")
         if source_type not in VISIBLE_SOURCE_TYPES:
             continue
@@ -877,9 +1114,9 @@ def count_pending_panel_clears(events: list[dict[str, Any]]) -> int:
     previous_real_panel: dict[str, Any] | None = None
     clears = 0
     for event in events:
-        if event.get("event") != "panel_display_candidates":
+        if str(event.get("event") or "") not in PREDICTION_SURFACE_EVENTS:
             continue
-        if not panel_is_post_commit_event(event):
+        if not surface_is_post_commit_event(event):
             continue
         candidates = event_candidates(event)
         real_candidate_visible = any(candidate_is_real_side_candidate(candidate) for candidate in candidates)
@@ -984,7 +1221,17 @@ def summarize_required_trace_events(events: list[dict[str, Any]]) -> dict[str, d
             alias_names={"sidecar_request_scheduled"},
         ),
         "sidecar_response_received": trace_event_status(events, direct_names={"sidecar_response_received"}),
+        "foreground_context_capture_resolved": trace_event_status(
+            events,
+            direct_names={"foreground_context_capture_resolved"},
+        ),
         "panel_display_candidates": trace_event_status(events, direct_names={"panel_display_candidates"}),
+        "assistant_overlay_candidate_visible": trace_event_status(
+            events,
+            direct_names=set(),
+            alias_names={"assistant_overlay_candidate_visible", "assistant_overlay_updated"},
+            alias_predicate=lambda event: event_is_visible_post_commit_surface(event),
+        ),
         "post_commit_prediction_applied": trace_event_status(
             events,
             direct_names={"post_commit_prediction_applied"},
@@ -1016,10 +1263,18 @@ def summarize_required_trace_events(events: list[dict[str, Any]]) -> dict[str, d
             direct_names={"candidate_snapshot_selection_rejected_stale"},
             alias_names={"stale_candidate_selection_rejected"},
         ),
+        "assistant_overlay_candidate_accepted": trace_event_status(
+            events,
+            direct_names={"assistant_overlay_candidate_accepted"},
+        ),
         "side_candidate_commit_observed": trace_event_status(
             events,
             direct_names={"side_candidate_commit_observed"},
             alias_names={"side_candidate_commit"},
+        ),
+        "side_candidate_feedback_recorded": trace_event_status(
+            events,
+            direct_names={"side_candidate_feedback_recorded"},
         ),
         "delete_context_resynced": trace_event_status(
             events,
@@ -1092,7 +1347,7 @@ def summarize_display_quality(
     frontend_report: dict[str, Any],
     min_model_candidates_per_panel: int = 0,
 ) -> dict[str, Any]:
-    panel_candidates = list(iter_panel_candidates(events))
+    panel_candidates = list(iter_visible_prediction_candidates(events, include_composition=True))
     source_badge_missing = sum(1 for candidate in panel_candidates if source_visual_violation(candidate))
     long_candidate_violation = sum(1 for candidate in panel_candidates if long_candidate_violation_for(candidate))
     quota_violations = candidate_quota_violations(events)
@@ -1191,9 +1446,7 @@ def summarize_model_candidate_panel_coverage(
     multi_model_panel_count = 0
     max_model_count = 0
     samples: list[dict[str, Any]] = []
-    for event in events:
-        if event.get("event") != "panel_display_candidates":
-            continue
+    for event in iter_prediction_surface_events(events, include_composition=True):
         candidates = event.get("candidates")
         if not isinstance(candidates, list):
             continue
@@ -1225,9 +1478,47 @@ def summarize_model_candidate_panel_coverage(
 
 
 def iter_panel_candidates(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
+    return list(iter_visible_prediction_candidates(events, include_composition=True, panel_only=True))
+
+
+def iter_prediction_surface_events(
+    events: list[dict[str, Any]],
+    *,
+    include_composition: bool = False,
+) -> list[dict[str, Any]]:
+    surfaces: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
     for event in events:
-        if event.get("event") != "panel_display_candidates":
+        name = str(event.get("event") or "")
+        if name not in PREDICTION_SURFACE_EVENTS:
+            continue
+        if name == "panel_display_candidates":
+            if not include_composition and not surface_is_post_commit_event(event):
+                continue
+        elif not surface_is_post_commit_event(event):
+            continue
+        candidate_ids = tuple(
+            candidate_stable_identity(candidate)
+            for candidate in event_candidates(event)
+            if isinstance(candidate, dict)
+        )
+        key = (str(event.get("snapshotId") or panel_snapshot_id(event)), str(event.get("uiMode") or ""), candidate_ids)
+        if name in OVERLAY_SURFACE_EVENTS and key in seen:
+            continue
+        seen.add(key)
+        surfaces.append(event)
+    return surfaces
+
+
+def iter_visible_prediction_candidates(
+    events: list[dict[str, Any]],
+    *,
+    include_composition: bool = False,
+    panel_only: bool = False,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for event in iter_prediction_surface_events(events, include_composition=include_composition):
+        if panel_only and event.get("event") != "panel_display_candidates":
             continue
         panel_candidates = event.get("candidates")
         if not isinstance(panel_candidates, list):
@@ -1246,7 +1537,8 @@ def source_visual_violation(candidate: dict[str, Any]) -> bool:
         return False
     observed_badge = str(candidate.get("sourceBadge") or candidate.get("badge") or "")
     observed_color = str(candidate.get("colorToken") or "")
-    return observed_badge != expected_badge or observed_color != expected_color
+    accepted_colors = ASSISTANT_OVERLAY_COLOR_ALIASES.get(source_type, {expected_color})
+    return observed_badge != expected_badge or observed_color not in accepted_colors
 
 
 def long_candidate_violation_for(candidate: dict[str, Any]) -> bool:
@@ -1270,9 +1562,7 @@ def candidate_display_text(candidate: dict[str, Any]) -> str:
 def snapshot_ordinal_drift_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     violations: list[dict[str, Any]] = []
-    for event in events:
-        if event.get("event") != "panel_display_candidates":
-            continue
+    for event in iter_prediction_surface_events(events, include_composition=True):
         snapshot_id = panel_snapshot_id(event)
         if not snapshot_id:
             continue
@@ -1347,7 +1637,13 @@ def candidate_stable_identity(candidate: dict[str, Any]) -> str:
     explicit = str(candidate.get("candidateStableId") or candidate.get("stableId") or "")
     if explicit:
         return explicit
-    text = str(candidate.get("insertText") or candidate.get("text") or candidate.get("displayText") or "")
+    text = str(
+        candidate.get("insertText")
+        or candidate.get("text")
+        or candidate.get("displayText")
+        or candidate.get("textHash")
+        or ""
+    )
     return "|".join(
         [
             str(candidate.get("sourceType") or ""),
@@ -1364,15 +1660,27 @@ def post_commit_number_key_violations(events: list[dict[str, Any]]) -> list[dict
     active_post_commit_panel = False
     for event in events:
         name = str(event.get("event") or "")
-        if name == "panel_display_candidates":
+        if name in PREDICTION_SURFACE_EVENTS:
+            if not surface_is_post_commit_event(event):
+                continue
             session = event.get("predictionSession")
             session = session if isinstance(session, dict) else {}
             phase = str(session.get("phase") or "")
             selection_scope = str(session.get("selectionScope") or "")
-            active_post_commit_panel = phase == "post_commit" or selection_scope == "prediction"
+            active_post_commit_panel = (
+                phase == "post_commit"
+                or selection_scope == "prediction"
+                or str(event.get("phase") or "") in {"post_commit", "active_rag"}
+                or str(event.get("uiMode") or "").startswith(("post_commit", "active_rag"))
+            )
             active_post_commit_snapshot = panel_snapshot_id(event) if active_post_commit_panel else ""
             continue
-        if name in {"display_invalidated_by_input_change", "prediction_panel_hard_clear", "prediction_panel_soft_hide"}:
+        if name in {
+            "display_invalidated_by_input_change",
+            "prediction_panel_hard_clear",
+            "prediction_panel_soft_hide",
+            "assistant_overlay_dismissed",
+        }:
             active_post_commit_panel = False
             active_post_commit_snapshot = ""
             continue
@@ -1382,11 +1690,6 @@ def post_commit_number_key_violations(events: list[dict[str, Any]]) -> list[dict
         candidate_snapshot = str(candidate.get("snapshotId") or "") if isinstance(candidate, dict) else ""
         if active_post_commit_snapshot and candidate_snapshot and candidate_snapshot != active_post_commit_snapshot:
             continue
-        if isinstance(candidate, dict):
-            source_type = str(candidate.get("sourceType") or "")
-            selection_action = str(candidate.get("selectionAction") or "")
-            if selection_action == "commit_side_candidate" and source_type not in {"", "rime", "raw_english"}:
-                continue
         violations.append(
             {
                 "event": name,
@@ -1415,6 +1718,9 @@ def panel_snapshot_id(event: dict[str, Any]) -> str:
 
 
 def prediction_session_phase(event: dict[str, Any]) -> str:
+    direct_phase = str(event.get("phase") or "")
+    if direct_phase:
+        return direct_phase
     session = event.get("predictionSession")
     if isinstance(session, dict):
         phase = str(session.get("phase") or session.get("selectionScope") or "")
@@ -1466,17 +1772,24 @@ def summarize_selection_quality(events: list[dict[str, Any]], *, paired_side_com
     accepted = [
         event for event in prediction_events if event.get("event") == "candidate_snapshot_selection_accepted"
     ]
+    accepted.extend(event for event in events if event.get("event") == "assistant_overlay_candidate_accepted")
     rejected_stale = [
         event for event in prediction_events if event.get("event") == "candidate_snapshot_selection_rejected_stale"
     ]
     legacy_stale_rejected_count = sum(1 for event in events if event.get("event") == "stale_candidate_selection_rejected")
     accepted_count = len(dedupe_trace_events(accepted))
     rejected_stale_count = len(dedupe_trace_events(rejected_stale))
+    feedback_recorded_count = sum(
+        1
+        for event in events
+        if event.get("event") == "side_candidate_feedback_recorded" and event.get("ok") is not False
+    )
     return {
         "snapshotSelectionAcceptedCount": accepted_count,
         "snapshotSelectionRejectedStaleCount": rejected_stale_count,
         "legacyStaleSelectionRejectedCount": legacy_stale_rejected_count,
         "pairedSideCommitCount": paired_side_commit_count,
+        "feedbackRecordedCount": feedback_recorded_count,
         "sideCommitWithoutAcceptedSnapshotSelectionCount": max(0, paired_side_commit_count - accepted_count),
         "acceptedSnapshotSelectionWithoutSideCommitCount": max(0, accepted_count - paired_side_commit_count),
     }

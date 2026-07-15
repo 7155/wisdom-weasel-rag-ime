@@ -60,11 +60,61 @@ class InstallSquirrelRagConfigScriptTests(unittest.TestCase):
         self.assertIn('"style/color_scheme": "native"', config)
         self.assertEqual(config.count("# >>> RAG-IME managed block"), 1)
         self.assertIn('"rag_ime/sidecar_url": "http://127.0.0.1:9999/api"', config)
+        self.assertIn('"rag_ime/post_commit_idle_ms": 60', config)
         self.assertNotIn("http://127.0.0.1:8766/api", config)
+        self.assertNotIn("# >>> RAG-IME app options managed block", config)
+        self.assertIn('"app_options/com.rag-ime.control/ascii_mode": false', config)
+        self.assertIn('"app_options/com.rag-ime.control.web-preview/ascii_mode": false', config)
         self.assertEqual(default_config.count("# >>> RAG-IME default managed block"), 1)
         self.assertIn('"menu/page_size": 8', default_config)
         self.assertIn("- schema: luna_pinyin_simp", default_config)
         self.assertNotIn('"menu/page_size": 5', default_config)
+
+    def test_deploy_runs_build_and_reload_from_rime_user_directory(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-deploy-") as tmp:
+            tmp_path = Path(tmp)
+            rime_dir = tmp_path / "Rime"
+            snippet = tmp_path / "rag-ime.squirrel.custom.yaml"
+            app = tmp_path / "Squirrel.app"
+            executable = app / "Contents" / "MacOS" / "Squirrel"
+            invocation_log = tmp_path / "invocations.log"
+            executable.parent.mkdir(parents=True)
+            executable.write_text(
+                "#!/usr/bin/env bash\n"
+                'printf "%s|%s\\n" "$PWD" "$1" >> "$RAG_IME_TEST_INVOCATION_LOG"\n'
+                'if [[ "$1" == "--reload" ]]; then\n'
+                '  mkdir -p "$PWD/build"\n'
+                '  cp "$PWD/squirrel.custom.yaml" "$PWD/build/squirrel.yaml"\n'
+                '  cp "$PWD/default.custom.yaml" "$PWD/build/default.yaml"\n'
+                'fi\n',
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
+            _write_snippet(snippet, sidecar_url="http://127.0.0.1:8766/api")
+
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_squirrel_rag_config.sh")],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_RIME_USER_DIR": str(rime_dir),
+                    "RAG_IME_SQUIRREL_CONFIG_SNIPPET": str(snippet),
+                    "RAG_IME_SQUIRREL_APP": str(app),
+                    "RAG_IME_SQUIRREL_DEPLOY": "1",
+                    "RAG_IME_TEST_INVOCATION_LOG": str(invocation_log),
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            invocations = invocation_log.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(
+            invocations,
+            [f"{rime_dir}|--build", f"{rime_dir}|--reload"],
+        )
 
 
 def _write_snippet(path: Path, *, sidecar_url: str) -> None:
@@ -82,6 +132,7 @@ def _write_snippet(path: Path, *, sidecar_url: str) -> None:
                 "  max_side_candidates: 5",
                 "  latency_budget_ms: 300",
                 "  debounce_ms: 80",
+                "  post_commit_idle_ms: 60",
                 "  timeout_ms: 250",
             ]
         )

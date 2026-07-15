@@ -344,6 +344,13 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(event.schema_id, "codex_history")
         self.assertEqual(event.app, "codex")
         self.assertIn("codex_history:codex.jsonl:1", event.recent_context)
+        self.assertNotIn("curated", event.tags)
+        curated = input_event_from_codex_record(
+            record,
+            project="wisdom-weasel-rag-ime",
+            curated=True,
+        )
+        self.assertIn("curated", curated.tags)
 
     def test_directory_import_prefers_recent_sessions_and_skips_runtime_noise(self) -> None:
         history_dir = self.root / "history-dir"
@@ -701,6 +708,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(db_path),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(self.history),
                     "--dry-run",
@@ -747,6 +755,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(self.root / "user-default.sqlite"),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(mixed_history),
                     "--dry-run",
@@ -768,6 +777,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(self.root / "any-role.sqlite"),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(mixed_history),
                     "--dry-run",
@@ -792,6 +802,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(db_path),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(self.history),
                     "--project",
@@ -810,6 +821,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(db_path),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(self.history),
                     "--project",
@@ -872,6 +884,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(db_path),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(self.history),
                     "--project",
@@ -931,6 +944,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(db_path),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(self.history),
                     "--project",
@@ -942,7 +956,8 @@ class CodexHistoryTests(unittest.TestCase):
             "Squirrel 本地记忆",
             recent_context="结构化 RAG 候选用于 sidecar eval, raw Codex history 不直接作为输入法候选。",
             project="wisdom-weasel-rag-ime",
-            tags=("structure", "rag-ime"),
+            tags=("structure", "rag-ime", "curated"),
+            privacy_disposition="allowed",
         )
 
         cases_file = self.root / "rime-sidecar-cases.jsonl"
@@ -1849,6 +1864,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "--db-path",
                     str(db_path),
                     "import-codex-history",
+                    "--curated",
                     "--path",
                     str(self.history),
                     "--project",
@@ -1933,6 +1949,7 @@ class CodexHistoryTests(unittest.TestCase):
             input_event_from_codex_record(
                 load_codex_history_records(self.history, limit=2)[1],
                 project="wisdom-weasel-rag-ime",
+                curated=True,
             )
         )
         suggestions = core.suggest_for_input(current_input="FTS5", project="wisdom-weasel-rag-ime")

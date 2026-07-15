@@ -147,7 +147,12 @@ def load_codex_history_records(
     return records
 
 
-def input_event_from_codex_record(record: CodexHistoryRecord, *, project: str) -> InputEvent:
+def input_event_from_codex_record(
+    record: CodexHistoryRecord,
+    *,
+    project: str,
+    curated: bool = False,
+) -> InputEvent:
     source_label = f"{Path(record.source_path).name}:{record.line_number}"
     role = f" role:{record.role}" if record.role else ""
     return InputEvent(
@@ -155,13 +160,14 @@ def input_event_from_codex_record(record: CodexHistoryRecord, *, project: str) -
         created_at_ms=record.created_at_ms or now_ms(),
         source="codex_history",
         committed_text=record.text,
+        privacy_disposition="allowed",
         recent_context=compact_whitespace(f"codex_history:{source_label}{role}"),
         preedit="",
         schema_id="codex_history",
         app="codex",
         project=project,
         provider_name="codex-history-import",
-        tags=record.tags + (f"record:{record.record_id[:12]}",),
+        tags=record.tags + (f"record:{record.record_id[:12]}",) + (("curated",) if curated else ()),
     )
 
 

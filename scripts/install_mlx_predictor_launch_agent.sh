@@ -8,11 +8,13 @@ PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 APP_CODE_DIR="$APP_SUPPORT_DIR/app"
+MODEL_REGISTRY_EXPLICIT="${RAG_IME_MODEL_REGISTRY+x}"
+MODEL_REGISTRY_ORIGIN="${RAG_IME_MODEL_REGISTRY_ORIGIN:-$([[ -n "$MODEL_REGISTRY_EXPLICIT" ]] && printf explicit || printf default)}"
+MODEL_REGISTRY_PATH="${RAG_IME_MODEL_REGISTRY:-$APP_SUPPORT_DIR/models.json}"
+PORTABLE_MODEL_DIR="${RAG_IME_MODELS_DIR:-$APP_SUPPORT_DIR/Models}/minimind-ime-v2"
 LAUNCH_WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
 HOST="${RAG_IME_MLX_HOST:-127.0.0.1}"
 PORT="${RAG_IME_MLX_PORT:-8767}"
-MODEL="${RAG_IME_MLX_MODEL:-/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local}"
-PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-qwen3_06b_ime_hot}}"
 MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-8}"
 TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-0.15}"
 TOP_P="${RAG_IME_MLX_TOP_P:-0.85}"
@@ -25,6 +27,11 @@ PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-}"
 MEMORY_PROFILE="${RAG_IME_MEMORY_PROFILE:-low}"
 HF_HOME_VALUE="${RAG_IME_HF_HOME:-}"
 DRY_RUN="${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}"
+
+if [[ "$MODEL_REGISTRY_ORIGIN" == "explicit" && ! -f "$MODEL_REGISTRY_PATH" ]]; then
+  echo "Explicit model registry does not exist: $MODEL_REGISTRY_PATH" >&2
+  exit 1
+fi
 
 detect_python() {
   local candidate
@@ -54,6 +61,15 @@ PY
   return 1
 }
 
+detect_model_profile() {
+  local model_dir="$1"
+  case "$model_dir" in
+    *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "minimind_ime_v2" ;;
+    *Qwen3*|*qwen3*) printf '%s\n' "qwen3_06b_ime_hot" ;;
+    *) printf '%s\n' "qwen3_06b_ime_hot" ;;
+  esac
+}
+
 PYTHON_EXECUTABLE="${RAG_IME_MLX_PYTHON:-${RAG_IME_PYTHON:-$(detect_python || true)}}"
 
 if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
@@ -72,6 +88,47 @@ raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
   echo "python executable cannot import required stdlib modules (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
   echo "Set RAG_IME_MLX_PYTHON or RAG_IME_PYTHON to a healthy Python." >&2
+  exit 1
+fi
+
+REGISTERED_MODEL_PATH=""
+REGISTERED_MODEL_PROFILE=""
+REGISTERED_MODEL_PROMPT_MODE=""
+REGISTERED_MODEL_ID=""
+REGISTERED_MODEL_FINGERPRINT=""
+REGISTERED_MODEL_RUNTIME=""
+if [[ -f "$MODEL_REGISTRY_PATH" ]]; then
+  if ! REGISTERED_RUNTIME_ENV="$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_EXECUTABLE" -m rag_ime.model_runtime --registry "$MODEL_REGISTRY_PATH" --lane hot --format shell)"; then
+    echo "Active hot model registry entry is invalid or its artifact is missing: $MODEL_REGISTRY_PATH" >&2
+    exit 1
+  fi
+  eval "$REGISTERED_RUNTIME_ENV"
+  REGISTERED_MODEL_PATH="${RAG_IME_REGISTERED_MODEL_PATH:-}"
+  REGISTERED_MODEL_PROFILE="${RAG_IME_REGISTERED_MODEL_PROFILE:-}"
+  REGISTERED_MODEL_PROMPT_MODE="${RAG_IME_REGISTERED_MODEL_PROMPT_MODE:-}"
+  REGISTERED_MODEL_ID="${RAG_IME_REGISTERED_MODEL_ID:-}"
+  REGISTERED_MODEL_FINGERPRINT="${RAG_IME_REGISTERED_MODEL_FINGERPRINT:-}"
+  REGISTERED_MODEL_RUNTIME="${RAG_IME_REGISTERED_MODEL_RUNTIME:-}"
+  HOST="${RAG_IME_MLX_HOST:-$HOST}"
+  PORT="${RAG_IME_MLX_PORT:-$PORT}"
+fi
+
+if [[ -n "$REGISTERED_MODEL_RUNTIME" && "$REGISTERED_MODEL_RUNTIME" != "mlx" && -z "${RAG_IME_MLX_MODEL:-}" ]]; then
+  echo "Active hot model runtime is $REGISTERED_MODEL_RUNTIME, not mlx; refusing to launch the MLX service." >&2
+  exit 1
+fi
+
+MODEL="${RAG_IME_MLX_MODEL:-${REGISTERED_MODEL_PATH:-$PORTABLE_MODEL_DIR}}"
+INFERRED_PROFILE="$(detect_model_profile "$MODEL")"
+INFERRED_MODEL_ID="$(basename "${MODEL:-local-model}")"
+PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-${REGISTERED_MODEL_PROFILE:-$INFERRED_PROFILE}}}"
+PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-$REGISTERED_MODEL_PROMPT_MODE}"
+MODEL_ID="${RAG_IME_MODEL_ID:-${REGISTERED_MODEL_ID:-$INFERRED_MODEL_ID}}"
+MODEL_FINGERPRINT="${RAG_IME_MODEL_FINGERPRINT:-$REGISTERED_MODEL_FINGERPRINT}"
+
+if [[ ! -d "$MODEL" && "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
+  echo "MLX model directory not found: $MODEL" >&2
+  echo "Register a model with: python3 -m rag_ime.model_registry register --model-id ID --path PATH --profile minimind_ime_v2 --prompt-mode base-completion" >&2
   exit 1
 fi
 
@@ -104,6 +161,9 @@ LAUNCH_WRAPPER="$LAUNCH_WRAPPER" \
 HOST="$HOST" \
 PORT="$PORT" \
 MODEL="$MODEL" \
+MODEL_ID="$MODEL_ID" \
+MODEL_FINGERPRINT="$MODEL_FINGERPRINT" \
+MODEL_REGISTRY_PATH="$MODEL_REGISTRY_PATH" \
 PROFILE="$PROFILE" \
 MAX_TOKENS="$MAX_TOKENS" \
 TEMPERATURE="$TEMPERATURE" \
@@ -156,6 +216,9 @@ env_vars = {
     "RAG_IME_ROOT": app_code_dir,
     "RAG_IME_SOURCE_ROOT": root,
     "RAG_IME_MLX_MODEL": os.environ["MODEL"],
+    "RAG_IME_MODEL_ID": os.environ["MODEL_ID"],
+    "RAG_IME_MODEL_FINGERPRINT": os.environ["MODEL_FINGERPRINT"],
+    "RAG_IME_MODEL_REGISTRY": os.environ["MODEL_REGISTRY_PATH"],
     "RAG_IME_MLX_PROFILE": os.environ["PROFILE"],
     "RAG_IME_MLX_HOST": os.environ["HOST"],
     "RAG_IME_MLX_PORT": os.environ["PORT"],
@@ -276,20 +339,46 @@ sleep 0.2
 bootstrap_launch_agent
 
 echo "$PLIST_PATH"
-echo "http://$HOST:$PORT/"
+DISPLAY_HOST="$HOST"
+if [[ "$DISPLAY_HOST" == *:* && "$DISPLAY_HOST" != \[*\] ]]; then
+  DISPLAY_HOST="[$DISPLAY_HOST]"
+fi
+echo "http://$DISPLAY_HOST:$PORT/"
 echo "Logs: $LOG_DIR/mlx-predictor.out.log and $LOG_DIR/mlx-predictor.err.log"
 
 for _attempt in {1..120}; do
-  if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" >/dev/null 2>&1 <<'PY'
+  if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" "$MODEL" "$MODEL_FINGERPRINT" >/dev/null 2>&1 <<'PY'
 import json
 import sys
 import urllib.request
+from pathlib import Path
 
 host = sys.argv[1]
 port = sys.argv[2]
-with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=1.0) as response:
+expected_model = Path(sys.argv[3]).expanduser().resolve()
+expected_fingerprint = sys.argv[4].strip().lower()
+url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+with opener.open(f"http://{url_host}:{port}/health", timeout=1.0) as response:
     payload = json.loads(response.read().decode("utf-8"))
 if not payload.get("ok") or not payload.get("modelLoaded"):
+    raise SystemExit(1)
+runtime_model = Path(str(payload.get("model") or "")).expanduser().resolve()
+runtime_fingerprint = str(payload.get("modelFingerprint") or "").strip().lower()
+
+def matching_sha256(first: str, second: str) -> bool:
+    if not first.startswith("sha256:") or not second.startswith("sha256:"):
+        return False
+    first_digest = first.removeprefix("sha256:")
+    second_digest = second.removeprefix("sha256:")
+    if len(first_digest) not in {16, 64} or len(second_digest) not in {16, 64}:
+        return False
+    return first_digest == second_digest or first_digest.startswith(second_digest) or second_digest.startswith(first_digest)
+
+if runtime_model != expected_model and not matching_sha256(expected_fingerprint, runtime_fingerprint):
+    raise SystemExit(1)
+expected_digest = expected_fingerprint.removeprefix("sha256:") if expected_fingerprint.startswith("sha256:") else ""
+if len(expected_digest) == 64 and not matching_sha256(expected_fingerprint, runtime_fingerprint):
     raise SystemExit(1)
 PY
   then

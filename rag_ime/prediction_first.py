@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -100,7 +102,12 @@ class CandidatePool:
     model: tuple[PredictionCandidate, ...] = ()
     memory: tuple[PredictionCandidate, ...] = ()
 
-    def prediction_order(self, *, side_budget: int | None = None) -> tuple[PredictionCandidate, ...]:
+    def prediction_order(
+        self,
+        *,
+        side_budget: int | None = None,
+        post_commit: bool = False,
+    ) -> tuple[PredictionCandidate, ...]:
         groups = {
             "model": list(sorted(self.model, key=lambda item: item.score, reverse=True)),
             "rag": list(sorted(self.rag, key=lambda item: item.score, reverse=True)),
@@ -114,7 +121,11 @@ class CandidatePool:
         if side_budget is None:
             side_budget = model_count + suggestion_count
         budget = max(0, int(side_budget))
-        model_slot_cap = _prediction_max_model_slots(budget, has_suggestions=suggestion_count > 0)
+        model_slot_cap = _prediction_max_model_slots(
+            budget,
+            has_suggestions=suggestion_count > 0,
+            post_commit=post_commit,
+        )
         if budget <= 1:
             suggestion_reserve = 0 if model_count else min(suggestion_count, 1)
         elif budget == 2:
@@ -170,10 +181,15 @@ def _prediction_rag_block_reserve(side_budget: int) -> int:
     return 1
 
 
-def _prediction_max_model_slots(side_budget: int, *, has_suggestions: bool) -> int:
+def _prediction_max_model_slots(
+    side_budget: int,
+    *,
+    has_suggestions: bool,
+    post_commit: bool = False,
+) -> int:
     if side_budget <= 0:
         return 0
-    if has_suggestions:
+    if has_suggestions and not post_commit:
         return min(2, side_budget)
     return min(3, side_budget)
 
@@ -185,18 +201,25 @@ def _allow_semantic_side_candidates_for_prefix(prefix: str) -> bool:
     return len(normalized) >= 6
 
 
+def prefix_constrained_composing_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL", "0")).strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def infer_input_mode(snapshot: RimeContextSnapshot) -> InputMode:
     """Infer the prediction-first state from an adapter snapshot.
 
     This is intentionally conservative. Any active composition is still owned by
-    Rime/wanxiang; Prediction-first logic only changes candidate ordering.
+    Rime/wanxiang. Prefix-constrained AI remains an explicit experiment behind
+    RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL.
     """
 
     prefix = active_pinyin_prefix(snapshot)
     if _looks_like_raw_ascii_commit_input(prefix):
         return InputMode.RAW_INPUT
     has_context = bool(compact_whitespace(snapshot.committed_context))
-    if prefix and has_context:
+    if prefix and has_context and prefix_constrained_composing_enabled():
         return InputMode.PREFIX_CONSTRAINED_COMPOSING
     if prefix:
         return InputMode.ANCHOR_COMPOSING
@@ -313,9 +336,14 @@ def merge_prediction_first_candidates(
     rime_reserve = _rime_reserve_for_mode(snapshot, resolved_mode, max_visible)
     side_budget = min(snapshot.max_side_candidates, max(0, max_visible - rime_reserve))
     side_slot_limit = max(0, max_visible - rime_reserve)
-    max_model_side = _prediction_max_model_slots(side_budget, has_suggestions=bool(pool.rag or pool.memory))
+    post_commit = resolved_mode == InputMode.POST_COMMIT_PREDICTING
+    max_model_side = _prediction_max_model_slots(
+        side_budget,
+        has_suggestions=bool(pool.rag or pool.memory),
+        post_commit=post_commit,
+    )
     rag_reserve = _prediction_rag_block_reserve(side_budget)
-    prediction_candidates = pool.prediction_order(side_budget=side_budget)
+    prediction_candidates = pool.prediction_order(side_budget=side_budget, post_commit=post_commit)
     strict_prefix_constraint = (
         resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
         and not raw_inserted
@@ -623,9 +651,11 @@ def _candidate_from_suggestion(suggestion: InputSuggestion, index: int) -> Predi
 
 def _candidate_from_model(prediction: ModelPrediction, index: int) -> PredictionCandidate:
     metadata = dict(prediction.metadata)
+    insert_text = str(metadata.get("insert_text") or prediction.text)
+    display_text = compact_whitespace(prediction.text).lstrip(",，。！？；;、 ")
     return PredictionCandidate(
-        display_text=prediction.text,
-        insert_text=str(metadata.get("insert_text") or prediction.text),
+        display_text=display_text,
+        insert_text=insert_text,
         source_type="model",
         source_index=prediction.rank - 1 if prediction.rank > 0 else index,
         score=1.0 + prediction.confidence - (index * 0.001),

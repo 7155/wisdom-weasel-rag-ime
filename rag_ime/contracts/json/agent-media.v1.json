@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-media.v1",
+  "type": "object",
+  "required": ["schemaVersion", "mediaId", "sessionId", "mimeType", "byteSize", "sha256", "origin", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-media.v1"},
+    "mediaId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "fileName": {"type": "string", "maxLength": 160},
+    "mimeType": {"type": "string", "enum": ["image/png", "image/jpeg", "image/gif", "image/webp", "audio/mpeg", "audio/mp4", "audio/wav", "application/pdf", "text/plain"]},
+    "byteSize": {"type": "integer", "minimum": 0},
+    "sha256": {"type": "string", "minLength": 64},
+    "width": {"type": ["integer", "null"]},
+    "height": {"type": ["integer", "null"]},
+    "durationMs": {"type": ["integer", "null"]},
+    "thumbnailMediaId": {"type": ["string", "null"]},
+    "origin": {"type": "string", "enum": ["user_attachment", "tool_result", "managed_asset"]},
+    "originTool": {"type": "string"},
+    "originReceiptId": {"type": "string"},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

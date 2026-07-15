@@ -13,12 +13,13 @@ class SelectMacosInputSourceScriptTests(unittest.TestCase):
         self.assertIn("currentInputSourceID() != target", source)
         self.assertIn("but current source is already", source)
 
-    def test_select_script_defaults_to_native_rag_ime_input_source(self) -> None:
+    def test_select_script_defaults_to_product_squirrel_input_source(self) -> None:
         root = Path(__file__).resolve().parents[1]
         source = (root / "scripts" / "select_macos_input_source.sh").read_text(encoding="utf-8")
 
-        self.assertIn("RAG_IME_MACOS_INPUT_SOURCE_ID", source)
-        self.assertIn("dev.local.inputmethod.RagImeMac.Hans", source)
+        self.assertIn("RAG_IME_SQUIRREL_INPUT_SOURCE_ID", source)
+        self.assertIn("im.rime.inputmethod.Squirrel.Hans", source)
+        self.assertNotIn("dev.local.inputmethod.RagImeMac.Hans", source)
 
     def test_select_script_writes_machine_readable_report(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -30,6 +31,15 @@ class SelectMacosInputSourceScriptTests(unittest.TestCase):
         self.assertIn("thirdPartyEnabled", source)
         self.assertIn("manualRequired", source)
         self.assertIn("TISSelectInputSource=-50", source)
+
+    def test_select_script_falls_back_to_the_visible_input_menu(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "select_macos_input_source.sh").read_text(encoding="utf-8")
+
+        self.assertIn("select_via_input_menu", source)
+        self.assertIn("TextInputMenuAgent", source)
+        self.assertIn("鼠须管|Squirrel - Simplified|Squirrel", source)
+        self.assertIn('selection_phase="menu-fallback"', source)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,98 @@
+/* eslint-disable */
+/**
+ * This file is generated. Do not edit it by hand.
+ * Source: rag_ime/contracts/json/agent-tool-result.v1.json
+ */
+
+export interface AgentToolResultV1 {
+  schemaVersion: 'rag-ime.agent-tool-result.v1';
+  ok: boolean;
+  tool:
+    | 'ime_overview'
+    | 'ime_input'
+    | 'ime_voice'
+    | 'ime_planning'
+    | 'ime_memory'
+    | 'ime_knowledge'
+    | 'ime_models'
+    | 'ime_runtime'
+    | 'ime_configuration'
+    | 'ime_agents'
+    | 'ime_plugins'
+    | 'workspace_list'
+    | 'workspace_read'
+    | 'workspace_shell';
+  operation:
+    | 'status'
+    | 'capabilities'
+    | 'recent_activity'
+    | 'get_settings'
+    | 'preview_settings'
+    | 'apply_settings'
+    | 'rollback_settings'
+    | 'profile'
+    | 'candidate_explain'
+    | 'lexicon_review'
+    | 'lexicon_apply'
+    | 'lexicon_rollback'
+    | 'privacy_policy'
+    | 'provider_status'
+    | 'provider_preview'
+    | 'provider_apply'
+    | 'provider_rollback'
+    | 'dashboard'
+    | 'task_action'
+    | 'undo_task_event'
+    | 'catalog'
+    | 'read'
+    | 'recent'
+    | 'trace'
+    | 'maintenance_status'
+    | 'maintenance_preview'
+    | 'maintenance_review'
+    | 'maintenance_apply'
+    | 'maintenance_rollback'
+    | 'list'
+    | 'list_bases'
+    | 'search'
+    | 'find'
+    | 'open'
+    | 'recall'
+    | 'deep_recall'
+    | 'route_status'
+    | 'profiles'
+    | 'profile_preview'
+    | 'profile_apply'
+    | 'profile_rollback'
+    | 'probe'
+    | 'cache_stats'
+    | 'health'
+    | 'components'
+    | 'diagnose'
+    | 'pause_ai'
+    | 'resume_ai'
+    | 'restart_sidecar'
+    | 'restart_predictor'
+    | 'redeploy_rime'
+    | 'history'
+    | 'audit'
+    | 'export_preview'
+    | 'export'
+    | 'restore_preview'
+    | 'restore_apply'
+    | 'delegate'
+    | 'artifact'
+    | 'abort'
+    | 'room_send'
+    | 'room_ask'
+    | 'room_reply'
+    | 'room_mailbox'
+    | 'create_draft'
+    | 'validate'
+    | 'propose_install'
+    | 'run';
+  result: {
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}

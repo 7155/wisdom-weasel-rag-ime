@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.pi-runtime-manifest.v1",
+  "type": "object",
+  "required": ["schemaVersion", "runtimeVersion", "piVersion", "platform", "architecture", "launchKind", "piEntrypoint", "extensionEntrypoint", "tools", "createdAtMs", "source", "files"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.pi-runtime-manifest.v1"},
+    "runtimeVersion": {"type": "string", "minLength": 1},
+    "piVersion": {"type": "string", "minLength": 1},
+    "runtimeProtocolVersion": {"type": "string", "enum": ["1", "2"]},
+    "platform": {"type": "string", "minLength": 1},
+    "architecture": {"type": "string", "minLength": 1},
+    "launchKind": {"type": "string", "enum": ["node", "standalone"]},
+    "piEntrypoint": {"type": "string", "minLength": 1},
+    "nodeEntrypoint": {"type": "string"},
+    "extensionEntrypoint": {"type": "string", "minLength": 1},
+    "tools": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "source": {
+      "type": "object",
+      "required": ["repository", "commit", "package"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "commit": {"type": "string", "minLength": 1},
+        "package": {"type": "string", "minLength": 1}
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "byteSize", "executable"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "minLength": 64},
+          "byteSize": {"type": "integer", "minimum": 0},
+          "executable": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

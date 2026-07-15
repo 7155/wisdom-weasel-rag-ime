@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-message.v1",
+  "type": "object",
+  "required": ["schemaVersion", "id", "sessionId", "turnId", "role", "status", "blocks", "attachments", "citations", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-message.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "turnId": {"type": "string"},
+    "role": {"type": "string", "enum": ["user", "assistant", "tool", "system"]},
+    "status": {"type": "string", "enum": ["queued", "streaming", "completed", "failed", "aborted"]},
+    "blocks": {"type": "array", "items": {"$ref": "#/$defs/block"}},
+    "attachments": {"type": "array", "items": {"type": "string"}},
+    "citations": {"type": "array", "items": {"type": "string"}},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "completedAtMs": {"type": ["integer", "null"]}
+  },
+  "$defs": {
+    "block": {
+      "type": "object",
+      "required": ["id", "type", "status", "presentationKind", "data"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "enum": ["text", "code", "reasoning_summary", "progress", "tool_call", "tool_result", "citation", "image", "audio", "file", "sticker", "task_plan", "diff", "approval", "error", "unknown"]},
+        "status": {"type": "string", "enum": ["queued", "running", "completed", "failed", "aborted"]},
+        "presentationKind": {"type": "string", "minLength": 1},
+        "data": {"type": "object"}
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-room.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "title",
+    "status",
+    "routingPolicy",
+    "moderatorParticipantId",
+    "createdAtMs",
+    "updatedAtMs",
+    "lastEventSequence",
+    "participants"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-room.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1, "maxLength": 120},
+    "status": {"type": "string", "enum": ["active", "archived"]},
+    "routingPolicy": {"type": "string", "enum": ["manual_mentions", "moderator"]},
+    "moderatorParticipantId": {"type": "string"},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "lastEventSequence": {"type": "integer", "minimum": 0},
+    "participants": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {"type": "object"}
+    }
+  }
+}

@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from itertools import combinations
 
 from .embeddings import EmbeddingProvider
-from .text_utils import build_fts_document, compact_whitespace, now_ms, token_terms
+from .text_utils import build_fts_document, compact_whitespace, now_ms
 
 
 _TECH_TERMS = {
@@ -15,18 +14,15 @@ _TECH_TERMS = {
     "mlx",
     "squirrel",
     "rime",
-    "wanxiang",
-    "sequencefork",
-    "kv",
-    "reranker",
     "sqlite",
     "fts5",
     "embedding",
     "predictor",
     "sidecar",
     "memory",
-    "candidate",
 }
+_CURATED_IMPORT_SIGNALS = {"compiled-memory", "compiled-phrase", "curated", "phrase-memory", "stable-memory"}
+_RETRIEVAL_TAG_SOURCES = {"curated_import", "dsv4", "user"}
 _SENSITIVE_RE = re.compile(
     r"(password|token|api[_ -]?key|bearer|sk-[a-z0-9]{8,}|验证码|身份证|手机号|地址|secret)",
     re.IGNORECASE,
@@ -46,12 +42,14 @@ def sync_event_to_memory_v2(
     app: str,
     provider_name: str,
     tags: tuple[str, ...],
+    context_group_id: str = "",
+    context_group_level: str = "app",
     embedding_provider: EmbeddingProvider | None = None,
 ) -> dict[str, object]:
     text = compact_whitespace(committed_text)
     normalized = normalize_text(text)
     privacy_class = "sensitive" if looks_sensitive(text) else "local"
-    extracted_tags = extract_tags(
+    source_tags = extract_tags(
         text=text,
         recent_context=recent_context,
         project=project,
@@ -62,7 +60,10 @@ def sync_event_to_memory_v2(
         "direct_candidate_allowed": False,
         "provider_name": provider_name,
         "source": source,
-        "tag_count": len(extracted_tags),
+        "source_tags": list(source_tags),
+        "semantic_tags_pending": privacy_class != "sensitive",
+        "contextGroupId": compact_whitespace(context_group_id),
+        "contextGroupLevel": compact_whitespace(context_group_level) or "app",
     }
     raw_item_id = upsert_memory_item(
         conn,
@@ -76,46 +77,81 @@ def sync_event_to_memory_v2(
         app=app,
         confidence=0.45,
         quality_score=0.35,
-        status="hidden" if privacy_class == "sensitive" else "active",
+        # Raw input is evidence for the periodic organizer, not a retrieval
+        # document. DSV4 must clean it before anything enters semantic memory.
+        status="hidden",
         privacy_class=privacy_class,
         created_at_ms=created_at_ms,
         updated_at_ms=created_at_ms,
         metadata=raw_metadata,
-        tags=extracted_tags if privacy_class != "sensitive" else (),
-        embedding_provider=embedding_provider if privacy_class != "sensitive" else None,
+        tags=(),
+        embedding_provider=None,
     )
 
     phrase_item_id: int | None = None
+    curated_item_id: int | None = None
+    normalized_source_tags = {normalize_text(tag) for tag in tags}
+    curated_import = bool(normalized_source_tags & _CURATED_IMPORT_SIGNALS) and privacy_class != "sensitive"
+    phrase_import = bool(normalized_source_tags & {"compiled-phrase", "phrase-memory"})
+    stable_import = bool(normalized_source_tags & {"compiled-memory", "stable-memory"}) or (
+        "curated" in normalized_source_tags and not phrase_import
+    )
+    if curated_import:
+        curated_metadata = {
+            "direct_candidate_allowed": True,
+            "source": "explicit_curated_import",
+            "source_tags": list(source_tags),
+            "contextGroupId": compact_whitespace(context_group_id),
+            "contextGroupLevel": compact_whitespace(context_group_level) or "app",
+        }
+        if stable_import:
+            curated_item_id = upsert_memory_item(
+                conn,
+                memory_id=f"event:{event_id}",
+                kind="stable_memory",
+                text=text,
+                normalized_text=normalized,
+                summary=compact_whitespace(recent_context)[:240],
+                source_event_id=event_id,
+                project=project,
+                app=app,
+                confidence=0.75,
+                quality_score=0.75,
+                status="approved",
+                privacy_class="local",
+                created_at_ms=created_at_ms,
+                updated_at_ms=created_at_ms,
+                metadata=curated_metadata,
+                tags=source_tags,
+                embedding_provider=embedding_provider,
+                tag_source="curated_import",
+            )
+        if phrase_import and 2 <= len(text) <= 40:
+            phrase_item_id = upsert_memory_item(
+                conn,
+                memory_id=f"phrase:{normalized}",
+                kind="phrase",
+                text=text,
+                normalized_text=normalized,
+                summary="explicit curated phrase import",
+                source_event_id=event_id,
+                project=project,
+                app=app,
+                confidence=0.8,
+                quality_score=0.8,
+                status="active",
+                privacy_class="local",
+                created_at_ms=created_at_ms,
+                updated_at_ms=created_at_ms,
+                metadata=curated_metadata,
+                tags=source_tags,
+                embedding_provider=embedding_provider,
+                tag_source="curated_import",
+            )
     kind = classify_text_kind(text)
-    if privacy_class != "sensitive" and kind == "phrase":
-        quality_score = 0.65 if "phrase-memory" in {tag.lower() for tag in extracted_tags} else 0.56
-        phrase_item_id = upsert_memory_item(
-            conn,
-            memory_id=f"phrase:{normalized}",
-            kind="phrase",
-            text=text,
-            normalized_text=normalized,
-            summary=compact_whitespace(recent_context)[:240],
-            source_event_id=event_id,
-            project=project,
-            app=app,
-            confidence=0.7,
-            quality_score=quality_score,
-            status="active",
-            privacy_class="local",
-            created_at_ms=created_at_ms,
-            updated_at_ms=created_at_ms,
-            metadata={
-                "direct_candidate_allowed": True,
-                "provider_name": provider_name,
-                "source": source,
-                "raw_memory_id": f"raw:event:{event_id}",
-            },
-            tags=extracted_tags,
-            embedding_provider=embedding_provider,
-        )
     return {
         "rawItemId": raw_item_id,
+        "curatedItemId": curated_item_id,
         "phraseItemId": phrase_item_id,
         "privacyClass": privacy_class,
         "kind": kind,
@@ -164,11 +200,9 @@ def extract_tags(
         add(project)
     if app:
         add(app.split(".")[-1])
-    for term in token_terms(f"{text} {recent_context}", max_terms=64):
-        if term.lower() in _TECH_TERMS:
-            add(term)
-        elif 2 <= len(term) <= 12 and not term.isdigit():
-            add(term)
+    # These are source metadata only. Semantic tags are exclusively produced
+    # by the offline organizer, otherwise Chinese n-grams pollute both the
+    # notebook and retrieval lanes.
     return tuple(found[:24])
 
 
@@ -192,6 +226,7 @@ def upsert_memory_item(
     metadata: dict[str, object],
     tags: tuple[str, ...],
     embedding_provider: EmbeddingProvider | None,
+    tag_source: str = "legacy_auto",
 ) -> int:
     existing = conn.execute("SELECT id, created_at_ms FROM memory_items WHERE memory_id = ?", (memory_id,)).fetchone()
     if existing is None:
@@ -250,10 +285,28 @@ def upsert_memory_item(
                 memory_item_id,
             ),
         )
-    _refresh_item_fts(conn, memory_item_id=memory_item_id, text=text, normalized_text=normalized_text, summary=summary, project=project, app=app, tags=tags)
-    _refresh_item_tags(conn, memory_item_id=memory_item_id, tags=tags)
-    if embedding_provider is not None and getattr(embedding_provider, "fingerprint", "none") != "none":
-        document = build_fts_document(text, summary, project, app, " ".join(tags))
+    retrieval_eligible = status in {"active", "approved"} and privacy_class != "sensitive"
+    retrieval_tags = tags if tag_source in _RETRIEVAL_TAG_SOURCES else ()
+    if retrieval_eligible:
+        _refresh_item_fts(
+            conn,
+            memory_item_id=memory_item_id,
+            text=text,
+            normalized_text=normalized_text,
+            summary=summary,
+            project=project,
+            app=app,
+            tags=retrieval_tags,
+        )
+    else:
+        # The raw ledger is consumed by the periodic organizer only. Keeping
+        # hidden source text out of both indexes makes it impossible for BM25
+        # or vector retrieval to bypass the DSV4 cleaning/governance step.
+        conn.execute("DELETE FROM memory_items_fts WHERE rowid = ?", (memory_item_id,))
+        conn.execute("DELETE FROM memory_item_vectors WHERE memory_item_id = ?", (memory_item_id,))
+    _refresh_item_tags(conn, memory_item_id=memory_item_id, tags=tags, source=tag_source)
+    if retrieval_eligible and embedding_provider is not None and getattr(embedding_provider, "fingerprint", "none") != "none":
+        document = build_fts_document(text, summary, project, app, " ".join(retrieval_tags))
         vector = embedding_provider.embed(document)
         if vector:
             conn.execute(
@@ -290,24 +343,50 @@ def _refresh_item_fts(
     )
 
 
-def _refresh_item_tags(conn: sqlite3.Connection, *, memory_item_id: int, tags: tuple[str, ...]) -> None:
+def _refresh_item_tags(
+    conn: sqlite3.Connection,
+    *,
+    memory_item_id: int,
+    tags: tuple[str, ...],
+    source: str,
+) -> None:
     conn.execute("DELETE FROM memory_item_tags WHERE memory_item_id = ?", (memory_item_id,))
-    tag_rows: list[tuple[int, int]] = []
     for position, tag in enumerate(tags):
         normalized = normalize_text(tag)
         row = conn.execute("SELECT id FROM memory_tags WHERE tag = ?", (tag,)).fetchone()
         if row is None:
             cur = conn.execute(
                 """
-                INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO memory_tags(
+                    tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms,
+                    description, source, status, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, '{}')
                 """,
-                (tag, normalized, infer_tag_type(tag), 0.55, now_ms(), now_ms()),
+                (
+                    tag,
+                    normalized,
+                    infer_tag_type(tag),
+                    0.55,
+                    now_ms(),
+                    now_ms(),
+                    source,
+                    "active" if source in _RETRIEVAL_TAG_SOURCES else "hidden",
+                ),
             )
             tag_id = int(cur.lastrowid)
         else:
             tag_id = int(row["id"])
-            conn.execute("UPDATE memory_tags SET updated_at_ms = ? WHERE id = ?", (now_ms(), tag_id))
+            conn.execute(
+                """
+                UPDATE memory_tags
+                SET updated_at_ms = ?,
+                    source = CASE WHEN ? IN ('curated_import', 'dsv4', 'user') THEN ? ELSE source END,
+                    status = CASE WHEN ? IN ('curated_import', 'dsv4', 'user') THEN 'active' ELSE status END
+                WHERE id = ?
+                """,
+                (now_ms(), source, source, source, tag_id),
+            )
         conn.execute(
             """
             INSERT INTO memory_item_tags(memory_item_id, tag_id, weight, position, evidence)
@@ -315,10 +394,6 @@ def _refresh_item_tags(conn: sqlite3.Connection, *, memory_item_id: int, tags: t
             """,
             (memory_item_id, tag_id, max(0.3, 1.0 - position * 0.05), position, tag),
         )
-        tag_rows.append((position, tag_id))
-    for (_, src_tag_id), (_, dst_tag_id) in combinations(tag_rows, 2):
-        _upsert_tag_edge(conn, src_tag_id=src_tag_id, dst_tag_id=dst_tag_id)
-        _upsert_tag_edge(conn, src_tag_id=dst_tag_id, dst_tag_id=src_tag_id)
 
 
 def infer_tag_type(tag: str) -> str:
@@ -328,17 +403,3 @@ def infer_tag_type(tag: str) -> str:
     if "." in tag:
         return "app"
     return "concept"
-
-
-def _upsert_tag_edge(conn: sqlite3.Connection, *, src_tag_id: int, dst_tag_id: int) -> None:
-    conn.execute(
-        """
-        INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, updated_at_ms, metadata_json)
-        VALUES (?, ?, 'cooccur', 1.0, 0.0, 1, ?, '{}')
-        ON CONFLICT(src_tag_id, dst_tag_id, edge_type) DO UPDATE SET
-            weight = memory_tag_edges.weight + 0.2,
-            evidence_count = memory_tag_edges.evidence_count + 1,
-            updated_at_ms = excluded.updated_at_ms
-        """,
-        (src_tag_id, dst_tag_id, now_ms()),
-    )

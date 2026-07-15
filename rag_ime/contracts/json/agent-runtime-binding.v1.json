@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-runtime-binding.v1",
+  "type": "object",
+  "required": ["schemaVersion", "driverId", "runtimeKind", "generation", "state", "createdAtMs", "updatedAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-runtime-binding.v1"},
+    "sessionId": {"type": "string", "minLength": 1},
+    "driverId": {"type": "string", "minLength": 1},
+    "runtimeKind": {"type": "string", "minLength": 1},
+    "externalSessionId": {"type": "string", "minLength": 1},
+    "transcriptRef": {"type": "string"},
+    "branchAnchor": {"type": "string"},
+    "generation": {"type": "integer", "minimum": 1},
+    "state": {"type": "string", "enum": ["prepared", "active", "stale"]},
+    "metadata": {"type": "object"},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0}
+  }
+}

@@ -49,6 +49,113 @@ class HybridRagRankerTests(unittest.TestCase):
         self.assertIn("bm25_raw", candidates[0].debug_features)
         self.assertIn("tagmemo", candidates[0].debug_features)
 
+    def test_runtime_lane_weights_change_real_candidate_order(self) -> None:
+        raw = HybridRagHit(
+            doc_id="doc:raw",
+            doc_type="phrase",
+            source_id="phrase:原文优先",
+            text="原文优先",
+            surface_hints=("原文优先",),
+            tags=(),
+            source_lane="bm25_raw",
+            rank=1,
+            raw_score=1.0,
+        )
+        tag = HybridRagHit(
+            doc_id="doc:tag",
+            doc_type="phrase",
+            source_id="phrase:标签优先",
+            text="标签优先",
+            surface_hints=("标签优先",),
+            tags=("RAG",),
+            source_lane="tagmemo",
+            rank=1,
+            raw_score=1.0,
+        )
+
+        default_order = rank_hybrid_hits([raw, tag], top_k=2)
+        configured_order = rank_hybrid_hits(
+            [raw, tag],
+            top_k=2,
+            lane_weights={"bm25_raw": 5.0, "tagmemo": 0.1},
+        )
+
+        self.assertEqual(default_order[0].text, "标签优先")
+        self.assertEqual(configured_order[0].text, "原文优先")
+        self.assertGreater(
+            configured_order[0].debug_features["bm25_raw"],
+            configured_order[1].debug_features["tagmemo"],
+        )
+
+    def test_type_specific_decay_favors_stable_preference_over_old_temporary_fact(self) -> None:
+        current_ms = 2_000_000_000_000
+        sixty_days_ago = current_ms - 60 * 86_400_000
+        temporary = HybridRagHit(
+            doc_id="doc:temporary",
+            doc_type="atom",
+            source_id="atom:temporary",
+            text="临时任务",
+            surface_hints=("临时任务",),
+            tags=(),
+            source_lane="bm25_raw",
+            rank=1,
+            raw_score=1.0,
+            metadata={"kind": "temporary_task", "sourceUpdatedAtMs": sixty_days_ago},
+        )
+        stable = HybridRagHit(
+            doc_id="doc:stable",
+            doc_type="atom",
+            source_id="atom:stable",
+            text="稳定偏好",
+            surface_hints=("稳定偏好",),
+            tags=(),
+            source_lane="bm25_raw",
+            rank=1,
+            raw_score=1.0,
+            metadata={"kind": "stable_preference", "sourceUpdatedAtMs": sixty_days_ago},
+        )
+
+        candidates = rank_hybrid_hits(
+            [temporary, stable],
+            current_ms=current_ms,
+            top_k=2,
+            decay_settings={"temporaryHalfLifeDays": 14, "stablePreferenceHalfLifeDays": 365},
+        )
+
+        self.assertEqual(candidates[0].text, "稳定偏好")
+        by_text = {item.text: item for item in candidates}
+        self.assertLess(by_text["临时任务"].metadata["timeDecayFactor"], by_text["稳定偏好"].metadata["timeDecayFactor"])
+
+    def test_explicit_historical_query_bypasses_age_and_archive_decay(self) -> None:
+        current_ms = 2_000_000_000_000
+        old_archived = HybridRagHit(
+            doc_id="doc:archived",
+            doc_type="book",
+            source_id="book:archived",
+            text="旧项目归档",
+            surface_hints=("旧项目方向",),
+            tags=(),
+            source_lane="time",
+            rank=1,
+            raw_score=1.0,
+            metadata={
+                "bookType": "topic",
+                "sourceUpdatedAtMs": current_ms - 500 * 86_400_000,
+                "archived": True,
+            },
+        )
+
+        ordinary = rank_hybrid_hits([old_archived], current_ms=current_ms, query_text="项目方向")
+        historical = rank_hybrid_hits([old_archived], current_ms=current_ms, query_text="去年项目方向")
+        initial_requirement = rank_hybrid_hits(
+            [old_archived], current_ms=current_ms, query_text="最初需求是什么"
+        )
+
+        self.assertLess(ordinary[0].metadata["timeDecayFactor"], 0.1)
+        self.assertEqual(historical[0].metadata["timeDecayFactor"], 1.0)
+        self.assertEqual(initial_requirement[0].metadata["timeDecayFactor"], 1.0)
+        self.assertGreater(historical[0].score, ordinary[0].score)
+
 
 if __name__ == "__main__":
     unittest.main()

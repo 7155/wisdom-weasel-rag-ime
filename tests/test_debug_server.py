@@ -105,7 +105,7 @@ class BlockingPredictionProvider:
         ][:max_candidates]
 
 
-class FakeX1ApiMemoryGenerator:
+class FakeDeepSeekV4MemoryGenerator:
     calls: list[dict[str, object]] = []
 
     @classmethod
@@ -122,8 +122,8 @@ class FakeX1ApiMemoryGenerator:
             }
         )
         return GeneratedMemoryReport(
-            provider="x1api",
-            model="fake-gpt",
+            provider="deepseek-v4",
+            model="deepseek-v4-flash",
             elapsed_ms=12,
             items=(
                 GeneratedMemoryItem(
@@ -205,10 +205,20 @@ class PrefixFixtureCore(FixtureCoreClient):
 
 
 class DebugImeServiceTests(unittest.TestCase):
+    def test_expected_client_disconnect_does_not_dump_server_traceback(self) -> None:
+        server = object.__new__(debug_server_module.QuietThreadingHTTPServer)
+        with patch.object(ThreadingHTTPServer, "handle_error") as parent_handler:
+            try:
+                raise ConnectionResetError("client cancelled stale request")
+            except ConnectionResetError:
+                server.handle_error(object(), ("127.0.0.1", 12345))
+        parent_handler.assert_not_called()
+
     def setUp(self) -> None:
         self._optimizer_env = {
             "RAG_IME_MEMORY_OPTIMIZER": os.environ.get("RAG_IME_MEMORY_OPTIMIZER"),
             "RAG_IME_MEMORY_OPTIMIZER_TRACE": os.environ.get("RAG_IME_MEMORY_OPTIMIZER_TRACE"),
+            "RAG_IME_AI_AFTER_COMMIT_ONLY": os.environ.get("RAG_IME_AI_AFTER_COMMIT_ONLY"),
             "RAG_IME_ENABLE_COMPOSING_MODEL": os.environ.get("RAG_IME_ENABLE_COMPOSING_MODEL"),
             "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": os.environ.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"),
             "RAG_IME_PINYIN_FUZZY_ENABLED": os.environ.get("RAG_IME_PINYIN_FUZZY_ENABLED"),
@@ -216,6 +226,7 @@ class DebugImeServiceTests(unittest.TestCase):
             "RAG_IME_PINYIN_FUZZY_S_SH": os.environ.get("RAG_IME_PINYIN_FUZZY_S_SH"),
             "RAG_IME_PINYIN_FUZZY_N_L": os.environ.get("RAG_IME_PINYIN_FUZZY_N_L"),
         }
+        os.environ["RAG_IME_AI_AFTER_COMMIT_ONLY"] = "0"
         os.environ["RAG_IME_ENABLE_COMPOSING_MODEL"] = "1"
         os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-debug-test-")
@@ -250,10 +261,35 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
 
+    def test_default_local_core_uses_configured_embedding_provider(self) -> None:
+        db_path = Path(self.tmp.name) / "configured-embedding.sqlite"
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
+                "RAG_IME_EMBEDDING_BASE_URL": "http://embedding.test:8000",
+                "RAG_IME_EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
+                "RAG_IME_EMBEDDING_DIMENSIONS": "1024",
+            },
+            clear=False,
+        ):
+            service = DebugImeService(DebugServerConfig(db_path=db_path, seed_if_empty=False))
+        try:
+            self.assertIsInstance(service.core, LocalSqliteCoreClient)
+            assert isinstance(service.core, LocalSqliteCoreClient)
+            self.assertIn("Qwen/Qwen3-Embedding-0.6B", service.core.embedding_provider.fingerprint)
+        finally:
+            service.management.close()
+
     def test_startup_can_backfill_vector_index_when_provider_enabled(self) -> None:
         db_path = Path(self.tmp.name) / "startup-vector.sqlite"
         plain_core = LocalSqliteCoreClient(db_path)
-        InputMethodAdapter(plain_core).commit_text("赤色星球探索计划", recent_context="航天项目背景")
+        InputMethodAdapter(plain_core).commit_text(
+            "赤色星球探索计划",
+            recent_context="航天项目背景",
+            tags=("curated",),
+            privacy_disposition="allowed",
+        )
 
         vector_core = LocalSqliteCoreClient(db_path, embedding_provider=MarsEmbeddingProvider(), vector_weight=2.0)
         service = DebugImeService(
@@ -275,7 +311,12 @@ class DebugImeServiceTests(unittest.TestCase):
     def test_rebuild_vector_index_endpoint_backfills_existing_events(self) -> None:
         db_path = Path(self.tmp.name) / "manual-vector.sqlite"
         plain_core = LocalSqliteCoreClient(db_path)
-        InputMethodAdapter(plain_core).commit_text("赤色星球探索计划", recent_context="航天项目背景")
+        InputMethodAdapter(plain_core).commit_text(
+            "赤色星球探索计划",
+            recent_context="航天项目背景",
+            tags=("curated",),
+            privacy_disposition="allowed",
+        )
 
         vector_core = LocalSqliteCoreClient(db_path, embedding_provider=MarsEmbeddingProvider(), vector_weight=2.0)
         service = DebugImeService(
@@ -298,8 +339,9 @@ class DebugImeServiceTests(unittest.TestCase):
             "API 整理后的输入历史记忆",
             recent_context="历史治理",
             source="api_memory_generator",
-            provider_name="x1api:fake",
-            tags=("generated-memory", "x1api"),
+            provider_name="deepseek-v4:fake",
+            tags=("generated-memory", "deepseek-v4"),
+            privacy_disposition="allowed",
         )
 
         payload = self.service.memory_history({"query": "输入历史", "generatedOnly": True, "limit": 10})
@@ -317,15 +359,17 @@ class DebugImeServiceTests(unittest.TestCase):
             recent_context="RAG 输入法需要更好的候选",
             project=self.service.config.project,
             tags=("phrase-memory",),
+            privacy_disposition="allowed",
         )
         response = self.service.rime_suggest(
             {
                 "sessionId": "debug-trace",
                 "requestSeq": 91,
-                "forceSideCandidates": True,
+                "privacyDisposition": "allowed",
                 "committedContext": "我想继续写连续",
                 "maxVisibleCandidates": 4,
                 "maxSideCandidates": 2,
+                "forceSideCandidates": True,
                 "rimeContext": {"candidates": [{"label": "1", "text": "连续", "comment": "rime"}]},
             }
         )
@@ -387,6 +431,14 @@ class DebugImeServiceTests(unittest.TestCase):
             recent_context="RAG 输入法需要更好的候选",
             project=self.service.config.project,
             tags=("phrase-memory",),
+            privacy_disposition="allowed",
+        )
+        self.service.adapter.commit_text(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project=self.service.config.project,
+            tags=("phrase-memory",),
+            privacy_disposition="allowed",
         )
         cleanup = self.service.core.build_memory_cleanup_plan(project=self.service.config.project)
 
@@ -420,10 +472,10 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(tombstone["metadata"]["source"], "debug-test")
         self.assertNotIn("连续预测", [item["text"] for item in after["candidates"]])
 
-    def test_generate_memory_endpoint_uses_x1api_generator_and_records_rows(self) -> None:
+    def test_generate_memory_endpoint_uses_deepseek_v4_generator_and_records_rows(self) -> None:
         original = debug_server_module.VcpRebuildMemoryGenerator
-        FakeX1ApiMemoryGenerator.calls = []
-        debug_server_module.VcpRebuildMemoryGenerator = FakeX1ApiMemoryGenerator
+        FakeDeepSeekV4MemoryGenerator.calls = []
+        debug_server_module.VcpRebuildMemoryGenerator = FakeDeepSeekV4MemoryGenerator
         try:
             payload = self.service.generate_memory(
                 {
@@ -437,7 +489,7 @@ class DebugImeServiceTests(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["recorded"], 1)
-        self.assertEqual(FakeX1ApiMemoryGenerator.calls[0]["maxItems"], 2)
+        self.assertEqual(FakeDeepSeekV4MemoryGenerator.calls[0]["maxItems"], 2)
         history = self.service.memory_history({"generatedOnly": True, "query": "API 蒸馏"})
         self.assertEqual(history["items"][0]["text"], "用户希望输入历史先经 API 蒸馏后再进入长期记忆")
 
@@ -474,6 +526,7 @@ class DebugImeServiceTests(unittest.TestCase):
         self.service.commit(
             {
                 "text": "历史输入会进入模型预测",
+                "privacyDisposition": "allowed",
                 "recentContext": "用户刚刚写过 RAG 输入法",
                 "preedit": "lishi",
                 "tags": ["history"],
@@ -534,11 +587,13 @@ class DebugImeServiceTests(unittest.TestCase):
             {
                 "sessionId": "debug-rime",
                 "requestSeq": 11,
+                "privacyDisposition": "allowed",
                 "rawInput": "jiubiruwopinshishur",
                 "preedit": "jiubiruwopinshishur",
                 "committedContext": "用户正在写输入法设计",
                 "maxVisibleCandidates": 4,
                 "maxSideCandidates": 2,
+                "debugAllowCompositionLanes": True,
                 "rimeContext": {
                     "candidates": [
                         {"label": "1", "text": "就比如", "comment": "rime"},
@@ -568,7 +623,8 @@ class DebugImeServiceTests(unittest.TestCase):
             "设计一个候选展示方式",
             recent_context="Prediction-first RAG IME 需要解释候选排序",
             project="wisdom-weasel-rag-ime",
-            tags=("rag", "memory"),
+            tags=("rag", "memory", "phrase-memory"),
+            privacy_disposition="allowed",
         )
         core.apply_action(
             MemoryAction(
@@ -592,6 +648,7 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = {
             "sessionId": "debug-rag-score",
             "requestSeq": 41,
+            "privacyDisposition": "allowed",
             "rawInput": "zs",
             "preedit": "zs",
             "committedContext": "我想设计一个",
@@ -632,6 +689,7 @@ class DebugImeServiceTests(unittest.TestCase):
         base_payload = {
             "sessionId": "debug-prediction-first",
             "requestSeq": 31,
+            "privacyDisposition": "allowed",
             "rawInput": "sj",
             "preedit": "sj",
             "committedContext": "我想",
@@ -686,6 +744,7 @@ class DebugImeServiceTests(unittest.TestCase):
             {
                 "sessionId": "debug-live-trace",
                 "requestSeq": 1,
+                "privacyDisposition": "allowed",
                 "rawInput": "sj",
                 "preedit": "sj",
                 "committedContext": "我想输入真实内容",
@@ -710,6 +769,45 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertGreaterEqual(frame["display"]["sourceCounts"]["model"], 1)
         self.assertTrue(frame["traceEvents"])
 
+    def test_management_context_ignores_all_doctor_probe_sessions(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "management-context-doctor-filter.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                core=PrefixFixtureCore(),
+                predictor=PrefixPredictionProvider(),
+            )
+        )
+        service._prediction_live_trace = [
+            {
+                "sessionId": "real-foreground-session",
+                "requestId": "real-request",
+                "foregroundContext": {
+                    "source": "text_input_client",
+                    "applied": True,
+                    "commitTextMatched": True,
+                    "capturedAtMs": 123,
+                    "surroundingBeforeChars": 18,
+                },
+            },
+            {
+                "sessionId": "doctor-raw-context",
+                "requestId": "synthetic-request",
+                "foregroundContext": {
+                    "source": "missing",
+                    "applied": False,
+                    "captureFailureReason": "foregroundText payload missing",
+                },
+            },
+        ]
+
+        latest = service._last_management_prediction()
+
+        self.assertEqual(latest["requestId"], "real-request")
+        self.assertEqual(latest["contextSource"], "text_input_client")
+        self.assertTrue(latest["foregroundContext"]["applied"])
+
     def test_prediction_live_trace_http_endpoint(self) -> None:
         service = DebugImeService(
             DebugServerConfig(
@@ -724,6 +822,7 @@ class DebugImeServiceTests(unittest.TestCase):
             {
                 "sessionId": "debug-live-trace-http",
                 "requestSeq": 1,
+                "privacyDisposition": "allowed",
                 "rawInput": "sj",
                 "preedit": "sj",
                 "committedContext": "我想",
@@ -778,6 +877,7 @@ class DebugImeServiceTests(unittest.TestCase):
         base_payload = {
             "sessionId": "debug-cache-transaction-a",
             "requestSeq": 71,
+            "privacyDisposition": "allowed",
             "frontendRevision": 10,
             "selectionEpoch": 20,
             "frontAppBundleId": "com.apple.TextEdit",
@@ -848,11 +948,13 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = {
             "sessionId": "cache-a",
             "requestSeq": 21,
+            "privacyDisposition": "allowed",
             "rawInput": "ragshurufa",
             "preedit": "ragshurufa",
             "committedContext": "用户正在写 RAG 输入法",
             "maxVisibleCandidates": 5,
             "maxSideCandidates": 2,
+            "forceSideCandidates": True,
             "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
         }
         first = self.service.rime_suggest(payload)
@@ -866,7 +968,7 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(second["requestSeq"], 22)
         self.assertEqual(second["sessionId"], "cache-b")
 
-        self.service.commit({"text": "cache invalidation commit"})
+        self.service.commit({"text": "cache invalidation commit", "privacyDisposition": "allowed"})
         third_payload = dict(payload)
         third_payload["requestSeq"] = 23
         third = self.service.rime_suggest(third_payload)
@@ -877,6 +979,7 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = {
             "sessionId": "cache-pinyin-a",
             "requestSeq": 1,
+            "privacyDisposition": "allowed",
             "rawInput": "shijie",
             "preedit": "shijie",
             "rimeContext": {"candidates": [{"text": "世界", "label": "1"}]},
@@ -908,11 +1011,13 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = {
             "sessionId": "cache-progressive-a",
             "requestSeq": 31,
+            "privacyDisposition": "allowed",
             "rawInput": "ragshurufa",
             "preedit": "ragshurufa",
             "committedContext": "用户正在写 RAG 输入法",
             "maxVisibleCandidates": 5,
             "maxSideCandidates": 2,
+            "forceSideCandidates": True,
             "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
         }
         first = self.service.rime_suggest(payload)
@@ -930,11 +1035,13 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = {
             "sessionId": "inflight-a",
             "requestSeq": 61,
+            "privacyDisposition": "allowed",
             "rawInput": "ragshurufa",
             "preedit": "ragshurufa",
             "committedContext": "用户正在写 RAG 输入法",
             "maxVisibleCandidates": 5,
             "maxSideCandidates": 2,
+            "forceSideCandidates": True,
             "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
         }
         second_payload = dict(payload)
@@ -964,6 +1071,7 @@ class DebugImeServiceTests(unittest.TestCase):
         core = VectorAwareFixtureCore()
         service = DebugImeService(
             DebugServerConfig(
+                db_path=Path(self.tmp.name) / "cache-vector-state.sqlite",
                 core=core,
                 predictor=predictor,
                 seed_if_empty=False,
@@ -973,11 +1081,13 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = {
             "sessionId": "cache-vector-a",
             "requestSeq": 51,
+            "privacyDisposition": "allowed",
             "rawInput": "ragshurufa",
             "preedit": "ragshurufa",
             "committedContext": "用户正在写 RAG 输入法",
             "maxVisibleCandidates": 5,
             "maxSideCandidates": 2,
+            "forceSideCandidates": True,
             "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
         }
 
@@ -1002,11 +1112,13 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = {
             "sessionId": "cache-raw-a",
             "requestSeq": 41,
+            "privacyDisposition": "allowed",
             "rawInput": "ragshuru",
             "preedit": "ragshuru",
             "committedContext": "用户正在写 RAG 输入法",
             "maxVisibleCandidates": 5,
             "maxSideCandidates": 2,
+            "forceSideCandidates": True,
             "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
         }
         first = self.service.rime_suggest(payload)
@@ -1055,6 +1167,7 @@ class DebugImeServiceTests(unittest.TestCase):
         action = self.service.action(
             {
                 "actionType": "pin",
+                "privacyDisposition": "allowed",
                 "memoryId": suggestion["memoryId"],
                 "suggestionId": suggestion["suggestionId"],
                 "sourceEventId": suggestion["sourceEventId"],
@@ -1067,6 +1180,7 @@ class DebugImeServiceTests(unittest.TestCase):
         committed = self.service.commit(
             {
                 "text": "输入法调试页接受了一条候选",
+                "privacyDisposition": "allowed",
                 "recentContext": "debug page",
                 "preedit": "debug",
                 "candidateRank": 1,
@@ -1076,6 +1190,97 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(committed["ok"])
         self.assertTrue(str(committed["eventId"]).startswith("event:"))
 
+    def test_assistant_candidate_remember_creates_and_pins_model_memory(self) -> None:
+        result = self.service.assistant_candidate_action(
+            {
+                "action": "remember",
+                "privacyDisposition": "allowed",
+                "candidate": {
+                    "text": "把前台验收流程跑通",
+                    "insertText": "把前台验收流程跑通",
+                    "sourceType": "model",
+                    "memoryId": "active-rag:synthetic-model-candidate",
+                    "candidateStableId": "model:remember-test",
+                },
+                "query": "前台验收",
+                "project": self.service.config.project,
+                "app": "com.apple.TextEdit",
+            }
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "remember")
+        self.assertTrue(str(result["memoryId"]).startswith("event:"))
+        self.assertEqual(result["pinned"]["actionType"], "pin")
+
+    def test_assistant_candidate_suppress_creates_text_tombstone(self) -> None:
+        result = self.service.assistant_candidate_action(
+            {
+                "action": "suppress",
+                "privacyDisposition": "allowed",
+                "candidate": {
+                    "text": "不要再显示这个候选",
+                    "insertText": "不要再显示这个候选",
+                    "sourceType": "model",
+                    "candidateStableId": "model:suppress-test",
+                },
+                "query": "候选反馈",
+                "project": self.service.config.project,
+                "app": "com.apple.TextEdit",
+            }
+        )
+        governance = self.service.core.optimizer_governance_snapshot(
+            memory_ids=[],
+            texts=["不要再显示这个候选"],
+            project=self.service.config.project,
+            app="com.apple.TextEdit",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "suppress")
+        self.assertGreater(int(result["tombstoneId"]), 0)
+        self.assertIn("不要再显示这个候选", governance["tombstonedTexts"])
+
+    def test_assistant_candidate_action_fails_closed_before_memory_or_tombstone_write(self) -> None:
+        before_events = self.service.core.event_count()
+        before_actions = self.service.core.action_count()
+        missing = self.service.assistant_candidate_action(
+            {
+                "action": "remember",
+                "candidate": {
+                    "insertText": "缺少隐私判断的候选",
+                    "sourceType": "model",
+                },
+            }
+        )
+        sensitive = self.service.assistant_candidate_action(
+            {
+                "action": "suppress",
+                "privacyDisposition": "allowed",
+                "secureInput": True,
+                "candidate": {
+                    "insertText": "敏感字段候选",
+                    "sourceType": "model",
+                },
+            }
+        )
+        governance = self.service.core.optimizer_governance_snapshot(
+            memory_ids=[],
+            texts=["缺少隐私判断的候选", "敏感字段候选"],
+            project=self.service.config.project,
+            app="",
+        )
+
+        for response, disposition in ((missing, "unknown"), (sensitive, "sensitive")):
+            self.assertTrue(response["noStore"])
+            self.assertFalse(response["stored"])
+            self.assertEqual(response["privacyAssessment"]["disposition"], disposition)
+            self.assertEqual(response["storageReceipt"]["outcome"], "no_store")
+        self.assertEqual(self.service.core.event_count(), before_events)
+        self.assertEqual(self.service.core.action_count(), before_actions)
+        self.assertNotIn("缺少隐私判断的候选", governance["tombstonedTexts"])
+        self.assertNotIn("敏感字段候选", governance["tombstonedTexts"])
+
     def test_rime_select_records_commit_and_rag_action(self) -> None:
         before_actions = self.service.core.action_count()
         with patch.dict(os.environ, {"RAG_IME_RAG_DIRECT_DISPLAY": "1"}):
@@ -1083,6 +1288,7 @@ class DebugImeServiceTests(unittest.TestCase):
                 {
                     "sessionId": "select-rag",
                     "requestSeq": 31,
+                    "privacyDisposition": "allowed",
                     "rawInput": "ragshurufa",
                     "preedit": "ragshurufa",
                     "committedContext": "用户正在写 RAG 输入法",
@@ -1095,6 +1301,7 @@ class DebugImeServiceTests(unittest.TestCase):
         rag_candidate = next(item for item in response["displayCandidates"] if item["sourceType"] in {"rag", "memory"})
         selection = self.service.rime_select(
             {
+                "privacyDisposition": "allowed",
                 "candidate": rag_candidate,
                 "query": response["semanticQuery"],
                 "recentContext": response["committedContext"],
@@ -1115,6 +1322,7 @@ class DebugImeServiceTests(unittest.TestCase):
         before_actions = self.service.core.action_count()
         selection = self.service.rime_select(
             {
+                "privacyDisposition": "allowed",
                 "candidate": {
                     "label": "2",
                     "text": "模型短候选",
@@ -1136,10 +1344,53 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(selection["commitAction"]["actionType"], "accepted")
         self.assertEqual(self.service.core.action_count(), before_actions + 1)
 
+    def test_candidate_edit_feedback_downranks_all_sources_but_only_rime_updates_lexicon(self) -> None:
+        model_feedback = self.service.candidate_edit_feedback(
+            {
+                "privacyDisposition": "allowed",
+                "sourceType": "model",
+                "candidateId": "model:accepted",
+                "candidateText": "错误模型候选",
+                "contextHash": "ctx:model",
+                "app": "app.test",
+            }
+        )
+        rime_feedback = self.service.candidate_edit_feedback(
+            {
+                "privacyDisposition": "allowed",
+                "sourceType": "rime",
+                "candidateId": "rime:accepted",
+                "candidateText": "错误词语",
+                "preedit": "cuowu",
+                "contextHash": "ctx:rime",
+                "app": "app.test",
+            }
+        )
+
+        with self.service.core._connect() as conn:
+            memory_rows = conn.execute(
+                "SELECT candidate_source, action FROM memory_feedback_events "
+                "WHERE candidate_id IN ('model:accepted', 'rime:accepted') ORDER BY candidate_id"
+            ).fetchall()
+            rank_rows = conn.execute(
+                "SELECT accepted_text, action FROM rime_rank_feedback ORDER BY id"
+            ).fetchall()
+
+        self.assertTrue(model_feedback["recorded"])
+        self.assertFalse(model_feedback["rimeRecorded"])
+        self.assertTrue(rime_feedback["recorded"])
+        self.assertTrue(rime_feedback["rimeRecorded"])
+        self.assertEqual(
+            [(str(row[0]), str(row[1])) for row in memory_rows],
+            [("model", "backspace_after_accept"), ("rime", "backspace_after_accept")],
+        )
+        self.assertEqual([(str(row[0]), str(row[1])) for row in rank_rows], [("错误词语", "backspace_downrank")])
+
     def test_rime_select_records_memory_candidate_action(self) -> None:
         committed = self.service.commit(
             {
                 "text": "用户选择候选会反向校准记忆源",
+                "privacyDisposition": "allowed",
                 "recentContext": "memory candidate feedback",
                 "tags": ["memory"],
             }
@@ -1149,6 +1400,7 @@ class DebugImeServiceTests(unittest.TestCase):
         before_actions = self.service.core.action_count()
         selection = self.service.rime_select(
             {
+                "privacyDisposition": "allowed",
                 "candidate": {
                     "label": "4",
                     "text": "用户选择候选会反向校准记忆源",
@@ -1176,6 +1428,7 @@ class DebugImeServiceTests(unittest.TestCase):
         before_actions = self.service.core.action_count()
         selection = self.service.rime_select(
             {
+                "privacyDisposition": "allowed",
                 "candidate": {
                     "label": "5",
                     "text": "最近上下文切片",
@@ -1206,6 +1459,7 @@ class DebugImeServiceTests(unittest.TestCase):
         selection = self.service.rime_select(
             {
                 "dryRun": True,
+                "privacyDisposition": "allowed",
                 "candidate": {
                     "label": "2",
                     "text": "doctor side candidate",
@@ -1231,6 +1485,7 @@ class DebugImeServiceTests(unittest.TestCase):
         committed = self.service.commit(
             {
                 "text": "Squirrel HTTP sidecar commit",
+                "privacyDisposition": "allowed",
                 "source": "squirrel_rime_sidecar",
                 "tags": ["squirrel"],
             }
@@ -1242,6 +1497,52 @@ class DebugImeServiceTests(unittest.TestCase):
                 ("Squirrel HTTP sidecar commit",),
             ).fetchone()[0]
         self.assertEqual(source, "squirrel_rime_sidecar")
+
+    def test_foreground_write_apis_return_no_store_receipts_without_explicit_allowed(self) -> None:
+        before_events = self.service.core.event_count()
+        before_actions = self.service.core.action_count()
+
+        missing = self.service.commit({"text": "旧客户端缺少隐私判断"})
+        explicit_unknown = self.service.commit(
+            {"text": "前台状态无法判断", "privacyDisposition": "unknown"}
+        )
+        sensitive = self.service.commit(
+            {
+                "text": "密码字段内容",
+                "privacyDisposition": "allowed",
+                "sensitiveField": True,
+            }
+        )
+        selection = self.service.rime_select(
+            {
+                "candidate": {
+                    "insertText": "不应记录的候选",
+                    "sourceType": "model",
+                }
+            }
+        )
+        action = self.service.action(
+            {
+                "actionType": "pin",
+                "memoryId": "event:1",
+            }
+        )
+
+        for response, disposition in (
+            (missing, "unknown"),
+            (explicit_unknown, "unknown"),
+            (sensitive, "sensitive"),
+            (selection, "unknown"),
+            (action, "unknown"),
+        ):
+            self.assertTrue(response["ok"])
+            self.assertTrue(response["noStore"])
+            self.assertFalse(response["stored"])
+            self.assertEqual(response["storageReceipt"]["outcome"], "no_store")
+            self.assertEqual(response["privacyAssessment"]["disposition"], disposition)
+
+        self.assertEqual(self.service.core.event_count(), before_events)
+        self.assertEqual(self.service.core.action_count(), before_actions)
 
     def test_http_sidecar_accepts_root_paths(self) -> None:
         class Handler(DebugRequestHandler):
@@ -1260,6 +1561,7 @@ class DebugImeServiceTests(unittest.TestCase):
                     {
                         "sessionId": "http-root",
                         "requestSeq": 1,
+                        "privacyDisposition": "allowed",
                         "maxVisibleCandidates": 3,
                         "maxSideCandidates": 1,
                         "rimeContext": {"candidates": [{"label": "1", "text": "本地记忆"}]},
@@ -1276,6 +1578,7 @@ class DebugImeServiceTests(unittest.TestCase):
                 select_url,
                 data=json.dumps(
                     {
+                        "privacyDisposition": "allowed",
                         "candidate": {
                             "label": "2",
                             "text": "HTTP side candidate",
@@ -1302,6 +1605,72 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["sessionId"], "http-root")
         self.assertEqual(selection["schemaVersion"], "rag-ime.rime-selection.v1")
         self.assertTrue(str(selection["eventId"]).startswith("event:"))
+
+    def test_http_foreground_write_routes_fail_closed_for_legacy_privacy_payloads(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        before_events = self.service.core.event_count()
+        before_actions = self.service.core.action_count()
+
+        def post(path: str, payload: dict[str, object]) -> dict[str, object]:
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        try:
+            responses = (
+                post("/commit", {"text": "legacy commit"}),
+                post(
+                    "/rime-select",
+                    {"candidate": {"insertText": "legacy select", "sourceType": "model"}},
+                ),
+                post(
+                    "/rime-rank-feedback",
+                    {
+                        "schemaVersion": "rag-ime.rime-rank-selection.v1",
+                        "selectionId": "legacy-rime-rank",
+                        "sourceType": "rime",
+                        "preedit": "legacy",
+                        "acceptedText": "旧客户端",
+                        "candidateRank": 1,
+                    },
+                ),
+                post(
+                    "/assistant-candidate-action",
+                    {
+                        "action": "suppress",
+                        "candidate": {"insertText": "legacy action", "sourceType": "model"},
+                    },
+                ),
+                post(
+                    "/action",
+                    {"actionType": "pin", "memoryId": "event:1"},
+                ),
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        for response in responses:
+            self.assertTrue(response["ok"])
+            self.assertTrue(response["noStore"])
+            self.assertFalse(response["stored"])
+            self.assertEqual(response["privacyAssessment"]["disposition"], "unknown")
+            self.assertEqual(response["storageReceipt"]["outcome"], "no_store")
+        self.assertEqual(self.service.core.event_count(), before_events)
+        self.assertEqual(self.service.core.action_count(), before_actions)
 
     def test_http_debug_server_exposes_predictor_ttfc_probe(self) -> None:
         MockOllamaStreamingHandler.captured_payloads = []
@@ -1397,6 +1766,7 @@ class DebugImeServiceTests(unittest.TestCase):
             recent_context="RAG 输入法需要更好的候选",
             project=self.service.config.project,
             tags=("phrase-memory",),
+            privacy_disposition="allowed",
         )
         self.service.core.apply_action(
             MemoryAction(
@@ -1412,6 +1782,7 @@ class DebugImeServiceTests(unittest.TestCase):
             {
                 "sessionId": "debug-http-memory",
                 "requestSeq": 101,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想继续写连续",
                 "maxVisibleCandidates": 4,
@@ -1736,13 +2107,14 @@ class DebugImeServiceTests(unittest.TestCase):
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):
-            self.service.commit({"text": " "})
+            self.service.commit({"text": " ", "privacyDisposition": "allowed"})
         with self.assertRaises(ValueError):
             self.service.action({"actionType": "unknown", "memoryId": "event:1"})
 
     def test_debug_service_can_use_injected_shared_core_adapter(self) -> None:
         service = DebugImeService(
             DebugServerConfig(
+                db_path=Path(self.tmp.name) / "fixture-core.sqlite",
                 core=FixtureCoreClient(),
                 seed_if_empty=False,
                 project="wisdom-weasel-rag-ime",

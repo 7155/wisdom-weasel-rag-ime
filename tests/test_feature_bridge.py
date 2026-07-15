@@ -5,6 +5,7 @@ import unittest
 from rag_ime.feature_bridge.foreground_acceptance import (
     acceptance_command_mentions_foreground_trace,
     feature_has_panel_trace_event,
+    feature_has_visible_prediction_trace_event,
     feature_requires_foreground_trace,
 )
 from rag_ime.feature_bridge.memory_compile_bridge import (
@@ -37,22 +38,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FeatureBridgeTests(unittest.TestCase):
-    def test_load_feature_registry_from_docs(self) -> None:
-        features = load_feature_registry(ROOT / "docs" / "feature-registry.md")
+    def test_load_public_feature_registry(self) -> None:
+        features = load_feature_registry(ROOT / "release" / "feature-registry.json")
         statuses = {feature["v1Status"] for feature in features}
         ids = {feature["featureId"] for feature in features}
 
-        self.assertEqual(len(features), 11)
+        self.assertEqual(len(features), len(ids))
+        self.assertGreaterEqual(len(features), 14)
         self.assertIn("backend_only", statuses)
-        self.assertIn("debug_preview", statuses)
+        self.assertNotIn("debug_preview", statuses)
         self.assertIn("offline_tool", statuses)
         self.assertIn("blocked_by_bug", statuses)
         self.assertIn("active-rag-selected-text-bridge", ids)
-        self.assertIn("x1top-cleanup-to-curated-memory", ids)
+        self.assertIn("dsv4-cleanup-to-curated-memory", ids)
         self.assertIn("rime-export-bridge", ids)
+        self.assertIn("group-aware-memory-completion", ids)
+        self.assertIn("generic-frontend-gateway", ids)
+        self.assertIn("ime-first-demo-pack", ids)
+        self.assertIn("minimind-retraining-quality-gate", ids)
 
     def test_validate_feature_registry_rejects_bad_status_and_duplicate_id(self) -> None:
-        features = load_feature_registry(ROOT / "docs" / "feature-registry.md")
+        features = load_feature_registry(ROOT / "release" / "feature-registry.json")
 
         bad_status = copy.deepcopy(features)
         bad_status[0]["v1Status"] = "complete_because_backend_works"
@@ -80,21 +86,29 @@ class FeatureBridgeTests(unittest.TestCase):
         self.assertTrue(feature_requires_foreground_trace(foreground_verified))
         self.assertTrue(acceptance_command_mentions_foreground_trace(foreground_verified))
         self.assertTrue(feature_has_panel_trace_event(foreground_verified))
+        self.assertTrue(feature_has_visible_prediction_trace_event(foreground_verified))
+
+        overlay_verified = {
+            **foreground_verified,
+            "foregroundTraceEvents": ["assistant_overlay_candidate_visible"],
+        }
+        self.assertFalse(feature_has_panel_trace_event(overlay_verified))
+        self.assertTrue(feature_has_visible_prediction_trace_event(overlay_verified))
 
     def test_bridge_descriptors_name_real_runtime_artifacts(self) -> None:
         self.assertIn("sidecar_settings_store", RUNTIME_CONFIG_ARTIFACTS)
-        self.assertIn("panel_display_candidates", RUNTIME_CONFIG_PROOF_EVENTS)
+        self.assertIn("assistant_overlay_candidate_visible", RUNTIME_CONFIG_PROOF_EVENTS)
 
         self.assertIn("selectedText", SELECTED_TEXT_BRIDGE_FIELDS)
         self.assertEqual(SELECTED_TEXT_SOURCE_TYPE, "rag")
         self.assertIn("selected_text_context_captured", SELECTED_TEXT_PROOF_EVENTS)
-        self.assertIn("panel_display_candidates", SELECTED_TEXT_PROOF_EVENTS)
+        self.assertIn("assistant_overlay_candidate_visible", SELECTED_TEXT_PROOF_EVENTS)
 
-        self.assertIn("x1top", OFFLINE_CLEANUP_PROVIDERS)
+        self.assertIn("deepseek-v4", OFFLINE_CLEANUP_PROVIDERS)
         self.assertIn("memory", DOWNSTREAM_SOURCE_TYPES)
         self.assertIn("rag", DOWNSTREAM_SOURCE_TYPES)
         self.assertIn("curated", CURATED_MEMORY_REQUIRED_SIGNALS)
-        self.assertIn("x1top realtime prediction", FORBIDDEN_REALTIME_PROVIDER_HINTS)
+        self.assertIn("deepseek-v4 realtime prediction", FORBIDDEN_REALTIME_PROVIDER_HINTS)
 
         self.assertEqual(RIME_EXPORT_SOURCE_TYPE, "rime")
         self.assertIn("rime_export_applied", RIME_EXPORT_PROOF_EVENTS)

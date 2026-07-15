@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.codex_history import load_codex_history_records
@@ -145,7 +146,8 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 project=PROJECT,
                 app="codex",
                 source="codex_history",
-                tags=tags,
+                tags=tuple(dict.fromkeys((*tags, "curated"))),
+                privacy_disposition="allowed",
             )
 
         for text in BAD_CANDIDATE_FRAGMENTS:
@@ -156,6 +158,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 app="codex",
                 source="codex_history",
                 tags=("runtime-noise",),
+                privacy_disposition="allowed",
             )
 
         frequent_id = self.adapter.commit_text(
@@ -164,7 +167,8 @@ class RagImeDemoQualityTests(unittest.TestCase):
             project=PROJECT,
             app="codex",
             source="codex_history",
-            tags=("frequency", "quality"),
+            tags=("frequency", "quality", "curated"),
+            privacy_disposition="allowed",
         )
         suggestion = self.adapter.suggest(SuggestionRequest(current_input="Codex 用户输入 质量测试", top_k=1))[0]
         if str(suggestion.metadata.get("memory_id")) == frequent_id:
@@ -245,6 +249,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             payload={
                 "sessionId": "raw-code",
                 "requestSeq": 7,
+                "privacyDisposition": "allowed",
                 "rawInput": "git status",
                 "preedit": "git status",
                 "committedContext": "用户正在输入 shell 命令和路径, 需要保护原文提交。",
@@ -279,29 +284,31 @@ class RagImeDemoQualityTests(unittest.TestCase):
         self.assertIn("pinyin:", str(suggestions[0].metadata.get("reason", "")))
 
     def test_sidecar_distribution_keeps_model_rag_and_rime_sources_selectable(self) -> None:
-        response = build_rime_sidecar_response(
-            payload={
-                "sessionId": "source-distribution",
-                "requestSeq": 11,
-                "rawInput": "ragshurufa",
-                "preedit": "ragshurufa",
-                "committedContext": "RAG 输入法 候选可选性 LLM 来源 本地记忆",
-                "forceSideCandidates": True,
-                "maxVisibleCandidates": 6,
-                "maxSideCandidates": 4,
-                "rimeContext": {
-                    "candidates": [
-                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
-                        {"label": "2", "text": "候选", "comment": "rime"},
-                    ],
-                    "page": 0,
-                    "isLastPage": True,
+        with patch.dict(os.environ, {"RAG_IME_AI_AFTER_COMMIT_ONLY": "0", "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "1"}):
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "source-distribution",
+                    "requestSeq": 11,
+                    "privacyDisposition": "allowed",
+                    "rawInput": "ragshurufa",
+                    "preedit": "ragshurufa",
+                    "committedContext": "RAG 输入法 候选可选性 LLM 来源 本地记忆",
+                    "forceSideCandidates": True,
+                    "maxVisibleCandidates": 6,
+                    "maxSideCandidates": 4,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                            {"label": "2", "text": "候选", "comment": "rime"},
+                        ],
+                        "page": 0,
+                        "isLastPage": True,
+                    },
                 },
-            },
-            adapter=self.adapter,
-            core=self.core,
-            predictor=DemoPredictionProvider(),
-        )
+                adapter=self.adapter,
+                core=self.core,
+                predictor=DemoPredictionProvider(),
+            )
         self._assert_no_bad_display_candidates(response)
         display = response["displayCandidates"]
         source_types = {item["sourceType"] for item in display}
@@ -333,6 +340,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             payload={
                 "sessionId": "prediction-first-source-distribution",
                 "requestSeq": 12,
+                "privacyDisposition": "allowed",
                 "commitTextPreview": "RAG 输入法 LLM 记忆 embedding",
                 "committedContext": "我正在实现 Prediction-first RAG 输入法, 需要 LLM RAG memory 都成功。",
                 "predictionFirstMerge": True,
@@ -368,7 +376,14 @@ class RagImeDemoQualityTests(unittest.TestCase):
             display,
         )
         self.assertTrue(
-            all(item["selectionAction"] == "start_active_rag_from_context" for item in actions),
+            {
+                item["selectionAction"]
+                for item in actions
+            }
+            == {
+                "start_active_rag_from_context",
+                "start_agent_deep_search_from_context",
+            },
             display,
         )
         self.assertGreaterEqual(response["modelLane"]["predictionCount"], 1)

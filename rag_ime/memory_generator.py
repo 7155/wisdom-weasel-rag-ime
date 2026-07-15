@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from .keychain_secrets import MODEL_KEYCHAIN_SERVICE, MODEL_KNOWLEDGE_ACCOUNT, read_keychain_secret
 from .text_utils import compact_whitespace, truncate_text
 
 
@@ -81,53 +82,60 @@ class MemoryGenerationError(RuntimeError):
 
 
 class VcpRebuildMemoryGenerator:
-    """A small AIMemo-style memory distiller backed by an x1top/x1api config.
+    """A small AIMemo-style memory distiller backed by DeepSeek V4.
 
     VCP/AIMemo is a design reference here, not the provider identity.
     """
 
     def __init__(self, config: VcpRebuildConfig):
         if not config.api_key:
-            raise MemoryGenerationError("x1top/x1api-compatible API_KEY is not configured")
+            raise MemoryGenerationError("DeepSeek V4 API key is not configured")
+        _validated_deepseek_base_url(config.api_base_url)
+        if not _is_deepseek_v4_model(config.model):
+            raise MemoryGenerationError("offline memory and lexicon optimization requires a DeepSeek V4 model")
         self.config = config
 
     @property
     def provider_name(self) -> str:
-        host = urllib.parse.urlsplit(self.config.api_base_url).netloc.lower()
-        if "x1api.top" in host or "x2app.top" in host:
-            return "x1api"
-        return "model-api"
+        return "deepseek-v4"
 
     @classmethod
     def from_env_path(cls, env_path: str | Path | None = None) -> "VcpRebuildMemoryGenerator":
         resolved = Path(env_path).expanduser() if env_path else default_vcp_rebuild_env_path()
         if resolved is None or not resolved.exists():
-            raise MemoryGenerationError("x1top/x1api-compatible env file was not found")
+            raise MemoryGenerationError("DeepSeek V4 env file was not found")
         values = _read_env_file(resolved)
-        api_base_url = _canonical_x1api_base_url(
+        api_base_url = _validated_deepseek_base_url(
             _first_env_value(
                 values,
+                "RAG_IME_DEEPSEEK_BASE_URL",
+                "DEEPSEEK_BASE_URL",
                 "RAG_IME_AI_BASE_URL",
-                "RAG_IME_PREDICTOR_BASE_URL",
-                "X1API_BASE_URL",
                 "API_BASE_URL",
-                default="https://x1api.top/v1",
+                default="https://api.deepseek.com/v1",
             )
         )
+        api_key = _first_env_value(
+            values,
+            "DEEPSEEK_API_KEY",
+            "RAG_IME_DEEPSEEK_API_KEY",
+            "RAG_IME_AI_API_KEY",
+            "API_KEY",
+        ) or read_keychain_secret(MODEL_KEYCHAIN_SERVICE, MODEL_KNOWLEDGE_ACCOUNT)
         config = VcpRebuildConfig(
             api_base_url=api_base_url,
-            api_key=_first_env_value(values, "RAG_IME_AI_API_KEY", "RAG_IME_PREDICTOR_API_KEY", "X1API_API_KEY", "API_KEY"),
-            model=_first_env_value(values, "RAG_IME_AI_MODEL", "RAG_IME_PREDICTOR_MODEL", "X1API_MODEL", "MODEL", default="gpt-5.5"),
+            api_key=api_key,
+            model=_first_env_value(values, "RAG_IME_DEEPSEEK_MODEL", "DEEPSEEK_MODEL", "RAG_IME_AI_MODEL", "MODEL", default="deepseek-v4-flash"),
             upstream_wire_api=_wire_api(
-                _first_env_value(values, "RAG_IME_AI_WIRE_API", "UPSTREAM_WIRE_API", default="chat_completions")
+                _first_env_value(values, "RAG_IME_DEEPSEEK_WIRE_API", "DEEPSEEK_WIRE_API", "RAG_IME_AI_WIRE_API", "UPSTREAM_WIRE_API", default="chat_completions")
             ),
             request_timeout_seconds=_float_value(
-                _first_env_value(values, "RAG_IME_AI_TIMEOUT_SECONDS", "REQUEST_TIMEOUT_SECONDS"),
+                _first_env_value(values, "RAG_IME_DEEPSEEK_TIMEOUT_SECONDS", "DEEPSEEK_TIMEOUT_SECONDS", "RAG_IME_AI_TIMEOUT_SECONDS", "REQUEST_TIMEOUT_SECONDS"),
                 default=60.0,
             ),
-            model_reasoning_effort=_first_env_value(values, "RAG_IME_AI_REASONING_EFFORT", "MODEL_REASONING_EFFORT"),
-            chat_thinking_type=_first_env_value(values, "RAG_IME_AI_THINKING", "MODEL_THINKING"),
-            response_format=_first_env_value(values, "RAG_IME_AI_RESPONSE_FORMAT", "MODEL_RESPONSE_FORMAT"),
+            model_reasoning_effort=_first_env_value(values, "RAG_IME_DEEPSEEK_REASONING_EFFORT", "DEEPSEEK_REASONING_EFFORT", "RAG_IME_AI_REASONING_EFFORT", "MODEL_REASONING_EFFORT"),
+            chat_thinking_type=_first_env_value(values, "RAG_IME_DEEPSEEK_THINKING", "DEEPSEEK_THINKING", "RAG_IME_AI_THINKING", "MODEL_THINKING"),
+            response_format=_first_env_value(values, "RAG_IME_DEEPSEEK_RESPONSE_FORMAT", "DEEPSEEK_RESPONSE_FORMAT", "RAG_IME_AI_RESPONSE_FORMAT", "MODEL_RESPONSE_FORMAT"),
             optimize_max_tokens=_int_value(
                 _first_env_value(values, "RAG_IME_AI_OPTIMIZE_MAX_TOKENS", "MODEL_OPTIMIZE_MAX_TOKENS"),
                 default=0,
@@ -292,13 +300,11 @@ class VcpRebuildMemoryGenerator:
                 parsed = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             preview = exc.read(500).decode("utf-8", errors="replace")
-            raise MemoryGenerationError(
-                f"x1top/x1api-compatible memory generation HTTP {exc.code}: {preview}"
-            ) from exc
+            raise MemoryGenerationError(f"DeepSeek V4 memory generation HTTP {exc.code}: {preview}") from exc
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-            raise MemoryGenerationError(f"x1top/x1api-compatible memory generation failed: {exc}") from exc
+            raise MemoryGenerationError(f"DeepSeek V4 memory generation failed: {exc}") from exc
         if not isinstance(parsed, dict):
-            raise MemoryGenerationError("x1top/x1api-compatible memory generation returned non-object JSON")
+            raise MemoryGenerationError("DeepSeek V4 memory generation returned non-object JSON")
         return parsed
 
 
@@ -318,7 +324,7 @@ def generated_lexicon_dedupe_tag(text: str) -> str:
 
 def generated_memory_context(source_text: str, recent_context: str, reason: str) -> str:
     parts = [
-        "x1top GPT-series generated memory inspired by VCP AIMemo",
+        "DeepSeek V4 generated memory inspired by VCP AIMemo",
         f"reason: {compact_whitespace(reason)}" if reason else "",
         f"context: {compact_whitespace(recent_context)}" if recent_context else "",
         f"source: {compact_whitespace(source_text)[:240]}",
@@ -328,32 +334,31 @@ def generated_memory_context(source_text: str, recent_context: str, reason: str)
 
 def default_vcp_rebuild_env_path() -> Path | None:
     env_override = (
-        os.environ.get("RAG_IME_MODEL_ENV", "").strip()
-        or os.environ.get("RAG_IME_X1API_ENV", "").strip()
+        os.environ.get("RAG_IME_MEMORY_GENERATOR_ENV", "").strip()
+        or os.environ.get("RAG_IME_DEEPSEEK_ENV", "").strip()
+        or os.environ.get("RAG_IME_MODEL_ENV", "").strip()
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", "").strip()
     )
     if env_override:
         return Path(env_override).expanduser()
-    candidates: list[Path] = []
-    cwd = Path.cwd()
-    candidates.append(cwd / "vcp-agent-rebuild/backend/.env")
-    for parent in (cwd, *cwd.parents):
-        candidates.append(parent / "vcp-agent-rebuild/backend/.env")
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        candidates.append(parent / "vcp-agent-rebuild/backend/.env")
-        candidates.append(parent.parent / "vcp-agent-rebuild/backend/.env")
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
     return None
 
 
-def _canonical_x1api_base_url(value: str) -> str:
-    parsed = urllib.parse.urlsplit(compact_whitespace(value))
-    if parsed.netloc.lower() != "x2app.top":
-        return compact_whitespace(value)
-    return urllib.parse.urlunsplit((parsed.scheme or "https", "x1api.top", parsed.path, parsed.query, parsed.fragment))
+def _validated_deepseek_base_url(value: str) -> str:
+    cleaned = compact_whitespace(value).rstrip("/") or "https://api.deepseek.com/v1"
+    parsed = urllib.parse.urlsplit(cleaned)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise MemoryGenerationError("DeepSeek V4 base URL is invalid")
+    if parsed.netloc.lower() in {"x1api.top", "x2app.top"}:
+        raise MemoryGenerationError("legacy proxy route is disabled; configure a DeepSeek V4 endpoint")
+    if not parsed.path.rstrip("/").endswith("/v1"):
+        cleaned = f"{cleaned}/v1"
+    return cleaned
+
+
+def _is_deepseek_v4_model(value: str) -> bool:
+    normalized = compact_whitespace(value).lower().replace("_", "-")
+    return normalized.startswith("deepseek-v4")
 
 
 def _memory_generation_system_prompt(*, max_count: int) -> str:

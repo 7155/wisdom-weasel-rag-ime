@@ -1,0 +1,3 @@
+{"id":"rag-ime-showcase","selectedText":"输入法 RAG 面试展示怎么讲，候选怎么体现记忆和历史整理","intent":"rewrite","expectedTerms":["RAG 输入法面试展示主线","本地优先","多路召回"],"tags":["rag","ime","interview"],"memoryText":"RAG 输入法面试展示主线：本地优先、多路召回、DeepSeek 离线整理，候选层只展示短结果。"}
+{"id":"candidate-debug","selectedText":"候选一会弹出，一会输入几个字后又不预测，怎么排查","intent":"debug","expectedTerms":["候选消失排查路径","trigger policy","sidecar latency"],"tags":["debug","candidate"],"memoryText":"候选消失排查路径：先看 trigger policy，再看 sidecar latency，最后看 RAG cache 和模型超时。"}
+{"id":"privacy-boundary","selectedText":"选区 RAG 助手会不会偷读我选中的内容，应该怎么解释隐私边界","intent":"summarize","expectedTerms":["显式触发","只记录哈希","非普通 suggest"],"tags":["privacy","active-rag"],"memoryText":"Active RAG 隐私边界：必须显式触发，只记录 selectedTextHash，raw selected text 默认不进 trace，也不进入普通 rime-suggest。"}

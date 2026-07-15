@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.frontend-capabilities.v1",
+  "type": "object",
+  "required": ["schemaVersion", "gatewayVersion", "contracts", "features", "adapterBoundary", "legacyCompatibility"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.frontend-capabilities.v1"},
+    "gatewayVersion": {"type": "string", "const": "rag-ime.frontend-gateway.v1"},
+    "contracts": {"type": "object"},
+    "features": {"type": "object"},
+    "adapterBoundary": {"type": "object"},
+    "legacyCompatibility": {"type": "object"}
+  }
+}

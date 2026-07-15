@@ -1,0 +1,323 @@
+from __future__ import annotations
+
+import re
+import sqlite3
+from dataclasses import dataclass
+from datetime import date, datetime, time as datetime_time, timedelta
+from typing import Mapping, Sequence
+
+from .daily_planner import estimate_tokens
+from .text_utils import compact_whitespace, stable_text_hash
+
+
+INPUT_CONTEXT_SCHEMA_VERSION = "rag-ime.recent-complete-input-context.v1"
+
+_RIME_FRAGMENT_SOURCE = "squirrel_rime_commit_burst"
+_SKIPPED_SOURCES = {
+    "api_core_optimizer",
+    "api_lexicon_optimizer",
+    "squirrel_rime_sidecar",
+    "vcp_memory_generator",
+    "ime_demo_fixture",
+}
+_SENTENCE_END_RE = re.compile(r"[。！？!?；;.]$")
+_EXPLICIT_DATE_RE = re.compile(r"(?<!\d)(20\d{2})[-年/.](\d{1,2})[-月/.](\d{1,2})日?(?!\d)")
+
+
+@dataclass(frozen=True)
+class TemporalWindow:
+    label: str
+    start_ms: int
+    end_ms: int
+    explicit: bool
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "startMs": self.start_ms,
+            "endMs": self.end_ms,
+            "explicit": self.explicit,
+        }
+
+
+def resolve_temporal_window(text: str, *, now: datetime | None = None) -> TemporalWindow | None:
+    value = compact_whitespace(text)
+    if not value:
+        return None
+    current = now.astimezone() if now is not None and now.tzinfo else (now or datetime.now().astimezone())
+    today = current.date()
+    explicit_match = _EXPLICIT_DATE_RE.search(value)
+    if explicit_match:
+        try:
+            target = date(*(int(part) for part in explicit_match.groups()))
+        except ValueError:
+            target = today
+        return _day_window(target, label=target.isoformat(), template=current)
+    if "前天" in value:
+        return _day_window(today - timedelta(days=2), label="前天", template=current)
+    if "昨天" in value or "昨日" in value:
+        return _day_window(today - timedelta(days=1), label="昨天", template=current)
+    if "今天" in value or "今日" in value:
+        return _day_window(today, label="今天", template=current)
+    if any(marker in value for marker in ("上周", "上星期", "上礼拜")):
+        this_week = today - timedelta(days=today.weekday())
+        return _date_range_window(
+            this_week - timedelta(days=7),
+            this_week,
+            label="上周",
+            template=current,
+        )
+    if any(marker in value for marker in ("本周", "这周", "这个星期", "这星期")):
+        start = today - timedelta(days=today.weekday())
+        return _date_range_window(start, start + timedelta(days=7), label="本周", template=current)
+    return None
+
+
+def recent_complete_input_context(
+    conn: sqlite3.Connection,
+    *,
+    project: str = "",
+    app: str = "",
+    query_text: str = "",
+    baseline_records: int = 20,
+    max_records: int = 80,
+    token_budget: int = 4096,
+    reserved_tokens: int = 1024,
+    raw_row_limit: int = 500,
+) -> dict[str, object]:
+    available_tokens = max(256, int(token_budget) - max(0, int(reserved_tokens)))
+    temporal = resolve_temporal_window(query_text)
+    where = ["COALESCE(s.deleted, 0) = 0"]
+    params: list[object] = []
+    if project:
+        where.append("(e.project = ? OR e.project = '')")
+        params.append(project)
+    if app:
+        where.append("(e.app = ? OR e.app = '')")
+        params.append(app)
+    if temporal is not None:
+        where.append("e.created_at_ms >= ? AND e.created_at_ms < ?")
+        params.extend((temporal.start_ms, temporal.end_ms))
+    params.append(max(40, min(2000, int(raw_row_limit))))
+    rows = conn.execute(
+        f"""
+        SELECT e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
+               e.preedit, e.app, e.project, e.context_group_id, e.context_group_level,
+               e.tags_json
+        FROM input_events e
+        LEFT JOIN memory_state s ON s.event_id = e.id
+        WHERE {' AND '.join(where)}
+        ORDER BY e.id DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    assembled = assemble_input_rows(list(reversed(rows)))
+    selected: list[dict[str, object]] = []
+    used_tokens = 0
+    limit = max(max(1, int(baseline_records)), min(200, int(max_records)))
+    for record in reversed(assembled):
+        text = compact_whitespace(str(record.get("text") or ""))
+        if not text:
+            continue
+        item_tokens = estimate_tokens(text) + 8
+        if selected and used_tokens + item_tokens > available_tokens:
+            break
+        if not selected and item_tokens > available_tokens:
+            text = tail_for_token_budget(text, available_tokens - 8)
+            item_tokens = estimate_tokens(text) + 8
+            record = {**record, "text": text, "truncated": True}
+        selected.append(record)
+        used_tokens += item_tokens
+        if len(selected) >= limit:
+            break
+    selected.reverse()
+    rendered = "\n".join(
+        f"[{_date_label(int(item.get('createdAtMs') or 0))}] {item.get('text', '')}"
+        for item in selected
+    )
+    return {
+        "schemaVersion": INPUT_CONTEXT_SCHEMA_VERSION,
+        "records": selected,
+        "rendered": rendered,
+        "observability": {
+            "rawEventCount": len(rows),
+            "assembledRecordCount": len(assembled),
+            "selectedRecordCount": len(selected),
+            "baselineRecordCount": max(1, int(baseline_records)),
+            "maxRecordCount": limit,
+            "tokenBudget": int(token_budget),
+            "reservedTokens": int(reserved_tokens),
+            "availableTokens": available_tokens,
+            "estimatedTokens": used_tokens,
+            "temporalWindow": temporal.payload() if temporal is not None else None,
+            "explicitTemporalQuery": temporal is not None,
+        },
+    }
+
+
+def assemble_input_rows(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    fragment_run: list[Mapping[str, object]] = []
+
+    def flush() -> None:
+        if not fragment_run:
+            return
+        result.append(_collapse_fragment_run(fragment_run))
+        fragment_run.clear()
+
+    for row in rows:
+        source = compact_whitespace(str(row["source"] if "source" in row.keys() else ""))
+        text = compact_whitespace(str(row["committed_text"] if "committed_text" in row.keys() else row.get("text", "")))
+        if source in _SKIPPED_SOURCES or not text:
+            continue
+        if source == _RIME_FRAGMENT_SOURCE:
+            if fragment_run and not _fragments_belong_together(fragment_run[-1], row):
+                flush()
+            fragment_run.append(row)
+            continue
+        flush()
+        result.append(_standalone_record(row, text=text))
+    flush()
+    return result
+
+
+def _fragments_belong_together(previous: Mapping[str, object], current: Mapping[str, object]) -> bool:
+    if _value(previous, "app") != _value(current, "app"):
+        return False
+    if _value(previous, "context_group_id", "contextGroupId") != _value(current, "context_group_id", "contextGroupId"):
+        return False
+    previous_ms = _int_value(previous, "created_at_ms", "createdAtMs")
+    current_ms = _int_value(current, "created_at_ms", "createdAtMs")
+    gap_ms = max(0, current_ms - previous_ms)
+    previous_context = _value(previous, "recent_context", "recentContext")
+    current_context = _value(current, "recent_context", "recentContext")
+    if previous_context and current_context:
+        if previous_context in current_context or current_context in previous_context:
+            return gap_ms <= 5 * 60 * 1000
+        overlap_limit = min(len(previous_context), len(current_context), 120)
+        for size in range(overlap_limit, 7, -1):
+            if previous_context[-size:] == current_context[:size]:
+                return gap_ms <= 5 * 60 * 1000
+    previous_text = _value(previous, "committed_text", "text")
+    if _SENTENCE_END_RE.search(previous_text) and gap_ms > 1200:
+        return False
+    return gap_ms <= 8_000
+
+
+def _collapse_fragment_run(events: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    source_ids = [_int_value(item, "id", "eventId") for item in events]
+    source_ids = [value for value in source_ids if value > 0]
+    committed = compact_whitespace("".join(_value(item, "committed_text", "text") for item in events))
+    contexts = [_value(item, "recent_context", "recentContext") for item in events]
+    contexts = [value for value in contexts if value]
+    reconstructed = max([committed, *contexts], key=len, default=committed)
+    last = events[-1]
+    return {
+        "id": f"assembled:{source_ids[0] if source_ids else 0}-{source_ids[-1] if source_ids else 0}",
+        "text": reconstructed,
+        "textHash": stable_text_hash(reconstructed),
+        "sourceEventIds": source_ids,
+        "sourceEventCount": len(source_ids),
+        "source": "assembled_user_input",
+        "createdAtMs": _int_value(last, "created_at_ms", "createdAtMs"),
+        "app": _value(last, "app"),
+        "project": _value(last, "project"),
+        "contextGroupId": _value(last, "context_group_id", "contextGroupId"),
+        "contextGroupLevel": _value(last, "context_group_level", "contextGroupLevel") or "app",
+        "complete": _record_is_complete(reconstructed, source_count=len(source_ids)),
+        "reconstruction": {"method": "rime-fragment-run", "rawEventCount": len(events)},
+    }
+
+
+def _standalone_record(row: Mapping[str, object], *, text: str) -> dict[str, object]:
+    event_id = _int_value(row, "id", "eventId")
+    recent_context = compact_whitespace(_value(row, "recent_context", "recentContext"))
+    use_context = bool(
+        recent_context
+        and len(recent_context) > len(text)
+        and (len(text) < 8 or text in recent_context)
+    )
+    reconstructed = recent_context if use_context else text
+    return {
+        "id": f"event:{event_id}" if event_id else f"event:{stable_text_hash(reconstructed).split(':')[-1][:12]}",
+        "text": reconstructed,
+        "textHash": stable_text_hash(reconstructed),
+        "sourceEventIds": [event_id] if event_id else [],
+        "sourceEventCount": 1 if event_id else 0,
+        "source": _value(row, "source") or "input",
+        "createdAtMs": _int_value(row, "created_at_ms", "createdAtMs"),
+        "app": _value(row, "app"),
+        "project": _value(row, "project"),
+        "contextGroupId": _value(row, "context_group_id", "contextGroupId"),
+        "contextGroupLevel": _value(row, "context_group_level", "contextGroupLevel") or "app",
+        "complete": _record_is_complete(reconstructed, source_count=1),
+        "reconstruction": {
+            "method": "standalone-context" if use_context else "standalone",
+            "rawEventCount": 1,
+        },
+    }
+
+
+def _record_is_complete(text: str, *, source_count: int) -> bool:
+    value = compact_whitespace(text)
+    return bool(_SENTENCE_END_RE.search(value) or len(value) >= 6 or source_count >= 2)
+
+
+def _day_window(target: date, *, label: str, template: datetime) -> TemporalWindow:
+    return _date_range_window(target, target + timedelta(days=1), label=label, template=template)
+
+
+def _date_range_window(start: date, end: date, *, label: str, template: datetime) -> TemporalWindow:
+    timezone = template.tzinfo
+    start_dt = datetime.combine(start, datetime_time.min, tzinfo=timezone)
+    end_dt = datetime.combine(end, datetime_time.min, tzinfo=timezone)
+    return TemporalWindow(
+        label=label,
+        start_ms=int(start_dt.timestamp() * 1000),
+        end_ms=int(end_dt.timestamp() * 1000),
+        explicit=True,
+    )
+
+
+def tail_for_token_budget(text: str, budget: int) -> str:
+    """Return the longest trailing text that fits the approximate token budget."""
+
+    value = compact_whitespace(text)
+    if estimate_tokens(value) <= max(1, int(budget)):
+        return value
+    low = 1
+    high = len(value)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if estimate_tokens(value[-middle:]) <= max(1, int(budget)):
+            low = middle
+        else:
+            high = middle - 1
+    return value[-low:]
+
+
+def _date_label(timestamp_ms: int) -> str:
+    if timestamp_ms <= 0:
+        return "unknown"
+    return datetime.fromtimestamp(timestamp_ms / 1000).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _value(row: Mapping[str, object], *keys: str) -> str:
+    available = set(row.keys())
+    for key in keys:
+        if key in available:
+            return compact_whitespace(str(row[key] or ""))
+    return ""
+
+
+def _int_value(row: Mapping[str, object], *keys: str) -> int:
+    available = set(row.keys())
+    for key in keys:
+        if key not in available:
+            continue
+        try:
+            return int(row[key] or 0)
+        except (TypeError, ValueError):
+            continue
+    return 0

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.foreground-context.v2",
+  "type": "object",
+  "required": ["available", "source", "freshnessMs", "canReplaceSelection"],
+  "properties": {
+    "available": {"type": "boolean"},
+    "source": {"type": "string"},
+    "freshnessMs": {"type": "integer", "minimum": 0},
+    "capturedAtMs": {"type": "integer", "minimum": 0},
+    "surroundingBefore": {"type": "string"},
+    "surroundingAfter": {"type": "string"},
+    "selectedText": {"type": "string"},
+    "selectedTextHash": {"type": "string"},
+    "canReplaceSelection": {"type": "boolean"},
+    "contextGroupId": {"type": "string"},
+    "contextGroupLevel": {"type": "string", "enum": ["document", "project", "app", "global", ""]}
+  }
+}

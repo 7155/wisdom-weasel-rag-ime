@@ -1,0 +1,69 @@
+{
+  "caseCount": 6,
+  "chainRollouts": [
+    {
+      "chainId": "test-daily-travel",
+      "turnCount": 2,
+      "turns": [
+        {
+          "acceptedTop1": "我晚点再发一版",
+          "caseId": "test-daily-travel-1",
+          "nextPrefix": "今晚我先把行李收好，我晚点再发一版",
+          "prefix": "今晚我先把行李收好，",
+          "teacherPrefixMatched": true,
+          "turn": 1
+        },
+        {
+          "acceptedTop1": "方便后面修改的样子",
+          "caseId": "test-daily-travel-2",
+          "nextPrefix": "今晚我先把行李收好，我晚点再发一版方便后面修改的样子",
+          "prefix": "今晚我先把行李收好，我晚点再发一版",
+          "teacherPrefixMatched": false,
+          "turn": 2
+        }
+      ]
+    },
+    {
+      "chainId": "test-tech-model-chain",
+      "turnCount": 3,
+      "turns": [
+        {
+          "acceptedTop1": "面再根据坏例继续调整",
+          "caseId": "test-tech-model-chain-1",
+          "nextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整",
+          "prefix": "RAG memory 候选应该先稳定出现，模型候选随后",
+          "teacherPrefixMatched": true,
+          "turn": 1
+        },
+        {
+          "acceptedTop1": "所以先不要弄得太",
+          "caseId": "test-tech-model-chain-2",
+          "nextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整所以先不要弄得太",
+          "prefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整",
+          "teacherPrefixMatched": false,
+          "turn": 2
+        },
+        {
+          "acceptedTop1": "复杂后面如果需要修改",
+          "caseId": "test-tech-model-chain-3",
+          "nextPrefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整所以先不要弄得太复杂后面如果需要修改",
+          "prefix": "RAG memory 候选应该先稳定出现，模型候选随后面再根据坏例继续调整所以先不要弄得太",
+          "teacherPrefixMatched": false,
+          "turn": 3
+        }
+      ]
+    }
+  ],
+  "checkpoint": "minimind-ime-v2-q8",
+  "datasetFingerprint": "sha256:e3d266245fa92d84e88d197bc48e08f5a6b2ac42effed8db84f8430c09538e87",
+  "datasetId": "minimind-completion-v3-public",
+  "datasetRoot": "dataset/minimind_completion_v3_public",
+  "endpoint": "http://127.0.0.1:8767/predict",
+  "evaluationStage": "raw_model_output",
+  "maxCandidates": 3,
+  "ok": true,
+  "rawOutputContract": "decoded seed branches from predictor rawText before candidate parsing/reranking",
+  "rowCount": 9,
+  "schemaVersion": "rag-ime.minimind-raw-capture.v1",
+  "split": "test"
+}

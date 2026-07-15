@@ -1,0 +1,16 @@
+{
+  "name": "RAG IME Control Center",
+  "short_name": "RAG IME",
+  "start_url": "./#/overview",
+  "display": "standalone",
+  "background_color": "#f4f5f1",
+  "theme_color": "#f4f5f1",
+  "icons": [
+    {
+      "src": "./companions/RagImeCompanionIdle.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

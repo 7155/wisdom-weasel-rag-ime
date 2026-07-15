@@ -6,9 +6,16 @@ DEFAULT_BUNDLE_ID="im.rime.inputmethod.Squirrel"
 BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 HANS_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
 HANT_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID:-$BUNDLE_ID.Hant}"
-DISPLAY_NAME="${RAG_IME_SQUIRREL_DISPLAY_NAME:-RAG-IME}"
-HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DISPLAY_NAME - Simplified}"
-HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DISPLAY_NAME - Traditional}"
+DISPLAY_NAME="${RAG_IME_SQUIRREL_DISPLAY_NAME:-智鼬输入法}"
+if [[ "$DISPLAY_NAME" == "智鼬输入法" ]]; then
+  DEFAULT_HANS_DISPLAY_NAME="智鼬输入法"
+  DEFAULT_HANT_DISPLAY_NAME="智鼬输入法（繁体）"
+else
+  DEFAULT_HANS_DISPLAY_NAME="$DISPLAY_NAME - Simplified"
+  DEFAULT_HANT_DISPLAY_NAME="$DISPLAY_NAME - Traditional"
+fi
+HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DEFAULT_HANS_DISPLAY_NAME}"
+HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DEFAULT_HANT_DISPLAY_NAME}"
 CONNECTION_NAME="${RAG_IME_SQUIRREL_CONNECTION_NAME:-RagIme_Connection}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
 
@@ -105,10 +112,15 @@ hans["TISInputSourceID"] = hans_id
 hant["TISInputSourceID"] = hant_id
 hans["tsInputModeDefaultStateKey"] = True
 hant["tsInputModeDefaultStateKey"] = False
+for mode in (hans, hant):
+    mode["tsInputModeMenuIconFileKey"] = "RagImeInputMenuIcon.png"
+    mode["tsInputModeAlternateMenuIconFileKey"] = "RagImeInputMenuIcon.png"
+    mode["tsInputModePaletteIconFileKey"] = "RagImeInputMenuIcon.png"
 
 info["CFBundleIdentifier"] = bundle_id
 info["CFBundleName"] = display_name
 info["CFBundleDisplayName"] = display_name
+info.pop("CFBundleIconName", None)
 info["TISInputSourceID"] = bundle_id
 info["InputMethodConnectionName"] = connection_name
 if bundle_id != default_bundle_id:

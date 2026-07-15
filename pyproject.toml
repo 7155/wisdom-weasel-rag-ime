@@ -2,8 +2,25 @@
 name = "wisdom-weasel-rag-ime"
 version = "0.1.0"
 description = "Local-first RAG input method MVP inspired by Wisdom-Weasel."
+license = "GPL-3.0-only"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "pypdf>=5.0,<7",
+  "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+embedding-local = [
+  "sentence-transformers>=5.0,<6",
+]
+embedding-mlx = [
+  "mlx>=0.29,<1",
+  "transformers>=4.50,<6",
+]
+knowledge-ann = [
+  "numpy>=2.0,<3",
+  "usearch>=2.23,<3",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

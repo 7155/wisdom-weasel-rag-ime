@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from rag_ime.adapter import InputMethodAdapter
+from rag_ime import rime_sidecar as rime_sidecar_module
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.memory_optimizer import optimize_suggestions_if_enabled
 from rag_ime.models import InputSuggestion, ModelPrediction
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
@@ -45,6 +51,15 @@ class RecordingPredictionProvider:
             )
             for index, text in enumerate(self.predictions, start=1)
         ][:max_candidates]
+
+
+class InlinePredictionThread:
+    def __init__(self, *, target: Callable[..., object], kwargs: dict[str, object], **_: object) -> None:
+        self._target = target
+        self._kwargs = kwargs
+
+    def start(self) -> None:
+        self._target(**self._kwargs)
 
 
 class CuratedMemoryCore:
@@ -95,6 +110,48 @@ def _memory(
 
 
 class RimeSidecarV1ContractTests(unittest.TestCase):
+    def test_progressive_candidate_text_keeps_the_same_snapshot_slot_identity(self) -> None:
+        partial = SimpleNamespace(
+            source_type="model",
+            source_index=0,
+            text="继续",
+            insert_text="继续",
+        )
+        final = SimpleNamespace(
+            source_type="model",
+            source_index=0,
+            text="继续完成整个前台验收",
+            insert_text="继续完成整个前台验收",
+        )
+
+        partial_id = rime_sidecar_module._candidate_stable_id(partial, snapshot_id="snap:stream")
+        final_id = rime_sidecar_module._candidate_stable_id(final, snapshot_id="snap:stream")
+
+        self.assertEqual(partial_id, final_id)
+        self.assertNotEqual(
+            final_id,
+            rime_sidecar_module._candidate_stable_id(final, snapshot_id="snap:next"),
+        )
+
+        action_before_expansion = SimpleNamespace(
+            source_type="action",
+            source_index=1,
+            selection_action="start_active_rag_from_context",
+            text="知识生成",
+            insert_text="",
+        )
+        action_after_expansion = SimpleNamespace(
+            source_type="action",
+            source_index=3,
+            selection_action="start_active_rag_from_context",
+            text="知识生成",
+            insert_text="",
+        )
+        self.assertEqual(
+            rime_sidecar_module._candidate_stable_id(action_before_expansion, snapshot_id="snap:stream"),
+            rime_sidecar_module._candidate_stable_id(action_after_expansion, snapshot_id="snap:stream"),
+        )
+
     def setUp(self) -> None:
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
@@ -128,10 +185,61 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
     def _adapter(self, core: CuratedMemoryCore) -> InputMethodAdapter:
         return InputMethodAdapter(core)
 
+    def test_model_lane_exposes_context_and_decode_observability(self) -> None:
+        prediction = ModelPrediction(
+            text="候选不要重复",
+            rank=1,
+            provider_name="local-mlx",
+            latency_ms=88,
+            metadata={
+                "server_timing": {
+                    "decodeMode": "shared-prefill-batch",
+                    "sharedPrefill": True,
+                    "branchCount": 4,
+                    "plannedSeedIndexes": [0, 2, 3, 4],
+                    "qualityReranked": True,
+                    "contextDomainTermCount": 4,
+                }
+            },
+        )
+
+        metadata = rime_sidecar_module._model_prediction_decode_metadata([prediction])
+
+        self.assertEqual(metadata["decodeMode"], "shared-prefill-batch")
+        self.assertEqual(metadata["plannedSeedIndexes"], [0, 2, 3, 4])
+        self.assertTrue(metadata["qualityReranked"])
+        self.assertEqual(metadata["contextDomainTermCount"], 4)
+
+    def test_empty_deferred_rag_lane_skips_memory_optimizer_work(self) -> None:
+        class FailingOptimizerCore:
+            def optimize_memory_candidates(self, *_args, **_kwargs):
+                raise AssertionError("empty model-first lane must not run the memory optimizer")
+
+        snapshot = rime_sidecar_module.parse_rime_context_payload(
+            self._post_commit_payload(),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        suggestions, trace = optimize_suggestions_if_enabled(
+            core=FailingOptimizerCore(),
+            snapshot=snapshot,
+            semantic_query="模型上下文",
+            query_basis="committedContext",
+            input_mode="post_commit_continuation",
+            suggestions=[],
+            top_k=3,
+            latency_budget_ms=900,
+            env={"RAG_IME_MEMORY_OPTIMIZER": "1"},
+        )
+
+        self.assertEqual(suggestions, [])
+        self.assertEqual(trace["skippedReason"], "no_suggestions")
+        self.assertEqual(trace["latencyMs"], 0.0)
+
     def _composition_payload(self, *, request_seq: int = 1) -> dict[str, object]:
         return {
             "sessionId": "v1-composition",
             "requestSeq": request_seq,
+            "privacyDisposition": "allowed",
             "rawInput": "nihao",
             "preedit": "nihao",
             "rimeCandidates": [
@@ -145,8 +253,9 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "predictionFirstMerge": True,
             "frontendRevision": request_seq,
             "selectionEpoch": request_seq,
+            "inputGeneration": request_seq,
             "frontAppBundleId": "com.apple.TextEdit",
-            "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
         }
 
     def _post_commit_payload(
@@ -161,6 +270,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         payload: dict[str, object] = {
             "sessionId": "v1-post-commit",
             "requestSeq": request_seq,
+            "privacyDisposition": "allowed",
             "rawInput": "",
             "preedit": "",
             "committedContext": context,
@@ -172,8 +282,9 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "progressiveFollowUp": progressive_follow_up,
             "frontendRevision": 7,
             "selectionEpoch": 7,
+            "inputGeneration": request_seq,
             "frontAppBundleId": "com.apple.TextEdit",
-            "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
             "panelSessionId": "panel-v1",
         }
         if foreground:
@@ -244,13 +355,19 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual(predictor.calls, 0)
         self.assertFalse(response["modelLane"]["called"])
-        self.assertEqual(response["modelLane"]["skippedReason"], "model lane disabled before post-commit")
+        self.assertFalse(response["ragLane"]["called"])
+        self.assertEqual(response["modelLane"]["skippedReason"], "skip: composition owned by rime; ai after commit only")
+        self.assertEqual(response["ragLane"]["skippedReason"], "skip: composition owned by rime; ai after commit only")
         self.assertTrue(response["predictionSession"]["rimeCompositionOwnedByRime"])
         self.assertEqual(response["predictionSession"]["selectionScope"], "rime")
         self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
+        self.assertEqual([item["sourceType"] for item in response["candidatePanel"]["candidates"]], ["rime", "rime"])
+        self.assertFalse(response["assistantOverlay"]["visible"])
+        self.assertEqual(response["assistantOverlay"]["dismissReason"], "composition_owned_by_rime")
+        self.assertEqual(response["assistantOverlay"]["candidates"], [])
         self.assertEqual(response["keyPolicy"]["numberKeys"], "select_rime_candidate")
 
-    def test_v1_accessibility_foreground_context_feeds_side_lanes(self) -> None:
+    def test_v1_accessibility_foreground_context_does_not_feed_side_lanes_during_composition(self) -> None:
         core = CuratedMemoryCore([_memory("fg:1", "真实前台文本相关候选", accepted_count=2)])
         payload = self._composition_payload(request_seq=11)
         payload["committedContext"] = "旧的输入法 ledger 不应该优先进入 side lane"
@@ -278,9 +395,16 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue(foreground_context["applied"])
         self.assertEqual(foreground_context["source"], "accessibility")
         self.assertEqual(foreground_context["wholeValueHash"], "sha256:foreground-whole-value")
-        self.assertIn("真实前台文本", core.last_current_input)
-        self.assertIn("真实前台文本", core.last_recent_context)
-        self.assertNotIn("旧的输入法 ledger", core.last_recent_context)
+        self.assertEqual(core.calls, 0)
+        self.assertEqual(core.last_current_input, "")
+        self.assertEqual(core.last_recent_context, "")
+        self.assertFalse(response["ragLane"]["called"])
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: composition owned by rime; ai after commit only")
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
+        self.assertEqual([item["sourceType"] for item in response["candidatePanel"]["candidates"]], ["rime", "rime"])
+        self.assertFalse(response["assistantOverlay"]["visible"])
+        self.assertEqual(response["assistantOverlay"]["dismissReason"], "composition_owned_by_rime")
 
     def test_v1_accessibility_foreground_context_can_drive_query_without_rime(self) -> None:
         core = CuratedMemoryCore([_memory("fg:2", "前台正文续写候选", accepted_count=2)])
@@ -324,7 +448,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "confidence": 0.78,
             "freshnessMs": 0,
             "surroundingBefore": "真实输入框上下文来自 IMKTextInput",
-            "surroundingAfter": "",
+            "surroundingAfter": "光标后的说明文字不能进入补全查询",
             "wholeValueHash": "",
             "wholeValueChars": 0,
             "canReplaceSelection": False,
@@ -337,8 +461,51 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(response["queryBasis"], "foregroundText")
         self.assertTrue(response["triggerDecision"]["foregroundContextGate"]["allowed"])
         self.assertEqual(response["ragLane"]["foregroundContext"]["source"], "text_input_client")
+        self.assertEqual(
+            response["ragLane"]["foregroundContext"]["semanticContextMode"],
+            "before_caret_and_selection",
+        )
+        self.assertEqual(
+            response["ragLane"]["foregroundContext"]["excludedAfterChars"],
+            len("光标后的说明文字不能进入补全查询"),
+        )
         self.assertEqual(core.last_current_input, "真实输入框上下文来自 IMKTextInput")
         self.assertEqual(core.last_recent_context, "真实输入框上下文来自 IMKTextInput")
+
+    def test_v1_word_commit_preview_uses_complete_foreground_context(self) -> None:
+        predictor = RecordingPredictionProvider(["继续把候选栏稳定下来"])
+        core = CuratedMemoryCore()
+        first = self._response(
+            self._post_commit_payload(
+                request_seq=15,
+                context="这个输入法目前最影响体验的是弹窗一直不出现，而且",
+                commit_preview="而且",
+            ),
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(first["queryBasis"], "foregroundText")
+        self.assertEqual(first["semanticQuery"], "这个输入法目前最影响体验的是弹窗一直不出现，而且")
+        self.assertTrue(first["triggerDecision"]["shouldRefresh"])
+        self.assertTrue(first["modelLane"]["called"])
+        self.assertTrue(first["progressive"]["shouldFollowUp"])
+        self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=2.0))
+
+        follow_up = self._response(
+            self._post_commit_payload(
+                request_seq=16,
+                context="这个输入法目前最影响体验的是弹窗一直不出现，而且",
+                commit_preview="而且",
+                progressive_follow_up=True,
+            ),
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(follow_up["queryBasis"], "foregroundText")
+        self.assertEqual([item["text"] for item in follow_up["modelPredictions"]], ["继续把候选栏稳定下来"])
+        self.assertIn("继续把候选栏稳定下来", [item["text"] for item in follow_up["displayCandidates"]])
 
     def test_v1_post_commit_without_reliable_foreground_context_skips_side_lanes(self) -> None:
         predictor = RecordingPredictionProvider()
@@ -371,8 +538,217 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertFalse(response["triggerDecision"]["shouldRefresh"])
         self.assertFalse(response["triggerDecision"]["foregroundContextGate"]["allowed"])
         self.assertIn("reliable foreground context required", response["triggerDecision"]["reason"])
+
+    def test_v1_progressive_follow_up_keeps_same_transaction_context_long_enough_to_poll(self) -> None:
+        payload = self._post_commit_payload(request_seq=18, progressive_follow_up=True)
+        foreground = payload["foregroundText"]
+        self.assertIsInstance(foreground, dict)
+        foreground["freshnessMs"] = 1200
+
+        follow_up = self._response(payload, predictor=RecordingPredictionProvider([]))
+        self.assertTrue(follow_up["triggerDecision"]["foregroundContextGate"]["allowed"])
+
+        initial = self._post_commit_payload(request_seq=19)
+        initial_foreground = initial["foregroundText"]
+        self.assertIsInstance(initial_foreground, dict)
+        initial_foreground["freshnessMs"] = 1200
+        rejected = self._response(initial, predictor=RecordingPredictionProvider([]))
+        self.assertFalse(rejected["triggerDecision"]["foregroundContextGate"]["allowed"])
+        self.assertEqual(rejected["triggerDecision"]["foregroundContextGate"]["foregroundReason"], "foreground context stale")
+
+    def test_v1_foreground_capture_epoch_mismatch_fails_closed(self) -> None:
+        predictor = RecordingPredictionProvider()
+        payload = self._post_commit_payload(request_seq=21)
+        foreground = payload["foregroundText"]
+        self.assertIsInstance(foreground, dict)
+        foreground["captureEpoch"] = 20
+
+        response = self._response(payload, predictor=predictor)
+
+        self.assertEqual(predictor.calls, 0)
+        gate = response["triggerDecision"]["foregroundContextGate"]
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["foregroundReason"], "capture epoch mismatch")
         self.assertFalse(response["modelLane"]["called"])
         self.assertFalse(response["ragLane"]["called"])
+
+    def test_v1_sensitive_field_fails_closed_before_storage_rag_or_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-sensitive-sidecar-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+            core.initialize()
+            predictor = RecordingPredictionProvider(["绝不能调用模型"])
+            adapter = InputMethodAdapter(core, project="wisdom-weasel-rag-ime")
+            secret = "hunter2@example.com"
+            payload = self._post_commit_payload(
+                request_seq=29,
+                context=f"账号 {secret}",
+                commit_preview=secret,
+            )
+            payload.update(
+                {
+                    "secureInput": True,
+                    "sensitiveField": False,
+                    "rawInput": secret,
+                    "preedit": secret,
+                    "commitBurstReady": True,
+                    "commitBurstDeltaChars": len(secret),
+                    "commitBurstTexts": [secret],
+                    "compositionHash": "sha256:secret-composition",
+                    "committedContextHash": "sha256:secret-context",
+                }
+            )
+            payload["foregroundText"].update(
+                {
+                    "surroundingBefore": f"账号 {secret}",
+                    "contextGroupId": "doc:secure-field",
+                    "commitTextMatched": True,
+                }
+            )
+            rag_calls = 0
+            original_suggest = core.suggest_for_input
+
+            def counted_suggest(**kwargs):
+                nonlocal rag_calls
+                rag_calls += 1
+                return original_suggest(**kwargs)
+
+            core.suggest_for_input = counted_suggest  # type: ignore[method-assign]
+            events_before = core.event_count()
+            actions_before = core.action_count()
+            buffer_before = list(rime_sidecar_module._GROUP_SHORT_BUFFER.recent("doc:secure-field", limit=10))
+
+            response = build_rime_sidecar_response(
+                payload=payload,
+                adapter=adapter,
+                core=core,
+                predictor=predictor,
+            )
+
+            self.assertEqual(core.event_count(), events_before)
+            self.assertEqual(core.action_count(), actions_before)
+            self.assertEqual(rag_calls, 0)
+            self.assertEqual(predictor.calls, 0)
+            self.assertEqual(
+                list(rime_sidecar_module._GROUP_SHORT_BUFFER.recent("doc:secure-field", limit=10)),
+                buffer_before,
+            )
+            self.assertEqual(response["displayCandidates"], [])
+            self.assertEqual(response["modelPredictions"], [])
+            self.assertEqual(response["ragCandidates"], [])
+            self.assertTrue(response["predictionSession"]["shouldClearPredictionPanel"])
+            self.assertEqual(response["predictionSession"]["clearReason"], "sensitive_field")
+            self.assertEqual(response["predictionSession"]["pinyinPrefix"], "")
+            self.assertTrue(response["triggerDecision"]["hardClear"])
+            self.assertFalse(response["assistantOverlay"]["visible"])
+            self.assertEqual(response["assistantOverlay"]["dismissReason"], "sensitive_field")
+            self.assertFalse(response["ragLane"]["called"])
+            self.assertFalse(response["modelLane"]["called"])
+            self.assertEqual(
+                response["predictionTraceEvents"],
+                [{"event": "prediction_sensitive_field_blocked", "fields": {"reason": "sensitive_field"}}],
+            )
+            trace_json = json.dumps(response["predictionTraceEvents"], ensure_ascii=False)
+            self.assertNotIn(secret, trace_json)
+            self.assertNotIn("sha256", trace_json)
+            self.assertEqual(response["rawInput"], "")
+            self.assertEqual(response["preedit"], "")
+            self.assertEqual(response["committedContext"], "")
+            self.assertEqual(response["frontendTransaction"]["compositionHash"], "")
+            self.assertEqual(response["frontendTransaction"]["committedContextHash"], "")
+            self.assertEqual(response["frontendTransaction"]["frontAppBundleId"], "")
+            self.assertEqual(response["frontendTransaction"]["inputSourceId"], "")
+
+    def test_missing_privacy_disposition_fails_closed_before_hash_buffer_storage_or_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-unknown-privacy-sidecar-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+            core.initialize()
+            predictor = RecordingPredictionProvider(["绝不能调用模型"])
+            adapter = InputMethodAdapter(core, project="wisdom-weasel-rag-ime")
+            payload = self._post_commit_payload(
+                request_seq=30,
+                context="旧客户端提交上下文",
+                commit_preview="提交上下文",
+            )
+            payload.pop("privacyDisposition")
+            payload.update(
+                {
+                    "commitBurstReady": True,
+                    "commitBurstDeltaChars": 6,
+                    "commitBurstTexts": ["旧客户端提交上下文"],
+                }
+            )
+            payload["foregroundText"].update(
+                {
+                    "contextGroupId": "doc:unknown-privacy",
+                    "contextGroupLevel": "document",
+                    "commitTextMatched": True,
+                }
+            )
+            buffer_before = list(
+                rime_sidecar_module._GROUP_SHORT_BUFFER.recent("doc:unknown-privacy", limit=10)
+            )
+
+            response = build_rime_sidecar_response(
+                payload=payload,
+                adapter=adapter,
+                core=core,
+                predictor=predictor,
+            )
+
+            self.assertEqual(core.event_count(), 0)
+            self.assertEqual(predictor.calls, 0)
+            self.assertEqual(
+                list(rime_sidecar_module._GROUP_SHORT_BUFFER.recent("doc:unknown-privacy", limit=10)),
+                buffer_before,
+            )
+            self.assertTrue(response["noStore"])
+            self.assertFalse(response["stored"])
+            self.assertEqual(response["privacyAssessment"]["disposition"], "unknown")
+            self.assertEqual(response["storageReceipt"]["outcome"], "no_store")
+            self.assertEqual(response["predictionSession"]["clearReason"], "privacy_unknown")
+            self.assertEqual(response["frontendTransaction"]["compositionHash"], "")
+            self.assertEqual(response["frontendTransaction"]["committedContextHash"], "")
+
+    def test_structured_password_field_metadata_blocks_before_text_inspection(self) -> None:
+        secret = "ordinary-looking-value-123"
+        predictor = RecordingPredictionProvider(["不应调用"])
+        payload = self._post_commit_payload(context=secret, commit_preview=secret)
+        payload.update(
+            {
+                "fieldType": "password",
+                "secureInput": False,
+                "sensitiveField": False,
+                "rawInput": secret,
+                "preedit": secret,
+            }
+        )
+
+        response = self._response(payload, predictor=predictor)
+
+        self.assertEqual(predictor.calls, 0)
+        self.assertEqual(response["predictionSession"]["clearReason"], "sensitive_field")
+        self.assertEqual(response["frontendTransaction"]["compositionHash"], "")
+        self.assertEqual(response["frontendTransaction"]["committedContextHash"], "")
+        self.assertNotIn(secret, json.dumps(response, ensure_ascii=False))
+
+    def test_password_discussion_text_is_not_misclassified_without_field_metadata(self) -> None:
+        payload = self._post_commit_payload(
+            context="这里讨论密码策略和 API key 轮换",
+            commit_preview="轮换",
+        )
+
+        response = self._response(payload, predictor=RecordingPredictionProvider(["方案"]))
+
+        self.assertNotEqual(response["predictionSession"]["clearReason"], "sensitive_field")
+
+    def test_non_password_browser_field_metadata_does_not_disable_ai(self) -> None:
+        for field_type in ("username", "email", "login", "one-time-code", "otp"):
+            with self.subTest(field_type=field_type):
+                payload = self._post_commit_payload(context="普通输入", commit_preview="输入")
+                payload["fieldType"] = field_type
+                response = self._response(payload, predictor=RecordingPredictionProvider(["继续"]))
+
+                self.assertNotEqual(response["predictionSession"]["clearReason"], "sensitive_field")
 
     def test_v1_post_commit_async_first_response_under_250ms(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.35)
@@ -388,10 +764,221 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["firstResponseMs"], 150)
         self.assertTrue(response["progressive"]["shouldFollowUp"])
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertEqual(response["candidatePanel"]["candidates"], [])
+        self.assertTrue(response["assistantOverlay"]["visible"])
+        self.assertEqual(response["assistantOverlay"]["phase"], "post_commit")
+        self.assertEqual(response["assistantOverlay"]["animation"]["kind"], "none")
+        self.assertEqual(response["assistantOverlay"]["dismissReason"], "")
+        self.assertTrue(
+            any(
+                item["selectionAction"] == "start_active_rag_from_context"
+                for item in response["assistantOverlay"]["candidates"]
+            )
+        )
+
+    def test_v1_fast_local_model_returns_three_candidates_in_first_response(self) -> None:
+        predictor = RecordingPredictionProvider(["结果", "速度", "方式"], sleep_s=0.03)
+        started = time.perf_counter()
+        # Keep response-shaping deterministic; the slow-provider test above
+        # retains the real asynchronous thread and deadline path.
+        with patch.object(rime_sidecar_module, "Thread", InlinePredictionThread):
+            response = self._response(self._post_commit_payload(), predictor=predictor)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+        self.assertLess(elapsed_ms, 220)
+        self.assertEqual(predictor.calls, 1)
+        self.assertFalse(response["modelLane"]["pending"])
+        self.assertEqual(response["modelLane"]["predictionCount"], 3)
+        self.assertEqual([item["text"] for item in response["modelPredictions"]], ["结果", "速度", "方式"])
+        model_cards = [item for item in response["displayCandidates"] if item["sourceType"] == "model"]
+        self.assertEqual([item["text"] for item in model_cards], ["结果", "速度", "方式"])
+        self.assertEqual(response["keyPolicy"]["tab"], "accept_top_prediction")
+        self.assertEqual(response["progressive"]["retryAfterMs"], 60)
+
+    def test_v1_model_first_response_defers_strong_memory_to_progressive_rag(self) -> None:
+        predictor = RecordingPredictionProvider(["先显示本地模型"])
+        core = CuratedMemoryCore([_memory("phrase:front", "完成前台闭环", accepted_count=3)])
+        payload = self._post_commit_payload(
+            context="这个方案正在验证真实前台上下文",
+            commit_preview="前台上下文",
+        )
+        payload.update({"commitBurstReady": True, "commitBurstDeltaChars": 6, "commitBurstTexts": []})
+        payload["foregroundText"].update(
+            {
+                "contextGroupId": "doc:t0",
+                "contextGroupLevel": "document",
+                "contextGroupConfidence": 1.0,
+                "commitTextMatched": True,
+            }
+        )
+
+        response = self._response(payload, core=core, predictor=predictor)
+
+        self.assertEqual(predictor.calls, 1)
+        self.assertTrue(response["ragLane"]["pending"])
+        self.assertTrue(response["ragLane"]["modelFirstDeferred"])
+        self.assertEqual(response["modelPredictions"][0]["providerName"], "v1-contract-model")
+        self.assertEqual(response["modelPredictions"][0]["text"], "先显示本地模型")
+        self.assertTrue(response["progressive"]["shouldFollowUp"])
+        self.assertTrue(response["predictionTrigger"]["providerCallAllowed"])
+        trace_names = [item["event"] for item in response["predictionTraceEvents"]]
+        self.assertIn("post_commit_completion_first_response_returned", trace_names)
+
+    def test_v1_progressive_follow_up_waits_for_configured_rag_lane(self) -> None:
+        class SlowMemoryCore(CuratedMemoryCore):
+            def suggest_for_input(self, **kwargs: object) -> list[InputSuggestion]:
+                time.sleep(0.18)
+                return super().suggest_for_input(**kwargs)
+
+        core = SlowMemoryCore([_memory("phrase:progressive", "渐进检索结果")])
+        payload = self._post_commit_payload(request_seq=2, progressive_follow_up=True)
+        snapshot = rime_sidecar_module.parse_rime_context_payload(
+            payload,
+            default_project="wisdom-weasel-rag-ime",
+        )
+        runtime_config = SimpleNamespace(
+            hybrid_rag=SimpleNamespace(enabled=True, budget_ms=400),
+            memory=SimpleNamespace(enabled=True),
+        )
+
+        started = time.perf_counter()
+        with patch.dict(os.environ, {"RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0"}):
+            suggestions, rag_lane, _, _, _ = rime_sidecar_module.run_side_lanes_with_latency_budget(
+                adapter=InputMethodAdapter(core),
+                core=core,
+                predictor=RecordingPredictionProvider([]),
+                snapshot=snapshot,
+                current_input="先把",
+                query_basis="commit_text_preview",
+                recent_context=snapshot.committed_context,
+                explicit_recent_context=snapshot.committed_context,
+                project=snapshot.project,
+                app=snapshot.app,
+                top_k=3,
+                max_candidates=3,
+                latency_budget_ms=snapshot.latency_budget_ms,
+                runtime_config=runtime_config,
+            )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+        self.assertGreaterEqual(elapsed_ms, 150)
+        self.assertLess(elapsed_ms, 500)
+        self.assertEqual([item.surface_text for item in suggestions], ["渐进检索结果"])
+        self.assertFalse(rag_lane["timedOut"])
+        self.assertFalse(rag_lane.get("pending", False))
+        self.assertEqual(rag_lane["latencyBudgetMs"], 400)
+
+    def test_v1_rag_lane_budget_is_capped_by_effective_runtime_config(self) -> None:
+        runtime_config = SimpleNamespace(hybrid_rag=SimpleNamespace(budget_ms=400))
+
+        self.assertEqual(
+            rime_sidecar_module._rag_lane_budget_for_request(900, runtime_config=runtime_config),
+            400,
+        )
+        self.assertEqual(
+            rime_sidecar_module._rag_lane_budget_for_request(300, runtime_config=runtime_config),
+            300,
+        )
+
+    def test_v1_commit_burst_gate_records_grouped_commits_once(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-burst-sidecar-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+            core.initialize()
+            adapter = InputMethodAdapter(core, project="wisdom-weasel-rag-ime")
+            predictor = RecordingPredictionProvider()
+            payload = self._post_commit_payload(
+                context="这个方案主要解决前台上下文问题",
+                commit_preview="上下文问题",
+            )
+            payload.update(
+                {
+                    "commitBurstReady": False,
+                    "commitBurstDeltaChars": 10,
+                    "commitBurstTexts": ["这个方案主要", "解决前台上下文问题"],
+                }
+            )
+            payload["foregroundText"].update(
+                {
+                    "contextGroupId": "doc:test",
+                    "contextGroupLevel": "document",
+                    "contextGroupConfidence": 1.0,
+                    "commitTextMatched": True,
+                }
+            )
+
+            waiting = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
+            self.assertFalse(waiting["triggerDecision"]["shouldRefresh"])
+            self.assertEqual(waiting["predictionTrigger"]["reason"], "waiting_idle")
+            self.assertEqual(core.event_count(), 0)
+
+            payload["commitBurstReady"] = True
+            fired = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
+            self.assertTrue(fired["predictionTrigger"]["providerCallAllowed"])
+            self.assertEqual(core.event_count(), 2)
+            with core._connect() as conn:
+                rows = conn.execute(
+                    "SELECT context_group_id, context_group_level FROM input_events ORDER BY id"
+                ).fetchall()
+            self.assertEqual([(row[0], row[1]) for row in rows], [("doc:test", "document"), ("doc:test", "document")])
+
+            duplicate = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
+            self.assertEqual(duplicate["predictionTrigger"]["reason"], "duplicate_context_hash")
+            self.assertEqual(core.event_count(), 2)
+
+    def test_v1_commit_burst_fallback_group_uses_full_short_digest(self) -> None:
+        payload = self._post_commit_payload(request_seq=20)
+        payload.update({"commitBurstReady": False, "commitBurstDeltaChars": 6})
+
+        response = self._response(payload, predictor=RecordingPredictionProvider([]))
+
+        digest = hashlib.sha256("com.apple.TextEdit".encode()).hexdigest()[:16]
+        self.assertEqual(response["predictionTrigger"]["groupId"], f"app:{digest}")
+        self.assertNotIn("sha256:", response["predictionTrigger"]["groupId"])
+
+    def test_v1_tab_continuation_bypasses_normal_commit_rate_limit(self) -> None:
+        predictor = RecordingPredictionProvider(["结果", "速度", "方式"])
+        core = CuratedMemoryCore([])
+        for index in range(2):
+            payload = self._post_commit_payload(
+                request_seq=30 + index,
+                context=f"普通提交上下文第{index}次已经完成",
+                commit_preview=f"第{index}次",
+            )
+            payload.update(
+                {
+                    "commitBurstReady": True,
+                    "commitBurstDeltaChars": 6,
+                    "commitBurstTexts": [],
+                }
+            )
+            payload["foregroundText"].update({"contextGroupId": "doc:tab-chain", "commitTextMatched": True})
+            response = self._response(payload, core=core, predictor=predictor)
+            self.assertTrue(response["predictionTrigger"]["providerCallAllowed"])
+
+        accepted = self._post_commit_payload(
+            request_seq=32,
+            context="普通提交上下文之后按下Tab接受首候选",
+            commit_preview="首候选",
+        )
+        accepted.update(
+            {
+                "commitBurstReady": True,
+                "acceptedCandidateContinuation": True,
+                "commitBurstDeltaChars": 3,
+                "commitBurstTexts": [],
+            }
+        )
+        accepted["foregroundText"].update({"contextGroupId": "doc:tab-chain", "commitTextMatched": True})
+        continued = self._response(accepted, core=core, predictor=predictor)
+
+        self.assertTrue(continued["predictionTrigger"]["acceptedCandidate"])
+        self.assertTrue(continued["predictionTrigger"]["providerCallAllowed"])
+        self.assertNotEqual(continued["predictionTrigger"]["reason"], "max_calls_per_10s")
+        self.assertEqual([item["text"] for item in continued["modelPredictions"]], ["结果", "速度", "方式"])
 
     def test_v1_post_commit_followup_does_not_restart_provider(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.4)
-        core = CuratedMemoryCore([_memory("durable:1", "真实输入链路跑通", accepted_count=2)])
+        core = CuratedMemoryCore([])
         first = self._response(self._post_commit_payload(), core=core, predictor=predictor)
         follow_up = self._response(
             self._post_commit_payload(request_seq=2, progressive_follow_up=True),
@@ -403,7 +990,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue(first["modelLane"]["pending"])
         self.assertIn(follow_up["modelLane"]["completionJobState"], {"pending", "hit"})
         self.assertEqual(follow_up["modelLane"]["requestType"], "post_commit_completion")
-        self.assertEqual(follow_up["progressive"]["retryAfterMs"], 250)
+        self.assertEqual(follow_up["progressive"]["retryAfterMs"], 60)
 
     def test_v1_post_commit_completion_cache_respects_memory_bound(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.01)
@@ -446,13 +1033,15 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         surfaces = [item["text"] for item in follow_up["displayCandidates"]]
         rag_surfaces = [item["surfaceText"] for item in follow_up["ragCandidates"]]
 
-        self.assertEqual(actual_core.last_current_input, "先把")
+        self.assertEqual(actual_core.last_current_input, "我想彻底整理项目，先把")
         self.assertNotIn("我想彻底整理项目，先把", surfaces)
         self.assertNotIn("我想彻底整理项目，先把", rag_surfaces)
         self.assertIn("真实输入链路跑通", rag_surfaces)
         self.assertTrue(follow_up["ragLane"]["directDisplaySuppressed"])
         self.assertEqual(follow_up["ragLane"]["displaySuggestionCount"], 0)
         self.assertGreaterEqual(follow_up["ragLane"]["filteredSuggestionCount"], 1)
+        source_cards = follow_up["assistantOverlay"]["sourceCards"]
+        self.assertTrue(any(card["title"] == "真实输入链路跑通" for card in source_cards))
 
     def test_v1_rag_prompt_leaks_filtered(self) -> None:
         core = CuratedMemoryCore(
@@ -486,35 +1075,67 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertFalse(response["showDecision"]["hardClear"])
         self.assertTrue(response["progressive"]["shouldFollowUp"])
 
-    def test_v1_post_commit_panel_exposes_active_rag_action_button(self) -> None:
-        response = self._response(
-            self._post_commit_payload(),
-            predictor=RecordingPredictionProvider(sleep_s=0.4),
-        )
+    def test_v1_post_commit_panel_can_disable_active_rag_action(self) -> None:
+        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "0"}):
+            response = self._response(
+                self._post_commit_payload(),
+                predictor=RecordingPredictionProvider(sleep_s=0.4),
+            )
         action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
 
         self.assertEqual(response["uiMode"], "post_commit_pending")
-        self.assertTrue(action_candidates)
-        self.assertEqual(action_candidates[0]["label"], "")
-        self.assertEqual(action_candidates[0]["visibleLabel"], "")
-        self.assertIsNone(action_candidates[0]["selectionKey"])
-        self.assertEqual(action_candidates[0]["selectionRank"], 0)
-        self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
-        self.assertTrue(action_candidates[0]["isSelectable"])
-        self.assertEqual(action_candidates[0]["text"], "DeepSeek 生成")
-        self.assertEqual(action_candidates[0]["sourceBadge"], "生成")
-        self.assertEqual(action_candidates[0]["colorToken"], "modelBlue")
-        self.assertEqual(action_candidates[0]["selectionAction"], "start_active_rag_from_context")
-        self.assertEqual(action_candidates[0]["metadata"]["maxCandidates"], 1)
+        self.assertEqual(action_candidates, [])
+
+    def test_v1_post_commit_panel_exposes_active_rag_action_button_when_opted_in(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
+                "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING": "1",
+            },
+        ):
+            response = self._response(
+                self._post_commit_payload(),
+                predictor=RecordingPredictionProvider(sleep_s=0.4),
+            )
+        action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
+
+        self.assertEqual(response["uiMode"], "post_commit_pending")
+        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "深度查找"])
+        self.assertEqual(
+            [item["selectionAction"] for item in action_candidates],
+            ["start_active_rag_from_context", "start_agent_deep_search_from_context"],
+        )
+        for item in action_candidates:
+            self.assertEqual(item["label"], "")
+            self.assertEqual(item["visibleLabel"], "")
+            self.assertIsNone(item["selectionKey"])
+            self.assertEqual(item["selectionRank"], 0)
+            self.assertEqual(item["candidateOrdinal"], 0)
+            self.assertTrue(item["isSelectable"])
+            self.assertEqual(item["colorToken"], "modelBlue")
+            self.assertEqual(item["metadata"]["maxCandidates"], 1)
+            self.assertTrue(item["metadata"]["numericSelectionDisabled"])
+            self.assertEqual(item["metadata"]["triggerPolicy"], "manual_only")
+            self.assertTrue(item["metadata"]["requiresExplicitSelection"])
         self.assertEqual(action_candidates[0]["metadata"]["buttonRole"], "active_rag_generate")
         self.assertEqual(action_candidates[0]["metadata"]["shortcutHint"], "ctrl+.")
-        self.assertTrue(action_candidates[0]["metadata"]["numericSelectionDisabled"])
-        self.assertEqual(action_candidates[0]["metadata"]["triggerPolicy"], "manual_only")
-        self.assertTrue(action_candidates[0]["metadata"]["requiresExplicitSelection"])
+        self.assertEqual(action_candidates[1]["metadata"]["buttonRole"], "agent_deep_search")
+        self.assertTrue(action_candidates[1]["metadata"]["requiresPi"])
+        overlay_candidates = response["assistantOverlay"]["candidates"]
+        self.assertEqual(response["candidatePanel"]["candidates"], [])
+        self.assertTrue(any(item["sourceType"] == "action" for item in overlay_candidates))
+        self.assertTrue(all(item["sourceType"] != "status" for item in overlay_candidates))
 
     def test_v1_post_commit_auto_model_can_be_action_only(self) -> None:
         predictor = RecordingPredictionProvider(["不应该自动调用"])
-        with patch.dict(os.environ, {"RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0"}):
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0",
+                "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
+            },
+        ):
             response = self._response(self._post_commit_payload(), predictor=predictor)
         action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
 
@@ -533,6 +1154,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             {
                 "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0",
                 "RAG_IME_RAG_DIRECT_DISPLAY": "0",
+                "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
             },
         ):
             response = self._response(self._post_commit_payload(), core=core, predictor=predictor)
@@ -540,11 +1162,12 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual(core.calls, 0)
         self.assertEqual(predictor.calls, 0)
-        self.assertEqual([item["text"] for item in action_candidates], ["DeepSeek 生成"])
-        self.assertEqual(action_candidates[0]["label"], "")
-        self.assertIsNone(action_candidates[0]["selectionKey"])
-        self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
-        self.assertTrue(action_candidates[0]["isSelectable"])
+        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "深度查找"])
+        for item in action_candidates:
+            self.assertEqual(item["label"], "")
+            self.assertIsNone(item["selectionKey"])
+            self.assertEqual(item["candidateOrdinal"], 0)
+            self.assertTrue(item["isSelectable"])
         self.assertIn("action-only fast path", response["ragLane"]["skippedReason"])
         self.assertIn("action-only fast path", response["modelLane"]["skippedReason"])
         self.assertFalse(response["predictionFirst"]["enabled"])
@@ -565,22 +1188,43 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue("自动LLM候选".startswith(model_candidates[0]["text"]))
         self.assertEqual(follow_up["uiMode"], "post_commit_prediction")
 
-    def test_v1_post_commit_active_rag_action_reserves_visible_slot(self) -> None:
+    def test_v1_post_commit_actions_do_not_consume_numbered_candidate_slots(self) -> None:
         payload = self._post_commit_payload()
         payload["maxVisibleCandidates"] = 1
-        response = self._response(payload, predictor=RecordingPredictionProvider(sleep_s=0.4))
+        with (
+            patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1"}),
+            patch.object(rime_sidecar_module, "Thread", InlinePredictionThread),
+        ):
+            response = self._response(payload, predictor=RecordingPredictionProvider(["继续完善"]))
 
-        self.assertEqual(len(response["displayCandidates"]), 1)
-        self.assertEqual(response["displayCandidates"][0]["sourceType"], "action")
-        self.assertEqual(response["displayCandidates"][0]["selectionAction"], "start_active_rag_from_context")
+        numbered = [item for item in response["displayCandidates"] if item["candidateOrdinal"] > 0]
+        actions = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
+        self.assertEqual(len(numbered), 1)
+        self.assertEqual(numbered[0]["selectionAction"], "commit_side_candidate")
+        self.assertEqual([item["candidateOrdinal"] for item in actions], [0, 0])
 
-    def test_v1_empty_post_commit_followup_gets_demo_safe_fallback_candidate(self) -> None:
+    def test_v1_empty_post_commit_followup_does_not_emit_demo_fallback_by_default(self) -> None:
         first, follow_up, _, _ = self._prime_post_commit(
             core=CuratedMemoryCore(),
             predictor=RecordingPredictionProvider(["我的需求你没有完成"]),
             context="我的需求你没有完成",
             commit_preview="完成",
         )
+        fallback_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
+
+        self.assertEqual(first["uiMode"], "post_commit_pending")
+        self.assertIn(follow_up["uiMode"], {"post_commit_pending", "post_commit_prediction"})
+        self.assertFalse(fallback_candidates)
+        self.assertNotEqual(follow_up["modelLane"].get("fallbackReason"), "demo_safe_empty_post_commit_fallback")
+
+    def test_v1_empty_post_commit_followup_gets_demo_safe_fallback_candidate_when_opted_in(self) -> None:
+        with patch.dict(os.environ, {"RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "1"}):
+            first, follow_up, _, _ = self._prime_post_commit(
+                core=CuratedMemoryCore(),
+                predictor=RecordingPredictionProvider(["我的需求你没有完成"]),
+                context="我的需求你没有完成",
+                commit_preview="完成",
+            )
         fallback_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
 
         self.assertEqual(first["uiMode"], "post_commit_pending")
@@ -593,12 +1237,13 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(follow_up["modelPredictions"][0]["metadata"]["fallbackSource"], "post_commit_empty_result")
 
     def test_v1_truncated_post_commit_model_fragment_uses_demo_safe_fallback(self) -> None:
-        _, follow_up, _, _ = self._prime_post_commit(
-            core=CuratedMemoryCore(),
-            predictor=RecordingPredictionProvider(["您已"]),
-            context="我的需求你没有完成",
-            commit_preview="完成",
-        )
+        with patch.dict(os.environ, {"RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "1"}):
+            _, follow_up, _, _ = self._prime_post_commit(
+                core=CuratedMemoryCore(),
+                predictor=RecordingPredictionProvider(["您已"]),
+                context="我的需求你没有完成",
+                commit_preview="完成",
+            )
         model_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
 
         self.assertEqual([item["text"] for item in model_candidates], ["继续补齐需求"])
@@ -628,9 +1273,15 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertNotIn("欢迎", surfaces)
 
     def test_v1_post_commit_presentation_streams_candidate_prefixes(self) -> None:
-        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1"}):
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1",
+                "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "1",
+            },
+        ):
             core = CuratedMemoryCore()
-            predictor = RecordingPredictionProvider(["继续补齐需求"])
+            predictor = RecordingPredictionProvider(["继续补齐需求"], sleep_s=0.35)
             first = self._response(
                 self._post_commit_payload(context="我的需求你没有完成", commit_preview="完成"),
                 core=core,
@@ -641,6 +1292,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             self.assertEqual(first_model_candidates[0]["text"], "继续")
             self.assertTrue(first_model_candidates[0]["metadata"]["pendingPreview"])
             self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=2.0))
+            time.sleep(0.25)
 
             streamed_surfaces: list[str] = []
             lane_states: list[str] = []
@@ -666,9 +1318,16 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             self.assertEqual(should_follow_up, [True, True, False])
 
     def test_v1_post_commit_fallback_presentation_streams_candidate_prefixes(self) -> None:
-        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1"}):
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1",
+                "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "1",
+                "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "1",
+            },
+        ):
             core = CuratedMemoryCore()
-            predictor = RecordingPredictionProvider(["您已"])
+            predictor = RecordingPredictionProvider(["您已"], sleep_s=0.35)
             first = self._response(
                 self._post_commit_payload(context="我的需求你没有完成", commit_preview="完成"),
                 core=core,
@@ -679,6 +1338,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             self.assertEqual(first_model_candidates[0]["text"], "继续")
             self.assertTrue(first_model_candidates[0]["metadata"]["pendingPreview"])
             self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=2.0))
+            time.sleep(0.25)
 
             streamed_surfaces: list[str] = []
             lane_states: list[str] = []
@@ -721,6 +1381,184 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in kept], ["继续补齐需求"])
 
+    def test_v1_minimind_quality_gate_abstains_on_off_topic_closed_context(self) -> None:
+        from rag_ime.rime_sidecar import parse_rime_context_payload
+
+        snapshot = parse_rime_context_payload(
+            self._post_commit_payload(
+                context="RAG要好好测试，还有rime的重排和优化",
+                commit_preview="重排和优化",
+            ),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        metadata = {
+            "candidate_mode": "base-completion-branches",
+            "candidate_scores": [
+                {"text": "不要再临时加新内容", "probability": 0.22},
+                {"text": "等跑完再看结果", "probability": 0.04},
+            ],
+        }
+        kept = filter_post_commit_model_completions(
+            [
+                ModelPrediction("不要再临时加新内容", 1, "local-mlx", 80, 0.9, metadata),
+                ModelPrediction("等跑完再看结果", 2, "local-mlx", 80, 0.8, metadata),
+            ],
+            snapshot=snapshot,
+            max_candidates=3,
+        )
+
+        self.assertEqual(kept, [])
+
+    def test_v1_minimind_quality_gate_keeps_topic_match_and_open_context(self) -> None:
+        from rag_ime.rime_sidecar import parse_rime_context_payload
+
+        technical = parse_rime_context_payload(
+            self._post_commit_payload(
+                context="如果是模型的话，可能是训练数据和语料问题",
+                commit_preview="语料问题",
+            ),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        technical_metadata = {
+            "candidate_mode": "base-completion-branches",
+            "candidate_scores": [{"text": "需要重新训练模型", "probability": 0.13}],
+        }
+        technical_kept = filter_post_commit_model_completions(
+            [ModelPrediction("需要重新训练模型", 1, "local-mlx", 80, 0.9, technical_metadata)],
+            snapshot=technical,
+            max_candidates=3,
+        )
+
+        natural = parse_rime_context_payload(
+            self._post_commit_payload(context="明天上午开会以后", commit_preview="以后"),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        natural_metadata = {
+            "candidate_mode": "base-completion-branches",
+            "candidate_scores": [{"text": "我再重新检查一遍", "probability": 0.34}],
+        }
+        natural_kept = filter_post_commit_model_completions(
+            [ModelPrediction("我再重新检查一遍", 1, "local-mlx", 80, 0.9, natural_metadata)],
+            snapshot=natural,
+            max_candidates=3,
+        )
+
+        self.assertEqual([item.text for item in technical_kept], ["，需要重新训练模型"])
+        self.assertEqual(technical_kept[0].metadata["qualityGate"]["reason"], "topic_match")
+        self.assertAlmostEqual(technical_kept[0].confidence, 0.13)
+        self.assertEqual([item.text for item in natural_kept], ["，我再重新检查一遍"])
+        self.assertEqual(natural_kept[0].metadata["qualityGate"]["reason"], "open_context")
+
+        display = rime_sidecar_module.merge_display_candidates(
+            snapshot=technical,
+            model_predictions=technical_kept,
+            suggestions=[],
+        )
+        self.assertEqual(display[0].text, "需要重新训练模型")
+        self.assertEqual(display[0].insert_text, "，需要重新训练模型")
+
+    def test_v1_minimind_quality_gate_observe_mode_keeps_visible_candidates(self) -> None:
+        from rag_ime.rime_sidecar import parse_rime_context_payload
+
+        snapshot = parse_rime_context_payload(
+            self._post_commit_payload(
+                context="RAG要好好测试，还有rime的重排和优化",
+                commit_preview="重排和优化",
+            ),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        metadata = {
+            "candidate_mode": "base-completion-branches",
+            "candidate_scores": [
+                {"text": "不要再临时加新内容", "probability": 0.22},
+                {"text": "等跑完再看结果", "probability": 0.04},
+            ],
+        }
+        with patch.dict(os.environ, {"RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE": "observe"}):
+            kept = filter_post_commit_model_completions(
+                [
+                    ModelPrediction("不要再临时加新内容", 1, "local-mlx", 80, 0.9, metadata),
+                    ModelPrediction("等跑完再看结果", 2, "local-mlx", 80, 0.8, metadata),
+                ],
+                snapshot=snapshot,
+                max_candidates=3,
+            )
+
+        self.assertEqual([item.text for item in kept], ["，不要再临时加新内容", "，等跑完再看结果"])
+        self.assertTrue(all(item.metadata["qualityGate"]["observedOnly"] for item in kept))
+        self.assertTrue(all(item.metadata["qualityGate"]["mode"] == "observe" for item in kept))
+
+    def test_v1_minimind_quality_gate_rejects_hypothesis_negation(self) -> None:
+        from rag_ime.rime_sidecar import parse_rime_context_payload
+
+        snapshot = parse_rime_context_payload(
+            self._post_commit_payload(
+                context="如果是模型的话，可能是训练数据和语料问题",
+                commit_preview="语料问题",
+            ),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        metadata = {
+            "candidate_mode": "base-completion-branches",
+            "candidate_scores": [{"text": "不是训练数据问题", "probability": 0.13}],
+        }
+
+        kept = filter_post_commit_model_completions(
+            [ModelPrediction("不是训练数据问题", 1, "local-mlx", 80, 0.9, metadata)],
+            snapshot=snapshot,
+            max_candidates=3,
+        )
+
+        self.assertEqual(kept, [])
+
+    def test_v1_same_app_commit_ledger_allows_terminal_without_accessibility(self) -> None:
+        payload = self._post_commit_payload(
+            context="终端里继续执行命令",
+            commit_preview="执行命令",
+        )
+        payload["frontAppBundleId"] = "com.mitchellh.ghostty"
+        payload["foregroundText"] = {
+            "available": True,
+            "source": "ime_commit_ledger",
+            "confidence": 0.65,
+            "freshnessMs": 0,
+            "surroundingBefore": "终端里继续执行命令",
+            "surroundingAfter": "",
+            "captureEpoch": 1,
+            "sourceAppBundleId": "com.mitchellh.ghostty",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+            "commitTextMatched": True,
+            "warnings": ["ime_commit_ledger_same_app"],
+        }
+
+        response = self._response(payload, predictor=RecordingPredictionProvider(["然后检查输出"]))
+
+        self.assertTrue(response["triggerDecision"]["foregroundContextGate"]["allowed"])
+        self.assertEqual(response["triggerDecision"]["foregroundContextGate"]["source"], "ime_commit_ledger")
+
+    def test_v1_unmatched_commit_ledger_still_fails_closed(self) -> None:
+        payload = self._post_commit_payload(context="终端旧上下文", commit_preview="新提交")
+        payload["frontAppBundleId"] = "com.mitchellh.ghostty"
+        payload["foregroundText"] = {
+            "available": True,
+            "source": "ime_commit_ledger",
+            "confidence": 0.65,
+            "freshnessMs": 0,
+            "surroundingBefore": "终端旧上下文",
+            "captureEpoch": 1,
+            "sourceAppBundleId": "com.mitchellh.ghostty",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+            "commitTextMatched": False,
+        }
+
+        response = self._response(payload, predictor=RecordingPredictionProvider(["不应出现"]))
+
+        self.assertFalse(response["triggerDecision"]["foregroundContextGate"]["allowed"])
+        self.assertEqual(
+            response["triggerDecision"]["foregroundContextGate"]["foregroundReason"],
+            "commit ledger does not prove the current commit",
+        )
+
     def test_v1_stale_context_late_result_dropped(self) -> None:
         _, first_follow_up, _, _ = self._prime_post_commit(
             predictor=RecordingPredictionProvider(["第一段建议"]),
@@ -752,6 +1590,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             core.initialize()
             result = record_rime_side_candidate_selection(
                 payload={
+                    "privacyDisposition": "allowed",
                     "candidate": top,
                     "shownCandidates": follow_up["displayCandidates"],
                     "recentContext": "我想彻底整理项目，先把",
@@ -836,6 +1675,109 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         )
 
         self.assertEqual([item.text for item in kept], ["换一个方向"])
+
+    def test_model_filter_rejects_adjacent_function_character_repetition(self) -> None:
+        kept = rime_sidecar_module._filter_model_predictions(
+            [
+                ModelPrediction("能能接", 1, "model", 1, 0.9),
+                ModelPrediction("继续优化交互", 2, "model", 1, 0.9),
+            ],
+            current_input="",
+            explicit_recent_context="持续优化",
+        )
+
+        self.assertEqual([item.text for item in kept], ["继续优化交互"])
+
+    def test_bare_completion_adds_clause_bridge_only_after_complete_context(self) -> None:
+        predictions = [
+            ModelPrediction(
+                "候选也要重新生成",
+                1,
+                "local-mlx",
+                30,
+                0.9,
+                metadata={"candidate_mode": "base-completion-branches"},
+            )
+        ]
+
+        complete = rime_sidecar_module._filter_model_predictions(
+            predictions,
+            current_input="",
+            explicit_recent_context="模型好像上下文有问题，预测的不合理",
+        )
+        incomplete = rime_sidecar_module._filter_model_predictions(
+            predictions,
+            current_input="",
+            explicit_recent_context="这个输入法目前最影响体验的是",
+        )
+
+        self.assertEqual([item.text for item in complete], ["，候选也要重新生成"])
+        self.assertEqual([item.text for item in incomplete], ["候选也要重新生成"])
+
+    def test_group_aware_model_context_keeps_recent_same_group_typing(self) -> None:
+        group_id = "app:context-quality-test"
+        current_ms = rime_sidecar_module.now_ms()
+        rime_sidecar_module._GROUP_SHORT_BUFFER.clear()
+        try:
+            rime_sidecar_module._GROUP_SHORT_BUFFER.append(
+                group_id,
+                "LLM 要立即弹出，",
+                created_at_ms=current_ms - 10,
+            )
+            rime_sidecar_module._GROUP_SHORT_BUFFER.append(
+                group_id,
+                "持续优化",
+                created_at_ms=current_ms - 5,
+            )
+
+            context, meta = rime_sidecar_module._group_aware_model_context(
+                context_group_id=group_id,
+                explicit_recent_context="持续优化",
+                current_ms=current_ms,
+            )
+
+            self.assertEqual(context, "LLM 要立即弹出，持续优化")
+            self.assertEqual(meta["contextMode"], "group-short-buffer+foreground")
+            self.assertEqual(meta["foregroundContextChars"], 4)
+            self.assertGreater(meta["groupContextChars"], 0)
+        finally:
+            rime_sidecar_module._GROUP_SHORT_BUFFER.clear()
+
+    def test_group_aware_model_context_keeps_long_foreground_up_to_model_budget(self) -> None:
+        foreground = (
+            "LLM 要立即弹出并稳定显示三个连续候选。"
+            "RAG 和 DeepSeek 上下文需要可验证注入。"
+            "模型好像上下文有问题，预测的不合理"
+        )
+        context, meta = rime_sidecar_module._group_aware_model_context(
+            context_group_id="app:context-focus-test",
+            explicit_recent_context=foreground,
+        )
+
+        self.assertEqual(context, foreground)
+        self.assertFalse(meta["contextWindowTrimmed"])
+        self.assertEqual(meta["assembledContextChars"], meta["modelContextChars"])
+        self.assertEqual(meta["contextWindowChars"], 256)
+
+    def test_group_aware_model_context_keeps_group_tail_for_short_foreground(self) -> None:
+        group_id = "app:context-short-fragment-test"
+        rime_sidecar_module._GROUP_SHORT_BUFFER.clear()
+        try:
+            rime_sidecar_module._GROUP_SHORT_BUFFER.append(
+                group_id,
+                "候选选择目前不方便，缺少 DS 入口，需要",
+                created_at_ms=rime_sidecar_module.now_ms() - 5,
+            )
+            context, meta = rime_sidecar_module._group_aware_model_context(
+                context_group_id=group_id,
+                explicit_recent_context="持续优化",
+            )
+
+            self.assertTrue(context.endswith("持续优化"))
+            self.assertIn("DS 入口", context)
+            self.assertGreater(meta["groupContextChars"], 0)
+        finally:
+            rime_sidecar_module._GROUP_SHORT_BUFFER.clear()
 
     def test_v1_key_policy_keeps_composition_numbers_for_rime(self) -> None:
         composition_policy = key_policy_for_prediction_session(

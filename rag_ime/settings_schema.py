@@ -8,19 +8,23 @@ from typing import Any, Mapping
 DEFAULT_SETTINGS: dict[str, object] = {
     "interaction": {
         "composition": {
-            "showPrediction": True,
-            "showOnlyRime": False,
+            "showPrediction": False,
+            "showOnlyRime": True,
             "numberKeys": "select_rime_candidate",
         },
         "postCommit": {
             "enabled": True,
-            "showPendingStatus": True,
-            "pendingStatusDelayMs": 150,
+            "idleTriggerMs": 420,
+            "minDeltaChars": 2,
+            "maxCallsPer10s": 6,
+            "cooldownMs": 1500,
+            "showPendingStatus": False,
+            "pendingStatusDelayMs": 600,
             "numberKeys": "pass_through",
             "tabAction": "accept_top_prediction",
             "optionNumber": "select_prediction_by_ordinal",
             "escape": "dismiss_prediction",
-            "panelTtlMs": 4200,
+            "panelTtlMs": 5000,
         },
     },
     "display": {
@@ -47,9 +51,13 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "showSourceBadge": True,
         "showDiagnosticsInline": False,
         "statusRowStyle": "compact",
+        "candidateFontSize": 14,
+        "panelStyle": "compact",
+        "fadeAnimation": True,
+        "maxWidth": 520,
     },
     "rag": {
-        "hybrid": {"enabled": True, "budgetMs": 25},
+        "hybrid": {"enabled": True, "budgetMs": 400},
         "lanes": {
             "bm25Raw": True,
             "bm25Tags": True,
@@ -75,16 +83,62 @@ DEFAULT_SETTINGS: dict[str, object] = {
         },
     },
     "memory": {
+        "enabled": True,
         "rawHistoryRedacted": True,
         "directCandidateDefault": False,
         "retentionDays": 30,
+        "shortTermItems": 20,
+        "shortTermTtlMinutes": 30,
+        "allowProjectFallback": True,
+        "allowAppFallback": True,
+        "allowGlobalMemory": True,
+        "archiveInactiveDays": 60,
+        "timeDecay": {
+            "temporaryHalfLifeDays": 14,
+            "projectHalfLifeDays": 120,
+            "topicBookHalfLifeDays": 180,
+            "stablePreferenceHalfLifeDays": 365,
+        },
+    },
+    "context": {
+        "recentInputBaseline": 20,
+        "recentInputMaximum": 80,
+        "tokenBudget": 4096,
+        "reservedOutputTokens": 1024,
+        "temporalRecall": True,
+    },
+    "planning": {
+        "enabled": True,
+        "injectIntoContext": True,
+        "detectExplicitCompletion": True,
+    },
+    "agent": {
+        "pi": {
+            "enabled": False,
+            "startup": "lazy",
+            "idleTimeoutSeconds": 900,
+            "resumeLastSession": True,
+            "defaultRoleId": "zhiyou-v1",
+            "toolProfile": "control-center-v1",
+            "coordinatorEnabled": False,
+        },
+        "ui": {
+            "deltaFlushMilliseconds": 40,
+            "showReasoningSummary": False,
+        },
+    },
+    "voice": {
+        "provider": "native_streaming",
+        "hotkey": "middle_mouse",
+        "hotwordsEnabled": False,
+        "hotwords": [],
     },
     "models": {
-        "hot": "qwen3_06b_ime_hot",
+        "hot": "minimind_ime_v2",
         "main": "",
         "quality": "",
-        "activeRag": "local",
-        "offlineCleanup": "x1api",
+        "activeRag": "deepseek-v4",
+        "offlineCleanup": "deepseek-v4",
         "embedding": "local-hash",
     },
     "activeRag": {
@@ -98,10 +152,18 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "defaultIntent": "auto",
         "defaultPlacement": "replace_selection",
         "maxCandidates": 1,
-        "latencyBudgetMs": 15000,
+        "latencyBudgetMs": 120000,
         "localOnlyDefault": True,
-        "allowRemoteModel": False,
+        "allowRemoteModel": True,
         "sensitiveTextGuard": True,
+    },
+    "knowledgeLibrary": {
+        "parser": {
+            "mineru": {
+                "enabled": False,
+                "port": 30001,
+            },
+        },
     },
     "pinyin": {
         "fuzzyProfile": "sichuan-mild",
@@ -113,6 +175,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "sSh": True,
             "enEng": True,
             "inIng": True,
+            "ongOn": True,
             "nL": False,
             "fH": False,
         },
@@ -124,14 +187,14 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "redactPaths": True,
         "redactSecrets": True,
         "blockSensitiveSelectedText": True,
-        "allowRemoteModelForActiveRag": False,
+        "allowRemoteModelForActiveRag": True,
         "allowRemoteModelForOfflineCompile": True,
         "retentionDays": 30,
     },
     "diagnostics": {
-        "liveTrace": True,
-        "dropStats": True,
-        "candidateExplain": True,
+        "liveTrace": False,
+        "dropStats": False,
+        "candidateExplain": False,
     },
     "managementSecurity": {
         "requireToken": False,
@@ -149,11 +212,16 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "id": "interaction",
             "label": "Interaction",
             "fields": [
-                {"key": "interaction.composition.showPrediction", "type": "boolean", "label": "输入拼音时显示 AI 候选", "default": True},
-                {"key": "interaction.composition.showOnlyRime", "type": "boolean", "label": "输入拼音时只显示 Rime 候选", "default": False},
-                {"key": "interaction.postCommit.showPendingStatus", "type": "boolean", "label": "Rime 选词后显示查忆状态行", "default": True},
-                {"key": "interaction.postCommit.pendingStatusDelayMs", "type": "integer", "label": "状态行延迟", "default": 150},
-                {"key": "interaction.postCommit.panelTtlMs", "type": "integer", "label": "预测面板 TTL", "default": 4200},
+                {"key": "interaction.composition.showPrediction", "type": "boolean", "label": "输入拼音时显示 AI 候选", "default": False},
+                {"key": "interaction.composition.showOnlyRime", "type": "boolean", "label": "输入拼音时只显示 Rime 候选", "default": True},
+                {"key": "interaction.postCommit.showPendingStatus", "type": "boolean", "label": "预测开始时立即显示反馈", "default": False},
+                {"key": "interaction.postCommit.enabled", "type": "boolean", "label": "启用提交后预测", "default": True},
+                {"key": "interaction.postCommit.idleTriggerMs", "type": "integer", "label": "停顿触发时间", "default": 420},
+                {"key": "interaction.postCommit.minDeltaChars", "type": "integer", "label": "最少新增字符数", "default": 2},
+                {"key": "interaction.postCommit.maxCallsPer10s", "type": "integer", "label": "10 秒最大模型调用", "default": 6},
+                {"key": "interaction.postCommit.cooldownMs", "type": "integer", "label": "空结果冷却", "default": 1500},
+                {"key": "interaction.postCommit.pendingStatusDelayMs", "type": "integer", "label": "状态行延迟", "default": 600},
+                {"key": "interaction.postCommit.panelTtlMs", "type": "integer", "label": "预测面板 TTL", "default": 5000},
                 {"key": "interaction.postCommit.numberKeys", "type": "enum", "label": "Post-commit 数字键", "options": ["pass_through", "select_prediction"], "default": "pass_through"},
                 {"key": "interaction.postCommit.tabAction", "type": "enum", "label": "Tab 行为", "options": ["accept_top_prediction", "rime_default", "disabled"], "default": "accept_top_prediction"},
             ],
@@ -162,7 +230,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "id": "display",
             "label": "Display",
             "fields": [
-                {"key": "display.showSourceBadge", "type": "boolean", "label": "显示来源徽标", "default": True},
+                {"key": "display.showSourceBadge", "type": "boolean", "label": "显示来源图标", "default": True},
                 {"key": "display.showDiagnosticsInline", "type": "boolean", "label": "候选行内诊断", "default": False},
                 {"key": "display.maxPostCommitCandidates", "type": "integer", "label": "Post-commit 候选数量", "default": 5},
                 {"key": "display.badges.model", "type": "string", "label": "模型徽标", "default": "模"},
@@ -170,6 +238,10 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "display.badges.memory", "type": "string", "label": "记忆徽标", "default": "忆"},
                 {"key": "display.badges.status", "type": "string", "label": "状态行徽标", "default": "查忆"},
                 {"key": "display.badges.action", "type": "string", "label": "手动生成按钮徽标", "default": "生成"},
+                {"key": "display.panelStyle", "type": "enum", "label": "候选界面", "options": ["compact", "expanded"], "default": "compact"},
+                {"key": "display.candidateFontSize", "type": "integer", "label": "候选字号", "default": 14},
+                {"key": "display.fadeAnimation", "type": "boolean", "label": "淡入动画", "default": True},
+                {"key": "display.maxWidth", "type": "integer", "label": "最大宽度", "default": 520},
             ],
         },
         {
@@ -177,9 +249,9 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "label": "RAG Core",
             "fields": [
                 {"key": "rag.hybrid.enabled", "type": "boolean", "label": "启用 Hybrid RAG", "default": True},
-                {"key": "rag.hybrid.budgetMs", "type": "integer", "label": "RAG 预算 ms", "default": 25},
-                {"key": "rag.lanes.bm25Raw", "type": "boolean", "label": "BM25 原文", "default": True},
-                {"key": "rag.lanes.bm25Tags", "type": "boolean", "label": "BM25 Tags", "default": True},
+                {"key": "rag.hybrid.budgetMs", "type": "integer", "label": "RAG 预算 ms", "default": 400},
+                {"key": "rag.lanes.bm25Raw", "type": "boolean", "label": "原文 BM25（SQLite FTS5）", "default": True},
+                {"key": "rag.lanes.bm25Tags", "type": "boolean", "label": "标签 BM25（SQLite FTS5）", "default": True},
                 {"key": "rag.lanes.vectorRaw", "type": "boolean", "label": "向量召回", "default": True},
                 {"key": "rag.lanes.tagMemo", "type": "boolean", "label": "TagMemo", "default": True},
                 {"key": "rag.lanes.timeDailyBook", "type": "boolean", "label": "Time/Daily Book", "default": True},
@@ -189,9 +261,9 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "id": "models",
             "label": "Models",
             "fields": [
-                {"key": "models.hot", "type": "string", "label": "Hot path model", "default": "qwen3_06b_ime_hot"},
-                {"key": "models.activeRag", "type": "string", "label": "Active RAG model", "default": "local"},
-                {"key": "models.offlineCleanup", "type": "string", "label": "Offline cleanup model", "default": "x1api"},
+                {"key": "models.hot", "type": "string", "label": "Hot path model", "default": "minimind_ime_v2"},
+                {"key": "models.activeRag", "type": "string", "label": "显式生成模型", "default": "deepseek-v4", "expert": True},
+                {"key": "models.offlineCleanup", "type": "string", "label": "离线整理模型", "default": "deepseek-v4"},
             ],
         },
         {
@@ -199,14 +271,95 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "label": "Active RAG",
             "fields": [
                 {"key": "activeRag.enabled", "type": "boolean", "label": "启用 Active RAG", "default": True},
-                {"key": "activeRag.shortcut", "type": "string", "label": "快捷键", "default": "ctrl+."},
+                {"key": "activeRag.shortcut", "type": "shortcut", "label": "快捷键", "default": "ctrl+."},
                 {"key": "activeRag.capture.accessibility", "type": "boolean", "label": "优先读取系统选区", "default": True},
                 {"key": "activeRag.capture.clipboardFallback", "type": "boolean", "label": "显式触发允许剪贴板 fallback", "default": True},
                 {"key": "activeRag.capture.manualClipboardFallback", "type": "boolean", "label": "允许手动剪贴板兜底", "default": True},
                 {"key": "activeRag.defaultPlacement", "type": "enum", "label": "插入方式", "options": ["replace_selection", "insert_after_selection", "show_only"], "default": "replace_selection"},
                 {"key": "activeRag.maxCandidates", "type": "integer", "label": "生成候选数量", "default": 1},
-                {"key": "activeRag.latencyBudgetMs", "type": "integer", "label": "强模型等待毫秒", "default": 15000},
-                {"key": "activeRag.allowRemoteModel", "type": "boolean", "label": "允许远程模型", "default": False},
+                {"key": "activeRag.latencyBudgetMs", "type": "integer", "label": "强模型等待毫秒", "default": 120000},
+                {"key": "activeRag.localOnlyDefault", "type": "boolean", "label": "预览默认仅使用本地 RAG", "default": True},
+                {"key": "activeRag.allowRemoteModel", "type": "boolean", "label": "启用高质量生成", "default": True},
+            ],
+        },
+        {
+            "id": "memory",
+            "label": "Memory",
+            "fields": [
+                {"key": "memory.enabled", "type": "boolean", "label": "启用记忆增强", "default": True},
+                {"key": "memory.shortTermItems", "type": "integer", "label": "短期记忆条数", "default": 20},
+                {"key": "memory.shortTermTtlMinutes", "type": "integer", "label": "短期记忆 TTL", "default": 30},
+                {"key": "memory.allowProjectFallback", "type": "boolean", "label": "允许项目级回退", "default": True},
+                {"key": "memory.allowAppFallback", "type": "boolean", "label": "允许 App 级回退", "default": True},
+                {"key": "memory.allowGlobalMemory", "type": "boolean", "label": "允许全局记忆", "default": True},
+                {"key": "memory.archiveInactiveDays", "type": "integer", "label": "主题书闲置归档天数", "default": 60},
+                {"key": "memory.timeDecay.temporaryHalfLifeDays", "type": "integer", "label": "临时事项衰减半衰期", "default": 14},
+                {"key": "memory.timeDecay.projectHalfLifeDays", "type": "integer", "label": "项目事实衰减半衰期", "default": 120},
+                {"key": "memory.timeDecay.topicBookHalfLifeDays", "type": "integer", "label": "主题书衰减半衰期", "default": 180},
+                {"key": "memory.timeDecay.stablePreferenceHalfLifeDays", "type": "integer", "label": "稳定偏好衰减半衰期", "default": 365},
+            ],
+        },
+        {
+            "id": "knowledgeLibrary",
+            "label": "文档知识库",
+            "fields": [
+                {
+                    "key": "knowledgeLibrary.parser.mineru.enabled",
+                    "type": "boolean",
+                    "label": "启用本机 MinerU",
+                    "default": False,
+                },
+                {
+                    "key": "knowledgeLibrary.parser.mineru.port",
+                    "type": "integer",
+                    "label": "MinerU 本机端口",
+                    "default": 30001,
+                },
+            ],
+        },
+        {
+            "id": "context",
+            "label": "Context",
+            "fields": [
+                {"key": "context.recentInputBaseline", "type": "integer", "label": "最近完整输入基线", "default": 20},
+                {"key": "context.recentInputMaximum", "type": "integer", "label": "最近完整输入上限", "default": 80},
+                {"key": "context.tokenBudget", "type": "integer", "label": "上下文 token 预算", "default": 4096},
+                {"key": "context.reservedOutputTokens", "type": "integer", "label": "预留输出 token", "default": 1024},
+                {"key": "context.temporalRecall", "type": "boolean", "label": "识别昨天、上周等时间表达", "default": True},
+            ],
+        },
+        {
+            "id": "planning",
+            "label": "Planning",
+            "fields": [
+                {"key": "planning.enabled", "type": "boolean", "label": "启用规划与任务", "default": True},
+                {"key": "planning.injectIntoContext", "type": "boolean", "label": "将今日计划注入上下文", "default": True},
+                {"key": "planning.detectExplicitCompletion", "type": "boolean", "label": "从明确表达识别任务完成", "default": True},
+            ],
+        },
+        {
+            "id": "agent",
+            "label": "Agent",
+            "fields": [
+                {"key": "agent.pi.enabled", "type": "boolean", "label": "连接 Pi", "default": False},
+                {"key": "agent.pi.startup", "type": "enum", "label": "启动方式", "options": ["lazy"], "default": "lazy"},
+                {"key": "agent.pi.idleTimeoutSeconds", "type": "integer", "label": "空闲退出时间", "default": 900},
+                {"key": "agent.pi.resumeLastSession", "type": "boolean", "label": "恢复上次对话", "default": True},
+                {"key": "agent.pi.defaultRoleId", "type": "string", "label": "默认角色", "default": "zhiyou-v1"},
+                {"key": "agent.pi.toolProfile", "type": "string", "label": "工具配置", "default": "control-center-v1"},
+                {"key": "agent.pi.coordinatorEnabled", "type": "boolean", "label": "允许运行协调模式", "default": False},
+                {"key": "agent.ui.deltaFlushMilliseconds", "type": "integer", "label": "流式刷新间隔", "default": 40},
+                {"key": "agent.ui.showReasoningSummary", "type": "boolean", "label": "显示可公开的分析摘要", "default": False},
+            ],
+        },
+        {
+            "id": "voice",
+            "label": "Voice",
+            "fields": [
+                {"key": "voice.provider", "type": "enum", "label": "语音服务", "options": ["native_streaming", "realtime_websocket", "http_transcription"], "default": "native_streaming"},
+                {"key": "voice.hotkey", "type": "enum", "label": "按住说话", "options": ["middle_mouse", "right_option", "option_space"], "default": "middle_mouse"},
+                {"key": "voice.hotwordsEnabled", "type": "boolean", "label": "启用语音热词", "default": False},
+                {"key": "voice.hotwords", "type": "string-list", "label": "语音热词", "default": []},
             ],
         },
         {
@@ -221,6 +374,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "pinyin.pairs.sSh", "type": "boolean", "label": "s/sh", "default": True},
                 {"key": "pinyin.pairs.enEng", "type": "boolean", "label": "en/eng", "default": True},
                 {"key": "pinyin.pairs.inIng", "type": "boolean", "label": "in/ing", "default": True},
+                {"key": "pinyin.pairs.ongOn", "type": "boolean", "label": "on/ong（漏 g）", "default": True},
                 {"key": "pinyin.pairs.nL", "type": "boolean", "label": "n/l", "default": False},
                 {"key": "pinyin.pairs.fH", "type": "boolean", "label": "f/h", "default": False},
             ],
@@ -231,7 +385,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "fields": [
                 {"key": "privacy.debugIncludeText", "type": "boolean", "label": "管理页显示原文", "default": False},
                 {"key": "privacy.traceIncludeText", "type": "boolean", "label": "trace 包含原文", "default": False},
-                {"key": "privacy.allowRemoteModelForActiveRag", "type": "boolean", "label": "Active RAG 可用远程模型", "default": False},
+                {"key": "privacy.allowRemoteModelForActiveRag", "type": "boolean", "label": "显式生成可使用联网模型", "default": True},
                 {"key": "managementSecurity.requireToken", "type": "boolean", "label": "POST 需要管理 token", "default": False},
             ],
         },
@@ -247,7 +401,82 @@ def default_settings() -> dict[str, object]:
 
 
 def settings_schema() -> dict[str, object]:
-    return copy.deepcopy(SETTINGS_SCHEMA)
+    schema = copy.deepcopy(SETTINGS_SCHEMA)
+    for section in schema["sections"]:  # type: ignore[index]
+        for field in section.get("fields", []):
+            key = str(field.get("key") or "")
+            field_type = str(field.get("type") or "string")
+            metadata = _FIELD_METADATA.get(key, {})
+            field.setdefault("description", metadata.get("description", str(field.get("label") or key)))
+            field.setdefault("applyMode", metadata.get("applyMode", "live"))
+            field.setdefault("risk", metadata.get("risk", "safe"))
+            field.setdefault("expert", metadata.get("expert", key.startswith("rag.weights.")))
+            field.setdefault("min", metadata.get("min"))
+            field.setdefault("max", metadata.get("max"))
+            field.setdefault("step", metadata.get("step", 1 if field_type == "integer" else None))
+            field.setdefault("unit", metadata.get("unit", ""))
+            field.setdefault("validation", metadata.get("validation", {}))
+            field.setdefault("restartComponent", metadata.get("restartComponent", ""))
+    return schema
+
+
+_FIELD_METADATA: dict[str, dict[str, object]] = {
+    "interaction.postCommit.idleTriggerMs": {"description": "连续输入合并后等待多久触发预测", "min": 40, "max": 3000, "step": 20, "unit": "ms"},
+    "interaction.postCommit.minDeltaChars": {"description": "相较上次预测至少新增的字符数", "min": 1, "max": 32, "unit": "字符"},
+    "interaction.postCommit.maxCallsPer10s": {"description": "限制连续输入期间的模型调用预算", "min": 0, "max": 10, "unit": "次"},
+    "interaction.postCommit.cooldownMs": {"description": "空结果后再次调用模型前的等待时间", "min": 0, "max": 10000, "step": 100, "unit": "ms"},
+    "interaction.postCommit.panelTtlMs": {"description": "预测候选自动关闭前的保留时间", "min": 500, "max": 15000, "step": 100, "unit": "ms", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "display.maxPostCommitCandidates": {"min": 1, "max": 8, "unit": "项", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "display.candidateFontSize": {"min": 11, "max": 24, "unit": "pt", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "display.maxWidth": {"min": 320, "max": 760, "step": 20, "unit": "pt", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "display.badges.model": {"expert": True},
+    "display.badges.rag": {"expert": True},
+    "display.badges.memory": {"expert": True},
+    "display.badges.status": {"expert": True},
+    "display.badges.action": {"expert": True},
+    "activeRag.shortcut": {"description": "显式生成快捷键", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "activeRag.latencyBudgetMs": {"description": "显式多段生成的最长等待时间", "min": 1000, "max": 300000, "step": 1000, "unit": "ms"},
+    "activeRag.allowRemoteModel": {"description": "只允许显式 Active RAG 使用远程模型", "risk": "sensitive", "validation": {"confirmText": "ALLOW REMOTE MODEL"}},
+    "knowledgeLibrary.parser.mineru.enabled": {
+        "description": "只连接本机 loopback MinerU 解析服务；不会启动命令或使用云端 API",
+        "applyMode": "restart_knowledge_worker",
+        "restartComponent": "knowledge-worker",
+    },
+    "knowledgeLibrary.parser.mineru.port": {
+        "description": "MinerU loopback HTTP 端口，主机和路径由服务端固定",
+        "min": 1024,
+        "max": 65535,
+        "unit": "端口",
+        "applyMode": "restart_knowledge_worker",
+        "restartComponent": "knowledge-worker",
+    },
+    "agent.pi.enabled": {"description": "按需启动受管理的 Pi RPC，不影响普通输入路径"},
+    "agent.pi.idleTimeoutSeconds": {"description": "Pi 无活动后自动退出的等待时间", "min": 0, "max": 86400, "step": 60, "unit": "秒"},
+    "agent.pi.coordinatorEnabled": {"description": "允许显式创建受审批约束的运行协调会话", "risk": "sensitive", "expert": True},
+    "agent.ui.deltaFlushMilliseconds": {"description": "原生对话页合并流式文本更新的时间窗口", "min": 16, "max": 250, "step": 8, "unit": "ms"},
+    "agent.ui.showReasoningSummary": {"description": "只显示服务端明确标记可公开的分析摘要，不显示原始 thinking"},
+    "voice.provider": {"description": "选择语音代理下一次连接使用的识别服务", "applyMode": "next_voice_session", "restartComponent": "voice"},
+    "voice.hotkey": {"description": "选择全局按住说话快捷键", "applyMode": "next_voice_session", "restartComponent": "voice"},
+    "voice.hotwordsEnabled": {"description": "仅在豆包/火山原生流式识别请求中发送已确认的热词", "applyMode": "next_voice_session", "restartComponent": "voice"},
+    "voice.hotwords": {"description": "每行一个中英文或技术词，最多 32 个，每个 2 至 9 个字符", "applyMode": "next_voice_session", "restartComponent": "voice"},
+    "pinyin.rimeManagedPatch": {"description": "写入受管理的 Rime 模糊音 patch", "applyMode": "redeploy_rime", "restartComponent": "rime"},
+    "pinyin.fuzzyProfile": {"applyMode": "redeploy_rime", "restartComponent": "rime"},
+    "models.hot": {"applyMode": "restart_predictor", "restartComponent": "predictor"},
+    "models.activeRag": {"applyMode": "restart_sidecar", "restartComponent": "sidecar"},
+    "models.offlineCleanup": {"applyMode": "restart_sidecar", "restartComponent": "sidecar", "expert": True},
+    "privacy.traceIncludeText": {"risk": "sensitive", "expert": True},
+    "privacy.debugIncludeText": {"risk": "sensitive", "expert": True},
+    "managementSecurity.requireToken": {"applyMode": "restart_sidecar", "restartComponent": "sidecar", "expert": True},
+    "memory.archiveInactiveDays": {"min": 7, "max": 3650, "unit": "天"},
+    "memory.timeDecay.temporaryHalfLifeDays": {"min": 1, "max": 365, "unit": "天", "expert": True},
+    "memory.timeDecay.projectHalfLifeDays": {"min": 7, "max": 1825, "unit": "天", "expert": True},
+    "memory.timeDecay.topicBookHalfLifeDays": {"min": 7, "max": 3650, "unit": "天", "expert": True},
+    "memory.timeDecay.stablePreferenceHalfLifeDays": {"min": 30, "max": 3650, "unit": "天", "expert": True},
+    "context.recentInputBaseline": {"min": 10, "max": 80, "unit": "条"},
+    "context.recentInputMaximum": {"min": 20, "max": 200, "unit": "条"},
+    "context.tokenBudget": {"min": 2048, "max": 32768, "step": 512, "unit": "token"},
+    "context.reservedOutputTokens": {"min": 256, "max": 8192, "step": 256, "unit": "token"},
+}
 
 
 def deep_merge_settings(base: Mapping[str, object], updates: Mapping[str, object]) -> dict[str, object]:

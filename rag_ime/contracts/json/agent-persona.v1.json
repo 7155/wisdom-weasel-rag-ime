@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-persona.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "roleId",
+    "version",
+    "displayName",
+    "tagline",
+    "summary",
+    "traits",
+    "visualProfile",
+    "defaults",
+    "safetyPolicyVersion",
+    "selectableModes"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-persona.v1"},
+    "roleId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"},
+    "version": {"type": "string", "pattern": "^[1-9][0-9]{0,5}$"},
+    "displayName": {"type": "string", "minLength": 1, "maxLength": 40},
+    "tagline": {"type": "string", "minLength": 1, "maxLength": 80},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 180},
+    "traits": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 24}
+    },
+    "visualProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["avatarAssetId", "symbolName", "accentToken"],
+      "properties": {
+        "avatarAssetId": {"type": "string", "minLength": 1, "maxLength": 80},
+        "symbolName": {"type": "string", "minLength": 1, "maxLength": 80},
+        "accentToken": {"type": "string", "enum": ["teal", "blue", "rose", "neutral"]}
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelPolicy", "memoryPolicy", "toolProfileVersion"],
+      "properties": {
+        "modelPolicy": {"type": "string", "minLength": 1, "maxLength": 80},
+        "memoryPolicy": {"type": "string", "minLength": 1, "maxLength": 80},
+        "toolProfileVersion": {"type": "string", "minLength": 1, "maxLength": 80}
+      }
+    },
+    "safetyPolicyVersion": {"type": "string", "const": "control-center-safe-v1"},
+    "selectableModes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {"type": "string", "enum": ["assistant", "coordinator"]}
+    }
+  }
+}

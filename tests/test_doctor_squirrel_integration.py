@@ -165,31 +165,17 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                     "committedContext": committed_context,
                     "queryBasis": "committedContext",
                     "triggerDecision": {
-                        "shouldRefresh": True,
-                        "reason": "refresh: recent committed context fallback",
+                        "shouldRefresh": False,
+                        "reason": "skip: composition owned by rime; ai after commit only",
                     },
                     "mergePolicy": {
-                        "sideCandidatesEnabled": True,
+                        "sideCandidatesEnabled": False,
                         "rawPinyinFallback": False,
                         "sideFirst": True,
                         "rimeFirst": False,
                         "fallbackOrder": ["model", "rag", "rime"],
                     },
-                    "displayCandidates": [
-                        {
-                            "label": "1",
-                            "selectionKey": "1",
-                            "selectionRank": 1,
-                            "text": "继续预测",
-                            "insertText": "继续预测",
-                            "sourceType": "model",
-                            "selectionAction": "commit_side_candidate",
-                            "sourceIndex": 0,
-                            "displayLayout": "inline",
-                            "displayLane": "model",
-                            "metadata": dict(self.__class__.model_metadata),
-                        }
-                    ],
+                    "displayCandidates": [],
                 }
             )
             return
@@ -229,7 +215,7 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                 "sourceType": "model",
                 "selectionAction": "commit_side_candidate",
                 "sourceIndex": index,
-                "displayLayout": "inline",
+                "displayLayout": "block",
                 "displayLane": "model",
                 "metadata": dict(self.__class__.model_metadata),
             }
@@ -306,6 +292,7 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS Squirrel integration tools")
 class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
     def setUp(self) -> None:
         _DoctorSidecarHandler.reset()
@@ -377,13 +364,23 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("doctor_latency_budget_ms: 2000", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
         self.assertTrue(all(payload.get("latencyBudgetMs") == 2000 for payload in _DoctorSidecarHandler.suggest_payloads))
+        self.assertTrue(
+            all(payload.get("privacyDisposition") == "allowed" for payload in _DoctorSidecarHandler.suggest_payloads),
+            _DoctorSidecarHandler.suggest_payloads,
+        )
         main_probe = _DoctorSidecarHandler.suggest_payloads[0]
         self.assertEqual(main_probe.get("frontendBuild"), "rag-ime.foreground-trace.v2")
         self.assertEqual(main_probe.get("schemaVersion"), "rag-ime.squirrel-frontend-trace.v1")
         self.assertEqual(main_probe.get("rawInput"), "")
-        self.assertEqual(main_probe.get("commitTextPreview"), "")
+        self.assertEqual(main_probe.get("commitTextPreview"), "展示方式")
         self.assertEqual(main_probe.get("queryBasis"), None)
         self.assertIn("候选展示方式", str(main_probe.get("committedContext") or ""))
+        foreground = main_probe.get("foregroundText")
+        self.assertIsInstance(foreground, dict)
+        self.assertEqual(foreground.get("source"), "text_input_client")
+        self.assertTrue(foreground.get("commitTextMatched"))
+        self.assertEqual(foreground.get("captureEpoch"), main_probe.get("requestSeq"))
+        self.assertTrue(main_probe.get("commitBurstReady"))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
@@ -501,6 +498,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     root=root,
                     model=_DoctorSidecarHandler.model,
                     base_url="http://127.0.0.1:18767",
+                    extra_env={
+                        "RAG_IME_RUNTIME_PROFILE": "foreground-rag-proof",
+                        "RAG_IME_RAG_DIRECT_DISPLAY": "1",
+                    },
                 )
                 mlx_plist = _write_mlx_launch_agent_plist(
                     tmp_path / "mlx.plist",
@@ -552,7 +553,6 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
                     cwd="/tmp",
                     env=env,
-                    check=True,
                     text=True,
                     capture_output=True,
                 )
@@ -561,6 +561,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("tryout_readiness: 1", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.select_payloads)
         self.assertTrue(_DoctorSidecarHandler.select_payloads[-1].get("dryRun"))
@@ -573,6 +574,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] RAG ranking diagnostics available", result.stdout)
         self.assertIn("[OK] sidecar LaunchAgent plist: matches current sidecar provider/model env", result.stdout)
         self.assertIn("[OK] sidecar LaunchAgent v1 foreground defaults", result.stdout)
+        self.assertIn("[OK] sidecar LaunchAgent v1 DeepSeek passive gate", result.stdout)
         self.assertIn("[OK] MLX predictor LaunchAgent plist: matches text-only MLX model", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
@@ -677,6 +679,62 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[FAIL] sidecar LaunchAgent v1 foreground defaults: drift:", result.stdout)
         self.assertIn("RAG_IME_POST_COMMIT_MODEL_BUDGET_MS='4500', expected '900'", result.stdout)
 
+    def test_doctor_fails_required_launch_agent_plist_when_v1_safety_defaults_drift(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.use_mlx_logits()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-launchd-v1-safety-drift-") as tmp:
+                tmp_path = Path(tmp)
+                sidecar_plist = _write_sidecar_launch_agent_plist(
+                    tmp_path / "sidecar.plist",
+                    root=root,
+                    model=_DoctorSidecarHandler.model,
+                    base_url="http://127.0.0.1:18767",
+                    extra_env={
+                        "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "0",
+                        "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
+                        "RAG_IME_DEEPSEEK_POST_COMMIT": "1",
+                    },
+                )
+                mlx_plist = _write_mlx_launch_agent_plist(
+                    tmp_path / "mlx.plist",
+                    root=root,
+                    model=_DoctorSidecarHandler.model,
+                    port="18767",
+                )
+                env = {
+                    **os.environ,
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                    "RAG_IME_SIDECAR_HOST": "127.0.0.1",
+                    "RAG_IME_SIDECAR_PORT": str(server.server_port),
+                    "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                    "RAG_IME_DOCTOR_REQUIRE_LAUNCH_AGENT_PLIST": "1",
+                    "RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST": str(sidecar_plist),
+                    "RAG_IME_MLX_LAUNCH_AGENT_PLIST": str(mlx_plist),
+                }
+                result = subprocess.run(
+                    ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                    cwd="/tmp",
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] sidecar LaunchAgent v1 foreground defaults: drift:", result.stdout)
+        self.assertIn("RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT='0', expected '1'", result.stdout)
+        self.assertNotIn("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON='1', expected '0'", result.stdout)
+        self.assertIn("[FAIL] sidecar LaunchAgent v1 DeepSeek passive gate", result.stdout)
+
     def test_doctor_tryout_mode_fails_when_squirrel_workdir_is_missing(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-tryout-") as tmp:
@@ -705,6 +763,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-input-source-") as tmp:
             tmp_path = Path(tmp)
             calls_log = tmp_path / "squirrel-calls.log"
+            refresh_log = tmp_path / "refresh-calls.log"
             app = _write_fake_squirrel_app(
                 tmp_path / "Squirrel.app",
                 body="#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$SQUIRREL_CALLS_LOG\"\nexit 0\n",
@@ -724,6 +783,12 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             swift.chmod(0o755)
+            refresh = tmp_path / "refresh-input-source.sh"
+            refresh.write_text(
+                "#!/usr/bin/env bash\nprintf 'refresh\\n' >> \"$REFRESH_CALLS_LOG\"\n",
+                encoding="utf-8",
+            )
+            refresh.chmod(0o755)
 
             env = {
                 **{key: value for key, value in os.environ.items() if not key.startswith("RAG_IME_")},
@@ -738,7 +803,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 "RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE": "1",
                 "RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE": "0",
                 "RAG_IME_DOCTOR_REQUIRE_PATCHED_APP": "0",
+                "RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT": str(refresh),
                 "SQUIRREL_CALLS_LOG": str(calls_log),
+                "REFRESH_CALLS_LOG": str(refresh_log),
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
@@ -748,14 +815,14 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
             )
-            if not calls_log.exists() and "Killed: 9" in result.stderr:
+            if not refresh_log.exists() and "Killed: 9" in result.stderr:
                 self.skipTest("macOS killed the fake Squirrel.app fixture")
-            calls = calls_log.read_text(encoding="utf-8")
+            refresh_calls = refresh_log.read_text(encoding="utf-8")
 
         self.assertIn("[OK] installed Squirrel.app executable exists", result.stdout)
         self.assertIn("[OK] macOS input source enabled", result.stdout)
-        self.assertIn("--register-input-source", calls)
-        self.assertIn("--enable-input-source im.rime.inputmethod.Squirrel.Hans", calls)
+        self.assertEqual(refresh_calls.strip(), "refresh")
+        self.assertFalse(calls_log.exists())
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_can_require_patched_squirrel_app_marker(self) -> None:
@@ -797,9 +864,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# rag-ime.foreground-trace.v2\n"
-                    "# panel_text_layout\n"
-                    "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_cleared\n"
+                    "# composition_ai_suppressed\n"
+                    "# foreground_context_capture_resolved\n"
+                    "# assistant_overlay_candidate_visible\n"
+                    "# side_candidate_feedback_recorded\n"
                     "exit 0\n"
                 ),
             )
@@ -844,9 +912,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# rag-ime.foreground-trace.v2\n"
-                    "# panel_text_layout\n"
-                    "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_cleared\n"
+                    "# composition_ai_suppressed\n"
+                    "# foreground_context_capture_resolved\n"
+                    "# assistant_overlay_candidate_visible\n"
+                    "# side_candidate_feedback_recorded\n"
                     "exit 0\n"
                 ),
             )
@@ -891,9 +960,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# rag-ime.foreground-trace.v2\n"
-                    "# panel_text_layout\n"
-                    "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_cleared\n"
+                    "# composition_ai_suppressed\n"
+                    "# foreground_context_capture_resolved\n"
+                    "# assistant_overlay_candidate_visible\n"
+                    "# side_candidate_feedback_recorded\n"
                     "exit 0\n"
                 ),
                 bundle_id="im.rag-ime.inputmethod.RagIme",
@@ -1137,6 +1207,7 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_ROOT": "/tmp/RagIme/app",
             "RAG_IME_DB_PATH": "/tmp/rag-ime.sqlite",
             "RAG_IME_CORE_MODE": "local",
+            "RAG_IME_RUNTIME_PROFILE": "v1-proof",
             "RAG_IME_PREDICTOR_PROVIDER": "mlx",
             "RAG_IME_PREDICTOR_BASE_URL": base_url,
             "RAG_IME_PREDICTOR_MODEL": model,
@@ -1146,11 +1217,18 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
             "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
             "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
-            "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
-            "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
+            "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "180",
+            "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "180",
             "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
             "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
             "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
+            "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "1",
+            "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": "700",
+            "RAG_IME_HYBRID_RAG_CORE": "1",
+            "RAG_IME_RAG_DIRECT_DISPLAY": "0",
+            "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
+            "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
+            "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
         },
     }
     payload["EnvironmentVariables"].update(extra_env or {})

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-memory-source.v1",
+  "type": "object",
+  "required": ["schemaVersion", "sourceId", "sessionId", "piEntryId", "inputEventId", "sourceRole", "sourceRevision", "canonicalTextSha256", "status", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-memory-source.v1"},
+    "sourceId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "piEntryId": {"type": "string", "minLength": 1},
+    "inputEventId": {"type": "integer", "minimum": 1},
+    "sourceRole": {"type": "string", "enum": ["user", "tool_receipt"]},
+    "sourceRevision": {"type": "integer", "minimum": 1},
+    "canonicalTextSha256": {"type": "string", "minLength": 64},
+    "status": {"type": "string", "enum": ["active", "superseded", "archived", "tombstoned"]},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "supersededAtMs": {"type": ["integer", "null"]}
+  }
+}

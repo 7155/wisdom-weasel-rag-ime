@@ -63,8 +63,21 @@ class QueryExpansionTests(unittest.TestCase):
         self.assertIn("Qwen3", expansion.expansion_terms)
 
     def test_query_expansion_uses_rime_top_candidate(self) -> None:
-        self._record_event("候选展示", recent_context="输入法 RAG 候选展示", tags=("输入法", "RAG", "候选", "本地模型"))
+        event_id = self._record_event(
+            "候选展示",
+            recent_context="输入法 RAG 候选展示",
+            tags=("输入法", "RAG", "候选", "本地模型"),
+        )
         with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    governed_compile_output(event_id, "候选展示", ("输入法", "RAG", "候选", "本地模型")),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
             rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
 
             expansion = build_query_expansion(
@@ -83,12 +96,25 @@ class QueryExpansionTests(unittest.TestCase):
         self.assertIn("候选", expansion.activated_tags)
 
     def test_query_expansion_activates_project_tags(self) -> None:
-        self._record_event(
+        event_id = self._record_event(
             "输入法候选需要本地模型和 RAG 一起工作",
             recent_context="Rime Squirrel 候选 本地模型",
             tags=("输入法", "RAG", "Rime", "Squirrel", "候选", "本地模型"),
         )
         with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    governed_compile_output(
+                        event_id,
+                        "输入法候选需要本地模型和 RAG 一起工作",
+                        ("输入法", "RAG", "Rime", "Squirrel", "候选", "本地模型"),
+                    ),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
             rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
 
             expansion = build_query_expansion(conn, query_text="输入法", project="wisdom-weasel-rag-ime")
@@ -97,17 +123,30 @@ class QueryExpansionTests(unittest.TestCase):
             self.assertIn(tag, expansion.activated_tags)
 
     def test_query_expansion_negative_tags_from_backspace_feedback(self) -> None:
-        self._record_event("大模型候选", recent_context="Qwen 本地模型", tags=("大模型", "Qwen", "本地模型"))
+        event_id = self._record_event(
+            "大模型候选",
+            recent_context="Qwen 本地模型",
+            tags=("大模型", "Qwen", "本地模型"),
+        )
         with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    governed_compile_output(event_id, "大模型候选", ("大模型", "Qwen", "本地模型")),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
             rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
             conn.execute(
                 """
                 INSERT INTO candidate_feedback(
                     created_at_ms, query_hash, candidate_text, source_type, memory_id, action, app, project, metadata_json
                 )
-                VALUES (?, 'q', '大模型候选', 'rag', 'phrase:大模型候选', 'backspace_after_accept', '', 'wisdom-weasel-rag-ime', '{}')
+                VALUES (?, 'q', '大模型候选', 'rag', ?, 'backspace_after_accept', '', 'wisdom-weasel-rag-ime', '{}')
                 """,
-                (now_ms(),),
+                (now_ms(), f"atom:governed:{event_id}"),
             )
 
             expansion = build_query_expansion(conn, query_text="大模型", project="wisdom-weasel-rag-ime")
@@ -124,6 +163,7 @@ class QueryExpansionTests(unittest.TestCase):
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text=text,
+                privacy_disposition="allowed",
                 recent_context=recent_context,
                 project="wisdom-weasel-rag-ime",
                 tags=tags,
@@ -156,6 +196,32 @@ def qwen_compile_output(event_id: int) -> dict[str, object]:
             {"src": "输入法", "dst": "大模型", "edgeType": "related", "weight": 0.8, "evidenceEventIds": [event_id]},
             {"src": "大模型", "dst": "本地模型", "edgeType": "related", "weight": 0.8, "evidenceEventIds": [event_id]},
         ],
+        "phraseCandidates": [],
+        "warnings": [],
+    }
+
+
+def governed_compile_output(event_id: int, text: str, tags: tuple[str, ...]) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.memory-book-compile.v1",
+        "dailyBooks": [],
+        "memoryAtoms": [
+            {
+                "atomId": f"atom:governed:{event_id}",
+                "kind": "project_fact",
+                "canonicalText": text,
+                "summary": text,
+                "tags": list(tags),
+                "aliases": [],
+                "surfaceHints": [],
+                "queryExpansions": list(tags),
+                "sourceEventIds": [event_id],
+                "directCandidateAllowed": False,
+                "confidence": 0.9,
+                "qualityScore": 0.86,
+            }
+        ],
+        "tagEdges": [],
         "phraseCandidates": [],
         "warnings": [],
     }

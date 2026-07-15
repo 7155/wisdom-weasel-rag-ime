@@ -14,7 +14,8 @@ from threading import RLock
 from typing import Any, Iterator
 
 from .core_client import CoreMemory
-from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
+from .daily_planner import detect_task_completion
+from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity, embed_query
 from .memory_cleanup import (
     apply_cleanup_diff,
     apply_cleanup_run,
@@ -39,6 +40,8 @@ from .rag_core_v3 import (
     memory_candidates_v2_to_input_suggestions,
     retrieve_candidates_v3 as retrieve_rag_core_v3_candidates,
 )
+from .retrieval_docs import rebuild_retrieval_docs
+from .retrieval_vector_index import rebuild_retrieval_doc_vectors, warm_retrieval_doc_vector_cache
 from .runtime_flags import load_hybrid_rag_runtime_flags
 from .suggestion_compiler import RankedMemory, SuggestionCompiler
 from .text_utils import (
@@ -56,6 +59,16 @@ from .text_utils import (
 _IMPORTANT_ASCII_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.\-]{2,}")
 _VECTOR_ONLY_MIN_SCORE_DEFAULT = 0.35
 _MS_PER_DAY = 24 * 60 * 60 * 1000
+_CURATED_EVENT_SQL = """
+(
+    e.tags_json LIKE '%"compiled-memory"%'
+    OR e.tags_json LIKE '%"compiled-phrase"%'
+    OR e.tags_json LIKE '%"curated"%'
+    OR e.tags_json LIKE '%"phrase-memory"%'
+    OR e.tags_json LIKE '%"stable-memory"%'
+)
+"""
+_CURATED_EVENT_TAGS = {"compiled-memory", "compiled-phrase", "curated", "phrase-memory", "stable-memory"}
 _PHRASE_FEEDBACK_SELECT_COLUMNS = """
                 COALESCE(pfb.phrase_accepted_count, s.accepted_count) AS phrase_accepted_count,
                 COALESCE(pfb.phrase_skipped_count, s.skipped_count) AS phrase_skipped_count,
@@ -104,116 +117,28 @@ class LocalSqliteCoreClient:
         self.legacy_governance_filter_enabled = bool(legacy_governance_filter_enabled)
         self.v2_governance_filter_enabled = bool(v2_governance_filter_enabled)
         self.memory_v2_enabled = True
-        self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
+        self._initialized = False
+        self._initialize_lock = RLock()
+        self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
         self._suggestion_cache_misses = 0
         self._suggestion_cache_evictions = 0
         self._suggestion_cache_invalidations = 0
+        self._vector_scan_cache: dict[tuple[object, ...], tuple[list[sqlite3.Row], Any]] = {}
+        self._vector_scan_cache_lock = RLock()
 
-    def initialize(self) -> None:
+    def initialize(self, *, force: bool = False) -> None:
+        if self._initialized and not force:
+            return
+        with self._initialize_lock:
+            if self._initialized and not force:
+                return
+            self._initialize_database()
+            self._initialized = True
+
+    def _initialize_database(self) -> None:
         with self._connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS input_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at_ms INTEGER NOT NULL,
-                    source TEXT NOT NULL,
-                    committed_text TEXT NOT NULL,
-                    recent_context TEXT NOT NULL DEFAULT '',
-                    preedit TEXT NOT NULL DEFAULT '',
-                    schema_id TEXT NOT NULL DEFAULT 'default',
-                    app TEXT NOT NULL DEFAULT 'manual',
-                    project TEXT NOT NULL DEFAULT '',
-                    candidate_rank INTEGER,
-                    provider_name TEXT NOT NULL DEFAULT 'local',
-                    tags_json TEXT NOT NULL DEFAULT '[]'
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_state (
-                    event_id INTEGER PRIMARY KEY,
-                    accepted_count INTEGER NOT NULL DEFAULT 0,
-                    skipped_count INTEGER NOT NULL DEFAULT 0,
-                    pinned INTEGER NOT NULL DEFAULT 0,
-                    downranked INTEGER NOT NULL DEFAULT 0,
-                    deleted INTEGER NOT NULL DEFAULT 0,
-                    updated_at_ms INTEGER NOT NULL,
-                    FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS phrase_stats (
-                    committed_text TEXT PRIMARY KEY,
-                    input_frequency INTEGER NOT NULL DEFAULT 0,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS phrase_project_stats (
-                    committed_text TEXT NOT NULL,
-                    project TEXT NOT NULL,
-                    input_frequency INTEGER NOT NULL DEFAULT 0,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    PRIMARY KEY(committed_text, project)
-                );
-
-                CREATE TABLE IF NOT EXISTS phrase_app_stats (
-                    committed_text TEXT NOT NULL,
-                    app TEXT NOT NULL,
-                    input_frequency INTEGER NOT NULL DEFAULT 0,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    PRIMARY KEY(committed_text, app)
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_actions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at_ms INTEGER NOT NULL,
-                    memory_id TEXT NOT NULL,
-                    event_id INTEGER,
-                    action_type TEXT NOT NULL,
-                    query TEXT NOT NULL DEFAULT '',
-                    suggestion_id TEXT NOT NULL DEFAULT '',
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_feedback_events (
-                    id TEXT PRIMARY KEY,
-                    candidate_id TEXT,
-                    candidate_text TEXT NOT NULL DEFAULT '',
-                    candidate_source TEXT NOT NULL DEFAULT 'unknown',
-                    action TEXT NOT NULL,
-                    context_hash TEXT,
-                    front_app_bundle_id TEXT,
-                    raw_input TEXT,
-                    preedit TEXT,
-                    committed_tail TEXT,
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    created_at_ms INTEGER NOT NULL
-                );
-
-                CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-                    content_text,
-                    committed_text,
-                    recent_context,
-                    project,
-                    tags,
-                    tokenize = 'unicode61'
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_vectors (
-                    event_id INTEGER PRIMARY KEY,
-                    provider_fingerprint TEXT NOT NULL,
-                    vector_json TEXT NOT NULL,
-                    updated_at_ms INTEGER NOT NULL,
-                    FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_memory_vectors_provider
-                ON memory_vectors(provider_fingerprint);
-                """
-            )
             ensure_memory_v2_schema(conn)
             conn.executescript(
                 """
@@ -285,18 +210,26 @@ class LocalSqliteCoreClient:
                     "phrase_stats",
                     "phrase_project_stats",
                     "phrase_app_stats",
+                    "schema_migrations",
                 )
             )
         )
-        with self._connect() as conn:
-            conn.execute("PRAGMA foreign_keys = OFF")
-            for table in table_names:
-                conn.execute(f"DROP TABLE IF EXISTS {table}")
-            conn.execute("PRAGMA foreign_keys = ON")
-        self.initialize()
+        with self._initialize_lock:
+            with self._connect() as conn:
+                conn.execute("PRAGMA foreign_keys = OFF")
+                for table in table_names:
+                    conn.execute(f"DROP TABLE IF EXISTS {table}")
+                conn.execute("PRAGMA foreign_keys = ON")
+            self._initialized = False
+            self.initialize()
         self._clear_suggestion_cache()
 
     def record_event(self, event: InputEvent) -> str:
+        privacy_disposition = compact_whitespace(event.privacy_disposition).lower()
+        if privacy_disposition not in {"allowed", "sensitive", "unknown"}:
+            raise ValueError("privacy_disposition must be allowed, sensitive, or unknown")
+        if privacy_disposition != "allowed":
+            return f"skipped:privacy_{privacy_disposition}"
         self.initialize()
         text = compact_whitespace(event.committed_text)
         if not text:
@@ -308,9 +241,10 @@ class LocalSqliteCoreClient:
                 """
                 INSERT INTO input_events (
                     created_at_ms, source, committed_text, recent_context, preedit,
-                    schema_id, app, project, candidate_rank, provider_name, tags_json
+                    schema_id, app, project, candidate_rank, provider_name, tags_json,
+                    context_group_id, context_group_level
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     created_at,
@@ -324,6 +258,8 @@ class LocalSqliteCoreClient:
                     event.candidate_rank,
                     event.provider_name,
                     tags_json,
+                    compact_whitespace(event.context_group_id),
+                    compact_whitespace(event.context_group_level) or "app",
                 ),
             )
             event_id = int(cur.lastrowid)
@@ -363,21 +299,23 @@ class LocalSqliteCoreClient:
                     """,
                     (text, event.app, created_at, created_at),
                 )
-            document = _event_fts_document(
-                text,
-                event.recent_context,
-                event.project,
-                " ".join(event.tags),
-                event.preedit,
-            )
-            conn.execute(
-                """
-                INSERT INTO memory_fts(rowid, content_text, committed_text, recent_context, project, tags)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (event_id, document, text, event.recent_context, event.project, " ".join(event.tags)),
-            )
-            self._upsert_event_vector(conn, event_id=event_id, document=document, updated_at_ms=created_at)
+            legacy_retrieval_allowed = not self.memory_v2_enabled or _event_has_curated_import_signal(event.tags)
+            if legacy_retrieval_allowed:
+                document = _event_fts_document(
+                    text,
+                    event.recent_context,
+                    event.project,
+                    " ".join(event.tags),
+                    event.preedit,
+                )
+                conn.execute(
+                    """
+                    INSERT INTO memory_fts(rowid, content_text, committed_text, recent_context, project, tags)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (event_id, document, text, event.recent_context, event.project, " ".join(event.tags)),
+                )
+                self._upsert_event_vector(conn, event_id=event_id, document=document, updated_at_ms=created_at)
             if self.memory_v2_enabled:
                 sync_event_to_memory_v2(
                     conn,
@@ -391,8 +329,25 @@ class LocalSqliteCoreClient:
                     app=event.app,
                     provider_name=event.provider_name,
                     tags=tuple(event.tags),
+                    context_group_id=event.context_group_id,
+                    context_group_level=event.context_group_level,
                     embedding_provider=self.embedding_provider,
                 )
+            # Explicit phrases such as "完成了模型优化" may close an
+            # unambiguous open task. The detector returns before touching SQL
+            # for ordinary input, so it does not add work to the hot path.
+            # Planning must never make a foreground commit fail: ambiguous
+            # matches are stored for confirmation and planner errors are
+            # isolated from the immutable input ledger.
+            try:
+                detect_task_completion(
+                    conn,
+                    text=text,
+                    source_event_id=event_id,
+                    project=event.project,
+                )
+            except (sqlite3.Error, ValueError):
+                pass
         self._clear_suggestion_cache()
         return f"event:{event_id}"
 
@@ -404,6 +359,9 @@ class LocalSqliteCoreClient:
         project: str = "",
         app: str = "",
         top_k: int = 5,
+        context_group_id: str = "",
+        context_group_level: str = "app",
+        context_group_parent_ids: tuple[str, ...] = (),
     ) -> list[InputSuggestion]:
         flags = load_hybrid_rag_runtime_flags()
         cache_key = self._suggestion_cache_key(
@@ -412,6 +370,7 @@ class LocalSqliteCoreClient:
             project=project,
             app=app,
             mode="v3" if flags.hybrid_rag_core else "legacy",
+            context_group_id=context_group_id,
             top_k=top_k,
         )
         cached = self._get_cached_suggestions(cache_key)
@@ -427,6 +386,9 @@ class LocalSqliteCoreClient:
                     app=app,
                     top_k=top_k,
                     source_budget_ms=flags.rag_core_v3_budget_ms,
+                    context_group_id=context_group_id,
+                    context_group_level=context_group_level,
+                    context_group_parent_ids=context_group_parent_ids,
                 )
                 suggestions = memory_candidates_v2_to_input_suggestions(candidates)[:top_k]
                 self._store_cached_suggestions(cache_key, suggestions)
@@ -484,6 +446,11 @@ class LocalSqliteCoreClient:
         app: str = "",
         top_k: int = 5,
         source_budget_ms: int = 25,
+        context_group_id: str = "",
+        context_group_level: str = "app",
+        context_group_parent_ids: tuple[str, ...] = (),
+        enabled_lanes: tuple[tuple[str, bool], ...] = (),
+        lane_weights: tuple[tuple[str, float], ...] = (),
     ) -> list[MemoryCandidateV2]:
         self.initialize()
         with self._connect() as conn:
@@ -498,6 +465,12 @@ class LocalSqliteCoreClient:
                 app=app,
                 top_k=top_k,
                 source_budget_ms=source_budget_ms,
+                context_group_id=context_group_id,
+                context_group_level=context_group_level,
+                context_group_parent_ids=context_group_parent_ids,
+                enabled_lanes=enabled_lanes,
+                lane_weights=lane_weights,
+                embedding_provider=self.embedding_provider,
             )
 
     def _legacy_suggest_for_input(
@@ -769,7 +742,11 @@ class LocalSqliteCoreClient:
                 continue
             context = compact_whitespace(str(row["recent_context"]))
             preedit = compact_whitespace(str(row["preedit"]))
-            parts = [truncate_text(text, 90)]
+            # The newest event often contains a long voice transcript. Keep
+            # its tail, where the live cursor and the user's latest request
+            # are, instead of preserving only the beginning of the dictation.
+            text_budget = min(max_chars, 420 if not selected else 120)
+            parts = [_tail_chars(text, text_budget)]
             if context and context != text:
                 parts.append(f"context: {truncate_text(context, 90)}")
             if preedit and preedit != text:
@@ -1503,14 +1480,34 @@ class LocalSqliteCoreClient:
                     (fingerprint,),
                 ).fetchone()["count"]
             )
+            retrieval_total = int(
+                conn.execute("SELECT COUNT(*) AS count FROM memory_retrieval_doc_vectors").fetchone()["count"]
+            )
+            retrieval_active = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM memory_retrieval_doc_vectors WHERE provider_fingerprint = ?",
+                    (fingerprint,),
+                ).fetchone()["count"]
+            )
         return {
             "enabled": self._embedding_enabled(),
             "providerFingerprint": fingerprint,
             "totalVectors": total,
             "activeProviderVectors": active,
+            "retrievalDocVectors": retrieval_total,
+            "activeProviderRetrievalDocVectors": retrieval_active,
             "candidateLimit": self.vector_candidate_limit,
             "weight": self.vector_weight,
         }
+
+    def warm_retrieval_vector_cache(self, *, project: str = "") -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            return warm_retrieval_doc_vector_cache(
+                conn,
+                self.embedding_provider.fingerprint,
+                project=project,
+            )
 
     def rebuild_vector_index(self, *, project: str = "", limit: int = 0) -> dict[str, object]:
         self.initialize()
@@ -1523,6 +1520,8 @@ class LocalSqliteCoreClient:
             }
         params: list[Any] = []
         where = ["s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
@@ -1538,7 +1537,9 @@ class LocalSqliteCoreClient:
             params.append(limit)
         scanned = 0
         indexed = 0
+        retrieval_report: dict[str, object] = {}
         with self._connect() as conn:
+            rebuild_retrieval_docs(conn, project=project)
             rows = list(conn.execute(sql, params).fetchall())
             for row in rows:
                 scanned += 1
@@ -1556,12 +1557,19 @@ class LocalSqliteCoreClient:
                     updated_at_ms=now_ms(),
                 ):
                     indexed += 1
+            retrieval_report = rebuild_retrieval_doc_vectors(
+                conn,
+                self.embedding_provider,
+                project=project,
+                limit=limit,
+            )
         self._clear_suggestion_cache()
         return {
             "enabled": True,
             "providerFingerprint": self.embedding_provider.fingerprint,
             "scanned": scanned,
             "indexed": indexed,
+            "retrievalDocs": retrieval_report,
         }
 
     def has_event_tag(self, tag: str) -> bool:
@@ -2003,11 +2011,13 @@ class LocalSqliteCoreClient:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._harden_storage_permissions()
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
+        self._harden_storage_permissions()
         try:
             yield conn
             conn.commit()
@@ -2016,6 +2026,25 @@ class LocalSqliteCoreClient:
             raise
         finally:
             conn.close()
+
+    def _harden_storage_permissions(self) -> None:
+        if os.name == "nt":
+            return
+        try:
+            os.chmod(self.db_path.parent, 0o700)
+        except OSError:
+            pass
+        for path in (
+            self.db_path,
+            Path(f"{self.db_path}-wal"),
+            Path(f"{self.db_path}-shm"),
+        ):
+            if not path.exists():
+                continue
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
 
     def _embedding_enabled(self) -> bool:
         return self.embedding_provider.fingerprint != "none"
@@ -2059,19 +2088,21 @@ class LocalSqliteCoreClient:
         project: str,
         app: str,
         mode: str,
+        context_group_id: str,
         top_k: int,
-    ) -> tuple[str, str, str, str, str, str, int]:
+    ) -> tuple[str, str, str, str, str, str, str, int]:
         return (
             compact_whitespace(current_input),
             compact_whitespace(recent_context),
             compact_whitespace(project),
             compact_whitespace(app),
             compact_whitespace(mode),
+            compact_whitespace(context_group_id),
             _pinyin_runtime_cache_fingerprint(),
             int(top_k),
         )
 
-    def _get_cached_suggestions(self, key: tuple[str, str, str, str, str, str, int]) -> list[InputSuggestion] | None:
+    def _get_cached_suggestions(self, key: tuple[str, str, str, str, str, str, str, int]) -> list[InputSuggestion] | None:
         if self.suggestion_cache_size <= 0:
             return None
         with self._suggestion_cache_lock:
@@ -2083,7 +2114,7 @@ class LocalSqliteCoreClient:
             self._suggestion_cache_hits += 1
             return _copy_suggestions(cached)
 
-    def _store_cached_suggestions(self, key: tuple[str, str, str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
+    def _store_cached_suggestions(self, key: tuple[str, str, str, str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
         if self.suggestion_cache_size <= 0:
             return
         with self._suggestion_cache_lock:
@@ -2143,6 +2174,7 @@ class LocalSqliteCoreClient:
                 SELECT mit.memory_item_id, GROUP_CONCAT(mt.tag, ',') AS tags_joined
                 FROM memory_item_tags mit
                 JOIN memory_tags mt ON mt.id = mit.tag_id
+                WHERE mt.status = 'active' AND mt.source IN ('curated_import', 'dsv4', 'user')
                 GROUP BY mit.memory_item_id
             ) tag_map ON tag_map.memory_item_id = mi.id
             WHERE {' AND '.join(where)}
@@ -2190,6 +2222,7 @@ class LocalSqliteCoreClient:
                 SELECT mit.memory_item_id, GROUP_CONCAT(mt.tag, ',') AS tags_joined
                 FROM memory_item_tags mit
                 JOIN memory_tags mt ON mt.id = mit.tag_id
+                WHERE mt.status = 'active' AND mt.source IN ('curated_import', 'dsv4', 'user')
                 GROUP BY mit.memory_item_id
             ) tag_map ON tag_map.memory_item_id = mi.id
             WHERE {' AND '.join(where)}
@@ -2362,7 +2395,7 @@ class LocalSqliteCoreClient:
     ) -> dict[int, float]:
         if not self._embedding_enabled():
             return {}
-        query_vector = self.embedding_provider.embed(query)
+        query_vector = embed_query(self.embedding_provider, query)
         if not query_vector:
             return {}
         params: list[Any] = [self.embedding_provider.fingerprint]
@@ -2705,6 +2738,8 @@ class LocalSqliteCoreClient:
     def _search_rows(self, *, fts_query: str, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = [fts_query]
         where = ["memory_fts MATCH ?", "s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             where_params.append(project)
@@ -2739,11 +2774,13 @@ class LocalSqliteCoreClient:
     def _vector_rows(self, *, query: str, project: str, app: str, limit: int) -> tuple[list[sqlite3.Row], dict[int, float]]:
         if not self._embedding_enabled() or self.vector_candidate_limit <= 0 or self.vector_weight <= 0:
             return [], {}
-        query_vector = self.embedding_provider.embed(query)
+        query_vector = embed_query(self.embedding_provider, query)
         if not query_vector:
             return [], {}
         where_params: list[Any] = [self.embedding_provider.fingerprint]
         where = ["v.provider_fingerprint = ?", "s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             where_params.append(project)
@@ -2771,9 +2808,45 @@ class LocalSqliteCoreClient:
             WHERE {' AND '.join(where)}
         """
         params = [project, app, *where_params]
-        candidates: list[tuple[float, sqlite3.Row]] = []
         with self._connect() as conn:
-            rows = list(conn.execute(sql, params).fetchall())
+            revision = conn.execute(
+                f"""
+                SELECT COUNT(*) AS vector_count, COALESCE(MAX(v.updated_at_ms), 0) AS latest_vector,
+                       COALESCE(SUM(s.deleted), 0) AS deleted_count
+                FROM memory_vectors v
+                JOIN input_events e ON e.id = v.event_id
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE {' AND '.join(where)}
+                """,
+                where_params,
+            ).fetchone()
+            cache_key = (
+                self.embedding_provider.fingerprint,
+                project,
+                app,
+                int(revision["vector_count"]),
+                int(revision["latest_vector"]),
+                int(revision["deleted_count"]),
+            )
+            with self._vector_scan_cache_lock:
+                cached_scan = self._vector_scan_cache.get(cache_key)
+            if cached_scan is None:
+                rows = list(conn.execute(sql, params).fetchall())
+                cached_scan = self._build_vector_scan_cache(rows)
+                with self._vector_scan_cache_lock:
+                    self._vector_scan_cache = {cache_key: cached_scan}
+        rows, matrix = cached_scan
+        if matrix is not None:
+            try:
+                import numpy as np
+
+                scores = matrix @ np.asarray(query_vector, dtype=np.float32)
+                order = np.argsort(-scores)[: max(1, limit)]
+                selected = [(float(scores[index]), rows[int(index)]) for index in order if float(scores[index]) > 0]
+                return [row for _, row in selected], {int(row["id"]): score for score, row in selected}
+            except (ImportError, ValueError):
+                pass
+        candidates: list[tuple[float, sqlite3.Row]] = []
         for row in rows:
             try:
                 vector = json.loads(row["vector_json"] or "[]")
@@ -2789,9 +2862,33 @@ class LocalSqliteCoreClient:
         selected = candidates[: max(1, limit)]
         return [row for _, row in selected], {int(row["id"]): score for score, row in selected}
 
+    @staticmethod
+    def _build_vector_scan_cache(rows: list[sqlite3.Row]) -> tuple[list[sqlite3.Row], Any]:
+        parsed_rows: list[sqlite3.Row] = []
+        vectors: list[list[float]] = []
+        dimensions = 0
+        for row in rows:
+            try:
+                vector = [float(value) for value in json.loads(row["vector_json"] or "[]")]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if not vector or (dimensions and len(vector) != dimensions):
+                continue
+            dimensions = dimensions or len(vector)
+            parsed_rows.append(row)
+            vectors.append(vector)
+        try:
+            import numpy as np
+
+            return parsed_rows, np.asarray(vectors, dtype=np.float32) if vectors else None
+        except ImportError:
+            return parsed_rows, None
+
     def _recent_rows(self, *, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = []
         where = ["s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             where_params.append(project)
@@ -3386,6 +3483,10 @@ def _split_tags_joined(raw: str) -> tuple[str, ...]:
     return tuple(tag for tag in (compact_whitespace(part) for part in raw.split(",")) if tag)
 
 
+def _event_has_curated_import_signal(tags: tuple[str, ...]) -> bool:
+    return bool({compact_whitespace(tag).lower() for tag in tags} & _CURATED_EVENT_TAGS)
+
+
 def _source_type_from_tags_v2(tags: tuple[str, ...]) -> str:
     tag_set = {tag.lower() for tag in tags}
     if tag_set.intersection({"cold_knowledge", "cold-knowledge", "external-knowledge"}):
@@ -3959,6 +4060,7 @@ def _pinyin_runtime_cache_fingerprint() -> str:
         "RAG_IME_PINYIN_FUZZY_S_SH",
         "RAG_IME_PINYIN_FUZZY_EN_ENG",
         "RAG_IME_PINYIN_FUZZY_IN_ING",
+        "RAG_IME_PINYIN_FUZZY_ONG_ON",
         "RAG_IME_PINYIN_FUZZY_N_L",
         "RAG_IME_PINYIN_FUZZY_F_H",
     )
@@ -4529,12 +4631,15 @@ def _legacy_v2_suggestion_key(suggestion: InputSuggestion) -> str:
 def _suggestion_looks_like_compiled_memory(suggestion: InputSuggestion) -> bool:
     metadata = dict(suggestion.metadata)
     tags = {str(tag).lower() for tag in metadata.get("tags") or []}
+    memory_id = compact_whitespace(str(metadata.get("memory_id") or ""))
     surface = compact_whitespace(suggestion.surface_text)
     if not surface or len(surface) > 24:
         return False
     if tags.intersection({"phrase-memory", "compiled-memory", "compiled-phrase", "curated", "structure", "outline"}):
         return True
     source_type = str(metadata.get("source_type") or "")
+    if memory_id.startswith("phrase:") and source_type in {"memory", "rag"} and suggestion.suggestion_type == "phrase":
+        return True
     return source_type == "memory" and suggestion.suggestion_type in {"phrase", "structure", "continue"}
 
 

@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_APP = Path.home() / "Library" / "Input Methods" / "RAG-IME.app"
-DEFAULT_INPUT_SOURCE_ID = "im.rag-ime.inputmethod.RagIme.Hans"
-DEFAULT_BUNDLE_ID = "im.rag-ime.inputmethod.RagIme"
+DEFAULT_APP = Path.home() / "Library" / "Input Methods" / "Squirrel.app"
+DEFAULT_INPUT_SOURCE_ID = "im.rime.inputmethod.Squirrel.Hans"
+DEFAULT_BUNDLE_ID = "im.rime.inputmethod.Squirrel"
 
 
 def sha256_file(path: Path) -> str | None:
@@ -23,6 +23,28 @@ def sha256_file(path: Path) -> str | None:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except FileNotFoundError:
         return None
+
+
+def assistant_overlay_sha256(root: Path) -> str | None:
+    names = (
+        "RagImeAssistantSurfaceState.swift",
+        "RagImeSuggestionCardView.swift",
+        "RagImeSuggestionRowView.swift",
+        "RagImeNonActivatingPanel.swift",
+        "RagImeAssistantPanelController.swift",
+    )
+    digest = hashlib.sha256()
+    for name in names:
+        path = root / "squirrel-patches" / "sources" / name
+        try:
+            content = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def load_json(path: Path) -> dict[str, Any] | None:
@@ -83,15 +105,20 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     patch_path = root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch"
     marker = load_json(marker_path)
     current_patch_sha = sha256_file(patch_path)
+    current_overlay_sha = assistant_overlay_sha256(root)
     marker_patch_sha = marker.get("patchSha256") if isinstance(marker, dict) else None
+    marker_overlay_sha = marker.get("overlaySha256") if isinstance(marker, dict) else None
     marker_bundle_id = marker.get("bundleId") if isinstance(marker, dict) else None
     marker_input_source_id = marker.get("inputSourceId") if isinstance(marker, dict) else None
     installed_latest = (
         isinstance(marker, dict)
-        and marker.get("schemaVersion") == "rag-ime.squirrel-build-marker.v1"
+        and marker.get("schemaVersion") == "rag-ime.squirrel-build-marker.v2"
         and marker_patch_sha is not None
         and current_patch_sha is not None
         and marker_patch_sha == current_patch_sha
+        and marker_overlay_sha is not None
+        and current_overlay_sha is not None
+        and marker_overlay_sha == current_overlay_sha
         and marker_bundle_id == args.bundle_id
         and marker_input_source_id == args.input_source_id
     )
@@ -99,14 +126,20 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     selected = None
     hitoolbox_enabled = None
     third_party_enabled = None
+    preference_enabled = None
     if isinstance(input_report, dict):
         source = input_report.get("source")
         if isinstance(source, dict):
             selected = source.get("selected")
             hitoolbox_enabled = source.get("hitoolboxEnabled")
             third_party_enabled = source.get("thirdPartyEnabled")
+            preference_enabled = source.get("preferenceEnabled")
     processes = running_processes(app_path) if args.check_process else []
-    ok = installed_latest and selected is not False and hitoolbox_enabled is not False and third_party_enabled is not False
+    preference_ready = (
+        preference_enabled is True
+        or (preference_enabled is None and (hitoolbox_enabled is True or third_party_enabled is True))
+    )
+    ok = installed_latest and selected is not False and preference_ready
     return {
         "schemaVersion": "rag-ime.installed-build-check.v1",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -118,6 +151,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "installedLatest": installed_latest,
         "currentPatchSha256": current_patch_sha,
         "markerPatchSha256": marker_patch_sha,
+        "currentOverlaySha256": current_overlay_sha,
+        "markerOverlaySha256": marker_overlay_sha,
         "bundleIdExpected": args.bundle_id,
         "bundleIdInstalled": marker_bundle_id,
         "inputSourceIdExpected": args.input_source_id,
@@ -125,21 +160,23 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "selected": selected,
         "hitoolboxEnabled": hitoolbox_enabled,
         "thirdPartyEnabled": third_party_enabled,
+        "preferenceEnabled": preference_enabled,
+        "preferenceReady": preference_ready,
         "inputSource": input_report,
         "runningPids": processes,
         "runningProcessCount": len(processes),
         "marker": marker,
         "notes": [
-            "installedLatest proves the installed app marker matches the current Squirrel patch file.",
+            "installedLatest proves the installed app marker matches both the current Squirrel patch and overlay sources.",
             "A running process can still be old until macOS restarts or reselects the input method.",
-            "If installedLatest=true but candidates look old, quit/reselect RAG-IME and run this checker again.",
+            "If installedLatest=true but candidates look old, quit/reselect Squirrel and run this checker again.",
         ],
     }
 
 
 def main() -> int:
     root_default = Path(__file__).resolve().parents[1]
-    parser = argparse.ArgumentParser(description="Check whether the installed RAG-IME app matches this checkout.")
+    parser = argparse.ArgumentParser(description="Check whether the installed patched Squirrel app matches this checkout.")
     parser.add_argument("--repo-root", type=Path, default=root_default)
     parser.add_argument("--app", type=Path, default=Path(os.environ.get("RAG_IME_SQUIRREL_APP", DEFAULT_APP)))
     parser.add_argument("--input-source-id", default=os.environ.get("RAG_IME_SQUIRREL_INPUT_SOURCE_ID", DEFAULT_INPUT_SOURCE_ID))

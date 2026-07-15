@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.memory-read-error.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "errorCode", "error"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.memory-read-error.v1"},
+    "ok": {"type": "boolean", "const": false},
+    "errorCode": {"type": "string", "const": "invalid_request"},
+    "error": {"type": "string", "minLength": 1, "maxLength": 256}
+  }
+}

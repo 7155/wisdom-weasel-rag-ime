@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.overlay-config.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "candidateFontSize",
+    "maxWidth",
+    "fadeAnimation",
+    "panelStyle",
+    "expiresAfterMs",
+    "maxCandidates",
+    "showSourceBadge",
+    "badges",
+    "colors",
+    "keyPolicy",
+    "activeRag"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.overlay-config.v1"},
+    "candidateFontSize": {"type": "integer", "minimum": 11, "maximum": 24},
+    "maxWidth": {"type": "integer", "minimum": 320, "maximum": 760},
+    "fadeAnimation": {"type": "boolean"},
+    "panelStyle": {"type": "string", "enum": ["compact", "expanded"]},
+    "expiresAfterMs": {"type": "integer", "minimum": 0, "maximum": 15000},
+    "maxCandidates": {"type": "integer", "minimum": 1, "maximum": 10},
+    "showSourceBadge": {"type": "boolean"},
+    "badges": {"type": "object", "additionalProperties": {"type": "string"}},
+    "colors": {"type": "object", "additionalProperties": {"type": "string"}},
+    "keyPolicy": {"type": "object"},
+    "activeRag": {
+      "type": "object",
+      "required": ["enabled", "shortcut"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "shortcut": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

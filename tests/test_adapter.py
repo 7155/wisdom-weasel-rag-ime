@@ -70,6 +70,7 @@ class InputMethodAdapterTests(unittest.TestCase):
             "默认本地完成, 不上传个人输入历史",
             recent_context="隐私边界",
             preedit="moren bendi",
+            privacy_disposition="allowed",
             tags=("privacy",),
         )
         self.assertEqual(event_id, "event:1")
@@ -81,6 +82,12 @@ class InputMethodAdapterTests(unittest.TestCase):
         disabled = self.adapter.commit_text("暂停记录", recording_enabled=False)
         self.assertEqual(sensitive, "skipped:sensitive_field")
         self.assertEqual(disabled, "skipped:recording_disabled")
+        self.assertEqual(self.core.events, [])
+
+    def test_unknown_privacy_disposition_fails_closed(self) -> None:
+        result = self.adapter.commit_text("不能确认字段类型")
+
+        self.assertEqual(result, "skipped:privacy_unknown")
         self.assertEqual(self.core.events, [])
 
     def test_renderer_keeps_full_evidence_out_of_candidate_bar(self) -> None:

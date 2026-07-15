@@ -1,21 +1,38 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import sqlite3
 import time
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
+from .context_group import ContextGroup, context_group_compatibility
+from .embeddings import EmbeddingProvider, cosine_similarity, embed_query
 from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery
 from .hybrid_rag_ranker import rank_hybrid_hits
+from .memory_book_lifecycle import set_memory_book_archive_status
 from .memory_ingest import normalize_text
 from .query_expansion import build_query_expansion
+from .retrieval_vector_index import load_retrieval_doc_vectors
 from .text_utils import compact_whitespace, token_terms
 
 
 HYBRID_RAG_RETRIEVAL_SCHEMA_VERSION = "rag-ime.hybrid-rag-retrieval.v1"
+_EXPLICIT_HISTORY_RE = re.compile(
+    r"(?:之前|以前|最初|初版|旧版|旧项目|归档|历史|当时|过去|去年|上周|上月|"
+    r"\d{4}[年./-]\d{1,2}(?:[月./-]\d{1,2}日?)?)",
+    re.IGNORECASE,
+)
 
 
-def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQuery) -> dict[str, object]:
+def retrieve_hybrid_rag_candidates(
+    conn: sqlite3.Connection,
+    query: HybridRagQuery,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> dict[str, object]:
     started = time.perf_counter()
     expansion = build_query_expansion(
         conn,
@@ -27,44 +44,116 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
         project=query.project,
         app=query.app,
     )
-    docs = _active_docs(conn, project=query.project, app=query.app)
+    docs = _active_docs(conn, query=query)
     blocked = _blocked_sets(conn)
-    lane_hits: dict[str, list[HybridRagHit]] = {
-        "bm25_raw": _rank_docs(
-            docs,
+    vector_available = bool(embedding_provider and embedding_provider.fingerprint != "none")
+    enabled_lanes = _resolved_lane_enabled(query.enabled_lanes, vector_available=vector_available)
+    lane_weights = _resolved_lane_weights(query.lane_weights)
+    vectors = (
+        load_retrieval_doc_vectors(conn, embedding_provider.fingerprint, (str(doc["doc_id"]) for doc in docs))
+        if vector_available and embedding_provider is not None else {}
+    )
+    query_vector = embed_query(embedding_provider, expansion.primary_query) if vectors and embedding_provider else []
+    # SQLite connections are thread-affine by default. Complete SQL-backed
+    # lanes here; CPU-only scoring lanes then run in parallel.
+    lexical_lane_meta: dict[str, str] = {}
+    bm25_raw_hits = []
+    if enabled_lanes["bm25_raw"]:
+        bm25_raw_hits, lexical_lane_meta["bm25_raw"] = _rank_fts5_docs(
+            conn,
+            docs=docs,
             lane="bm25_raw",
             terms=(expansion.primary_query, *expansion.lexical_terms),
             fields=("raw_text",),
             blocked=blocked,
+            project=query.project,
+            app=query.app,
             limit=max(8, query.top_k * 4),
-        ),
-        "bm25_tags": _rank_docs(
-            docs,
+        )
+    bm25_tags_hits = []
+    if enabled_lanes["bm25_tags"]:
+        bm25_tags_hits, lexical_lane_meta["bm25_tags"] = _rank_fts5_docs(
+            conn,
+            docs=docs,
             lane="bm25_tags",
             terms=(*expansion.matched_aliases, *expansion.activated_tags, *expansion.expansion_terms),
             fields=("tags_text", "aliases_text", "surface_hints_text", "query_expansions_text"),
             blocked=blocked,
+            project=query.project,
+            app=query.app,
             limit=max(8, query.top_k * 4),
-        ),
-        "vector_raw": [],
-        "vector_tag_boost": [],
-        "tagmemo": _rank_docs(
-            docs,
+        )
+    tagmemo_hits = []
+    if enabled_lanes["tagmemo"]:
+        tagmemo_hits, lexical_lane_meta["tagmemo"] = _rank_fts5_docs(
+            conn,
+            docs=docs,
             lane="tagmemo",
             terms=expansion.activated_tags,
             fields=("tags_text", "aliases_text", "query_expansions_text"),
             blocked=blocked,
+            project=query.project,
+            app=query.app,
             limit=max(8, query.top_k * 4),
+        )
+    feedback_hits = (
+        _feedback_hits(
+            conn,
+            docs=docs,
+            query=query,
+            terms=(*expansion.lexical_terms, *expansion.matched_aliases, *expansion.activated_tags),
+            blocked=blocked,
+            limit=max(8, query.top_k * 4),
+        )
+        if enabled_lanes["feedback"] else []
+    )
+    tasks = {
+        "vector_raw": lambda: _rank_vector_docs(
+            docs, vectors=vectors, query_vector=query_vector, lane="vector_raw", vector_index=0,
+            blocked=blocked, limit=max(8, query.top_k * 4),
+        ) if enabled_lanes["vector_raw"] else [],
+        "vector_tag_boost": lambda: _rank_vector_docs(
+            docs, vectors=vectors, query_vector=query_vector, lane="vector_tag_boost", vector_index=1,
+            blocked=blocked, limit=max(8, query.top_k * 4), include_group=True,
+        ) if enabled_lanes["vector_tag_boost"] else [],
+        "time": lambda: (
+            _rank_time_docs(
+                docs,
+                expansion_terms=(*expansion.expansion_terms, *expansion.activated_tags),
+                blocked=blocked,
+                limit=max(8, query.top_k * 4),
+            )
+            if enabled_lanes["time"]
+            else []
         ),
-        "time": _rank_time_docs(docs, expansion_terms=(*expansion.expansion_terms, *expansion.activated_tags), blocked=blocked, limit=max(8, query.top_k * 4)),
-        "feedback": _feedback_hits(conn, docs=docs, query=query, blocked=blocked, limit=max(8, query.top_k * 4)),
+        "feedback": lambda: feedback_hits,
     }
+    with ThreadPoolExecutor(max_workers=len(tasks), thread_name_prefix="rag-lane") as executor:
+        futures = {name: executor.submit(task) for name, task in tasks.items()}
+        lane_hits = {name: future.result() for name, future in futures.items()}
+    lane_hits.update({
+        "bm25_raw": bm25_raw_hits,
+        "bm25_tags": bm25_tags_hits,
+        "tagmemo": tagmemo_hits,
+    })
     hits = [hit for lane in lane_hits.values() for hit in lane]
     candidates = rank_hybrid_hits(
         hits,
         query_text=query.query_text,
         committed_tail=query.committed_tail,
         top_k=query.top_k,
+        lane_weights=lane_weights,
+        decay_settings=_memory_decay_settings(conn),
+    )
+    reactivated_book_ids = _reactivate_archived_books_for_explicit_history(
+        conn,
+        hits=hits,
+        candidates=candidates,
+        query_text=" ".join(
+            item
+            for item in (query.query_text, query.raw_input, query.committed_tail)
+            if compact_whitespace(item)
+        ),
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
@@ -78,18 +167,184 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             "expansionTerms": list(expansion.expansion_terms),
         },
         "lanes": {
-            name: {"count": len(values), "docIds": [hit.doc_id for hit in values[:5]]}
+            name: {
+                "enabled": enabled_lanes[name],
+                "available": vector_available if name in {"vector_raw", "vector_tag_boost"} else True,
+                "implementation": _lane_implementation(
+                    name,
+                    lexical_lane_meta=lexical_lane_meta,
+                    vector_available=vector_available,
+                ),
+                "lexicalFallback": _lane_implementation(
+                    name,
+                    lexical_lane_meta=lexical_lane_meta,
+                    vector_available=vector_available,
+                ) == "lexical_substring_fallback",
+                "fts5Bm25": _lane_implementation(
+                    name,
+                    lexical_lane_meta=lexical_lane_meta,
+                    vector_available=vector_available,
+                ) == "sqlite_fts5_bm25",
+                "skippedReason": (
+                    ("embedding_provider_not_wired" if not vector_available else "vector_index_empty")
+                    if name in {"vector_raw", "vector_tag_boost"} and not values
+                    else ("disabled_by_effective_runtime_config" if not enabled_lanes[name] else "")
+                ),
+                "weight": lane_weights[name],
+                "count": len(values),
+                "docIds": [hit.doc_id for hit in values[:5]],
+            }
             for name, values in lane_hits.items()
         },
         "elapsedMs": elapsed_ms,
+        "parallelExecution": True,
+        "vectorIndexDocuments": len(vectors),
         "overBudget": elapsed_ms > max(1, int(query.latency_budget_ms)),
         "hits": [hit.__dict__ for hit in hits],
         "candidates": [candidate.__dict__ for candidate in candidates],
+        "reactivatedBookIds": reactivated_book_ids,
     }
 
 
-def retrieve_hybrid_rag_candidate_objects(conn: sqlite3.Connection, query: HybridRagQuery) -> list[HybridRagCandidate]:
-    payload = retrieve_hybrid_rag_candidates(conn, query)
+_DEFAULT_LANE_WEIGHTS = {
+    "bm25_raw": 1.00,
+    "bm25_tags": 1.15,
+    "vector_raw": 0.95,
+    "vector_tag_boost": 1.05,
+    "tagmemo": 1.10,
+    "time": 0.90,
+    "feedback": 1.20,
+}
+
+
+def _resolved_lane_enabled(values: tuple[tuple[str, bool], ...], *, vector_available: bool = False) -> dict[str, bool]:
+    configured = {str(key): bool(value) for key, value in values}
+    resolved = {lane: configured.get(lane, True) for lane in _DEFAULT_LANE_WEIGHTS}
+    resolved["vector_raw"] = vector_available and resolved["vector_raw"]
+    resolved["vector_tag_boost"] = vector_available and resolved["vector_tag_boost"]
+    return resolved
+
+
+def _resolved_lane_weights(values: tuple[tuple[str, float], ...]) -> dict[str, float]:
+    configured = {str(key): max(0.0, float(value)) for key, value in values}
+    return {lane: configured.get(lane, default) for lane, default in _DEFAULT_LANE_WEIGHTS.items()}
+
+
+def _reactivate_archived_books_for_explicit_history(
+    conn: sqlite3.Connection,
+    *,
+    hits: list[HybridRagHit],
+    candidates: list[HybridRagCandidate],
+    query_text: str,
+) -> list[str]:
+    """Restore only archived topic books reached by an explicit history query.
+
+    Ordinary background completion keeps archived books down-weighted and read-only.
+    A deliberate request such as "最初需求" or "旧项目" is a user action, so a
+    strongly retrieved book may become active again. Related new input also
+    reactivates a reused book in the offline Memory Book compiler.
+    """
+
+    if _EXPLICIT_HISTORY_RE.search(compact_whitespace(query_text)) is None:
+        return []
+    restored: list[str] = []
+    eligible_book_ids: list[str] = []
+    for hit in hits:
+        if hit.doc_type != "book" or not bool(hit.metadata.get("archived")):
+            continue
+        # Time-only recall can contain unrelated old books. A lexical, vector,
+        # tag, or feedback lane is the evidence that this archived topic is
+        # actually related to the user's explicit historical request.
+        if hit.source_lane == "time" or hit.source_id in eligible_book_ids:
+            continue
+        eligible_book_ids.append(hit.source_id)
+    for book_id in eligible_book_ids:
+        row = conn.execute(
+            "SELECT status, book_type FROM memory_books WHERE book_id = ?",
+            (book_id,),
+        ).fetchone()
+        if (
+            row is None
+            or str(row["status"] or "") != "archived"
+            or str(row["book_type"] or "") != "topic"
+        ):
+            continue
+        result = set_memory_book_archive_status(
+            conn,
+            book_id=book_id,
+            archived=False,
+            reason="explicit_historical_retrieval",
+            actor="hybrid_rag_retriever",
+        )
+        updated = result.get("book") if isinstance(result.get("book"), dict) else {}
+        _refresh_retrieval_book_lifecycle_metadata(
+            conn,
+            book_id=book_id,
+            updated_at_ms=int(updated.get("updatedAtMs") or 0),
+            last_active_at_ms=int(updated.get("lastActiveAtMs") or 0),
+        )
+        for candidate in candidates:
+            if book_id in candidate.book_ids:
+                candidate.metadata["archived"] = False
+                candidate.metadata["reactivated"] = True
+        restored.append(book_id)
+        if len(restored) >= 2:
+            return restored
+    return restored
+
+
+def _refresh_retrieval_book_lifecycle_metadata(
+    conn: sqlite3.Connection,
+    *,
+    book_id: str,
+    updated_at_ms: int,
+    last_active_at_ms: int,
+) -> None:
+    rows = conn.execute(
+        "SELECT doc_id, metadata_json FROM memory_retrieval_docs WHERE doc_type = 'book' AND source_id = ?",
+        (book_id,),
+    ).fetchall()
+    for row in rows:
+        metadata = _metadata(row["metadata_json"])
+        metadata.update(
+            {
+                "bookStatus": "active",
+                "archived": False,
+                "archivedAtMs": 0,
+                "archiveReason": "",
+                "lastActiveAtMs": last_active_at_ms,
+                "sourceUpdatedAtMs": updated_at_ms,
+            }
+        )
+        conn.execute(
+            "UPDATE memory_retrieval_docs SET metadata_json = ?, updated_at_ms = ? WHERE doc_id = ?",
+            (json.dumps(metadata, ensure_ascii=False, sort_keys=True), updated_at_ms, str(row["doc_id"])),
+        )
+
+
+def _lane_implementation(
+    lane: str,
+    *,
+    lexical_lane_meta: dict[str, str],
+    vector_available: bool,
+) -> str:
+    if lane in {"bm25_raw", "bm25_tags", "tagmemo"}:
+        return lexical_lane_meta.get(lane, "disabled")
+    if lane in {"vector_raw", "vector_tag_boost"}:
+        return "precomputed_cosine" if vector_available else "not_wired"
+    if lane == "time":
+        return "recency_term_scoring"
+    if lane == "feedback":
+        return "accepted_feedback_relevance"
+    return "native"
+
+
+def retrieve_hybrid_rag_candidate_objects(
+    conn: sqlite3.Connection,
+    query: HybridRagQuery,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> list[HybridRagCandidate]:
+    payload = retrieve_hybrid_rag_candidates(conn, query, embedding_provider)
     candidates: list[HybridRagCandidate] = []
     for item in payload.get("candidates", []):
         if isinstance(item, HybridRagCandidate):
@@ -117,20 +372,41 @@ def retrieve_hybrid_rag_candidate_objects(conn: sqlite3.Connection, query: Hybri
     return candidates
 
 
-def _active_docs(conn: sqlite3.Connection, *, project: str, app: str) -> list[dict[str, object]]:
+def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dict[str, object]]:
     rows = conn.execute(
         """
         SELECT doc_id, doc_type, source_id, raw_text, tags_text, aliases_text, surface_hints_text,
-               query_expansions_text, time_key, project, app, metadata_json
+               query_expansions_text, time_key, project, app, updated_at_ms, metadata_json
         FROM memory_retrieval_docs
         WHERE status = 'active'
           AND (? = '' OR project = ? OR project = '')
           AND (? = '' OR app = ? OR app = '')
         """,
-        (project, project, app, app),
+        (query.project, query.project, query.app, query.app),
     ).fetchall()
-    return [
-        {
+    current_group = ContextGroup(
+        context_group_id=compact_whitespace(query.context_group_id),
+        context_group_level=query.context_group_level if query.context_group_level in {"document", "project", "app", "global"} else "app",
+        confidence=1.0 if query.context_group_id else 0.0,
+        parent_group_ids=tuple(query.context_group_parent_ids),
+        app_bundle_id=compact_whitespace(query.app),
+        project=compact_whitespace(query.project),
+    )
+    docs: list[dict[str, object]] = []
+    for row in rows:
+        metadata = _metadata(row["metadata_json"])
+        short_term = bool(metadata.get("shortTerm") or metadata.get("short_term"))
+        compatibility = context_group_compatibility(
+            current_group,
+            candidate_group_id=str(metadata.get("contextGroupId") or metadata.get("context_group_id") or ""),
+            candidate_project=str(row["project"] or ""),
+            candidate_app=str(row["app"] or ""),
+            short_term=short_term,
+        )
+        if compatibility <= 0.0:
+            continue
+        metadata["groupCompatibility"] = compatibility
+        docs.append({
             "doc_id": str(row["doc_id"]),
             "doc_type": str(row["doc_type"]),
             "source_id": str(row["source_id"]),
@@ -142,10 +418,11 @@ def _active_docs(conn: sqlite3.Connection, *, project: str, app: str) -> list[di
             "time_key": str(row["time_key"] or ""),
             "project": str(row["project"] or ""),
             "app": str(row["app"] or ""),
-            "metadata": _metadata(row["metadata_json"]),
-        }
-        for row in rows
-    ]
+            "updated_at_ms": int(row["updated_at_ms"] or 0),
+            "metadata": metadata,
+        })
+    docs.sort(key=lambda item: float(dict(item.get("metadata") or {}).get("groupCompatibility") or 0.0), reverse=True)
+    return docs
 
 
 def _rank_docs(
@@ -177,6 +454,159 @@ def _rank_docs(
     return [_hit_from_doc(doc, lane=lane, rank=index, raw_score=score) for index, (score, doc) in enumerate(weighted[:limit], start=1)]
 
 
+def _rank_fts5_docs(
+    conn: sqlite3.Connection,
+    *,
+    docs: list[dict[str, object]],
+    lane: str,
+    terms: Iterable[str],
+    fields: tuple[str, ...],
+    blocked: dict[str, set[str]],
+    project: str,
+    app: str,
+    limit: int,
+) -> tuple[list[HybridRagHit], str]:
+    """Run a column-scoped FTS5 BM25 query, with an explicit safe fallback.
+
+    The retrieval-doc builder maintains ``memory_retrieval_docs_fts`` with the
+    same rowids as the normalized document table.  Keeping the fallback local
+    makes a partially migrated database usable, but diagnostics must report it
+    as such rather than calling it BM25.
+    """
+
+    match_query = _fts5_match_query(terms, fields=fields)
+    if not match_query:
+        return [], "sqlite_fts5_bm25"
+    docs_by_id = {str(doc["doc_id"]): doc for doc in docs}
+    if not docs_by_id:
+        return [], "sqlite_fts5_bm25"
+    try:
+        rows = conn.execute(
+            """
+            SELECT d.doc_id, bm25(memory_retrieval_docs_fts) AS bm25_score
+            FROM memory_retrieval_docs_fts
+            JOIN memory_retrieval_docs AS d
+              ON d.rowid = memory_retrieval_docs_fts.rowid
+            WHERE memory_retrieval_docs_fts MATCH ?
+              AND d.status = 'active'
+              AND (? = '' OR d.project = ? OR d.project = '')
+              AND (? = '' OR d.app = ? OR d.app = '')
+            ORDER BY bm25(memory_retrieval_docs_fts) ASC, d.updated_at_ms DESC
+            LIMIT ?
+            """,
+            (match_query, project, project, app, app, max(1, limit * 8)),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return (
+            _rank_docs(docs, lane=lane, terms=terms, fields=fields, blocked=blocked, limit=limit),
+            "lexical_substring_fallback",
+        )
+    hits: list[HybridRagHit] = []
+    for row in rows:
+        doc = docs_by_id.get(str(row["doc_id"]))
+        if doc is None or _doc_blocked(doc, blocked):
+            continue
+        hits.append(
+            _hit_from_doc(
+                doc,
+                lane=lane,
+                rank=len(hits) + 1,
+                raw_score=float(row["bm25_score"]),
+            )
+        )
+        if len(hits) >= limit:
+            break
+    if not hits:
+        fallback_hits = _rank_docs(
+            docs,
+            lane=lane,
+            terms=terms,
+            fields=fields,
+            blocked=blocked,
+            limit=limit,
+        )
+        if fallback_hits:
+            return fallback_hits, "lexical_substring_fallback"
+    return hits, "sqlite_fts5_bm25"
+
+
+def _fts5_match_query(terms: Iterable[str], *, fields: tuple[str, ...]) -> str:
+    normalized: list[str] = []
+    for value in terms:
+        normalized.extend(token_terms(str(value), max_terms=24))
+    unique_terms = _unique(normalized)
+    if not unique_terms or not fields:
+        return ""
+    escaped = [f'"{term.replace(chr(34), chr(34) + chr(34))}"' for term in unique_terms]
+    return f"{{{' '.join(fields)}}} : ({' OR '.join(escaped)})"
+
+
+def _rank_vector_docs(
+    docs: list[dict[str, object]],
+    *,
+    vectors: dict[str, tuple[list[float], list[float], list[float]]],
+    query_vector: list[float],
+    lane: str,
+    vector_index: int,
+    blocked: dict[str, set[str]],
+    limit: int,
+    include_group: bool = False,
+) -> list[HybridRagHit]:
+    if not query_vector:
+        return []
+    eligible: list[tuple[dict[str, object], list[float], list[float]]] = []
+    for doc in docs:
+        if _doc_blocked(doc, blocked):
+            continue
+        doc_vectors = vectors.get(str(doc["doc_id"]))
+        if doc_vectors and doc_vectors[vector_index]:
+            eligible.append((doc, doc_vectors[vector_index], doc_vectors[2]))
+    try:
+        import numpy as np
+
+        if eligible:
+            query_array = np.asarray(query_vector, dtype=np.float32)
+            matrix = np.asarray([item[1] for item in eligible], dtype=np.float32)
+            scores = matrix @ query_array
+            if include_group:
+                group_matrix = np.asarray(
+                    [item[2] if item[2] else [0.0] * len(query_vector) for item in eligible],
+                    dtype=np.float32,
+                )
+                group_scores = np.maximum(0.0, group_matrix @ query_array)
+                compatibility = np.asarray([
+                    float(dict(item[0].get("metadata") or {}).get("groupCompatibility") or 0.0)
+                    for item in eligible
+                ], dtype=np.float32)
+                scores = scores * 0.75 + group_scores * 0.15 + compatibility * 0.10
+            weighted = [
+                (float(score), eligible[index][0])
+                for index, score in enumerate(scores)
+                if float(score) > 0.0
+            ]
+            weighted.sort(key=lambda item: item[0], reverse=True)
+            return [
+                _hit_from_doc(doc, lane=lane, rank=index, raw_score=score)
+                for index, (score, doc) in enumerate(weighted[:limit], start=1)
+            ]
+    except (ImportError, ValueError):
+        pass
+    weighted: list[tuple[float, dict[str, object]]] = []
+    for doc, doc_vector, group_vector in eligible:
+        score = cosine_similarity(query_vector, doc_vector)
+        if include_group and group_vector:
+            group_score = max(0.0, cosine_similarity(query_vector, group_vector))
+            compatibility = float(dict(doc.get("metadata") or {}).get("groupCompatibility") or 0.0)
+            score = score * 0.75 + group_score * 0.15 + compatibility * 0.10
+        if score > 0.0:
+            weighted.append((score, doc))
+    weighted.sort(key=lambda item: item[0], reverse=True)
+    return [
+        _hit_from_doc(doc, lane=lane, rank=index, raw_score=score)
+        for index, (score, doc) in enumerate(weighted[:limit], start=1)
+    ]
+
+
 def _rank_time_docs(
     docs: list[dict[str, object]],
     *,
@@ -186,6 +616,7 @@ def _rank_time_docs(
 ) -> list[HybridRagHit]:
     terms = [normalize_text(term) for term in expansion_terms if compact_whitespace(str(term))]
     weighted: list[tuple[float, dict[str, object]]] = []
+    now_ms = int(time.time() * 1000)
     for doc in docs:
         if _doc_blocked(doc, blocked):
             continue
@@ -193,7 +624,14 @@ def _rank_time_docs(
         if not time_key:
             continue
         haystack = normalize_text(" ".join([str(doc.get("raw_text") or ""), str(doc.get("tags_text") or ""), time_key]))
-        score = 0.8 + sum(0.5 for term in terms if term and term in haystack)
+        matched_terms = {term for term in terms if term and term in haystack}
+        lexical_ratio = len(matched_terms) / max(1, len(set(terms)))
+        recency = _time_recency_score(time_key, updated_at_ms=int(doc.get("updated_at_ms") or 0), now_ms=now_ms)
+        # The Time lane is deliberately an explicit temporal prior, not an
+        # unbounded "all Daily Books" fallback. Query overlap keeps an old but
+        # relevant book competitive while the half-life prevents it from
+        # permanently outranking recent evidence.
+        score = 0.20 + 0.55 * recency + 0.65 * lexical_ratio
         weighted.append((score, doc))
     weighted.sort(key=lambda item: item[0], reverse=True)
     return [_hit_from_doc(doc, lane="time", rank=index, raw_score=score) for index, (score, doc) in enumerate(weighted[:limit], start=1)]
@@ -204,6 +642,7 @@ def _feedback_hits(
     *,
     docs: list[dict[str, object]],
     query: HybridRagQuery,
+    terms: Iterable[str],
     blocked: dict[str, set[str]],
     limit: int,
 ) -> list[HybridRagHit]:
@@ -224,15 +663,67 @@ def _feedback_hits(
         (query.project, query.project, query.app, query.app, max(1, limit)),
     ).fetchall()
     hits: list[HybridRagHit] = []
+    normalized_terms = _unique(token_terms(" ".join(str(item) for item in terms), max_terms=32))
     for index, row in enumerate(rows, start=1):
         doc = source_ids.get(str(row["memory_id"] or ""))
         if doc is None:
             continue
+        relevance = _feedback_relevance(doc, normalized_terms)
+        if relevance <= 0.0:
+            continue
         metadata = dict(doc.get("metadata") or {})
         metadata["feedbackAccepted"] = True
         metadata["acceptedCount"] = int(row["accepted_count"] or 0)
-        hits.append(_hit_from_doc({**doc, "metadata": metadata}, lane="feedback", rank=index, raw_score=float(row["accepted_count"] or 0)))
+        metadata["feedbackRelevance"] = relevance
+        hits.append(
+            _hit_from_doc(
+                {**doc, "metadata": metadata},
+                lane="feedback",
+                rank=len(hits) + 1,
+                raw_score=float(row["accepted_count"] or 0) * (1.0 + relevance),
+            )
+        )
+        if len(hits) >= limit:
+            break
     return hits
+
+
+def _feedback_relevance(doc: dict[str, object], terms: list[str]) -> float:
+    if not terms:
+        return 0.0
+    haystack = normalize_text(
+        " ".join(
+            str(doc.get(field) or "")
+            for field in ("raw_text", "tags_text", "aliases_text", "surface_hints_text", "query_expansions_text")
+        )
+    )
+    if not haystack:
+        return 0.0
+    matched = {term for term in terms if term and term in haystack}
+    return len(matched) / max(1, len(terms))
+
+
+_TIME_KEY_DATE_RE = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2}|\d{8})(?!\d)")
+
+
+def _time_recency_score(time_key: str, *, updated_at_ms: int, now_ms: int) -> float:
+    reference_ms = _time_key_ms(time_key) or max(0, int(updated_at_ms))
+    if reference_ms <= 0:
+        return 0.0
+    age_days = max(0.0, (max(0, now_ms - reference_ms)) / 86_400_000.0)
+    return math.exp(-math.log(2.0) * age_days / 30.0)
+
+
+def _time_key_ms(time_key: str) -> int:
+    match = _TIME_KEY_DATE_RE.search(str(time_key or ""))
+    if match is None:
+        return 0
+    value = match.group(1)
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d" if "-" in value else "%Y%m%d")
+    except ValueError:
+        return 0
+    return int(parsed.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def _hit_from_doc(doc: dict[str, object], *, lane: str, rank: int, raw_score: float) -> HybridRagHit:
@@ -300,6 +791,20 @@ def _metadata(raw: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _memory_decay_settings(conn: sqlite3.Connection) -> dict[str, object]:
+    try:
+        row = conn.execute(
+            "SELECT value_json FROM management_settings WHERE key = 'memory' LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error:
+        return {}
+    if row is None:
+        return {}
+    payload = _metadata(row[0])
+    value = payload.get("timeDecay")
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _book_title(raw_text: str) -> str:

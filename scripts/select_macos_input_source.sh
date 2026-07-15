@@ -40,8 +40,10 @@ USAGE
       ;;
   esac
 done
-INPUT_SOURCE_ID="${INPUT_SOURCE_ID:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}}}"
+INPUT_SOURCE_ID="${INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+MENU_FALLBACK_ENABLED="${RAG_IME_INPUT_SOURCE_MENU_FALLBACK:-1}"
+MENU_NAME_ALIASES="${RAG_IME_INPUT_SOURCE_MENU_NAMES:-鼠须管|Squirrel - Simplified|Squirrel}"
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-tis-select-input-source.XXXXXX")"
@@ -52,6 +54,44 @@ check_out="$tmpdir/check.out"
 check_err="$tmpdir/check.err"
 trap 'rm -rf "$tmpdir"' EXIT
 mkdir -p "$MODULE_CACHE"
+
+select_via_input_menu() {
+  [[ "$MENU_FALLBACK_ENABLED" != "0" ]] || return 1
+  command -v osascript >/dev/null 2>&1 || return 1
+  osascript - "$MENU_NAME_ALIASES" <<'APPLESCRIPT'
+on splitAliases(rawAliases)
+  set previousDelimiters to AppleScript's text item delimiters
+  set AppleScript's text item delimiters to "|"
+  set aliasItems to text items of rawAliases
+  set AppleScript's text item delimiters to previousDelimiters
+  return aliasItems
+end splitAliases
+
+on run argv
+  set aliases to splitAliases(item 1 of argv)
+  tell application "System Events"
+    if not (exists process "TextInputMenuAgent") then error "TextInputMenuAgent is unavailable"
+    tell process "TextInputMenuAgent"
+      if (count of menu bars) < 2 then error "input menu bar is unavailable"
+      set statusItem to menu bar item 1 of menu bar 2
+      click statusItem
+      delay 0.25
+      set inputMenu to menu 1 of statusItem
+      repeat with candidateName in aliases
+        set resolvedName to candidateName as text
+        if exists menu item resolvedName of inputMenu then
+          click menu item resolvedName of inputMenu
+          delay 0.5
+          return resolvedName
+        end if
+      end repeat
+      key code 53
+    end tell
+  end tell
+  error "requested input source is absent from the input menu"
+end run
+APPLESCRIPT
+}
 
 write_report() {
   [[ -n "$REPORT_PATH" ]] || return 0
@@ -259,10 +299,22 @@ set +e
 "$(dirname "${BASH_SOURCE[0]}")/check_macos_input_source.sh" --require-selected "$INPUT_SOURCE_ID" >"$check_out" 2>"$check_err"
 check_status=$?
 set -e
+selection_phase="final-check"
+if [[ "$check_status" != "0" ]]; then
+  if select_via_input_menu >"$select_out.menu" 2>"$select_err.menu"; then
+    set +e
+    "$(dirname "${BASH_SOURCE[0]}")/check_macos_input_source.sh" --require-selected "$INPUT_SOURCE_ID" >"$check_out" 2>"$check_err"
+    check_status=$?
+    set -e
+    selection_phase="menu-fallback"
+  else
+    cat "$select_err.menu" >>"$select_err"
+  fi
+fi
 cat "$check_out"
 cat "$check_err" >&2
 if [[ "$check_status" != "0" ]]; then
-  write_report "final-check" "$check_status" "$select_status" "$check_status"
+  write_report "$selection_phase" "$check_status" "$select_status" "$check_status"
   exit "$check_status"
 fi
-write_report "final-check" 0 "$select_status" "$check_status"
+write_report "$selection_phase" 0 "$select_status" "$check_status"

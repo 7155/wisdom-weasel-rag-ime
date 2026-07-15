@@ -20,8 +20,12 @@ class MemoryOptimizerEvalTests(unittest.TestCase):
                 "RAG_IME_MEMORY_OPTIMIZER",
                 "RAG_IME_MEMORY_OPTIMIZER_TRACE",
                 "RAG_IME_MEMORY_OPTIMIZER_MAX_MS",
+                "RAG_IME_AI_AFTER_COMMIT_ONLY",
+                "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL",
             )
         }
+        os.environ["RAG_IME_AI_AFTER_COMMIT_ONLY"] = "0"
+        os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
 
     def tearDown(self) -> None:
         for key, value in self.original_env.items():
@@ -53,7 +57,7 @@ class MemoryOptimizerEvalTests(unittest.TestCase):
         self.assertEqual(cases["repeated-skip-cooldown"]["ragCandidateCount"], 0)
 
     def test_repository_memory_optimizer_eval_covers_plan_cases(self) -> None:
-        cases_path = Path("docs/eval/memory_optimizer_cases.jsonl")
+        cases_path = Path("eval/memory_optimizer_cases.jsonl")
 
         report = run_memory_optimizer_eval(
             cases_file=cases_path,
@@ -75,6 +79,23 @@ class MemoryOptimizerEvalTests(unittest.TestCase):
         self.assertIn("前台稳定性", cases["long-stable-memory-compiled-short"]["ragCandidateSurfaces"])
         self.assertEqual(cases["cold-knowledge-disabled-by-default"]["blockedReasons"], ["cold_knowledge_disabled"])
         self.assertEqual(cases["rollback-cleanup-diff"]["cleanup"]["applyRollback"]["rollbackStatus"], "rolled_back")
+
+    def test_eval_ignores_installed_post_commit_only_policy(self) -> None:
+        cases_path = Path("eval/memory_optimizer_cases.jsonl")
+        os.environ["RAG_IME_AI_AFTER_COMMIT_ONLY"] = "1"
+
+        report = run_memory_optimizer_eval(
+            cases_file=cases_path,
+            project="wisdom-weasel-rag-ime",
+            repeat=1,
+            max_visible_candidates=4,
+            max_side_candidates=2,
+            latency_budget_ms=150,
+            optimizer_max_ms=50,
+        )
+
+        self.assertTrue(report["gatePassed"])
+        self.assertEqual(report["failedCases"], 0)
 
     def test_cli_eval_memory_optimizer_returns_nonzero_on_failure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-memory-eval-cli-") as tmp:

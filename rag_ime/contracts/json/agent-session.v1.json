@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-session.v1",
+  "type": "object",
+  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-session.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "piSessionId": {"type": "string"},
+    "sessionFile": {"type": "string"},
+    "runtimeBinding": {
+      "type": "object",
+      "required": ["schemaVersion", "driverId", "runtimeKind", "generation", "state", "createdAtMs", "updatedAtMs"],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.agent-runtime-binding.v1"},
+        "driverId": {"type": "string", "minLength": 1},
+        "runtimeKind": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "state": {"type": "string", "enum": ["prepared", "active", "stale"]},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "title": {"type": "string", "minLength": 1},
+    "mode": {"type": "string", "enum": ["assistant", "coordinator"]},
+    "status": {"type": "string", "enum": ["idle", "active", "busy", "faulted", "archived"]},
+    "sessionKind": {"type": "string", "enum": ["conversation", "subagent_runtime"]},
+    "roleId": {"type": "string", "minLength": 1},
+    "roleVersion": {"type": "string", "minLength": 1},
+    "modelProfile": {"type": "string", "minLength": 1},
+    "toolProfileVersion": {"type": "string", "minLength": 1},
+    "toolAllowlistMode": {"type": "string", "enum": ["profile", "explicit"]},
+    "allowedTools": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "lastOpenedAtMs": {"type": "integer", "minimum": 0},
+    "archivedAtMs": {"type": ["integer", "null"]},
+    "messageCount": {"type": "integer", "minimum": 0},
+    "lastMessagePreview": {"type": "string"},
+    "workspaceRoots": {"type": "array", "items": {"type": "string"}},
+    "shellPolicyVersion": {"type": "string"}
+  }
+}

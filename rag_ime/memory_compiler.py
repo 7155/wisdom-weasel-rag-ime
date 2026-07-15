@@ -478,6 +478,6 @@ def _unique_strings(items: tuple[str, ...] | list[str] | tuple[object, ...]) -> 
 
 def _compiler_provider_alias(provider: str) -> str:
     normalized = compact_whitespace(provider).lower()
-    if normalized in {"x1top", "x1api", "x2app"}:
-        return "x1api"
+    if normalized in {"deepseek", "deepseek-v4", "dsv4"}:
+        return "deepseek-v4"
     return normalized

@@ -1,0 +1,320 @@
+[
+  {
+    "featureId": "rime-core-stability",
+    "userValue": "Keep normal Wanxiang/Rime pinyin, fuzzy pinyin, paging, dictionary ranking, fallback, and composition-time numeric selection stable while RAG-IME is present.",
+    "currentStatus": "Patched route and tests exist; a public-safe deployed-librime suite passes 10/10 Top-1 cases, while real Squirrel foreground proof is still required.",
+    "realImeTrigger": "composing input with non-empty rawInput/preedit",
+    "sidecarEndpoint": "/rime-suggest",
+    "candidateSourceType": "rime",
+    "keyPolicy": "composition: numberKeys=select_rime_candidate, tab=rime_default, optionNumber=disabled",
+    "dataSource": "Rime/Wanxiang schema and dictionary candidates",
+    "foregroundTraceEvents": [
+      "rime_composition_started",
+      "rime_composition_candidates_visible",
+      "panel_display_candidates"
+    ],
+    "acceptanceCommand": "scripts/verify_squirrel_foreground_trace.sh --side-panel-only --auto-type --wait 120 --require-rime-composition-ok",
+    "failureFallback": "Rime candidates stay visible; sidecar/model/RAG failure must not clear composition candidates.",
+    "userVisibleBehavior": "User can type pinyin, page, and use ordinary number keys for Rime candidates.",
+    "tests": [
+      "python3 -m unittest tests.test_rime_sidecar tests.test_squirrel_frontend_trace tests.test_rime_lexicon_eval -v",
+      "python3 scripts/evaluate_deployed_rime_lexicon.py"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "rime-native-rank-feedback",
+    "userValue": "Learn from an actual native Rime choice without letting model, RAG, memory, Notion, or DeepSeek output pollute the Rime dictionary lane.",
+    "currentStatus": "The source-restricted endpoint, successful-selection hook, sensitive-field guard, review-only export, and tests exist; no fresh foreground native selection has produced acceptance evidence yet.",
+    "realImeTrigger": "librime successfully commits a native Rime candidate selected from the current composition page",
+    "sidecarEndpoint": "/rime-rank-feedback",
+    "candidateSourceType": "rime only",
+    "keyPolicy": "ordinary Rime composition selection remains authoritative; recording runs only after a successful native selection and never changes the live page",
+    "dataSource": "raw pinyin/preedit, accepted native Rime text, rank, optional rejected top candidate, and a deduplicated selection id; Rime userdb remains authoritative",
+    "foregroundTraceEvents": [
+      "native_rime_rank_feedback_recorded",
+      "native_rime_rank_feedback_failed"
+    ],
+    "acceptanceCommand": "scripts/verify_squirrel_foreground_trace.sh --side-panel-only --auto-type --wait 120 --require-rime-composition-ok && rg -q 'native_rime_rank_feedback_recorded' \"$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl\"",
+    "failureFallback": "Sensitive fields and non-Rime sources fail closed; write failure never blocks or changes the native Rime commit, and generated dictionary changes remain explicit review/apply/rollback operations.",
+    "userVisibleBehavior": "Normal Rime selection stays unchanged; repeated reviewed corrections may improve a later explicitly deployed user dictionary.",
+    "tests": [
+      "python3 -m unittest tests.test_rime_native_feedback tests.test_rime_rank_export tests.test_build_patched_squirrel -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "group-aware-memory-completion",
+    "userValue": "Use current-document memory without leaking short-term text from another document or calling a model after every commit.",
+    "currentStatus": "Context Group, commit-burst, T0 phrase, local suffix, compiler, and replay gates exist; real foreground Group-switch proof is still required.",
+    "realImeTrigger": "trusted post-commit foreground snapshot after a 500ms commit burst",
+    "sidecarEndpoint": "/rime-suggest and /rime-select",
+    "candidateSourceType": "model / memory; Memory Book title and raw history are evidence-only",
+    "keyPolicy": "composition is Rime-only; post-commit Tab accepts top prediction and Option+number selects an ordinal",
+    "dataSource": "deterministic Context Group short buffer plus validated Memory Book phrase/surface hints and TagMemo retrieval",
+    "foregroundTraceEvents": [
+      "foreground_context_capture_succeeded",
+      "prediction_trigger_dirty",
+      "prediction_trigger_coalesced",
+      "prediction_trigger_fired",
+      "prediction_trigger_direct_memory_hit",
+      "prediction_provider_called",
+      "assistant_overlay_candidate_visible",
+      "side_candidate_feedback_recorded"
+    ],
+    "acceptanceCommand": "python3 scripts/replay_prediction_burst.py --cases eval/group_memory_completion_cases.jsonl && python3 scripts/check_squirrel_soak_report.py --log-path \"$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl\" --report-path /tmp/rag-ime-v1-soak-report.json --require-post-commit-visible --max-context-echo-count 0",
+    "failureFallback": "Unreliable or stale context, duplicate hashes, rate limits, delete cooldown, cross-Group short-term evidence, and remote providers fail closed.",
+    "userVisibleBehavior": "A continuous sentence normally creates one short local prediction opportunity; changing document does not surface the previous document's short-term text.",
+    "tests": [
+      "python3 -m unittest tests.test_context_group tests.test_prediction_trigger tests.test_group_memory_completion_eval -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "post-commit-local-completion",
+    "userValue": "After committed text, show 1-3 short source-marked local completions, then let Tab or Option+number accept one and continue prediction without doing pinyin-constrained generation.",
+    "currentStatus": "Async post-commit, source-aware overlay, selection receipt, and progressive follow-up contracts exist. Backend acceptance returns three model rows plus one local RAG row and a separate DeepSeek action; the native four-row card no longer truncates RAG, but real foreground overlay/selection proof is still required.",
+    "realImeTrigger": "after commit, no active preedit",
+    "sidecarEndpoint": "/rime-suggest and /rime-select",
+    "candidateSourceType": "model; the same source-aware overlay may render separately governed rag/memory rows",
+    "keyPolicy": "post_commit: numberKeys=pass_through, tab=accept_top_prediction, optionNumber=select_prediction_by_ordinal",
+    "dataSource": "local MLX predictor, source badge contract, and accepted foreground candidate id/source/rank/context anchors",
+    "foregroundTraceEvents": [
+      "post_commit_prediction_scheduled",
+      "sidecar_request_sent",
+      "sidecar_response_received",
+      "foreground_context_capture_resolved",
+      "assistant_overlay_candidate_visible",
+      "post_commit_prediction_applied",
+      "candidate_snapshot_selection_accepted",
+      "assistant_overlay_candidate_accepted",
+      "side_candidate_feedback_recorded",
+      "sidecar_progressive_followup_sent"
+    ],
+    "acceptanceCommand": "python3 scripts/check_squirrel_soak_report.py --log-path \"$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl\" --report-path /tmp/rag-ime-v1-soak-report.json --require-assistant-overlay-post-commit --require-assistant-overlay-key-policy --require-source-badges --require-followup-after-select --max-first-visible-ms 500 --max-context-echo-count 0",
+    "failureFallback": "Capture failure is fail-closed; pending/timeout/empty model results must not clear a legal existing overlay, and stale or mismatched selections must not commit.",
+    "userVisibleBehavior": "User sees source-marked short continuations after committing text, accepts one with Tab or Option+number, and can receive a later follow-up opportunity.",
+    "tests": [
+      "python3 -m unittest tests.test_rime_sidecar tests.test_prediction_quality tests.test_source_contracts tests.test_squirrel_frontend_trace -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "curated-rag-memory-candidates",
+    "userValue": "Show useful personal/project memory candidates without repeating raw old input or current context.",
+    "currentStatus": "Curated-memory policy exists; realtime foreground display still needs trace proof.",
+    "realImeTrigger": "post-commit or explicit side-candidate refresh",
+    "sidecarEndpoint": "/rime-suggest",
+    "candidateSourceType": "rag / memory",
+    "keyPolicy": "post_commit side candidates: Tab / Option+number; ordinary digits pass through",
+    "dataSource": "curated/accepted/durable/project/high-confidence local SQLite memory; raw append-only history is not displayed directly",
+    "foregroundTraceEvents": [
+      "assistant_overlay_candidate_visible",
+      "post_commit_prediction_applied",
+      "candidate_snapshot_selection_accepted",
+      "side_candidate_commit_observed"
+    ],
+    "acceptanceCommand": "python3 scripts/check_squirrel_soak_report.py --log-path \"$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl\" --report-path /tmp/rag-ime-v1-soak-report.json --require-assistant-overlay-post-commit --require-source-badges --max-context-echo-count 0",
+    "failureFallback": "Uncurated, tombstoned, rejected, echo, low-signal, or prompt-leak memory candidates are filtered fail-closed.",
+    "userVisibleBehavior": "User sees source-marked RAG/memory rows only when they are high-quality enough for realtime typing.",
+    "tests": [
+      "python3 -m unittest tests.test_curated_memory tests.test_prediction_quality tests.test_rime_sidecar -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "native-control-center",
+    "userValue": "Provide one supported native place for runtime status, settings, voice-agent state, memory review, knowledge work, and scoped repair actions.",
+    "currentStatus": "RagImeControl.app builds and its management contracts are tested; the legacy browser console has been removed, while release signing/notarization and a fresh user-facing acceptance run remain pending.",
+    "realImeTrigger": "user explicitly opens RagImeControl.app directly or from the patched Squirrel menu; it is never on the keystroke path",
+    "sidecarEndpoint": "local /api management and lifecycle endpoints; voice status is read from the mode-0600 agent status file",
+    "candidateSourceType": "runtime/control artifact, not a candidate source",
+    "keyPolicy": "the app does not intercept typing; a setting can affect Squirrel key policy only through the validated runtime bridge",
+    "dataSource": "sidecar settings/status/history, model registry, memory governance state, diagnostics, and RagImeVoice agent status",
+    "foregroundTraceEvents": [
+      "source_badge_setting_applied",
+      "key_policy_setting_applied",
+      "matching_squirrel_foreground_case_required"
+    ],
+    "acceptanceCommand": "RAG_IME_CONTROL_SKIP_LIVE=1 scripts/check_control_center_footprint.sh && python3 -m unittest tests.test_native_control_center tests.test_runtime_lifecycle_control_plane -v",
+    "failureFallback": "Closing or failing to launch the Control Center must not block normal Rime composition; settings without a matching Squirrel trace remain backend-only.",
+    "userVisibleBehavior": "The user sees one native Control Center. RagImeVoice stays headless and the local API root returns JSON rather than a second browser console.",
+    "tests": [
+      "python3 -m unittest tests.test_native_control_center tests.test_runtime_lifecycle_control_plane -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "streaming-voice-input",
+    "userValue": "Dictate at the current cursor with live revisions while keeping microphone/network work outside Squirrel and outside typing history.",
+    "currentStatus": "The headless native agent, mode-0600 credential file with Keychain fallback, protocol/revision tests, Release build, real PCM provider probe, content-free v3 telemetry, configurable hotkey, and explicit bounded request-level hotwords pass; partial replacement, finalization, Esc cancellation, and sensitive-field blocking still require one user-authorized foreground run.",
+    "realImeTrigger": "user holds the mouse middle button by default in a supported non-sensitive foreground text field after granting RagImeVoice microphone and Accessibility permissions",
+    "sidecarEndpoint": "none; RagImeVoice uses the Doubao streaming ASR WebSocket directly and writes only a local mode-0600 status file for RagImeControl",
+    "candidateSourceType": "volatile voice transcript, not a Rime/model/RAG/memory candidate",
+    "keyPolicy": "hold the configurable push-to-talk control (mouse middle button by default; right Option and Option+Space remain available) to stream, release to finalize, Esc to cancel; the agent never consumes ordinary Rime candidate keys or mouse scrolling",
+    "dataSource": "in-memory 16 kHz mono Int16 PCM, cumulative Doubao transcript revisions, mode-0600 credential file with Keychain fallback, optional mode-0600 explicit hotword configuration, and mode-0600 content-free counts/latencies; no Rime user-dictionary import",
+    "foregroundTraceEvents": [
+      "voice-agent-status:recording",
+      "voice-agent-status:finalizing",
+      "voice-agent-status:idle"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_voice_input tests.test_native_control_center -v && scripts/build_voice_input.sh && scripts/build_control_center.sh",
+    "failureFallback": "Missing permission, credentials, secure/account/password detection, network failure, or stale session cancels or abstains without storing audio/transcripts in RAG or typing history.",
+    "userVisibleBehavior": "Speech appears as replace-in-place partial text and settles to Doubao's final punctuation on release; the Control Center is the only settings/status UI.",
+    "tests": [
+      "python3 -m unittest tests.test_voice_input tests.test_native_control_center -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "active-rag-selected-text-bridge",
+    "userValue": "Selected text/context assist should become real RAG candidates, not only a debug preview.",
+    "currentStatus": "Selected-text preview exists; real Squirrel selectedText capture and foreground overlay proof are not verified.",
+    "realImeTrigger": "foreground selected text or context anchor captured by Squirrel",
+    "sidecarEndpoint": "/rime-suggest with selectedText/contextAnchor bridge",
+    "candidateSourceType": "rag",
+    "keyPolicy": "post_commit side candidate policy after selected-text bridge produces candidate rows",
+    "dataSource": "selectedText/currentSelectedText plus local RAG/memory evidence",
+    "foregroundTraceEvents": [
+      "selected_text_context_captured",
+      "assistant_overlay_candidate_visible",
+      "candidate_snapshot_selection_accepted"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_active_rag_service tests.test_active_rag_debug_server -v",
+    "failureFallback": "If macOS selectedText cannot be captured reliably, status stays blocked_by_bug/debug_preview and cannot be product-complete.",
+    "userVisibleBehavior": "Selected text should generate a visible sourceType=rag candidate in the real Squirrel assistant overlay.",
+    "tests": [
+      "python3 -m unittest tests.test_active_rag_service tests.test_active_rag_debug_server -v"
+    ],
+    "v1Status": "blocked_by_bug"
+  },
+  {
+    "featureId": "dsv4-cleanup-to-curated-memory",
+    "userValue": "Use high-intelligence cleanup offline to improve realtime memory quality without calling remote models while typing.",
+    "currentStatus": "Offline cleanup concept exists; realtime path must only read curated local output.",
+    "realImeTrigger": "none during typing; downstream trigger is post-commit /rime-suggest after curated memory is written",
+    "sidecarEndpoint": "offline cleanup writes curated memory; downstream consumer is /rime-suggest",
+    "candidateSourceType": "memory after curated compile",
+    "keyPolicy": "downstream post_commit side-candidate policy only",
+    "dataSource": "offline DeepSeek V4 cleanup output compiled into curated local SQLite memory",
+    "foregroundTraceEvents": [
+      "curated_memory_compiled",
+      "assistant_overlay_candidate_visible"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_curated_memory tests.test_rime_sidecar -v",
+    "failureFallback": "Remote cleanup output is ignored by realtime RAG unless it has curated/accepted/durable/project evidence.",
+    "userVisibleBehavior": "Cleaner memory improves real RAG/memory candidate relevance while typing, without remote realtime requests.",
+    "tests": [
+      "python3 -m unittest tests.test_curated_memory -v"
+    ],
+    "v1Status": "offline_tool"
+  },
+  {
+    "featureId": "rime-export-bridge",
+    "userValue": "Exported phrases should become real Rime dictionary candidates, not just a management preview.",
+    "currentStatus": "Maintenance/export path exists; foreground Rime candidate proof is not verified.",
+    "realImeTrigger": "composition input that matches an exported phrase",
+    "sidecarEndpoint": "management/export operation; downstream visible route is Rime composition through /rime-suggest trace",
+    "candidateSourceType": "rime",
+    "keyPolicy": "composition: numberKeys=select_rime_candidate",
+    "dataSource": "generated user dictionary or custom schema artifact deployed to Rime",
+    "foregroundTraceEvents": [
+      "rime_export_applied",
+      "rime_deploy_observed",
+      "rime_candidate_from_export_visible"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_debug_management_api tests.test_squirrel_frontend_trace -v",
+    "failureFallback": "Rollback must restore previous Rime candidate behavior; no export preview counts as product completion.",
+    "userVisibleBehavior": "Exported phrase appears in the normal Rime candidate list during composition.",
+    "tests": [
+      "python3 -m unittest tests.test_debug_management_api -v"
+    ],
+    "v1Status": "offline_tool"
+  },
+  {
+    "featureId": "mlx-provider-health",
+    "userValue": "Keep a validated local model service ready for realtime post-commit completion without treating runtime health or benchmark speed as semantic product completion.",
+    "currentStatus": "MLX, Ollama, and loopback OpenAI-compatible lifecycle/health contracts exist. Registry v3 plus MLX health now bind newly registered artifacts by full content fingerprint and reject a stale resident model after switching. The active MiniMind deployment passes backend latency and three-candidate count, but its reviewed production-candidate semantic gate fails; raw checkpoint output remains a separate contract.",
+    "realImeTrigger": "post-commit /rime-suggest asks local predictor for short completions",
+    "sidecarEndpoint": "/rime-suggest via the normalized local predictor runtime and capability health boundary",
+    "candidateSourceType": "model",
+    "keyPolicy": "post_commit prediction key policy after candidates are visible",
+    "dataSource": "local MLX, local Ollama, or loopback OpenAI-compatible serving; remote/OpenAI-compatible providers are offline or explicit-workflow only and never passive per-keystroke providers",
+    "foregroundTraceEvents": [
+      "sidecar_request_sent",
+      "sidecar_response_received",
+      "assistant_overlay_candidate_visible"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_model_registry tests.test_model_runtime tests.test_mlx_predictor_server tests.test_predictor tests.test_squirrel_frontend_trace -v",
+    "failureFallback": "An incompatible artifact/runtime pair, non-loopback hot endpoint, unreachable server, resident-model identity mismatch, failed semantic probe, or timeout fails closed; foreground must not wait for benchmark-length generation.",
+    "userVisibleBehavior": "The selected local runtime can produce short candidates quickly enough to type with. The offline gate blocks checkpoint promotion but does not silently rewrite output or automatically disable an already configured runtime; foreground trigger/abstention policy remains separate.",
+    "tests": [
+      "python3 -m unittest tests.test_model_registry tests.test_model_runtime tests.test_mlx_predictor_server tests.test_predictor -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "generic-frontend-gateway",
+    "userValue": "Let a future frontend reuse suggestion, selection, privacy, session, and input-engine contracts without moving model/RAG/memory policy into that frontend.",
+    "currentStatus": "The versioned generic request/response schemas, normalization gateway, capability description, and tests exist; patched Squirrel is still the only real frontend and is not yet migrated to this boundary end to end.",
+    "realImeTrigger": "none as an independent product today; a frontend adapter must capture a trusted transaction and call the gateway, with patched Squirrel remaining the only operational trigger",
+    "sidecarEndpoint": "/api/frontend/v1/suggest, /api/frontend/v1/select, and /api/frontend/v1/capabilities as engine-neutral adapters over the existing sidecar services",
+    "candidateSourceType": "normalized rime/model/rag/memory/action candidates with preserved source provenance",
+    "keyPolicy": "declared by frontend phase and capabilities; composition ownership stays with the input engine and post-commit acceptance stays explicit",
+    "dataSource": "versioned JSON schemas plus normalized engine, frontend, session, privacy, context, candidate, and selection fields",
+    "foregroundTraceEvents": [
+      "frontend_gateway_suggestion_normalized",
+      "frontend_gateway_selection_normalized",
+      "matching_squirrel_foreground_case_required"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_frontend_gateway tests.test_json_contracts -v",
+    "failureFallback": "Unsupported, stale, or sensitive transactions fail closed; the legacy Squirrel route remains authoritative until a real adapter migration passes foreground acceptance.",
+    "userVisibleBehavior": "There is no new frontend UI today. A future adapter can reuse backend behavior only after it implements its own native composition, caret, commit, privacy, and key-policy bridge.",
+    "tests": [
+      "python3 -m unittest tests.test_frontend_gateway tests.test_json_contracts -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
+    "featureId": "ime-first-demo-pack",
+    "userValue": "Demonstrate the input-method-first data contracts deterministically without touching personal history, a model server, the network, or macOS permissions.",
+    "currentStatus": "An isolated fixture, seed/verify/reset CLI, ownership guard, and deterministic report tests exist. It is an offline demonstration and not foreground acceptance evidence.",
+    "realImeTrigger": "none; the user explicitly runs scripts/ime_first_demo.py against the isolated .rag-ime-demo directory",
+    "sidecarEndpoint": "none during verification; the fixture exercises local database and contract behavior only",
+    "candidateSourceType": "deterministic local demo records for Rime/model/RAG/memory contract inspection",
+    "keyPolicy": "none; the demo never intercepts keystrokes or changes the installed input method",
+    "dataSource": "dataset/ime_first_demo_pack.v1.json in an isolated database that refuses the personal .rag-ime-data route",
+    "foregroundTraceEvents": [
+      "demo_seed_verified",
+      "matching_squirrel_foreground_case_required"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_ime_demo_pack -v",
+    "failureFallback": "The tool refuses personal-data paths and reset removes only fixture-owned rows; a demo report can never promote product or foreground status.",
+    "userVisibleBehavior": "The user can seed, verify, report, and reset a reproducible local demo without modifying their real IME database.",
+    "tests": [
+      "python3 -m unittest tests.test_ime_demo_pack -v"
+    ],
+    "v1Status": "offline_tool"
+  },
+  {
+    "featureId": "minimind-retraining-quality-gate",
+    "userValue": "Compare MiniMind network or data revisions on semantic relevance and continuous Tab behavior instead of accepting a checkpoint because it is merely fast.",
+    "currentStatus": "A public-safe prompt-free seed set, split-leakage audit, positive and ranking exports, separate raw/production stages, explicit human semantic judgments, baseline comparison, and real Predictor runner exist. The reviewed Q8 production-candidate baseline fails semantic, boundary, and continuous-Tab acceptance.",
+    "realImeTrigger": "none; this is an offline training and checkpoint acceptance gate over the same Predictor contract used by post-commit completion",
+    "sidecarEndpoint": "an explicitly configured, already-running loopback predictor; the evaluator never starts a model service or training job",
+    "candidateSourceType": "model evaluation only",
+    "keyPolicy": "continuous Tab is simulated by accepting real Top-1 output and feeding the resulting prefix into the next turn, without teacher-forcing the model back onto the gold path",
+    "dataSource": "dataset/minimind_completion_v3_public with 19 contexts, 57 positive suffixes, 57 hard negatives, and six multi-turn chains",
+    "foregroundTraceEvents": [
+      "offline_quality_report",
+      "matching_squirrel_foreground_case_required"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_minimind_quality_gate -v && python3 scripts/minimind_retraining.py audit",
+    "failureFallback": "A failing checkpoint is not rewritten into plausible output and is not promoted; return to data, objective, network, or decoding experiments and compare a new report against the same fingerprint.",
+    "userVisibleBehavior": "No foreground behavior changes until a replacement checkpoint passes the offline gate and then the real Squirrel acceptance matrix.",
+    "tests": [
+      "python3 -m unittest tests.test_minimind_quality_gate -v"
+    ],
+    "v1Status": "offline_tool"
+  }
+]

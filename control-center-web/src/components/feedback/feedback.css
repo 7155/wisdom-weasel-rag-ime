@@ -1,0 +1,112 @@
+.global-connection {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-round);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.global-connection svg {
+  color: var(--color-success);
+}
+
+.global-connection[data-state='connecting'] svg,
+.global-connection[data-state='reconnecting'] svg {
+  color: var(--color-info);
+}
+
+.global-connection[data-state='degraded'] svg {
+  color: var(--color-warning);
+}
+
+.global-connection[data-state='offline'] svg {
+  color: var(--color-danger);
+}
+
+.global-connection[data-state='mock'] {
+  border-color: color-mix(in srgb, var(--color-info) 38%, var(--color-border));
+  background: var(--color-info-soft);
+}
+
+.global-connection[data-state='mock'] svg {
+  color: var(--color-info);
+}
+
+.global-notices {
+  position: relative;
+  z-index: 20;
+  display: grid;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.global-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: 7px var(--space-4);
+  border-left: 3px solid var(--color-info);
+  background: var(--color-info-soft);
+  animation: global-notice-in var(--duration-normal) var(--ease-standard);
+}
+
+.global-notice + .global-notice {
+  border-top: 1px solid var(--color-border);
+}
+
+.global-notice[data-tone='warning'] {
+  border-left-color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+.global-notice[data-tone='danger'] {
+  border-left-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.global-notice__icon {
+  color: var(--color-info);
+}
+
+.global-notice[data-tone='warning'] .global-notice__icon { color: var(--color-warning); }
+.global-notice[data-tone='danger'] .global-notice__icon { color: var(--color-danger); }
+
+.global-notice__copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 12px;
+}
+
+.global-notice__copy strong {
+  color: var(--color-text);
+}
+
+.global-notice__copy span {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes global-notice-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 620px) {
+  .global-connection span { display: none; }
+  .global-connection { width: 28px; justify-content: center; padding: 0; }
+  .global-notice__copy { display: grid; gap: 0; }
+  .global-notice__copy span { white-space: normal; }
+}

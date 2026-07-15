@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-runtime.v1",
+  "type": "object",
+  "required": ["schemaVersion", "enabled", "managed", "status", "piVersion", "idleTimeoutSeconds", "capabilities"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-runtime.v1"},
+    "enabled": {"type": "boolean"},
+    "managed": {"type": "boolean"},
+    "status": {"type": "string", "enum": ["disabled", "not_installed", "needs_configuration", "stopped", "starting", "ready", "busy", "faulted"]},
+    "driverId": {"type": "string", "minLength": 1},
+    "runtimeKind": {"type": "string", "minLength": 1},
+    "runtimeVersion": {"type": "string"},
+    "piVersion": {"type": "string"},
+    "idleTimeoutSeconds": {"type": "integer", "minimum": 0},
+    "activeSessionId": {"type": ["string", "null"]},
+    "lastError": {"type": "string"},
+    "capabilities": {"type": "object"}
+  }
+}

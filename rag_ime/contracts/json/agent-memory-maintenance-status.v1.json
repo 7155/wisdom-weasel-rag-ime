@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-memory-maintenance-status.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "ok",
+    "policy",
+    "autoApply",
+    "scheduledDraftOnly",
+    "due",
+    "dueReason",
+    "idleMs",
+    "compileState",
+    "pendingDraftCount",
+    "runs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-memory-maintenance-status.v1"},
+    "ok": {"type": "boolean", "const": true},
+    "policy": {"type": "string", "const": "review"},
+    "autoApply": {"type": "boolean", "const": false},
+    "scheduledDraftOnly": {"type": "boolean", "const": true},
+    "due": {"type": "boolean"},
+    "dueReason": {"type": "string", "enum": ["pending_events", "idle", "daily", "not_due"]},
+    "idleMs": {"type": "integer", "minimum": 0},
+    "compileState": {
+      "type": "object",
+      "required": ["project", "lastCompiledEventId", "lastRunMs", "pendingEventCount", "lastBundleHash"],
+      "properties": {
+        "project": {"type": "string"},
+        "lastCompiledEventId": {"type": "integer", "minimum": 0},
+        "lastRunMs": {"type": "integer", "minimum": 0},
+        "pendingEventCount": {"type": "integer", "minimum": 0},
+        "lastBundleHash": {"type": "string"}
+      }
+    },
+    "pendingDraftCount": {"type": "integer", "minimum": 0},
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["runId", "createdAtMs", "status", "summary", "diffCount", "bundleHash", "sourceCursor"],
+        "properties": {
+          "runId": {"type": "string", "minLength": 1},
+          "createdAtMs": {"type": "integer", "minimum": 0},
+          "status": {"type": "string", "enum": ["draft", "applied", "partial", "rolled_back", "superseded", "empty"]},
+          "summary": {"type": "string"},
+          "diffCount": {"type": "integer", "minimum": 0},
+          "bundleHash": {"type": "string"},
+          "sourceCursor": {"type": "object"}
+        }
+      }
+    }
+  }
+}

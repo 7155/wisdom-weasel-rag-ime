@@ -13,18 +13,20 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
     def test_checker_reports_installed_latest_from_marker(self) -> None:
         root = Path(__file__).resolve().parents[1]
         patch_sha = _sha256(root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch")
+        overlay_sha = _overlay_sha256(root)
         with tempfile.TemporaryDirectory(prefix="rag-ime-installed-build-") as tmp:
             tmp_path = Path(tmp)
-            app = tmp_path / "RAG-IME.app"
+            app = tmp_path / "Squirrel.app"
             marker_path = app / "Contents" / "Resources" / "rag-ime-build-marker.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": "rag-ime.squirrel-build-marker.v1",
+                        "schemaVersion": "rag-ime.squirrel-build-marker.v2",
                         "patchSha256": patch_sha,
-                        "bundleId": "im.rag-ime.inputmethod.RagIme",
-                        "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+                        "overlaySha256": overlay_sha,
+                        "bundleId": "im.rime.inputmethod.Squirrel",
+                        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
                     }
                 )
                 + "\n",
@@ -61,16 +63,17 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-installed-build-") as tmp:
             tmp_path = Path(tmp)
-            app = tmp_path / "RAG-IME.app"
+            app = tmp_path / "Squirrel.app"
             marker_path = app / "Contents" / "Resources" / "rag-ime-build-marker.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": "rag-ime.squirrel-build-marker.v1",
+                        "schemaVersion": "rag-ime.squirrel-build-marker.v2",
                         "patchSha256": "old",
-                        "bundleId": "im.rag-ime.inputmethod.RagIme",
-                        "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+                        "overlaySha256": _overlay_sha256(root),
+                        "bundleId": "im.rime.inputmethod.Squirrel",
+                        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
                     }
                 )
                 + "\n",
@@ -98,12 +101,79 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
         self.assertFalse(payload["installedLatest"])
         self.assertEqual(payload["markerPatchSha256"], "old")
 
+    def test_checker_accepts_third_party_preference_when_hitoolbox_list_is_empty(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-installed-build-") as tmp:
+            tmp_path = Path(tmp)
+            app = tmp_path / "Squirrel.app"
+            marker_path = app / "Contents" / "Resources" / "rag-ime-build-marker.json"
+            marker_path.parent.mkdir(parents=True)
+            marker_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.squirrel-build-marker.v2",
+                        "patchSha256": _sha256(root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch"),
+                        "overlaySha256": _overlay_sha256(root),
+                        "bundleId": "im.rime.inputmethod.Squirrel",
+                        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            check_script = _write_fake_check_script(
+                tmp_path,
+                hitoolbox_enabled=False,
+                third_party_enabled=True,
+                preference_enabled=True,
+            )
+            result = subprocess.run(
+                [
+                    str(root / "scripts" / "check_installed_rag_ime_build.py"),
+                    "--app",
+                    str(app),
+                    "--check-script",
+                    str(check_script),
+                    "--no-process",
+                    "--require-latest",
+                ],
+                cwd=root,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["preferenceReady"])
+        self.assertTrue(payload["installedLatest"])
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _write_fake_check_script(tmp_path: Path) -> Path:
+def _overlay_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    for name in (
+        "RagImeAssistantSurfaceState.swift",
+        "RagImeSuggestionCardView.swift",
+        "RagImeSuggestionRowView.swift",
+        "RagImeNonActivatingPanel.swift",
+        "RagImeAssistantPanelController.swift",
+    ):
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((root / "squirrel-patches" / "sources" / name).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _write_fake_check_script(
+    tmp_path: Path,
+    *,
+    hitoolbox_enabled: bool = True,
+    third_party_enabled: bool = True,
+    preference_enabled: bool = True,
+) -> Path:
     script = tmp_path / "check-input-source.sh"
     script.write_text(
         "\n".join(
@@ -118,9 +188,15 @@ def _write_fake_check_script(tmp_path: Path) -> Path:
                 "    *) shift ;;",
                 "  esac",
                 "done",
-                "target=\"${1:-im.rag-ime.inputmethod.RagIme.Hans}\"",
+                "target=\"${1:-im.rime.inputmethod.Squirrel.Hans}\"",
                 "cat > \"$report\" <<JSON",
-                "{\"ok\":true,\"source\":{\"selected\":true,\"hitoolboxEnabled\":true,\"thirdPartyEnabled\":true},\"inputSourceId\":\"$target\"}",
+                (
+                    "{\"ok\":true,\"source\":{\"selected\":true,"
+                    f"\"hitoolboxEnabled\":{str(hitoolbox_enabled).lower()},"
+                    f"\"thirdPartyEnabled\":{str(third_party_enabled).lower()},"
+                    f"\"preferenceEnabled\":{str(preference_enabled).lower()}"
+                    "},\"inputSourceId\":\"$target\"}"
+                ),
                 "JSON",
                 "echo \"id=$target selected=true hitoolboxEnabled=true thirdPartyEnabled=true\"",
             ]

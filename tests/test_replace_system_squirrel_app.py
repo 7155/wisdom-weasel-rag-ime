@@ -53,6 +53,7 @@ class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
             source_app = _write_fake_squirrel_app(tmp_path / "User Squirrel.app", patched=True)
             target_app = _write_fake_squirrel_app(tmp_path / "System Squirrel.app", patched=False)
             fake_bin = _write_fake_system_tools(tmp_path)
+            refresh_script = _write_logger_script(tmp_path / "refresh.sh", "refresh")
             select_script = _write_logger_script(tmp_path / "select.sh", "select")
             check_script = _write_logger_script(tmp_path / "check.sh", "check")
             doctor_script = _write_logger_script(tmp_path / "doctor.sh", "doctor")
@@ -68,6 +69,7 @@ class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
                         "RAG_IME_SQUIRREL_SOURCE_APP": str(source_app),
                         "RAG_IME_SQUIRREL_SYSTEM_APP": str(target_app),
                         "RAG_IME_SQUIRREL_BACKUP_SUFFIX": "test-backup",
+                        "RAG_IME_REFRESH_INPUT_SOURCE_SCRIPT": str(refresh_script),
                         "RAG_IME_SELECT_INPUT_SOURCE_SCRIPT": str(select_script),
                         "RAG_IME_CHECK_INPUT_SOURCE_SCRIPT": str(check_script),
                         "RAG_IME_DOCTOR_SCRIPT": str(doctor_script),
@@ -88,9 +90,10 @@ class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
         self.assertIn("installed patched system Squirrel.app", result.stdout)
         self.assertIn("backing up existing system Squirrel.app", result.stdout)
         self.assertIn("rag-ime.squirrel-frontend-trace.v1", target_text)
-        self.assertIn("panel_text_layout", target_text)
-        self.assertIn("sidecar_request_scheduled", target_text)
-        self.assertIn("sidecar_empty_response_cleared", target_text)
+        self.assertIn("foreground_context_capture_resolved", target_text)
+        self.assertIn("assistant_overlay_candidate_visible", target_text)
+        self.assertIn("side_candidate_feedback_recorded", target_text)
+        self.assertIn("refresh", calls)
         self.assertIn("select im.rime.inputmethod.Squirrel.Hans", calls)
         self.assertIn("check --require-selected im.rime.inputmethod.Squirrel.Hans", calls)
         self.assertIn("doctor", calls)
@@ -136,9 +139,10 @@ def _write_fake_squirrel_app(path: Path, *, patched: bool) -> Path:
             [
                 "# rag-ime.squirrel-frontend-trace.v1",
                 "# rag-ime.foreground-trace.v2",
-                "# panel_text_layout",
-                "# sidecar_request_scheduled",
-                "# sidecar_empty_response_cleared",
+                "# composition_ai_suppressed",
+                "# foreground_context_capture_resolved",
+                "# assistant_overlay_candidate_visible",
+                "# side_candidate_feedback_recorded",
             ]
         )
     lines.extend(

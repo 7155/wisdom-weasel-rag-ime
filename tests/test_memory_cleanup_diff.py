@@ -26,6 +26,7 @@ class MemoryCleanupDiffTests(unittest.TestCase):
                 created_at_ms=1_900_000_000_010,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -47,6 +48,7 @@ class MemoryCleanupDiffTests(unittest.TestCase):
                 created_at_ms=1_900_000_000_012,
                 source="manual",
                 committed_text="这是一条很长且没有被接受过的历史输入，应该在 cleanup 里被 tombstone",
+                privacy_disposition="allowed",
                 recent_context="输入法 old raw event",
                 project="wisdom-weasel-rag-ime",
                 tags=("user-input",),
@@ -56,7 +58,12 @@ class MemoryCleanupDiffTests(unittest.TestCase):
         plan = self.core.build_memory_cleanup_plan(project="wisdom-weasel-rag-ime")
         ops = [item["op"] for item in plan["diffs"]]
         self.assertIn("add_stable_memory", ops)
-        self.assertIn("tombstone", ops)
+        self.assertNotIn("tombstone", ops)
+        with self.core._connect() as conn:
+            raw_status = conn.execute(
+                "SELECT status FROM memory_items WHERE memory_id = 'raw:event:2'",
+            ).fetchone()[0]
+        self.assertEqual(raw_status, "hidden")
 
         applied = self.core.apply_memory_cleanup_plan(run_id=plan["runId"])
         statuses = {item["status"] for item in applied["diffs"]}
@@ -77,6 +84,7 @@ class MemoryCleanupDiffTests(unittest.TestCase):
                 created_at_ms=1_900_000_000_020,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -117,7 +125,7 @@ class MemoryCleanupDiffTests(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO memory_cleanup_runs(run_id, created_at_ms, provider, model, status, summary, metadata_json)
-                VALUES ('cleanup_invalid_apply', 1, 'x1top', 'fake-gpt', 'draft', 'stable=1', '{}')
+                VALUES ('cleanup_invalid_apply', 1, 'deepseek-v4', 'deepseek-v4-flash', 'draft', 'stable=1', '{}')
                 """
             )
             conn.execute(

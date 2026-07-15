@@ -10,7 +10,9 @@ from typing import Any, Mapping
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
+from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .context_frame import build_current_input_frame, context_frame_trace_payload, foreground_text_from_payload
+from .context_group import GroupShortBuffer
 from .context_views import (
     build_display_view,
     build_model_prompt_view,
@@ -23,6 +25,7 @@ from .contracts.source import source_badge_for, source_color_token_for
 from .core_client import CoreClient
 from .deepseek_completion import DeepSeekCompletionRequest
 from .embeddings import NullEmbeddingProvider
+from .foreground_privacy import assess_foreground_write, storage_receipt
 from .history_context import build_prediction_context, model_prediction_context_limits, prediction_context_metadata
 from .local_sqlite_core import LocalSqliteCoreClient
 from .memory_optimizer import MemoryOptimizerConfig, optimize_suggestions_if_enabled
@@ -51,6 +54,7 @@ from .prediction_first import (
 from .prediction.quality import reject_context_echo as quality_reject_context_echo
 from .prediction.quality import reject_prompt_leak as quality_reject_prompt_leak
 from .prediction_manager import PredictionManager
+from .prediction_trigger import PredictionTrigger, PredictionTriggerConfig, TriggerDecision
 from .prediction_status import prediction_status_row
 from .predictor import (
     PREDICTION_REQUEST_NO_INPUT,
@@ -61,7 +65,10 @@ from .predictor import (
     predict_with_optional_request_context,
 )
 from .runtime_flags import assert_deepseek_not_called, assert_deepseek_scene_allowed
+from .runtime_config import RuntimeConfigSnapshot
+from .rag_core_v3 import memory_candidates_v2_to_input_suggestions
 from .side_lane_scheduler import LaneRequestToken, LatestWinsLaneScheduler
+from .smart_rag_context_packet import build_post_commit_context_packet
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
 from .timeline_context import timeline_evidence_pack_from_core
 
@@ -133,7 +140,7 @@ _MODEL_HOLDOVER_TTL_MS = 5000
 _MODEL_LANE_LEASE_TTL_MS = 3000
 _PROGRESSIVE_FIRST_RESPONSE_MS = 700
 _PROGRESSIVE_FOLLOW_UP_RETRY_MS = 280
-_POST_COMMIT_FIRST_RESPONSE_MS = 150
+_POST_COMMIT_FIRST_RESPONSE_MS = 180
 _POST_COMMIT_COMPLETION_TTL_MS = 12000
 _POST_COMMIT_MODEL_HARD_TIMEOUT_MS = 12000
 _POST_COMMIT_PANEL_TTL_MS = 8000
@@ -144,7 +151,10 @@ _PREDICTION_MANAGER_MAX_ENTRIES = 16
 _REFRESH_DEBOUNCE_MAX_ENTRIES = 128
 _POST_COMMIT_COMPLETION_CACHE_MAX_JOBS = 8
 _POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES = 32
-_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS = 1500
+_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS = 700
+_MODEL_GROUP_CONTEXT_TTL_MS = 120_000
+_MODEL_GROUP_CONTEXT_MAX_CHARS = 2048
+_MODEL_COMPLETION_CONTEXT_MAX_CHARS = 256
 _MODEL_LANE_LOCK = RLock()
 _MODEL_LANE_ACTIVE_TOKEN: str | None = None
 _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
@@ -154,7 +164,31 @@ _PREDICTION_MANAGER_LOCK = RLock()
 _PREDICTION_MANAGERS: dict[tuple[str, str, str], PredictionManager] = {}
 _REFRESH_DEBOUNCE_LOCK = RLock()
 _REFRESH_DEBOUNCE: dict[tuple[str, str, str, str, str], "_RefreshDebounceState"] = {}
+def _early_env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 _SIDE_LANE_SCHEDULER = LatestWinsLaneScheduler()
+_AUTO_PREDICTION_TRIGGER = PredictionTrigger(
+    PredictionTriggerConfig(
+        idle_ms=0,
+        min_delta_chars=max(1, _early_env_int("RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS", 1)),
+        max_calls_per_10s=max(1, _early_env_int("RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S", 10)),
+        ignore_cooldown_ms=max(0, _early_env_int("RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS", 0)),
+    )
+)
+_AUTO_PREDICTION_TRIGGER_LOCK = RLock()
+_AUTO_PREDICTION_JOB_DECISIONS: dict[str, TriggerDecision] = {}
+_AUTO_PREDICTION_TRIGGER_CONFIG = (
+    _AUTO_PREDICTION_TRIGGER.config.min_delta_chars,
+    _AUTO_PREDICTION_TRIGGER.config.max_calls_per_10s,
+    _AUTO_PREDICTION_TRIGGER.config.ignore_cooldown_ms,
+)
+_GROUP_SHORT_BUFFER = GroupShortBuffer()
+_RECORDED_COMMIT_BURSTS: dict[str, int] = {}
 _POST_COMMIT_COMPLETION_CACHE: "PostCommitCompletionCache"
 _POST_COMMIT_PRESENTATION_STREAM_LOCK = RLock()
 _POST_COMMIT_PRESENTATION_STREAM_STAGES: dict[str, tuple[int, float]] = {}
@@ -171,6 +205,83 @@ _CANDIDATE_SOURCE_SUFFIXES = (
     " 查",
     " 忆",
 )
+
+_MODEL_QUALITY_TOPIC_TERMS = (
+    "rag",
+    "rime",
+    "llm",
+    "ds",
+    "输入法",
+    "候选",
+    "联想",
+    "模型",
+    "训练",
+    "语料",
+    "上下文",
+    "重排",
+    "排序",
+    "优化",
+    "推理",
+    "延迟",
+    "数据",
+    "反馈",
+    "测试",
+    "终端",
+    "命令行",
+    "缓存",
+    "接口",
+)
+_MODEL_QUALITY_OPEN_ENDINGS = (
+    "是",
+    "有",
+    "要",
+    "需要",
+    "应该",
+    "可以",
+    "把",
+    "先",
+    "再",
+    "然后",
+    "因为",
+    "所以",
+    "但是",
+    "如果",
+    "以后",
+    "之后",
+    "为了",
+    "想",
+    "希望",
+    "准备",
+)
+
+
+def configure_auto_prediction_trigger(
+    *,
+    min_delta_chars: int,
+    max_calls_per_10s: int,
+    ignore_cooldown_ms: int,
+) -> None:
+    """Apply the current runtime snapshot to the commit-burst trigger."""
+
+    global _AUTO_PREDICTION_TRIGGER, _AUTO_PREDICTION_TRIGGER_CONFIG
+    config_key = (
+        max(1, int(min_delta_chars)),
+        max(0, int(max_calls_per_10s)),
+        max(0, int(ignore_cooldown_ms)),
+    )
+    with _AUTO_PREDICTION_TRIGGER_LOCK:
+        if config_key == _AUTO_PREDICTION_TRIGGER_CONFIG:
+            return
+        _AUTO_PREDICTION_TRIGGER = PredictionTrigger(
+            PredictionTriggerConfig(
+                idle_ms=0,
+                min_delta_chars=config_key[0],
+                max_calls_per_10s=config_key[1],
+                ignore_cooldown_ms=config_key[2],
+            )
+        )
+        _AUTO_PREDICTION_TRIGGER_CONFIG = config_key
+        _AUTO_PREDICTION_JOB_DECISIONS.clear()
 _RECENT_MEMORY_KEYWORDS = (
     "输入法",
     "RAG",
@@ -320,6 +431,8 @@ class PostCommitCompletionKey:
     commit_text_length: int
     input_source_id: str
     selection_epoch: int
+    runtime_config_hash: str = ""
+    max_candidates: int = 0
     request_type: str = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
 
 
@@ -356,53 +469,88 @@ class PostCommitCompletionCache:
         max_candidates: int,
         ttl_ms: int,
         hard_timeout_ms: int,
+        wait_ms: int = 0,
+        memory_enabled: bool = True,
     ) -> tuple[list[ModelPrediction], dict[str, object]]:
         now = time.time()
         ttl_ms = max(1000, int(ttl_ms))
         hard_timeout_ms = max(500, int(hard_timeout_ms))
+        wait_ms = max(0, min(int(wait_ms), hard_timeout_ms))
         start_kwargs: dict[str, object] | None = None
+        started = False
         with self._lock:
             self._ttl_ms = ttl_ms
             self._drop_expired_locked(now)
             job = self._jobs.get(key)
-            if job is not None:
-                return self._payload_for_job_locked(job, now=now, cache_hit=job.state == "completed")
-            job_id = _short_stable_id(
-                "post-commit-completion",
-                key.project,
-                key.app,
-                key.context_fingerprint,
-                key.commit_text_hash,
-                str(key.selection_epoch),
-                key.input_source_id,
+            if job is None:
+                job_id = _short_stable_id(
+                    "post-commit-completion",
+                    key.project,
+                    key.app,
+                    key.context_fingerprint,
+                    key.commit_text_hash,
+                    str(key.selection_epoch),
+                    key.input_source_id,
+                    key.runtime_config_hash,
+                    str(key.max_candidates),
+                )
+                job = PostCommitCompletionJob(
+                    key=key,
+                    job_id=job_id,
+                    created_at=now,
+                    started_at_ms=now_ms(),
+                    hard_timeout_ms=hard_timeout_ms,
+                    state="pending",
+                )
+                self._jobs[key] = job
+                self._drop_over_limit_locked()
+                start_kwargs = {
+                    "job": job,
+                    "snapshot": snapshot,
+                    "core": core,
+                    "predictor": predictor,
+                    "project": project,
+                    "explicit_recent_context": explicit_recent_context,
+                    "max_candidates": max_candidates,
+                    "memory_enabled": memory_enabled,
+                }
+                started = True
+        if start_kwargs is not None:
+            Thread(
+                target=self._run_job,
+                name=f"rag-ime-post-commit-completion-{job.job_id}",
+                kwargs=start_kwargs,
+                daemon=True,
+            ).start()
+
+        # The resident MiniMind seed probe is fast and the shared-prefill batch
+        # normally completes full phrases within the foreground window. Wait
+        # briefly so the first response can carry real candidates.
+        deadline = time.monotonic() + wait_ms / 1000
+        while wait_ms > 0 and time.monotonic() < deadline:
+            with self._lock:
+                current = self._jobs.get(key)
+                if current is not job or job.state != "pending":
+                    break
+            time.sleep(min(0.004, max(0.001, deadline - time.monotonic())))
+
+        with self._lock:
+            current = self._jobs.get(key)
+            if current is not job:
+                return [], _model_lane_status(
+                    called=False,
+                    timed_out=False,
+                    skipped_reason="post-commit completion superseded",
+                    budget_ms=hard_timeout_ms,
+                    request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                    requested_max_candidates=max_candidates,
+                )
+            return self._payload_for_job_locked(
+                job,
+                now=time.time(),
+                cache_hit=not started and job.state == "completed",
+                started=started and job.state == "pending",
             )
-            job = PostCommitCompletionJob(
-                key=key,
-                job_id=job_id,
-                created_at=now,
-                started_at_ms=now_ms(),
-                hard_timeout_ms=hard_timeout_ms,
-                state="pending",
-            )
-            self._jobs[key] = job
-            self._drop_over_limit_locked()
-            predictions, lane = self._payload_for_job_locked(job, now=now, cache_hit=False, started=True)
-            start_kwargs = {
-                "job": job,
-                "snapshot": snapshot,
-                "core": core,
-                "predictor": predictor,
-                "project": project,
-                "explicit_recent_context": explicit_recent_context,
-                "max_candidates": max_candidates,
-            }
-        Thread(
-            target=self._run_job,
-            name=f"rag-ime-post-commit-completion-{job.job_id}",
-            kwargs=start_kwargs,
-            daemon=True,
-        ).start()
-        return predictions, lane
 
     def clear(self) -> None:
         with self._lock:
@@ -418,6 +566,7 @@ class PostCommitCompletionCache:
         project: str,
         explicit_recent_context: str,
         max_candidates: int,
+        memory_enabled: bool,
     ) -> None:
         started = time.perf_counter()
         predictions: list[ModelPrediction] = []
@@ -425,7 +574,7 @@ class PostCommitCompletionCache:
         error = ""
         try:
             recent_context = compact_whitespace(explicit_recent_context)[-420:]
-            if not recent_context:
+            if not recent_context and memory_enabled:
                 context_event_limit, context_char_limit = model_prediction_context_limits()
                 recent_context = build_prediction_context(
                     core,
@@ -508,6 +657,8 @@ class PostCommitCompletionCache:
                     job.key.input_source_id,
                     str(job.key.selection_epoch),
                     job.key.request_type,
+                    job.key.runtime_config_hash,
+                    str(job.key.max_candidates),
                 ),
                 "completionJobState": state,
                 "cacheHit": bool(cache_hit and predictions),
@@ -617,8 +768,68 @@ def build_rime_sidecar_response(
     predictor: PredictionProvider,
     deepseek_completion_provider: Any | None = None,
     default_project: str = "wisdom-weasel-rag-ime",
+    runtime_config: RuntimeConfigSnapshot | None = None,
 ) -> dict[str, object]:
+    privacy_assessment = assess_foreground_write(payload)
+    if sensitive_input_requested(payload) and privacy_assessment["disposition"] != "sensitive":
+        privacy_assessment = {
+            "schemaVersion": "rag-ime.foreground-privacy-assessment.v1",
+            "disposition": "sensitive",
+            "storeAllowed": False,
+            "reason": "sensitive_foreground_flag",
+            "source": "foreground_guard",
+        }
+    if privacy_assessment["storeAllowed"] is not True:
+        return _sensitive_field_response(
+            payload=payload,
+            default_project=default_project,
+            privacy_assessment=privacy_assessment,
+        )
+    if runtime_config is None:
+        configure_auto_prediction_trigger(
+            min_delta_chars=_bounded_int(
+                os.environ.get("RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS"),
+                default=2,
+                minimum=1,
+                maximum=32,
+            ),
+            max_calls_per_10s=_bounded_int(
+                os.environ.get("RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S"),
+                default=2,
+                minimum=0,
+                maximum=10,
+            ),
+            ignore_cooldown_ms=_bounded_int(
+                os.environ.get("RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS"),
+                default=1500,
+                minimum=0,
+                maximum=10000,
+            ),
+        )
     snapshot = parse_rime_context_payload(payload, default_project=default_project)
+    active_composition = bool(compact_whitespace(snapshot.raw_input or snapshot.preedit))
+    debug_allow_composition_lanes = _bool(
+        payload.get("debugAllowCompositionLanes"),
+        default=False,
+    )
+    debug_use_legacy_rag_fallback = _bool(
+        payload.get("debugUseLegacyRagFallback"),
+        default=False,
+    )
+    if runtime_config is not None and not active_composition and not runtime_config.post_commit.enabled:
+        return _runtime_hard_clear_response(
+            payload=payload,
+            default_project=default_project,
+            reason="post_commit_disabled",
+        )
+    if runtime_config is not None:
+        snapshot = replace(
+            snapshot,
+            max_side_candidates=min(
+                snapshot.max_side_candidates,
+                runtime_config.post_commit.max_candidates,
+            ),
+        )
     foreground_context, foreground_context_meta = foreground_context_for_side_lanes(payload, snapshot=snapshot)
     effective_snapshot = (
         replace(snapshot, committed_context=foreground_context)
@@ -634,6 +845,17 @@ def build_rime_sidecar_response(
         semantic_query=semantic_query,
         query_basis=query_basis,
     )
+    if (
+        runtime_config is not None
+        and active_composition
+        and not runtime_config.composition_ai
+        and not snapshot.force_side_candidates
+        and not debug_allow_composition_lanes
+    ):
+        trigger_decision = RimeSideCandidateTriggerDecision(
+            False,
+            "composition_ai_disabled_by_effective_runtime_config",
+        )
     foreground_context_gate = post_commit_foreground_context_gate(
         snapshot=effective_snapshot,
         foreground_context_meta=foreground_context_meta,
@@ -643,6 +865,16 @@ def build_rime_sidecar_response(
             False,
             _string(foreground_context_gate.get("reason")) or "skip: reliable foreground context required",
         )
+    trigger_decision, commit_burst_trigger = apply_commit_burst_prediction_gate(
+        payload=payload,
+        snapshot=effective_snapshot,
+        adapter=adapter,
+        predictor=predictor,
+        trigger_decision=trigger_decision,
+        foreground_context_gate=foreground_context_gate,
+        privacy_disposition=str(privacy_assessment["disposition"]),
+        runtime_config=runtime_config,
+    )
     trigger_decision, refresh_debounce = apply_refresh_debounce(
         snapshot=effective_snapshot,
         trigger_decision=trigger_decision,
@@ -670,10 +902,26 @@ def build_rime_sidecar_response(
             explicit_recent_context=effective_snapshot.committed_context,
             project=snapshot.project or default_project,
             app=snapshot.app,
+            context_group_id=_string(foreground_context_meta.get("contextGroupId")),
             top_k=snapshot.max_side_candidates,
             max_candidates=snapshot.max_side_candidates,
             latency_budget_ms=snapshot.latency_budget_ms,
+            runtime_config=(
+                None
+                if snapshot.force_side_candidates or debug_use_legacy_rag_fallback
+                else runtime_config
+            ),
         )
+        commit_burst_latest = reconcile_commit_burst_prediction_outcome(
+            trigger_meta=commit_burst_trigger,
+            model_lane=model_lane,
+            prediction_count=len(model_predictions),
+        )
+        if commit_burst_latest is False:
+            model_predictions = []
+            model_lane["predictionCount"] = 0
+            model_lane["skippedReason"] = "stale commit-burst generation; latest wins"
+            model_lane["staleGenerationDropped"] = True
         raw_model_prediction_count = len(model_predictions)
         pending_preview_predictions, pending_preview_lane_update = _post_commit_pending_preview_predictions(
             snapshot=snapshot,
@@ -732,7 +980,14 @@ def build_rime_sidecar_response(
             model_lane["foregroundContext"] = foreground_context_meta
         retrieved_suggestions = list(suggestions)
         display_suggestions = list(suggestions)
-        if rag_direct_display_enabled():
+        direct_rag_display = (
+            snapshot.force_side_candidates
+            or debug_use_legacy_rag_fallback
+            or runtime_config.hybrid_rag.direct_display
+            if runtime_config is not None
+            else rag_direct_display_enabled()
+        )
+        if direct_rag_display:
             rag_lane["directDisplaySuppressed"] = False
             rag_lane["suppressedDisplaySuggestionCount"] = 0
             rag_lane["displaySuggestionCount"] = len(display_suggestions)
@@ -792,6 +1047,7 @@ def build_rime_sidecar_response(
             }
         )
     else:
+        skipped_by_trigger_reason = trigger_decision.reason or "side candidates disabled by trigger"
         prediction_context = ""
         model_predictions = []
         suggestions = []
@@ -806,7 +1062,7 @@ def build_rime_sidecar_response(
         rag_lane = {
             "called": False,
             "timedOut": False,
-            "skippedReason": "side candidates disabled by trigger",
+            "skippedReason": skipped_by_trigger_reason,
             "suggestionCount": 0,
             "filteredSuggestionCount": 0,
             "postCommitQualityFilteredCount": 0,
@@ -822,7 +1078,7 @@ def build_rime_sidecar_response(
         model_lane = {
             "called": False,
             "timedOut": False,
-            "skippedReason": "side candidates disabled by trigger",
+            "skippedReason": skipped_by_trigger_reason,
             "predictionCount": 0,
             "filteredPredictionCount": 0,
             "latencyBudgetMs": 0,
@@ -1040,6 +1296,13 @@ def build_rime_sidecar_response(
         model_lane=model_lane,
         display_candidates=display_candidates,
     )
+    if bool(commit_burst_trigger.get("enforced")):
+        prediction_trace_events.append(
+            {
+                "event": str(commit_burst_trigger.get("traceEvent") or "prediction_trigger_skipped"),
+                "fields": dict(commit_burst_trigger),
+            }
+        )
     context_frame = build_current_input_frame(
         snapshot,
         ui_mode=ui_mode,
@@ -1056,13 +1319,48 @@ def build_rime_sidecar_response(
         key_policy={str(key): str(value) for key, value in key_policy.items()},
     )
     include_context_text = os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
+    display_candidate_payloads = [display_item_to_payload(item) for item in display_candidates]
+    rag_candidate_payloads = [suggestion_to_payload(item) for item in retrieved_suggestions]
+    frontend_transaction_payload = frontend_transaction_to_payload(snapshot.frontend_transaction)
+    candidate_panel_payload = build_candidate_panel_payload(
+        input_mode=response_input_mode.value,
+        display_candidates=display_candidate_payloads,
+    )
+    assistant_overlay_payload = build_assistant_overlay_payload(
+        ui_mode=ui_mode,
+        input_mode=response_input_mode.value,
+        display_candidates=display_candidate_payloads,
+        rag_candidates=rag_candidate_payloads,
+        prediction_session=prediction_session_payload,
+        key_policy=key_policy,
+        progressive=progressive_state,
+        frontend_transaction=frontend_transaction_payload,
+    )
+    recorded_event_ids = [
+        str(item)
+        for item in commit_burst_trigger.get("recordedEventIds", [])
+        if str(item) and not str(item).startswith("skipped:")
+    ] if isinstance(commit_burst_trigger.get("recordedEventIds"), list) else []
+    suggest_storage_receipt = storage_receipt(
+        privacy_assessment,
+        stored=bool(recorded_event_ids),
+        event_id=recorded_event_ids[0] if recorded_event_ids else None,
+        outcome=None if recorded_event_ids else "no_write",
+        reason=None if recorded_event_ids else "no_commit_burst_write",
+    )
+    if recorded_event_ids:
+        suggest_storage_receipt["eventIds"] = recorded_event_ids
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
         "sessionId": snapshot.session_id,
         "requestSeq": snapshot.request_seq,
-        **frontend_transaction_to_payload(snapshot.frontend_transaction),
-        "frontendTransaction": frontend_transaction_to_payload(snapshot.frontend_transaction),
+        **frontend_transaction_payload,
+        "frontendTransaction": frontend_transaction_payload,
         "project": snapshot.project or default_project,
+        "stored": bool(recorded_event_ids),
+        "noStore": False,
+        "privacyAssessment": privacy_assessment,
+        "storageReceipt": suggest_storage_receipt,
         "rawInput": snapshot.raw_input,
         "preedit": snapshot.preedit,
         "commitTextPreview": snapshot.commit_text_preview,
@@ -1083,10 +1381,12 @@ def build_rime_sidecar_response(
             "semanticSignalLength": semantic_signal_length(semantic_query),
             "forceSideCandidates": snapshot.force_side_candidates,
             "foregroundContextGate": foreground_context_gate,
+            "commitBurst": commit_burst_trigger,
         },
         "refreshDecision": refresh_decision,
         "showDecision": show_decision,
         "predictionTraceEvents": prediction_trace_events,
+        "predictionTrigger": commit_burst_trigger,
         "historyContext": prediction_context,
         "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
@@ -1107,8 +1407,10 @@ def build_rime_sidecar_response(
         "modelLane": model_lane,
         "rimeContext": rime_context_to_payload(snapshot),
         "modelPredictions": [model_prediction_to_payload(item) for item in model_predictions],
-        "ragCandidates": [suggestion_to_payload(item) for item in retrieved_suggestions],
-        "displayCandidates": [display_item_to_payload(item) for item in display_candidates],
+        "ragCandidates": rag_candidate_payloads,
+        "displayCandidates": display_candidate_payloads,
+        "candidatePanel": candidate_panel_payload,
+        "assistantOverlay": assistant_overlay_payload,
         "predictionFirst": prediction_first_payload,
         "predictionSession": prediction_session_payload,
         "keyPolicy": key_policy,
@@ -1127,10 +1429,337 @@ def build_rime_sidecar_response(
             "maxModelSideCandidates": max_model_side_candidates(snapshot.max_side_candidates),
             "ragBlockReserve": rag_block_reserve(snapshot.max_side_candidates),
             "ragKeepsRemainingSideSlots": False,
-            "ragDirectDisplayEnabled": rag_direct_display_enabled(),
+            "ragDirectDisplayEnabled": (
+                snapshot.force_side_candidates
+                or debug_use_legacy_rag_fallback
+                or runtime_config.hybrid_rag.direct_display
+                if runtime_config is not None
+                else rag_direct_display_enabled()
+            ),
             "rawPinyinFallback": query_basis == "rawInputFallback",
             "sideCandidatesEnabled": trigger_decision.should_refresh,
             "fallbackOrder": ["model", "rag", "rime"],
+        },
+    }
+
+
+def sensitive_input_requested(payload: Mapping[str, object]) -> bool:
+    rime_context = payload.get("rimeContext")
+    rime_mapping = rime_context if isinstance(rime_context, Mapping) else {}
+    foreground = payload.get("foregroundText")
+    foreground_mapping = foreground if isinstance(foreground, Mapping) else {}
+    explicit_sensitive_flag = any(
+        _bool(value, default=False)
+        for value in (
+            payload.get("sensitiveField"),
+            payload.get("secureInput"),
+            payload.get("isPasswordField"),
+            payload.get("credentialField"),
+            rime_mapping.get("sensitiveField"),
+            rime_mapping.get("secureInput"),
+            rime_mapping.get("isPasswordField"),
+            rime_mapping.get("credentialField"),
+            foreground_mapping.get("sensitiveField"),
+            foreground_mapping.get("secureInput"),
+            foreground_mapping.get("isPasswordField"),
+            foreground_mapping.get("credentialField"),
+        )
+    )
+    if explicit_sensitive_flag:
+        return True
+    # Only inspect structured field metadata. Never classify the text itself,
+    # so ordinary discussion about password policy or API keys is not blocked.
+    credential_kinds = {
+        "password",
+        "current-password",
+        "new-password",
+        "passcode",
+    }
+    for mapping in (payload, rime_mapping, foreground_mapping):
+        for key in ("fieldType", "inputPurpose", "autocomplete", "textContentType", "fieldRole"):
+            value = compact_whitespace(str(mapping.get(key) or "")).lower().replace("_", "-")
+            if value in credential_kinds:
+                return True
+    return False
+
+
+def _sensitive_field_response(
+    *,
+    payload: Mapping[str, object],
+    default_project: str,
+    privacy_assessment: Mapping[str, object],
+) -> dict[str, object]:
+    reason = (
+        "sensitive_field"
+        if str(privacy_assessment.get("disposition") or "") == "sensitive"
+        else "privacy_unknown"
+    )
+    response = _hard_clear_prediction_response(
+        payload=payload,
+        default_project=default_project,
+        reason=reason,
+        redact_transaction=True,
+    )
+    response.update(
+        {
+            "stored": False,
+            "noStore": True,
+            "privacyAssessment": dict(privacy_assessment),
+            "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+        }
+    )
+    return response
+
+
+def _runtime_hard_clear_response(
+    *,
+    payload: Mapping[str, object],
+    default_project: str,
+    reason: str,
+) -> dict[str, object]:
+    return _hard_clear_prediction_response(
+        payload=payload,
+        default_project=default_project,
+        reason=reason,
+        redact_transaction=False,
+    )
+
+
+def _hard_clear_prediction_response(
+    *,
+    payload: Mapping[str, object],
+    default_project: str,
+    reason: str,
+    redact_transaction: bool,
+) -> dict[str, object]:
+    """Return a hard-clear response before predictor, retrieval, hashes, or trace text."""
+
+    rime_context = payload.get("rimeContext")
+    rime_mapping = rime_context if isinstance(rime_context, Mapping) else {}
+    session_id = _string(payload.get("sessionId")) or "default"
+    request_seq = _bounded_int(payload.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1)
+    frontend_revision = _bounded_int(
+        _first_present(dict(payload), dict(rime_mapping), "frontendRevision"),
+        default=_bounded_int(payload.get("inputGeneration"), default=0, minimum=0, maximum=2**63 - 1),
+        minimum=0,
+        maximum=2**63 - 1,
+    )
+    selection_epoch = _bounded_int(
+        _first_present(dict(payload), dict(rime_mapping), "selectionEpoch"),
+        default=frontend_revision,
+        minimum=0,
+        maximum=2**63 - 1,
+    )
+    front_app_bundle_id = "" if redact_transaction else _string(
+        payload.get("frontAppBundleId")
+        or payload.get("frontmostAppBundleId")
+        or payload.get("app")
+        or rime_mapping.get("frontAppBundleId")
+    )
+    input_source_id = "" if redact_transaction else _string(
+        payload.get("inputSourceId") or rime_mapping.get("inputSourceId")
+    )
+    composition_hash = "" if redact_transaction else _hash_from_payload(
+        _first_present(dict(payload), dict(rime_mapping), "compositionHash"),
+        fallback_text="",
+    )
+    committed_context_hash = "" if redact_transaction else _hash_from_payload(
+        _first_present(dict(payload), dict(rime_mapping), "committedContextHash"),
+        fallback_text="",
+    )
+    supplied_panel_session_id = "" if redact_transaction else _string(
+        payload.get("panelSessionId") or rime_mapping.get("panelSessionId")
+    )
+    panel_session_id = supplied_panel_session_id or _short_stable_id(
+        session_id,
+        str(request_seq),
+        str(frontend_revision),
+        str(selection_epoch),
+        reason,
+    )
+    transaction = FrontendTransaction(
+        frontend_revision=frontend_revision,
+        selection_epoch=selection_epoch,
+        input_generation=_bounded_int(
+            _first_present(dict(payload), dict(rime_mapping), "inputGeneration"),
+            default=frontend_revision,
+            minimum=0,
+            maximum=2**63 - 1,
+        ),
+        front_app_bundle_id=front_app_bundle_id,
+        input_source_id=input_source_id,
+        composition_hash=composition_hash,
+        committed_context_hash=committed_context_hash,
+        panel_session_id=panel_session_id,
+        created_at_ms=(
+            0
+            if redact_transaction
+            else _bounded_int(
+                _first_present(dict(payload), dict(rime_mapping), "createdAtMs"),
+                default=0,
+                minimum=0,
+                maximum=2**63 - 1,
+            )
+        ),
+    )
+    snapshot = RimeContextSnapshot(
+        session_id=session_id,
+        request_seq=request_seq,
+        project=("" if redact_transaction else (_string(payload.get("project")) or default_project)),
+        app=front_app_bundle_id,
+        highlighted_index=0,
+        page=(0 if redact_transaction else _bounded_int(rime_mapping.get("page", payload.get("page")), default=0, minimum=0, maximum=999)),
+        is_last_page=(True if redact_transaction else _bool(rime_mapping.get("isLastPage", payload.get("isLastPage")), default=True)),
+        latency_budget_ms=(0 if redact_transaction else _bounded_int(payload.get("latencyBudgetMs"), default=0, minimum=0, maximum=20000)),
+        max_visible_candidates=(8 if redact_transaction else _bounded_int(payload.get("maxVisibleCandidates"), default=8, minimum=1, maximum=10)),
+        max_side_candidates=(0 if redact_transaction else _bounded_int(payload.get("maxSideCandidates"), default=0, minimum=0, maximum=10)),
+        frontend_transaction=transaction,
+    )
+    frontend_transaction_payload = frontend_transaction_to_payload(transaction)
+    prediction_session_payload: dict[str, object] = {
+        "phase": reason,
+        "inputMode": reason,
+        "pinyinPrefix": "",
+        "candidatePanelVisible": False,
+        "predictionPanelVisible": False,
+        "shouldClearPredictionPanel": True,
+        "clearReason": reason,
+        "selectionScope": "none",
+        "rimeCompositionOwnedByRime": True,
+        "sessionFingerprint": _short_stable_id(session_id, str(request_seq), reason),
+        "contextFingerprint": "",
+        "snapshotId": "",
+        "stableSnapshotId": "",
+        "requestSeq": request_seq,
+        "expiresAfterMs": 0,
+        **frontend_transaction_payload,
+    }
+    key_policy = contract_key_policy_for_prediction_session(prediction_session_payload)
+    progressive = _progressive_state(enabled=False, partial=False, should_follow_up=False)
+    candidate_panel = build_candidate_panel_payload(input_mode=reason, display_candidates=[])
+    assistant_overlay = build_assistant_overlay_payload(
+        ui_mode=reason,
+        input_mode=reason,
+        display_candidates=[],
+        rag_candidates=[],
+        prediction_session=prediction_session_payload,
+        key_policy=key_policy,
+        progressive=progressive,
+        frontend_transaction=frontend_transaction_payload,
+    )
+    assistant_overlay["dismissReason"] = reason
+    rag_lane = _rag_lane_status(
+        called=False,
+        timed_out=False,
+        skipped_reason=reason,
+        budget_ms=0,
+    )
+    model_lane = _model_lane_status(
+        called=False,
+        timed_out=False,
+        skipped_reason=reason,
+        budget_ms=0,
+        request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+        requested_max_candidates=0,
+    )
+    trace_events = [
+        {
+            "event": f"prediction_{reason}_blocked",
+            "fields": {"reason": reason},
+        }
+    ]
+    return {
+        "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
+        "sessionId": session_id,
+        "requestSeq": request_seq,
+        **frontend_transaction_payload,
+        "frontendTransaction": frontend_transaction_payload,
+        "project": snapshot.project,
+        "rawInput": "",
+        "preedit": "",
+        "commitTextPreview": "",
+        "committedContext": "",
+        "semanticQuery": "",
+        "queryBasis": reason,
+        "triggerDecision": {
+            "shouldRefresh": False,
+            "reason": reason,
+            "refreshReason": reason,
+            "shouldShow": False,
+            "showReason": reason,
+            "hardClear": True,
+            "hardClearReason": reason,
+            "softHold": False,
+            "softHoldReason": "",
+            "idleMs": 0,
+            "semanticSignalLength": 0,
+            "forceSideCandidates": False,
+            "foregroundContextGate": {"allowed": False, "reason": reason},
+        },
+        "refreshDecision": {
+            "shouldRefresh": False,
+            "refreshReason": reason,
+            "reason": reason,
+            "idleMs": 0,
+            "semanticSignalLength": 0,
+            "forceSideCandidates": False,
+        },
+        "showDecision": {
+            "shouldShow": False,
+            "showReason": reason,
+            "action": "hard_clear",
+            "hardClear": True,
+            "hardClearReason": reason,
+            "softHold": False,
+            "softHoldReason": "",
+            "visibleCandidateCount": 0,
+            "snapshotId": "",
+        },
+        "predictionTraceEvents": trace_events,
+        "predictionTrigger": {
+            "enforced": False,
+            "reason": reason,
+            "traceEvent": "prediction_trigger_skipped",
+        },
+        "historyContext": "",
+        "latencyBudgetMs": 0,
+        "uiMode": reason,
+        "laneStatus": lane_status_payload(rag_lane=rag_lane, model_lane=model_lane, rime_candidate_count=0),
+        "ragLane": rag_lane,
+        "modelLane": model_lane,
+        "rimeContext": rime_context_to_payload(snapshot),
+        "modelPredictions": [],
+        "ragCandidates": [],
+        "displayCandidates": [],
+        "candidatePanel": candidate_panel,
+        "assistantOverlay": assistant_overlay,
+        "predictionFirst": {
+            "enabled": False,
+            "mode": reason,
+            "pinyinPrefix": "",
+            "policy": {"engine": "fail_closed", "reason": reason},
+        },
+        "predictionSession": prediction_session_payload,
+        "keyPolicy": key_policy,
+        "selectionActions": {
+            "rime": "select_rime_candidate",
+            "side": "commit_side_candidate",
+        },
+        "progressive": progressive,
+        "mergePolicy": {
+            "rimeFirst": True,
+            "sideFirst": False,
+            "maxVisibleCandidates": snapshot.max_visible_candidates,
+            "maxSideCandidates": 0,
+            "reservedSideSlots": 0,
+            "maxRimeVisibleCandidates": snapshot.max_visible_candidates,
+            "maxModelSideCandidates": 0,
+            "ragBlockReserve": 0,
+            "ragKeepsRemainingSideSlots": False,
+            "ragDirectDisplayEnabled": False,
+            "rawPinyinFallback": False,
+            "sideCandidatesEnabled": False,
+            "fallbackOrder": [],
         },
     }
 
@@ -1145,6 +1774,8 @@ def suggest_rag_with_latency_budget(
     app: str,
     top_k: int,
     latency_budget_ms: int,
+    context_group_id: str = "",
+    runtime_config: RuntimeConfigSnapshot | None = None,
 ) -> tuple[list[InputSuggestion], dict[str, object]]:
     budget_ms = max(0, int(latency_budget_ms))
     if budget_ms <= 0:
@@ -1176,16 +1807,40 @@ def suggest_rag_with_latency_budget(
     def run_suggest() -> None:
         started = time.perf_counter()
         try:
-            realtime_adapter = _realtime_rag_adapter(adapter=adapter, core=core, budget_ms=budget_ms)
-            result["suggestions"] = realtime_adapter.suggest(
-                SuggestionRequest(
+            if runtime_config is not None and isinstance(core, LocalSqliteCoreClient):
+                candidates = core.retrieve_candidates_v3(
                     current_input=current_input,
                     recent_context=recent_context,
+                    committed_context=recent_context,
                     project=project,
                     app=app,
                     top_k=retrieval_top_k,
+                    source_budget_ms=min(budget_ms, runtime_config.hybrid_rag.budget_ms),
+                    context_group_id=context_group_id,
+                    context_group_level="document" if context_group_id.startswith("doc:") else "app",
+                    enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+                    lane_weights=runtime_config.hybrid_rag.query_weights(),
                 )
-            )
+                result["suggestions"] = memory_candidates_v2_to_input_suggestions(candidates)
+                result["retrievalConfig"] = {
+                    "memoryEnabled": runtime_config.memory.enabled,
+                    "hybridEnabled": runtime_config.hybrid_rag.enabled,
+                    "lanes": dict(runtime_config.hybrid_rag.query_lanes()),
+                    "weights": dict(runtime_config.hybrid_rag.query_weights()),
+                }
+            else:
+                realtime_adapter = _realtime_rag_adapter(adapter=adapter, core=core, budget_ms=budget_ms)
+                result["suggestions"] = realtime_adapter.suggest(
+                    SuggestionRequest(
+                        current_input=current_input,
+                        recent_context=recent_context,
+                        project=project,
+                        app=app,
+                        top_k=retrieval_top_k,
+                        context_group_id=context_group_id,
+                        context_group_level="document" if context_group_id.startswith("doc:") else "app",
+                    )
+                )
         except Exception as exc:  # pragma: no cover - defensive fail-open guard
             result["error"] = exc.__class__.__name__
             result["failClosed"] = True
@@ -1208,7 +1863,7 @@ def suggest_rag_with_latency_budget(
     if not isinstance(suggestions, list):
         suggestions = []
     error = _string(result.get("error"))
-    return suggestions, _rag_lane_status(
+    lane = _rag_lane_status(
         called=True,
         timed_out=False,
         skipped_reason=f"error: {error}" if error else "",
@@ -1218,6 +1873,9 @@ def suggest_rag_with_latency_budget(
         fail_closed=bool(result.get("failClosed")),
         warnings=tuple(str(item) for item in result.get("warnings", []) if str(item)),
     )
+    if isinstance(result.get("retrievalConfig"), dict):
+        lane["retrievalConfig"] = dict(result["retrievalConfig"])  # type: ignore[arg-type]
+    return suggestions, lane
 
 
 def _realtime_rag_adapter(*, adapter: InputMethodAdapter, core: CoreClient, budget_ms: int) -> InputMethodAdapter:
@@ -1255,6 +1913,237 @@ def _looks_like_deepseek_provider(predictor: PredictionProvider) -> bool:
     return "deepseek" in identity
 
 
+def _strong_t0_prediction(
+    suggestions: list[InputSuggestion],
+    *,
+    snapshot: RimeContextSnapshot,
+    current_input: str,
+) -> ModelPrediction | None:
+    threshold = _bounded_float_env("RAG_IME_T0_DIRECT_MEMORY_THRESHOLD", default=0.86)
+    context = compact_whitespace(snapshot.committed_context or current_input)
+    for suggestion in suggestions:
+        surface = compact_whitespace(suggestion.surface_text)
+        metadata = dict(suggestion.metadata)
+        diagnostics = dict(metadata.get("diagnostics") or {})
+        doc_type = compact_whitespace(str(diagnostics.get("docType") or metadata.get("memory_kind") or ""))
+        source_type = compact_whitespace(suggestion.suggestion_type)
+        if source_type not in {"phrase", "memory", "alias"} and doc_type != "phrase":
+            continue
+        if float(suggestion.confidence) < threshold or not 2 <= len(surface) <= 18:
+            continue
+        if context and surface in context[-160:]:
+            continue
+        source_ids = [suggestion.source_event_id] if suggestion.source_event_id > 0 else []
+        source_ids.extend(
+            int(value)
+            for value in metadata.get("evidence_event_ids", [])
+            if isinstance(value, int) and value > 0
+        )
+        if not source_ids:
+            continue
+        return ModelPrediction(
+            text=surface,
+            rank=1,
+            provider_name="memory-t0",
+            latency_ms=0,
+            confidence=float(suggestion.confidence),
+            metadata={
+                "sourceType": "phrase",
+                "sourceLane": "memory_t0",
+                "directMemoryHit": True,
+                "sourceEventIds": list(dict.fromkeys(source_ids)),
+                "memoryId": metadata.get("memory_id") or suggestion.suggestion_id,
+            },
+        )
+    return None
+
+
+def _post_commit_online_context_packet(
+    *,
+    current_input: str,
+    context_group_id: str,
+    app: str,
+    project: str,
+    suggestions: list[InputSuggestion],
+) -> dict[str, object]:
+    current = now_ms()
+    group_events = [
+        {
+            "text": event.text,
+            "ageMs": max(0, current - event.created_at_ms),
+            "accepted": event.accepted,
+            "deleted": event.deleted,
+            "contextGroupId": context_group_id,
+        }
+        for event in _GROUP_SHORT_BUFFER.recent(context_group_id, limit=2, include_deleted=True)
+    ]
+    surface_hints = [item.surface_text for item in suggestions if 2 <= len(compact_whitespace(item.surface_text)) <= 18]
+    tag_hints = [
+        str(tag)
+        for suggestion in suggestions
+        for tag in dict(suggestion.metadata).get("tags", [])
+    ]
+    memory_books = [
+        {
+            "bookId": str(item.metadata.get("memory_id") or item.suggestion_id),
+            "title": "",
+            "summary": item.evidence_preview,
+            "surfaceHints": [item.surface_text],
+            "tags": list(item.metadata.get("tags") or []),
+            "sourceEventIds": [item.source_event_id] if item.source_event_id > 0 else [],
+        }
+        for item in suggestions[:2]
+    ]
+    return build_post_commit_context_packet(
+        current_input=current_input,
+        context_group_id=context_group_id,
+        app=app,
+        project=project,
+        group_events=group_events,
+        memory_books=memory_books,
+        tag_hints=tag_hints,
+        surface_hints=surface_hints,
+        negative_signals=("根据上述", "接下来我们", "可以继续", "候选如下"),
+    )
+
+
+def _group_aware_model_context(
+    *,
+    context_group_id: str,
+    explicit_recent_context: str,
+    current_ms: int | None = None,
+) -> tuple[str, dict[str, object]]:
+    """Join the current editor value with only the recent same-group typing stream."""
+
+    current = compact_whitespace(explicit_recent_context)
+    now = now_ms() if current_ms is None else max(0, int(current_ms))
+    recent_events = [
+        event
+        for event in _GROUP_SHORT_BUFFER.recent(context_group_id, limit=20)
+        if now - event.created_at_ms <= _MODEL_GROUP_CONTEXT_TTL_MS
+    ]
+    stream = compact_whitespace("".join(event.text for event in recent_events))
+    history = stream
+    if current and history.endswith(current):
+        history = history[: -len(current)]
+    elif current and current.endswith(history):
+        history = ""
+    else:
+        max_overlap = min(len(history), len(current))
+        for width in range(max_overlap, 0, -1):
+            if history[-width:] == current[:width]:
+                history = history[:-width]
+                break
+    history = compact_whitespace(history)
+    if history and current:
+        cjk_boundary = re.search(r"[\u3400-\u9fff]", current[:1]) and re.search(
+            r"[\u3400-\u9fff，。！？；：、]", history[-1:]
+        )
+        separator = "" if cjk_boundary else " "
+        combined = f"{history}{separator}{current}"
+    else:
+        combined = history or current
+    assembled = compact_whitespace(combined)[-_MODEL_GROUP_CONTEXT_MAX_CHARS:]
+    history_chars = max(0, len(assembled) - len(current)) if current and assembled.endswith(current) else len(history)
+    focused = _focus_model_completion_context(assembled=assembled, foreground=current)
+    context_mode = "group-short-buffer+foreground" if history_chars else "foreground-only"
+    if focused != assembled:
+        context_mode = f"{context_mode}-focused"
+    return focused, {
+        "contextMode": context_mode,
+        "foregroundContextChars": len(current),
+        "groupContextChars": history_chars,
+        "groupContextEventCount": len(recent_events),
+        "assembledContextChars": len(assembled),
+        "modelContextChars": len(focused),
+        "contextWindowChars": _MODEL_COMPLETION_CONTEXT_MAX_CHARS,
+        "contextWindowTrimmed": focused != assembled,
+        "modelContextHash": stable_text_hash(focused),
+    }
+
+
+def _focus_model_completion_context(*, assembled: str, foreground: str) -> str:
+    """Keep the current field plus enough same-group history to disambiguate it."""
+
+    combined = compact_whitespace(assembled)
+    current = compact_whitespace(foreground)
+    if not combined:
+        return ""
+
+    # A meaningful current field is still the strongest signal. Very short
+    # fragments borrow the same-group buffer, while a complete current field
+    # keeps its whole tail instead of being collapsed to the last few words.
+    source = current if len(current) >= 8 else combined
+    return compact_whitespace(source)[-_MODEL_COMPLETION_CONTEXT_MAX_CHARS:]
+
+
+def _annotate_model_prediction_context(
+    predictions: list[ModelPrediction],
+    context_meta: Mapping[str, object],
+) -> list[ModelPrediction]:
+    if not predictions:
+        return []
+    metadata_patch = {
+        key: value
+        for key, value in context_meta.items()
+        if key
+        in {
+            "contextMode",
+            "foregroundContextChars",
+            "groupContextChars",
+            "groupContextEventCount",
+            "assembledContextChars",
+            "modelContextChars",
+            "contextWindowChars",
+            "contextWindowTrimmed",
+            "modelContextHash",
+        }
+    }
+    return [
+        ModelPrediction(
+            text=item.text,
+            rank=item.rank,
+            provider_name=item.provider_name,
+            latency_ms=item.latency_ms,
+            confidence=item.confidence,
+            metadata={**dict(item.metadata), **metadata_patch},
+        )
+        for item in predictions
+    ]
+
+
+def _model_prediction_decode_metadata(predictions: list[ModelPrediction]) -> dict[str, object]:
+    if not predictions:
+        return {}
+    metadata = dict(predictions[0].metadata)
+    timing = metadata.get("server_timing")
+    if not isinstance(timing, Mapping):
+        return {}
+    allowed = {
+        "candidateMode",
+        "decodeMode",
+        "sharedPrefill",
+        "prefillMs",
+        "batchMs",
+        "branchCount",
+        "plannedSeedIndexes",
+        "qualityReranked",
+        "contextDomainTermCount",
+    }
+    return {
+        key: value
+        for key, value in timing.items()
+        if key in allowed
+    }
+
+
+def _bounded_float_env(name: str, *, default: float) -> float:
+    try:
+        return max(0.0, min(1.0, float(os.environ.get(name, str(default)))))
+    except ValueError:
+        return default
+
+
 def run_side_lanes_with_latency_budget(
     *,
     adapter: InputMethodAdapter,
@@ -1271,16 +2160,25 @@ def run_side_lanes_with_latency_budget(
     top_k: int,
     max_candidates: int,
     latency_budget_ms: int,
+    context_group_id: str = "",
+    runtime_config: RuntimeConfigSnapshot | None = None,
 ) -> tuple[list[InputSuggestion], dict[str, object], list[ModelPrediction], dict[str, object], dict[str, object]]:
     started = time.perf_counter()
     rag_result: dict[str, object] = {}
     model_result: dict[str, object] = {}
-    rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
+    rag_budget_ms = _rag_lane_budget_for_request(
+        latency_budget_ms,
+        runtime_config=runtime_config,
+    )
     model_budget_ms = _model_lane_budget_for_request(latency_budget_ms, snapshot=snapshot)
     request_type = model_request_type_for_snapshot(snapshot)
     post_commit_prediction = _is_post_commit_prediction_snapshot(snapshot)
     post_commit_auto_model = (not post_commit_prediction) or post_commit_auto_model_enabled()
     post_commit_async = post_commit_prediction and post_commit_auto_model and post_commit_async_completion_enabled()
+    rag_retrieval_enabled = bool(
+        runtime_config is None
+        or (runtime_config.hybrid_rag.enabled and runtime_config.memory.enabled)
+    )
     if post_commit_async:
         request_type = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
     model_candidate_limit = realtime_model_candidate_limit(max_candidates)
@@ -1299,22 +2197,60 @@ def run_side_lanes_with_latency_budget(
             model_current_input = prefix
     elif post_commit_prediction:
         model_current_input = ""
+    model_recent_context = explicit_recent_context
+    model_context_meta: dict[str, object] = {
+        "contextMode": "foreground-only",
+        "foregroundContextChars": len(compact_whitespace(explicit_recent_context)),
+        "groupContextChars": 0,
+        "groupContextEventCount": 0,
+        "modelContextChars": len(compact_whitespace(explicit_recent_context)),
+        "modelContextHash": stable_text_hash(explicit_recent_context),
+    }
+    if post_commit_prediction:
+        model_recent_context, model_context_meta = _group_aware_model_context(
+            context_group_id=context_group_id,
+            explicit_recent_context=explicit_recent_context,
+        )
     if post_commit_async and not snapshot.progressive_follow_up:
+        # Start the resident local model before retrieval. The previous T0 RAG
+        # probe ran synchronously here, so retrieval could hold the sub-100 ms
+        # shared-prefill model path behind SQLite/vector work for much longer.
+        # RAG remains a progressive lane and is appended by the follow-up.
+        online_context_packet = _post_commit_online_context_packet(
+            current_input=explicit_recent_context,
+            context_group_id=context_group_id,
+            app=app,
+            project=project,
+            suggestions=[],
+        )
         predictions, model_lane = run_post_commit_completion_async(
             core=core,
             predictor=predictor,
             snapshot=snapshot,
-            explicit_recent_context=explicit_recent_context,
+            explicit_recent_context=model_recent_context,
             project=project,
             max_candidates=model_candidate_limit,
+            runtime_config=runtime_config,
         )
+        model_lane["contextPacket"] = online_context_packet
+        model_lane.update(model_context_meta)
+        predictions = _annotate_model_prediction_context(predictions, model_context_meta)
+        model_lane.update(_model_prediction_decode_metadata(predictions))
         rag_lane = _rag_lane_status(
-            called=True,
+            called=False,
             timed_out=False,
-            skipped_reason="RAG lane deferred to post-commit follow-up",
+            skipped_reason=(
+                "RAG lane deferred behind model-first response"
+                if rag_retrieval_enabled
+                else "RAG/memory disabled by effective runtime config"
+            ),
             budget_ms=rag_budget_ms,
         )
-        rag_lane["pending"] = True
+        if rag_retrieval_enabled:
+            rag_lane["pending"] = True
+            rag_lane["modelFirstDeferred"] = True
+        else:
+            rag_lane["runtimeDisabled"] = True
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         rag_lane.update(
             {
@@ -1335,15 +2271,25 @@ def run_side_lanes_with_latency_budget(
         pending_lanes = _progressive_pending_lanes(rag_lane=rag_lane, model_lane=model_lane)
         return [], rag_lane, predictions, model_lane, _progressive_state(
             enabled=progressive_sidecar_updates_enabled(),
-            partial=True,
+            partial=bool(pending_lanes),
             should_follow_up=bool(pending_lanes),
             pending_lanes=pending_lanes,
             first_response_budget_ms=post_commit_first_response_budget_ms(),
-            retry_after_ms=progressive_follow_up_retry_ms(),
+            retry_after_ms=post_commit_completion_poll_wait_ms(),
         )
     lane_token = _SIDE_LANE_SCHEDULER.begin(_side_lane_request_token(snapshot, current_input, query_basis))
 
     def run_rag() -> None:
+        if not rag_retrieval_enabled:
+            rag_result["suggestions"] = []
+            rag_result["lane"] = _rag_lane_status(
+                called=False,
+                timed_out=False,
+                skipped_reason="RAG/memory disabled by effective runtime config",
+                budget_ms=rag_budget_ms,
+            )
+            rag_result["lane"]["runtimeDisabled"] = True  # type: ignore[index]
+            return
         if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
             rag_result["suggestions"] = []
             rag_result["lane"] = _stale_lane_status(
@@ -1362,7 +2308,11 @@ def run_side_lanes_with_latency_budget(
             app=app,
             top_k=top_k,
             latency_budget_ms=rag_budget_ms,
+            context_group_id=context_group_id,
+            runtime_config=runtime_config,
         )
+        if "RAG lane already running" in _string(lane.get("skippedReason")):
+            lane["pending"] = True
         if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
             suggestions = []
             lane.update(_stale_lane_fields("superseded_after_rag", lane_token))
@@ -1388,9 +2338,10 @@ def run_side_lanes_with_latency_budget(
                 core=core,
                 predictor=predictor,
                 snapshot=snapshot,
-                explicit_recent_context=explicit_recent_context,
+                explicit_recent_context=model_recent_context,
                 project=project,
                 max_candidates=model_candidate_limit,
+                runtime_config=runtime_config,
             )
             model_result["predictions"] = predictions
             model_result["lane"] = lane
@@ -1472,10 +2423,11 @@ def run_side_lanes_with_latency_budget(
             deepseek_completion_provider=deepseek_completion_provider,
             snapshot=snapshot,
             current_input=model_current_input,
-            explicit_recent_context=explicit_recent_context,
+            explicit_recent_context=model_recent_context,
             project=project,
             max_candidates=model_candidate_limit,
             latency_budget_ms=model_budget_ms,
+            memory_enabled=runtime_config.memory.enabled if runtime_config is not None else True,
         )
         if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
             predictions = []
@@ -1488,7 +2440,10 @@ def run_side_lanes_with_latency_budget(
     threads = [rag_thread, model_thread]
     for thread in threads:
         thread.start()
-    deadline = started + max(0, latency_budget_ms) / 1000
+    response_budget_ms = max(0, int(latency_budget_ms))
+    if post_commit_prediction and not snapshot.progressive_follow_up:
+        response_budget_ms = min(response_budget_ms, post_commit_side_lane_response_budget_ms())
+    deadline = started + response_budget_ms / 1000
     progressive_enabled = progressive_sidecar_updates_enabled()
     allow_progressive_first_response = progressive_enabled and not snapshot.progressive_follow_up
     first_response_budget_ms = (
@@ -1525,17 +2480,18 @@ def run_side_lanes_with_latency_budget(
     rag_lane = rag_result.get("lane")
     rag_pending = rag_thread.is_alive()
     if not isinstance(rag_lane, dict):
+        pending_after_response = bool((progressive_partial or post_commit_prediction) and rag_pending)
         rag_lane = _rag_lane_status(
             called=True,
-            timed_out=not ((progressive_partial or post_commit_prediction) and rag_pending),
-            skipped_reason="RAG lane pending after progressive first response"
-            if progressive_partial and rag_pending
+            timed_out=not pending_after_response,
+            skipped_reason="RAG lane pending after progressive response window"
+            if pending_after_response
             else "RAG dispatch exceeded latency budget",
             budget_ms=rag_budget_ms,
         )
-        if (progressive_partial or post_commit_prediction) and rag_pending:
+        if pending_after_response:
             rag_lane["pending"] = True
-    if recent_context_candidate_fallback_enabled():
+    if recent_context_candidate_fallback_enabled() and rag_retrieval_enabled:
         recent_fallback = recent_context_memory_suggestions(
             recent_context=explicit_recent_context or recent_context,
             current_input=current_input,
@@ -1573,6 +2529,9 @@ def run_side_lanes_with_latency_budget(
 
     if isinstance(model_lane, dict):
         model_lane["requestedMaxCandidates"] = model_candidate_limit
+        model_lane.update(model_context_meta)
+    predictions = _annotate_model_prediction_context(predictions, model_context_meta)
+    model_lane.update(_model_prediction_decode_metadata(predictions))
     pending_lanes = _progressive_pending_lanes(rag_lane=rag_lane, model_lane=model_lane)
     should_follow_up = bool(pending_lanes)
     progressive_state = _progressive_state(
@@ -1581,7 +2540,11 @@ def run_side_lanes_with_latency_budget(
         should_follow_up=should_follow_up,
         pending_lanes=pending_lanes,
         first_response_budget_ms=first_response_budget_ms,
-        retry_after_ms=progressive_follow_up_retry_ms(),
+        retry_after_ms=(
+            post_commit_completion_poll_wait_ms()
+            if post_commit_prediction
+            else progressive_follow_up_retry_ms()
+        ),
     )
     return suggestions, rag_lane, predictions, model_lane, progressive_state
 
@@ -1594,8 +2557,19 @@ def run_post_commit_completion_async(
     explicit_recent_context: str,
     project: str,
     max_candidates: int,
+    runtime_config: RuntimeConfigSnapshot | None = None,
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
-    key = build_post_commit_completion_key(snapshot=snapshot, project=project)
+    key = build_post_commit_completion_key(
+        snapshot=snapshot,
+        project=project,
+        runtime_config=runtime_config,
+        max_candidates=max_candidates,
+    )
+    wait_ms = (
+        post_commit_completion_poll_wait_ms()
+        if snapshot.progressive_follow_up
+        else post_commit_first_response_budget_ms()
+    )
     predictions, lane = _POST_COMMIT_COMPLETION_CACHE.poll_or_start(
         key=key,
         snapshot=snapshot,
@@ -1604,13 +2578,29 @@ def run_post_commit_completion_async(
         project=project,
         explicit_recent_context=explicit_recent_context,
         max_candidates=max_candidates,
-        ttl_ms=post_commit_completion_ttl_ms(),
-        hard_timeout_ms=post_commit_model_hard_timeout_ms(),
+        ttl_ms=(
+            runtime_config.post_commit.completion_ttl_ms
+            if runtime_config is not None
+            else post_commit_completion_ttl_ms()
+        ),
+        hard_timeout_ms=(
+            runtime_config.post_commit.model_hard_timeout_ms
+            if runtime_config is not None
+            else post_commit_model_hard_timeout_ms()
+        ),
+        wait_ms=wait_ms,
+        memory_enabled=runtime_config.memory.enabled if runtime_config is not None else True,
     )
     return predictions, lane
 
 
-def build_post_commit_completion_key(*, snapshot: RimeContextSnapshot, project: str) -> PostCommitCompletionKey:
+def build_post_commit_completion_key(
+    *,
+    snapshot: RimeContextSnapshot,
+    project: str,
+    runtime_config: RuntimeConfigSnapshot | None = None,
+    max_candidates: int = 0,
+) -> PostCommitCompletionKey:
     transaction = snapshot.frontend_transaction
     context_text = compact_whitespace(snapshot.committed_context)
     commit_preview = compact_whitespace(snapshot.commit_text_preview)
@@ -1625,13 +2615,21 @@ def build_post_commit_completion_key(*, snapshot: RimeContextSnapshot, project: 
         commit_text_length=len(commit_preview),
         input_source_id=transaction.input_source_id,
         selection_epoch=transaction.selection_epoch,
+        runtime_config_hash=runtime_config.snapshot_hash if runtime_config is not None else "",
+        max_candidates=max(0, int(max_candidates)),
         request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
     )
 
 
-def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
-    budget = max(0, int(latency_budget_ms))
-    return budget
+def _rag_lane_budget_for_request(
+    latency_budget_ms: int,
+    *,
+    runtime_config: RuntimeConfigSnapshot | None = None,
+) -> int:
+    request_budget_ms = max(0, int(latency_budget_ms))
+    if runtime_config is None or request_budget_ms <= 0:
+        return request_budget_ms
+    return min(request_budget_ms, max(1, int(runtime_config.hybrid_rag.budget_ms)))
 
 
 def _model_lane_budget_for_request(latency_budget_ms: int, *, snapshot: RimeContextSnapshot) -> int:
@@ -1844,6 +2842,26 @@ def post_commit_first_response_budget_ms(env: Mapping[str, str] | None = None) -
     return configured
 
 
+def post_commit_completion_poll_wait_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_POST_COMMIT_COMPLETION_POLL_WAIT_MS"),
+        default=60,
+        minimum=20,
+        maximum=250,
+    )
+
+
+def post_commit_side_lane_response_budget_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_POST_COMMIT_SIDE_LANE_RESPONSE_MS"),
+        default=80,
+        minimum=40,
+        maximum=300,
+    )
+
+
 def post_commit_completion_ttl_ms(env: Mapping[str, str] | None = None) -> int:
     source = env if env is not None else os.environ
     return _bounded_int(
@@ -1891,15 +2909,33 @@ def post_commit_auto_model_enabled(env: Mapping[str, str] | None = None) -> bool
     return value not in _FALSEY_ENV_VALUES
 
 
+def local_model_quality_gate_mode(env: Mapping[str, str] | None = None) -> str:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE", "strict")).strip().lower()
+    return "observe" if value in {"observe", "report", "audit"} else "strict"
+
+
+def ai_after_commit_only_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_AI_AFTER_COMMIT_ONLY", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
 def post_commit_presentation_stream_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
-    value = str(source.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "1")).strip().lower()
+    value = str(source.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "0")).strip().lower()
     return value not in _FALSEY_ENV_VALUES
 
 
 def post_commit_pending_preview_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
-    value = str(source.get("RAG_IME_POST_COMMIT_PENDING_PREVIEW", "1")).strip().lower()
+    value = str(source.get("RAG_IME_POST_COMMIT_PENDING_PREVIEW", "0")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def demo_safe_fallback_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_ENABLE_DEMO_SAFE_FALLBACK", "0")).strip().lower()
     return value not in _FALSEY_ENV_VALUES
 
 
@@ -1997,6 +3033,9 @@ def rag_direct_display_enabled(env: Mapping[str, str] | None = None) -> bool:
 
 def post_commit_active_rag_button_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
+    # Explicit generation is the stable fallback when the hot model has no
+    # suitable completion. Keep the affordance present by default; users can
+    # still disable it explicitly for a minimal passive-only surface.
     value = str(source.get("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", "1")).strip().lower()
     return bool(value) and value not in _FALSEY_ENV_VALUES
 
@@ -2109,7 +3148,7 @@ def _progressive_state(
 def realtime_model_candidate_limit(max_candidates: int) -> int:
     configured = _bounded_int(
         os.environ.get("RAG_IME_MODEL_LANE_MAX_CANDIDATES"),
-        default=5,
+        default=3,
         minimum=1,
         maximum=10,
     )
@@ -2577,6 +3616,8 @@ def _post_commit_empty_result_fallback_predictions(
         return []
     if not snapshot.progressive_follow_up:
         return []
+    if not demo_safe_fallback_enabled():
+        return []
     pending_lanes = progressive_state.get("pendingLanes")
     if isinstance(pending_lanes, list) and pending_lanes:
         return []
@@ -2811,7 +3852,18 @@ def filter_post_commit_model_completions(
     result: list[ModelPrediction] = []
     seen: set[str] = set()
     for prediction in predictions:
+        quality_allowed, quality_meta = _post_commit_base_completion_quality(
+            prediction,
+            context=committed or commit_preview,
+        )
+        quality_mode = local_model_quality_gate_mode()
+        if not quality_allowed and (
+            quality_mode == "strict" or quality_meta.get("reason") == "negates_context_hypothesis"
+        ):
+            continue
         text = _clean_post_commit_completion_text(prediction.text)
+        if _is_bare_completion_prediction(prediction):
+            text = _bridge_bare_completion_clause(text, committed)
         normalized = compact_whitespace(text).lower()
         if not normalized or normalized in seen or normalized in duplicate_surfaces:
             continue
@@ -2834,13 +3886,22 @@ def filter_post_commit_model_completions(
         metadata = dict(prediction.metadata)
         metadata["noPinyinFilter"] = True
         metadata["requestType"] = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
+        if quality_meta:
+            quality_meta["mode"] = quality_mode
+            quality_meta["observedOnly"] = not quality_allowed and quality_mode == "observe"
+            metadata["qualityGate"] = quality_meta
+        quality_confidence = quality_meta.get("seedProbability") if quality_meta else None
         result.append(
             ModelPrediction(
                 text=text,
                 rank=len(result) + 1,
                 provider_name=prediction.provider_name,
                 latency_ms=prediction.latency_ms,
-                confidence=prediction.confidence,
+                confidence=(
+                    max(0.0, min(1.0, float(quality_confidence)))
+                    if isinstance(quality_confidence, (int, float))
+                    else prediction.confidence
+                ),
                 metadata=metadata,
             )
         )
@@ -2849,13 +3910,77 @@ def filter_post_commit_model_completions(
     return result
 
 
+def _post_commit_base_completion_quality(
+    prediction: ModelPrediction,
+    *,
+    context: str,
+) -> tuple[bool, dict[str, object]]:
+    """Fail closed on uncertain MiniMind branches without affecting other providers."""
+
+    metadata = dict(prediction.metadata or {})
+    if str(metadata.get("candidate_mode") or "") != "base-completion-branches":
+        return True, {}
+    score_rows = metadata.get("candidate_scores")
+    if not isinstance(score_rows, list):
+        return True, {}
+    surface = compact_whitespace(prediction.text)
+    score = next(
+        (
+            row
+            for row in score_rows
+            if isinstance(row, Mapping) and compact_whitespace(str(row.get("text") or "")) == surface
+        ),
+        None,
+    )
+    if not isinstance(score, Mapping):
+        return True, {}
+    try:
+        probability = float(score.get("probability"))
+    except (TypeError, ValueError):
+        return True, {}
+
+    context_tail = compact_whitespace(re.split(r"[。！？!?\n\r]+", context)[-1]).lower()
+    candidate_text = surface.lower()
+    context_terms = {term for term in _MODEL_QUALITY_TOPIC_TERMS if term in context_tail}
+    candidate_terms = {term for term in _MODEL_QUALITY_TOPIC_TERMS if term in candidate_text}
+    shared_terms = sorted(context_terms.intersection(candidate_terms))
+    technical_context = len(context_terms) >= 2 or bool(
+        context_terms.intersection({"rag", "rime", "llm", "ds", "输入法", "候选", "模型", "训练", "语料"})
+    )
+    open_context = context_tail.endswith(_MODEL_QUALITY_OPEN_ENDINGS)
+    negates_context_hypothesis = bool(
+        technical_context
+        and candidate_text.startswith(("不是", "并不是", "不一定是"))
+        and re.search(r"(?:可能|也许|或许)(?:是|与).{0,16}(?:问题|原因)", context_tail)
+    )
+    if negates_context_hypothesis:
+        allowed = False
+        reason = "negates_context_hypothesis"
+    elif technical_context:
+        allowed = bool(shared_terms and probability >= 0.015) or bool(open_context and probability >= 0.18)
+        reason = "topic_match" if shared_terms else "open_technical_context" if allowed else "technical_topic_miss"
+    else:
+        allowed = bool(open_context and probability >= 0.12)
+        reason = "open_context" if allowed else "closed_or_uncertain_context"
+    return allowed, {
+        "schemaVersion": "rag-ime.model-quality-gate.v1",
+        "allowed": allowed,
+        "reason": reason,
+        "seedProbability": probability,
+        "technicalContext": technical_context,
+        "openContext": open_context,
+        "negatesContextHypothesis": negates_context_hypothesis,
+        "sharedTerms": shared_terms,
+    }
+
+
 def _clean_post_commit_completion_text(text: str) -> str:
     surface = compact_whitespace(text)
     surface = re.sub(r"^\s*(?:[-*]|\d+[.)、]|[一二三四五六七八九十]+[.)、])\s*", "", surface)
     surface = re.sub(r"^[\"'“”‘’\[\]【】]+|[\"'“”‘’\[\]【】]+$", "", surface)
     surface = re.sub(r"^[,，。！？；;、\s]+|[,，。！？；;、\s]+$", "", surface)
-    if len(surface) > 80:
-        surface = surface[:80].rstrip("，。！？；;、 ")
+    if len(surface) > 18:
+        surface = surface[:18].rstrip("，。！？；;、 ")
     return compact_whitespace(surface)
 
 
@@ -3148,6 +4273,7 @@ def predict_model_with_latency_budget(
     project: str,
     max_candidates: int,
     latency_budget_ms: int,
+    memory_enabled: bool = True,
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
     budget_ms = max(0, int(latency_budget_ms))
     request_type = model_request_type_for_snapshot(snapshot)
@@ -3244,7 +4370,7 @@ def predict_model_with_latency_budget(
                 # of "history/reference/current context" wrappers.
                 recent_context = compact_whitespace(explicit_recent_context)[-420:]
                 result["contextMode"] = "explicit-post-commit"
-            else:
+            elif memory_enabled:
                 context_event_limit, context_char_limit = model_prediction_context_limits()
                 recent_context = build_prediction_context(
                     core,
@@ -3254,6 +4380,9 @@ def predict_model_with_latency_budget(
                     max_chars=context_char_limit,
                 )
                 result["contextMode"] = "history-expanded"
+            else:
+                recent_context = compact_whitespace(explicit_recent_context)[-420:]
+                result["contextMode"] = "explicit-memory-disabled"
             result["historyContext"] = recent_context
             if int((time.perf_counter() - started) * 1000) >= budget_ms:
                 result["skippedReason"] = "history context exceeded latency budget"
@@ -3475,18 +4604,24 @@ def _filter_model_predictions(
     prediction_context: str = "",
     pinyin_prefix: str = "",
 ) -> list[ModelPrediction]:
-    _ = current_input, explicit_recent_context, prediction_context
     cleaned: list[ModelPrediction] = []
     seen: set[str] = set()
     for prediction in predictions:
-        text = compact_whitespace(prediction.text)
+        text = _clean_model_prediction_text(
+            prediction.text,
+            current_input=current_input,
+            explicit_recent_context=explicit_recent_context,
+            prediction_context=prediction_context,
+        )
+        if _is_bare_completion_prediction(prediction):
+            text = _bridge_bare_completion_clause(text, explicit_recent_context)
         normalized = compact_whitespace(text).lower()
         if not normalized or normalized in seen:
             continue
         if pinyin_prefix and not _model_prediction_matches_pinyin_prefix(prediction, text, pinyin_prefix):
             continue
         seen.add(normalized)
-        if text == prediction.text:
+        if text == compact_whitespace(prediction.text):
             cleaned.append(prediction)
         else:
             cleaned.append(
@@ -3500,6 +4635,70 @@ def _filter_model_predictions(
                 )
             )
     return cleaned
+
+
+def _is_bare_completion_prediction(prediction: ModelPrediction) -> bool:
+    metadata = dict(prediction.metadata or {})
+    return str(metadata.get("candidate_mode") or "") in {
+        "base-completion",
+        "base-completion-branches",
+    }
+
+
+def _bridge_bare_completion_clause(candidate: str, context: str) -> str:
+    surface = compact_whitespace(candidate)
+    prefix = compact_whitespace(context)
+    if not surface or not prefix or not re.search(r"[\u3400-\u9fff]$", prefix):
+        return surface
+    if len(re.split(r"[。！？!?\n\r]+", prefix)[-1]) < 8:
+        return surface
+    incomplete_endings = (
+        "的",
+        "地",
+        "得",
+        "是",
+        "有",
+        "把",
+        "被",
+        "给",
+        "让",
+        "向",
+        "从",
+        "在",
+        "对",
+        "为",
+        "和",
+        "或",
+        "与",
+        "及",
+        "但",
+        "而",
+        "如果",
+        "因为",
+        "所以",
+        "虽然",
+        "不过",
+        "需要",
+        "应该",
+        "可以",
+        "能够",
+        "不能",
+        "不要",
+        "准备",
+        "计划",
+        "继续",
+        "正在",
+        "已经",
+        "随后",
+        "然后",
+        "包括",
+        "例如",
+        "比如",
+        "缺少",
+    )
+    if prefix.endswith(incomplete_endings):
+        return surface
+    return f"，{surface}"
 
 
 def _model_prediction_matches_pinyin_prefix(prediction: ModelPrediction, text: str, prefix: str) -> bool:
@@ -3699,6 +4898,11 @@ def clear_prediction_manager_cache() -> None:
 def clear_refresh_debounce_cache() -> None:
     with _REFRESH_DEBOUNCE_LOCK:
         _REFRESH_DEBOUNCE.clear()
+    with _AUTO_PREDICTION_TRIGGER_LOCK:
+        _AUTO_PREDICTION_TRIGGER.clear()
+        _AUTO_PREDICTION_JOB_DECISIONS.clear()
+        _GROUP_SHORT_BUFFER.clear()
+        _RECORDED_COMMIT_BURSTS.clear()
 
 
 def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
@@ -3749,6 +4953,7 @@ def _should_clear_prediction_pool(
         "skip: raw pinyin fallback",
         "skip: empty semantic signal",
         "skip: low-information Rime candidates",
+        "skip: composition owned by rime; ai after commit only",
     }:
         return True
     return False
@@ -3925,6 +5130,29 @@ def record_rime_side_candidate_selection(
     core: CoreClient,
     default_project: str = "wisdom-weasel-rag-ime",
 ) -> dict[str, object]:
+    privacy_assessment = assess_foreground_write(payload)
+    if privacy_assessment["storeAllowed"] is not True:
+        return {
+            "schemaVersion": "rag-ime.rime-selection.v1",
+            "ok": True,
+            "dryRun": bool(payload.get("dryRun", False)),
+            "stored": False,
+            "noStore": True,
+            "eventId": "",
+            "project": "",
+            "sourceType": "",
+            "insertText": "",
+            "recordedAction": False,
+            "recordedCommitAction": False,
+            "recordedActionCount": 0,
+            "action": None,
+            "commitAction": None,
+            "skippedActionCount": 0,
+            "skippedActions": [],
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+        }
+
     candidate = _candidate_payload(payload)
     insert_text = (
         _string(candidate.get("insertText"))
@@ -3966,10 +5194,20 @@ def record_rime_side_candidate_selection(
             schema_id="rime_sidecar",
             app=_string(payload.get("app")) or "squirrel",
             project=project,
+            privacy_disposition=str(privacy_assessment["disposition"]),
             source=_string(payload.get("source")) or "squirrel_rime_sidecar",
             candidate_rank=candidate_rank,
             provider_name=_string(payload.get("providerName")) or f"rime-sidecar:{source_type}",
             tags=tags,
+            context_group_id=_string(
+                payload.get("contextGroupId")
+                or _mapping(payload.get("foregroundText")).get("contextGroupId")
+            ),
+            context_group_level=_string(
+                payload.get("contextGroupLevel")
+                or _mapping(payload.get("foregroundText")).get("contextGroupLevel")
+            )
+            or "app",
         )
 
     commit_action_payload: dict[str, object] | None = None
@@ -4077,10 +5315,13 @@ def record_rime_side_candidate_selection(
                 if skipped_payload is not None:
                     skipped_actions.append(skipped_payload)
 
+    stored = not dry_run and bool(event_id) and not event_id.startswith("skipped:")
     return {
         "schemaVersion": "rag-ime.rime-selection.v1",
         "ok": True,
         "dryRun": dry_run,
+        "stored": stored,
+        "noStore": False,
         "eventId": event_id,
         "project": project,
         "sourceType": source_type,
@@ -4094,6 +5335,14 @@ def record_rime_side_candidate_selection(
         "commitAction": commit_action_payload,
         "skippedActionCount": len(skipped_actions),
         "skippedActions": skipped_actions,
+        "privacyAssessment": privacy_assessment,
+        "storageReceipt": storage_receipt(
+            privacy_assessment,
+            stored=stored,
+            event_id=event_id,
+            outcome=None if stored else "dry_run",
+            reason=None if stored else "dry_run",
+        ),
     }
 
 
@@ -4238,7 +5487,14 @@ def _hash_from_payload(value: object, *, fallback_text: str) -> str:
 
 def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: str = "") -> tuple[str, str]:
     commit_preview = compact_whitespace(snapshot.commit_text_preview)
-    if commit_preview:
+    foreground = compact_whitespace(foreground_context)
+    active_composition = bool(compact_whitespace(snapshot.raw_input or snapshot.preedit) or snapshot.candidates)
+    if foreground and not active_composition:
+        # Rime commonly commits Chinese a word at a time. A two- or three-character
+        # commit is not the completion context when IMK has already supplied the
+        # fresh text field contents; using it alone starves both model and RAG.
+        return foreground[-240:], "foregroundText"
+    if commit_preview and _commit_preview_has_prediction_signal(commit_preview):
         return commit_preview, "commitTextPreview"
     raw_semantic_input = semantic_ascii_input_text(snapshot)
     if raw_semantic_input:
@@ -4246,7 +5502,7 @@ def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: 
     candidate_text = compact_whitespace(" ".join(item.text for item in snapshot.candidates[:3] if item.text))
     if candidate_text:
         prefix = stable_short_pinyin_prefix(snapshot)
-        context = compact_whitespace(foreground_context or snapshot.committed_context)
+        context = compact_whitespace(foreground or snapshot.committed_context)
         query_parts = tuple(part for part in (context[-160:] if context else "", prefix, candidate_text) if part)
         if context:
             return compact_whitespace(" ".join(query_parts)), "rimeCandidates"
@@ -4257,7 +5513,7 @@ def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: 
     raw_input = compact_whitespace(snapshot.raw_input)
     if preedit and preedit != raw_input:
         return preedit, "preedit"
-    context = compact_whitespace(foreground_context or snapshot.committed_context)
+    context = compact_whitespace(foreground or snapshot.committed_context)
     if context:
         return context[-240:], "foregroundText" if foreground_context else "committedContext"
     return raw_input, "rawInputFallback"
@@ -4368,26 +5624,68 @@ def foreground_context_for_side_lanes(
         "surroundingAfterChars": len(compact_whitespace(foreground.surrounding_after)),
         "wholeValueHash": foreground.whole_value_hash,
         "wholeValueChars": foreground.whole_value_chars,
+        "captureEpoch": foreground.capture_epoch,
+        "capturedAtMs": foreground.captured_at_ms,
+        "sourceAppBundleId": foreground.source_app_bundle_id,
+        "inputSourceId": foreground.input_source_id,
+        "captureFailureReason": foreground.capture_failure_reason,
         "warnings": list(foreground.warnings),
+        "snapshotId": foreground.snapshot_id,
+        "contextGroupId": foreground.context_group_id,
+        "contextGroupLevel": foreground.context_group_level,
+        "contextGroupConfidence": foreground.context_group_confidence,
+        "commitTextMatched": foreground.commit_text_matched,
+        "commitTextMatchDeclared": "commitTextMatched" in raw_payload,
     }
-    if foreground.source not in {"accessibility", "text_input_client"}:
+    transaction = snapshot.frontend_transaction
+    expected_capture_epoch = transaction.input_generation or transaction.frontend_revision
+    if foreground.capture_failure_reason:
+        meta["reason"] = foreground.capture_failure_reason
+        return "", meta
+    if foreground.capture_epoch and expected_capture_epoch and foreground.capture_epoch != expected_capture_epoch:
+        meta["reason"] = "capture epoch mismatch"
+        meta["expectedCaptureEpoch"] = expected_capture_epoch
+        return "", meta
+    if (
+        foreground.source_app_bundle_id
+        and transaction.front_app_bundle_id
+        and foreground.source_app_bundle_id != transaction.front_app_bundle_id
+    ):
+        meta["reason"] = "capture app mismatch"
+        return "", meta
+    if foreground.input_source_id and transaction.input_source_id and foreground.input_source_id != transaction.input_source_id:
+        meta["reason"] = "capture input source mismatch"
+        return "", meta
+    if foreground.source not in {"accessibility", "text_input_client", "ime_commit_ledger"}:
         meta["reason"] = "foreground source is not an external text context"
+        return "", meta
+    if foreground.source == "ime_commit_ledger" and (
+        "commitTextMatched" not in raw_payload or not foreground.commit_text_matched
+    ):
+        meta["reason"] = "commit ledger does not prove the current commit"
         return "", meta
     if not foreground.available:
         meta["reason"] = "foreground context unavailable"
         return "", meta
-    max_freshness = foreground_context_max_freshness_ms()
+    max_freshness = (
+        progressive_follow_up_foreground_max_freshness_ms()
+        if snapshot.progressive_follow_up
+        else foreground_context_max_freshness_ms()
+    )
     if foreground.freshness_ms > max_freshness:
         meta["reason"] = "foreground context stale"
         meta["maxFreshnessMs"] = max_freshness
         return "", meta
+    # Post-commit completion continues at the caret. Text after the caret is
+    # useful provenance for explicit rewrite/Active RAG, but feeding it into the
+    # hot completion query makes the model and retriever continue the wrong
+    # paragraph (for example, TextEdit instructions below the insertion point).
     context = compact_whitespace(
         " ".join(
             part
             for part in (
                 foreground.surrounding_before,
                 foreground.selected_text_preview,
-                foreground.surrounding_after,
             )
             if compact_whitespace(part)
         )
@@ -4396,7 +5694,10 @@ def foreground_context_for_side_lanes(
         meta["reason"] = "foreground context empty"
         return "", meta
     meta["applied"] = True
-    meta["reason"] = "foreground context applied"
+    meta["reason"] = ""
+    meta["status"] = "foreground_context_applied"
+    meta["semanticContextMode"] = "before_caret_and_selection"
+    meta["excludedAfterChars"] = len(compact_whitespace(foreground.surrounding_after))
     meta["contextHash"] = stable_text_hash(context)
     meta["contextChars"] = len(context)
     return context[-600:], meta
@@ -4412,6 +5713,215 @@ def foreground_context_max_freshness_ms(env: Mapping[str, str] | None = None) ->
     )
 
 
+def progressive_follow_up_foreground_max_freshness_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_PROGRESSIVE_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS"),
+        default=2500,
+        minimum=700,
+        maximum=10000,
+    )
+
+
+def apply_commit_burst_prediction_gate(
+    *,
+    payload: Mapping[str, object],
+    snapshot: RimeContextSnapshot,
+    adapter: InputMethodAdapter,
+    predictor: PredictionProvider,
+    trigger_decision: RimeSideCandidateTriggerDecision,
+    foreground_context_gate: Mapping[str, object],
+    privacy_disposition: str,
+    runtime_config: RuntimeConfigSnapshot | None = None,
+) -> tuple[RimeSideCandidateTriggerDecision, dict[str, object]]:
+    if "commitBurstReady" not in payload or snapshot.progressive_follow_up:
+        return trigger_decision, {"enforced": False, "reason": "legacy_or_followup_request"}
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return trigger_decision, {"enforced": False, "reason": "not_post_commit"}
+    ready = _bool(payload.get("commitBurstReady"), default=False)
+    fallback_group_material = snapshot.app or snapshot.frontend_transaction.front_app_bundle_id
+    fallback_group_digest = stable_text_hash(fallback_group_material).removeprefix("sha256:")
+    group_id = _string(_mapping(payload.get("foregroundText")).get("contextGroupId")) or (
+        f"app:{fallback_group_digest[:16]}"
+    )
+    effective_idle_ms = (
+        runtime_config.post_commit.idle_trigger_ms
+        if runtime_config is not None
+        else auto_predict_idle_ms()
+    )
+    memory_recording_enabled = runtime_config is None or runtime_config.memory.enabled
+    base = {
+        "enforced": True,
+        "groupId": group_id,
+        "idleMs": effective_idle_ms,
+        "deltaChars": _optional_int(payload.get("commitBurstDeltaChars")) or 0,
+        "acceptedCandidate": _bool(payload.get("acceptedCandidateContinuation"), default=False),
+        "remoteDeepSeekAutoCallCount": 0,
+        "memoryRecordingEnabled": memory_recording_enabled,
+    }
+    if not trigger_decision.should_refresh:
+        return trigger_decision, {**base, "reason": trigger_decision.reason, "traceEvent": "prediction_trigger_skipped"}
+    if not ready:
+        decision = RimeSideCandidateTriggerDecision(False, "skip: waiting for commit burst idle")
+        return decision, {**base, "reason": "waiting_idle", "traceEvent": "prediction_trigger_coalesced"}
+    if not bool(foreground_context_gate.get("allowed")):
+        decision = RimeSideCandidateTriggerDecision(False, "skip: unreliable commit burst context")
+        return decision, {**base, "reason": "unreliable_context", "traceEvent": "prediction_trigger_skipped"}
+    delta_chars = max(0, int(base["deltaChars"]))
+    preview = compact_whitespace(snapshot.commit_text_preview)
+    trigger_text = preview + ("文" * max(0, delta_chars - len(preview)))
+    current = now_ms()
+    with _AUTO_PREDICTION_TRIGGER_LOCK:
+        burst_texts = [
+            compact_whitespace(str(item))
+            for item in payload.get("commitBurstTexts", [])
+            if compact_whitespace(str(item))
+        ] if isinstance(payload.get("commitBurstTexts"), list) else []
+        burst_key = stable_text_hash(
+            "\x1f".join(
+                (
+                    snapshot.session_id,
+                    str(snapshot.frontend_transaction.frontend_revision),
+                    group_id,
+                    _string(foreground_context_gate.get("contextHash")),
+                    *burst_texts,
+                )
+            )
+        )
+        recorded_event_ids: list[str] = []
+        if memory_recording_enabled and burst_texts and burst_key not in _RECORDED_COMMIT_BURSTS:
+            for committed_text in burst_texts:
+                recorded_event_ids.append(
+                    adapter.commit_text(
+                        committed_text,
+                        recent_context=compact_whitespace(snapshot.committed_context)[-300:],
+                        preedit="",
+                        schema_id="rime_sidecar",
+                        app=snapshot.app or snapshot.frontend_transaction.front_app_bundle_id or "squirrel",
+                        project=snapshot.project,
+                        privacy_disposition=privacy_disposition,
+                        source="squirrel_rime_commit_burst",
+                        provider_name="rime-commit",
+                        tags=("squirrel", "rime-commit", "group-buffer"),
+                        context_group_id=group_id,
+                        context_group_level=_string(_mapping(payload.get("foregroundText")).get("contextGroupLevel")) or "app",
+                    )
+                )
+            _RECORDED_COMMIT_BURSTS[burst_key] = current
+            while len(_RECORDED_COMMIT_BURSTS) > 512:
+                oldest = min(_RECORDED_COMMIT_BURSTS, key=_RECORDED_COMMIT_BURSTS.get)  # type: ignore[arg-type]
+                _RECORDED_COMMIT_BURSTS.pop(oldest, None)
+        if memory_recording_enabled:
+            buffered_texts = burst_texts or ([preview] if preview else [])
+            for buffered_text in buffered_texts:
+                _GROUP_SHORT_BUFFER.append(
+                    group_id,
+                    buffered_text,
+                    accepted=bool(base["acceptedCandidate"]),
+                    source="accepted_candidate" if bool(base["acceptedCandidate"]) else "commit",
+                    created_at_ms=current,
+                )
+        dirty = _AUTO_PREDICTION_TRIGGER.record_commit(
+            group_id=group_id,
+            text=trigger_text,
+            context_hash=_string(foreground_context_gate.get("contextHash"))
+            or stable_text_hash(snapshot.committed_context),
+            reliable=True,
+            accepted_candidate=bool(base["acceptedCandidate"]),
+            now=max(0, current - effective_idle_ms),
+        )
+        provider_identity = f"{_predictor_provider_name(predictor)} {_predictor_model_name(predictor)}".lower()
+        provider_kind = "deepseek" if "deepseek" in provider_identity else "local"
+        fired = _AUTO_PREDICTION_TRIGGER.poll(group_id, now=current, provider_kind=provider_kind)
+    base["recordedEventIds"] = recorded_event_ids
+    if not fired.should_call_predictor:
+        decision = RimeSideCandidateTriggerDecision(False, f"skip: {fired.reason}")
+        return decision, {
+            **base,
+            "reason": fired.reason,
+            "generation": fired.generation,
+            "contextHash": fired.context_hash,
+            "traceEvent": fired.trace_event,
+            "dirtyTraceEvent": dirty.trace_event,
+        }
+    return trigger_decision, {
+        **base,
+        "reason": fired.reason,
+        "generation": fired.generation,
+        "contextHash": fired.context_hash,
+        "traceEvent": fired.trace_event,
+        "dirtyTraceEvent": dirty.trace_event,
+        "providerCallAllowed": True,
+    }
+
+
+def auto_predict_idle_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_AUTO_PREDICT_IDLE_MS"),
+        default=500,
+        minimum=0,
+        maximum=5000,
+    )
+
+
+def reconcile_commit_burst_prediction_outcome(
+    *,
+    trigger_meta: dict[str, object],
+    model_lane: Mapping[str, object],
+    prediction_count: int,
+) -> bool | None:
+    """Settle trigger budgets when T0 wins or an async local job completes."""
+
+    job_id = _string(model_lane.get("completionJobId"))
+    state = _string(model_lane.get("completionJobState"))
+    with _AUTO_PREDICTION_TRIGGER_LOCK:
+        decision: TriggerDecision | None = None
+        if bool(trigger_meta.get("providerCallAllowed")):
+            decision = TriggerDecision(
+                action="fire",
+                reason=_string(trigger_meta.get("reason")) or "commit_burst_idle",
+                group_id=_string(trigger_meta.get("groupId")) or "app:unknown",
+                generation=_optional_int(trigger_meta.get("generation")) or 0,
+                context_hash=_string(trigger_meta.get("contextHash")),
+                should_call_predictor=True,
+                trace_event="prediction_trigger_fired",
+            )
+        if bool(model_lane.get("directMemoryHit")) and decision is not None:
+            latest = _AUTO_PREDICTION_TRIGGER.complete(
+                decision,
+                result_count=max(1, int(prediction_count)),
+                provider_called=False,
+            )
+            trigger_meta.update(
+                {
+                    "providerCallAllowed": False,
+                    "directMemoryHit": True,
+                    "traceEvent": "prediction_trigger_direct_memory_hit",
+                }
+            )
+            return latest
+        if bool(model_lane.get("asyncMode")):
+            if decision is not None and job_id and state in {"started", "pending", "streaming"}:
+                _AUTO_PREDICTION_JOB_DECISIONS[job_id] = decision
+                return None
+            completed_decision = _AUTO_PREDICTION_JOB_DECISIONS.pop(job_id, None) if job_id else None
+            if completed_decision is not None and state in {"completed", "hit", "error", "timeout"}:
+                return _AUTO_PREDICTION_TRIGGER.complete(
+                    completed_decision,
+                    result_count=max(0, int(prediction_count)),
+                    ignored=state in {"error", "timeout"},
+                )
+            return None
+        if decision is not None and bool(model_lane.get("called")):
+            return _AUTO_PREDICTION_TRIGGER.complete(
+                decision,
+                result_count=max(0, int(prediction_count)),
+                ignored=bool(model_lane.get("timedOut")),
+            )
+    return None
+
+
 def post_commit_foreground_context_gate(
     *,
     snapshot: RimeContextSnapshot,
@@ -4422,6 +5932,15 @@ def post_commit_foreground_context_gate(
     if not post_commit_requires_foreground_context():
         return {"allowed": True, "reason": "foreground context gate disabled", "required": False}
     if bool(foreground_context_meta.get("applied")):
+        if bool(foreground_context_meta.get("commitTextMatchDeclared")) and not bool(
+            foreground_context_meta.get("commitTextMatched")
+        ):
+            return {
+                "allowed": False,
+                "reason": "skip: committed text not observed in foreground context",
+                "required": True,
+                "source": _string(foreground_context_meta.get("source")),
+            }
         return {
             "allowed": True,
             "reason": "reliable foreground context applied",
@@ -4450,6 +5969,14 @@ def decide_side_candidate_refresh(
     Rime candidates should always render, but local model and RAG work should
     wait until there is a stable semantic signal instead of raw pinyin noise.
     """
+
+    if ai_after_commit_only_enabled() and (
+        compact_whitespace(snapshot.raw_input) or compact_whitespace(snapshot.preedit)
+    ):
+        return RimeSideCandidateTriggerDecision(
+            False,
+            "skip: composition owned by rime; ai after commit only",
+        )
 
     if snapshot.max_side_candidates <= 0:
         return RimeSideCandidateTriggerDecision(False, "skip: side candidates disabled")
@@ -4482,7 +6009,7 @@ def decide_side_candidate_refresh(
     if query_basis == "rawSemanticInput":
         return RimeSideCandidateTriggerDecision(True, "refresh: semantic raw input")
 
-    if query_basis == "commitTextPreview" and signal_len >= 2:
+    if query_basis == "commitTextPreview" and _commit_preview_has_prediction_signal(semantic_query):
         return RimeSideCandidateTriggerDecision(True, "refresh: commit preview")
 
     if query_basis == "rimeCandidates":
@@ -4500,13 +6027,13 @@ def decide_side_candidate_refresh(
         return RimeSideCandidateTriggerDecision(False, "skip: preedit not stable enough")
 
     if query_basis == "foregroundText":
-        if signal_len >= 4:
+        if signal_len >= 2 or _commit_preview_has_prediction_signal(semantic_query):
             return RimeSideCandidateTriggerDecision(True, "refresh: foreground accessibility context")
         return RimeSideCandidateTriggerDecision(False, "skip: foreground context too short")
 
     if query_basis == "committedContext":
         no_active_composition = not compact_whitespace(snapshot.raw_input) and not compact_whitespace(snapshot.preedit)
-        if signal_len >= 4:
+        if signal_len >= 2 or _commit_preview_has_prediction_signal(semantic_query):
             if snapshot.idle_ms > _POST_COMMIT_PANEL_TTL_MS:
                 return RimeSideCandidateTriggerDecision(False, "skip: stale post-commit continuation")
             return RimeSideCandidateTriggerDecision(
@@ -4522,6 +6049,22 @@ def decide_side_candidate_refresh(
 
 def semantic_signal_length(text: str) -> int:
     return sum(1 for char in compact_whitespace(text) if not char.isspace())
+
+
+def _commit_preview_has_prediction_signal(text: str) -> bool:
+    """Allow one meaningful CJK commit without treating punctuation as a query."""
+
+    surface = compact_whitespace(text)
+    if not surface:
+        return False
+    cjk = re.findall(r"[\u3400-\u9fff]", surface)
+    if cjk:
+        return any(char not in _LOW_INFORMATION_CJK_TOKENS for char in cjk)
+    lowered = surface.lower()
+    return lowered in _SEMANTIC_ASCII_TERMS or any(
+        term.lower() in _SEMANTIC_ASCII_TERMS
+        for term in re.findall(r"[A-Za-z][A-Za-z0-9_+-]{1,}", surface)
+    )
 
 
 def _committed_context_is_low_information(snapshot: RimeContextSnapshot, semantic_query: str) -> bool:
@@ -4554,7 +6097,7 @@ def _active_rime_candidates_are_low_information(snapshot: RimeContextSnapshot) -
 
 def _forced_refresh_has_side_signal(snapshot: RimeContextSnapshot, query_basis: str, semantic_query: str) -> bool:
     if query_basis == "commitTextPreview":
-        return semantic_signal_length(semantic_query) >= 2
+        return _commit_preview_has_prediction_signal(semantic_query)
     active_input = compact_whitespace(snapshot.preedit or snapshot.raw_input)
     if not active_input:
         return False
@@ -4753,9 +6296,19 @@ def merge_display_candidates(
             ):
                 return False
             prediction = model_items.pop(0)
-            candidate_text = _strip_candidate_source_suffix(prediction.text)
             candidate_insert_text = _strip_candidate_source_suffix(
-                str(prediction.metadata.get("insert_text") or candidate_text)
+                str(prediction.metadata.get("insert_text") or prediction.text)
+            )
+            # A comma can be necessary when the completion is committed after
+            # a complete clause, but it is visual noise at the start of a row.
+            # Keep it in insertText and render the semantic phrase itself.
+            candidate_text = re.sub(
+                r"^[,，。！？；;、\s]+",
+                "",
+                _strip_candidate_source_suffix(prediction.text),
+            )
+            candidate_insert_text = _strip_candidate_source_suffix(
+                candidate_insert_text
             )
             normalized_text = _display_text_norm(candidate_text)
             if not normalized_text or normalized_text in display_texts:
@@ -4906,48 +6459,55 @@ def append_post_commit_active_rag_action(
         return False
     if not post_commit_active_rag_button_enabled():
         return False
-    if any(item.selection_action == "start_active_rag_from_context" for item in display_candidates):
-        return True
-    max_visible = max(1, int(snapshot.max_visible_candidates))
-    if len(display_candidates) >= max_visible:
-        removable_index = _post_commit_active_rag_action_slot_index(display_candidates)
-        if removable_index < 0:
-            return False
-        display_candidates.pop(removable_index)
-    display_candidates.append(
-        SideCandidateDisplayItem(
-            label="",
-            text="DeepSeek 生成",
-            insert_text="",
-            source_type="action",
-            selection_action="start_active_rag_from_context",
-            source_index=len(display_candidates),
-            comment="active_rag",
-            display_layout="block",
-            display_lane="active_rag",
-            metadata={
-                "candidate_mode": "post-commit-active-rag-button",
-                "activeRagTrigger": True,
-                "buttonRole": "active_rag_generate",
-                "buttonLabel": "DeepSeek 生成",
-                "shortcutHint": "ctrl+.",
-                "numericSelectionDisabled": True,
-                "triggerPolicy": "manual_only",
-                "requiresExplicitSelection": True,
-                "intent": "complete",
-                "placement": "insert_after_selection",
-                "maxCandidates": 1,
-            },
-        )
+    existing = {item.selection_action for item in display_candidates if item.source_type == "action"}
+    action_specs = (
+        (
+            "快速生成",
+            "start_active_rag_from_context",
+            "active_rag_generate",
+            "ctrl+.",
+            "active_rag",
+        ),
+        (
+            "深度查找",
+            "start_agent_deep_search_from_context",
+            "agent_deep_search",
+            "",
+            "agent_deep_search",
+        ),
     )
+    for text, selection_action, button_role, shortcut, lane in action_specs:
+        if selection_action in existing:
+            continue
+        display_candidates.append(
+            SideCandidateDisplayItem(
+                label="",
+                text=text,
+                insert_text="",
+                source_type="action",
+                selection_action=selection_action,
+                source_index=len(display_candidates),
+                comment=lane,
+                display_layout="action_bar",
+                display_lane=lane,
+                metadata={
+                    "candidate_mode": "post-commit-dual-action-button",
+                    "activeRagTrigger": selection_action == "start_active_rag_from_context",
+                    "agentDeepSearchTrigger": selection_action == "start_agent_deep_search_from_context",
+                    "buttonRole": button_role,
+                    "buttonLabel": text,
+                    "shortcutHint": shortcut,
+                    "numericSelectionDisabled": True,
+                    "triggerPolicy": "manual_only",
+                    "requiresExplicitSelection": True,
+                    "intent": "complete" if button_role == "active_rag_generate" else "deep_search",
+                    "placement": "insert_after_selection" if button_role == "active_rag_generate" else "control_center",
+                    "maxCandidates": 1,
+                    "requiresPi": button_role == "agent_deep_search",
+                },
+            )
+        )
     return True
-
-
-def _post_commit_active_rag_action_slot_index(display_candidates: list[SideCandidateDisplayItem]) -> int:
-    for index in range(len(display_candidates) - 1, -1, -1):
-        if display_candidates[index].source_type != "status":
-            return index
-    return len(display_candidates) - 1
 
 
 def ui_mode_for_response(
@@ -5389,6 +6949,36 @@ def prediction_trace_events_payload(
         },
     ]
 
+    if bool(model_lane.get("directMemoryHit")):
+        events.append(
+            {
+                "event": "prediction_trigger_direct_memory_hit",
+                "fields": _non_empty_trace_fields(
+                    {
+                        **common,
+                        "sourceEventIds": list(rag_lane.get("directMemorySourceEventIds") or []),
+                        "remoteDeepSeekAutoCallCount": 0,
+                    }
+                ),
+            }
+        )
+    elif bool(model_lane.get("called")) and (
+        not bool(model_lane.get("asyncMode"))
+        or _string(model_lane.get("completionJobState")) == "started"
+    ):
+        events.append(
+            {
+                "event": "prediction_provider_called",
+                "fields": _non_empty_trace_fields(
+                    {
+                        **common,
+                        "providerCallCount": 1,
+                        "remoteDeepSeekAutoCallCount": 0,
+                    }
+                ),
+            }
+        )
+
     if action == "fresh" and snapshot_id:
         events.append({"event": "prediction_snapshot_created", "fields": _non_empty_trace_fields(common)})
     elif action == "progressive_append" and snapshot_id:
@@ -5605,13 +7195,15 @@ def _source_stability_from_session(prediction_session_payload: Mapping[str, obje
 
 
 def _candidate_stable_id(item: SideCandidateDisplayItem, *, snapshot_id: str) -> str:
+    # Progressive model output mutates text in place. Identity belongs to the
+    # snapshot lane/slot, otherwise every token delta looks like a new row and
+    # invalidates the user's current keyboard selection.
+    slot_identity = item.selection_action if item.source_type == "action" else str(item.source_index)
     material = "\x1f".join(
         (
             snapshot_id,
             item.source_type,
-            str(item.source_index),
-            compact_whitespace(item.text),
-            compact_whitespace(item.insert_text),
+            slot_identity,
         )
     )
     return f"{item.source_type}:{hashlib.sha1(material.encode('utf-8')).hexdigest()[:16]}"
@@ -5726,6 +7318,10 @@ def _first_present(primary: dict[str, Any], fallback: dict[str, Any], key: str) 
     if key in primary:
         return primary.get(key)
     return fallback.get(key)
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _candidate_payload(payload: dict[str, Any]) -> dict[str, Any]:

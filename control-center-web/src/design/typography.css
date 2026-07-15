@@ -1,0 +1,62 @@
+body {
+  font-size: 16px;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin-block: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--color-text);
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+h3 {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+small {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+}
+
+kbd {
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid var(--color-border);
+  border-bottom-color: var(--color-border-strong);
+  border-radius: var(--radius-1);
+  background: var(--color-surface-subtle);
+  box-shadow: 0 1px 0 var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  text-align: center;
+}

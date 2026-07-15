@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.assistant-candidate-action.v1",
+  "type": "object",
+  "required": ["action", "candidate"],
+  "properties": {
+    "action": {"type": "string", "enum": ["remember", "suppress"]},
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "text": {"type": "string"},
+        "insertText": {"type": "string"},
+        "sourceType": {"type": "string"},
+        "memoryId": {"type": "string"},
+        "sourceEventId": {"type": ["integer", "null"]},
+        "suggestionId": {"type": "string"},
+        "candidateStableId": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "query": {"type": "string"},
+    "project": {"type": "string"},
+    "app": {"type": "string"},
+    "frontAppBundleId": {"type": "string"},
+    "frontmostApp": {"type": "string"},
+    "bundleId": {"type": "string"},
+    "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+    "sensitiveField": {"type": "boolean"},
+    "secureInput": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

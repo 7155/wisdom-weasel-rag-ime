@@ -1,0 +1,912 @@
+from __future__ import annotations
+
+import unittest
+
+from rag_ime.control_api import (
+    ControlAccessContext,
+    ControlApiError,
+    ControlErrorCode,
+    ControlPathId,
+    ControlRequest,
+    ControlScope,
+    default_route_policy,
+)
+
+
+class ControlRoutePolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.policy = default_route_policy()
+
+    def test_manifest_covers_every_canonical_path_id_once(self) -> None:
+        manifest = self.policy.manifest(include_targets=True)
+
+        self.assertEqual(len(manifest), len(ControlPathId))
+        self.assertEqual(
+            {item["pathId"] for item in manifest},
+            {path_id.value for path_id in ControlPathId},
+        )
+        self.assertEqual(
+            {
+                "planning.dashboard",
+                "planning.mutation.preview",
+                "planning.task.save",
+                "planning.goal.save",
+                "planning.task.action",
+                "planning.taskEvent.undo",
+                "planning.mutation.rollback",
+                "memory.summary",
+                "memory.pages",
+                "memory.graph.get",
+                "memory.entity.get",
+                "memory.edit",
+                "memory.book.archive.preview",
+                "memory.book.archive.apply",
+                "memory.book.archive.rollback",
+                "history.page",
+                "history.detail",
+                "history.tombstone.preview",
+                "history.tombstone.apply",
+                "history.tombstone.rollback",
+                "knowledge.start",
+                "knowledge.cancel",
+                "knowledge.status",
+                "knowledge.routeStatus",
+                "knowledge.database.apply.preview",
+                "knowledge.database.draft.edit",
+                "knowledge.database.apply",
+                "knowledge.database.rollback",
+                "knowledgeBases.list",
+                "knowledgeBases.create",
+                "knowledgeBases.get",
+                "knowledgeBases.update",
+                "knowledgeBases.delete.preview",
+                "knowledgeBases.delete.apply",
+                "knowledgeBases.documents.list",
+                "knowledgeBases.document.import",
+                "knowledgeBases.document.retry",
+                "knowledgeBases.document.delete",
+                "knowledgeBases.document.get",
+                "knowledgeBases.document.source",
+                "knowledgeBases.asset.get",
+                "knowledgeBases.jobs.list",
+                "knowledgeBases.job.cancel",
+                "knowledgeBases.chunkPreview",
+                "knowledgeBases.search",
+                "knowledgeBases.find",
+                "knowledgeBases.open",
+                "knowledgeBases.graph.get",
+                "knowledgeBases.graph.rebuild",
+                "knowledgeBases.reindexPreview",
+                "knowledgeBases.rebuild",
+                "knowledgeWorker.health",
+                "knowledgeParsers.list",
+                "diagnostics.runtime",
+                "diagnostics.predictor",
+                "diagnostics.models",
+                "diagnostics.action.preview",
+                "diagnostics.action.start",
+                "diagnostics.action.job",
+                "configuration.settings",
+                "configuration.schema",
+                "configuration.settings.preview",
+                "configuration.settings.apply",
+                "configuration.settings.rollback",
+                "configuration.import.preview",
+                "configuration.import.apply",
+                "configuration.backup.export",
+                "configuration.restore.preview",
+                "configuration.restore.apply",
+                "input.lexicon.review",
+                "input.lexicon.apply",
+                "input.lexicon.rollback",
+            },
+            {
+                path_id.value
+                for path_id in ControlPathId
+                if path_id.name.startswith(
+                    (
+                        "PLANNING_",
+                        "MEMORY_",
+                        "HISTORY_",
+                        "KNOWLEDGE_",
+                        "DIAGNOSTICS_",
+                        "CONFIGURATION_",
+                        "INPUT_LEXICON_",
+                    )
+                )
+            },
+        )
+
+    def test_input_lexicon_work_contract_is_allowlisted_and_local_only(self) -> None:
+        review = ControlRequest(
+            request_id="request-lexicon-review",
+            path_id=ControlPathId.INPUT_LEXICON_REVIEW.value,
+            query={"limit": 200, "project": "wisdom-weasel-rag-ime"},
+        )
+        apply = ControlRequest(
+            request_id="request-lexicon-apply",
+            path_id=ControlPathId.INPUT_LEXICON_APPLY.value,
+            body={
+                "reviewToken": "review-token",
+                "selectedKeys": ["entry-1"],
+                "confirmText": "APPLY_REVIEWED_RIME_LEXICON",
+                "project": "wisdom-weasel-rag-ime",
+                "limit": 200,
+            },
+        )
+        rollback = ControlRequest(
+            request_id="request-lexicon-rollback",
+            path_id=ControlPathId.INPUT_LEXICON_ROLLBACK.value,
+            body={"rollbackId": "rollback-1"},
+        )
+
+        for request in (review, apply, rollback):
+            self.policy.authorize(request, ControlAccessContext.native())
+            with self.assertRaises(ControlApiError) as raised:
+                self.policy.authorize(
+                    request,
+                    ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+                )
+            self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-lexicon-missing-confirm",
+                    path_id=ControlPathId.INPUT_LEXICON_APPLY.value,
+                    body={"reviewToken": "review-token", "selectedKeys": ["entry-1"]},
+                ),
+                ControlAccessContext.native(),
+            )
+
+    def test_configuration_file_migration_routes_are_strict_and_local_only(self) -> None:
+        requests = (
+            ControlRequest(
+                request_id="request-config-preview",
+                path_id=ControlPathId.CONFIGURATION_IMPORT_PREVIEW.value,
+                body={"path": "/trusted/rag-ime.config.yaml"},
+            ),
+            ControlRequest(
+                request_id="request-config-apply",
+                path_id=ControlPathId.CONFIGURATION_IMPORT_APPLY.value,
+                body={
+                    "path": "/trusted/rag-ime.config.yaml",
+                    "expectedRuntimeRevision": 4,
+                    "previewToken": "sha256:preview",
+                    "confirmText": "IMPORT RAG-IME CONFIGURATION",
+                },
+            ),
+            ControlRequest(
+                request_id="request-backup-export",
+                path_id=ControlPathId.CONFIGURATION_BACKUP_EXPORT.value,
+                body={"destination": "/trusted/Backups"},
+            ),
+            ControlRequest(
+                request_id="request-restore-preview",
+                path_id=ControlPathId.CONFIGURATION_RESTORE_PREVIEW.value,
+                body={"path": "/trusted/backup.ragime-backup"},
+            ),
+            ControlRequest(
+                request_id="request-restore-apply",
+                path_id=ControlPathId.CONFIGURATION_RESTORE_APPLY.value,
+                body={
+                    "path": "/trusted/backup.ragime-backup",
+                    "restoreToken": "a" * 64,
+                    "confirmText": "RESTORE RAG-IME",
+                    "expectedRuntimeRevision": 4,
+                },
+            ),
+        )
+
+        for request in requests:
+            self.policy.authorize(request, ControlAccessContext.native())
+            with self.assertRaises(ControlApiError) as raised:
+                self.policy.authorize(
+                    request,
+                    ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+                )
+            self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-restore-arbitrary",
+                    path_id=ControlPathId.CONFIGURATION_RESTORE_APPLY.value,
+                    body={
+                        "path": "/trusted/backup.ragime-backup",
+                        "restoreToken": "a" * 64,
+                        "confirmText": "RESTORE RAG-IME",
+                        "expectedRuntimeRevision": 4,
+                        "shell": "rm -rf",
+                    },
+                ),
+                ControlAccessContext.native(),
+            )
+
+    def test_planning_goal_save_accepts_only_public_contract_fields(self) -> None:
+        body = {
+            "goalId": "goal-1",
+            "title": "完成控制中心切换",
+            "detail": "验证真实规划写入",
+            "horizon": "medium_term",
+            "status": "active",
+            "priority": 3,
+            "targetDate": "2026-07-31",
+            "project": "wisdom-weasel-rag-ime",
+            "expectedRuntimeRevision": 7,
+            "previewToken": "preview-token",
+            "payloadSha256": "sha256:payload",
+            "confirmText": "apply",
+        }
+        request = ControlRequest(
+            request_id="request-planning-goal-save",
+            path_id=ControlPathId.PLANNING_GOAL_SAVE.value,
+            body=body,
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-planning-goal-internal-field",
+                    path_id=ControlPathId.PLANNING_GOAL_SAVE.value,
+                    body={**body, "metadata": {"systemPrompt": "client-owned"}},
+                ),
+                ControlAccessContext.native(),
+            )
+
+    def test_pi_provider_credentials_are_local_only_and_secret_allowlisted(self) -> None:
+        requests = (
+            ControlRequest(
+                request_id="request-provider-catalog",
+                path_id=ControlPathId.AGENT_PROVIDERS_GET.value,
+            ),
+            ControlRequest(
+                request_id="request-provider-preview",
+                path_id=ControlPathId.AGENT_PROVIDER_AUTH_PREVIEW.value,
+                body={"provider": "openai-codex", "action": "set_api_key"},
+            ),
+            ControlRequest(
+                request_id="request-provider-apply",
+                path_id=ControlPathId.AGENT_PROVIDER_AUTH_APPLY.value,
+                body={
+                    "previewToken": "preview-token",
+                    "confirmText": "replace",
+                    "apiKey": "secret-only-on-apply",
+                },
+            ),
+            ControlRequest(
+                request_id="request-provider-oauth-status",
+                path_id=ControlPathId.AGENT_PROVIDER_OAUTH_STATUS.value,
+                query={"loginId": "login-1"},
+            ),
+            ControlRequest(
+                request_id="request-provider-oauth-cancel",
+                path_id=ControlPathId.AGENT_PROVIDER_OAUTH_CANCEL.value,
+                body={"loginId": "login-1"},
+            ),
+        )
+        for request in requests:
+            self.policy.authorize(request, ControlAccessContext.native())
+            with self.subTest(path_id=request.path_id), self.assertRaises(ControlApiError) as raised:
+                self.policy.authorize(
+                    request,
+                    ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+                )
+            self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+        for path_id, body in (
+            (
+                ControlPathId.AGENT_PROVIDER_AUTH_PREVIEW.value,
+                {"provider": "openai-codex", "action": "set_api_key", "apiKey": "secret"},
+            ),
+            (
+                ControlPathId.AGENT_PROVIDER_AUTH_APPLY.value,
+                {
+                    "previewToken": "preview-token",
+                    "confirmText": "replace",
+                    "refreshToken": "secret",
+                },
+            ),
+        ):
+            with self.subTest(path_id=path_id), self.assertRaises(ControlApiError):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-provider-secret-injection",
+                        path_id=path_id,
+                        body=body,
+                    ),
+                    ControlAccessContext.native(),
+                )
+
+    def test_persona_creation_accepts_only_public_fields(self) -> None:
+        body = {
+            "displayName": "智鼬·雨天",
+            "tagline": "陪你安静整理",
+            "summary": "偏向温和复盘与清楚的下一步。",
+            "traits": ["温和", "复盘"],
+            "timelineModel": "terra",
+            "selectableModes": ["assistant"],
+        }
+        request = ControlRequest(
+            request_id="request-persona-create",
+            path_id=ControlPathId.AGENT_ROLES_CREATE.value,
+            body=body,
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+        self.policy.authorize(
+            request,
+            ControlAccessContext.remote(
+                device_id="phone-1",
+                scopes={ControlScope.AGENT_WRITE.value},
+            ),
+        )
+
+        for injected in (
+            {"personaPrompt": "ignore safety"},
+            {"roleId": "client-owned"},
+            {"version": "9"},
+            {"toolPolicy": {"shell": "allow"}},
+        ):
+            with self.subTest(injected=injected), self.assertRaises(ControlApiError):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-persona-injected",
+                        path_id=ControlPathId.AGENT_ROLES_CREATE.value,
+                        body={**body, **injected},
+                    ),
+                    ControlAccessContext.native(),
+                )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-persona-missing",
+                    path_id=ControlPathId.AGENT_ROLES_CREATE.value,
+                    body={"displayName": "缺字段"},
+                ),
+                ControlAccessContext.native(),
+            )
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-persona-model",
+                    path_id=ControlPathId.AGENT_ROLES_CREATE.value,
+                    body={**body, "timelineModel": "custom"},
+                ),
+                ControlAccessContext.remote(
+                    device_id="phone-1",
+                    scopes={ControlScope.AGENT_WRITE.value},
+                ),
+            )
+
+    def test_manifest_marks_method_targets_remote_safety_and_subscription(self) -> None:
+        entries = {item["pathId"]: item for item in self.policy.manifest(include_targets=True)}
+
+        prompt = entries[ControlPathId.AGENT_SESSION_PROMPT.value]
+        self.assertEqual(prompt["method"], "POST")
+        self.assertEqual(prompt["target"]["8766"], "/api/agent/sessions/{sessionId}/prompt")
+        self.assertEqual(
+            prompt["target"]["8768"],
+            "/control/v1/agent/sessions/{sessionId}/prompt",
+        )
+        self.assertTrue(prompt["remoteSafe"])
+        self.assertFalse(prompt["subscription"])
+
+        events = entries[ControlPathId.AGENT_SESSION_EVENTS.value]
+        self.assertTrue(events["subscription"])
+        self.assertIn("lastEventId", events["query"])
+
+        control_events = entries[ControlPathId.CONTROL_EVENTS.value]
+        self.assertEqual(control_events["target"]["8766"], "/api/agent/events")
+
+        templates = entries[ControlPathId.AGENT_SUBAGENTS_TEMPLATES.value]
+        self.assertEqual(
+            templates["target"]["8766"],
+            "/api/agent/subagents/templates",
+        )
+
+        room_snapshot = entries[ControlPathId.AGENT_ROOM_SNAPSHOT.value]
+        self.assertEqual(room_snapshot["method"], "GET")
+        self.assertEqual(
+            room_snapshot["target"]["8766"],
+            "/api/agent/rooms/{roomId}/snapshot",
+        )
+        self.assertTrue(room_snapshot["remoteSafe"])
+        self.assertFalse(room_snapshot["subscription"])
+
+        tools = entries[ControlPathId.AGENT_TOOLS_LIST.value]
+        self.assertFalse(tools["remoteSafe"])
+
+    def test_unknown_path_id_fails_closed(self) -> None:
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.resolve("debug.anything")
+
+        self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_FOUND)
+
+    def test_request_payload_rejects_url_host_and_headers(self) -> None:
+        for forbidden in ("url", "host", "headers"):
+            with self.subTest(forbidden=forbidden), self.assertRaises(ControlApiError) as raised:
+                ControlRequest.from_payload(
+                    {
+                        "id": "request-1",
+                        "pathId": "system.health",
+                        forbidden: "http://attacker.invalid",
+                    }
+                )
+            self.assertEqual(raised.exception.code, ControlErrorCode.INVALID_REQUEST)
+
+    def test_request_body_must_be_json_shaped_and_size_bounded(self) -> None:
+        with self.assertRaises(ControlApiError) as raised:
+            ControlRequest(
+                request_id="request-1",
+                path_id=ControlPathId.AGENT_SESSION_PROMPT.value,
+                params={"sessionId": "session-1"},
+                body={"message": object()},
+            )
+        self.assertEqual(raised.exception.code, ControlErrorCode.INVALID_REQUEST)
+
+        with self.assertRaises(ControlApiError):
+            ControlRequest(
+                request_id="request-2",
+                path_id=ControlPathId.AGENT_SESSION_PROMPT.value,
+                params={"sessionId": "session-1"},
+                body={"message": "x" * 2_000_001},
+            )
+
+    def test_path_parameters_reject_traversal_and_encoded_escape(self) -> None:
+        for value in ("../../etc/passwd", "abc/def", "abc%2Fdef", "..", ""):
+            request = ControlRequest(
+                request_id="request-1",
+                path_id=ControlPathId.AGENT_SESSION_SNAPSHOT.value,
+                params={"sessionId": value},
+            )
+            with self.subTest(value=value), self.assertRaises(ControlApiError):
+                self.policy.authorize(request, ControlAccessContext.native())
+
+    def test_memory_page_kind_is_an_enum_not_an_arbitrary_path(self) -> None:
+        allowed = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.MEMORY_PAGES.value,
+            params={"kind": "books"},
+        )
+        self.policy.authorize(allowed, ControlAccessContext.native())
+
+        rejected = ControlRequest(
+            request_id="request-2",
+            path_id=ControlPathId.MEMORY_PAGES.value,
+            params={"kind": "private-table"},
+        )
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(rejected, ControlAccessContext.native())
+
+    def test_memory_edit_is_local_only_and_requires_a_stable_identity(self) -> None:
+        route = self.policy.resolve(ControlPathId.MEMORY_EDIT)
+        self.assertEqual(route.method.value, "POST")
+        self.assertEqual(route.local_8766_path, "/api/memory/edit")
+        self.assertEqual(route.required_body, {"kind", "id"})
+        self.assertEqual(
+            route.body,
+            {
+                "kind",
+                "id",
+                "title",
+                "text",
+                "summary",
+                "note",
+                "description",
+                "tags",
+                "aliases",
+                "type",
+                "color",
+                "reason",
+                "active",
+            },
+        )
+
+        allowed = ControlRequest(
+            request_id="request-memory-edit",
+            path_id=ControlPathId.MEMORY_EDIT.value,
+            body={"kind": "books", "id": "book-1", "title": "长期计划"},
+        )
+        self.policy.authorize(allowed, ControlAccessContext.native())
+        with self.assertRaises(ControlApiError) as remote_error:
+            self.policy.authorize(
+                allowed,
+                ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+            )
+        self.assertEqual(remote_error.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+        for body in (
+            {"kind": "books", "title": "缺少稳定标识"},
+            {"kind": "books", "id": "book-1", "schemaVersion": "client-owned"},
+        ):
+            with self.subTest(body=body), self.assertRaises(ControlApiError):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-memory-edit-rejected",
+                        path_id=ControlPathId.MEMORY_EDIT.value,
+                        body=body,
+                    ),
+                    ControlAccessContext.native(),
+                )
+
+    def test_memory_entity_allows_public_book_summary_but_not_raw_atoms(self) -> None:
+        allowed = ControlRequest(
+            request_id="request-book",
+            path_id=ControlPathId.MEMORY_ENTITY_GET.value,
+            params={"kind": "book", "entityId": "book:input"},
+        )
+        self.policy.authorize(allowed, ControlAccessContext.native())
+
+        rejected = ControlRequest(
+            request_id="request-atom",
+            path_id=ControlPathId.MEMORY_ENTITY_GET.value,
+            params={"kind": "atom", "entityId": "atom:visible"},
+        )
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(rejected, ControlAccessContext.native())
+
+    def test_subscriptions_require_explicit_last_event_id_even_when_empty(self) -> None:
+        missing = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_SESSION_EVENTS.value,
+            params={"sessionId": "session-1"},
+        )
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize(missing, ControlAccessContext.native())
+        self.assertEqual(raised.exception.code, ControlErrorCode.INVALID_REQUEST)
+
+        fresh = ControlRequest(
+            request_id="request-2",
+            path_id=ControlPathId.AGENT_SESSION_EVENTS.value,
+            params={"sessionId": "session-1"},
+            query={"lastEventId": ""},
+        )
+        self.policy.authorize(fresh, ControlAccessContext.native())
+
+    def test_remote_clients_need_a_paired_device_and_each_required_scope(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_SESSIONS_LIST.value,
+        )
+        contexts = (
+            ControlAccessContext.remote(),
+            ControlAccessContext.remote(device_id="phone-1"),
+            ControlAccessContext.remote(device_id="phone-1", scopes={ControlScope.CONTROL_READ.value}),
+        )
+        for context in contexts:
+            with self.subTest(context=context), self.assertRaises(ControlApiError) as raised:
+                self.policy.authorize(request, context)
+            self.assertEqual(raised.exception.code, ControlErrorCode.SCOPE_REQUIRED)
+
+        authorized = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_READ.value},
+        )
+        self.policy.authorize(request, authorized)
+
+    def test_history_detail_requires_event_id_and_history_read_scope(self) -> None:
+        request = ControlRequest(
+            request_id="request-history-detail",
+            path_id=ControlPathId.HISTORY_DETAIL.value,
+            query={"eventId": 81},
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+        self.policy.authorize(
+            request,
+            ControlAccessContext.remote(
+                device_id="phone-1",
+                scopes={ControlScope.HISTORY_READ.value},
+            ),
+        )
+
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize(
+                request,
+                ControlAccessContext.remote(
+                    device_id="phone-1",
+                    scopes={ControlScope.MEMORY_READ.value},
+                ),
+            )
+        self.assertEqual(raised.exception.code, ControlErrorCode.SCOPE_REQUIRED)
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-history-detail-missing-id",
+                    path_id=ControlPathId.HISTORY_DETAIL.value,
+                ),
+                ControlAccessContext.native(),
+            )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-history-detail-injected-context",
+                    path_id=ControlPathId.HISTORY_DETAIL.value,
+                    query={"eventId": 81, "includeContext": True},
+                ),
+                ControlAccessContext.native(),
+            )
+
+    def test_remote_clients_cannot_enable_local_only_routes_with_a_wildcard_scope(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_SESSION_DELETE.value,
+            params={"sessionId": "session-1"},
+        )
+        context = ControlAccessContext.remote(device_id="phone-1", scopes={"*", "agent.write"})
+
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize(request, context)
+
+        self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+    def test_configuration_settings_mutations_are_local_only(self) -> None:
+        request = ControlRequest(
+            request_id="request-configuration-preview",
+            path_id=ControlPathId.CONFIGURATION_SETTINGS_PREVIEW.value,
+            body={"changes": {"display.maxWidth": 640}, "expectedRuntimeRevision": 1},
+        )
+
+        self.policy.authorize(request, ControlAccessContext.native())
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize(
+                request,
+                ControlAccessContext.remote(
+                    device_id="phone-1",
+                    scopes={"*"},
+                ),
+            )
+
+        self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+    def test_remote_body_allowlist_blocks_workspace_paths_and_privileged_modes(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        workspace_request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_SESSIONS_CREATE.value,
+            body={"title": "remote", "workspaceRoots": ["/Users/undo"]},
+        )
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(workspace_request, context)
+
+        privileged_request = ControlRequest(
+            request_id="request-2",
+            path_id=ControlPathId.AGENT_SESSIONS_CREATE.value,
+            body={"title": "remote", "mode": "coding"},
+        )
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(privileged_request, context)
+
+        assistant_request = ControlRequest(
+            request_id="request-3",
+            path_id=ControlPathId.AGENT_SESSIONS_CREATE.value,
+            body={"title": "remote", "mode": "assistant"},
+        )
+        self.policy.authorize(assistant_request, context)
+
+    def test_remote_session_list_cannot_request_internal_sessions(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_READ.value},
+        )
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_SESSIONS_LIST.value,
+            query={"includeInternal": True},
+        )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(request, context)
+
+    def test_remote_configuration_update_cannot_spoof_audit_identity(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_CONFIGURATION_UPDATE.value,
+            body={
+                "expectedRevision": 4,
+                "changes": {"defaultModel": "local"},
+                "updatedBy": "spoofed-device",
+            },
+        )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(request, context)
+
+    def test_bounded_artifact_reads_require_session_ownership(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_ARTIFACT_GET.value,
+            params={"artifactId": "artifact-1"},
+        )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(request, ControlAccessContext.native())
+
+    def test_intercom_rejects_client_supplied_source_identity(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_SESSION_INTERCOM_SEND.value,
+            params={"sessionId": "session-1"},
+            body={
+                "kind": "send",
+                "clientMessageId": "message-1",
+                "content": "hello",
+                "sourceSessionId": "session-2",
+            },
+        )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(request, ControlAccessContext.native())
+
+    def test_deep_search_remains_local_only(self) -> None:
+        request = ControlRequest(
+            request_id="request-1",
+            path_id=ControlPathId.AGENT_DEEP_SEARCH.value,
+            body={"query": "hello", "privacyDisposition": "allowed"},
+        )
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize(request, context)
+        self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+    def test_remote_manifest_contains_only_explicit_remote_safe_routes_and_no_targets(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={
+                ControlScope.CONTROL_READ.value,
+                ControlScope.AGENT_READ.value,
+            },
+        )
+        manifest = self.policy.manifest(context=context)
+
+        self.assertTrue(manifest)
+        self.assertTrue(all(item["remoteSafe"] for item in manifest))
+        self.assertTrue(all("target" not in item for item in manifest))
+        self.assertNotIn(ControlPathId.AGENT_TOOLS_LIST.value, {item["pathId"] for item in manifest})
+
+    def test_no_generic_or_privileged_escape_route_is_registered(self) -> None:
+        manifest = self.policy.manifest(include_targets=True)
+        path_ids = {str(item["pathId"]).lower() for item in manifest}
+        targets = {
+            str(path).lower()
+            for item in manifest
+            for path in item["target"].values()
+            if path != "facade"
+        }
+
+        for forbidden in ("shell", "keychain", "file.read", "file.write"):
+            self.assertFalse(any(forbidden in path_id for path_id in path_ids))
+        self.assertNotIn("/api/action", targets)
+        self.assertIn("/api/configuration/import-apply", targets)
+        self.assertNotIn("agent.media.import", path_ids)
+        self.assertNotIn("agent.tool.execute", path_ids)
+        self.assertNotIn("agent.session.get", path_ids)
+
+        entries = {item["pathId"]: item for item in manifest}
+        for path_id in (
+            "knowledge.database.apply.preview",
+            "knowledge.database.draft.edit",
+            "knowledge.database.apply",
+            "knowledge.database.rollback",
+        ):
+            self.assertFalse(entries[path_id]["remoteSafe"])
+
+        apply_route = self.policy.resolve(ControlPathId.KNOWLEDGE_DATABASE_APPLY)
+        self.assertEqual(
+            apply_route.required_body,
+            {"runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"},
+        )
+
+    def test_document_knowledge_management_routes_are_local_only(self) -> None:
+        manifest = {item["pathId"]: item for item in self.policy.manifest(include_targets=True)}
+        document_routes = {
+            path_id.value
+            for path_id in ControlPathId
+            if path_id.value.startswith("knowledgeBases.")
+            or path_id in {ControlPathId.KNOWLEDGE_WORKER_HEALTH, ControlPathId.KNOWLEDGE_PARSERS_LIST}
+        }
+        self.assertEqual(len(document_routes), 25)
+        for path_id in document_routes:
+            self.assertFalse(manifest[path_id]["remoteSafe"])
+            self.assertIsNone(manifest[path_id]["target"]["8768"])
+
+        upload = self.policy.authorize(
+            ControlRequest(
+                request_id="request-knowledge-upload",
+                path_id=ControlPathId.KNOWLEDGE_BASES_DOCUMENT_IMPORT.value,
+                params={"kbId": "kb_docs"},
+                query={"fileName": "manual.pdf", "mimeType": "application/pdf"},
+            ),
+            ControlAccessContext.native(),
+        )
+        self.assertEqual(upload.local_8766_path, "/api/knowledge-bases/{kbId}/documents/import")
+        asset = self.policy.resolve(ControlPathId.KNOWLEDGE_BASES_ASSET_GET)
+        self.assertTrue(asset.binary)
+        self.assertIsNone(asset.gateway_8768_path)
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-invalid-asset",
+                    path_id=ControlPathId.KNOWLEDGE_BASES_ASSET_GET.value,
+                    params={"kbId": "kb_docs", "fileId": "file_manual", "assetId": "not-a-sha"},
+                ),
+                ControlAccessContext.native(),
+            )
+
+        for request in (
+            ControlRequest(
+                request_id="request-config-update",
+                path_id=ControlPathId.KNOWLEDGE_BASES_UPDATE.value,
+                params={"kbId": "kb_docs"},
+                body={
+                    "chunkingConfig": {"chunkSize": 1200, "overlap": 160},
+                    "retrievalConfig": {"mode": "hybrid", "topK": 12, "threshold": 0.2},
+                    "expectedRevision": "revision-1",
+                },
+            ),
+            ControlRequest(
+                request_id="request-search-threshold",
+                path_id=ControlPathId.KNOWLEDGE_BASES_SEARCH.value,
+                params={"kbId": "kb_docs"},
+                body={"query": "winter velocity", "topK": 8, "mode": "hybrid", "threshold": 0.2},
+            ),
+            ControlRequest(
+                request_id="request-rebuild",
+                path_id=ControlPathId.KNOWLEDGE_BASES_REBUILD.value,
+                params={"kbId": "kb_docs"},
+                body={
+                    "previewToken": "preview-token",
+                    "payloadSha256": "a" * 64,
+                    "expectedRevision": "revision-1",
+                    "confirmText": "REBUILD",
+                },
+            ),
+        ):
+            self.policy.authorize(request, ControlAccessContext.native())
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-remote-knowledge",
+                    path_id=ControlPathId.KNOWLEDGE_BASES_LIST.value,
+                ),
+                ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+            )
+            self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+    def test_document_detail_allows_independent_chunk_and_markdown_windows(self) -> None:
+        request = ControlRequest(
+            request_id="request-knowledge-document-windows",
+            path_id=ControlPathId.KNOWLEDGE_BASES_DOCUMENT_GET.value,
+            params={"kbId": "kb-docs", "fileId": "file-manual"},
+            query={"offset": 400, "limit": 200, "lineOffset": 800, "lineLimit": 200},
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-knowledge-document-unknown-window",
+                    path_id=ControlPathId.KNOWLEDGE_BASES_DOCUMENT_GET.value,
+                    params={"kbId": "kb-docs", "fileId": "file-manual"},
+                    query={"lineCursor": 800},
+                ),
+                ControlAccessContext.native(),
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

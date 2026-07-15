@@ -14,6 +14,7 @@ _FUZZY_PAIR_DEFAULTS: dict[str, bool] = {
     "s_sh": True,
     "en_eng": True,
     "in_ing": True,
+    "ong_on": True,
     "n_l": False,
     "f_h": False,
 }
@@ -23,6 +24,7 @@ _FUZZY_PAIR_ENV_NAMES: dict[str, tuple[str, ...]] = {
     "s_sh": ("RAG_IME_PINYIN_FUZZY_S_SH", "RAG_IME_PINYIN_FUZZY_PAIR_S_SH"),
     "en_eng": ("RAG_IME_PINYIN_FUZZY_EN_ENG", "RAG_IME_PINYIN_FUZZY_PAIR_EN_ENG"),
     "in_ing": ("RAG_IME_PINYIN_FUZZY_IN_ING", "RAG_IME_PINYIN_FUZZY_PAIR_IN_ING"),
+    "ong_on": ("RAG_IME_PINYIN_FUZZY_ONG_ON", "RAG_IME_PINYIN_FUZZY_PAIR_ONG_ON"),
     "n_l": ("RAG_IME_PINYIN_FUZZY_N_L", "RAG_IME_PINYIN_FUZZY_PAIR_N_L"),
     "f_h": ("RAG_IME_PINYIN_FUZZY_F_H", "RAG_IME_PINYIN_FUZZY_PAIR_F_H"),
 }
@@ -377,6 +379,9 @@ def _fuzzy_pinyin_one_step(value: str) -> tuple[str, ...]:
     ):
         if _fuzzy_pair_enabled(pair) and value.endswith(source):
             add(value[: -len(source)] + target)
+
+    if _fuzzy_pair_enabled("ong_on") and value.endswith("on"):
+        add(value[:-2] + "ong")
 
     for pair, source, target in (("n_l", "n", "l"), ("n_l", "l", "n"), ("f_h", "h", "f"), ("f_h", "f", "h")):
         if not _fuzzy_pair_enabled(pair):

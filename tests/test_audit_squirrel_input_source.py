@@ -53,7 +53,7 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
         self.assertEqual(report["schemaVersion"], "rag-ime.macos-input-source-audit.v1")
         self.assertFalse(report["mutatesSystem"])
         self.assertEqual(report["readiness"]["state"], "third-party-missing")
-        self.assertFalse(report["preferences"]["wouldChangeHitoolbox"])
+        self.assertTrue(report["preferences"]["wouldChangeHitoolbox"])
         self.assertTrue(report["preferences"]["wouldChangeThirdParty"])
         self.assertEqual(report["launchServices"]["duplicatePathCount"], 1)
         self.assertEqual(before_hitoolbox, after_hitoolbox)

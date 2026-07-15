@@ -38,19 +38,39 @@ class RetrievalDocsTests(unittest.TestCase):
             conn.close()
 
     def test_retrieval_docs_include_memory_item_tags_aliases(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要连续预测候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory", "RAG"),
             )
         )
+        event_id = int(event_ref.split(":", 1)[1])
 
         with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    {
+                        "phraseCandidates": [
+                            {
+                                "text": "连续预测",
+                                "tags": ["phrase-memory", "RAG"],
+                                "sourceEventIds": [event_id],
+                                "weight": 0.8,
+                            }
+                        ]
+                    },
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
             report = rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
             row = conn.execute(
                 "SELECT * FROM memory_retrieval_docs WHERE doc_type = 'phrase' AND source_id = 'phrase:连续预测'"
@@ -111,6 +131,7 @@ class RetrievalDocsTests(unittest.TestCase):
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text="Bearer sk-secret-value",
+                privacy_disposition="allowed",
                 recent_context="敏感信息",
                 project="wisdom-weasel-rag-ime",
             )
@@ -121,6 +142,7 @@ class RetrievalDocsTests(unittest.TestCase):
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text="噪声短语",
+                privacy_disposition="allowed",
                 recent_context="应该被 tombstone 排除",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -171,12 +193,33 @@ class RetrievalDocsTests(unittest.TestCase):
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text="RAG 输入法多路召回方案",
+                privacy_disposition="allowed",
                 recent_context="BM25 向量 TagMemo Time DeepSeek",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG", "输入法"),
             )
         )
-        return int(memory_id.split(":", 1)[1])
+        event_id = int(memory_id.split(":", 1)[1])
+        with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    {
+                        "phraseCandidates": [
+                            {
+                                "text": "RAG 输入法多路召回方案",
+                                "tags": ["RAG", "输入法"],
+                                "sourceEventIds": [event_id],
+                                "weight": 0.8,
+                            }
+                        ]
+                    },
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+        return event_id
 
 
 def sample_compile_output(event_id: int) -> dict[str, object]:

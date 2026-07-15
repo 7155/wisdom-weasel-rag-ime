@@ -43,6 +43,10 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
         modes = info["ComponentInputModeDict"]["tsInputModeListKey"]
         self.assertEqual(set(modes), {"im.rag-ime.inputmethod.RagIme.Hans", "im.rag-ime.inputmethod.RagIme.Hant"})
         self.assertEqual(modes["im.rag-ime.inputmethod.RagIme.Hans"]["TISInputSourceID"], "im.rag-ime.inputmethod.RagIme.Hans")
+        for mode in modes.values():
+            self.assertEqual(mode["tsInputModeMenuIconFileKey"], "RagImeInputMenuIcon.png")
+            self.assertEqual(mode["tsInputModeAlternateMenuIconFileKey"], "RagImeInputMenuIcon.png")
+            self.assertEqual(mode["tsInputModePaletteIconFileKey"], "RagImeInputMenuIcon.png")
         self.assertEqual(
             info["ComponentInputModeDict"]["tsVisibleInputModeOrderedArrayKey"],
             ["im.rag-ime.inputmethod.RagIme.Hans", "im.rag-ime.inputmethod.RagIme.Hant"],
@@ -50,6 +54,25 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
         self.assertNotIn("im.rime.inputmethod.Squirrel.Hans", strings)
         self.assertEqual(strings["im.rag-ime.inputmethod.RagIme.Hans"], "RAG-IME - Simplified")
         self.assertEqual(strings["im.rag-ime.inputmethod.RagIme.Hant"], "RAG-IME - Traditional")
+
+    def test_default_brand_uses_wisdom_weasel_name(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="wisdom-weasel-brand-squirrel-") as tmp:
+            app = _write_fake_squirrel_app(Path(tmp) / "Squirrel.app")
+            subprocess.run(
+                ["bash", str(root / "scripts" / "brand_squirrel_app.sh"), str(app)],
+                cwd=root,
+                env={**os.environ},
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            info = _read_plist(app / "Contents" / "Info.plist")
+            strings = _read_plist(app / "Contents" / "Resources" / "en.lproj" / "InfoPlist.strings")
+
+        self.assertEqual(info["CFBundleDisplayName"], "智鼬输入法")
+        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hans"], "智鼬输入法")
+        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hant"], "智鼬输入法（繁体）")
 
 
 def _write_fake_squirrel_app(path: Path) -> Path:

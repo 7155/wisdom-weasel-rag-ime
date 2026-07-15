@@ -8,6 +8,7 @@ INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirre
 BACKUP_SUFFIX="${RAG_IME_SQUIRREL_BACKUP_SUFFIX:-rag-ime-backup-$(date +%Y%m%d-%H%M%S)}"
 SELECT_INPUT_SOURCE_SCRIPT="${RAG_IME_SELECT_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/select_macos_input_source.sh}"
 CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
+REFRESH_INPUT_SOURCE_SCRIPT="${RAG_IME_REFRESH_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/refresh_squirrel_input_source_registration.sh}"
 DOCTOR_SCRIPT="${RAG_IME_DOCTOR_SCRIPT:-$ROOT/scripts/doctor_squirrel_integration.sh}"
 RUN_DOCTOR="${RAG_IME_SQUIRREL_REPLACE_RUN_DOCTOR:-1}"
 PREFLIGHT=0
@@ -28,12 +29,19 @@ USAGE
 has_current_rag_ime_frontend_patch() {
   local app="$1"
   local executable="$app/Contents/MacOS/Squirrel"
+  local marker
+  local marker_text
   [[ -x "$executable" ]] || return 1
-  strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
-    strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
-    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_cleared"
+  marker_text="$(strings "$executable" 2>/dev/null || true)"
+  for marker in \
+    "rag-ime.squirrel-frontend-trace.v1" \
+    "rag-ime.foreground-trace.v2" \
+    "composition_ai_suppressed" \
+    "foreground_context_capture_resolved" \
+    "assistant_overlay_candidate_visible" \
+    "side_candidate_feedback_recorded"; do
+    grep -Fq -- "$marker" <<< "$marker_text" || return 1
+  done
 }
 
 bool_true() {
@@ -150,10 +158,10 @@ fi
 
 pkill -x Squirrel >/dev/null 2>&1 || true
 
-"$TARGET_APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-"$TARGET_APP/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 ||
-  "$TARGET_APP/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
-  true
+RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+  RAG_IME_SQUIRREL_BUNDLE_ID="${INPUT_SOURCE_ID%.*}" \
+  RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+  "$REFRESH_INPUT_SOURCE_SCRIPT"
 
 "$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
 RAG_IME_SQUIRREL_APP="$TARGET_APP" "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"

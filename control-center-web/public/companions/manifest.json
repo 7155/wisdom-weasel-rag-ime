@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "rag-ime.persona-assets.v2",
+  "fallbackAssetId": "rag-ime-timeline-present-v1",
+  "assets": {
+    "rag-ime-companion-v1": {
+      "personaId": "zhiyou-v1",
+      "timeline": "legacy-state",
+      "modelAffinity": "session-selected",
+      "states": {
+        "idle": "./RagImeCompanionIdle.png",
+        "listening": "./RagImeCompanionListening.png",
+        "thinking": "./RagImeCompanionThinking.png",
+        "warning": "./RagImeCompanionWarning.png",
+        "done": "./RagImeCompanionDone.png"
+      }
+    },
+    "rag-ime-timeline-past-v1": {
+      "personaId": "hermes-v1",
+      "timeline": "past",
+      "modelAffinity": "5.6 Luna",
+      "states": {
+        "idle": "./timeline-past.png",
+        "listening": "./timeline-past.png",
+        "thinking": "./timeline-past.png",
+        "warning": "./timeline-past.png",
+        "done": "./timeline-past.png"
+      }
+    },
+    "rag-ime-timeline-present-v1": {
+      "personaId": "zhiyou-v1",
+      "timeline": "present",
+      "modelAffinity": "5.6 Terra",
+      "states": {
+        "idle": "./timeline-present.png",
+        "listening": "./timeline-present.png",
+        "thinking": "./timeline-present.png",
+        "warning": "./timeline-present.png",
+        "done": "./timeline-present.png"
+      }
+    },
+    "rag-ime-timeline-future-v1": {
+      "personaId": "vcp-v1",
+      "timeline": "future",
+      "modelAffinity": "5.6 Sol",
+      "states": {
+        "idle": "./timeline-future.png",
+        "listening": "./timeline-future.png",
+        "thinking": "./timeline-future.png",
+        "warning": "./timeline-future.png",
+        "done": "./timeline-future.png"
+      }
+    }
+  }
+}

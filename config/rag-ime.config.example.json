@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "rag-ime.user-config.v1",
+  "settings": {
+    "interaction": {
+      "postCommit": {
+        "enabled": true,
+        "idleTriggerMs": 420
+      }
+    },
+    "context": {
+      "recentInputBaseline": 20,
+      "recentInputMaximum": 80,
+      "tokenBudget": 4096,
+      "reservedOutputTokens": 1024,
+      "temporalRecall": true
+    },
+    "planning": {
+      "enabled": true,
+      "injectIntoContext": true,
+      "detectExplicitCompletion": true
+    },
+    "memory": {
+      "archiveInactiveDays": 60,
+      "timeDecay": {
+        "temporaryHalfLifeDays": 14,
+        "projectHalfLifeDays": 120,
+        "topicBookHalfLifeDays": 180,
+        "stablePreferenceHalfLifeDays": 365
+      }
+    },
+    "pinyin": {
+      "fuzzyProfile": "sichuan-mild",
+      "pairs": {
+        "zZh": true,
+        "cCh": true,
+        "sSh": true,
+        "enEng": true,
+        "inIng": true,
+        "ongOn": true,
+        "nL": false,
+        "fH": false
+      }
+    }
+  },
+  "providers": {
+    "instant": {
+      "provider": "mlx",
+      "endpoint": "http://127.0.0.1:8767",
+      "model": "",
+      "apiKey": "",
+      "headers": {}
+    },
+    "knowledge": {
+      "provider": "deepseek",
+      "endpoint": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash",
+      "apiKey": "",
+      "headers": {}
+    },
+    "voice": {
+      "provider": "native_streaming",
+      "appID": "",
+      "accessToken": "",
+      "resourceID": "volc.seedasr.sauc.duration",
+      "endpoint": "",
+      "model": "",
+      "headers": {}
+    }
+  }
+}
