@@ -147,13 +147,14 @@ export function KnowledgeDocumentViewer({
   transport: ControlTransport;
 }) {
   const [view, setView] = useState<'source' | 'markdown' | 'chunks' | 'artifacts'>('markdown');
+  const pageCount = detail ? detail.pages.length || detail.document.pageCount : 0;
   useEffect(() => setView('markdown'), [selectedDocumentId]);
   if (!documents.length) return <EmptyState description="" icon={FileText} title="先导入资料" />;
   return (
     <div className="knowledge-panel knowledge-viewer">
       <div className="knowledge-viewer__bar">
         <label><span>材料</span><select className="ui-input" onChange={(event) => onSelectDocument(event.target.value)} value={selectedDocumentId || documents[0]?.id}>{documents.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        {detail ? <span>{detail.chunkTotal} 个片段 · {detail.pages.length || detail.document.pageCount || 0} 页 · {detail.assets.length} 个产物</span> : null}
+        {detail ? <span>{detail.chunkTotal} 个片段 · {pageCount ? `${pageCount} 页` : '页码未提供'} · {detail.assets.length} 个产物</span> : null}
       </div>
       {loading ? <p className="knowledge-detail-loading">正在读取解析结果…</p> : null}
       {error ? <InlineNotice title="材料查看不可用" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}

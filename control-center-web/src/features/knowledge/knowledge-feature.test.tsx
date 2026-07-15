@@ -97,7 +97,7 @@ describe('document knowledge library', () => {
     expect(screen.getByText('48')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '确认重建' }));
     await waitFor(() => expect(request(transport, 'knowledgeBases.rebuild')?.body).toEqual({
-      previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, confirmText: 'rebuild',
+      previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, confirmText: 'REBUILD',
     }));
     expect(screen.getByRole('tab', { name: '索引任务' })).toHaveAttribute('data-state', 'active');
   });

@@ -10,6 +10,7 @@ import shutil
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -55,6 +56,13 @@ _SOURCE_PREVIEW_MIME_TYPES = _IMAGE_MIME_TYPES | frozenset(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
 )
+_MAX_TABLE_ARTIFACTS = 32
+_MAX_TABLE_ROWS = 200
+_MAX_TABLE_COLUMNS = 32
+_MAX_TABLE_CELL_CHARS = 500
+_MAX_TABLE_MARKDOWN_CHARS = 64_000
+_MAX_HTML_TABLE_SCAN_CHARS = 2 * 1024 * 1024
+_MAX_TABLE_LINE_CHARS = 64 * 1024
 
 
 class KnowledgeLibraryService:
@@ -204,6 +212,7 @@ class KnowledgeLibraryService:
         *,
         display_name: str = "",
         mime_type: str = "",
+        parser_mode: str | None = None,
     ) -> dict[str, Any]:
         base_id = _identifier(base_id, "base id")
         base = self.store.get_base(base_id)
@@ -238,13 +247,18 @@ class KnowledgeLibraryService:
                 "updated_at_ms": timestamp,
             }
         )
-        return self._dispatch_document(row, parser_mode=str(base["parser_mode"]))
+        selected_mode = _parser_mode(parser_mode) if parser_mode else str(base["parser_mode"])
+        return self._dispatch_document(row, parser_mode=selected_mode)
 
     def retry_document(self, document_id: str, *, parser_mode: str | None = None) -> dict[str, Any]:
         document_id = _identifier(document_id, "document id")
         row = self.store.get_document(document_id)
         base = self.store.get_base(str(row["base_id"]))
-        selected_mode = _parser_mode(parser_mode) if parser_mode is not None else str(base["parser_mode"])
+        selected_mode = (
+            _parser_mode(parser_mode)
+            if parser_mode is not None
+            else _parser_mode_for_provider(str(row["parser_provider"] or ""), fallback=str(base["parser_mode"]))
+        )
         row = self.store.update_document(
             document_id,
             {
@@ -328,6 +342,7 @@ class KnowledgeLibraryService:
             line_offset=max(0, int(line_offset)),
             line_limit=max(1, min(500, int(line_limit))),
         )
+        tables = self._artifact_tables(document)
         return {
             "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
             "document": {
@@ -351,7 +366,7 @@ class KnowledgeLibraryService:
                 for row in page_rows
             ],
             "assets": assets,
-            "tables": [],
+            "tables": tables,
             **artifact,
         }
 
@@ -467,7 +482,11 @@ class KnowledgeLibraryService:
                     "error_message": "",
                 },
             )
-            rebuilt.append(self._dispatch_document(row, parser_mode=str(base["parser_mode"]), job_kind="reindex"))
+            selected_mode = _parser_mode_for_provider(
+                str(existing["parser_provider"] or ""),
+                fallback=str(base["parser_mode"]),
+            )
+            rebuilt.append(self._dispatch_document(row, parser_mode=selected_mode, job_kind="reindex"))
         return {
             "schemaVersion": KNOWLEDGE_SCHEMA_VERSION,
             "kbId": base_id,
@@ -921,6 +940,17 @@ class KnowledgeLibraryService:
             },
         }
 
+    def _artifact_tables(self, document: Any) -> list[dict[str, Any]]:
+        raw_path = str(document["artifact_path"] or "")
+        if not raw_path:
+            return []
+        try:
+            path = _safe_stored_path(Path(raw_path), root=self.config.artifacts_dir)
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except (OSError, KnowledgeLibraryError):
+            return []
+        return _extract_table_artifacts(text)
+
     def _delete_dense(self, document_id: str) -> None:
         try:
             self.dense_index.delete_document(document_id)
@@ -1041,6 +1071,7 @@ def _base_to_dict(row: Any) -> dict[str, Any]:
 
 
 def _document_to_dict(row: Any, *, include_error: bool = True) -> dict[str, Any]:
+    metadata = decode_metadata(row)
     result = {
         "id": str(row["id"]),
         "documentId": str(row["id"]),
@@ -1058,7 +1089,8 @@ def _document_to_dict(row: Any, *, include_error: bool = True) -> dict[str, Any]
         "revision": int(row["revision"]),
         "indexedConfigRevision": int(row["indexed_config_revision"]),
         "chunkCount": int(row["chunk_count"]),
-        "metadata": decode_metadata(row),
+        "pageCount": _metadata_page_count(metadata),
+        "metadata": metadata,
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
     }
@@ -1095,6 +1127,269 @@ def _asset_to_dict(row: Any, *, base_id: str, document_id: str) -> dict[str, Any
             f"/api/knowledge-bases/{base_id}/documents/{document_id}/assets/{asset_id}"
         ),
     }
+
+
+class _BoundedHTMLTableParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._table_depth = 0
+        self._in_caption = False
+        self._caption_parts: list[str] = []
+        self._row: list[tuple[str, bool]] | None = None
+        self._cell_parts: list[str] | None = None
+        self._cell_is_header = False
+        self.rows: list[list[tuple[str, bool]]] = []
+
+    @property
+    def caption(self) -> str:
+        return _bounded_table_cell(" ".join(self._caption_parts), maximum=300)
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag == "table":
+            self._table_depth += 1
+            return
+        if self._table_depth != 1:
+            return
+        if tag == "caption":
+            self._in_caption = True
+        elif tag == "tr":
+            self._row = []
+        elif tag in {"th", "td"} and self._row is not None:
+            self._cell_parts = []
+            self._cell_is_header = tag == "th"
+        elif tag == "br" and self._cell_parts is not None:
+            self._cell_parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag == "table":
+            self._table_depth = max(0, self._table_depth - 1)
+            return
+        if self._table_depth != 1:
+            return
+        if tag == "caption":
+            self._in_caption = False
+        elif tag in {"th", "td"} and self._cell_parts is not None and self._row is not None:
+            if len(self._row) < _MAX_TABLE_COLUMNS:
+                self._row.append((_bounded_table_cell(" ".join(self._cell_parts)), self._cell_is_header))
+            self._cell_parts = None
+        elif tag == "tr" and self._row is not None:
+            if self._row and len(self.rows) <= _MAX_TABLE_ROWS:
+                self.rows.append(self._row)
+            self._row = None
+
+    def handle_data(self, data: str) -> None:
+        if self._table_depth != 1:
+            return
+        if self._in_caption:
+            self._caption_parts.append(data)
+        if self._cell_parts is not None:
+            self._cell_parts.append(data)
+
+
+def _extract_table_artifacts(markdown: str) -> list[dict[str, Any]]:
+    if not markdown:
+        return []
+    html_candidates, html_spans = _extract_html_tables(markdown)
+    candidates = html_candidates + _extract_pipe_tables(markdown, excluded_spans=html_spans)
+    candidates.sort(key=lambda item: int(item.pop("_position")))
+    artifacts: list[dict[str, Any]] = []
+    for index, item in enumerate(candidates[:_MAX_TABLE_ARTIFACTS], start=1):
+        raw_markdown = str(item["markdown"])
+        table_id = hashlib.sha256(
+            f"{index}\0{raw_markdown}".encode("utf-8", errors="replace")
+        ).hexdigest()[:24]
+        artifacts.append(
+            {
+                "tableId": f"table-{table_id}",
+                "title": str(item["title"] or f"表格 {index}")[:300],
+                "page": item["page"],
+                "columns": item["columns"],
+                "rows": item["rows"],
+                "markdown": raw_markdown[:_MAX_TABLE_MARKDOWN_CHARS],
+            }
+        )
+    return artifacts
+
+
+def _extract_html_tables(markdown: str) -> tuple[list[dict[str, Any]], list[tuple[int, int]]]:
+    candidates: list[dict[str, Any]] = []
+    spans: list[tuple[int, int]] = []
+    for match in re.finditer(r"(?is)<table\b[^>]*>.*?</table\s*>", markdown):
+        spans.append(match.span())
+        if len(candidates) >= _MAX_TABLE_ARTIFACTS:
+            continue
+        parser = _BoundedHTMLTableParser()
+        raw_table = markdown[match.start() : min(match.end(), match.start() + _MAX_HTML_TABLE_SCAN_CHARS)]
+        try:
+            parser.feed(raw_table)
+            parser.close()
+        except (ValueError, AssertionError):
+            continue
+        if not parser.rows:
+            continue
+        has_header = any(is_header for _, is_header in parser.rows[0])
+        if has_header:
+            columns = [value for value, _ in parser.rows[0]][:_MAX_TABLE_COLUMNS]
+            data_rows = parser.rows[1 : _MAX_TABLE_ROWS + 1]
+            width = len(columns)
+        else:
+            columns = [value for value, _ in parser.rows[0]][:_MAX_TABLE_COLUMNS]
+            data_rows = parser.rows[1 : _MAX_TABLE_ROWS + 1]
+            width = len(columns)
+        if not width:
+            continue
+        candidates.append(
+            {
+                "_position": match.start(),
+                "title": parser.caption or _nearest_markdown_heading(markdown, match.start()),
+                "page": _artifact_page(markdown, match.start()),
+                "columns": [_bounded_table_cell(value) for value in columns],
+                "rows": [_normalize_table_row(row, width=width) for row in data_rows],
+                "markdown": raw_table[:_MAX_TABLE_MARKDOWN_CHARS],
+            }
+        )
+    return candidates, spans
+
+
+def _extract_pipe_tables(markdown: str, *, excluded_spans: Sequence[tuple[int, int]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    lines = markdown.splitlines(keepends=True)
+    offsets: list[int] = []
+    cursor = 0
+    for line in lines:
+        offsets.append(cursor)
+        cursor += len(line)
+    in_fence = False
+    index = 0
+    while index + 1 < len(lines) and len(candidates) < _MAX_TABLE_ARTIFACTS:
+        line = lines[index].rstrip("\r\n")
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            index += 1
+            continue
+        position = offsets[index]
+        if in_fence or _position_in_spans(position, excluded_spans):
+            index += 1
+            continue
+        header = _split_markdown_table_row(line[:_MAX_TABLE_LINE_CHARS])
+        separator = _split_markdown_table_row(lines[index + 1].rstrip("\r\n")[:_MAX_TABLE_LINE_CHARS])
+        if (
+            len(header) < 1
+            or len(separator) != len(header)
+            or "|" not in line
+            or not all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in separator)
+        ):
+            index += 1
+            continue
+        width = min(len(header), _MAX_TABLE_COLUMNS)
+        columns = [_bounded_table_cell(cell) or f"Column {column + 1}" for column, cell in enumerate(header[:width])]
+        rows: list[list[str]] = []
+        raw_lines = [line, lines[index + 1].rstrip("\r\n")]
+        next_index = index + 2
+        while next_index < len(lines):
+            raw = lines[next_index].rstrip("\r\n")
+            if _position_in_spans(offsets[next_index], excluded_spans) or "|" not in raw:
+                break
+            cells = _split_markdown_table_row(raw[:_MAX_TABLE_LINE_CHARS])
+            if not cells:
+                break
+            if len(rows) < _MAX_TABLE_ROWS:
+                rows.append(_normalize_table_row([(cell, False) for cell in cells], width=width))
+                raw_lines.append(raw[:_MAX_TABLE_LINE_CHARS])
+            next_index += 1
+        candidates.append(
+            {
+                "_position": position,
+                "title": _nearest_markdown_heading(markdown, position),
+                "page": _artifact_page(markdown, position),
+                "columns": columns,
+                "rows": rows,
+                "markdown": _bounded_table_markdown(raw_lines),
+            }
+        )
+        index = max(next_index, index + 2)
+    return candidates
+
+
+def _split_markdown_table_row(value: str) -> list[str]:
+    source = value.strip()
+    if not source or "|" not in source:
+        return []
+    if source.startswith("|"):
+        source = source[1:]
+    if source.endswith("|") and not source.endswith("\\|"):
+        source = source[:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    escaped = False
+    code_ticks = 0
+    for character in source:
+        if escaped:
+            current.append(character)
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == "`":
+            code_ticks = 0 if code_ticks else 1
+            current.append(character)
+        elif character == "|" and not code_ticks:
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(character)
+    if escaped:
+        current.append("\\")
+    cells.append("".join(current).strip())
+    return cells
+
+
+def _normalize_table_row(row: Sequence[tuple[str, bool]], *, width: int) -> list[str]:
+    cells = [_bounded_table_cell(value) for value, _ in row[:width]]
+    return cells + [""] * max(0, width - len(cells))
+
+
+def _bounded_table_cell(value: str, *, maximum: int = _MAX_TABLE_CELL_CHARS) -> str:
+    return " ".join(str(value or "").replace("\x00", " ").split())[:maximum]
+
+
+def _bounded_table_markdown(lines: Sequence[str]) -> str:
+    parts: list[str] = []
+    remaining = _MAX_TABLE_MARKDOWN_CHARS
+    for line in lines:
+        if remaining <= 0:
+            break
+        addition = ("\n" if parts else "") + line
+        parts.append(addition[:remaining])
+        remaining -= len(parts[-1])
+    return "".join(parts)
+
+
+def _nearest_markdown_heading(markdown: str, position: int) -> str:
+    window = markdown[max(0, position - 20_000) : position]
+    matches = re.findall(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$", window)
+    return _bounded_table_cell(matches[-1], maximum=300) if matches else ""
+
+
+def _artifact_page(markdown: str, position: int) -> int | None:
+    return markdown.count("\f", 0, position) + 1 if "\f" in markdown else None
+
+
+def _position_in_spans(position: int, spans: Sequence[tuple[int, int]]) -> bool:
+    return any(start <= position < end for start, end in spans)
+
+
+def _metadata_page_count(metadata: dict[str, Any]) -> int:
+    value = metadata.get("pageCount", 0)
+    if isinstance(value, bool):
+        return 0
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return count if 0 < count <= 100_000 else 0
 
 
 def _normalize_chunking_config(
@@ -1272,6 +1567,15 @@ def _parser_mode(value: str) -> str:
     if clean not in PARSER_MODES:
         raise KnowledgeLibraryError(f"invalid parser mode: {value}", code="invalid_argument")
     return clean
+
+
+def _parser_mode_for_provider(provider: str, *, fallback: str) -> str:
+    clean = str(provider or "").strip().lower()
+    if clean == "mineru_local_http":
+        return "mineru"
+    if clean == "builtin":
+        return "builtin"
+    return _parser_mode(fallback)
 
 
 def _validated_source(path: Path, *, max_bytes: int) -> Path:

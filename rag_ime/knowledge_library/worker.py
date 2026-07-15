@@ -265,6 +265,7 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                 temporary_path,
                 display_name=file_name,
                 mime_type=str(self.headers.get("Content-Type") or "application/octet-stream").split(";", 1)[0],
+                parser_mode=(str(query["parserMode"][0]) if query.get("parserMode") else None),
             )
         finally:
             if temporary_path is not None:

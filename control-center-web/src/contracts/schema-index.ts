@@ -4451,6 +4451,11 @@ export const contractSchemas = {
               "deleting"
             ]
           },
+          "pageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
           "sourceReadPath": {
             "type": "string",
             "pattern": "^/api/knowledge-bases/"
@@ -4540,7 +4545,61 @@ export const contractSchemas = {
         }
       },
       "tables": {
-        "type": "array"
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "object",
+          "required": [
+            "tableId",
+            "title",
+            "page",
+            "columns",
+            "rows",
+            "markdown"
+          ],
+          "properties": {
+            "tableId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "page": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "columns": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "rows": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "string",
+                  "maxLength": 500
+                }
+              }
+            },
+            "markdown": {
+              "type": "string",
+              "maxLength": 64000
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "artifact": {
         "type": "object"

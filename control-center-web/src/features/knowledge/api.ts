@@ -337,7 +337,7 @@ export async function rebuildKnowledgeBase(
       previewToken: preview.previewToken,
       payloadSha256: preview.payloadSha256,
       expectedRevision: preview.expectedRevision,
-      confirmText: 'rebuild',
+      confirmText: 'REBUILD',
     },
   });
 }

@@ -14,6 +14,7 @@ export interface KnowledgeDocumentDetailV1 {
     byteSize: number;
     sha256: string;
     status: 'queued' | 'parsing' | 'indexing' | 'ready' | 'stale' | 'failed' | 'deleting';
+    pageCount?: number;
     sourceReadPath: string;
     [k: string]: unknown;
   };
@@ -33,7 +34,23 @@ export interface KnowledgeDocumentDetailV1 {
     sha256: string;
     readPath: string;
   }[];
-  tables: unknown[];
+  /**
+   * @maxItems 32
+   */
+  tables: {
+    tableId: string;
+    title: string;
+    page: number | null;
+    /**
+     * @maxItems 32
+     */
+    columns: string[];
+    /**
+     * @maxItems 200
+     */
+    rows: string[][];
+    markdown: string;
+  }[];
   artifact: {
     [k: string]: unknown;
   };

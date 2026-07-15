@@ -42,13 +42,13 @@ class BuiltinDocumentParser:
         if suffix not in _TEXT_EXTENSIONS | _OFFICE_EXTENSIONS | {".pdf"}:
             raise DocumentParseError(f"unsupported built-in document type: {suffix or '<none>'}", code="unsupported_type")
         if suffix == ".pdf":
-            text, engine = _extract_pdf_text(path)
+            text, engine, page_count = _extract_pdf_text(path)
             return ParsedDocument(
                 text=text,
                 title=path.stem,
                 provider=self.provider,
                 provider_version=f"pdf-{engine}-v1",
-                metadata={"pageSeparator": "\\f"},
+                metadata={"pageSeparator": "\f", "pageCount": page_count},
             )
         if suffix in _OFFICE_EXTENSIONS:
             text, engine = _extract_office_text(path, suffix=suffix)
@@ -187,13 +187,16 @@ class MinerULocalParser:
         if len(payload) > self.zip_limits.max_zip_bytes:
             raise DocumentParseError("MinerU ZIP response exceeds the compressed size limit", code="unsafe_archive")
         text, assets, archive_hash = inspect_mineru_zip(payload, limits=self.zip_limits)
+        metadata: dict[str, Any] = {"archiveSha256": archive_hash, "port": self.port}
+        if path.suffix.lower() == ".pdf":
+            metadata["pageCount"] = _pdf_page_count(path)
         return ParsedDocument(
             text=text,
             title=path.stem,
             provider=self.provider,
             provider_version="file-parse-v1",
             assets=assets,
-            metadata={"archiveSha256": archive_hash, "port": self.port},
+            metadata=metadata,
         )
 
 
@@ -485,23 +488,56 @@ def _text_quality_is_acceptable(text: str) -> bool:
     return readable / max(1, len(compact)) >= 0.45
 
 
-def _extract_pdf_text(path: Path) -> tuple[str, str]:
+def _extract_pdf_text(path: Path) -> tuple[str, str, int]:
     try:
         from pypdf import PdfReader  # type: ignore[import-not-found]
     except ImportError:
-        text = _basic_pdf_text(path.read_bytes())
+        payload = path.read_bytes()
+        text = _basic_pdf_text(payload)
+        page_count = _basic_pdf_page_count(payload)
         engine = "basic"
     else:
         try:
             reader = PdfReader(str(path), strict=False)
             text = "\f".join((page.extract_text() or "").strip() for page in reader.pages)
+            page_count = len(reader.pages)
         except Exception as exc:
             raise DocumentParseError(f"PDF parsing failed: {exc}", code="pdf_parse_failed") from exc
         engine = "pypdf"
     text = _normalize_text(text.replace("\f\n", "\f"))
     if not text:
         raise DocumentParseError("PDF contains no extractable text", code="pdf_needs_ocr")
-    return text, engine
+    return text, engine, page_count
+
+
+def _pdf_page_count(path: Path) -> int:
+    """Read a PDF page count without trusting document-provided commands or scripts."""
+
+    try:
+        from pypdf import PdfReader  # type: ignore[import-not-found]
+    except ImportError:
+        pass
+    else:
+        try:
+            count = len(PdfReader(str(path), strict=False).pages)
+            if 0 < count <= 100_000:
+                return count
+        except Exception:
+            # MinerU may still parse PDFs whose cross-reference table is damaged.
+            pass
+    try:
+        return _basic_pdf_page_count(path.read_bytes())
+    except OSError:
+        return 0
+
+
+def _basic_pdf_page_count(payload: bytes) -> int:
+    page_objects = len(re.findall(rb"/Type\s*/Page\b", payload))
+    if 0 < page_objects <= 100_000:
+        return page_objects
+    counts = [int(value) for value in re.findall(rb"/Count\s+([0-9]{1,6})\b", payload)]
+    plausible = [value for value in counts if 0 < value <= 100_000]
+    return max(plausible, default=0)
 
 
 def _basic_pdf_text(payload: bytes) -> str:

@@ -176,7 +176,14 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
         class AssetParser:
             def parse(self, path: Path, *, mode: str = "auto") -> ParsedDocument:
                 return ParsedDocument(
-                    text="# Parsed\n\nA table image follows.\n\n![table](images/table.png)",
+                    text=(
+                        "# Parsed\n\nA table image follows.\n\n![table](images/table.png)\n\n"
+                        "## Station summary\n\n"
+                        "| Station | Speed |\n| --- | ---: |\n| A1 | 12.5 |\n| B2 | 8.2 |\n\n\f"
+                        "## Extracted metrics\n\n"
+                        "<table><caption>Glacier metrics</caption><tr><td>Metric</td><td>Value</td></tr>"
+                        "<tr><td>Retreat</td><td>42 m</td></tr></table>"
+                    ),
                     provider="mineru_local_http",
                     provider_version="test",
                     assets=(
@@ -187,7 +194,7 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
                             data=image_data,
                         ),
                     ),
-                    metadata={"archiveSha256": "a" * 64},
+                    metadata={"archiveSha256": "a" * 64, "pageCount": 2},
                 )
 
         service = KnowledgeLibraryService(
@@ -200,8 +207,18 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
         detail = service.document_detail(base["id"], document["documentId"], limit=1, line_limit=2)
         self.assertTrue(detail["artifact"]["available"])
         self.assertEqual(2, len(detail["contentWindow"]["items"]))
-        self.assertEqual(1, detail["chunks"]["total"])
-        self.assertEqual([], detail["tables"])
+        self.assertEqual(1, len(detail["chunks"]["items"]))
+        self.assertGreaterEqual(detail["chunks"]["total"], 2)
+        self.assertEqual(2, detail["document"]["pageCount"])
+        self.assertEqual(2, len(detail["tables"]))
+        markdown_table, html_table = detail["tables"]
+        self.assertEqual("Station summary", markdown_table["title"])
+        self.assertEqual(["Station", "Speed"], markdown_table["columns"])
+        self.assertEqual([["A1", "12.5"], ["B2", "8.2"]], markdown_table["rows"])
+        self.assertEqual("Glacier metrics", html_table["title"])
+        self.assertEqual(2, html_table["page"])
+        self.assertEqual(["Metric", "Value"], html_table["columns"])
+        self.assertEqual([["Retreat", "42 m"]], html_table["rows"])
         asset = detail["assets"][0]
         self.assertEqual("image/png", asset["mimeType"])
         self.assertNotIn(str(self.root), str(detail))
@@ -217,6 +234,40 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
         service.store.clear_document_asset_links(other_document["documentId"])
         with self.assertRaises(KnowledgeNotFoundError):
             service.read_document_asset(other_base["id"], other_document["documentId"], asset["assetId"])
+
+    def test_table_artifacts_enforce_count_row_column_and_cell_limits(self) -> None:
+        wide_header = "|".join(f"C{index}" for index in range(40))
+        separator = "|".join("---" for _ in range(40))
+        long_row = "|".join(["x" * 800] + [str(index) for index in range(39)])
+        first_table = f"|{wide_header}|\n|{separator}|\n" + "\n".join(
+            f"|{long_row}|" for _ in range(240)
+        )
+        extra_tables = "\n\n".join(
+            f"## T{index}\n\n| A | B |\n| --- | --- |\n| {index} | value |" for index in range(40)
+        )
+
+        class TableParser:
+            def parse(self, path: Path, *, mode: str = "auto") -> ParsedDocument:
+                return ParsedDocument(
+                    text=f"# Tables\n\n{first_table}\n\n{extra_tables}",
+                    provider="mineru_local_http",
+                    provider_version="test",
+                )
+
+        service = KnowledgeLibraryService(
+            KnowledgeLibraryConfig(self.root / "TableLimits"),
+            parser_router=TableParser(),
+        )
+        base = service.create_base("Bounded tables")
+        document = service.import_document(base["id"], self._document("tables.md"))
+
+        tables = service.document_detail(base["id"], document["documentId"])["tables"]
+
+        self.assertEqual(32, len(tables))
+        self.assertEqual(32, len(tables[0]["columns"]))
+        self.assertEqual(200, len(tables[0]["rows"]))
+        self.assertLessEqual(len(tables[0]["rows"][0][0]), 500)
+        self.assertLessEqual(len(tables[0]["markdown"]), 64_000)
 
     def test_background_jobs_return_before_a_slow_parser_finishes(self) -> None:
         started = threading.Event()
@@ -288,6 +339,39 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
         )
         self.assertTrue(dense["items"])
         self.assertTrue(self.service.status()["dense"]["available"])
+
+    def test_import_retry_and_rebuild_preserve_a_document_parser_override(self) -> None:
+        modes: list[str] = []
+
+        class RecordingParser:
+            def parse(self, path: Path, *, mode: str = "auto") -> ParsedDocument:
+                modes.append(mode)
+                return ParsedDocument(
+                    text="# Parsed\n\nProvider-specific artifact.",
+                    provider="mineru_local_http" if mode == "mineru" else "builtin",
+                    provider_version="test",
+                )
+
+        service = KnowledgeLibraryService(
+            KnowledgeLibraryConfig(self.root / "ParserOverrides"),
+            parser_router=RecordingParser(),
+        )
+        base = service.create_base("Mixed parsers", parser_mode="builtin")
+        document = service.import_document(base["id"], self._document("override.pdf"), parser_mode="mineru")
+        self.assertEqual("mineru_local_http", document["parserProvider"])
+
+        retried = service.retry_document(document["documentId"])
+        self.assertEqual("mineru_local_http", retried["parserProvider"])
+        preview = service.reindex_preview(base["id"])
+        service.rebuild_base(
+            base["id"],
+            preview_token=preview["previewToken"],
+            expected_revision=preview["configRevision"],
+            confirm_text="REBUILD",
+        )
+
+        self.assertEqual(["mineru", "mineru", "mineru"], modes)
+        self.assertEqual("mineru_local_http", service.get_document(document["documentId"])["parserProvider"])
 
     def test_chunking_and_retrieval_configuration_are_strictly_validated(self) -> None:
         with self.assertRaisesRegex(Exception, "overlap"):
@@ -362,7 +446,13 @@ class MinerUArchiveSafetyTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             pdf = Path(temporary) / "paper.pdf"
-            pdf.write_bytes(b"pdf")
+            pdf.write_bytes(
+                b"%PDF-1.4\n"
+                b"1 0 obj << /Type /Pages /Count 3 >> endobj\n"
+                b"2 0 obj << /Type /Page /Parent 1 0 R >> endobj\n"
+                b"3 0 obj << /Type /Page /Parent 1 0 R >> endobj\n"
+                b"4 0 obj << /Type /Page /Parent 1 0 R >> endobj\n"
+            )
             parsed = MinerULocalParser(urlopen=urlopen).parse(pdf)
         body = captured["body"]
         self.assertIn(b'hybrid-engine', body)
@@ -371,6 +461,7 @@ class MinerUArchiveSafetyTests(unittest.TestCase):
         self.assertNotIn(b'["ch"]', body)
         self.assertIn(b'name="effort"\r\n\r\nmedium\r\n', body)
         self.assertIn("MinerU 3.4.4", parsed.text)
+        self.assertEqual(3, parsed.metadata["pageCount"])
 
     def test_mineru_http_422_is_reported_as_parser_contract_error(self) -> None:
         captured: dict[str, bytes] = {}
