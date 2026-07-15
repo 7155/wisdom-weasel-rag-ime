@@ -113,6 +113,8 @@ const canonicalPathIds = [
   'knowledgeBases.open',
   'knowledgeBases.reindexPreview',
   'knowledgeBases.rebuild',
+  'knowledgeBases.graph.get',
+  'knowledgeBases.graph.rebuild',
   'knowledgeWorker.health',
   'knowledgeParsers.list',
   'diagnostics.runtime',
@@ -128,7 +130,15 @@ const canonicalPathIds = [
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(115);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(117);
+  });
+
+  it('validates document graph reads with the shared contract', () => {
+    expect(CONTROL_ROUTES['knowledgeBases.graph.get']).toMatchObject({
+      method: 'GET',
+      path: '/api/knowledge-bases/:kbId/graph',
+      responseContract: 'knowledge-graph.v1',
+    });
   });
 
   it('keeps Pi credentials behind preview/apply and never accepts secrets on preview', () => {

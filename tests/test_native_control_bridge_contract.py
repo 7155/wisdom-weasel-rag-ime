@@ -202,7 +202,9 @@ class NativeControlBridgeContractTests(unittest.TestCase):
             r"private func sendKnowledgeBinaryToWeb\(.*?\n    \}",
             self.native_bridge,
         )
-        self.assertIn("new Blob", send_block)
+        self.assertIn("window.__RAG_IME_NATIVE_BINARY_TRANSFERS__", send_block)
+        self.assertIn("appendKnowledgeBinaryChunk", send_block)
+        self.assertIn("new Blob", self.native_bridge)
         self.assertNotIn('"path"', send_block)
 
         source_block = _required_match(

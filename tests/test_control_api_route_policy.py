@@ -73,6 +73,8 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "knowledgeBases.search",
                 "knowledgeBases.find",
                 "knowledgeBases.open",
+                "knowledgeBases.graph.get",
+                "knowledgeBases.graph.rebuild",
                 "knowledgeBases.reindexPreview",
                 "knowledgeBases.rebuild",
                 "knowledgeWorker.health",
@@ -743,7 +745,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
             if path_id.value.startswith("knowledgeBases.")
             or path_id in {ControlPathId.KNOWLEDGE_WORKER_HEALTH, ControlPathId.KNOWLEDGE_PARSERS_LIST}
         }
-        self.assertEqual(len(document_routes), 23)
+        self.assertEqual(len(document_routes), 25)
         for path_id in document_routes:
             self.assertFalse(manifest[path_id]["remoteSafe"])
             self.assertIsNone(manifest[path_id]["target"]["8768"])

@@ -15,8 +15,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Sequence
 
+from ..contracts.json_schema import validate_contract
 from ..embeddings import embedding_provider_from_env
 from .dense import DenseIndex, dense_index_from_env
+from .graph import GRAPH_NODE_KINDS, KnowledgeGraph
 from .models import (
     AssetBlob,
     KNOWLEDGE_SCHEMA_VERSION,
@@ -88,6 +90,7 @@ class KnowledgeLibraryService:
         secure_directory(self.config.assets_dir)
         secure_directory(self.config.artifacts_dir)
         self.store = KnowledgeStore(config.database_path)
+        self.graph = KnowledgeGraph(self.store)
         self.parsers = parser_router or ParserRouter(config)
         self.dense_index = dense_index or dense_index_from_env(
             config.database_path,
@@ -303,6 +306,55 @@ class KnowledgeLibraryService:
             raise KnowledgeNotFoundError(f"knowledge job {job_id!r} was not found")
         cancelled = self.store.cancel_job(job_id)
         return {"schemaVersion": KNOWLEDGE_SCHEMA_VERSION, "job": _job_to_dict(cancelled)}
+
+    def knowledge_graph(
+        self,
+        base_id: str,
+        *,
+        document_id: str = "",
+        query: str = "",
+        kinds: Sequence[str] = (),
+        limit: int = 200,
+        depth: int = 2,
+        exclude_chunks: bool = True,
+        focus_id: str = "",
+    ) -> dict[str, Any]:
+        base_id = _identifier(base_id, "base id")
+        document_id = _identifier(document_id, "document id") if document_id else ""
+        focus_id = _identifier(focus_id, "focus id") if focus_id else ""
+        normalized_kinds = tuple(str(item).strip().lower() for item in kinds if str(item).strip())
+        unknown = sorted(set(normalized_kinds) - GRAPH_NODE_KINDS)
+        if unknown:
+            raise KnowledgeLibraryError(
+                f"unsupported knowledge graph node kinds: {', '.join(unknown)}",
+                code="invalid_argument",
+            )
+        result = self.graph.read(
+            base_id,
+            document_id=document_id,
+            query=str(query or "")[:200],
+            kinds=normalized_kinds,
+            limit=limit,
+            depth=depth,
+            exclude_chunks=exclude_chunks,
+            focus_id=focus_id,
+        )
+        validate_contract(result, "knowledge-graph.v1.json")
+        return result
+
+    def rebuild_knowledge_graph(
+        self,
+        base_id: str,
+        *,
+        expected_revision: int | None,
+        document_ids: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        normalized_ids = tuple(_identifier(item, "document id") for item in document_ids)
+        return self.graph.rebuild(
+            _identifier(base_id, "base id"),
+            expected_revision=expected_revision,
+            document_ids=normalized_ids,
+        )
 
     def preview_chunking(
         self,

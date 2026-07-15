@@ -94,6 +94,28 @@ class KnowledgeWorkerTests(unittest.TestCase):
         status = self.client.management_status()
         self.assertEqual(1, status["readyDocumentCount"])
 
+    def test_management_knowledge_graph_round_trip(self) -> None:
+        imported = self.client.management_import_document(
+            self.base["id"],
+            b"# Graph\n\nRAG links Agent Runtime to `SQLite` evidence chunks.",
+            file_name="graph.md",
+            mime_type="text/markdown",
+        )
+        rebuilt = self.client.management_rebuild_knowledge_graph(
+            self.base["id"], expected_revision=0
+        )
+        self.assertEqual("ready", rebuilt["status"])
+        graph = self.client.management_knowledge_graph(
+            self.base["id"],
+            document_id=imported["receipt"]["documentId"],
+            query="SQLite",
+            depth=2,
+            limit=20,
+        )
+        self.assertEqual("rag-ime.knowledge-graph.v1", graph["schemaVersion"])
+        self.assertEqual("ready", graph["status"])
+        self.assertTrue(any("SQLite" in node["label"] for node in graph["nodes"]))
+
     def test_management_chunk_preview_and_job_cancel_round_trip(self) -> None:
         imported = self.client.management_import_document(
             self.base["id"],

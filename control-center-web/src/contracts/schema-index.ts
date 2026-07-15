@@ -4680,6 +4680,242 @@ export const contractSchemas = {
     },
     "additionalProperties": false
   },
+  "knowledge-graph.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.knowledge-graph.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "kbId",
+      "revision",
+      "sourceRevision",
+      "status",
+      "updatedAtMs",
+      "nodes",
+      "edges",
+      "stats",
+      "truncated"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.knowledge-graph.v1"
+      },
+      "kbId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sourceRevision": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "building",
+          "stale",
+          "failed"
+        ]
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "jobId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "error": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "nodes": {
+        "type": "array",
+        "maxItems": 1000,
+        "items": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "edges": {
+        "type": "array",
+        "maxItems": 3000,
+        "items": {
+          "$ref": "#/$defs/edge"
+        }
+      },
+      "stats": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodeCount",
+          "edgeCount",
+          "documentCount",
+          "chunkCount",
+          "indexedDocumentCount",
+          "pendingDocumentCount"
+        ],
+        "properties": {
+          "nodeCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "edgeCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "documentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "chunkCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "indexedDocumentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pendingDocumentCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "$defs": {
+      "node": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "weight"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "document",
+              "chunk",
+              "topic",
+              "entity",
+              "term"
+            ]
+          },
+          "documentId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "documentName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "documentIds": {
+            "type": "array",
+            "maxItems": 1000,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          },
+          "chunkId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "heading": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "excerpt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "edge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source",
+          "target",
+          "kind",
+          "weight"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    }
+  },
   "knowledge-library.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://rag-ime.local/contracts/knowledge-library.v1.json",

@@ -239,6 +239,26 @@ struct NativeRoutePolicyTests {
         )
         expect(rebuild.request.url?.path == "/api/knowledge-bases/kb_docs/rebuild", "knowledge rebuild route")
 
+        let graph = try policy.resolveRequest(
+            pathId: "knowledgeBases.graph.get",
+            parameters: ["kbId": "kb_docs"],
+            query: ["query": "Agent Runtime", "kinds": "document,topic", "limit": "120"],
+            body: nil
+        )
+        expect(graph.request.url?.path == "/api/knowledge-bases/kb_docs/graph", "knowledge graph route")
+        expect(graph.request.url?.query?.contains("kinds=") == true, "knowledge graph kind filter")
+
+        let graphRebuild = try policy.resolveRequest(
+            pathId: "knowledgeBases.graph.rebuild",
+            parameters: ["kbId": "kb_docs"],
+            query: [:],
+            body: [
+                "expectedRevision": 3,
+                "documentIds": ["file_manual"],
+            ]
+        )
+        expect(graphRebuild.request.url?.path == "/api/knowledge-bases/kb_docs/graph/rebuild", "knowledge graph rebuild route")
+
         let gatewayPreferredPolicy = NativeRoutePolicy(
             sidecarBaseURL: URL(string: "http://127.0.0.1:8766")!,
             gatewayBaseURL: URL(string: "http://127.0.0.1:8768")!,

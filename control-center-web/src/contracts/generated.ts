@@ -46,6 +46,7 @@ import type { FrontendSuggestRequestV1 } from './generated/frontend-suggest-requ
 import type { FrontendSuggestResponseV1 } from './generated/frontend-suggest-response.v1';
 import type { KnowledgeDocumentDetailV1 } from './generated/knowledge-document-detail.v1';
 import type { KnowledgeDocumentImportV1 } from './generated/knowledge-document-import.v1';
+import type { KnowledgeGraphV1 } from './generated/knowledge-graph.v1';
 import type { KnowledgeLibraryV1 } from './generated/knowledge-library.v1';
 import type { ManagementWorkErrorV1 } from './generated/management-work-error.v1';
 import type { ManagementWorkPreviewV1 } from './generated/management-work-preview.v1';
@@ -104,6 +105,7 @@ export type {
   FrontendSuggestResponseV1,
   KnowledgeDocumentDetailV1,
   KnowledgeDocumentImportV1,
+  KnowledgeGraphV1,
   KnowledgeLibraryV1,
   ManagementWorkErrorV1,
   ManagementWorkPreviewV1,
@@ -163,6 +165,7 @@ export interface ContractTypeMap {
   'frontend-suggest-response.v1': FrontendSuggestResponseV1;
   'knowledge-document-detail.v1': KnowledgeDocumentDetailV1;
   'knowledge-document-import.v1': KnowledgeDocumentImportV1;
+  'knowledge-graph.v1': KnowledgeGraphV1;
   'knowledge-library.v1': KnowledgeLibraryV1;
   'management-work-error.v1': ManagementWorkErrorV1;
   'management-work-preview.v1': ManagementWorkPreviewV1;

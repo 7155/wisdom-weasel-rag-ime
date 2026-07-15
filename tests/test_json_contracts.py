@@ -39,6 +39,7 @@ class JsonContractTests(unittest.TestCase):
             "management-work-receipt.v1.json",
             "management-work-error.v1.json",
             "memory-graph.v1.json",
+            "knowledge-graph.v1.json",
             "memory-entity.v1.json",
             "memory-read-error.v1.json",
         ):

@@ -5252,6 +5252,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     response = control.list_documents(knowledge_parts[0])
                 elif len(knowledge_parts) == 2 and knowledge_parts[1] == "jobs":
                     response = control.jobs(knowledge_parts[0])
+                elif len(knowledge_parts) == 2 and knowledge_parts[1] == "graph":
+                    response = control.graph(
+                        knowledge_parts[0],
+                        {
+                            "documentId": _query_first(query, "documentId"),
+                            "query": _query_first(query, "query"),
+                            "kinds": _query_first(query, "kinds"),
+                            "limit": _query_first(query, "limit"),
+                            "depth": _query_first(query, "depth"),
+                            "excludeChunks": _query_first(query, "excludeChunks"),
+                            "focusId": _query_first(query, "focusId"),
+                        },
+                    )
+                    validate_contract(response, "knowledge-graph.v1.json")
                 elif len(knowledge_parts) == 2 and knowledge_parts[1] == "reindex-preview":
                     response = control.reindex_preview(knowledge_parts[0])
                 elif len(knowledge_parts) == 3 and knowledge_parts[1] == "documents":
@@ -6011,6 +6025,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     status = HTTPStatus.OK
                 elif len(knowledge_parts) == 2 and knowledge_parts[1] == "rebuild":
                     response = control.rebuild(knowledge_parts[0], payload)
+                    status = HTTPStatus.OK
+                elif len(knowledge_parts) == 3 and knowledge_parts[1:] == ("graph", "rebuild"):
+                    response = control.rebuild_graph(knowledge_parts[0], payload)
                     status = HTTPStatus.OK
                 elif len(knowledge_parts) == 4 and knowledge_parts[1] == "documents" and knowledge_parts[3] == "find":
                     response = control.find(knowledge_parts[0], knowledge_parts[2], payload)

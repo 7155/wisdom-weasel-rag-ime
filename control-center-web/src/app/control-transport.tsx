@@ -202,6 +202,35 @@ function previewResponse(pathId: ControlPathId): unknown {
           },
         ],
       };
+    case 'knowledgeBases.graph.get':
+      return {
+        schemaVersion: 'rag-ime.knowledge-graph.v1',
+        kbId: 'kb:preview-project-docs',
+        revision: 1,
+        sourceRevision: `sha256:${'a'.repeat(64)}`,
+        status: 'ready',
+        updatedAtMs: Date.now() - 60_000,
+        nodes: [
+          { id: 'doc:runtime', label: 'agent-runtime-notes.md', kind: 'document', documentId: 'file:preview-yuxi', documentName: 'agent-runtime-notes.md', weight: 1 },
+          { id: 'topic:tools', label: 'Agent Tool 边界', kind: 'topic', weight: .9 },
+          { id: 'entity:worker', label: 'Knowledge Worker', kind: 'entity', weight: .84 },
+        ],
+        edges: [
+          { id: 'edge:doc-topic', source: 'doc:runtime', target: 'topic:tools', kind: 'contains', label: '包含', weight: .9 },
+          { id: 'edge:topic-worker', source: 'topic:tools', target: 'entity:worker', kind: 'mentions', label: '提及', weight: .84 },
+        ],
+        stats: {
+          nodeCount: 4,
+          edgeCount: 3,
+          documentCount: 1,
+          chunkCount: 1,
+          indexedDocumentCount: 1,
+          pendingDocumentCount: 0,
+        },
+        truncated: false,
+      };
+    case 'knowledgeBases.graph.rebuild':
+      return { ok: true, jobId: 'graph:preview-rebuild', status: 'queued' };
     case 'knowledgeBases.open':
       return { ok: true, items: [] };
     case 'knowledgeWorker.health':

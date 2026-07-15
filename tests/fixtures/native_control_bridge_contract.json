@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 113,
+  "routeCount": 117,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -101,11 +101,15 @@
     "knowledgeBases.document.source",
     "knowledgeBases.asset.get",
     "knowledgeBases.jobs.list",
+    "knowledgeBases.job.cancel",
+    "knowledgeBases.chunkPreview",
     "knowledgeBases.search",
     "knowledgeBases.find",
     "knowledgeBases.open",
     "knowledgeBases.reindexPreview",
     "knowledgeBases.rebuild",
+    "knowledgeBases.graph.get",
+    "knowledgeBases.graph.rebuild",
     "knowledgeWorker.health",
     "knowledgeParsers.list",
     "diagnostics.runtime",
@@ -120,6 +124,7 @@
   "methods": [
     "capabilities",
     "request",
+    "cancelRequest",
     "subscribe",
     "cancelSubscription",
     "pickFiles",
