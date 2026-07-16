@@ -839,6 +839,31 @@ describe('Agent experience', () => {
     expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
   });
 
+  it('treats an open Pi transcript as quiescent instead of showing a permanent stop action', async () => {
+    const snapshot = {
+      ...previewAgentSnapshot('session-preview'),
+      status: 'active',
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      snapshot,
+    );
+
+    renderAgent(transport);
+
+    expect(await screen.findByText('已完成。活动明细仍可追溯，但正文只保留能直接阅读的结论和产物。')).toBeInTheDocument();
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById['session-preview:turn-media']?.status).toBe('completed'));
+    expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
+    expect(screen.queryByText('思考中')).not.toBeInTheDocument();
+  });
+
   it('opens memory review immediately and resumes Pi when the user defers it', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
