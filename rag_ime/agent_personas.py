@@ -147,6 +147,54 @@ class AgentPersonaStore:
             ).fetchall()
         return [_manifest(row) for row in rows]
 
+    def runtime_defaults(self, role_id: object, version: object) -> dict[str, str] | None:
+        role = self.resolve(role_id, version)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT model_profile, thinking_level
+                FROM agent_role_runtime_preferences
+                WHERE role_id = ? AND role_version = ?
+                """,
+                (role.role_id, role.version),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "modelProfile": str(row["model_profile"]),
+            "thinkingLevel": str(row["thinking_level"]),
+        }
+
+    def set_runtime_defaults(
+        self,
+        role_id: object,
+        version: object,
+        *,
+        model_profile: str,
+        thinking_level: str,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, str]:
+        role = self.resolve(role_id, version)
+        profile = _model_profile(model_profile)
+        level = str(thinking_level or "").strip().lower()
+        if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("thinkingLevel is not supported")
+        timestamp = int(updated_at_ms if updated_at_ms is not None else time.time() * 1000)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_role_runtime_preferences(
+                    role_id, role_version, model_profile, thinking_level, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(role_id, role_version) DO UPDATE SET
+                    model_profile = excluded.model_profile,
+                    thinking_level = excluded.thinking_level,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (role.role_id, role.version, profile, level, timestamp),
+            )
+        return {"modelProfile": profile, "thinkingLevel": level}
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
@@ -207,6 +255,16 @@ def _public_text(value: object, *, field: str, maximum: int) -> str:
         raise ValueError(f"{field} must not be empty")
     if len(normalized) > maximum:
         raise ValueError(f"{field} must not exceed {maximum} characters")
+    return normalized
+
+
+def _model_profile(value: object) -> str:
+    normalized = str(value or "").strip()
+    if "/" not in normalized or any(character.isspace() for character in normalized):
+        raise ValueError("modelProfile must be provider/modelId")
+    provider, model_id = normalized.split("/", 1)
+    if not provider or not model_id or len(provider) > 80 or len(model_id) > 160:
+        raise ValueError("modelProfile must be provider/modelId")
     return normalized
 
 

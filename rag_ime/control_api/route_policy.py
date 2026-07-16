@@ -63,6 +63,8 @@ class ControlPathId(str, Enum):
     AGENT_ROOM_EVENTS = "agent.room.events"
     AGENT_ROLES_LIST = "agent.roles.list"
     AGENT_ROLES_CREATE = "agent.roles.create"
+    AGENT_ROLE_MODELS = "agent.role.models"
+    AGENT_ROLE_RUNTIME_DEFAULTS_UPDATE = "agent.role.runtimeDefaults.update"
     AGENT_TOOLS_LIST = "agent.tools.list"
     AGENT_APPROVALS_LIST = "agent.approvals.list"
     AGENT_APPROVAL_GET = "agent.approval.get"
@@ -504,6 +506,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_ROLES_LIST, ControlMethod.GET, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_ROLES_CREATE, ControlMethod.POST, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, required_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body_values={"timelineModel": {"luna", "terra", "sol"}}),
+        _route(ControlPathId.AGENT_ROLE_MODELS, ControlMethod.GET, "/api/agent/roles/models", "/control/v1/agent/roles/models", scopes=[ControlScope.AGENT_READ], remote_safe=True),
+        _route(ControlPathId.AGENT_ROLE_RUNTIME_DEFAULTS_UPDATE, ControlMethod.POST, "/api/agent/roles/runtime-defaults", "/control/v1/agent/roles/runtime-defaults", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"roleId", "roleVersion", "provider", "modelId", "thinkingLevel"}, required_body={"roleId", "roleVersion", "provider", "modelId", "thinkingLevel"}, remote_body={"roleId", "roleVersion", "provider", "modelId", "thinkingLevel"}, remote_body_values={"thinkingLevel": {"off", "minimal", "low", "medium", "high", "xhigh", "max"}}),
         _route(ControlPathId.AGENT_TOOLS_LIST, ControlMethod.GET, "/api/agent/tools", "/control/v1/agent/tools", query={"sessionId"}),
         _route(ControlPathId.AGENT_APPROVALS_LIST, ControlMethod.GET, "/api/agent/approvals", "/control/v1/agent/approvals", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, query={"sessionId", "state", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_APPROVAL_GET, ControlMethod.GET, "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, params=_APPROVAL),

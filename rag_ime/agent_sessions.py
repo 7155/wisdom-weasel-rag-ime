@@ -54,6 +54,7 @@ class AgentSessionStore:
         role_id: str = "zhiyou-v1",
         role_version: str = "1",
         model_profile: str = "deepseek-v4",
+        thinking_level: str = "",
         tool_profile_version: str = "control-center-v1",
         workspace_roots: Iterable[str] = (),
         shell_policy_version: str | None = None,
@@ -71,6 +72,18 @@ class AgentSessionStore:
         normalized_kind = str(session_kind or "").strip()
         if normalized_kind not in {"conversation", "subagent_runtime"}:
             raise ValueError("agent session kind must be conversation or subagent_runtime")
+        normalized_thinking = str(thinking_level or "").strip().lower()
+        if normalized_thinking not in {
+            "",
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        }:
+            raise ValueError("agent thinking level is not supported")
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         session_id = f"agent:{uuid.uuid4()}"
         shell_policy = shell_policy_version or (
@@ -80,10 +93,10 @@ class AgentSessionStore:
             conn.execute(
                 """
                 INSERT INTO agent_sessions(
-                    id, title, session_mode, role_id, role_version, model_profile,
+                    id, title, session_mode, role_id, role_version, model_profile, thinking_level,
                     tool_profile_version, workspace_roots_json, shell_policy_version,
                     session_kind, created_at_ms, updated_at_ms, last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -92,6 +105,7 @@ class AgentSessionStore:
                     role_id,
                     role_version,
                     model_profile,
+                    normalized_thinking,
                     tool_profile_version,
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     shell_policy,
@@ -310,6 +324,31 @@ class AgentSessionStore:
         self._update(
             session_id,
             "model_profile = ?, updated_at_ms = ?",
+            (normalized, _timestamp(updated_at_ms)),
+        )
+        return self.get(session_id)
+
+    def set_thinking_level(
+        self,
+        session_id: str,
+        thinking_level: str,
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized = str(thinking_level or "").strip().lower()
+        if normalized not in {
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        }:
+            raise ValueError("agent thinking level is not supported")
+        self._update(
+            session_id,
+            "thinking_level = ?, updated_at_ms = ?",
             (normalized, _timestamp(updated_at_ms)),
         )
         return self.get(session_id)
@@ -1033,6 +1072,7 @@ def _session_payload(
         "roleId": str(row["role_id"]),
         "roleVersion": str(row["role_version"]),
         "modelProfile": str(row["model_profile"]),
+        "thinkingLevel": str(row["thinking_level"] or ""),
         "toolProfileVersion": str(row["tool_profile_version"]),
         "toolAllowlistMode": "explicit" if allowed_tools is not None else "profile",
         "allowedTools": allowed_tools or [],

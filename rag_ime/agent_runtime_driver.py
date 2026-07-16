@@ -90,6 +90,8 @@ class AgentRuntimeDriver(Protocol):
 
     def model_catalog(self, session_id: str) -> dict[str, object]: ...
 
+    def available_models(self) -> list[dict[str, object]]: ...
+
     def set_model(
         self,
         session_id: str,

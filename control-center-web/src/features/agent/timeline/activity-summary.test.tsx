@@ -1,11 +1,31 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { ActivitySummary } from './ActivitySummary';
 
 afterEach(cleanup);
 
 describe('Agent tool activity details', () => {
+  it('renders an interleaved tool group as an inline disclosure with the real result', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-inline-result',
+      toolName: 'ime_overview',
+      result: { details: { ok: true, operation: 'status', result: { summary: '运行状态已读取' } } },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline');
+    expect(group).not.toBeNull();
+    expect(group).not.toHaveAttribute('open');
+
+    fireEvent.click(group!.querySelector('summary')!);
+    expect(group).toHaveAttribute('open');
+    const row = group!.querySelector<HTMLDetailsElement>('.agent-activity-row');
+    fireEvent.click(row!.querySelector('summary')!);
+    expect(row).toHaveAttribute('open');
+    expect(group).toHaveTextContent('运行状态已读取');
+  });
+
   it('keeps the timeline compact and opens full activity details in a dialog', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-compact-dialog',
@@ -215,6 +235,136 @@ describe('Agent tool activity details', () => {
     expect(screen.getByRole('link', { name: '打开知识库' })).toHaveAttribute('href', '#/knowledge');
     expect(container).not.toHaveTextContent('不应在时间线详情里展开');
     expect(container).not.toHaveTextContent('/Users/private');
+  });
+
+  it('shows a bounded public structured result while removing secrets, paths and private reasoning', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-public-structure',
+      toolName: 'workspace_list',
+      result: {
+        details: {
+          ok: true,
+          operation: 'list',
+          result: {
+            summary: '已读取 2 个工作区条目',
+            entries: [
+              { name: 'src', kind: 'directory', itemCount: 12, sourcePath: '/Users/private/project/src', content: 'private file body' },
+              { name: 'README.md', kind: 'file' },
+            ],
+            nextCursor: 'cursor-public-2',
+            metadata: { healthy: true, authorization: 'Bearer hidden' },
+            content: { state: 'ready', resultCount: 2 },
+            apiKey: 'sk-do-not-render',
+            reasoning: 'private chain of thought',
+          },
+        },
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} />);
+    openActivity(container);
+
+    const result = screen.getByLabelText('工具公开结果');
+    expect(result).toHaveTextContent('公开的结构化结果');
+    expect(result).toHaveTextContent('entries');
+    expect(result).toHaveTextContent('README.md');
+    expect(result).toHaveTextContent('cursor-public-2');
+    expect(result).toHaveTextContent('healthy');
+    expect(result).toHaveTextContent('content');
+    expect(result).toHaveTextContent('resultCount');
+    expect(result).not.toHaveTextContent('/Users/private');
+    expect(result).not.toHaveTextContent('private file body');
+    expect(result).not.toHaveTextContent('sk-do-not-render');
+    expect(result).not.toHaveTextContent('private chain of thought');
+    expect(result).not.toHaveTextContent('authorization');
+  });
+
+  it('summarizes a Pi write_file result as a safe file name and added line count', () => {
+    const writtenContent = Array.from({ length: 335 }, (_, index) => `line ${index + 1}`).join('\n');
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-pi-write-file',
+      toolName: 'write_file',
+      args: {
+        path: '/Users/private/project/src/report.ts',
+        content: writtenContent,
+      },
+      result: {
+        content: [{
+          type: 'text',
+          text: 'Successfully wrote 2908 bytes to /Users/private/project/src/report.ts',
+        }],
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} />);
+    openActivity(container);
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('写入文件');
+    expect(dialog).toHaveTextContent('report.ts +335');
+    expect(dialog).toHaveTextContent('335 行');
+    expect(dialog).toHaveTextContent('+335 / -0');
+    expect(dialog).not.toHaveTextContent('/Users/private/project');
+    expect(dialog).not.toHaveTextContent('line 1');
+    expect(dialog).not.toHaveTextContent('Successfully wrote');
+  });
+
+  it('shows the sanitized permission failure and opens the real permission picker entry point', () => {
+    const onRequestPermission = vi.fn();
+    const activity = toolActivity('tool_finished', 'failed', {
+      toolCallId: 'call-permission-failed',
+      toolName: 'workspace_shell',
+      result: {
+        details: {
+          ok: false,
+          operation: 'run',
+          result: {
+            error: '工作区不在授权目录内，当前权限不足。',
+            sourcePath: '/Users/private/project',
+            apiKey: 'sk-do-not-render',
+          },
+        },
+      },
+    });
+
+    const { container } = render(
+      <ActivitySummary activities={[activity]} onRequestPermission={onRequestPermission} />,
+    );
+    openActivity(container);
+
+    expect(screen.getByLabelText('工具错误')).toHaveTextContent('工作区不在授权目录内，当前权限不足。');
+    expect(container).not.toHaveTextContent('/Users/private/project');
+    expect(container).not.toHaveTextContent('sk-do-not-render');
+    fireEvent.click(screen.getByRole('button', { name: '请求权限' }));
+    expect(onRequestPermission).toHaveBeenCalledOnce();
+  });
+
+  it('routes an approval-gated failure to the existing bound approval review', () => {
+    const onOpenApproval = vi.fn();
+    const activity = toolActivity('tool_finished', 'failed', {
+      toolCallId: 'call-approval-failed',
+      toolName: 'ime_input',
+      approvalId: 'approval-bound-1',
+      payloadSha256: 'a'.repeat(64),
+      preview: { title: '应用输入法设置', summary: '需要本机审批后才能应用。' },
+      result: {
+        details: {
+          ok: false,
+          operation: 'apply_settings',
+          result: { error: '该操作需要本机审批后继续。' },
+        },
+      },
+    });
+
+    const { container } = render(
+      <ActivitySummary activities={[activity]} onOpenApproval={onOpenApproval} />,
+    );
+    openActivity(container);
+
+    expect(screen.getByLabelText('工具错误')).toHaveTextContent('该操作需要本机审批后继续。');
+    fireEvent.click(screen.getByRole('button', { name: '去审批' }));
+    expect(onOpenApproval).toHaveBeenCalledOnce();
+    expect(onOpenApproval).toHaveBeenCalledWith(activity);
   });
 });
 

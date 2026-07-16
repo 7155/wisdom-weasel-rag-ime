@@ -20,6 +20,16 @@ const hash = 'sha256:ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 afterEach(cleanup);
 
 describe('History WorkContract UI', () => {
+  it('renders the history filters as one responsive search toolbar', async () => {
+    renderHistory();
+
+    const toolbar = await screen.findByRole('search', { name: '筛选输入历史' });
+    expect(toolbar).toHaveClass('history-filter-toolbar');
+    expect(within(toolbar).getByRole('textbox', { name: '搜索' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('combobox', { name: '来源' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: '搜索' })).toBeInTheDocument();
+  });
+
   it('opens a real full-text detail from the keyboard and exposes only verified server state', async () => {
     const user = userEvent.setup();
     const transport = renderHistory();

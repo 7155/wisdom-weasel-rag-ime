@@ -29,6 +29,14 @@
 .role-inspector dl > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--color-border); }
 .role-inspector dt { display: flex; align-items: center; gap: 6px; color: var(--color-text-tertiary); font-size: 9px; }
 .role-inspector dd { margin: 0; font-size: 10px; overflow-wrap: anywhere; }
+.role-runtime-defaults { display: grid; gap: 9px; padding-top: 18px; }
+.role-runtime-defaults header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.role-runtime-defaults header > span { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.role-runtime-defaults header small { color: var(--color-text-tertiary); font: 500 8px var(--font-sans); }
+.role-runtime-defaults label { display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--color-text-secondary); font-size: 9px; }
+.role-runtime-defaults .ui-select__trigger { width: 100%; }
+.role-runtime-defaults > .ui-button { justify-self: end; }
+.role-runtime-defaults > p { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--color-text-tertiary); font-size: 9px; line-height: 1.5; }
 .template-list { display: grid; align-content: start; gap: 5px; }
 .template-list > button { display: grid; min-height: 66px; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid transparent; border-radius: var(--radius-2); background: transparent; text-align: left; cursor: pointer; }
 .template-list > button:hover { background: var(--color-surface-hover); }

@@ -28,6 +28,7 @@
     "roleId": {"type": "string", "minLength": 1},
     "roleVersion": {"type": "string", "minLength": 1},
     "modelProfile": {"type": "string", "minLength": 1},
+    "thinkingLevel": {"type": "string", "enum": ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"]},
     "toolProfileVersion": {"type": "string", "minLength": 1},
     "toolAllowlistMode": {"type": "string", "enum": ["profile", "explicit"]},
     "allowedTools": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},

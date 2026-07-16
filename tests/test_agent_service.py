@@ -549,6 +549,14 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(catalog["thinkingLevel"], "medium")
         self.assertNotIn("apiKey", json.dumps(catalog))
 
+        with patch.object(
+            self.service.runtime,
+            "model_catalog",
+            return_value={"selected": model, "models": [], "thinkingLevel": "medium"},
+        ):
+            partial_catalog = self.service.model_catalog(session_id)
+        self.assertEqual(partial_catalog["providers"][0]["models"][0]["id"], model["id"])
+
         selected_session = self.service.sessions.set_model_profile(
             session_id,
             "openrouter/anthropic/claude-sonnet",
@@ -568,6 +576,7 @@ class AgentServiceTests(unittest.TestCase):
             provider="openrouter",
             model_id="anthropic/claude-sonnet",
         )
+
         self.assertEqual(response["session"]["modelProfile"], "openrouter/anthropic/claude-sonnet")
 
         with patch.object(
@@ -588,6 +597,107 @@ class AgentServiceTests(unittest.TestCase):
             [event.payload["kind"] for event in configuration_events],
             ["model", "thinking"],
         )
+
+    def test_role_runtime_defaults_are_listed_saved_and_inherited_by_new_sessions(self) -> None:
+        runtime_config = PiRuntimeConfig(
+            enabled=False,
+            executable=None,
+            agent_dir=self.root / "role-agent-config",
+            session_dir=self.root / "role-sessions",
+            logs_dir=self.root / "role-logs",
+            provider="gpt",
+            model="gpt-5.6-terra",
+            model_providers={
+                "gpt": {
+                    "models": [
+                        {
+                            "id": "gpt-5.6-terra",
+                            "name": "GPT-5.6 Terra",
+                            "reasoning": True,
+                            "thinkingLevelMap": {"max": "max"},
+                        }
+                    ]
+                }
+            },
+        )
+        service = AgentService(
+            db_path=self.root / "role-defaults.sqlite",
+            runtime_config=runtime_config,
+            process_id_provider=lambda: self.process_id,
+        )
+        available_models = [
+            {
+                "provider": "gpt",
+                "id": "gpt-5.6-luna",
+                "name": "GPT-5.6 Luna",
+                "thinkingLevels": ["off", "max"],
+            },
+            {
+                "provider": "gpt",
+                "id": "gpt-5.6-terra",
+                "name": "GPT-5.6 Terra",
+                "thinkingLevels": ["off", "max"],
+            },
+            {
+                "provider": "gpt",
+                "id": "gpt-5.6-sol",
+                "name": "GPT-5.6 Sol",
+                "thinkingLevels": ["off", "xhigh"],
+            },
+        ]
+        initial_roles = {
+            item["roleId"]: item["defaults"] for item in service.list_roles()["items"]
+        }
+        self.assertEqual(
+            initial_roles["hermes-v1"],
+            {
+                "modelPolicy": "runtime-default",
+                "memoryPolicy": "personal-evidence-v1",
+                "toolProfileVersion": "control-center-v1",
+                "modelProfile": "gpt/gpt-5.6-luna",
+                "thinkingLevel": "max",
+            },
+        )
+        self.assertEqual(initial_roles["zhiyou-v1"]["modelProfile"], "gpt/gpt-5.6-terra")
+        self.assertEqual(initial_roles["zhiyou-v1"]["thinkingLevel"], "max")
+        self.assertEqual(initial_roles["vcp-v1"]["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(initial_roles["vcp-v1"]["thinkingLevel"], "xhigh")
+        with patch.object(service.runtime, "available_models", return_value=available_models):
+            catalog = service.role_model_catalog()
+        self.assertEqual(catalog["providers"][0]["models"][0]["name"], "GPT-5.6 Luna")
+        with patch.object(service.runtime, "available_models", return_value=available_models):
+            response = service.update_role_runtime_defaults(
+                {
+                    "roleId": "zhiyou-v1",
+                    "roleVersion": "1",
+                    "provider": "gpt",
+                    "modelId": "gpt-5.6-luna",
+                    "thinkingLevel": "max",
+                }
+            )
+        self.assertEqual(response["role"]["defaults"]["thinkingLevel"], "max")
+        self.assertEqual(
+            service.list_roles()["items"][0]["defaults"]["modelProfile"],
+            "gpt/gpt-5.6-luna",
+        )
+        with patch.object(service.runtime, "set_thinking_level") as set_thinking:
+            session = service.create_session(
+                {"title": "继承角色默认", "roleId": "zhiyou-v1", "roleVersion": "1"}
+            )["session"]
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(session["thinkingLevel"], "max")
+        set_thinking.assert_not_called()
+
+        explicit = service.create_session(
+            {
+                "title": "本轮显式模型",
+                "roleId": "zhiyou-v1",
+                "roleVersion": "1",
+                "modelProfile": "gpt/gpt-5.6-sol",
+            }
+        )["session"]
+        self.assertEqual(explicit["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(explicit["thinkingLevel"], "")
 
     def test_command_catalog_exposes_only_pi_prompt_commands_and_degrades_cleanly(self) -> None:
         session = self.service.create_session({"title": "命令目录"})["session"]

@@ -36,12 +36,19 @@ import { publicAgentErrorText } from '../public-error';
 
 export function ActivitySummary({
   activities,
+  inline = false,
   onApprovalDecision,
+  onOpenApproval,
+  onRequestPermission,
 }: {
   activities: AgentActivityProjection[];
+  inline?: boolean;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  onOpenApproval?: (activity: AgentActivityProjection) => void;
+  onRequestPermission?: () => void;
 }) {
   const running = activities.some((activity) => activity.status === 'running');
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!running) return undefined;
@@ -67,24 +74,62 @@ export function ActivitySummary({
     }];
   });
   const liveActivities = running || waiting ? activities.slice(-3) : [];
+  const state = failed ? 'failed' : waiting ? 'waiting' : running ? 'running' : 'done';
+  const summaryContent = (
+    <>
+      <span className="agent-activity__status" aria-hidden="true">
+        {failed ? <TriangleAlert size={15} /> : waiting ? <ShieldAlert size={15} /> : running ? <CircleDashed size={15} /> : <CheckCircle2 size={15} />}
+      </span>
+      <span className="agent-activity__copy">
+        <strong>{title}</strong>
+        <small>{summary}</small>
+      </span>
+      <ChevronRight aria-hidden="true" size={16} />
+    </>
+  );
+  const approvals = pendingApprovals.map((approval) => (
+    <div className="agent-activity-approval" key={approval.approvalId}>
+      <ShieldAlert aria-hidden="true" size={16} />
+      <span><strong>{approval.title}</strong><small>{approval.summary}</small></span>
+      <div>
+        <Button size="small" variant="quiet" onClick={() => onApprovalDecision?.(approval.approvalId, 'rejected', approval.hash)}>拒绝</Button>
+        <Button size="small" variant="primary" onClick={() => onApprovalDecision?.(approval.approvalId, 'approved', approval.hash)}>批准</Button>
+      </div>
+    </div>
+  ));
+  if (inline) {
+    return (
+      <div className="agent-activity-group" data-layout="interleaved">
+        <details className="agent-activity agent-activity--inline" open={running || waiting || undefined} data-state={state}>
+          <summary aria-label={`${title}，${summary}`}>{summaryContent}</summary>
+          <div className="agent-activity__inline-timeline">
+            {activities.map((activity) => (
+              <ActivityRow
+                key={activity.id}
+                activity={activity}
+                nowMs={nowMs}
+                onApprovalDecision={onApprovalDecision}
+                onOpenApproval={onOpenApproval}
+                onRequestPermission={onRequestPermission}
+              />
+            ))}
+          </div>
+        </details>
+        {approvals}
+      </div>
+    );
+  }
   return (
     <div className="agent-activity-group">
-      <Dialog>
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogTrigger asChild>
           <button
             className="agent-activity"
-            data-state={failed ? 'failed' : waiting ? 'waiting' : running ? 'running' : 'done'}
+            data-state={state}
             type="button"
             aria-label={`查看活动详情：${title}，${summary}`}
           >
-            <span className="agent-activity__status" aria-hidden="true">
-              {failed ? <TriangleAlert size={15} /> : waiting ? <ShieldAlert size={15} /> : running ? <CircleDashed size={15} /> : <CheckCircle2 size={15} />}
-            </span>
-            <span className="agent-activity__copy">
-              <strong>{title}</strong>
-              <small>{summary}</small>
-            </span>
-            <ChevronRight aria-hidden="true" size={16} />
+            {summaryContent}
           </button>
         </DialogTrigger>
         <DialogContent className="agent-activity-dialog">
@@ -99,6 +144,14 @@ export function ActivitySummary({
                 activity={activity}
                 nowMs={nowMs}
                 onApprovalDecision={onApprovalDecision}
+                onOpenApproval={(selected) => {
+                  setDetailsOpen(false);
+                  onOpenApproval?.(selected);
+                }}
+                onRequestPermission={() => {
+                  setDetailsOpen(false);
+                  onRequestPermission?.();
+                }}
               />
             ))}
           </div>
@@ -107,20 +160,18 @@ export function ActivitySummary({
       {liveActivities.length ? (
         <div className="agent-activity-live" aria-label="当前活动">
           {liveActivities.map((activity) => (
-            <ActivityRow key={activity.id} activity={activity} nowMs={nowMs} onApprovalDecision={onApprovalDecision} />
+            <ActivityRow
+              key={activity.id}
+              activity={activity}
+              nowMs={nowMs}
+              onApprovalDecision={onApprovalDecision}
+              onOpenApproval={onOpenApproval}
+              onRequestPermission={onRequestPermission}
+            />
           ))}
         </div>
       ) : null}
-      {pendingApprovals.map((approval) => (
-        <div className="agent-activity-approval" key={approval.approvalId}>
-          <ShieldAlert aria-hidden="true" size={16} />
-          <span><strong>{approval.title}</strong><small>{approval.summary}</small></span>
-          <div>
-            <Button size="small" variant="quiet" onClick={() => onApprovalDecision?.(approval.approvalId, 'rejected', approval.hash)}>拒绝</Button>
-            <Button size="small" variant="primary" onClick={() => onApprovalDecision?.(approval.approvalId, 'approved', approval.hash)}>批准</Button>
-          </div>
-        </div>
-      ))}
+      {approvals}
     </div>
   );
 }
@@ -129,10 +180,14 @@ function ActivityRow({
   activity,
   nowMs,
   onApprovalDecision,
+  onOpenApproval,
+  onRequestPermission,
 }: {
   activity: AgentActivityProjection;
   nowMs: number;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  onOpenApproval?: (activity: AgentActivityProjection) => void;
+  onRequestPermission?: () => void;
 }) {
   const presentation = activityPresentation(activity);
   const Icon = presentation.icon;
@@ -161,6 +216,8 @@ function ActivityRow({
         {presentation.detail ? <p>{presentation.detail}</p> : null}
         <ToolProgressTimeline activity={activity} entries={progressHistory} />
         {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
+        {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
+        {toolView?.structuredResult !== undefined ? <PublicStructuredResult value={toolView.structuredResult} /> : null}
         <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
         {toolView?.destination ? (
           <a className="agent-tool-destination" href={toolView.destination.href}>
@@ -171,6 +228,15 @@ function ActivityRow({
           <div className="agent-activity-row__approval-actions">
             <Button size="small" variant="quiet" onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}>拒绝</Button>
             <Button size="small" variant="primary" onClick={() => onApprovalDecision(approvalId, 'approved', hash)}>批准</Button>
+          </div>
+        ) : null}
+        {toolView?.recovery === 'approval' && onOpenApproval ? (
+          <div className="agent-tool-recovery">
+            <Button size="small" variant="primary" leadingIcon={<ShieldAlert size={14} />} onClick={() => onOpenApproval(activity)}>去审批</Button>
+          </div>
+        ) : toolView?.recovery === 'permission' && onRequestPermission ? (
+          <div className="agent-tool-recovery">
+            <Button size="small" variant="primary" leadingIcon={<ShieldAlert size={14} />} onClick={onRequestPermission}>请求权限</Button>
           </div>
         ) : null}
       </div>
@@ -201,13 +267,35 @@ function ToolProgressTimeline({
 }
 
 function PublicToolFields({ view }: { view: PublicToolResultView }) {
-  if (view.fields.length === 0) return <p>工具没有返回可公开展示的结构化明细。</p>;
+  if (view.fields.length === 0) {
+    return view.structuredResult !== undefined || view.error
+      ? null
+      : <p>工具没有返回可公开展示的结构化明细。</p>;
+  }
   return (
     <dl className="agent-safe-fields">
       {view.fields.map((field) => (
         <div key={field.id}><dt>{field.label}</dt><dd>{field.value}</dd></div>
       ))}
     </dl>
+  );
+}
+
+function PublicToolError({ reason }: { reason: string }) {
+  return (
+    <section className="agent-tool-result-panel" data-tone="error" aria-label="工具错误">
+      <strong><TriangleAlert size={13} />失败原因</strong>
+      <p>{reason}</p>
+    </section>
+  );
+}
+
+function PublicStructuredResult({ value }: { value: NonNullable<PublicToolResultView['structuredResult']> }) {
+  return (
+    <section className="agent-tool-result-panel" aria-label="工具公开结果">
+      <strong><TerminalSquare size={13} />公开的结构化结果</strong>
+      <pre>{JSON.stringify(value, null, 2)}</pre>
+    </section>
   );
 }
 

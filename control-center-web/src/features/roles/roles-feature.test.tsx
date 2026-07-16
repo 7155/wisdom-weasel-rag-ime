@@ -68,6 +68,61 @@ describe('Roles experience', () => {
     });
   });
 
+  it('persists a per-role default model and thinking level', async () => {
+    const user = userEvent.setup();
+    const configured = {
+      ...previewPersonas[0]!,
+      defaults: {
+        ...previewPersonas[0]!.defaults,
+        modelProfile: 'gpt/gpt-5.6-terra',
+        thinkingLevel: 'low' as const,
+      },
+    };
+    const updated = {
+      ...configured,
+      defaults: {
+        ...configured.defaults,
+        modelProfile: 'gpt/gpt-5.6-sol',
+        thinkingLevel: 'xhigh' as const,
+      },
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: [configured] },
+      'agent.subagents.templates': { ok: true, items: [] },
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'gpt',
+          displayName: 'GPT',
+          models: [
+            { provider: 'gpt', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+            { provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'xhigh'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+          ],
+        }],
+      },
+      'agent.role.runtimeDefaults.update': { ok: true, role: updated },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await screen.findByText('GPT-5.6 Terra');
+    await user.click(screen.getByLabelText('角色默认模型'));
+    await user.click(await screen.findByRole('option', { name: 'GPT-5.6 Sol' }));
+    await user.click(screen.getByLabelText('角色默认推理强度'));
+    expect(await screen.findByRole('option', { name: '不启用推理' })).toBeInTheDocument();
+    await user.click(await screen.findByRole('option', { name: '极高' }));
+    await user.click(screen.getByRole('button', { name: '保存默认设置' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.role.runtimeDefaults.update')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.role.runtimeDefaults.update')?.request.body).toEqual({
+      roleId: configured.roleId,
+      roleVersion: configured.version,
+      provider: 'gpt',
+      modelId: 'gpt-5.6-sol',
+      thinkingLevel: 'xhigh',
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(`${configured.displayName} 的默认模型已保存。`);
+  });
+
   it('does not substitute preview Personas when the native catalog is empty', async () => {
     const transport = new StubControlTransport('native', {
       'agent.roles.list': { ok: true, items: [] },
@@ -96,6 +151,7 @@ describe('Roles experience', () => {
     expect(transport.requests.map((request) => request.pathId)).toEqual([
       'agent.roles.list',
       'agent.subagents.templates',
+      'agent.role.models',
     ]);
   });
 

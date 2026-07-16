@@ -136,6 +136,8 @@ final class NativeRoutePolicy {
             "agent.room.events": route("GET", "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", remoteSafe: true, subscription: true),
             "agent.roles.list": route("GET", "/api/agent/roles", "/control/v1/agent/roles", remoteSafe: true),
             "agent.roles.create": route("POST", "/api/agent/roles", "/control/v1/agent/roles", remoteSafe: true, bodyKeys: ["displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"], requiredBodyKeys: ["displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"]),
+            "agent.role.models": route("GET", "/api/agent/roles/models", "/control/v1/agent/roles/models", remoteSafe: true),
+            "agent.role.runtimeDefaults.update": route("POST", "/api/agent/roles/runtime-defaults", "/control/v1/agent/roles/runtime-defaults", remoteSafe: true, bodyKeys: ["roleId", "roleVersion", "provider", "modelId", "thinkingLevel"], requiredBodyKeys: ["roleId", "roleVersion", "provider", "modelId", "thinkingLevel"]),
             "agent.tools.list": route("GET", "/api/agent/tools", "/control/v1/agent/tools", query: ["sessionId"]),
             "agent.approvals.list": route("GET", "/api/agent/approvals", "/control/v1/agent/approvals", query: ["sessionId", "state", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.approval.get": route("GET", "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", remoteSafe: true),

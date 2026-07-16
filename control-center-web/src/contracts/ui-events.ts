@@ -16,6 +16,7 @@ export const knownAgentEventTypes = [
   'approval_resolved',
   'memory_checkpointed',
   'memory_maintenance_updated',
+  'session_configuration_changed',
   'user_input_required',
   'message_completed',
   'turn_completed',

@@ -11,11 +11,21 @@ export interface PublicToolResultView {
   summary: string;
   fields: PublicToolResultField[];
   sources: string[];
+  structuredResult?: PublicStructuredResult;
+  error?: string;
+  recovery?: 'approval' | 'permission';
   destination?: {
     href: string;
     label: string;
   };
 }
+
+export type PublicStructuredResult =
+  | string
+  | number
+  | boolean
+  | PublicStructuredResult[]
+  | { [key: string]: PublicStructuredResult };
 
 const toolLabels: Record<string, string> = {
   ime_overview: '控制中心概览',
@@ -29,6 +39,22 @@ const toolLabels: Record<string, string> = {
   ime_configuration: '历史与配置',
   ime_agents: '多 Agent 协作',
   agent_plan: '当前回合计划',
+  read: '读取文件',
+  read_file: '读取文件',
+  write: '写入文件',
+  write_file: '写入文件',
+  workspace_write_file: '写入文件',
+  edit: '编辑文件',
+  edit_file: '编辑文件',
+  workspace_edit_file: '编辑文件',
+  bash: '运行命令',
+  shell: '运行命令',
+  grep: '搜索文本',
+  find: '查找文件',
+  ls: '浏览目录',
+  todo: '待办事项',
+  write_todos: '待办事项',
+  update_plan: '更新计划',
   workspace_list: '工作区浏览',
   workspace_read: '工作区读取',
   workspace_shell: '受控命令',
@@ -138,11 +164,12 @@ export function publicToolResultView(activity: AgentActivityProjection): PublicT
   const envelopeResult = record(envelope.result);
   const carrierResult = record(carrier.result);
   const domain = Object.keys(envelopeResult).length > 0 ? envelopeResult : carrierResult;
-  const layers = [domain, envelope, carrier, payload];
+  const publicResult = record(payload.publicResult);
+  const layers = [domain, envelope, carrier, publicResult, payload];
   const toolId = firstText(
     [payload, envelope, carrier],
     ['toolId', 'toolName', 'tool'],
-  );
+  ).toLowerCase();
   const toolLabel = toolLabels[toolId] ?? '工具操作';
   const fields: PublicToolResultField[] = [];
   const seen = new Set<string>();
@@ -238,17 +265,206 @@ export function publicToolResultView(activity: AgentActivityProjection): PublicT
   const writePolicy = firstPublicText(layers, ['writePolicy', 'safety']);
   if (writePolicy) append('writePolicy', '写入保护', writePolicy);
 
+  const codeResult = publicCodeToolResult(toolId, record(payload.args), publicResult, envelope, carrier);
+  if (codeResult.file) append('file', '文件', codeResult.file);
+  if (codeResult.lines !== undefined) append('lineCount', '行数', `${codeResult.lines} 行`);
+  if (codeResult.additions !== undefined || codeResult.deletions !== undefined) {
+    append('changes', '变更', `+${codeResult.additions ?? 0} / -${codeResult.deletions ?? 0}`);
+  }
+
   const sources = toolId === 'ime_knowledge'
     ? safeKnowledgeSourceLabels(items)
     : safeSourceLabels(payload.sources ?? payload.documents ?? payload.books);
+  const structuredResult = publicStructuredResult(
+    Object.keys(domain).length > 0 ? domain : envelope,
+  );
+  const error = activity.status === 'failed' || payload.isError === true
+    ? publicToolError(layers, carrier)
+    : '';
+  const recovery = error ? publicToolRecovery(error, payload) : undefined;
 
   return {
     toolLabel,
-    summary: summary || `${toolLabel}${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : '已完成'}`,
+    summary: summary || codeResult.summary || `${toolLabel}${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : '已完成'}`,
     fields,
     sources,
+    ...(structuredResult !== undefined ? { structuredResult } : {}),
+    ...(error ? { error } : {}),
+    ...(recovery ? { recovery } : {}),
     ...(toolDestinations[toolId] ? { destination: toolDestinations[toolId] } : {}),
   };
+}
+
+interface PublicCodeToolResult {
+  summary: string;
+  file: string;
+  lines?: number;
+  additions?: number;
+  deletions?: number;
+}
+
+function publicCodeToolResult(
+  toolId: string,
+  args: Record<string, unknown>,
+  publicResult: Record<string, unknown>,
+  envelope: Record<string, unknown>,
+  carrier: Record<string, unknown>,
+): PublicCodeToolResult {
+  const fileTools = new Set([
+    'read', 'read_file', 'workspace_read',
+    'write', 'write_file', 'workspace_write_file',
+    'edit', 'edit_file', 'workspace_edit_file',
+  ]);
+  const rawPath = firstText([publicResult, args, envelope, carrier], ['relativePath', 'fileName', 'file_path', 'path']);
+  const file = fileTools.has(toolId) ? publicWorkspacePath(rawPath) : '';
+  if (['write', 'write_file', 'workspace_write_file'].includes(toolId)) {
+    const lines = firstFiniteNumber([publicResult], ['lineCount']) ?? publicLineCount(text(args.content));
+    const additions = firstFiniteNumber([publicResult], ['additions']) ?? lines;
+    return {
+      file,
+      ...(lines !== undefined ? { lines } : {}),
+      ...(additions !== undefined ? { additions } : {}),
+      summary: file ? `${file}${lines !== undefined ? ` +${lines}` : ' 已写入'}` : '文件已写入',
+    };
+  }
+  if (['edit', 'edit_file', 'workspace_edit_file'].includes(toolId)) {
+    const diff = firstText([envelope, carrier], ['diff', 'patch']);
+    const changes = publicDiffCounts(diff);
+    const changeLabel = changes.additions !== undefined || changes.deletions !== undefined
+      ? ` +${changes.additions ?? 0} / -${changes.deletions ?? 0}`
+      : ' 已更新';
+    return { file, summary: file ? `${file}${changeLabel}` : '文件已更新', ...changes };
+  }
+  if (['read', 'read_file', 'workspace_read'].includes(toolId)) {
+    const truncation = firstRecord([envelope, carrier], ['truncation']);
+    const totalLines = firstFiniteNumber([truncation], ['totalLines']);
+    const lines = totalLines ?? publicLineCount(publicToolContentText(carrier));
+    return {
+      file,
+      ...(lines !== undefined ? { lines } : {}),
+      summary: file ? `${file}${lines !== undefined ? ` · ${lines} 行` : ' 已读取'}` : '文件已读取',
+    };
+  }
+  return { file: '', summary: '' };
+}
+
+function publicWorkspacePath(value: string): string {
+  const normalized = value.replace(/\\/gu, '/').replace(/\/{2,}/gu, '/').trim();
+  if (!normalized || normalized.length > 1_000) return '';
+  if (/(?:api.?key|authorization|cookie|password|secret|bearer\s)/iu.test(normalized)) return '';
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length === 0) return '';
+  const absolute = normalized.startsWith('/') || normalized.startsWith('~/') || /^[a-z]:\//iu.test(normalized);
+  const unsafeRelative = parts.some((part) => part === '..' || part === '.');
+  const candidate = absolute || unsafeRelative ? parts.at(-1) ?? '' : parts.join('/');
+  if (!candidate || candidate.length > 240 || /[\u0000-\u001f]/u.test(candidate)) return '';
+  return candidate;
+}
+
+function publicLineCount(value: string): number | undefined {
+  if (!value) return undefined;
+  const lines = value.replace(/\r\n?/gu, '\n').split('\n');
+  while (lines.length > 0 && lines.at(-1) === '') lines.pop();
+  return Math.max(lines.length, 1);
+}
+
+function publicDiffCounts(value: string): Pick<PublicCodeToolResult, 'additions' | 'deletions'> {
+  if (!value) return {};
+  let additions = 0;
+  let deletions = 0;
+  for (const line of value.replace(/\r\n?/gu, '\n').split('\n').slice(0, 20_000)) {
+    if (line.startsWith('+') && !line.startsWith('+++')) additions += 1;
+    if (line.startsWith('-') && !line.startsWith('---')) deletions += 1;
+  }
+  return additions || deletions ? { additions, deletions } : {};
+}
+
+function publicToolContentText(carrier: Record<string, unknown>): string {
+  const content = Array.isArray(carrier.content) ? carrier.content : [];
+  return content
+    .slice(0, 12)
+    .map((item) => text(record(item).text))
+    .filter(Boolean)
+    .join('\n');
+}
+
+const privateResultKey = /(?:^_|^id$|(?:approval|session|request|toolCall|event)Id$|token|secret|password|passphrase|api.?key|authorization|cookie|credential|reasoning|thinking|chain.?of.?thought|system.?prompt|prompt|headers?|environment|\benv\b|stack|traceback|raw|request.?body|response.?body|source.?path|file.?path|absolute.?path|^path$|stdout|stderr|^diff$|^patch$)/iu;
+
+function publicStructuredResult(value: unknown, depth = 0): PublicStructuredResult | undefined {
+  if (depth > 3 || value === null || value === undefined) return undefined;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string') return publicStructuredText(value);
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, 12)
+      .map((item) => publicStructuredResult(item, depth + 1))
+      .filter((item): item is PublicStructuredResult => item !== undefined);
+    return items.length > 0 ? items : undefined;
+  }
+  const source = record(value);
+  const entries: Array<[string, PublicStructuredResult]> = [];
+  for (const [rawKey, rawValue] of Object.entries(source).slice(0, 32)) {
+    const key = rawKey.trim().slice(0, 80);
+    if (!key || privateResultKey.test(key)) continue;
+    if (/^(?:content|text)$/iu.test(key)) {
+      if (typeof rawValue === 'string' || isToolContentBlocks(rawValue)) continue;
+    }
+    const safeValue = publicStructuredResult(rawValue, depth + 1);
+    if (safeValue === undefined) continue;
+    entries.push([key, safeValue]);
+  }
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function isToolContentBlocks(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every((item) => {
+    const block = record(item);
+    return ['text', 'image'].includes(text(block.type).toLowerCase())
+      && (Object.hasOwn(block, 'text') || Object.hasOwn(block, 'data'));
+  });
+}
+
+function publicStructuredText(value: string): string | undefined {
+  let normalized = value.replace(/\s+/gu, ' ').trim();
+  if (!normalized) return undefined;
+  if (/^(?:\{|\[)/u.test(normalized)) return undefined;
+  if (/(?:api.?key|authorization|cookie|password|secret|bearer\s|chain[- ]?of[- ]?thought|private reasoning|思维链)/iu.test(normalized)) return undefined;
+  if (/(?:file:\/\/|\/Users\/|\/Volumes\/|\/private\/var\/|\/var\/folders\/)/u.test(normalized)) return undefined;
+  normalized = normalized
+    .replace(/\[REDACTED_SECRET\]/gu, '已隐藏敏感值')
+    .replace(/\[REDACTED_PATH\]/gu, '已隐藏本机路径');
+  return normalized.slice(0, 500);
+}
+
+function publicToolError(layers: Record<string, unknown>[], carrier: Record<string, unknown>): string {
+  for (const layer of layers) {
+    for (const key of ['error', 'errorMessage', 'message', 'summary']) {
+      const value = publicStructuredText(text(layer[key]));
+      if (value) return value;
+    }
+  }
+  const content = Array.isArray(carrier.content) ? carrier.content : [];
+  for (const item of content.slice(0, 4)) {
+    const value = publicStructuredText(text(record(item).text));
+    if (value) return value;
+  }
+  return '工具执行失败，但没有返回可公开展示的错误明细。';
+}
+
+function publicToolRecovery(
+  error: string,
+  payload: Record<string, unknown>,
+): 'approval' | 'permission' | undefined {
+  if (text(payload.approvalId) && text(payload.payloadSha256)) return 'approval';
+  if (/(?:approval required|requires approval|pending approval|需要(?:本机)?(?:审批|批准)|等待(?:审批|批准)|审批后|需(?:要)?本机确认)/iu.test(error)) {
+    return 'permission';
+  }
+  if (/(?:permission denied|access denied|not allowed|allowlist|sandbox|权限不足|没有权限|未授权|授权目录|只读模式|运行协调)/iu.test(error)) {
+    return 'permission';
+  }
+  return undefined;
 }
 
 function safeKnowledgeSourceLabels(items: unknown[]): string[] {

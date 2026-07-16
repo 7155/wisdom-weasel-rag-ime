@@ -26,6 +26,7 @@ export interface AgentSessionV1 {
   roleId: string;
   roleVersion: string;
   modelProfile: string;
+  thinkingLevel?: '' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   toolProfileVersion: string;
   toolAllowlistMode?: 'profile' | 'explicit';
   allowedTools?: string[];

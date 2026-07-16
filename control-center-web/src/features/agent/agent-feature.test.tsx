@@ -550,6 +550,113 @@ describe('Agent experience', () => {
     })));
   });
 
+  it('opens the existing approval review from a failed tool receipt and uses its bound route', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    const view = renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-tool-approval';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'tool-approval-failed-ui',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'tool_finished',
+        payload: {
+          toolCallId: 'tool-approval-failed-ui',
+          toolName: 'ime_input',
+          isError: true,
+          approvalId: 'approval-from-tool-1',
+          payloadSha256: 'd'.repeat(64),
+          preview: {
+            title: '确认失败工具的受控操作',
+            summary: '应用输入法设置',
+            changes: [{ label: '候选数', before: '5', after: '7' }],
+          },
+          result: {
+            details: {
+              ok: false,
+              operation: 'apply_settings',
+              result: { error: '该操作需要本机审批后继续。' },
+            },
+          },
+        },
+        resumeToken: 'tool-approval-failed-ui',
+      }]);
+    });
+
+    const activity = [...view.container.querySelectorAll<HTMLElement>('.agent-activity--inline')]
+      .find((item) => item.textContent?.includes('该操作需要本机审批后继续'));
+    expect(activity).toBeDefined();
+    fireEvent.click(activity!.querySelector('summary')!);
+    const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]
+      .find((row) => row.textContent?.includes('该操作需要本机审批后继续'));
+    expect(failedRow).toBeDefined();
+    fireEvent.click(failedRow!.querySelector('summary')!);
+    await user.click(within(failedRow!).getByRole('button', { name: '去审批' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '确认失败工具的受控操作' });
+    expect(within(dialog).getByText('候选数')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: '批准并执行' }));
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.approval.decide',
+        params: { approvalId: 'approval-from-tool-1' },
+        body: { decision: 'approve', payloadSha256: 'd'.repeat(64) },
+      }),
+    })));
+  });
+
+  it('opens the real permission picker from a permission-denied tool receipt', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    const view = renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-tool-permission';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'tool-permission-failed-ui',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'tool_finished',
+        payload: {
+          toolCallId: 'tool-permission-failed-ui',
+          toolName: 'workspace_shell',
+          isError: true,
+          result: { details: { ok: false, result: { error: '工作区不在授权目录内，当前权限不足。' } } },
+        },
+        resumeToken: 'tool-permission-failed-ui',
+      }]);
+    });
+
+    const activity = [...view.container.querySelectorAll<HTMLElement>('.agent-activity--inline')]
+      .find((item) => item.textContent?.includes('工作区不在授权目录内'));
+    expect(activity).toBeDefined();
+    fireEvent.click(activity!.querySelector('summary')!);
+    const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]
+      .find((row) => row.textContent?.includes('工作区不在授权目录内'));
+    expect(failedRow).toBeDefined();
+    fireEvent.click(failedRow!.querySelector('summary')!);
+    await user.click(within(failedRow!).getByRole('button', { name: '请求权限' }));
+
+    expect(await screen.findByText('对话权限')).toBeInTheDocument();
+    const picker = document.querySelector('.agent-picker-popover');
+    expect(picker).not.toBeNull();
+    expect(within(picker as HTMLElement).getByRole('radio', { name: /受控助手/ })).toBeInTheDocument();
+  });
+
   it('restores a pending approval dialog directly from the session snapshot', async () => {
     const snapshot = previewAgentSnapshot('session-preview');
     const transport = productionTransport({
@@ -654,6 +761,73 @@ describe('Agent experience', () => {
     expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('busy');
     expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.abort')).toHaveLength(1);
     resolveAbort({ ok: true });
+  });
+
+  it('recovers a stale client-side busy turn from the idle snapshot returned after abort ACK', async () => {
+    let snapshotCalls = 0;
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        snapshotCalls += 1;
+        if (snapshotCalls === 1) return previewAgentSnapshot('session-preview');
+        return {
+          schemaVersion: 'rag-ime.agent-message-list.v1',
+          ok: true,
+          sessionId: 'session-preview',
+          items: [],
+          liveEvents: [],
+          status: 'idle',
+          lastSequence: 99,
+          resumeToken: 'session-preview:99',
+        };
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(snapshotCalls).toBe(1));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [
+        {
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: 'stale-busy-before-stop',
+          sessionId: 'session-preview',
+          turnId: 'turn-stale-stop',
+          sequence: projection.lastSequence + 1,
+          createdAtMs: Date.now(),
+          streamKind: 'agent',
+          eventType: 'status_changed',
+          payload: { status: 'busy' },
+          resumeToken: `session-preview:${projection.lastSequence + 1}`,
+        },
+        {
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: 'stale-delta-before-stop',
+          sessionId: 'session-preview',
+          turnId: 'turn-stale-stop',
+          sequence: projection.lastSequence + 2,
+          createdAtMs: Date.now(),
+          streamKind: 'agent',
+          eventType: 'text_delta',
+          payload: { delta: 'partial' },
+          resumeToken: `session-preview:${projection.lastSequence + 2}`,
+        },
+      ]);
+    });
+
+    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('idle'));
+    expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
   });
 
   it('opens memory review immediately and resumes Pi when the user defers it', async () => {
@@ -1034,11 +1208,15 @@ describe('Agent experience', () => {
   it('disables image selection and explains paste rejection for a Pi text-only model', async () => {
     const catalog = previewModelCatalog('session-preview');
     catalog.selected = { provider: 'deepseek', id: 'deepseek-v4' };
+    catalog.thinkingLevel = 'off';
     const transport = featureTransport(catalog);
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
 
-    await screen.findByRole('button', { name: /模型：DeepSeek V4/ });
+    const modelPicker = await screen.findByRole('button', {
+      name: '模型：DeepSeek V4，思考强度：不启用推理',
+    });
+    expect(modelPicker).toHaveTextContent('DeepSeek V4 · 不启用推理');
     expect(screen.getByRole('button', { name: '当前模型不支持图片' })).toBeDisabled();
 
     const image = new File(['png'], 'clipboard.png', { type: 'image/png' });
@@ -1169,7 +1347,7 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
     const lunaDetails = screen.getByText('GPT-5.6 Luna', { selector: 'summary' }).closest('details');
     expect(lunaDetails).not.toBeNull();
-    for (const level of ['关闭', '最小', '低', '中', '高', '极高', 'Max']) {
+    for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
       expect(within(lunaDetails!).getByRole('button', { name: level })).toBeInTheDocument();
     }
     const max = within(lunaDetails!).getByRole('button', { name: 'Max' });
@@ -1220,6 +1398,36 @@ describe('Agent experience', () => {
       }) }),
     ])));
     expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.models')).toHaveLength(2);
+  });
+
+  it('reloads the model catalog when Pi publishes a session configuration change', async () => {
+    let modelCatalogCalls = 0;
+    const transport = featureTransport(() => {
+      modelCatalogCalls += 1;
+      return lunaModelCatalog();
+    });
+    renderAgent(transport);
+
+    await waitFor(() => expect(modelCatalogCalls).toBe(1));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const sequence = projection.lastSequence + 1;
+    act(() => {
+      transport.emit('agent.session.events', {
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'event-model-refresh',
+        sessionId: 'session-preview',
+        turnId: '',
+        sequence,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'session_configuration_changed',
+        payload: { kind: 'model' },
+        resumeToken: `session-preview:${sequence}`,
+      });
+    });
+
+    await waitFor(() => expect(modelCatalogCalls).toBe(2));
   });
 
   it('treats the mobile session rail as a focus-managed drawer', async () => {
@@ -1398,6 +1606,7 @@ function featureTransport(
     lastError: '',
     capabilities: { conversationFork: true },
   },
+  snapshotRoute: unknown = previewAgentSnapshot('session-preview'),
 ): MockControlTransport {
   return new MockControlTransport({
     pickedFiles: [{
@@ -1421,7 +1630,7 @@ function featureTransport(
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.tools.list': toolRoute,
       'agent.runtime.get': runtimeRoute,
-      'agent.session.snapshot': previewAgentSnapshot('session-preview'),
+      'agent.session.snapshot': snapshotRoute,
       'agent.session.models': modelCatalog,
       'agent.session.commands': commandCatalog(),
       'agent.session.prompt': promptRoute,

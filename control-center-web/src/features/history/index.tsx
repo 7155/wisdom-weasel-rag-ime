@@ -104,12 +104,12 @@ export function HistoryFeature() {
         </ManagementSection>
 
         <ManagementSection title="筛选与分页">
-          <div className="mgmt-filter-row">
-            <Field htmlFor="history-search" label="搜索">
+          <div aria-label="筛选输入历史" className="history-filter-toolbar" role="search">
+            <Field className="history-filter-toolbar__search" htmlFor="history-search" label="搜索">
               <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="文本、应用或项目" value={draftQuery} />
             </Field>
-            <Button leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">搜索</Button>
-            <Field htmlFor="history-source-filter" label="来源">
+            <Button className="history-filter-toolbar__submit" leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">搜索</Button>
+            <Field className="history-filter-toolbar__source" htmlFor="history-source-filter" label="来源">
               <Select id="history-source-filter" onValueChange={setFilter} options={[
                 { value: '', label: '全部来源' },
                 { value: 'rime_commit', label: 'Rime 提交' },

@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
+import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import type { UiAgentEvent } from '@/contracts/ui-events';
 import { AgentComposer } from './composer/AgentComposer';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
@@ -59,6 +60,7 @@ export function AgentFeature() {
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
   const [helpRequest, setHelpRequest] = useState(0);
+  const [requestedApproval, setRequestedApproval] = useState<AgentActivityProjection>();
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
   const [forkingEntryId, setForkingEntryId] = useState('');
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
@@ -93,6 +95,7 @@ export function AgentFeature() {
     state.projections[selectedId],
     (activity) => activity.kind === 'approval_required',
   ));
+  const approvalForReview = pendingApproval ?? requestedApproval;
   const railModal = mobileViewport && railOpen;
   const statusModal = statusOverlayViewport && statusOpen;
   useModalPanel({
@@ -190,7 +193,12 @@ export function AgentFeature() {
         unsubscribe = transport.subscribe<UiAgentEvent>(
           { pathId: 'agent.session.events', params: { sessionId: selectedId }, lastEventId: cursor },
           {
-            next: (event) => batcher.push(event),
+            next: (event) => {
+              batcher.push(event);
+              if (event.eventType === 'session_configuration_changed') {
+                void loadSessionCatalogs();
+              }
+            },
             error: (streamError) => active && setError(errorText(streamError)),
             snapshotRequired: () => void loadSnapshot(),
           },
@@ -541,9 +549,15 @@ export function AgentFeature() {
     setStopping(true);
     try {
       await transport.request({ pathId: 'agent.session.abort', params: { sessionId: session.id } });
-      // Abort acknowledgement only means Pi accepted the request. Keep the
-      // composer locked until the runtime publishes the real terminal event;
-      // otherwise a late event from the old turn can close a newly sent turn.
+      // Abort acknowledgement only means Pi accepted the request. Reconcile
+      // once with the authoritative Session row so a stale client-side busy
+      // marker can recover; a genuinely active turn remains locked until its
+      // terminal SSE event arrives.
+      const snapshot = await transport.request({
+        pathId: 'agent.session.snapshot',
+        params: { sessionId: session.id },
+      });
+      useAgentLiveStore.getState().hydrate(session.id, snapshot);
       setError('');
     } catch (requestError) {
       setStopping(false);
@@ -744,7 +758,13 @@ export function AgentFeature() {
     if (!modelChanged && !thinkingChanged) return;
     setModelChanging(true);
     try {
-      if (modelChanged) await transport.request({ pathId: 'agent.session.model.select', params: { sessionId: session.id }, body: { provider, modelId } });
+      if (modelChanged) {
+        const response = await transport.request<Record<string, unknown>>({ pathId: 'agent.session.model.select', params: { sessionId: session.id }, body: { provider, modelId } });
+        if (isRecord(response.session)) {
+          const updated = response.session as unknown as SessionSummary;
+          setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
+        }
+      }
       if (modelChanged || thinkingChanged) await transport.request({ pathId: 'agent.session.thinking.select', params: { sessionId: session.id }, body: { level } });
       const refreshed = await transport.request({ pathId: 'agent.session.models', params: { sessionId: session.id } });
       if (!isModelCatalog(refreshed)) throw new Error('Pi 没有返回有效的模型目录。');
@@ -770,6 +790,7 @@ export function AgentFeature() {
         params: { approvalId },
         body: { decision: decision === 'approved' ? 'approve' : 'reject', payloadSha256 },
       });
+      setRequestedApproval(undefined);
       setError('');
     }
     catch (requestError) {
@@ -792,13 +813,13 @@ export function AgentFeature() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable} forkingEntryId={forkingEntryId} onForkFromMessage={(entryId, message) => { void forkFromMessage(entryId, message); }} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} /> : null}
+        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable} forkingEntryId={forkingEntryId} onForkFromMessage={(entryId, message) => { void forkFromMessage(entryId, message); }} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" tabIndex={-1} onClick={closeStatusPanel} type="button" />
       <AgentStatusPanel ref={statusRef} sessionId={selectedId} open={statusOpen} modal={statusModal} onClose={closeStatusPanel} />
       <MemoryReviewDialog activity={pendingApproval ? undefined : pendingMemoryReview} sessionId={selectedId} onError={setError} />
-      <ApprovalReviewDialog activity={pendingApproval} onDecision={decideApproval} />
+      <ApprovalReviewDialog activity={approvalForReview} onDecision={decideApproval} />
       <ConversationForkDialog
         open={forkDialogOpen}
         sessionId={session?.id ?? ''}

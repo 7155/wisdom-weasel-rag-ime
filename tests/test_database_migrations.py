@@ -22,10 +22,10 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 first.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 33)
+            self.assertEqual(status["currentVersion"], 34)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -65,6 +65,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("management_work_previews", tables)
             self.assertIn("management_work_receipts", tables)
             self.assertIn("agent_personas", tables)
+            self.assertIn("agent_role_runtime_preferences", tables)
             self.assertIn("agent_session_tool_policies", tables)
             self.assertIn("agent_plan_events", tables)
             session_columns = {

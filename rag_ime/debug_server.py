@@ -5385,6 +5385,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/agent/roles":
             self._write_json(HTTPStatus.OK, self.service.agent.list_roles())
             return
+        if parsed.path == "/api/agent/roles/models":
+            self._write_json(HTTPStatus.OK, self.service.agent.role_model_catalog())
+            return
         if parsed.path == "/api/agent/subagents/templates":
             self._write_json(HTTPStatus.OK, self.service.agent.list_agent_templates())
             return
@@ -6091,6 +6094,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
             elif path == "/api/agent/roles":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_role(payload))
+            elif path == "/api/agent/roles/runtime-defaults":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.update_role_runtime_defaults(payload),
+                )
             elif path == "/api/agent/rooms":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_room(payload))
             elif path == "/api/agent/subagents/runs":

@@ -675,6 +675,8 @@ class PiRuntimeManager:
         self._status = "stopped" if config.enabled else "disabled"
         self._last_error = ""
         self._idle_timer: threading.Timer | None = None
+        self._abort_timer: threading.Timer | None = None
+        self._aborting_turn_id = ""
         self._intentional_stop = False
         self._pending_approval_requests: dict[str, str] = {}
         self._pending_review_requests: dict[str, str] = {}
@@ -821,6 +823,10 @@ class PiRuntimeManager:
                     session_id,
                     f"{selected_provider}/{selected_model_id}",
                 )
+            desired_thinking = str(session.get("thinkingLevel") or "").strip().lower()
+            if desired_thinking and str(state.get("thinkingLevel") or "") != desired_thinking:
+                client.send({"type": "set_thinking_level", "level": desired_thinking})
+                state = _mapping(client.send({"type": "get_state"}).get("data"))
             bound = self.sessions.bind_runtime_session(
                 session_id,
                 driver_id=self.driver_id,
@@ -1310,6 +1316,24 @@ class PiRuntimeManager:
             "thinkingLevel": thinking_level,
         }
 
+    def available_models(self) -> list[dict[str, object]]:
+        with self._lock:
+            client = self._client
+        if client is None or not client.running:
+            raise PiRuntimeError("Pi model catalog requires an active runtime session")
+        response = client.send({"type": "get_available_models"})
+        data = _mapping(response.get("data"))
+        raw_models = data.get("models") if isinstance(data.get("models"), list) else []
+        models = [
+            model
+            for value in raw_models
+            if isinstance(value, Mapping)
+            for model in [_public_pi_model(value)]
+            if model
+        ]
+        models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
+        return models
+
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
         normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
         normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)
@@ -1359,11 +1383,13 @@ class PiRuntimeManager:
             state_response = client.send({"type": "get_state"})
             state = _mapping(state_response.get("data"))
             selected = _public_pi_model(_mapping(state.get("model")))
+            effective = _effective_thinking_level(
+                state.get("thinkingLevel") or normalized,
+                selected,
+            )
+            self.sessions.set_thinking_level(session_id, effective)
             return {
-                "thinkingLevel": _effective_thinking_level(
-                    state.get("thinkingLevel") or normalized,
-                    selected,
-                ),
+                "thinkingLevel": effective,
                 "selected": selected or None,
             }
         finally:
@@ -1375,7 +1401,19 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             turn_id = self._active_turn_id
         client.send({"type": "abort"})
-        self.events.publish(session_id, "status_changed", {"status": "aborting"}, turn_id=turn_id)
+        if not turn_id:
+            return
+        with self._lock:
+            # Pi may settle while the abort ACK is in flight. Never append an
+            # "aborting" event after the real terminal event in that case.
+            if (
+                self._client is not client
+                or self._active_session_id != session_id
+                or self._active_turn_id != turn_id
+            ):
+                return
+            self.events.publish(session_id, "status_changed", {"status": "aborting"}, turn_id=turn_id)
+            self._schedule_abort_fallback_locked(session_id, turn_id)
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
         self.ensure(session_id)
@@ -1401,6 +1439,7 @@ class PiRuntimeManager:
         session_id: str
         with self._lock:
             self._cancel_idle_locked()
+            self._cancel_abort_locked()
             client = self._client
             session_id = self._active_session_id
             self._intentional_stop = True
@@ -1491,12 +1530,17 @@ class PiRuntimeManager:
                 "tool_execution_update": "tool_progress",
                 "tool_execution_end": "tool_finished",
             }[event_type]
+            raw_args = _mapping(raw.get("args"))
+            tool_name = str(raw.get("toolName") or "")
             payload = {
                 "toolCallId": str(raw.get("toolCallId") or ""),
-                "toolName": str(raw.get("toolName") or ""),
-                "args": _redact_mapping(_mapping(raw.get("args"))),
+                "toolName": tool_name,
+                "args": _redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
+            public_result = _public_code_tool_activity(tool_name, raw_args)
+            if public_result:
+                payload["publicResult"] = public_result
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             if raw.get(result_key) is not None:
                 payload[result_key] = _redact_mapping(_mapping(raw.get(result_key)))
@@ -1565,12 +1609,38 @@ class PiRuntimeManager:
         if event_type == "agent_end":
             messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
             preview = _last_assistant_preview(messages)
-            self.sessions.set_status(session_id, "idle", message_count=len(messages), last_message_preview=preview)
             provider_error = _last_assistant_error(messages)
-            if provider_error:
-                self._turn_failed(session_id, turn_id, PiRuntimeError(provider_error))
-                return
             with self._lock:
+                if (
+                    self._client is not client
+                    or self._active_session_id != session_id
+                    or self._active_turn_id != turn_id
+                ):
+                    return
+                if provider_error:
+                    self._turn_failed(session_id, turn_id, PiRuntimeError(provider_error))
+                    return
+                # The real terminal event won the race; disarm the abort
+                # fallback before publishing so it cannot emit a second
+                # terminal receipt while turn_completed is being recorded.
+                self._cancel_abort_locked()
+            # Publish the terminal receipt before exposing the session as idle.
+            # Otherwise a poller can observe idle in the small window before
+            # turn_completed is appended and incorrectly treat the same Pi
+            # turn as incomplete.
+            self.events.publish(
+                session_id,
+                "turn_completed",
+                {"messageCount": len(messages)},
+                turn_id=turn_id,
+            )
+            with self._lock:
+                if (
+                    self._client is not client
+                    or self._active_session_id != session_id
+                    or self._active_turn_id != turn_id
+                ):
+                    return
                 self._status = "ready"
                 self._active_turn_id = ""
                 self._active_client_message_id = ""
@@ -1578,12 +1648,7 @@ class PiRuntimeManager:
                 self._pending_approval_requests.clear()
                 self._pending_review_requests.clear()
                 self._schedule_idle_locked()
-            self.events.publish(
-                session_id,
-                "turn_completed",
-                {"messageCount": len(messages)},
-                turn_id=turn_id,
-            )
+            self.sessions.set_status(session_id, "idle", message_count=len(messages), last_message_preview=preview)
             return
         if event_type == "extension_error":
             self._turn_failed(session_id, turn_id, PiRuntimeError(str(raw.get("error") or "Pi extension failed")))
@@ -1620,6 +1685,7 @@ class PiRuntimeManager:
             if not request_id:
                 raise PiRuntimeError("review request is no longer pending")
             client = self._client
+            turn_id = self._active_turn_id
         client.respond_extension_ui(request_id, confirmed=reviewed)
         with self._lock:
             self._pending_review_requests.pop(run_id, None)
@@ -1632,7 +1698,7 @@ class PiRuntimeManager:
                 "state": "approved",
                 "reviewState": "reviewed" if reviewed else "deferred",
             },
-            turn_id=self._active_turn_id,
+            turn_id=turn_id,
         )
 
     def resolve_approval(
@@ -1659,6 +1725,7 @@ class PiRuntimeManager:
             if not request_id:
                 raise PiRuntimeError("approval request is no longer pending")
             client = self._client
+            turn_id = self._active_turn_id
         client.respond_extension_ui(request_id, confirmed=approved)
         with self._lock:
             self._pending_approval_requests.pop(approval_id, None)
@@ -1669,7 +1736,7 @@ class PiRuntimeManager:
                 "approvalId": approval_id,
                 "state": resolution_state or ("approved" if approved else "rejected"),
             },
-            turn_id=self._active_turn_id,
+            turn_id=turn_id,
         )
 
     def _handle_process_exit(
@@ -1688,6 +1755,7 @@ class PiRuntimeManager:
             self._active_client_message_id = ""
             self._stream_pi_message_id = ""
             self._cancel_idle_locked()
+            self._cancel_abort_locked()
             if intentional:
                 self._status = "stopped"
             else:
@@ -1708,6 +1776,7 @@ class PiRuntimeManager:
         safe_error = _redact_runtime_text(str(error))
         self.sessions.set_status(session_id, "idle")
         with self._lock:
+            self._cancel_abort_locked()
             self._status = "ready" if self._client is not None and self._client.running else "faulted"
             self._active_turn_id = ""
             self._active_client_message_id = ""
@@ -1740,6 +1809,43 @@ class PiRuntimeManager:
         if self._idle_timer is not None:
             self._idle_timer.cancel()
             self._idle_timer = None
+
+    def _schedule_abort_fallback_locked(self, session_id: str, turn_id: str) -> None:
+        self._cancel_abort_locked()
+        self._aborting_turn_id = turn_id
+        timer = threading.Timer(1.0, self._abort_fallback_expired, args=(session_id, turn_id))
+        timer.daemon = True
+        self._abort_timer = timer
+        timer.start()
+
+    def _cancel_abort_locked(self) -> None:
+        timer = self._abort_timer
+        self._abort_timer = None
+        self._aborting_turn_id = ""
+        if timer is not None:
+            timer.cancel()
+
+    def _abort_fallback_expired(self, session_id: str, turn_id: str) -> None:
+        # Older Pi RPC builds ACK abort before emitting agent_end, and a
+        # crashed extension can omit agent_end entirely. Recycle this v1
+        # single-session process so no late event can terminate a newer turn.
+        with self._lifecycle_lock:
+            with self._lock:
+                if (
+                    self._aborting_turn_id != turn_id
+                    or self._active_session_id != session_id
+                    or self._active_turn_id != turn_id
+                ):
+                    return
+                self._abort_timer = None
+                self._aborting_turn_id = ""
+            self._stop_locked()
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "aborted", "aborted": True, "terminalEvent": "abort_timeout"},
+            turn_id=turn_id,
+        )
 
     def _idle_expired(self) -> None:
         with self._lock:
@@ -2040,6 +2146,44 @@ def _redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str,
         else:
             result[key] = _safe_scalar(raw_value)
     return result
+
+
+def _public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> dict[str, object]:
+    normalized_tool = str(tool_name or "").strip().lower()
+    file_tools = {
+        "read", "read_file", "workspace_read",
+        "write", "write_file", "workspace_write_file",
+        "edit", "edit_file", "workspace_edit_file",
+    }
+    if normalized_tool not in file_tools:
+        return {}
+    raw_path = str(args.get("relativePath") or args.get("fileName") or args.get("file_path") or args.get("path") or "")
+    file_name = _public_file_name(raw_path)
+    result: dict[str, object] = {}
+    if file_name:
+        result["fileName"] = file_name
+    if normalized_tool in {"write", "write_file", "workspace_write_file"}:
+        content = args.get("content")
+        if isinstance(content, str) and content:
+            normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+            lines = normalized.split("\n")
+            while lines and not lines[-1]:
+                lines.pop()
+            line_count = max(1, len(lines))
+            result.update({"lineCount": line_count, "additions": line_count})
+            if file_name:
+                result["summary"] = f"{file_name} +{line_count}"
+    return result
+
+
+def _public_file_name(value: str) -> str:
+    normalized = str(value or "").replace("\\", "/").rstrip("/")
+    file_name = normalized.rsplit("/", 1)[-1].strip()
+    if not file_name or len(file_name) > 240 or any(ord(character) < 32 for character in file_name):
+        return ""
+    if re.search(r"token|secret|password|api.?key|authorization|cookie", file_name, re.IGNORECASE):
+        return ""
+    return file_name
 
 
 def _safe_scalar(value: object) -> object:

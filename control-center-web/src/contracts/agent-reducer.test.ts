@@ -22,6 +22,45 @@ describe('AgentEventReducer', () => {
     expect(textOf(second.state.messagesById['turn-1:assistant'])).toBe('你好');
   });
 
+  it('preserves assistant segments around a tool call instead of replacing earlier text', () => {
+    let state = createAgentProjection('session-1');
+    const events = [
+      agentEvent(1, 'text_delta', { delta: '我先检查运行状态。', replaceBlock: true }),
+      agentEvent(2, 'message_completed', {
+        message: serverMessage('turn-1:assistant', 'assistant', 'turn-1', '我先检查运行状态。'),
+      }),
+      agentEvent(3, 'tool_started', {
+        toolCallId: 'tool-interleaved',
+        toolName: 'ime_overview',
+      }),
+      agentEvent(4, 'tool_finished', {
+        toolCallId: 'tool-interleaved',
+        toolName: 'ime_overview',
+        result: { details: { result: { summary: '运行状态正常' } } },
+      }),
+      agentEvent(5, 'text_delta', { delta: '检查完成，一切正常。', replaceBlock: true }),
+      agentEvent(6, 'message_completed', {
+        message: serverMessage('turn-1:assistant', 'assistant', 'turn-1', '检查完成，一切正常。'),
+      }),
+      agentEvent(7, 'turn_completed', { status: 'completed' }),
+    ];
+    for (const event of events) state = reduceAgentEvent(state, event).state;
+
+    expect(state.turnsById['turn-1'].messageIds).toEqual([
+      'turn-1:assistant',
+      'turn-1:assistant:segment:5',
+    ]);
+    expect(textOf(state.messagesById['turn-1:assistant'])).toBe('我先检查运行状态。');
+    expect(textOf(state.messagesById['turn-1:assistant:segment:5'])).toBe('检查完成，一切正常。');
+    expect(state.messagesById['turn-1:assistant']).toMatchObject({ createdAtMs: 10, timelineSequence: 1 });
+    expect(state.messagesById['turn-1:assistant:segment:5']).toMatchObject({ createdAtMs: 50, timelineSequence: 5 });
+    expect(state.activitiesById['tool-interleaved']).toMatchObject({
+      createdAtMs: 30,
+      timelineSequence: 3,
+      status: 'completed',
+    });
+  });
+
   it('stops projection on a sequence gap until a snapshot is applied', () => {
     const first = reduceAgentEvent(
       createAgentProjection('session-1'),
@@ -82,6 +121,24 @@ describe('AgentEventReducer', () => {
     expect(recovered.status).toBe('waiting');
   });
 
+  it('uses the authoritative idle snapshot status to recover a stale aborting turn', () => {
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [
+        rawAgentEvent(41, 'status_changed', { status: 'busy' }),
+        rawAgentEvent(42, 'text_delta', { delta: 'partial' }),
+        rawAgentEvent(43, 'status_changed', { status: 'aborting' }),
+      ],
+      lastSequence: 43,
+      resumeToken: 'session-1:43',
+      status: 'idle',
+    });
+
+    expect(recovered.status).toBe('idle');
+    expect(recovered.turnsById['turn-1'].status).toBe('aborted');
+    expect(recovered.messagesById['turn-1:assistant'].status).toBe('aborted');
+  });
+
   it('keeps bounded progress checkpoints for one logical tool call', () => {
     const started = reduceAgentEvent(
       createAgentProjection('session-1'),
@@ -89,6 +146,7 @@ describe('AgentEventReducer', () => {
         toolCallId: 'tool-progress-1',
         toolName: 'ime_knowledge',
         summary: '开始检索知识库',
+        args: { path: 'docs/acceptance.md' },
       }),
     ).state;
     const firstProgress = reduceAgentEvent(
@@ -109,6 +167,7 @@ describe('AgentEventReducer', () => {
       secondProgress,
       agentEvent(4, 'tool_finished', {
         toolCallId: 'tool-progress-1',
+        args: {},
         result: { details: { result: { summary: '知识检索完成' } } },
       }),
     ).state;
@@ -121,6 +180,7 @@ describe('AgentEventReducer', () => {
       updatedAtMs: 40,
       payload: {
         toolName: 'ime_knowledge',
+        args: { path: 'docs/acceptance.md' },
         progressHistory: [
           { kind: 'tool_started', summary: '开始检索知识库', createdAtMs: 10 },
           { kind: 'tool_progress', summary: '已找到候选来源', createdAtMs: 20 },
@@ -173,6 +233,25 @@ describe('AgentEventReducer', () => {
     const aborted = abortAgentTurn(streaming, 'turn-1', 30);
     expect(aborted.turnsById['turn-1'].status).toBe('aborted');
     expect(aborted.messagesById['turn-1:assistant'].status).toBe('aborted');
+  });
+
+  it('projects an abort fallback terminal event as aborted instead of completed', () => {
+    const streaming = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'text_delta', { delta: 'partial' }),
+    ).state;
+    const stopped = reduceAgentEvent(
+      streaming,
+      agentEvent(2, 'turn_completed', {
+        status: 'aborted',
+        aborted: true,
+        terminalEvent: 'abort_timeout',
+      }),
+    ).state;
+
+    expect(stopped.status).toBe('idle');
+    expect(stopped.turnsById['turn-1'].status).toBe('aborted');
+    expect(stopped.messagesById['turn-1:assistant'].status).toBe('aborted');
   });
 
   it('hides legacy per-turn user source checkpoints but keeps explicit memory work', () => {

@@ -1706,6 +1706,22 @@ export const contractSchemas = {
             "type": "string",
             "minLength": 1,
             "maxLength": 80
+          },
+          "modelProfile": {
+            "type": "string",
+            "pattern": "^[^/\\s]{1,80}/\\S{1,160}$"
+          },
+          "thinkingLevel": {
+            "type": "string",
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
           }
         }
       },
@@ -2686,6 +2702,19 @@ export const contractSchemas = {
       "modelProfile": {
         "type": "string",
         "minLength": 1
+      },
+      "thinkingLevel": {
+        "type": "string",
+        "enum": [
+          "",
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
       },
       "toolProfileVersion": {
         "type": "string",

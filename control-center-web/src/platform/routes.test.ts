@@ -58,6 +58,8 @@ const canonicalPathIds = [
   'agent.room.events',
   'agent.roles.list',
   'agent.roles.create',
+  'agent.role.models',
+  'agent.role.runtimeDefaults.update',
   'agent.tools.list',
   'agent.approvals.list',
   'agent.approval.get',

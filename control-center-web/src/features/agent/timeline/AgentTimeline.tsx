@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button, IconButton } from '@/components/primitives';
-import type { AgentActivityProjection } from '@/contracts/agent-reducer';
+import type { AgentActivityProjection, AgentMessageProjection } from '@/contracts/agent-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { ActivitySummary } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
@@ -19,6 +19,8 @@ export function AgentTimeline({
   onRetryTurn,
   onSwitchModel,
   onApprovalDecision,
+  onOpenApproval,
+  onRequestPermission,
   forkAvailable = false,
   forkingEntryId = '',
   onForkFromMessage,
@@ -30,6 +32,8 @@ export function AgentTimeline({
   onRetryTurn: (turnId: string) => void;
   onSwitchModel: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  onOpenApproval?: (activity: AgentActivityProjection) => void;
+  onRequestPermission?: () => void;
   forkAvailable?: boolean;
   forkingEntryId?: string;
   onForkFromMessage?: (entryId: string, message: string) => void;
@@ -61,6 +65,8 @@ export function AgentTimeline({
             onRetryTurn={onRetryTurn}
             onSwitchModel={onSwitchModel}
             onApprovalDecision={onApprovalDecision}
+            onOpenApproval={onOpenApproval}
+            onRequestPermission={onRequestPermission}
             forkAvailable={forkAvailable}
             forkingEntryId={forkingEntryId}
             onForkFromMessage={onForkFromMessage}
@@ -79,6 +85,8 @@ export function AgentTurn({
   onRetryTurn,
   onSwitchModel,
   onApprovalDecision,
+  onOpenApproval,
+  onRequestPermission,
   forkAvailable = false,
   forkingEntryId = '',
   onForkFromMessage,
@@ -90,6 +98,8 @@ export function AgentTurn({
   onRetryTurn?: (turnId: string) => void;
   onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  onOpenApproval?: (activity: AgentActivityProjection) => void;
+  onRequestPermission?: () => void;
   forkAvailable?: boolean;
   forkingEntryId?: string;
   onForkFromMessage?: (entryId: string, message: string) => void;
@@ -99,9 +109,11 @@ export function AgentTurn({
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.messageIds ?? []).filter((id) => projection?.messagesById[id]?.role === 'user');
   }));
-  const assistantIds = useAgentLiveStore(useShallow((state) => {
+  const assistantMessages = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
-    return (projection?.turnsById[turnId]?.messageIds ?? []).filter((id) => projection?.messagesById[id]?.role === 'assistant');
+    return (projection?.turnsById[turnId]?.messageIds ?? [])
+      .map((id) => projection?.messagesById[id])
+      .filter((message): message is AgentMessageProjection => message?.role === 'assistant');
   }));
   const activities = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
@@ -124,17 +136,33 @@ export function AgentTurn({
   const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
+  const timelineEntries = interleavedTurnEntries(assistantMessages, activities);
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} forking={forkingEntryId === messageId} onForkFromMessage={onForkFromMessage} />)}
-      {assistantIds.length > 0 || activities.length > 0 || failure || showWorking ? (
+      {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <PersonaAvatar persona={persona} presence={showWorking ? 'thinking' : presence} />
           <div className="agent-assistant-turn__body">
             <header><strong>{persona?.displayName ?? '智鼬'}</strong><span>{showWorking ? '正在处理' : turnStatusLabel(turn.status)}</span></header>
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} /> : null}
-            <ActivitySummary activities={activities} onApprovalDecision={onApprovalDecision} />
-            {assistantIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} />)}
+            <div className="agent-turn-sequence" aria-label="本轮响应过程">
+              {timelineEntries.map((entry) => entry.kind === 'message' ? (
+                <div data-timeline-kind="message" key={entry.message.id}>
+                  <MessageView sessionId={sessionId} messageId={entry.message.id} />
+                </div>
+              ) : (
+                <div data-timeline-kind="activity" key={entry.key}>
+                  <ActivitySummary
+                    activities={entry.activities}
+                    inline
+                    onApprovalDecision={onApprovalDecision}
+                    onOpenApproval={onOpenApproval}
+                    onRequestPermission={onRequestPermission}
+                  />
+                </div>
+              ))}
+            </div>
             {failure ? (
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
@@ -152,6 +180,74 @@ export function AgentTurn({
       ) : null}
     </article>
   );
+}
+
+type TurnTimelineItem = {
+  kind: 'message';
+  message: AgentMessageProjection;
+  createdAtMs: number;
+  sequence?: number;
+  fallbackOrder: number;
+} | {
+  kind: 'activity';
+  activity: AgentActivityProjection;
+  createdAtMs: number;
+  sequence?: number;
+  fallbackOrder: number;
+};
+
+export type InterleavedTurnEntry =
+  | { kind: 'message'; message: AgentMessageProjection }
+  | { kind: 'activity-group'; key: string; activities: AgentActivityProjection[] };
+
+export function interleavedTurnEntries(
+  messages: AgentMessageProjection[],
+  activities: AgentActivityProjection[],
+): InterleavedTurnEntry[] {
+  const items: TurnTimelineItem[] = [
+    ...messages.map((message, index): TurnTimelineItem => ({
+      kind: 'message',
+      message,
+      createdAtMs: message.createdAtMs,
+      sequence: message.timelineSequence,
+      fallbackOrder: index,
+    })),
+    ...activities.map((activity, index): TurnTimelineItem => ({
+      kind: 'activity',
+      activity,
+      createdAtMs: activity.createdAtMs,
+      sequence: activity.timelineSequence,
+      fallbackOrder: messages.length + index,
+    })),
+  ];
+  items.sort(compareTimelineItems);
+
+  return items.reduce<InterleavedTurnEntry[]>((entries, item) => {
+    if (item.kind === 'message') {
+      entries.push({ kind: 'message', message: item.message });
+      return entries;
+    }
+    const previous = entries[entries.length - 1];
+    if (previous?.kind === 'activity-group') {
+      previous.activities.push(item.activity);
+      return entries;
+    }
+    entries.push({
+      kind: 'activity-group',
+      key: `activity:${item.activity.id}`,
+      activities: [item.activity],
+    });
+    return entries;
+  }, []);
+}
+
+function compareTimelineItems(left: TurnTimelineItem, right: TurnTimelineItem): number {
+  if (left.sequence !== undefined && right.sequence !== undefined && left.sequence !== right.sequence) {
+    return left.sequence - right.sequence;
+  }
+  const byTime = left.createdAtMs - right.createdAtMs;
+  if (byTime !== 0) return byTime;
+  return left.fallbackOrder - right.fallbackOrder;
 }
 
 function AssistantWorkingState({

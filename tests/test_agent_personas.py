@@ -45,7 +45,7 @@ class AgentPersonaStoreTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             self.assertEqual(
                 conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0],
-            33,
+            34,
             )
             private = conn.execute(
                 """
@@ -78,6 +78,28 @@ class AgentPersonaStoreTests(unittest.TestCase):
 
         coordinator = self.store.create({**base, "selectableModes": ["coordinator"]})
         self.assertEqual(coordinator.selectable_modes, ("coordinator",))
+
+    def test_runtime_defaults_are_persistent_for_builtin_and_user_personas(self) -> None:
+        saved = self.store.set_runtime_defaults(
+            "zhiyou-v1",
+            "1",
+            model_profile="gpt/gpt-5.6-terra",
+            thinking_level="high",
+            updated_at_ms=456,
+        )
+        self.assertEqual(
+            saved,
+            {"modelProfile": "gpt/gpt-5.6-terra", "thinkingLevel": "high"},
+        )
+        self.assertEqual(self.store.runtime_defaults("zhiyou-v1", "1"), saved)
+
+        with self.assertRaisesRegex(ValueError, "thinkingLevel"):
+            self.store.set_runtime_defaults(
+                "zhiyou-v1",
+                "1",
+                model_profile="gpt/gpt-5.6-terra",
+                thinking_level="ultra",
+            )
 
 
 if __name__ == "__main__":

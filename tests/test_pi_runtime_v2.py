@@ -52,12 +52,13 @@ for line in sys.stdin:
     if method == "hello":
         result(request, {"protocol": "rag-ime.pi-runtime-host", "protocolVersion": "2", "hostVersion": "test",
                          "piVersion": "0.80.7", "capabilities": {"multiSession": True, "maxSessions": 4,
-                         "settledEvents": True, "dynamicTools": True, "managedPlugins": True}})
+                         "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
+                         "conversationFork": True}})
     elif method == "session.open":
         session = sessions.setdefault(session_id, {
             "sessionId": session_id, "piSessionId": "pi-" + session_id,
             "sessionFile": str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
-            "leafId": "", "messages": [], "thinkingLevel": "medium",
+            "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
         })
         result(request, {"snapshot": session, "evictedSessionId": None})
@@ -71,18 +72,53 @@ for line in sys.stdin:
     elif method == "session.prompt":
         turn_id = "turn-" + session_id
         client_message_id = params.get("clientMessageId", "")
-        assistant = {"role": "assistant", "timestamp": 101,
+        user_entry_id = "entry-user-" + str(len(sessions[session_id].get("forkItems", [])) + 1)
+        assistant_entry_id = "entry-assistant-" + str(len(sessions[session_id].get("forkItems", [])) + 1)
+        user_message = {"id": user_entry_id, "role": "user", "timestamp": 100,
+                        "content": [{"type": "text", "text": params["message"]}]}
+        assistant = {"id": assistant_entry_id, "role": "assistant", "timestamp": 101,
                      "content": [{"type": "text", "text": "host reply for " + session_id}]}
-        sessions[session_id]["messages"] = [
-            {"role": "user", "timestamp": 100, "content": [{"type": "text", "text": params["message"]}]},
-            assistant,
-        ]
+        sessions[session_id]["messages"].extend([user_message, assistant])
+        sessions[session_id].setdefault("forkItems", []).append(
+            {"entryId": user_entry_id, "text": params["message"]}
+        )
+        sessions[session_id]["leafId"] = assistant_entry_id
+        transcript = pathlib.Path(sessions[session_id]["sessionFile"])
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text(json.dumps({"type": "session", "id": sessions[session_id]["piSessionId"]}) + "\n")
         result(request, {"accepted": True, "turnId": turn_id})
         event(session_id, turn_id, client_message_id, {"type": "agent_start"})
+        if params["message"] == "hang-without-settled":
+            continue
         event(session_id, turn_id, client_message_id, {"type": "message_end", "message": assistant})
         event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
         time.sleep(0.15)
         event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
+    elif method == "session.fork.candidates":
+        result(request, {"items": sessions[session_id].get("forkItems", [])})
+    elif method == "session.fork":
+        target_id = params["targetSessionId"]
+        candidates = sessions[session_id].get("forkItems", [])
+        selected = next((item for item in candidates if item["entryId"] == params["entryId"]), None)
+        if selected is None:
+            result(request, {})
+            continue
+        target_file = pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / ("fork-" + target_id + ".jsonl")
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        target_file.write_text(json.dumps({"type": "session", "id": "pi-fork-" + target_id}) + "\n")
+        target = {
+            "sessionId": target_id, "piSessionId": "pi-fork-" + target_id,
+            "sessionFile": str(target_file), "leafId": "", "messages": [], "forkItems": [],
+            "thinkingLevel": sessions[session_id]["thinkingLevel"], "model": model,
+        }
+        sessions[target_id] = target
+        result(request, {
+            "sourceSessionId": session_id, "targetSessionId": target_id,
+            "entryId": params["entryId"], "selectedText": selected["text"],
+            "branchAnchor": params["entryId"], "snapshot": target, "evictedSessionId": None,
+        })
+    elif method == "session.close":
+        result(request, {"closed": sessions.pop(session_id, None) is not None})
     elif method == "plugins.list":
         result(request, {"plugins": []})
     else:
@@ -136,6 +172,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
     def test_one_host_keeps_multiple_sessions_open_and_syncs_dynamic_tools(self) -> None:
         first_id = str(self.first["id"])
         second_id = str(self.second["id"])
+        self.store.set_thinking_level(first_id, "max")
         self.runtime.ensure(first_id)
         self.runtime.ensure(second_id)
 
@@ -146,6 +183,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         opened = [row for row in requests if row["method"] == "session.open"]
         self.assertEqual(len(opened), 2)
         self.assertEqual(opened[0]["params"]["toolManifest"][0]["name"], "ime_memory")
+        self.assertEqual(opened[0]["params"]["thinkingLevel"], "max")
 
     def test_agent_end_is_not_terminal_and_max_comes_from_host_catalog(self) -> None:
         session_id = str(self.first["id"])
@@ -159,23 +197,60 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(self.store.get(session_id)["status"], "busy")
         self.assertFalse(any(item.event_type == "turn_completed" for item in self.events.replay(session_id)[0]))
 
-        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+        _wait_until(
+            lambda: any(
+                item.event_type == "turn_completed"
+                for item in self.events.replay(session_id)[0]
+            )
+        )
         completed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]
         self.assertEqual(completed[-1].payload["terminalEvent"], "agent_settled")
         messages = self.runtime.messages(session_id)
         self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
 
-    def test_v2_reports_branching_as_unavailable_until_host_protocol_supports_it(self) -> None:
+    def test_v2_fork_uses_host_owned_anchor_and_binds_a_distinct_target(self) -> None:
         first_id = str(self.first["id"])
-        self.assertFalse(self.runtime.runtime_status()["capabilities"]["conversationFork"])
-        with self.assertRaisesRegex(PiRuntimeError, "unavailable"):
-            self.runtime.fork_candidates(first_id)
-        with self.assertRaisesRegex(PiRuntimeError, "unavailable"):
-            self.runtime.fork_session(
-                first_id,
-                str(self.second["id"]),
-                entry_id="entry-user-1",
-            )
+        second_id = str(self.second["id"])
+        self.assertTrue(self.runtime.runtime_status()["capabilities"]["conversationFork"])
+        self.runtime.prompt(first_id, "从这条消息建立分支")
+        _wait_until(lambda: self.store.get(first_id)["status"] == "idle")
+        source_binding = self.store.runtime_binding(first_id)
+
+        self.assertEqual(
+            self.runtime.fork_candidates(first_id),
+            [{"entryId": "entry-user-1", "text": "从这条消息建立分支"}],
+        )
+        forked = self.runtime.fork_session(first_id, second_id, entry_id="entry-user-1")
+
+        self.assertTrue(self.runtime.runtime_status()["capabilities"]["conversationFork"])
+        self.assertEqual(self.store.runtime_binding(first_id), source_binding)
+        target_binding = self.store.runtime_binding(second_id)
+        self.assertIsNotNone(target_binding)
+        assert source_binding is not None and target_binding is not None
+        self.assertNotEqual(target_binding["externalSessionId"], source_binding["externalSessionId"])
+        self.assertNotEqual(target_binding["transcriptRef"], source_binding["transcriptRef"])
+        self.assertEqual(target_binding["branchAnchor"], "entry-user-1")
+        self.assertEqual(target_binding["metadata"]["forkedFromSessionId"], first_id)
+        self.assertEqual(forked["selectedText"], "从这条消息建立分支")
+        self.assertEqual(self.store.get(first_id)["status"], "idle")
+        self.assertEqual(self.store.get(second_id)["status"], "idle")
+
+        self.runtime.prompt(second_id, "只发送到新分支")
+        _wait_until(lambda: self.store.get(second_id)["status"] == "idle")
+        self.assertEqual(self.runtime.messages(second_id)[0]["blocks"][0]["data"]["text"], "只发送到新分支")
+
+    def test_v2_fork_rejects_unknown_anchor_without_binding_target(self) -> None:
+        first_id = str(self.first["id"])
+        second_id = str(self.second["id"])
+        self.runtime.prompt(first_id, "原始消息")
+        _wait_until(lambda: self.store.get(first_id)["status"] == "idle")
+        source_binding = self.store.runtime_binding(first_id)
+
+        with self.assertRaisesRegex(PiRuntimeError, "not available"):
+            self.runtime.fork_session(first_id, second_id, entry_id="entry-missing")
+
+        self.assertEqual(self.store.runtime_binding(first_id), source_binding)
+        self.assertIsNone(self.store.runtime_binding(second_id))
 
     def test_prompt_rejects_a_second_turn_until_the_active_turn_settles(self) -> None:
         session_id = str(self.first["id"])
@@ -185,6 +260,40 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         with self.assertRaisesRegex(PiRuntimeError, "上一轮"):
             self.runtime.prompt(session_id, "不要覆盖旧回合")
+
+    def test_abort_ack_without_agent_settled_retires_only_the_old_turn(self) -> None:
+        session_id = str(self.first["id"])
+        accepted = self.runtime.prompt(session_id, "hang-without-settled")
+        turn_id = str(accepted["turnId"])
+
+        self.runtime.abort(session_id)
+
+        _wait_until(
+            lambda: any(
+                item.event_type == "turn_completed" and item.payload.get("status") == "aborted"
+                for item in self.events.replay(session_id)[0]
+            ),
+            timeout=2.5,
+        )
+        completed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]
+        self.assertEqual(completed[-1].turn_id, turn_id)
+        self.assertEqual(completed[-1].payload["status"], "aborted")
+        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout")
+
+        completed_count = len(completed)
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {"type": "agent_settled"},
+        })
+        self.assertEqual(
+            len([item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]),
+            completed_count,
+        )
+        with self.runtime._lock:
+            self.assertEqual(self.runtime._states[session_id].turn_id, "")
 
     def test_turn_failure_uses_supported_faulted_status_and_publishes_event(self) -> None:
         session_id = str(self.first["id"])

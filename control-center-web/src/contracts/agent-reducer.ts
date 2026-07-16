@@ -28,7 +28,14 @@ export interface AgentActivityProjection {
   payload: Record<string, unknown>;
   createdAtMs: number;
   updatedAtMs: number;
+  /** First source-event sequence, used only as a stable timeline tie-breaker. */
+  timelineSequence?: number;
 }
+
+export type AgentMessageProjection = UiAgentMessage & {
+  /** First source-event sequence; snapshots created before this field still sort by timestamp. */
+  timelineSequence?: number;
+};
 
 export interface AgentToolProgressEntry {
   eventId: string;
@@ -61,7 +68,7 @@ export interface AgentProjectionState {
   needsSnapshot: boolean;
   gap?: ProjectionGap;
   status: string;
-  messagesById: Record<string, UiAgentMessage>;
+  messagesById: Record<string, AgentMessageProjection>;
   messageOrder: string[];
   turnsById: Record<string, AgentTurnProjection>;
   turnOrder: string[];
@@ -220,8 +227,17 @@ export function reduceAgentEvent(
     case 'memory_maintenance_updated':
       upsertActivity(next, event, payload, 'completed');
       break;
+    case 'session_configuration_changed':
+      // Model/thinking state is refreshed from the authoritative Pi catalog
+      // by AgentFeature; it is not a visible timeline activity.
+      break;
     case 'turn_completed':
-      completeTurn(next, event.turnId, 'completed', event.createdAtMs);
+      completeTurn(
+        next,
+        event.turnId,
+        payload.status === 'aborted' || payload.aborted === true ? 'aborted' : 'completed',
+        event.createdAtMs,
+      );
       next.status = 'idle';
       break;
     case 'turn_failed':
@@ -374,6 +390,23 @@ export function applyAgentSnapshot(
     }
   }
 
+  // liveEvents is a bounded journal and may end with an old busy/aborting
+  // marker after a runtime restart. The Session row is read after the runtime
+  // snapshot, so its terminal status is authoritative for stale-busy recovery.
+  const replayStatus = next.status;
+  if (snapshot.status && ['idle', 'ready', 'stopped'].includes(snapshot.status)) {
+    next.status = snapshot.status;
+    const lastTurn = next.turnsById[next.turnOrder[next.turnOrder.length - 1] ?? ''];
+    if (lastTurn && ['queued', 'running', 'waiting'].includes(lastTurn.status)) {
+      completeTurn(
+        next,
+        lastTurn.id,
+        replayStatus === 'aborting' ? 'aborted' : 'completed',
+        lastTurn.updatedAtMs,
+      );
+    }
+  }
+
   for (const [clientMessageId, messageId] of Object.entries(
     state.optimisticByClientMessageId,
   )) {
@@ -417,14 +450,23 @@ function applyTextDelta(
 ): void {
   const delta = text(payload.delta);
   if (!delta) return;
-  const messageId = text(payload.messageId) || `${event.turnId}:assistant`;
-  const blockId = text(payload.blockId) || `${messageId}:text`;
+  const baseMessageId = text(payload.messageId) || `${event.turnId}:assistant`;
+  const messageId = streamingAssistantSegmentId(
+    state,
+    event.turnId,
+    baseMessageId,
+    payload.replaceBlock === true,
+    event.sequence,
+  );
+  const blockId = messageId === baseMessageId
+    ? text(payload.blockId) || `${messageId}:text`
+    : `${messageId}:text`;
   const existing = state.messagesById[messageId];
   const blocks = existing ? [...existing.blocks] : [];
   const blockIndex = blocks.findIndex((block) => block.id === blockId || block.type === 'text');
   if (blockIndex >= 0) {
     const block = blocks[blockIndex];
-    const previous = payload.replaceBlock === true ? '' : text(record(block.data).text);
+    const previous = text(record(block.data).text);
     blocks[blockIndex] = {
       ...block,
       status: 'running',
@@ -441,7 +483,7 @@ function applyTextDelta(
       data: { text: delta },
     });
   }
-  const message: UiAgentMessage = existing
+  const message: AgentMessageProjection = existing
     ? { ...existing, status: 'streaming', blocks, completedAtMs: null }
     : {
         schemaVersion: 'rag-ime.agent-message.v1',
@@ -455,6 +497,7 @@ function applyTextDelta(
         citations: [],
         createdAtMs: event.createdAtMs,
         completedAtMs: null,
+        timelineSequence: event.sequence,
       };
   upsertMessage(state, message);
   touchTurn(state, event.turnId, 'running', event.createdAtMs);
@@ -479,9 +522,12 @@ function applyCompletedMessage(
     return;
   }
   const clientMessageId = text(payload.clientMessageId) || parsed.value.clientMessageId || '';
+  const completedMessage = parsed.value.role === 'assistant'
+    ? completedAssistantSegment(state, event, parsed.value)
+    : { ...parsed.value, timelineSequence: event.sequence };
   upsertMessage(
     state,
-    clientMessageId ? { ...parsed.value, clientMessageId } : parsed.value,
+    clientMessageId ? { ...completedMessage, clientMessageId } : completedMessage,
     clientMessageId,
   );
   touchTurn(
@@ -492,9 +538,60 @@ function applyCompletedMessage(
   );
 }
 
+function streamingAssistantSegmentId(
+  state: AgentProjectionState,
+  turnId: string,
+  baseMessageId: string,
+  startsNewMessage: boolean,
+  sequence: number,
+): string {
+  const segments = assistantSegmentsForBase(state, turnId, baseMessageId);
+  const latest = segments[segments.length - 1];
+  if (!latest) return baseMessageId;
+  if (startsNewMessage) return `${baseMessageId}:segment:${sequence}`;
+  return latest.id;
+}
+
+function completedAssistantSegment(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+  message: UiAgentMessage,
+): AgentMessageProjection {
+  const segments = assistantSegmentsForBase(state, message.turnId, message.id);
+  const latest = segments[segments.length - 1];
+  const targetId = latest?.status === 'streaming'
+    ? latest.id
+    : latest
+      ? `${message.id}:segment:${event.sequence}`
+      : message.id;
+  return {
+    ...message,
+    id: targetId,
+    createdAtMs: latest?.status === 'streaming' ? latest.createdAtMs : message.createdAtMs,
+    timelineSequence: latest?.status === 'streaming'
+      ? latest.timelineSequence ?? event.sequence
+      : event.sequence,
+  };
+}
+
+function assistantSegmentsForBase(
+  state: AgentProjectionState,
+  turnId: string,
+  baseMessageId: string,
+): AgentMessageProjection[] {
+  const turn = state.turnsById[turnId];
+  if (!turn) return [];
+  const segmentPrefix = `${baseMessageId}:segment:`;
+  return turn.messageIds.flatMap((messageId) => {
+    const message = state.messagesById[messageId];
+    if (!message || message.role !== 'assistant') return [];
+    return message.id === baseMessageId || message.id.startsWith(segmentPrefix) ? [message] : [];
+  });
+}
+
 function upsertMessage(
   state: AgentProjectionState,
-  message: UiAgentMessage,
+  message: AgentMessageProjection,
   clientMessageId = message.clientMessageId ?? '',
 ): void {
   if (message.role !== 'user' && message.role !== 'assistant') return;
@@ -545,6 +642,7 @@ function upsertActivity(
     payload: activityPayload,
     createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
     updatedAtMs: event.createdAtMs,
+    timelineSequence: previous?.timelineSequence ?? event.sequence,
   };
   if (!previous) state.activityOrder.push(id);
   state.activitiesById[id] = activity;
@@ -577,11 +675,18 @@ function mergeActivityPayload(
 
   // These events are updates for one logical tool call. Keep stable metadata
   // and prior partial results while the latest event advances its status.
-  return {
+  const merged: Record<string, unknown> = {
     ...previousPayload,
     ...payload,
     progressHistory,
   };
+  if (
+    Object.keys(record(payload.args)).length === 0
+    && Object.keys(record(previousPayload.args)).length > 0
+  ) {
+    merged.args = previousPayload.args;
+  }
+  return merged;
 }
 
 export function agentToolProgressHistory(value: unknown): AgentToolProgressEntry[] {

@@ -47,7 +47,12 @@
       "properties": {
         "modelPolicy": {"type": "string", "minLength": 1, "maxLength": 80},
         "memoryPolicy": {"type": "string", "minLength": 1, "maxLength": 80},
-        "toolProfileVersion": {"type": "string", "minLength": 1, "maxLength": 80}
+        "toolProfileVersion": {"type": "string", "minLength": 1, "maxLength": 80},
+        "modelProfile": {"type": "string", "pattern": "^[^/\\s]{1,80}/\\S{1,160}$"},
+        "thinkingLevel": {
+          "type": "string",
+          "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        }
       }
     },
     "safetyPolicyVersion": {"type": "string", "const": "control-center-safe-v1"},

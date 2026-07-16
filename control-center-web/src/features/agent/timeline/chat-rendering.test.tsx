@@ -2,16 +2,83 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TooltipProvider } from '@/components/primitives';
 import type { UiAgentBlock, UiAgentMessage } from '@/contracts/ui-events';
+import { agentEventFixture } from '@/test/fixtures/events';
 import { useAgentLiveStore } from '../state/live-store';
-import { AgentTurn } from './AgentTimeline';
+import { AgentTurn, interleavedTurnEntries } from './AgentTimeline';
 import { AgentBlock, MarkdownBody } from './BlockRenderer';
 
 afterEach(() => {
   cleanup();
   useAgentLiveStore.getState().clear('session-failed-snapshot');
+  useAgentLiveStore.getState().clear('session-1');
 });
 
 describe('Agent chat rendering', () => {
+  it('uses authoritative event sequence before message clock drift', () => {
+    const before = { ...assistantMessage('session-1', 'turn-1', '调用前', 120), timelineSequence: 8 };
+    const after = { ...assistantMessage('session-1', 'turn-1', '调用后', 80), id: 'turn-1:assistant:segment:10', timelineSequence: 10 };
+    const activity = {
+      id: 'same-time-tool',
+      turnId: 'turn-1',
+      kind: 'tool_finished',
+      status: 'completed' as const,
+      summary: '工具完成',
+      payload: { toolName: 'ime_overview' },
+      createdAtMs: 100,
+      updatedAtMs: 100,
+      timelineSequence: 9,
+    };
+
+    const entries = interleavedTurnEntries([after, before], [activity]);
+
+    expect(entries.map((entry) => entry.kind)).toEqual(['message', 'activity-group', 'message']);
+    expect(entries[0].kind === 'message' ? entries[0].message.blocks[0]?.data.text : '').toBe('调用前');
+    expect(entries[2].kind === 'message' ? entries[2].message.blocks[0]?.data.text : '').toBe('调用后');
+  });
+
+  it('renders assistant text and tool results in their real event order', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'text_delta', { delta: '我先读取运行状态。', replaceBlock: true }),
+      agentEventFixture(2, 'message_completed', {
+        message: assistantMessage(sessionId, turnId, '我先读取运行状态。', 10),
+      }),
+      agentEventFixture(3, 'tool_started', {
+        toolCallId: 'call-interleaved-overview',
+        toolName: 'ime_overview',
+      }),
+      agentEventFixture(4, 'tool_finished', {
+        toolCallId: 'call-interleaved-overview',
+        toolName: 'ime_overview',
+        result: { details: { ok: true, operation: 'status', result: { summary: '运行状态正常' } } },
+      }),
+      agentEventFixture(5, 'text_delta', { delta: '读取完成，当前运行正常。', replaceBlock: true }),
+      agentEventFixture(6, 'message_completed', {
+        message: assistantMessage(sessionId, turnId, '读取完成，当前运行正常。', 50),
+      }),
+      agentEventFixture(7, 'turn_completed', { status: 'completed' }),
+    ]);
+
+    const { container } = render(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    const entries = [...container.querySelectorAll<HTMLElement>('[data-timeline-kind]')];
+    expect(entries.map((entry) => entry.dataset.timelineKind)).toEqual(['message', 'activity', 'message']);
+    expect(entries[0]).toHaveTextContent('我先读取运行状态。');
+    expect(entries[1]).toHaveTextContent('运行状态正常');
+    expect(entries[2]).toHaveTextContent('读取完成，当前运行正常。');
+    expect(entries[0]).not.toHaveTextContent('读取完成');
+  });
+
   it('renders headings, lists, GFM tables, inline code, and fenced code blocks', () => {
     const markdown = [
       '## 验收结论',
@@ -168,5 +235,27 @@ function userMessage(sessionId: string, turnId: string): UiAgentMessage {
     citations: [],
     createdAtMs: 0,
     completedAtMs: 1,
+  };
+}
+
+function assistantMessage(sessionId: string, turnId: string, value: string, createdAtMs: number): UiAgentMessage {
+  return {
+    schemaVersion: 'rag-ime.agent-message.v1',
+    id: `${turnId}:assistant`,
+    sessionId,
+    turnId,
+    role: 'assistant',
+    status: 'completed',
+    blocks: [{
+      id: `${turnId}:assistant:text`,
+      type: 'text',
+      status: 'completed',
+      presentationKind: 'markdown',
+      data: { text: value },
+    }],
+    attachments: [],
+    citations: [],
+    createdAtMs,
+    completedAtMs: createdAtMs,
   };
 }

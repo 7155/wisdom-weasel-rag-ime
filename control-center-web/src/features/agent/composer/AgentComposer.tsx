@@ -731,7 +731,7 @@ function composerPlaceholder(name: string, support: 'supported' | 'unsupported' 
 }
 
 function thinkingLabel(value: string): string {
-  return ({ off: '关闭', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '极高', max: 'Max' } as Record<string, string>)[value] ?? value;
+  return ({ off: '不启用推理', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '极高', max: 'Max' } as Record<string, string>)[value] ?? value;
 }
 
 function riskLabel(value: string): string {

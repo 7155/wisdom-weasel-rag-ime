@@ -1,10 +1,13 @@
 import {
   Bot,
+  BrainCircuit,
+  Cpu,
   Gauge,
   LockKeyhole,
   MessageCirclePlus,
   Plus,
   ShieldCheck,
+  Save,
   Sparkles,
   UserRoundPlus,
   Wrench,
@@ -22,9 +25,11 @@ import {
   DialogHeader,
   DialogTitle,
   IconButton,
+  Select,
   SegmentedControl,
 } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { AgentModelCatalogV1 } from '@/contracts/generated/agent-model-catalog.v1';
 import type { AgentTemplateV1 } from '@/contracts/generated/agent-template.v1';
 import { previewPersonas, previewTemplates } from '@/features/agent/preview-data';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
@@ -38,10 +43,12 @@ export function RolesFeature() {
   const [view, setView] = useState<'personas' | 'templates'>('personas');
   const [personas, setPersonas] = useState<AgentPersonaV1[]>(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   const [templates, setTemplates] = useState<AgentTemplateV1[]>(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewTemplates : []);
+  const [modelCatalog, setModelCatalog] = useState<RoleModelCatalog>({ providers: [] });
   const [selectedPersona, setSelectedPersona] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas[0]?.roleId ?? '' : '');
   const [selectedTemplate, setSelectedTemplate] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewTemplates[0]?.templateId ?? '' : '');
   const [sessionCreating, setSessionCreating] = useState(false);
   const [roleCreating, setRoleCreating] = useState(false);
+  const [roleDefaultsSaving, setRoleDefaultsSaving] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createDisplayName, setCreateDisplayName] = useState('');
   const [createTagline, setCreateTagline] = useState('');
@@ -58,7 +65,8 @@ export function RolesFeature() {
     void Promise.allSettled([
       transport.request({ pathId: 'agent.roles.list' }),
       transport.request({ pathId: 'agent.subagents.templates' }),
-    ]).then(([roleResult, templateResult]) => {
+      transport.request({ pathId: 'agent.role.models' }),
+    ]).then(([roleResult, templateResult, modelResult]) => {
       if (!active) return;
       const errors: string[] = [];
       if (roleResult.status === 'fulfilled') {
@@ -78,6 +86,9 @@ export function RolesFeature() {
         }
       } else {
         errors.push(`Agent 模板：${publicErrorText(templateResult.reason, '暂时无法读取，请稍后重试。')}`);
+      }
+      if (modelResult.status === 'fulfilled') {
+        setModelCatalog(roleModelCatalog(modelResult.value));
       }
       setCatalogNotice(errors.join('；'));
     });
@@ -174,6 +185,36 @@ export function RolesFeature() {
     }
   }
 
+  async function saveRoleRuntimeDefaults(modelProfile: string, thinkingLevel: string): Promise<void> {
+    if (!persona || roleDefaultsSaving) return;
+    const separator = modelProfile.indexOf('/');
+    if (separator <= 0 || separator === modelProfile.length - 1) return;
+    setRoleDefaultsSaving(true);
+    setActionNotice('');
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.role.runtimeDefaults.update',
+        body: {
+          roleId: persona.roleId,
+          roleVersion: persona.version,
+          provider: modelProfile.slice(0, separator),
+          modelId: modelProfile.slice(separator + 1),
+          thinkingLevel,
+        },
+      });
+      const [updated] = roleItems({ items: [record(response).role] });
+      if (!updated) throw new Error('服务端没有返回可验证的角色默认设置。');
+      setPersonas((current) => current.map((item) => (
+        item.roleId === updated.roleId && item.version === updated.version ? updated : item
+      )));
+      setActionNotice(`${updated.displayName} 的默认模型已保存。`);
+    } catch (error) {
+      setActionNotice(publicErrorText(error, '角色默认模型暂时无法保存。'));
+    } finally {
+      setRoleDefaultsSaving(false);
+    }
+  }
+
   const pendingTraits = normalizedTraits(createTraits, traitDraft);
 
   return <>
@@ -183,7 +224,7 @@ export function RolesFeature() {
       {view === 'personas' ? (
         <div className="roles-layout">
           <section className="persona-grid" aria-label="角色列表">{personas.length ? personas.map((item) => <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div><b aria-label="角色阶段">{personaPhase(item).label}</b>{personaExpressionTraits(item).map((trait) => <i key={trait}>{trait}</i>)}</div></button>) : <p className="roles-empty">本机还没有可用角色。</p>}</section>
-          {persona ? <PersonaInspector persona={persona} /> : null}
+          {persona ? <PersonaInspector catalog={modelCatalog} persona={persona} saving={roleDefaultsSaving} onSave={saveRoleRuntimeDefaults} /> : null}
         </div>
       ) : (
         <div className="roles-layout">
@@ -220,10 +261,31 @@ const timelineOptions: ReadonlyArray<{ value: TimelineModel; label: string; capt
   { value: 'sol', label: '构筑阶段', caption: '沉稳、面向行动，侧重协作与推进' },
 ];
 
-function PersonaInspector({ persona }: { persona: AgentPersonaV1 }) {
+function PersonaInspector({
+  catalog,
+  onSave,
+  persona,
+  saving,
+}: {
+  catalog: RoleModelCatalog;
+  onSave: (modelProfile: string, thinkingLevel: string) => Promise<void>;
+  persona: AgentPersonaV1;
+  saving: boolean;
+}) {
   const phase = personaPhase(persona);
   const expressionTraits = personaExpressionTraits(persona);
-  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>角色</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />陪伴阶段</dt><dd>{phase.label}</dd></div><div><dt><Sparkles size={15} />表达特征</dt><dd>{expressionTraits.length ? expressionTraits.join(' · ') : '自然'}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />操作确认</dt><dd>敏感操作由你确认</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具</dd></div></dl></aside>;
+  const initialProfile = persona.defaults.modelProfile ?? '';
+  const [modelProfile, setModelProfile] = useState(initialProfile);
+  const [thinkingLevel, setThinkingLevel] = useState<string>(persona.defaults.thinkingLevel ?? 'off');
+  useEffect(() => {
+    setModelProfile(persona.defaults.modelProfile ?? '');
+    setThinkingLevel(persona.defaults.thinkingLevel ?? 'off');
+  }, [persona.roleId, persona.version, persona.defaults.modelProfile, persona.defaults.thinkingLevel]);
+  const models = catalog.providers.flatMap((provider) => provider.models);
+  const selectedModel = models.find((model) => `${model.provider}/${model.id}` === modelProfile);
+  const thinkingLevels = selectedModel?.thinkingLevels?.length ? selectedModel.thinkingLevels : ['off'];
+  const changed = modelProfile !== initialProfile || thinkingLevel !== (persona.defaults.thinkingLevel ?? 'off');
+  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>角色</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />陪伴阶段</dt><dd>{phase.label}</dd></div><div><dt><Sparkles size={15} />表达特征</dt><dd>{expressionTraits.length ? expressionTraits.join(' · ') : '自然'}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />操作确认</dt><dd>敏感操作由你确认</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具</dd></div></dl><section className="role-runtime-defaults" aria-label="角色运行默认设置"><header><span><Cpu size={15} /><strong>默认模型</strong></span><small>新对话自动使用</small></header>{models.length ? <><label><span>模型</span><Select aria-label="角色默认模型" value={modelProfile} onValueChange={(value) => { setModelProfile(value); const next = models.find((model) => `${model.provider}/${model.id}` === value); const levels = next?.thinkingLevels?.length ? next.thinkingLevels : ['off']; if (!levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? 'off'); }} options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))} /></label><label><span>推理强度</span><Select aria-label="角色默认推理强度" value={thinkingLevel} onValueChange={setThinkingLevel} options={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))} /></label><Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button></> : <p><BrainCircuit size={15} />当前 Pi 模型目录不可用，请先在配置页完成模型配置。</p>}</section></aside>;
 }
 
 function TemplateInspector({ template }: { template: AgentTemplateV1 }) {
@@ -233,6 +295,29 @@ function TemplateInspector({ template }: { template: AgentTemplateV1 }) {
 function templateItems(value: unknown): AgentTemplateV1[] { const source = record(value); const items = Array.isArray(source.items) ? source.items : Array.isArray(source.templates) ? source.templates : []; return items.filter((item) => record(item).schemaVersion === 'rag-ime.agent-template.v1') as AgentTemplateV1[]; }
 function createdSessionId(value: unknown): string { const session = record(record(value).session); return typeof session.id === 'string' ? session.id : ''; }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+
+type RoleModel = AgentModelCatalogV1['providers'][number]['models'][number];
+type RoleModelCatalog = { providers: Array<{ id: string; displayName: string; models: RoleModel[] }> };
+
+function roleModelCatalog(value: unknown): RoleModelCatalog {
+  const source = record(value);
+  const providers = Array.isArray(source.providers) ? source.providers : [];
+  return {
+    providers: providers.flatMap((providerValue) => {
+      const provider = record(providerValue);
+      if (typeof provider.id !== 'string' || !Array.isArray(provider.models)) return [];
+      const models = provider.models.filter((model): model is RoleModel => {
+        const item = record(model);
+        return typeof item.provider === 'string' && typeof item.id === 'string' && typeof item.name === 'string';
+      });
+      return [{ id: provider.id, displayName: typeof provider.displayName === 'string' ? provider.displayName : provider.id, models }];
+    }),
+  };
+}
+
+function thinkingLabel(level: string): string {
+  return ({ off: '不启用推理', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '极高', max: 'Max' } as Record<string, string>)[level] ?? level;
+}
 
 function personaPhase(persona: AgentPersonaV1): { id: TimelineModel | ''; label: string } {
   const assetId = persona.visualProfile.avatarAssetId.toLowerCase();

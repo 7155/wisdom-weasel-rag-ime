@@ -20,6 +20,7 @@ from .pi_runtime import (
     PiRuntimeError,
     _effective_thinking_level,
     _integer,
+    _is_within,
     _last_assistant_error,
     _last_assistant_preview,
     _mapping,
@@ -27,6 +28,7 @@ from .pi_runtime import (
     _pi_message_id,
     _pi_message_is_public,
     _pi_message_payload,
+    _public_code_tool_activity,
     _public_pi_model,
     _public_usage,
     _redact_mapping,
@@ -240,6 +242,8 @@ class _HostedSessionState:
     final_error: str = ""
     pending_approvals: dict[str, str] = field(default_factory=dict)
     pending_reviews: dict[str, str] = field(default_factory=dict)
+    abort_timer: threading.Timer | None = field(default=None, repr=False)
+    retired_turn_ids: set[str] = field(default_factory=set)
 
 
 class PiRuntimeHostManager:
@@ -299,6 +303,7 @@ class PiRuntimeHostManager:
             status = "busy" if busy else self._status
             last_error = self._last_error
             capabilities = dict(self._host_capabilities)
+            host_negotiated = self._client is not None and self._client.running
         if self.config.enabled and not installed:
             status = "not_installed"
             last_error = last_error or _redact_runtime_text(self.config.installation_error)
@@ -323,7 +328,11 @@ class PiRuntimeHostManager:
             "capabilities": {
                 "rpc": installed,
                 "sessions": True,
-                "conversationFork": False,
+                "conversationFork": (
+                    bool(capabilities.get("conversationFork"))
+                    if host_negotiated
+                    else installed and str(self.config.protocol_version or "") == _PROTOCOL_VERSION
+                ),
                 "multiSession": True,
                 "maxSessions": int(capabilities.get("maxSessions") or self.config.max_sessions),
                 "tools": True,
@@ -399,6 +408,9 @@ class PiRuntimeHostManager:
             }
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
+            thinking_level = str(session.get("thinkingLevel") or "").strip().lower()
+            if thinking_level:
+                params["thinkingLevel"] = thinking_level
             if session_file:
                 params["sessionFile"] = session_file
             result = client.send("session.open", params, timeout=max(60.0, self.config.command_timeout_seconds))
@@ -423,7 +435,9 @@ class PiRuntimeHostManager:
                 self._states.setdefault(session_id, _HostedSessionState())
                 if evicted:
                     self._open_sessions.discard(evicted)
-                    self._states.pop(evicted, None)
+                    evicted_state = self._states.pop(evicted, None)
+                    if evicted_state is not None and evicted_state.abort_timer is not None:
+                        evicted_state.abort_timer.cancel()
                 self._status = "ready"
                 self._schedule_idle_locked()
             self.events.publish(session_id, "status_changed", {"status": "ready"})
@@ -508,8 +522,22 @@ class PiRuntimeHostManager:
         return result
 
     def fork_candidates(self, session_id: str) -> list[dict[str, object]]:
-        del session_id
-        raise PiRuntimeError("conversation branching is unavailable in Pi Runtime Host protocol v2")
+        with self._lifecycle_lock:
+            self._require_idle_fork_session(session_id)
+            try:
+                self.ensure(session_id)
+                with self._lock:
+                    self._require_quiescent_fork_locked(session_id)
+                result = self._require_client().send(
+                    "session.fork.candidates",
+                    {"sessionId": session_id},
+                )
+                with self._lock:
+                    self._schedule_idle_locked()
+                return self._fork_candidates_from_result(result)
+            finally:
+                if str(self.sessions.get(session_id).get("status") or "") == "active":
+                    self.sessions.set_status(session_id, "idle")
 
     def fork_session(
         self,
@@ -518,8 +546,185 @@ class PiRuntimeHostManager:
         *,
         entry_id: str,
     ) -> dict[str, object]:
-        del source_session_id, target_session_id, entry_id
-        raise PiRuntimeError("conversation branching is unavailable in Pi Runtime Host protocol v2")
+        normalized_entry_id = str(entry_id or "").strip()
+        if not normalized_entry_id:
+            raise ValueError("conversation fork entryId must not be empty")
+        with self._lifecycle_lock:
+            self._require_idle_fork_session(source_session_id)
+            target = self.sessions.get(target_session_id)
+            if str(target.get("status") or "") != "idle":
+                raise PiRuntimeError("conversation fork target must be idle")
+            if self.sessions.runtime_binding(target_session_id) is not None:
+                raise PiRuntimeError("conversation fork target is already bound")
+            self.ensure(source_session_id)
+            source_binding = self.sessions.runtime_binding(source_session_id)
+            if not isinstance(source_binding, Mapping):
+                raise PiRuntimeError("conversation fork source has no runtime binding")
+            source_transcript = str(source_binding.get("transcriptRef") or "").strip()
+            client = self._require_client()
+            try:
+                with self._lock:
+                    self._require_quiescent_fork_locked(source_session_id)
+                    self._cancel_idle_locked()
+                candidates = self._fork_candidates_from_result(
+                    client.send("session.fork.candidates", {"sessionId": source_session_id})
+                )
+            except Exception:
+                self.sessions.set_status(source_session_id, "idle")
+                self.sessions.set_status(target_session_id, "idle")
+                with self._lock:
+                    self._schedule_idle_locked()
+                raise
+            selected = next(
+                (candidate for candidate in candidates if candidate["entryId"] == normalized_entry_id),
+                None,
+            )
+            if selected is None:
+                self.sessions.set_status(source_session_id, "idle")
+                with self._lock:
+                    self._schedule_idle_locked()
+                raise PiRuntimeError("conversation fork entry is not available in the source Session")
+
+            opened_target = False
+            branch_transcript: Path | None = None
+            branch_cleanup_safe = False
+            try:
+                forked = client.send(
+                    "session.fork",
+                    {
+                        "sessionId": source_session_id,
+                        "targetSessionId": target_session_id,
+                        "entryId": normalized_entry_id,
+                    },
+                    timeout=max(60.0, self.config.command_timeout_seconds),
+                )
+                opened_target = True
+                if str(forked.get("sourceSessionId") or "") != source_session_id:
+                    raise PiRuntimeError("Pi returned a mismatched conversation fork source")
+                if str(forked.get("targetSessionId") or "") != target_session_id:
+                    raise PiRuntimeError("Pi returned a mismatched conversation fork target")
+                snapshot = dict(_mapping(forked.get("snapshot")))
+                external_session_id = str(snapshot.get("piSessionId") or "").strip()
+                transcript_ref = str(snapshot.get("sessionFile") or "").strip()
+                if not external_session_id or not transcript_ref:
+                    raise PiRuntimeError("Pi returned an incomplete conversation fork identity")
+                branch_candidate = Path(transcript_ref).expanduser()
+                if branch_candidate.is_symlink():
+                    raise PiRuntimeError("Pi conversation fork file must not be a symlink")
+                branch_transcript = branch_candidate.resolve(strict=False)
+                session_root = self.config.session_dir.expanduser().resolve(strict=False)
+                if not _is_within(branch_transcript, session_root):
+                    raise PiRuntimeError("Pi conversation fork file is outside the managed session directory")
+                source_path = Path(source_transcript).expanduser().resolve(strict=False) if source_transcript else None
+                if source_path is not None and branch_transcript == source_path:
+                    raise PiRuntimeError("Pi conversation fork reused the source transcript")
+                if external_session_id == str(source_binding.get("externalSessionId") or ""):
+                    raise PiRuntimeError("Pi conversation fork reused the source runtime identity")
+                branch_cleanup_safe = True
+
+                bound = self.sessions.bind_runtime_session(
+                    target_session_id,
+                    driver_id=self.driver_id,
+                    runtime_kind=self.runtime_kind,
+                    external_session_id=external_session_id,
+                    transcript_ref=branch_transcript.as_posix(),
+                    branch_anchor=str(forked.get("branchAnchor") or normalized_entry_id),
+                    binding_state="active",
+                    metadata={
+                        "protocolVersion": _PROTOCOL_VERSION,
+                        "forkedFromSessionId": source_session_id,
+                        "forkEntryId": normalized_entry_id,
+                    },
+                    message_count=len(snapshot.get("messages") or []),
+                )
+                evicted = str(forked.get("evictedSessionId") or "")
+                with self._lock:
+                    self._open_sessions.add(target_session_id)
+                    self._states.setdefault(target_session_id, _HostedSessionState())
+                    if evicted:
+                        self._open_sessions.discard(evicted)
+                        evicted_state = self._states.pop(evicted, None)
+                        if evicted_state is not None and evicted_state.abort_timer is not None:
+                            evicted_state.abort_timer.cancel()
+                    self._status = "ready"
+                    self._schedule_idle_locked()
+                self.sessions.set_status(source_session_id, "idle")
+                bound = self.sessions.set_status(target_session_id, "idle")
+                self.events.publish(
+                    target_session_id,
+                    "session_configuration_changed",
+                    {
+                        "kind": "fork",
+                        "sourceSessionId": source_session_id,
+                        "entryId": normalized_entry_id,
+                    },
+                )
+                return {
+                    "sourceSessionId": source_session_id,
+                    "targetSessionId": target_session_id,
+                    "entryId": normalized_entry_id,
+                    "selectedText": str(forked.get("selectedText") or selected["text"]),
+                    "state": snapshot,
+                    "session": bound,
+                }
+            except Exception:
+                if opened_target:
+                    try:
+                        client.send("session.close", {"sessionId": target_session_id})
+                    except AgentRuntimeError:
+                        pass
+                    with self._lock:
+                        self._open_sessions.discard(target_session_id)
+                        target_state = self._states.pop(target_session_id, None)
+                        if target_state is not None and target_state.abort_timer is not None:
+                            target_state.abort_timer.cancel()
+                if (
+                    branch_transcript is not None
+                    and branch_cleanup_safe
+                    and branch_transcript.is_file()
+                    and not branch_transcript.is_symlink()
+                ):
+                    try:
+                        branch_transcript.unlink()
+                    except OSError:
+                        pass
+                self.sessions.set_status(source_session_id, "idle")
+                self.sessions.set_status(target_session_id, "idle")
+                with self._lock:
+                    self._schedule_idle_locked()
+                raise
+
+    def _require_idle_fork_session(self, session_id: str) -> None:
+        session = self.sessions.get(session_id)
+        if str(session.get("status") or "") != "idle":
+            raise PiRuntimeError("conversation forks are only available for idle Sessions")
+
+    def _require_quiescent_fork_locked(self, session_id: str) -> None:
+        state = self._states.get(session_id)
+        if state is None:
+            return
+        if state.turn_id:
+            raise PiRuntimeError("conversation forks are unavailable during an Agent turn")
+        if state.pending_approvals or state.pending_reviews:
+            raise PiRuntimeError("conversation forks are unavailable while user input is pending")
+
+    @staticmethod
+    def _fork_candidates_from_result(result: Mapping[str, object]) -> list[dict[str, object]]:
+        raw_items = result.get("items")
+        if not isinstance(raw_items, list):
+            raise PiRuntimeError("Pi returned an invalid conversation fork catalog")
+        candidates: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw in raw_items[:500]:
+            if not isinstance(raw, Mapping):
+                continue
+            entry_id = str(raw.get("entryId") or "").strip()[:240]
+            text = " ".join(str(raw.get("text") or "").split())[:8000]
+            if not entry_id or not text or entry_id in seen:
+                continue
+            seen.add(entry_id)
+            candidates.append({"entryId": entry_id, "text": text})
+        return candidates
 
     def command_catalog(self, session_id: str) -> list[dict[str, object]]:
         self.ensure(session_id)
@@ -529,8 +734,19 @@ class PiRuntimeHostManager:
         self.ensure(session_id)
         client = self._require_client()
         snapshot = client.send("session.snapshot", {"sessionId": session_id})
-        catalog = client.send("models.list", timeout=max(30.0, self.config.command_timeout_seconds))
         selected = _public_pi_model(_mapping(snapshot.get("model")))
+        models = self.available_models()
+        return {
+            "selected": selected or None,
+            "models": models,
+            "thinkingLevel": _effective_thinking_level(snapshot.get("thinkingLevel"), selected),
+        }
+
+    def available_models(self) -> list[dict[str, object]]:
+        catalog = self._host().send(
+            "models.list",
+            timeout=max(30.0, self.config.command_timeout_seconds),
+        )
         models = [
             model
             for value in catalog.get("models") or []
@@ -539,11 +755,7 @@ class PiRuntimeHostManager:
             if model
         ]
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
-        return {
-            "selected": selected or None,
-            "models": models,
-            "thinkingLevel": _effective_thinking_level(snapshot.get("thinkingLevel"), selected),
-        }
+        return models
 
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
         normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
@@ -569,7 +781,9 @@ class PiRuntimeHostManager:
             "session.thinking.set",
             {"sessionId": session_id, "level": normalized},
         )
-        return {"thinkingLevel": str(result.get("level") or normalized)}
+        effective = str(result.get("level") or normalized)
+        self.sessions.set_thinking_level(session_id, effective)
+        return {"thinkingLevel": effective}
 
     def tool_catalog(self, session_id: str) -> list[dict[str, object]]:
         session = dict(self.sessions.get(session_id))
@@ -578,10 +792,22 @@ class PiRuntimeHostManager:
         return [dict(item) for item in self._tool_manifest_provider(session)]
 
     def abort(self, session_id: str) -> None:
-        self._require_client().send("session.abort", {"sessionId": session_id})
+        client = self._require_client()
+        client.send("session.abort", {"sessionId": session_id})
         with self._lock:
-            turn_id = self._states.get(session_id, _HostedSessionState()).turn_id
-        self.events.publish(session_id, "status_changed", {"status": "aborting"}, turn_id=turn_id)
+            state = self._states.setdefault(session_id, _HostedSessionState())
+            turn_id = state.turn_id
+            # The host can emit agent_settled before the abort ACK arrives.
+            # Do not regress an already terminal turn back to "aborting".
+            if not turn_id:
+                return
+            if state.abort_timer is not None:
+                state.abort_timer.cancel()
+            self.events.publish(session_id, "status_changed", {"status": "aborting"}, turn_id=turn_id)
+            timer = threading.Timer(1.0, self._abort_fallback_expired, args=(session_id, turn_id))
+            timer.daemon = True
+            state.abort_timer = timer
+            timer.start()
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
         self.ensure(session_id)
@@ -697,6 +923,9 @@ class PiRuntimeHostManager:
                 self._client = None
                 self._intentional_stop = True
                 session_ids = tuple(self._open_sessions)
+                for state in self._states.values():
+                    if state.abort_timer is not None:
+                        state.abort_timer.cancel()
                 self._open_sessions.clear()
                 self._states.clear()
                 self._status = "stopped" if self.config.enabled else "disabled"
@@ -727,13 +956,15 @@ class PiRuntimeHostManager:
         raw = dict(_mapping(envelope.get("payload")))
         turn_id = str(envelope.get("turnId") or "")
         client_message_id = str(envelope.get("clientMessageId") or "")
+        event_type = str(raw.get("type") or "")
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
+            if turn_id and turn_id in state.retired_turn_ids:
+                return
             if turn_id:
                 state.turn_id = turn_id
             if client_message_id:
                 state.client_message_id = client_message_id
-        event_type = str(raw.get("type") or "")
         if event_type == "message_update":
             update = _mapping(raw.get("assistantMessageEvent"))
             update_type = str(update.get("type") or "")
@@ -783,12 +1014,17 @@ class PiRuntimeHostManager:
                 "tool_execution_update": "tool_progress",
                 "tool_execution_end": "tool_finished",
             }[event_type]
+            raw_args = _mapping(raw.get("args"))
+            tool_name = str(raw.get("toolName") or "")
             payload: dict[str, object] = {
                 "toolCallId": str(raw.get("toolCallId") or ""),
-                "toolName": str(raw.get("toolName") or ""),
-                "args": _redact_mapping(_mapping(raw.get("args"))),
+                "toolName": tool_name,
+                "args": _redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
+            public_result = _public_code_tool_activity(tool_name, raw_args)
+            if public_result:
+                payload["publicResult"] = public_result
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             if raw.get(result_key) is not None:
                 payload[result_key] = _redact_mapping(_mapping(raw.get(result_key)))
@@ -806,8 +1042,23 @@ class PiRuntimeHostManager:
             return
         if event_type == "agent_settled":
             with self._lock:
+                if state.turn_id != turn_id:
+                    return
                 messages = list(state.last_agent_messages)
                 final_error = state.final_error
+                if state.abort_timer is not None:
+                    state.abort_timer.cancel()
+                    state.abort_timer = None
+                if not final_error:
+                    state.turn_id = ""
+                    state.client_message_id = ""
+                    state.stream_pi_message_id = ""
+                    state.last_agent_messages = []
+                    state.final_error = ""
+                    state.pending_approvals.clear()
+                    state.pending_reviews.clear()
+                    self._status = "ready"
+                    self._schedule_idle_locked()
             if final_error:
                 self._turn_failed(session_id, turn_id, PiRuntimeError(final_error))
                 return
@@ -817,16 +1068,6 @@ class PiRuntimeHostManager:
                 message_count=len(messages),
                 last_message_preview=_last_assistant_preview(messages),
             )
-            with self._lock:
-                state.turn_id = ""
-                state.client_message_id = ""
-                state.stream_pi_message_id = ""
-                state.last_agent_messages = []
-                state.final_error = ""
-                state.pending_approvals.clear()
-                state.pending_reviews.clear()
-                self._status = "ready"
-                self._schedule_idle_locked()
             self.events.publish(
                 session_id,
                 "turn_completed",
@@ -905,6 +1146,9 @@ class PiRuntimeHostManager:
         message = _redact_runtime_text(str(error))
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
+            if state.abort_timer is not None:
+                state.abort_timer.cancel()
+                state.abort_timer = None
             state.turn_id = ""
             state.client_message_id = ""
             state.stream_pi_message_id = ""
@@ -922,6 +1166,9 @@ class PiRuntimeHostManager:
                 return
             message = _redact_runtime_text(error or f"Pi Runtime Host exited with code {exit_code}")
             active = [(session_id, state.turn_id) for session_id, state in self._states.items() if state.turn_id]
+            for state in self._states.values():
+                if state.abort_timer is not None:
+                    state.abort_timer.cancel()
             self._client = None
             self._open_sessions.clear()
             self._states.clear()
@@ -930,6 +1177,36 @@ class PiRuntimeHostManager:
         for session_id, turn_id in active:
             self.sessions.set_status(session_id, "faulted", last_message_preview=message)
             self.events.publish(session_id, "turn_failed", {"error": message}, turn_id=turn_id)
+
+    def _abort_fallback_expired(self, session_id: str, turn_id: str) -> None:
+        # session.abort is an ACK, not a terminal event. If a host/extension
+        # never emits agent_settled, retire that exact turn locally after a
+        # short grace period. Late events for it are ignored, so they cannot
+        # close a newer turn in the same hosted Session.
+        with self._lock:
+            state = self._states.get(session_id)
+            if state is None or state.turn_id != turn_id:
+                return
+            state.abort_timer = None
+            if len(state.retired_turn_ids) >= 64:
+                state.retired_turn_ids.pop()
+            state.retired_turn_ids.add(turn_id)
+            state.turn_id = ""
+            state.client_message_id = ""
+            state.stream_pi_message_id = ""
+            state.last_agent_messages = []
+            state.final_error = ""
+            state.pending_approvals.clear()
+            state.pending_reviews.clear()
+            self._status = "ready"
+            self._schedule_idle_locked()
+            self.sessions.set_status(session_id, "idle")
+            self.events.publish(
+                session_id,
+                "turn_completed",
+                {"status": "aborted", "aborted": True, "terminalEvent": "abort_timeout"},
+                turn_id=turn_id,
+            )
 
     def _schedule_idle_locked(self) -> None:
         self._cancel_idle_locked()

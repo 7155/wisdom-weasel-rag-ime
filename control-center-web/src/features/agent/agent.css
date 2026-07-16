@@ -93,6 +93,7 @@
 .agent-assistant-turn__body > header { display: flex; align-items: baseline; gap: 7px; min-height: 26px; }
 .agent-assistant-turn__body > header strong { font-size: 15px; }
 .agent-assistant-turn__body > header span { color: var(--color-text-tertiary); font-size: 12px; }
+.agent-turn-sequence { display: grid; min-width: 0; }
 .agent-assistant-message { min-width: 0; padding: 2px 0 12px; }
 .agent-assistant-pending { display: flex; min-height: 52px; max-width: 620px; align-items: center; gap: 10px; margin: 2px 0 12px; padding: 10px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-surface-subtle) 54%, var(--color-surface)); color: var(--color-accent); }
 .agent-assistant-pending > svg { flex: 0 0 auto; animation: agent-status-spin 1.2s linear infinite; }
@@ -184,6 +185,22 @@
 .agent-activity__copy { display: grid; min-width: 0; gap: 2px; }
 .agent-activity__copy strong { font-size: 14px; }
 .agent-activity__copy small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+details.agent-activity--inline { display: block; padding: 0; overflow: hidden; }
+details.agent-activity--inline > summary {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+details.agent-activity--inline > summary::-webkit-details-marker { display: none; }
+details.agent-activity--inline > summary > svg { color: var(--color-text-tertiary); transition: transform var(--duration-enter) var(--ease-standard); }
+details.agent-activity--inline[open] > summary > svg { transform: rotate(90deg); }
+.agent-activity__inline-timeline { padding: 2px 9px 7px; border-top: 1px solid var(--color-border); }
+.agent-activity__inline-timeline .agent-activity-row:last-child::before { bottom: 20px; }
 .agent-activity-approval { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 9px; margin-top: 6px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--color-warning) 30%, var(--color-border)); border-left: 3px solid var(--color-warning); border-radius: var(--radius-2); background: var(--color-warning-soft); color: var(--color-warning); }
 .agent-activity-approval > span { display: grid; min-width: 0; gap: 2px; }
 .agent-activity-approval strong { color: var(--color-text); font-size: 13px; }
@@ -212,6 +229,13 @@
 .agent-activity-row__source-panel { display: grid; gap: 5px; padding: 8px 10px; border-left: 2px solid var(--color-accent); background: var(--color-surface-subtle); }
 .agent-activity-row__source-panel > strong { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-secondary); font-size: 11px; }
 .agent-activity-row__sources { display: grid; gap: 3px; margin: 0; padding-left: 16px; color: var(--color-text-secondary); font-size: 11px; }
+.agent-tool-result-panel { display: grid; gap: 6px; margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--color-accent); background: var(--color-surface-subtle); }
+.agent-tool-result-panel[data-tone='error'] { border-left-color: var(--color-danger); background: var(--color-danger-soft); }
+.agent-tool-result-panel > strong { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-secondary); font-size: 11px; }
+.agent-tool-result-panel[data-tone='error'] > strong, .agent-tool-result-panel[data-tone='error'] > p { color: var(--color-danger); }
+.agent-tool-result-panel > p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-tool-result-panel > pre { max-height: 260px; margin: 0; padding: 8px; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-tool-recovery { display: flex; justify-content: flex-end; margin-top: 8px; }
 .agent-activity-row__approval-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .agent-activity-live { margin-top: 5px; padding: 3px 8px 2px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-surface-subtle) 38%, transparent); }
 .agent-activity-live .agent-activity-row { padding-left: 12px; }

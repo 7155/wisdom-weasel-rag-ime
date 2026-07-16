@@ -38,7 +38,7 @@ from .agent_runtime_driver import (
     ToolManifestProvider,
 )
 from .agent_rooms import AgentRoomEventHub, AgentRoomStore
-from .agent_roles import agent_role_catalog
+from .agent_roles import PersonaManifest, agent_role_catalog
 from .agent_sessions import AgentSessionStore
 from .agent_tool_ids import CONTROL_TOOL_IDS
 from .contracts.json_schema import validate_contract
@@ -335,20 +335,38 @@ class AgentService:
             workspace_roots = [str(item) for item in roots_value]
         else:
             raise ValueError("workspaceRoots must be an array")
+        role_runtime_defaults = self.personas.runtime_defaults(
+            role.role_id,
+            role.version,
+        ) or self._initial_role_runtime_defaults(
+            role,
+            default_model_profile=str(session_defaults["modelProfile"]),
+        )
         requested_model_profile = payload.get("modelProfile")
         if requested_model_profile is not None:
             model_profile = str(requested_model_profile)
+            # A role's reasoning level is part of its saved model choice, not
+            # an independent persona preference.  An explicit session model
+            # override must therefore let that model/runtime choose its own
+            # safe default instead of carrying a potentially unsupported level
+            # across models (for example Luna/max -> Sol).
+            thinking_level = ""
+        elif role_runtime_defaults is not None:
+            model_profile = role_runtime_defaults["modelProfile"]
+            thinking_level = role_runtime_defaults.get("thinkingLevel", "")
         else:
             # Persona controls prompt, visual identity and tool policy. The
             # Pi runtime catalog is the model authority; choosing a role must
             # never silently substitute a guessed or unavailable model ID.
             model_profile = str(session_defaults["modelProfile"])
+            thinking_level = ""
         session = self.sessions.create(
             title=title,
             mode=mode,
             role_id=role.role_id,
             role_version=role.version,
             model_profile=model_profile,
+            thinking_level=thinking_level,
             tool_profile_version=requested_tool_profile,
             workspace_roots=workspace_roots,
         )
@@ -362,10 +380,10 @@ class AgentService:
         return {
             "schemaVersion": "rag-ime.agent-role-list.v1",
             "ok": True,
-            "items": [
+            "items": [self._role_payload(role) for role in [
                 *agent_role_catalog(),
                 *(persona.to_payload() for persona in self.personas.list()),
-            ],
+            ]],
         }
 
     def create_role(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -373,7 +391,134 @@ class AgentService:
         return {
             "schemaVersion": "rag-ime.agent-role-create.v1",
             "ok": True,
-            "role": persona.to_payload(),
+            "role": self._role_payload(persona.to_payload()),
+        }
+
+    def role_model_catalog(self) -> dict[str, object]:
+        try:
+            available = self.runtime.available_models()
+        except AgentRuntimeError as exc:
+            return {
+                "schemaVersion": "rag-ime.agent-role-model-catalog.v1",
+                "ok": False,
+                "selected": None,
+                "thinkingLevel": "off",
+                "providers": [],
+                "error": str(exc),
+            }
+        grouped: dict[str, list[dict[str, object]]] = {}
+        for value in available:
+            if not isinstance(value, Mapping):
+                continue
+            provider = str(value.get("provider") or "")
+            if provider:
+                grouped.setdefault(provider, []).append(dict(value))
+        providers = [
+            {"id": provider, "displayName": _provider_display_name(provider), "models": models}
+            for provider, models in sorted(grouped.items(), key=lambda item: item[0].lower())
+        ]
+        default_profile = str(self.runtime_factory.default_model_profile or "pi/default")
+        default_provider, _, default_model = default_profile.partition("/")
+        selected = next(
+            (
+                {"provider": default_provider, "id": default_model}
+                for provider in providers
+                for model in provider["models"]
+                if isinstance(model, Mapping)
+                and provider["id"] == default_provider
+                and model.get("id") == default_model
+            ),
+            None,
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-role-model-catalog.v1",
+            "ok": True,
+            "selected": selected,
+            "thinkingLevel": "off",
+            "providers": providers,
+        }
+
+    def update_role_runtime_defaults(self, payload: Mapping[str, object]) -> dict[str, object]:
+        role_id = _required_text(payload, "roleId")
+        role_version = _required_text(payload, "roleVersion")
+        provider = _required_text(payload, "provider")
+        model_id = _required_text(payload, "modelId")
+        thinking_level = _required_text(payload, "thinkingLevel").lower()
+        catalog = self.role_model_catalog()
+        selected_model = next(
+            (
+                model
+                for provider_item in catalog["providers"]
+                if isinstance(provider_item, Mapping) and provider_item.get("id") == provider
+                for model in provider_item.get("models", [])
+                if isinstance(model, Mapping) and model.get("id") == model_id
+            ),
+            None,
+        )
+        if selected_model is None:
+            raise ValueError("所选模型不在当前 Pi 模型目录中")
+        supported = selected_model.get("thinkingLevels")
+        if not isinstance(supported, list) or thinking_level not in supported:
+            raise ValueError("所选模型不支持这个推理强度")
+        defaults = self.personas.set_runtime_defaults(
+            role_id,
+            role_version,
+            model_profile=f"{provider}/{model_id}",
+            thinking_level=thinking_level,
+        )
+        role = self.personas.resolve(role_id, role_version)
+        return {
+            "schemaVersion": "rag-ime.agent-role-runtime-defaults.v1",
+            "ok": True,
+            "defaults": defaults,
+            "role": self._role_payload(role.to_payload()),
+        }
+
+    def _role_payload(self, value: Mapping[str, object]) -> dict[str, object]:
+        payload = dict(value)
+        defaults_value = payload.get("defaults")
+        defaults = dict(defaults_value) if isinstance(defaults_value, Mapping) else {}
+        role = self.personas.resolve(payload.get("roleId"), payload.get("version"))
+        stored = self.personas.runtime_defaults(role.role_id, role.version)
+        defaults.update(stored or self._initial_role_runtime_defaults(role))
+        payload["defaults"] = defaults
+        validate_contract(payload, "agent-persona.v1.json")
+        return payload
+
+    def _initial_role_runtime_defaults(
+        self,
+        role: PersonaManifest,
+        *,
+        default_model_profile: str | None = None,
+    ) -> dict[str, str]:
+        """Resolve first-use defaults without replacing explicit role preferences.
+
+        Timeline models are available only on the GPT provider. Other runtime
+        drivers keep their own configured model rather than receiving a model
+        identifier they cannot resolve.
+        """
+
+        default_profile = str(
+            default_model_profile
+            or self.runtime_factory.default_model_profile
+            or "pi/default"
+        )
+        provider, separator, configured_model = default_profile.partition("/")
+        timeline_models = {
+            "rag-ime-timeline-past-v1": ("gpt-5.6-luna", "max"),
+            "rag-ime-timeline-present-v1": ("gpt-5.6-terra", "max"),
+            "rag-ime-timeline-future-v1": ("gpt-5.6-sol", "xhigh"),
+        }
+        timeline = timeline_models.get(role.visual_profile.avatar_asset_id)
+        provider_has_timeline_models = provider == "gpt" or configured_model.startswith(
+            "gpt-5.6-"
+        )
+        if not separator or timeline is None or not provider_has_timeline_models:
+            return {"modelProfile": default_profile, "thinkingLevel": "off"}
+        model_id, thinking_level = timeline
+        return {
+            "modelProfile": f"{provider}/{model_id}",
+            "thinkingLevel": thinking_level,
         }
 
     def list_agent_templates(self) -> dict[str, object]:
@@ -657,6 +802,20 @@ class AgentService:
     def model_catalog(self, session_id: str) -> dict[str, object]:
         catalog = self.runtime.model_catalog(session_id)
         models = catalog.get("models") if isinstance(catalog.get("models"), list) else []
+        selected = catalog.get("selected")
+        if isinstance(selected, Mapping):
+            selected_provider = str(selected.get("provider") or "")
+            selected_id = str(selected.get("id") or selected.get("modelId") or "")
+            if selected_provider and selected_id and not any(
+                isinstance(value, Mapping)
+                and str(value.get("provider") or "") == selected_provider
+                and str(value.get("id") or value.get("modelId") or "") == selected_id
+                for value in models
+            ):
+                # The selected session model is authoritative even when Pi's
+                # independently refreshed available-model list is temporarily
+                # partial. Keep it renderable instead of showing "选择模型".
+                models = [*models, dict(selected)]
         providers: dict[str, list[dict[str, object]]] = {}
         for value in models:
             if not isinstance(value, Mapping):
@@ -667,7 +826,7 @@ class AgentService:
             "schemaVersion": "rag-ime.agent-model-catalog.v1",
             "ok": True,
             "sessionId": session_id,
-            "selected": catalog.get("selected"),
+            "selected": selected,
             "thinkingLevel": str(catalog.get("thinkingLevel") or "off"),
             "providers": [
                 {

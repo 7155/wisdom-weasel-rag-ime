@@ -30,6 +30,8 @@ export interface AgentPersonaV1 {
     modelPolicy: string;
     memoryPolicy: string;
     toolProfileVersion: string;
+    modelProfile?: string;
+    thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   };
   safetyPolicyVersion: 'control-center-safe-v1';
   /**

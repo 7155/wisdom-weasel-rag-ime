@@ -300,6 +300,16 @@ export const CONTROL_ROUTES = {
     body: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes'],
     requiredBody: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes'],
   },
+  'agent.role.models': {
+    method: 'GET',
+    path: '/api/agent/roles/models',
+  },
+  'agent.role.runtimeDefaults.update': {
+    method: 'POST',
+    path: '/api/agent/roles/runtime-defaults',
+    body: ['roleId', 'roleVersion', 'provider', 'modelId', 'thinkingLevel'],
+    requiredBody: ['roleId', 'roleVersion', 'provider', 'modelId', 'thinkingLevel'],
+  },
   'agent.tools.list': { method: 'GET', path: '/api/agent/tools', query: ['sessionId'] },
   'agent.approvals.list': {
     method: 'GET',

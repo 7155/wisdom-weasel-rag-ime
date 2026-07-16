@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from dataclasses import replace
@@ -737,6 +738,14 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(history[0]["turnId"], history[1]["turnId"])
         self.assertNotEqual(history[0]["id"], history[1]["id"])
 
+    def test_ensure_applies_the_persisted_session_thinking_level(self) -> None:
+        session_id = str(self.session["id"])
+        self.store.set_thinking_level(session_id, "xhigh")
+
+        ensured = self.runtime.ensure(session_id)
+
+        self.assertEqual(ensured["state"]["thinkingLevel"], "xhigh")
+
     def test_prompt_rejects_a_second_turn_until_the_active_turn_settles(self) -> None:
         session_id = str(self.session["id"])
         self.runtime.ensure(session_id)
@@ -834,6 +843,29 @@ class PiRuntimeTests(unittest.TestCase):
             self.runtime.abort(str(other["id"]))
 
         self.runtime.stop()
+        self.assertEqual(self.runtime.runtime_status()["status"], "stopped")
+
+    def test_abort_ack_without_agent_end_is_terminalized_after_grace_period(self) -> None:
+        session_id = str(self.session["id"])
+        accepted = self.runtime.prompt(session_id, "review:abort-hang")
+        turn_id = str(accepted["turnId"])
+        _wait_until(lambda: self.store.get(session_id)["status"] == "busy")
+
+        self.runtime.abort(session_id)
+
+        _wait_until(
+            lambda: any(
+                event.event_type == "turn_completed" and event.payload.get("status") == "aborted"
+                for event in self.events.replay(session_id)[0]
+            ),
+            timeout=2.5,
+        )
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        completed = [event for event in events if event.event_type == "turn_completed"]
+        self.assertEqual(completed[-1].turn_id, turn_id)
+        self.assertEqual(completed[-1].payload["status"], "aborted")
+        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout")
         self.assertEqual(self.runtime.runtime_status()["status"], "stopped")
 
     def test_real_pi_fork_binds_distinct_target_and_preserves_source_binding(self) -> None:
@@ -1100,7 +1132,8 @@ class PiRuntimeTests(unittest.TestCase):
         events, _ = self.events.replay(session_id)
         resolved = next(event for event in events if event.event_type == "approval_resolved")
         self.assertEqual(resolved.payload["state"], "external_pending")
-        self.assertIn("turn_completed", [event.event_type for event in events])
+        completed = next(event for event in events if event.event_type == "turn_completed")
+        self.assertEqual({required.turn_id, resolved.turn_id, completed.turn_id}, {required.turn_id})
 
     def test_memory_review_pauses_and_resumes_the_same_pi_turn(self) -> None:
         session_id = str(self.session["id"])
@@ -1129,7 +1162,40 @@ class PiRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(resolved.payload["requestId"], required.payload["requestId"])
         self.assertEqual(resolved.payload["reviewState"], "reviewed")
+        self.assertEqual(resolved.turn_id, required.turn_id)
         self.assertIn("turn_completed", [event.event_type for event in events])
+
+    def test_memory_review_does_not_expose_idle_before_the_same_turn_terminal_receipt(self) -> None:
+        session_id = str(self.session["id"])
+        run_id = "review:terminal-order"
+        self.runtime.prompt(session_id, run_id)
+        _wait_until(lambda: self.runtime.has_pending_review(session_id, run_id))
+
+        terminal_publish_entered = threading.Event()
+        allow_terminal_publish = threading.Event()
+        original_publish = self.events.publish
+
+        def gated_publish(*args, **kwargs):
+            if len(args) > 1 and args[1] == "turn_completed":
+                terminal_publish_entered.set()
+                allow_terminal_publish.wait(timeout=2.0)
+            return original_publish(*args, **kwargs)
+
+        try:
+            with mock.patch.object(self.events, "publish", side_effect=gated_publish):
+                self.runtime.resolve_review(session_id, run_id, reviewed=True)
+                _wait_until(terminal_publish_entered.is_set)
+                self.assertEqual(self.store.get(session_id)["status"], "busy")
+                allow_terminal_publish.set()
+                _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+        finally:
+            allow_terminal_publish.set()
+
+        events, _ = self.events.replay(session_id)
+        required = next(event for event in events if event.event_type == "user_input_required")
+        resolved = next(event for event in events if event.event_type == "approval_resolved")
+        completed = next(event for event in events if event.event_type == "turn_completed")
+        self.assertEqual({required.turn_id, resolved.turn_id, completed.turn_id}, {required.turn_id})
 
     def test_disabled_and_uninstalled_states_fail_closed(self) -> None:
         disabled = PiRuntimeManager(
