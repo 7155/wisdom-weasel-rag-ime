@@ -401,7 +401,12 @@ class AgentSessionStore:
         if normalized_mode not in {"assistant", "coordinator"}:
             raise ValueError("agent session mode must be assistant or coordinator")
         profile = str(tool_profile_version or "").strip()
-        if profile not in {"control-center-v1", "subagent-readonly-v1", "subagent-worker-v1"}:
+        if profile not in {
+            "control-center-v1",
+            "subagent-readonly-v1",
+            "subagent-worker-v1",
+            "ime-surface-v1",
+        }:
             raise ValueError("unsupported Agent tool profile")
         current = self.get(session_id)
         roots = _workspace_roots(

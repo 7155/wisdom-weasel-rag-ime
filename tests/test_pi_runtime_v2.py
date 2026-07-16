@@ -188,6 +188,27 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(opened[0]["params"]["toolManifest"][0]["name"], "ime_memory")
         self.assertEqual(opened[0]["params"]["thinkingLevel"], "max")
 
+    def test_surface_profile_disables_project_context_files(self) -> None:
+        surface = self.store.create(
+            title="输入法联想 · test",
+            session_kind="subagent_runtime",
+            tool_profile_version="ime-surface-v1",
+        )
+        self.store.set_runtime_policy(
+            str(surface["id"]),
+            mode="assistant",
+            tool_profile_version="ime-surface-v1",
+            allowed_tools=[],
+            workspace_roots=[],
+        )
+
+        self.runtime.ensure(str(surface["id"]))
+
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        opened = [row for row in requests if row["method"] == "session.open"]
+        self.assertTrue(opened[-1]["params"]["noContextFiles"])
+        self.assertIn("只输出可以直接插入光标", opened[-1]["params"]["systemPrompt"])
+
     def test_agent_end_is_not_terminal_and_max_comes_from_host_catalog(self) -> None:
         session_id = str(self.first["id"])
         catalog = self.runtime.model_catalog(session_id)

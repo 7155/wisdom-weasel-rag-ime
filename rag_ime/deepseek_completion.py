@@ -31,6 +31,9 @@ class DeepSeekCompletionRequest:
     stream: bool = True
     latency_budget_ms: int = 2500
     recovery_mode: bool = False
+    surface_request_id: str = ""
+    front_app_bundle_id: str = ""
+    visual_context: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)

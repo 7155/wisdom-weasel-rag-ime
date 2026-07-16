@@ -24,6 +24,7 @@ ESCAPE_PASS_THROUGH_OR_CLEAR_RIME = "pass_through_or_clear_rime"
 SELECTION_ACTION_COMMIT_SIDE_CANDIDATE = "commit_side_candidate"
 SELECTION_ACTION_SELECT_RIME_CANDIDATE = "select_rime_candidate"
 SELECTION_ACTION_START_ACTIVE_RAG_FROM_CONTEXT = "start_active_rag_from_context"
+SELECTION_ACTION_START_VISUAL_RAG_FROM_CONTEXT = "start_visual_rag_from_context"
 SELECTION_ACTION_NONE = "none"
 
 ROUTE_NUMBER_KEY = "number_key_route"

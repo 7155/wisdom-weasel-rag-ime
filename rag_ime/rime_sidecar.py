@@ -6469,6 +6469,13 @@ def append_post_commit_active_rag_action(
             "active_rag",
         ),
         (
+            "看图生成",
+            "start_visual_rag_from_context",
+            "active_rag_visual",
+            "",
+            "active_rag_visual",
+        ),
+        (
             "深度查找",
             "start_agent_deep_search_from_context",
             "agent_deep_search",
@@ -6491,8 +6498,9 @@ def append_post_commit_active_rag_action(
                 display_layout="action_bar",
                 display_lane=lane,
                 metadata={
-                    "candidate_mode": "post-commit-dual-action-button",
+                    "candidate_mode": "post-commit-triple-action-button",
                     "activeRagTrigger": selection_action == "start_active_rag_from_context",
+                    "visualRagTrigger": selection_action == "start_visual_rag_from_context",
                     "agentDeepSearchTrigger": selection_action == "start_agent_deep_search_from_context",
                     "buttonRole": button_role,
                     "buttonLabel": text,
@@ -6500,10 +6508,11 @@ def append_post_commit_active_rag_action(
                     "numericSelectionDisabled": True,
                     "triggerPolicy": "manual_only",
                     "requiresExplicitSelection": True,
-                    "intent": "complete" if button_role == "active_rag_generate" else "deep_search",
-                    "placement": "insert_after_selection" if button_role == "active_rag_generate" else "control_center",
+                    "intent": "deep_search" if button_role == "agent_deep_search" else "complete",
+                    "placement": "control_center" if button_role == "agent_deep_search" else "insert_after_selection",
                     "maxCandidates": 1,
-                    "requiresPi": button_role == "agent_deep_search",
+                    "requiresPi": True,
+                    "requiresScreenshot": button_role == "active_rag_visual",
                 },
             )
         )

@@ -424,7 +424,10 @@ final class RagImeAssistantPanelController {
     )
     switch state {
     case .pendingPrediction:
-      return NSSize(width: width, height: RagImeSuggestionCardView.pendingHeight)
+      return NSSize(
+        width: min(configuredMaximumWidth, RagImeSuggestionCardView.minimumPredictionWidth),
+        height: RagImeSuggestionCardView.pendingHeight
+      )
     case .compactPrediction, .expandedPredictions:
       return NSSize(
         width: width,

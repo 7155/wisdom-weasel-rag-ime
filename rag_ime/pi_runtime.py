@@ -53,6 +53,14 @@ _REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
 _MAX_PERSISTED_TRANSCRIPT_BYTES = 64 * 1024 * 1024
 _MAX_PERSISTED_TRANSCRIPT_ENTRIES = 100_000
 _MAX_PERSISTED_TRANSCRIPT_LINE_BYTES = 4 * 1024 * 1024
+_IME_SURFACE_SYSTEM_PROMPT = """你是输入法中的连续联想引擎，只处理用户明确点击触发的文字生成。
+
+输出规则：
+- 只输出可以直接插入光标或替换选区的正文，不解释过程，不加标题、引号、Markdown 围栏或候选编号。
+- 延续当前文字的语言、语气、时态与格式；需要改写时只返回改写结果。
+- 请求附带当前应用截图时，把可见界面作为辅助上下文，但不要复述界面、泄露无关内容或猜测不可见信息。
+- 没有足够上下文时给出最保守、最短的自然续写，不调用工具，也不声称执行了任何操作。
+"""
 
 
 def _tools_for_session(
@@ -281,6 +289,8 @@ class PiRuntimeConfig:
         return [str(executable)]
 
     def system_prompt_for_session(self, session: Mapping[str, object]) -> str:
+        if str(session.get("toolProfileVersion") or "") == "ime-surface-v1":
+            return _IME_SURFACE_SYSTEM_PROMPT
         role = self.role_resolver(
             session.get("roleId") or "zhiyou-v1",
             session.get("roleVersion") or "1",

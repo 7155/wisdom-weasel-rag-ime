@@ -29,6 +29,11 @@ from .active_rag_service import (
     active_rag_sensitive_text_blocked,
 )
 from .agent_extensions import AgentExtensionService
+from .agent_surface_runtime import (
+    AgentSurfaceRuntime,
+    PiSurfaceCompletionProvider,
+    validate_visual_context,
+)
 from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
     agent_approval_route,
@@ -360,6 +365,18 @@ class DebugImeService:
             # database but must never race to claim the same wake schedule.
             wake_scheduler_enabled=config.server_name == "agent gateway",
         )
+        self.agent_surface = AgentSurfaceRuntime(self.agent)
+        if config.server_name == "agent gateway":
+            self.active_rag.completion_provider = PiSurfaceCompletionProvider(
+                local_runtime=self.agent_surface,
+            )
+        elif config.server_name == "sidecar server":
+            self.active_rag.completion_provider = PiSurfaceCompletionProvider(
+                gateway_url=os.environ.get(
+                    "RAG_IME_AGENT_GATEWAY_URL",
+                    "http://127.0.0.1:8768",
+                ),
+            )
         runtime_factory_config = getattr(self.agent.runtime_factory, "config", None)
         self.pi_provider_auth = config.pi_provider_auth_service or PiProviderAuthService.from_runtime(
             runtime_factory_config
@@ -1690,6 +1707,7 @@ class DebugImeService:
             if isinstance(payload.get("evidencePack"), list)
             else ()
         )
+        visual_context = validate_visual_context(payload.get("visualContext"))
         return ActiveRagStartRequest(
             selected_text=selected_text,
             selected_text_hash=(
@@ -1753,6 +1771,7 @@ class DebugImeService:
             ),
             rag_enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
             rag_lane_weights=runtime_config.hybrid_rag.query_weights(),
+            visual_context=visual_context,
         )
 
     @staticmethod
@@ -1870,6 +1889,12 @@ class DebugImeService:
         if not session_id:
             return {"schemaVersion": "rag-ime.active-rag-service.v1", "status": "missing", "error": "sessionId is required"}
         return self.active_rag.cancel(session_id)
+
+    def agent_surface_complete(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.agent_surface.complete(payload)
+
+    def agent_surface_cancel(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.agent_surface.cancel(payload)
 
     def active_rag_accept(self, payload: dict[str, Any]) -> dict[str, object]:
         return self.active_rag.accept(
@@ -6161,6 +6186,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.agent_extensions.apply(payload))
             elif path == "/api/agent/deep-search":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
+            elif path == "/api/agent/surface/complete":
+                self._write_json(HTTPStatus.OK, self.service.agent_surface_complete(payload))
+            elif path == "/api/agent/surface/cancel":
+                self._write_json(HTTPStatus.OK, self.service.agent_surface_cancel(payload))
             elif path == "/api/agent/sessions":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
             elif path == "/api/agent/wake-schedules":

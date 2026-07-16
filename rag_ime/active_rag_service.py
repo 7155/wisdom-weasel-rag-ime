@@ -148,6 +148,7 @@ class ActiveRagStartRequest:
     local_retrieval_skip_reason: str = ""
     rag_enabled_lanes: tuple[tuple[str, bool], ...] = ()
     rag_lane_weights: tuple[tuple[str, float], ...] = ()
+    visual_context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -381,6 +382,9 @@ class ActiveRagService:
                 session.updated_at_ms = now_ms()
                 self._record_cancel_feedback(session=session)
                 self._persist_session_trace_locked(session, phase="cancelled")
+                cancel = getattr(self.completion_provider, "cancel", None)
+                if callable(cancel):
+                    cancel(session.request.panel_session_id)
             return _session_payload(session) if session is not None else {"sessionId": session_id, "status": "missing"}
 
     def accept(
@@ -641,7 +645,8 @@ class ActiveRagService:
         if provider is None:
             return ()
         try:
-            assert_deepseek_scene_allowed("active_rag")
+            if not bool(getattr(provider, "uses_managed_pi", False)):
+                assert_deepseek_scene_allowed("active_rag")
         except RuntimeError as exc:
             if diagnostics is not None:
                 diagnostics["route"] = {
@@ -695,6 +700,9 @@ class ActiveRagService:
             max_candidates=request.max_candidates,
             max_chars=request.max_chars,
             latency_budget_ms=_remote_completion_budget_ms(request),
+            surface_request_id=request.panel_session_id,
+            front_app_bundle_id=request.front_app_bundle_id,
+            visual_context=dict(request.visual_context),
         )
         resolved_model_request = resolved_active_rag_current_request(completion_request)
         messages = build_deepseek_completion_messages(completion_request)
@@ -1733,11 +1741,12 @@ def _remote_active_rag_route(
     credentials_configured = _provider_credentials_configured(provider)
     scene_enabled = True
     scene_reason = ""
-    try:
-        assert_deepseek_scene_allowed("active_rag")
-    except RuntimeError as exc:
-        scene_enabled = False
-        scene_reason = str(exc)
+    if not bool(getattr(provider, "uses_managed_pi", False)):
+        try:
+            assert_deepseek_scene_allowed("active_rag")
+        except RuntimeError as exc:
+            scene_enabled = False
+            scene_reason = str(exc)
     gates = {
         "explicitActiveRagOnly": True,
         "requestAllowsRemoteModel": request_allowed,
@@ -1756,7 +1765,11 @@ def _remote_active_rag_route(
         skip_reason = "credentials_missing"
     return {
         "schemaVersion": ACTIVE_RAG_ROUTE_STATUS_SCHEMA_VERSION,
-        "route": "explicit_active_rag_knowledge_provider",
+        "route": (
+            "explicit_active_rag_pi_surface"
+            if bool(getattr(provider, "uses_managed_pi", False))
+            else "explicit_active_rag_knowledge_provider"
+        ),
         "provider": _provider_name(provider),
         "model": _provider_model(provider),
         "ready": all(gates.values()),
@@ -1793,6 +1806,12 @@ def _initial_session_diagnostics(
             "frontendContextChars": request.frontend_context_chars,
             "frontendContextHash": request.frontend_context_hash,
             "captureWarnings": capture_warnings,
+            "visualContext": {
+                "present": bool(request.visual_context),
+                "mimeType": str(request.visual_context.get("mimeType") or ""),
+                "pixelWidth": int(request.visual_context.get("pixelWidth") or 0),
+                "pixelHeight": int(request.visual_context.get("pixelHeight") or 0),
+            },
         },
         "route": route,
         "contextInjection": {

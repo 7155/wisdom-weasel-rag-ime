@@ -407,6 +407,7 @@ class PiRuntimeHostManager:
                 "cwd": cwd,
                 "systemPrompt": self.config.system_prompt_for_session(session),
                 "toolManifest": self.tool_catalog(session_id),
+                "noContextFiles": str(session.get("toolProfileVersion") or "") == "ime-surface-v1",
             }
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})

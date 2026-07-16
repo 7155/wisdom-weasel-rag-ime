@@ -1101,10 +1101,14 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
 
         self.assertEqual(response["uiMode"], "post_commit_pending")
-        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "深度查找"])
+        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "看图生成", "深度查找"])
         self.assertEqual(
             [item["selectionAction"] for item in action_candidates],
-            ["start_active_rag_from_context", "start_agent_deep_search_from_context"],
+            [
+                "start_active_rag_from_context",
+                "start_visual_rag_from_context",
+                "start_agent_deep_search_from_context",
+            ],
         )
         for item in action_candidates:
             self.assertEqual(item["label"], "")
@@ -1120,8 +1124,11 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             self.assertTrue(item["metadata"]["requiresExplicitSelection"])
         self.assertEqual(action_candidates[0]["metadata"]["buttonRole"], "active_rag_generate")
         self.assertEqual(action_candidates[0]["metadata"]["shortcutHint"], "ctrl+.")
-        self.assertEqual(action_candidates[1]["metadata"]["buttonRole"], "agent_deep_search")
-        self.assertTrue(action_candidates[1]["metadata"]["requiresPi"])
+        self.assertEqual(action_candidates[1]["metadata"]["buttonRole"], "active_rag_visual")
+        self.assertTrue(action_candidates[1]["metadata"]["visualRagTrigger"])
+        self.assertTrue(action_candidates[1]["metadata"]["requiresScreenshot"])
+        self.assertEqual(action_candidates[2]["metadata"]["buttonRole"], "agent_deep_search")
+        self.assertTrue(action_candidates[2]["metadata"]["requiresPi"])
         overlay_candidates = response["assistantOverlay"]["candidates"]
         self.assertEqual(response["candidatePanel"]["candidates"], [])
         self.assertTrue(any(item["sourceType"] == "action" for item in overlay_candidates))
@@ -1162,7 +1169,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual(core.calls, 0)
         self.assertEqual(predictor.calls, 0)
-        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "深度查找"])
+        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "看图生成", "深度查找"])
         for item in action_candidates:
             self.assertEqual(item["label"], "")
             self.assertIsNone(item["selectionKey"])
@@ -1201,7 +1208,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         actions = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
         self.assertEqual(len(numbered), 1)
         self.assertEqual(numbered[0]["selectionAction"], "commit_side_candidate")
-        self.assertEqual([item["candidateOrdinal"] for item in actions], [0, 0])
+        self.assertEqual([item["candidateOrdinal"] for item in actions], [0, 0, 0])
 
     def test_v1_empty_post_commit_followup_does_not_emit_demo_fallback_by_default(self) -> None:
         first, follow_up, _, _ = self._prime_post_commit(

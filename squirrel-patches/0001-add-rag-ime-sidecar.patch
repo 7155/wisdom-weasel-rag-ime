@@ -212,10 +212,10 @@ index f998248d94a4ce09ada9850edbff104a9ef9611f..a56500e18f044ce567db38c66da0cd7f
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..54c239a4e5a0d8ad9a1b8b7d93a7c985d436a4bf
+index 0000000000000000000000000000000000000000..966509f6388a0570e9f387b4532871570d30b2d6
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,703 @@
+@@ -0,0 +1,706 @@
 +import AppKit
 +import QuartzCore
 +
@@ -642,7 +642,10 @@ index 0000000000000000000000000000000000000000..54c239a4e5a0d8ad9a1b8b7d93a7c985
 +    )
 +    switch state {
 +    case .pendingPrediction:
-+      return NSSize(width: width, height: RagImeSuggestionCardView.pendingHeight)
++      return NSSize(
++        width: min(configuredMaximumWidth, RagImeSuggestionCardView.minimumPredictionWidth),
++        height: RagImeSuggestionCardView.pendingHeight
++      )
 +    case .compactPrediction, .expandedPredictions:
 +      return NSSize(
 +        width: width,
@@ -2355,10 +2358,10 @@ index 0000000000000000000000000000000000000000..aec4fe5622dc1ae734b8c77abcd283c1
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..7bc0284af41c0d230a481cb84a5c473ac71037c4
+index 0000000000000000000000000000000000000000..44575b28c5cc52e62faa7b1ada3ad2082b312cd5
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,725 @@
+@@ -0,0 +1,735 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -2537,6 +2540,15 @@ index 0000000000000000000000000000000000000000..7bc0284af41c0d230a481cb84a5c473a
 +  }
 +}
 +
++struct RagImeVisualContext: Codable {
++  let schemaVersion: String
++  let mimeType: String
++  let dataBase64: String
++  let pixelWidth: Int
++  let pixelHeight: Int
++  let source: String
++}
++
 +struct RagImeActiveRagRequest: Codable {
 +  let schemaVersion: String
 +  let sessionId: String
@@ -2562,6 +2574,7 @@ index 0000000000000000000000000000000000000000..7bc0284af41c0d230a481cb84a5c473a
 +  let project: String
 +  let maxCandidates: Int
 +  let latencyBudgetMs: Int
++  let visualContext: RagImeVisualContext?
 +}
 +
 +struct RagImeActiveRagResponse: Codable {
@@ -3086,10 +3099,10 @@ index 0000000000000000000000000000000000000000..7bc0284af41c0d230a481cb84a5c473a
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8dc5f9f878
+index 0000000000000000000000000000000000000000..bdd2c3bdfc410509ed13101fc51dcf8148b02b7c
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
-@@ -0,0 +1,685 @@
+@@ -0,0 +1,735 @@
 +import AppKit
 +import QuartzCore
 +
@@ -3164,8 +3177,10 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +  private let accentRail = NSView()
 +  private let actionSeparator = NSView()
 +  private let actionContainer = NSView()
-+  private let actionDivider = NSView()
-+  private let deepSeekButton = NSButton(title: "快速", target: nil, action: nil)
++  private let actionDividerLeading = NSView()
++  private let actionDividerTrailing = NSView()
++  private let quickGenerateButton = NSButton(title: "生成", target: nil, action: nil)
++  private let visualGenerateButton = NSButton(title: "看图", target: nil, action: nil)
 +  private let deepSearchButton = NSButton(title: "深度", target: nil, action: nil)
 +  private let statusHalo = NSView()
 +  private let statusIcon = NSImageView()
@@ -3188,6 +3203,8 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +  private var candidateIndexes: [Int] = []
 +  private var quickActionCandidate: RagImeDisplayCandidate?
 +  private var quickActionCandidateIndex: Int?
++  private var visualActionCandidate: RagImeDisplayCandidate?
++  private var visualActionCandidateIndex: Int?
 +  private var deepActionCandidate: RagImeDisplayCandidate?
 +  private var deepActionCandidateIndex: Int?
 +  private var canReplaceSelection = false
@@ -3229,20 +3246,34 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +    actionContainer.wantsLayer = true
 +    actionContainer.layer?.cornerRadius = 6
 +    actionContainer.layer?.masksToBounds = true
-+    actionDivider.wantsLayer = true
-+    deepSeekButton.isBordered = false
-+    deepSeekButton.focusRingType = .none
-+    deepSeekButton.font = RagImeAssistantTypography.action
-+    deepSeekButton.alignment = .left
-+    deepSeekButton.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "快速生成")
-+    deepSeekButton.imagePosition = .imageLeading
-+    deepSeekButton.contentTintColor = .systemIndigo
-+    deepSeekButton.wantsLayer = true
-+    deepSeekButton.layer?.cornerRadius = 0
-+    deepSeekButton.target = self
-+    deepSeekButton.action = #selector(startActiveRag)
-+    deepSeekButton.toolTip = "快速生成：一次检索与一次模型调用（⌃.）"
-+    deepSeekButton.setAccessibilityLabel("快速生成")
++    actionDividerLeading.wantsLayer = true
++    actionDividerTrailing.wantsLayer = true
++    quickGenerateButton.isBordered = false
++    quickGenerateButton.focusRingType = .none
++    quickGenerateButton.font = RagImeAssistantTypography.action
++    quickGenerateButton.alignment = .left
++    quickGenerateButton.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "文字生成")
++    quickGenerateButton.imagePosition = .imageLeading
++    quickGenerateButton.contentTintColor = .systemIndigo
++    quickGenerateButton.wantsLayer = true
++    quickGenerateButton.layer?.cornerRadius = 0
++    quickGenerateButton.target = self
++    quickGenerateButton.action = #selector(startActiveRag)
++    quickGenerateButton.toolTip = "文字生成：使用连续的 Pi 联想会话"
++    quickGenerateButton.setAccessibilityLabel("文字生成")
++    visualGenerateButton.isBordered = false
++    visualGenerateButton.focusRingType = .none
++    visualGenerateButton.font = RagImeAssistantTypography.action
++    visualGenerateButton.alignment = .center
++    visualGenerateButton.image = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "看图生成")
++    visualGenerateButton.imagePosition = .imageLeading
++    visualGenerateButton.contentTintColor = .systemIndigo
++    visualGenerateButton.wantsLayer = true
++    visualGenerateButton.layer?.cornerRadius = 0
++    visualGenerateButton.target = self
++    visualGenerateButton.action = #selector(startVisualActiveRag)
++    visualGenerateButton.toolTip = "看图生成：附带当前应用窗口截图"
++    visualGenerateButton.setAccessibilityLabel("看图生成")
 +    deepSearchButton.isBordered = false
 +    deepSearchButton.focusRingType = .none
 +    deepSearchButton.font = RagImeAssistantTypography.action
@@ -3257,8 +3288,10 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +    deepSearchButton.toolTip = "深度查找：交给 Pi 连续会话和 Agent Loop"
 +    deepSearchButton.setAccessibilityLabel("使用 Pi 深度查找")
 +    updateActionGroupChrome()
-+    actionContainer.addSubview(deepSeekButton)
-+    actionContainer.addSubview(actionDivider)
++    actionContainer.addSubview(quickGenerateButton)
++    actionContainer.addSubview(actionDividerLeading)
++    actionContainer.addSubview(visualGenerateButton)
++    actionContainer.addSubview(actionDividerTrailing)
 +    actionContainer.addSubview(deepSearchButton)
 +    [actionSeparator, actionContainer].forEach(addSubview)
 +    statusHalo.wantsLayer = true
@@ -3330,12 +3363,12 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +    accentRail.frame = NSRect(x: 0, y: 8, width: 3, height: max(0, bounds.height - 16))
 +    switch surfaceState {
 +    case .pendingPrediction:
-+      statusHalo.frame = NSRect(x: 7, y: 4, width: 38, height: 36)
++      layoutActionBar(frame: NSRect(x: 8, y: 7, width: 108, height: 30), compact: true)
++      statusHalo.frame = NSRect(x: 120, y: 4, width: 38, height: 36)
 +      statusIcon.frame = statusHalo.frame
-+      statusLabel.frame = NSRect(x: 49, y: 10, width: max(80, bounds.width - 137), height: 24)
-+      layoutActionBar(frame: NSRect(x: bounds.width - 82, y: 7, width: 72, height: 30), compact: true)
++      statusLabel.frame = NSRect(x: 160, y: 10, width: max(80, bounds.width - 170), height: 24)
 +    case .compactPrediction, .expandedPredictions:
-+      let hasAction = quickActionCandidate != nil || deepActionCandidate != nil
++      let hasAction = quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil
 +      let actionOffset = hasAction ? Self.actionHeight : 0
 +      let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
 +      for (index, row) in rows.enumerated() {
@@ -3414,12 +3447,18 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +    }
 +    quickActionCandidateIndex = quickAction?.offset
 +    quickActionCandidate = quickAction?.element
++    let visualAction = indexedCandidates.first {
++      $0.element.selectionAction == "start_visual_rag_from_context"
++    }
++    visualActionCandidateIndex = visualAction?.offset
++    visualActionCandidate = visualAction?.element
 +    let deepAction = indexedCandidates.first {
 +      $0.element.selectionAction == "start_agent_deep_search_from_context"
 +    }
 +    deepActionCandidateIndex = deepAction?.offset
 +    deepActionCandidate = deepAction?.element
-+    deepSeekButton.isEnabled = quickActionCandidate != nil
++    quickGenerateButton.isEnabled = quickActionCandidate != nil
++    visualGenerateButton.isEnabled = visualActionCandidate != nil
 +    deepSearchButton.isEnabled = deepActionCandidate != nil
 +    let nextSignature = ([state.rawValue, payload.snapshotId] + candidates.map {
 +      $0.candidateStableId ?? "\($0.sourceType):\($0.insertText)"
@@ -3435,11 +3474,13 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +      statusIcon.image = companionImage(named: "RagImeCompanionThinking")
 +      statusLabel.stringValue = payload.statusText.isEmpty ? "正在联想" : providerNeutralStatus(payload.statusText)
 +      [statusHalo, statusIcon, statusLabel].forEach { $0.isHidden = false }
-+      deepSeekButton.imagePosition = .imageOnly
++      quickGenerateButton.imagePosition = .imageOnly
++      visualGenerateButton.imagePosition = .imageOnly
 +      deepSearchButton.imagePosition = .imageOnly
-+      actionContainer.isHidden = quickActionCandidate == nil && deepActionCandidate == nil
++      actionContainer.isHidden = quickActionCandidate == nil && visualActionCandidate == nil && deepActionCandidate == nil
 +    case .compactPrediction, .expandedPredictions:
-+      deepSeekButton.imagePosition = .imageLeading
++      quickGenerateButton.imagePosition = .imageLeading
++      visualGenerateButton.imagePosition = .imageLeading
 +      deepSearchButton.imagePosition = .imageLeading
 +      let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
 +      for index in rows.indices where index < visibleCount {
@@ -3454,7 +3495,7 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +          )
 +        }
 +      }
-+      if quickActionCandidate != nil || deepActionCandidate != nil {
++      if quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil {
 +        [actionSeparator, actionContainer].forEach { $0.isHidden = false }
 +      }
 +    case .explicitGenerating:
@@ -3538,6 +3579,7 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +  static func isActionCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
 +    candidate.sourceType == "action"
 +      || candidate.selectionAction == "start_active_rag_from_context"
++      || candidate.selectionAction == "start_visual_rag_from_context"
 +      || candidate.selectionAction == "start_agent_deep_search_from_context"
 +  }
 +
@@ -3711,22 +3753,35 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +  private func layoutActionBar(frame: NSRect, compact: Bool) {
 +    actionContainer.frame = frame
 +    let dividerWidth: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
-+    let half = max(0, floor((frame.width - dividerWidth) / 2))
++    let segment = max(0, floor((frame.width - dividerWidth * 2) / 3))
 +    let dividerInset: CGFloat = compact ? 5 : 4
-+    deepSeekButton.frame = NSRect(x: 0, y: 0, width: half, height: frame.height)
-+    actionDivider.frame = NSRect(
-+      x: half,
++    quickGenerateButton.frame = NSRect(x: 0, y: 0, width: segment, height: frame.height)
++    actionDividerLeading.frame = NSRect(
++      x: segment,
++      y: dividerInset,
++      width: dividerWidth,
++      height: max(0, frame.height - dividerInset * 2)
++    )
++    visualGenerateButton.frame = NSRect(
++      x: segment + dividerWidth,
++      y: 0,
++      width: segment,
++      height: frame.height
++    )
++    actionDividerTrailing.frame = NSRect(
++      x: segment * 2 + dividerWidth,
 +      y: dividerInset,
 +      width: dividerWidth,
 +      height: max(0, frame.height - dividerInset * 2)
 +    )
 +    deepSearchButton.frame = NSRect(
-+      x: half + dividerWidth,
++      x: segment * 2 + dividerWidth * 2,
 +      y: 0,
-+      width: max(0, frame.width - half - dividerWidth),
++      width: max(0, frame.width - segment * 2 - dividerWidth * 2),
 +      height: frame.height
 +    )
-+    deepSeekButton.alignment = .center
++    quickGenerateButton.alignment = .center
++    visualGenerateButton.alignment = .center
 +    deepSearchButton.alignment = .center
 +  }
 +
@@ -3739,10 +3794,13 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +    actionContainer.layer?.backgroundColor = NSColor.controlBackgroundColor
 +      .withAlphaComponent(increaseContrast ? 0.95 : 0.72)
 +      .cgColor
-+    actionDivider.layer?.backgroundColor = NSColor.separatorColor
++    let dividerColor = NSColor.separatorColor
 +      .withAlphaComponent(increaseContrast ? 0.88 : 0.48)
 +      .cgColor
-+    deepSeekButton.layer?.backgroundColor = NSColor.clear.cgColor
++    actionDividerLeading.layer?.backgroundColor = dividerColor
++    actionDividerTrailing.layer?.backgroundColor = dividerColor
++    quickGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
++    visualGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
 +    deepSearchButton.layer?.backgroundColor = NSColor.clear.cgColor
 +  }
 +
@@ -3768,6 +3826,11 @@ index 0000000000000000000000000000000000000000..42994af3da425937d4b330c2aff3bb8d
 +  @objc private func startActiveRag() {
 +    guard let quickActionCandidate, let quickActionCandidateIndex else { return }
 +    onSelect?(quickActionCandidate, quickActionCandidateIndex, .insert)
++  }
++
++  @objc private func startVisualActiveRag() {
++    guard let visualActionCandidate, let visualActionCandidateIndex else { return }
++    onSelect?(visualActionCandidate, visualActionCandidateIndex, .insert)
 +  }
 +
 +  @objc private func startAgentDeepSearch() {
@@ -4031,10 +4094,18 @@ index 124ef7b2ec9a7c2e7bb898295704682f5131b314..52c6983d9ff6adeba2589879c679ae13
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a5f864bb2 100644
+index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc485af69411 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
-@@ -27,6 +27,95 @@ final class SquirrelInputController: IMKInputController {
+@@ -6,6 +6,7 @@
+ //
+ 
+ import InputMethodKit
++import CoreGraphics
+ 
+ final class SquirrelInputController: IMKInputController {
+   private static let keyRollOver = 50
+@@ -27,6 +28,95 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
@@ -4130,7 +4201,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -44,11 +133,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -44,11 +134,9 @@ final class SquirrelInputController: IMKInputController {
        }
      }
  
@@ -4145,7 +4216,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
  
      switch event.type {
      case .flagsChanged:
-@@ -89,217 +176,5018 @@ final class SquirrelInputController: IMKInputController {
+@@ -89,217 +177,5233 @@ final class SquirrelInputController: IMKInputController {
          _ = processKey(keycode, modifiers: modifier)
        }
  
@@ -4161,6 +4232,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +      }
 +
 +      let keyCode = event.keyCode
++      if [36, 76].contains(keyCode) && !ragImeNativeCompositionActive() {
++        dismissRagImePostCommitAssistForSubmission(keyCode: keyCode)
++      }
 +      if keyCode == 53
 +        && !ragImeNativeCompositionActive()
 +        && ragImeAssistantOverlayController.isVisible {
@@ -4274,6 +4348,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +      }
 +      if candidate.selectionAction == "start_active_rag_from_context" {
 +        return startRagImeActiveRagAssistFromContext(actionCandidate: candidate)
++      }
++      if candidate.selectionAction == "start_visual_rag_from_context" {
++        return startRagImeVisualAssistFromContext(actionCandidate: candidate)
 +      }
 +      if candidate.selectionAction == "commit_side_candidate" {
 +        let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
@@ -5232,6 +5309,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +    if candidate.selectionAction == "start_active_rag_from_context" {
 +      return startRagImeActiveRagAssistFromContext(actionCandidate: candidate)
 +    }
++    if candidate.selectionAction == "start_visual_rag_from_context" {
++      return startRagImeVisualAssistFromContext(actionCandidate: candidate)
++    }
 +    guard candidate.selectionAction == "commit_side_candidate" else { return false }
 +    let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
 +    guard !insertText.isEmpty else { return false }
@@ -5400,6 +5480,55 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +      dismissReason: ""
 +    )
 +    applyRagImeAssistantOverlay(payload, semanticQuery: context, preedit: "", traceEvent: "assistant_overlay_post_commit_pending")
++  }
++
++  func showRagImeImmediatePostCommitPending(committedText: String, generation: Int) {
++    guard ragImePostCommitPendingOverlayEnabled(), ragImePrivacyDisposition == "allowed" else { return }
++    let context = ragImeCompactWhitespace(
++      ragImeCommittedContext.isEmpty ? committedText : ragImeCommittedContext
++    )
++    guard !context.isEmpty else { return }
++    let snapshotId = "post-commit-local:\(session):\(generation)"
++    let inputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
++    let payload = RagImeAssistantOverlayPayload(
++      schemaVersion: "rag-ime.assistant-overlay.v1",
++      visible: true,
++      uiMode: "post_commit_pending",
++      phase: "post_commit",
++      inputMode: "post_commit_predicting",
++      statusText: "正在联想",
++      animation: RagImeAssistantOverlayAnimation(kind: "thinking_dots", frame: 0),
++      candidates: ragImeLocalActionCandidates(
++        context: context,
++        panelSessionId: snapshotId,
++        requestSeq: ragImeRequestSeq,
++        frontendRevision: ragImeFrontendRevision,
++        selectionEpoch: ragImeSelectionEpoch,
++        inputSourceId: inputSourceId,
++        compositionHash: ragImeStableTextHash(""),
++        committedContextHash: ragImeStableTextHash(ragImeCommittedContext)
++      ),
++      sourceCards: [],
++      snapshotId: snapshotId,
++      sessionFingerprint: "",
++      expiresAfterMs: 12_000,
++      keyPolicy: RagImeKeyPolicyPayload(
++        numberKeys: "pass_through",
++        tab: "accept_top_when_ready",
++        optionNumber: "select_prediction_by_ordinal",
++        escape: "dismiss_prediction"
++      ),
++      overlayConfig: nil,
++      progressive: nil,
++      frontendTransaction: nil,
++      dismissReason: ""
++    )
++    applyRagImeAssistantOverlay(
++      payload,
++      semanticQuery: context,
++      preedit: "",
++      traceEvent: "assistant_overlay_post_commit_immediate"
++    )
 +  }
 +
 +  func showRagImeAssistantOverlayFeedback(
@@ -5605,22 +5734,45 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +  }
 +
 +  func ragImeLocalActionCandidates(request: RagImeSidecarRequest, context: String) -> [RagImeDisplayCandidate] {
++    return ragImeLocalActionCandidates(
++      context: context,
++      panelSessionId: request.panelSessionId,
++      requestSeq: request.requestSeq,
++      frontendRevision: request.frontendRevision,
++      selectionEpoch: request.selectionEpoch,
++      inputSourceId: request.inputSourceId,
++      compositionHash: request.compositionHash,
++      committedContextHash: request.committedContextHash
++    )
++  }
++
++  func ragImeLocalActionCandidates(
++    context: String,
++    panelSessionId: String,
++    requestSeq: Int,
++    frontendRevision: Int,
++    selectionEpoch: Int,
++    inputSourceId: String,
++    compositionHash: String,
++    committedContextHash: String
++  ) -> [RagImeDisplayCandidate] {
 +    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
 +    let contextAnchor = ragImeStableTextHash(context)
 +    let actions = [
-+      ("快速生成", "start_active_rag_from_context", "active_rag_generate", false),
-+      ("深度查找", "start_agent_deep_search_from_context", "agent_deep_search", true),
++      ("快速生成", "start_active_rag_from_context", "active_rag_generate", false, false),
++      ("看图生成", "start_visual_rag_from_context", "active_rag_visual", false, true),
++      ("深度查找", "start_agent_deep_search_from_context", "agent_deep_search", true, false),
 +    ]
 +    return actions.enumerated().map { index, action in
-+      let (title, selectionAction, buttonRole, requiresPi) = action
++      let (title, selectionAction, buttonRole, opensControlCenter, requiresScreenshot) = action
 +      return RagImeDisplayCandidate(
 +      label: "",
 +      visibleLabel: "",
 +      selectionKey: nil,
 +      selectionRank: 0,
 +      candidateOrdinal: 0,
-+      candidateStableId: "action:overlay:\(selectionAction):\(request.panelSessionId)",
-+      snapshotId: request.panelSessionId,
++      candidateStableId: "action:overlay:\(selectionAction):\(panelSessionId)",
++      snapshotId: panelSessionId,
 +      snapshotGeneration: 0,
 +      text: title,
 +      insertText: "",
@@ -5649,29 +5801,31 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +      isSelectable: true,
 +      isStatus: false,
 +      metadata: [
-+        "candidate_mode": .string("post-commit-dual-action-button-overlay"),
-+        "activeRagTrigger": .bool(!requiresPi),
-+        "agentDeepSearchTrigger": .bool(requiresPi),
++        "candidate_mode": .string("post-commit-triple-action-button-overlay"),
++        "activeRagTrigger": .bool(selectionAction == "start_active_rag_from_context"),
++        "visualRagTrigger": .bool(selectionAction == "start_visual_rag_from_context"),
++        "agentDeepSearchTrigger": .bool(opensControlCenter),
 +        "buttonRole": .string(buttonRole),
 +        "buttonLabel": .string(title),
-+        "shortcutHint": .string(requiresPi ? "" : ragImeActiveRagShortcutSetting()),
++        "shortcutHint": .string(selectionAction == "start_active_rag_from_context" ? ragImeActiveRagShortcutSetting() : ""),
 +        "triggerPolicy": .string("manual_only"),
 +        "requiresExplicitSelection": .bool(true),
-+        "intent": .string(requiresPi ? "deep_search" : "complete"),
-+        "placement": .string(requiresPi ? "control_center" : "insert_after_selection"),
++        "intent": .string(opensControlCenter ? "deep_search" : "complete"),
++        "placement": .string(opensControlCenter ? "control_center" : "insert_after_selection"),
 +        "maxCandidates": .number(1),
-+        "requiresPi": .bool(requiresPi),
-+        "requestSeq": .number(Double(request.requestSeq)),
-+        "sessionId": .string(request.sessionId),
++        "requiresPi": .bool(true),
++        "requiresScreenshot": .bool(requiresScreenshot),
++        "requestSeq": .number(Double(requestSeq)),
++        "sessionId": .string(String(session)),
 +        "predictionSessionPhase": .string("post_commit"),
 +        "selectionScope": .string("prediction"),
-+        "frontendRevision": .number(Double(request.frontendRevision)),
-+        "selectionEpoch": .number(Double(request.selectionEpoch)),
-+        "frontAppBundleId": .string(request.frontAppBundleId),
-+        "inputSourceId": .string(request.inputSourceId),
-+        "compositionHash": .string(request.compositionHash),
-+        "committedContextHash": .string(request.committedContextHash),
-+        "panelSessionId": .string(request.panelSessionId),
++        "frontendRevision": .number(Double(frontendRevision)),
++        "selectionEpoch": .number(Double(selectionEpoch)),
++        "frontAppBundleId": .string(currentApp),
++        "inputSourceId": .string(inputSourceId),
++        "compositionHash": .string(compositionHash),
++        "committedContextHash": .string(committedContextHash),
++        "panelSessionId": .string(panelSessionId),
 +        "localPlaceholder": .bool(true),
 +      ]
 +      )
@@ -5686,6 +5840,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +    }
 +    let requiredActions = [
 +      "start_active_rag_from_context",
++      "start_visual_rag_from_context",
 +      "start_agent_deep_search_from_context",
 +    ]
 +    let visibleActions = Set(payload.candidates.map(\.selectionAction))
@@ -5968,7 +6123,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +      contextHash: ragImeStableTextHash(requestContext),
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
-+      latencyBudgetMs: 120000
++      latencyBudgetMs: 120000,
++      visualContext: nil
 +    )
 +    traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: [
 +      "selectedTextHash": request.selectedTextHash,
@@ -5991,7 +6147,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +    return true
 +  }
 +
-+  func startRagImeActiveRagAssistFromContext(actionCandidate: RagImeDisplayCandidate? = nil) -> Bool {
++  func startRagImeActiveRagAssistFromContext(
++    actionCandidate: RagImeDisplayCandidate? = nil,
++    visualContext: RagImeVisualContext? = nil
++  ) -> Bool {
 +    guard requireRagImeActiveRagEnabled(trigger: "context") else { return false }
 +    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }
 +    guard let sidecarClient = ragImeSidecarClient else { return false }
@@ -6072,7 +6231,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +      contextHash: ragImeStableTextHash(context.isEmpty ? anchorText : context),
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
-+      latencyBudgetMs: 120000
++      latencyBudgetMs: 120000,
++      visualContext: visualContext
 +    )
 +    traceRagImeFrontendEvent("active_rag_context_button_triggered", fields: [
 +      "selectedTextHash": request.selectedTextHash,
@@ -6096,6 +6256,100 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +    showRagImeActiveRagThinkingPlaceholder(request: request)
 +    sendRagImeActiveRagStartRequest(request, sidecarClient: sidecarClient, generation: activeGeneration)
 +    return true
++  }
++
++  func startRagImeVisualAssistFromContext(
++    actionCandidate: RagImeDisplayCandidate? = nil
++  ) -> Bool {
++    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }
++    guard let visualContext = captureRagImeCurrentAppVisualContext() else {
++      traceRagImeFrontendEvent("active_rag_visual_capture_failed", fields: [
++        "frontAppBundleId": currentApp,
++        "screenCapturePermission": CGPreflightScreenCaptureAccess(),
++      ])
++      NSSound.beep()
++      return false
++    }
++    traceRagImeFrontendEvent("active_rag_visual_capture_ready", fields: [
++      "frontAppBundleId": currentApp,
++      "pixelWidth": visualContext.pixelWidth,
++      "pixelHeight": visualContext.pixelHeight,
++      "mimeType": visualContext.mimeType,
++      "traceIncludesText": false,
++    ])
++    return startRagImeActiveRagAssistFromContext(
++      actionCandidate: actionCandidate,
++      visualContext: visualContext
++    )
++  }
++
++  func captureRagImeCurrentAppVisualContext() -> RagImeVisualContext? {
++    guard !currentApp.isEmpty else { return nil }
++    guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { return nil }
++    let pids = Set(
++      NSRunningApplication.runningApplications(withBundleIdentifier: currentApp)
++        .filter { !$0.isTerminated }
++        .map(\.processIdentifier)
++    )
++    guard !pids.isEmpty,
++      let windows = CGWindowListCopyWindowInfo(
++        [.optionOnScreenOnly, .excludeDesktopElements],
++        kCGNullWindowID
++      ) as? [[String: Any]] else { return nil }
++    let selected = windows.compactMap { window -> (CGWindowID, CGFloat)? in
++      guard let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
++        pids.contains(pid),
++        (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
++        ((window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
++        let number = window[kCGWindowNumber as String] as? NSNumber,
++        let boundsValue = window[kCGWindowBounds as String] as? NSDictionary,
++        let bounds = CGRect(dictionaryRepresentation: boundsValue),
++        bounds.width >= 160,
++        bounds.height >= 120 else { return nil }
++      return (CGWindowID(number.uint32Value), bounds.width * bounds.height)
++    }.max { $0.1 < $1.1 }
++    guard let windowId = selected?.0,
++      let captured = CGWindowListCreateImage(
++        .null,
++        .optionIncludingWindow,
++        windowId,
++        [.boundsIgnoreFraming, .bestResolution]
++      ) else { return nil }
++
++    let maximumDimension: CGFloat = 1600
++    let sourceWidth = CGFloat(captured.width)
++    let sourceHeight = CGFloat(captured.height)
++    let scale = min(1, maximumDimension / max(sourceWidth, sourceHeight))
++    let pixelWidth = max(1, Int((sourceWidth * scale).rounded()))
++    let pixelHeight = max(1, Int((sourceHeight * scale).rounded()))
++    let colorSpace = CGColorSpaceCreateDeviceRGB()
++    guard let context = CGContext(
++      data: nil,
++      width: pixelWidth,
++      height: pixelHeight,
++      bitsPerComponent: 8,
++      bytesPerRow: 0,
++      space: colorSpace,
++      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
++    ) else { return nil }
++    context.setFillColor(gray: 1, alpha: 1)
++    context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
++    context.interpolationQuality = .high
++    context.draw(captured, in: CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
++    guard let scaled = context.makeImage(),
++      let data = NSBitmapImageRep(cgImage: scaled).representation(
++        using: .jpeg,
++        properties: [.compressionFactor: 0.72]
++      ),
++      data.count <= 5 * 1024 * 1024 else { return nil }
++    return RagImeVisualContext(
++      schemaVersion: "rag-ime.visual-context.v1",
++      mimeType: "image/jpeg",
++      dataBase64: data.base64EncodedString(),
++      pixelWidth: pixelWidth,
++      pixelHeight: pixelHeight,
++      source: "front_app_window"
++    )
 +  }
 +
 +  func startRagImeAgentDeepSearchFromContext(
@@ -6819,6 +7073,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +    ragImeCommitBurstTexts.append(committedText)
 +    ragImeCommitBurstGeneration += 1
 +    let generation = ragImeCommitBurstGeneration
++    showRagImeImmediatePostCommitPending(committedText: committedText, generation: generation)
 +    let idleMs = acceptedCandidate ? 0 : sidecarClient.postCommitIdleMs
 +    traceRagImeFrontendEvent(wasPending ? "prediction_trigger_coalesced" : "prediction_trigger_dirty", fields: [
 +      "generation": generation,
@@ -6876,6 +7131,38 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
 +      "reason": "delete_cooldown",
 +      "cooldownMs": 1500,
 +      "generation": ragImeCommitBurstGeneration,
++    ])
++  }
++
++  func dismissRagImePostCommitAssistForSubmission(keyCode: UInt16) {
++    let hadPendingWork = ragImeCommitBurstWorkItem != nil
++      || ragImePendingRequestWorkItem != nil
++      || !ragImePendingRequestFingerprint.isEmpty
++      || !ragImeLastRequestFingerprint.isEmpty
++      || !ragImeDisplayCandidates.isEmpty
++      || ragImeAssistantOverlayController.isVisible
++    guard hadPendingWork else { return }
++    ragImeInputGeneration += 1
++    ragImeFrontendRevision += 1
++    ragImeSelectionEpoch += 1
++    ragImeCommitBurstWorkItem?.cancel()
++    ragImeCommitBurstWorkItem = nil
++    ragImeCommitBurstGeneration += 1
++    ragImeCommitBurstDeltaChars = 0
++    ragImeCommitBurstTexts = []
++    ragImePendingRequestWorkItem?.cancel()
++    ragImePendingRequestWorkItem = nil
++    ragImePendingRequestFingerprint = ""
++    ragImeLastRequestFingerprint = ""
++    cancelRagImePendingContinuation(reason: "user_submit", keyCode: keyCode)
++    cancelRagImeActiveRagSession(reason: "user_submit")
++    clearRagImeDisplayCandidates()
++    dismissRagImeAssistantOverlay(reason: "user_submit")
++    traceRagImeFrontendEvent("assistant_overlay_submit_dismissed", fields: [
++      "keyCode": Int(keyCode),
++      "inputGeneration": ragImeInputGeneration,
++      "frontendRevision": ragImeFrontendRevision,
++      "selectionEpoch": ragImeSelectionEpoch,
 +    ])
 +  }
 +
@@ -9312,7 +9599,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
  
    func onChordTimer(_: Timer) {
      var processedKeys = false
-@@ -359,7 +5247,12 @@ private extension SquirrelInputController {
+@@ -359,7 +5463,12 @@ private extension SquirrelInputController {
      schemaId = ""
  
      if session != 0 {
@@ -9325,7 +9612,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
      }
    }
  
-@@ -426,15 +5319,39 @@ private extension SquirrelInputController {
+@@ -426,15 +5535,39 @@ private extension SquirrelInputController {
    func rimeConsumeCommittedText() {
      var commitText = RimeCommit.rimeStructInit()
      if rimeAPI.get_commit(session, &commitText) {
@@ -9367,7 +9654,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +5363,7 @@ private extension SquirrelInputController {
+@@ -446,6 +5579,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -9375,7 +9662,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +5376,14 @@ private extension SquirrelInputController {
+@@ -458,13 +5592,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -9391,7 +9678,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -525,11 +5444,11 @@ private extension SquirrelInputController {
+@@ -525,11 +5660,11 @@ private extension SquirrelInputController {
          comments.append(candidate.comment.map { String(cString: $0) } ?? "")
        }
        var labels = [String]()
@@ -9404,7 +9691,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
          for i in 0..<pageSize {
            labels.append(select_labels[i].map { String(cString: $0) } ?? "")
          }
-@@ -537,22 +5456,78 @@ private extension SquirrelInputController {
+@@ -537,22 +5672,78 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -9488,7 +9775,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a45a0336a3c435ccbd30f32b90795e8a
    }
  
    func show(preedit: String, selRange: NSRange, caretPos: Int) {
-@@ -578,15 +5553,35 @@ private extension SquirrelInputController {
+@@ -578,15 +5769,35 @@ private extension SquirrelInputController {
    }
  
    // swiftlint:disable:next function_parameter_count
