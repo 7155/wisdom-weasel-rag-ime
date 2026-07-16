@@ -308,7 +308,9 @@ export function VoiceFeature() {
           {credentials.status.error ? <InlineNotice title="凭据状态读取失败" tone="danger">无法确认 Keychain 中是否已有凭据，请刷新后重试。</InlineNotice> : null}
           {credentialSave.error ? <InlineNotice title="凭据保存失败" tone="danger">{credentialSave.error instanceof Error ? credentialSave.error.message : 'Keychain 写入没有完成。'}</InlineNotice> : null}
           {credentialSave.isSuccess ? <InlineNotice title="凭据已保存" tone="success">Token 已写入 Keychain，页面未读取或显示保存值。</InlineNotice> : null}
-          <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} size="small" variant="primary">保存到 Keychain</Button>
+          <div className="voice-credential-actions">
+            <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} variant="primary">保存到 Keychain</Button>
+          </div>
         </ManagementSection>
 
         <ManagementSection title="按住说话与热词" description="热词只在你预览并确认保存后发送给当前语音识别服务。">

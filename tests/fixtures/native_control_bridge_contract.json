@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 132,
+  "routeCount": 138,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -56,6 +56,12 @@
     "agent.role.models",
     "agent.role.runtimeDefaults.update",
     "agent.tools.list",
+    "agent.extensions.list",
+    "agent.extensions.create",
+    "agent.extensions.proposals",
+    "agent.extensions.validate",
+    "agent.extensions.preview",
+    "agent.extensions.apply",
     "agent.approvals.list",
     "agent.approval.get",
     "agent.approval.decide",

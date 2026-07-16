@@ -122,7 +122,7 @@ describe('DiagnosticsFeature runtime actions', () => {
       expect(await screen.findByText(title)).toBeInTheDocument();
     }
     const accessibility = await workflowFor('打开辅助功能设置');
-    expect(within(accessibility).getByRole('button', { name: '当前不可用' })).toBeDisabled();
+    expect(within(accessibility).queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
     const pause = await workflowFor('暂停智能候选');
     expect(within(pause).getByRole('button', { name: '预览操作' })).toBeEnabled();
   });

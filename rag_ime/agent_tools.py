@@ -191,6 +191,14 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "ime_plugins",
+        "domain": "agents",
+        "displayName": "插件制作与安装",
+        "description": "制作、校验并提交插件安装提议；最终应用必须由用户在控制中心批准",
+        "operations": ("list", "create_draft", "validate", "propose_install"),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "workspace_list",
         "domain": "workspace",
         "displayName": "工作区浏览",
@@ -324,6 +332,7 @@ class ControlToolGateway:
         workspace_harness: WorkspaceHarness | None = None,
         delegation: object | None = None,
         collaboration: object | None = None,
+        extensions: object | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -334,6 +343,7 @@ class ControlToolGateway:
         self.workspace_harness = workspace_harness or WorkspaceHarness()
         self.delegation = delegation
         self.collaboration = collaboration
+        self.extensions = extensions
 
     def manifests(self, *, session_id: str = "") -> dict[str, object]:
         session = self.sessions.get(session_id) if session_id else None
@@ -478,6 +488,7 @@ class ControlToolGateway:
             "ime_configuration": self._configuration,
             "ime_agents": self._agents,
             "agent_plan": self._agent_plan,
+            "ime_plugins": self._plugins,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
         if risk_level == "R0":
@@ -512,6 +523,27 @@ class ControlToolGateway:
         }
         validate_contract(response, "agent-tool-result.v1.json")
         return response
+
+    def _plugins(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if self.extensions is None:
+            raise ValueError("managed plugin lifecycle is unavailable")
+        if operation == "list":
+            return dict(self.extensions.list())  # type: ignore[attr-defined]
+        if operation == "create_draft":
+            return dict(self.extensions.create_draft(args))  # type: ignore[attr-defined]
+        if operation == "validate":
+            return dict(self.extensions.validate(args))  # type: ignore[attr-defined]
+        if operation == "propose_install":
+            return dict(
+                self.extensions.preview(  # type: ignore[attr-defined]
+                    {
+                        "action": "install",
+                        "validationToken": args.get("validationToken"),
+                        "enable": args.get("enable") is True,
+                    }
+                )
+            )
+        raise ValueError("unsupported ime_plugins operation")
 
     def _agents(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation in {"catalog", "delegate", "status", "artifact", "abort"} and self.delegation is None:

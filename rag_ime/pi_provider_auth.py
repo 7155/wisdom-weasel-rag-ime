@@ -37,6 +37,7 @@ class PiProviderBridgeConfig:
     package_entry: Path | None
     agent_dir: Path
     bridge_script: Path
+    managed_bridge_entry: Path | None = None
     timeout_seconds: float = 15.0
     oauth_timeout_seconds: float = _OAUTH_TIMEOUT_SECONDS
     provider_environment: Mapping[str, str] = field(default_factory=dict, repr=False)
@@ -50,11 +51,17 @@ class PiProviderBridgeConfig:
     ) -> PiProviderBridgeConfig:
         root = Path(repo_root).expanduser().resolve(strict=False) if repo_root else None
         package_entry = _discover_pi_package_entry(runtime, repo_root=root)
+        managed_bridge_entry = (
+            runtime.executable.parent / "provider-bridge.mjs"
+            if runtime.executable is not None
+            else None
+        )
         return cls(
             node_executable=runtime.node_executable or "node",
             package_entry=package_entry,
             agent_dir=runtime.agent_dir.expanduser().resolve(strict=False),
             bridge_script=Path(__file__).with_name("node") / "pi_provider_bridge.mjs",
+            managed_bridge_entry=managed_bridge_entry,
             timeout_seconds=max(5.0, min(float(runtime.command_timeout_seconds), 60.0)),
             oauth_timeout_seconds=_OAUTH_TIMEOUT_SECONDS,
             provider_environment={
@@ -64,15 +71,31 @@ class PiProviderBridgeConfig:
 
     @property
     def available(self) -> bool:
-        node = shutil.which(self.node_executable) if not Path(self.node_executable).is_absolute() else self.node_executable
-        return bool(
-            node
-            and self.package_entry is not None
+        node_path = Path(self.node_executable)
+        node = (
+            shutil.which(self.node_executable)
+            if not node_path.is_absolute()
+            else node_path.is_file()
+        )
+        return bool(node and self.bridge_entry is not None)
+
+    @property
+    def bridge_entry(self) -> Path | None:
+        if (
+            self.managed_bridge_entry is not None
+            and self.managed_bridge_entry.is_file()
+            and not self.managed_bridge_entry.is_symlink()
+        ):
+            return self.managed_bridge_entry
+        if (
+            self.package_entry is not None
             and self.package_entry.is_file()
             and not self.package_entry.is_symlink()
             and self.bridge_script.is_file()
             and not self.bridge_script.is_symlink()
-        )
+        ):
+            return self.bridge_script
+        return None
 
 
 @dataclass
@@ -296,17 +319,14 @@ class PiProviderAuthService:
         }
 
     def _call(self, request: Mapping[str, object]) -> dict[str, object]:
-        if not self.config.available or self.config.package_entry is None:
+        bridge_entry = self.config.bridge_entry
+        if not self.config.available or bridge_entry is None:
             raise PiProviderAuthError("当前 Agent 运行时没有可用的 Pi 凭据组件。")
-        payload = {
-            **dict(request),
-            "packageEntry": str(self.config.package_entry),
-            "agentDir": str(self.config.agent_dir),
-        }
+        payload = self._bridge_payload(request)
         try:
             with self._bridge_lock:
                 completed = subprocess.run(
-                    [self.config.node_executable, str(self.config.bridge_script)],
+                    [self.config.node_executable, str(bridge_entry)],
                     input=json.dumps(payload, ensure_ascii=False),
                     text=True,
                     stdout=subprocess.PIPE,
@@ -323,7 +343,8 @@ class PiProviderAuthService:
         return result
 
     def _start_oauth(self, provider: str, provider_name: str) -> dict[str, object]:
-        if not self.config.available or self.config.package_entry is None:
+        bridge_entry = self.config.bridge_entry
+        if not self.config.available or bridge_entry is None:
             raise PiProviderAuthError("当前 Agent 运行时没有可用的 Pi 登录组件。")
         with self._oauth_start_lock:
             with self._lock:
@@ -331,16 +352,13 @@ class PiProviderAuthService:
                 for existing in self._oauth_jobs.values():
                     if existing.provider == provider and existing.state not in {"completed", "failed", "cancelled"}:
                         raise PiProviderAuthError("这个 Provider 已有一个登录流程正在进行。")
-            request = {
-                "action": "oauth_device_code",
-                "provider": provider,
-                "packageEntry": str(self.config.package_entry),
-                "agentDir": str(self.config.agent_dir),
-            }
+            request = self._bridge_payload(
+                {"action": "oauth_device_code", "provider": provider}
+            )
             process: subprocess.Popen[str] | None = None
             try:
                 process = subprocess.Popen(
-                    [self.config.node_executable, str(self.config.bridge_script)],
+                    [self.config.node_executable, str(bridge_entry)],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -383,6 +401,15 @@ class PiProviderAuthService:
         timeout.daemon = True
         timeout.start()
         return _oauth_payload(job)
+
+    def _bridge_payload(self, request: Mapping[str, object]) -> dict[str, object]:
+        payload = {**dict(request), "agentDir": str(self.config.agent_dir)}
+        if (
+            self.config.bridge_entry == self.config.bridge_script
+            and self.config.package_entry is not None
+        ):
+            payload["packageEntry"] = str(self.config.package_entry)
+        return payload
 
     def _expire_oauth_job(self, job: _OAuthJob) -> None:
         with self._lock:

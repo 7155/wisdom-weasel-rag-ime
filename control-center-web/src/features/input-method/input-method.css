@@ -51,7 +51,7 @@ main[data-route-id='input'] .input-status-item__copy {
 
 main[data-route-id='input'] .input-status-item__copy small {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
 }
 
@@ -67,7 +67,7 @@ main[data-route-id='input'] .input-status-item__copy > span {
   display: -webkit-box;
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -102,7 +102,7 @@ main[data-route-id='input'] .input-mode-choice > strong { font-size: 14px; }
 
 main[data-route-id='input'] .input-mode-choice > span {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -144,7 +144,7 @@ main[data-route-id='input'] .input-settings-group h3 {
 
 main[data-route-id='input'] .input-settings-group > header span {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -176,14 +176,14 @@ main[data-route-id='input'] .input-setting-row dd {
 main[data-route-id='input'] .input-setting-row dt strong,
 main[data-route-id='input'] .input-setting-row dd strong {
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
 }
 
 main[data-route-id='input'] .input-setting-row dt span,
 main[data-route-id='input'] .input-setting-row dd span {
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -229,7 +229,7 @@ main[data-route-id='input'] .input-setting-editor-row .ui-switch-field__label {
 
 main[data-route-id='input'] .input-setting-editor-row .ui-field__description,
 main[data-route-id='input'] .input-setting-editor-row .ui-switch-field__description {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -258,7 +258,7 @@ main[data-route-id='input'] .input-setting-editor-row--readonly strong { font-si
 
 main[data-route-id='input'] .input-setting-editor-row--readonly small {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 main[data-route-id='input'] .input-settings-diff-title {
@@ -295,7 +295,7 @@ main[data-route-id='input'] .mgmt-list__content strong {
 main[data-route-id='input'] .mgmt-list__content span {
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

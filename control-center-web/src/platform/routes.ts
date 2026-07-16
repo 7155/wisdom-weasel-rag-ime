@@ -311,6 +311,32 @@ export const CONTROL_ROUTES = {
     requiredBody: ['roleId', 'roleVersion', 'provider', 'modelId', 'thinkingLevel'],
   },
   'agent.tools.list': { method: 'GET', path: '/api/agent/tools', query: ['sessionId'] },
+  'agent.extensions.list': { method: 'GET', path: '/api/agent/extensions' },
+  'agent.extensions.create': {
+    method: 'POST',
+    path: '/api/agent/extensions/drafts',
+    body: ['draftId', 'manifest', 'files'],
+    requiredBody: ['draftId', 'manifest', 'files'],
+  },
+  'agent.extensions.proposals': { method: 'GET', path: '/api/agent/extensions/proposals' },
+  'agent.extensions.validate': {
+    method: 'POST',
+    path: '/api/agent/extensions/validate',
+    body: ['sourcePath'],
+    requiredBody: ['sourcePath'],
+  },
+  'agent.extensions.preview': {
+    method: 'POST',
+    path: '/api/agent/extensions/preview',
+    body: ['action', 'validationToken', 'pluginId', 'enable'],
+    requiredBody: ['action'],
+  },
+  'agent.extensions.apply': {
+    method: 'POST',
+    path: '/api/agent/extensions/apply',
+    body: ['previewToken', 'payloadSha256', 'confirmText'],
+    requiredBody: ['previewToken', 'payloadSha256', 'confirmText'],
+  },
   'agent.approvals.list': {
     method: 'GET',
     path: '/api/agent/approvals',

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import subprocess
 import threading
 import uuid
@@ -730,7 +731,34 @@ class PiRuntimeHostManager:
 
     def command_catalog(self, session_id: str) -> list[dict[str, object]]:
         self.ensure(session_id)
-        return []
+        response = self._require_client().send("session.commands", {"sessionId": session_id})
+        raw_commands = response.get("commands")
+        if not isinstance(raw_commands, list):
+            return []
+        commands: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for value in raw_commands[:200]:
+            if not isinstance(value, Mapping):
+                continue
+            source = str(value.get("source") or "").strip()
+            name = str(value.get("name") or "").strip()
+            if source not in {"extension", "prompt", "skill"}:
+                continue
+            if not re.fullmatch(r"[\w][\w.:-]{0,79}", name, flags=re.UNICODE):
+                continue
+            identity = name.casefold()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            commands.append(
+                {
+                    "name": name,
+                    "invocation": f"/{name}",
+                    "description": " ".join(str(value.get("description") or "").split())[:240],
+                    "source": source,
+                }
+            )
+        return commands
 
     def model_catalog(self, session_id: str) -> dict[str, object]:
         self.ensure(session_id)

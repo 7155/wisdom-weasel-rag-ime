@@ -243,6 +243,22 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
   });
 
+  it('opens the shared status experience for the selected Room', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-status', '状态 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-status', [], '状态 Room'),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await screen.findByText('还没有对话，发一条消息开始协作。');
+    await user.click(screen.getByRole('button', { name: '展开 Room 状态' }));
+    expect(screen.getByRole('complementary', { name: 'Room 状态' })).toHaveAttribute('data-open', 'true');
+    expect(screen.getByText('协作成员')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '收起 Room 状态' })).toBeInTheDocument();
+  });
+
   it('keeps the real role catalog usable when the Room list request fails', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': () => { throw new Error('room catalog unavailable'); },

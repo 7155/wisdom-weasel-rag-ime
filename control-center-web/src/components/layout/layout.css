@@ -61,7 +61,7 @@
   margin-top: 3px;
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .shell-nav {
@@ -84,7 +84,7 @@
   margin: 0;
   padding: 5px 9px 3px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -156,7 +156,7 @@
   gap: 6px;
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -222,7 +222,7 @@
 .shell-topbar__title span {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .shell-topbar__actions {
@@ -254,7 +254,7 @@
 .shell-route-stage > main[data-route-id] > h1:only-child {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -387,7 +387,7 @@
     gap: 3px;
     border-radius: var(--radius-2);
     color: var(--color-text-tertiary);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 620;
     text-decoration: none;
     transition:
@@ -409,7 +409,7 @@
 
   .shell-mobile-nav > .ui-icon-button::after {
     content: '全部';
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .shell-mobile-menu__routes {
@@ -422,5 +422,5 @@
 @media (max-width: 380px) {
   .shell-topbar__actions { gap: 2px; }
   .shell-topbar__title h1 { font-size: 14px; }
-  .shell-mobile-nav__link span { font-size: 10px; }
+  .shell-mobile-nav__link span { font-size: 13px; }
 }

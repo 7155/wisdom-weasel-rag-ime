@@ -84,7 +84,7 @@ describe('Configuration settings WorkContract UI', () => {
     expect(workflow).not.toBeNull();
 
     expect(await within(workflow as HTMLElement).findByText(/当前版本还不能安全应用设置/)).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).getByRole('button', { name: '尚不可预览' })).toBeDisabled();
+    expect(within(workflow as HTMLElement).queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.preview')).toBeUndefined();
   });
 
@@ -98,7 +98,7 @@ describe('Configuration settings WorkContract UI', () => {
     expect(workflow).not.toBeNull();
 
     expect(await within(workflow as HTMLElement).findByText(/修改至少一个非敏感设置/)).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).getByRole('button', { name: '尚不可预览' })).toBeDisabled();
+    expect(within(workflow as HTMLElement).queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.preview')).toBeUndefined();
   });
 

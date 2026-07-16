@@ -63,7 +63,7 @@ main[data-route-id='voice'] .voice-native-action-group > span {
   min-width: 64px;
   margin-right: auto;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -87,6 +87,14 @@ main[data-route-id='voice'] .voice-credential-grid .ui-textarea {
   width: 100%;
 }
 
+main[data-route-id='voice'] .voice-credential-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-4);
+}
+
 main[data-route-id='voice'] .voice-hotword-editor {
   display: grid;
   min-width: 0;
@@ -95,7 +103,7 @@ main[data-route-id='voice'] .voice-hotword-editor {
 
 main[data-route-id='voice'] .voice-hotword-editor > span {
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -108,7 +116,7 @@ main[data-route-id='voice'] .voice-hotword-editor .ui-textarea {
 
 main[data-route-id='voice'] .voice-hotword-editor > small {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 main[data-route-id='voice'] .voice-hotword-suggestions {
@@ -129,7 +137,7 @@ main[data-route-id='voice'] .voice-hotword-suggestions button {
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   transition:
     border-color var(--duration-fast) var(--ease-standard),
     background var(--duration-fast) var(--ease-standard),

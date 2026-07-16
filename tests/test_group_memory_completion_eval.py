@@ -14,7 +14,7 @@ SPEC.loader.exec_module(MODULE)
 
 class GroupMemoryCompletionEvalTest(unittest.TestCase):
     def test_interview_replay_hard_gates(self) -> None:
-        report = MODULE.replay_cases(MODULE.load_cases(ROOT / "docs" / "eval" / "group_memory_completion_cases.jsonl"))
+        report = MODULE.replay_cases(MODULE.load_cases(ROOT / "eval" / "group_memory_completion_cases.jsonl"))
         self.assertTrue(report["ok"], report)
         self.assertEqual(report["metrics"]["commitCount"], 13)
         self.assertEqual(report["metrics"]["remoteDeepSeekAutoCallCount"], 0)

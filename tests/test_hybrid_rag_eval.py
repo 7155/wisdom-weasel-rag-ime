@@ -14,7 +14,7 @@ from rag_ime.hybrid_rag_eval import load_hybrid_rag_eval_cases, run_hybrid_rag_e
 class HybridRagEvalTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(__file__).resolve().parents[1]
-        self.cases_file = self.root / "docs" / "eval" / "hybrid_rag_core_cases.jsonl"
+        self.cases_file = self.root / "eval" / "hybrid_rag_core_cases.jsonl"
 
     def test_load_hybrid_rag_eval_cases(self) -> None:
         cases = load_hybrid_rag_eval_cases(self.cases_file, default_project="wisdom-weasel-rag-ime")

@@ -115,6 +115,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             }
         )
         with closing(sqlite3.connect(self.db_path)) as conn:
+            migration_count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
             self.assertGreater(conn.execute("SELECT COUNT(*) FROM memory_tombstones").fetchone()[0], 0)
             self.assertGreater(conn.execute("SELECT COUNT(*) FROM memory_feedback_events").fetchone()[0], 0)
 
@@ -126,6 +127,10 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_tombstones").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_candidate_suppressions").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_feedback_events").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], migration_count)
+
+        # Reset clears memory data without replaying already-applied product migrations.
+        self.core.reset()
 
     def test_core_optimization_snapshot_includes_recent_events_and_high_frequency_phrases(self) -> None:
         for _ in range(3):

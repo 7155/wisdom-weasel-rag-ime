@@ -64,6 +64,9 @@ for line in sys.stdin:
         result(request, {"snapshot": session, "evictedSessionId": None})
     elif method == "session.snapshot":
         result(request, sessions[session_id])
+    elif method == "session.commands":
+        result(request, {"commands": [{"name": "skill:rag-ime-plugin-creator",
+                                        "description": "Create and propose a managed plugin", "source": "skill"}]})
     elif method == "models.list":
         result(request, {"models": [model]})
     elif method == "session.thinking.set":
@@ -207,6 +210,21 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].payload["terminalEvent"], "agent_settled")
         messages = self.runtime.messages(session_id)
         self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+
+    def test_v2_exposes_managed_skill_commands_to_the_composer(self) -> None:
+        session_id = str(self.first["id"])
+
+        self.assertEqual(
+            self.runtime.command_catalog(session_id),
+            [
+                {
+                    "name": "skill:rag-ime-plugin-creator",
+                    "invocation": "/skill:rag-ime-plugin-creator",
+                    "description": "Create and propose a managed plugin",
+                    "source": "skill",
+                }
+            ],
+        )
 
     def test_v2_fork_uses_host_owned_anchor_and_binds_a_distinct_target(self) -> None:
         first_id = str(self.first["id"])

@@ -107,7 +107,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
 
     def test_default_eval_cases_file_is_checked_in_and_seedable(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        cases_file = root / "docs" / "eval" / "codex-history-cases.example.jsonl"
+        cases_file = root / "eval" / "codex-history-cases.example.jsonl"
 
         self.assertTrue(cases_file.is_file())
         self.assertGreaterEqual(

@@ -275,16 +275,14 @@ describe('management features', () => {
     expect(await screen.findByText('浏览器预览不能启动代理或触发系统授权；请在已安装的智鼬控制中心中操作。')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '原生流式' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '尚不可预览' }).every((button) => button.hasAttribute('disabled'))).toBe(true);
+    expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(screen.queryByText('unavailable')).not.toBeInTheDocument();
   });
 
   it('fails closed when the management WorkContract capability is absent', async () => {
     renderFeature(PlanningFeature);
     await screen.findByRole('heading', { name: '规划', level: 1 });
-    const unsupported = await screen.findAllByRole('button', { name: '当前不可用' });
-    expect(unsupported.length).toBeGreaterThan(0);
-    expect(unsupported.every((button) => button.hasAttribute('disabled'))).toBe(true);
+    expect(screen.queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
     expect(screen.queryByText('演练 / 未执行')).not.toBeInTheDocument();
   });
 
@@ -305,8 +303,7 @@ describe('management features', () => {
       </ControlTransportProvider>,
     );
 
-    const button = screen.getByRole('button', { name: '当前不可用' });
-    expect(button).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看示例' })).not.toBeInTheDocument();
   });
 });

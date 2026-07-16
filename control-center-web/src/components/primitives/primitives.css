@@ -173,7 +173,7 @@
   background: var(--color-text);
   box-shadow: var(--shadow-menu);
   color: var(--color-canvas);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.35;
   animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
 }
@@ -246,7 +246,7 @@
 .ui-menu__label {
   padding: 7px 9px 4px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -382,12 +382,12 @@
 .ui-field__description,
 .ui-switch-field__description {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .ui-field__error {
   color: var(--color-danger);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .ui-input {
@@ -663,7 +663,7 @@
 
 .ui-toast__description {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .ui-skeleton {

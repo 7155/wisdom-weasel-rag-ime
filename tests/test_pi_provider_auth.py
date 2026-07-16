@@ -13,6 +13,7 @@ from rag_ime.pi_provider_auth import (
     PiProviderAuthService,
     PiProviderBridgeConfig,
 )
+from rag_ime.pi_runtime import PiRuntimeConfig
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -136,6 +137,34 @@ class PiProviderAuthTests(unittest.TestCase):
             self.service.preview({"provider": "../../auth.json", "action": "logout"})
         with self.assertRaises(PiProviderAuthError):
             self.service.preview({"provider": "test-provider", "action": "read_secret"})
+
+    def test_managed_runtime_bridge_is_discovered_without_a_pi_package_entry(self) -> None:
+        root = Path(self.temporary.name)
+        runtime_dir = root / "runtime-host"
+        runtime_dir.mkdir()
+        executable = runtime_dir / "cli.mjs"
+        managed_bridge = runtime_dir / "provider-bridge.mjs"
+        executable.write_text("\n", encoding="utf-8")
+        managed_bridge.write_text("\n", encoding="utf-8")
+        runtime = PiRuntimeConfig(
+            enabled=True,
+            executable=executable,
+            agent_dir=root / "agent",
+            session_dir=root / "sessions",
+            logs_dir=root / "logs",
+            node_executable=sys.executable,
+        )
+
+        config = PiProviderBridgeConfig.from_runtime(runtime)
+        service = PiProviderAuthService(config)
+
+        self.assertTrue(config.available)
+        self.assertEqual(config.bridge_entry, managed_bridge)
+        self.assertIsNone(config.package_entry)
+        self.assertEqual(
+            service._bridge_payload({"action": "catalog"}),
+            {"action": "catalog", "agentDir": str(config.agent_dir)},
+        )
 
     @unittest.skipUnless(PI_PACKAGE_ENTRY.is_file(), "local Pi build is not available")
     def test_real_pi_auth_storage_bridge_replaces_and_logs_out_without_echoing_secret(self) -> None:

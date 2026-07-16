@@ -338,13 +338,20 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func pickFiles(id: String, payload: [String: Any]) {
         do {
-            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "sessionId", "kbId", "parserProvider", "maxFiles"]
+            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "selection", "sessionId", "kbId", "parserProvider", "maxFiles"]
             guard Set(payload.keys).isSubset(of: allowedKeys) else {
                 throw NativeMediaImportError.rejected("File picker payload contained an unsupported field")
             }
             let purpose = try requiredString("purpose", in: payload)
-            guard ["attachment", "configuration-import", "restore", "export-destination", "workspace-root", "knowledge-import"].contains(purpose) else {
+            guard ["attachment", "configuration-import", "restore", "export-destination", "workspace-root", "knowledge-import", "plugin-source"].contains(purpose) else {
                 throw NativeMediaImportError.rejected("File picker purpose is not allowlisted")
+            }
+            let selection = payload["selection"] as? String
+            if let selection, !["file", "directory"].contains(selection) {
+                throw NativeMediaImportError.rejected("File picker selection is not allowlisted")
+            }
+            if purpose == "plugin-source" && selection != "directory" {
+                throw NativeMediaImportError.rejected("Plugin sources must be selected as a directory")
             }
             let multiple: Bool
             if let rawMultiple = payload["multiple"] {
@@ -883,7 +890,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         multiple: Bool
     ) {
         let panel = NSOpenPanel()
-        let choosesDirectory = purpose == "export-destination" || purpose == "workspace-root"
+        let choosesDirectory = purpose == "export-destination" || purpose == "workspace-root" || purpose == "plugin-source"
         panel.canChooseFiles = !choosesDirectory
         panel.canChooseDirectories = choosesDirectory
         panel.allowsMultipleSelection = multiple && maxFiles > 1

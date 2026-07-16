@@ -198,6 +198,7 @@ class LocalSqliteCoreClient:
             )
 
     def reset(self) -> None:
+        self.initialize()
         table_names = tuple(
             dict.fromkeys(
                 (
@@ -210,7 +211,6 @@ class LocalSqliteCoreClient:
                     "phrase_stats",
                     "phrase_project_stats",
                     "phrase_app_stats",
-                    "schema_migrations",
                 )
             )
         )
@@ -218,10 +218,13 @@ class LocalSqliteCoreClient:
             with self._connect() as conn:
                 conn.execute("PRAGMA foreign_keys = OFF")
                 for table in table_names:
-                    conn.execute(f"DROP TABLE IF EXISTS {table}")
+                    conn.execute(f"DELETE FROM {table}")
+                placeholders = ", ".join("?" for _ in table_names)
+                conn.execute(
+                    f"DELETE FROM sqlite_sequence WHERE name IN ({placeholders})",
+                    table_names,
+                )
                 conn.execute("PRAGMA foreign_keys = ON")
-            self._initialized = False
-            self.initialize()
         self._clear_suggestion_cache()
 
     def record_event(self, event: InputEvent) -> str:

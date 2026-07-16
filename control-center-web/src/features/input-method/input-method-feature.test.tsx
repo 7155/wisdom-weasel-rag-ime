@@ -182,7 +182,7 @@ describe('InputMethodFeature', () => {
     expect(screen.getByLabelText('续写候选数量').closest('.input-setting-editor-row')).not.toBeNull();
     expect(screen.getByText(/需重新载入/)).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: '提交后预测' })).toBeDisabled();
-    expect(screen.getAllByRole('button', { name: '尚不可预览' }).every((button) => button.hasAttribute('disabled'))).toBe(true);
+    expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
   });
 
   it('switches runtime mode only after preview and explicit approval, then supports rollback', async () => {
@@ -455,7 +455,7 @@ describe('InputMethodFeature', () => {
     expect(await screen.findByLabelText('预测出现时的数字键')).toBeDisabled();
     expect(screen.getByRole('radio', { name: '安全' })).toBeDisabled();
     expect(screen.getAllByText(/没有提供完整的设置预览、应用与撤销能力/)).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: '尚不可预览' }).every((button) => button.hasAttribute('disabled'))).toBe(true);
+    expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
   });
 
   it('keeps settings visible when the input source query fails', async () => {

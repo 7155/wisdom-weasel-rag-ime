@@ -37,13 +37,15 @@ class NotionWorkerContractTests(unittest.TestCase):
         instructions = (ROOT / "integrations" / "notion-worker" / "custom-agent-instructions.md").read_text(
             encoding="utf-8"
         )
-        docs = (ROOT / "docs" / "notion-personal-knowledge.md").read_text(encoding="utf-8")
+        worker_readme = (ROOT / "integrations" / "notion-worker" / "README.md").read_text(encoding="utf-8")
+        route_source = (ROOT / "rag_ime" / "notion_knowledge.py").read_text(encoding="utf-8")
+        workbench_source = (ROOT / "rag_ime" / "knowledge_workbench.py").read_text(encoding="utf-8")
 
         self.assertIn("不得修改 `query_id`、`context_hash` 或 `generation`", instructions)
-        self.assertIn("HTTP 202", docs)
-        self.assertIn("submitConfigured", docs)
-        self.assertIn("pollConfigured", docs)
-        self.assertIn("stale_dropped", docs)
+        self.assertIn("HTTP 202", worker_readme)
+        self.assertIn('"submitConfigured"', route_source)
+        self.assertIn('"pollConfigured"', route_source)
+        self.assertIn('"stale_dropped"', workbench_source)
 
 
 if __name__ == "__main__":

@@ -405,6 +405,28 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(str(linked_python), executable)
         self.assertRegex(version, r"^\d+\.\d+\.\d+")
 
+    def test_worker_health_preserves_configured_python_identity(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-worker-python-identity-") as tmp:
+            linked_python = Path(tmp) / "python"
+            linked_python.symlink_to(sys.executable)
+            port = _free_port()
+            with mock.patch.dict(
+                os.environ,
+                {"RAG_IME_KNOWLEDGE_PYTHON": str(linked_python)},
+                clear=False,
+            ):
+                supervisor = KnowledgeWorkerSupervisor(
+                    settings_provider=_disabled_mineru_settings,
+                    root_dir=Path(tmp) / "Knowledge",
+                    base_url=f"http://127.0.0.1:{port}",
+                )
+                self.addCleanup(supervisor.close)
+                supervisor.ensure_running()
+                self.assertEqual(
+                    supervisor._worker_settings()[0],
+                    supervisor._worker_health()["configFingerprint"],
+                )
+
     def test_close_reaps_the_worker_owned_by_the_supervisor(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-knowledge-close-") as tmp:
             port = _free_port()
