@@ -22,11 +22,13 @@ import { publicAgentErrorText } from '../public-error';
 export function AgentBlocks({
   blocks,
   onApprovalDecision,
+  streaming = false,
 }: {
   blocks: UiAgentBlock[];
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  streaming?: boolean;
 }) {
-  const tailIndex = findLastTextBlock(blocks);
+  const tailIndex = streaming ? findLastTextBlock(blocks) : -1;
   return (
     <div className="agent-blocks" data-has-stream-tail={tailIndex >= 0 || undefined}>
       {blocks.map((block, index) => (

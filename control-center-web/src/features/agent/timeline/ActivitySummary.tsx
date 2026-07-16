@@ -53,7 +53,7 @@ export function ActivitySummary({
   useEffect(() => {
     if (!running) return undefined;
     setNowMs(Date.now());
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, [running]);
   if (activities.length === 0) return null;
@@ -117,8 +117,8 @@ export function ActivitySummary({
           <summary aria-label={`${inlineTitle}，${inlineSummary}，${inlineStatus}`}>
             <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />
             <strong>{inlineTitle}</strong>
-            <span>{inlineSummary}</span>
-            <i data-status={state}>{inlineStatus}</i>
+            <span className="agent-activity__inline-tools">{inlineSummary}</span>
+            <span className="agent-activity__inline-status" data-status={state}>{inlineStatus}</span>
             <ChevronRight aria-hidden="true" size={15} />
           </summary>
           <div className="agent-activity__inline-timeline">
@@ -395,7 +395,7 @@ function compactToolSummary(activities: AgentActivityProjection[]) {
   }
   return {
     count: calls.size,
-    names: [...names].slice(0, 3).join('、'),
+    names: [...names].slice(0, 3).join(' · '),
   };
 }
 
@@ -421,14 +421,7 @@ function checkpointOffset(createdAtMs: number, startedAtMs: number): string {
 }
 
 function elapsedLabel(elapsedMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1_000));
-  if (totalSeconds < 60) return `${totalSeconds}秒`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return seconds ? `${minutes}分${seconds}秒` : `${minutes}分`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}小时${remainingMinutes}分` : `${hours}小时`;
+  return `${Math.max(0, Math.round(elapsedMs))} ms`;
 }
 
 function text(value: unknown): string {

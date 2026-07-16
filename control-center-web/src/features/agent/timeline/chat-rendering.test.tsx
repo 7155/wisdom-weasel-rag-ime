@@ -126,7 +126,7 @@ describe('Agent chat rendering', () => {
     }];
     const { container } = render(
       <div className="agent-assistant-message" data-status="streaming">
-        <AgentBlocks blocks={blocks} />
+        <AgentBlocks blocks={blocks} streaming />
         <span aria-label="正在生成" className="agent-streaming-cursor" />
       </div>,
     );
@@ -139,6 +139,45 @@ describe('Agent chat rendering', () => {
     expect(items[1]!.querySelector('.agent-streaming-cursor--inline')).toBeInTheDocument();
     expect(container.querySelector('.agent-blocks')).toHaveAttribute('data-has-stream-tail', 'true');
     expect(screen.getByLabelText('正在生成')).toBe(container.querySelector('.agent-blocks')?.nextElementSibling);
+  });
+
+  it('removes stale segment cursors while a turn is waiting for confirmation', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'responding',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'text_delta', {
+        messageId: 'turn-1:assistant:segment:1',
+        blockId: 'turn-1:assistant:segment:1:text',
+        delta: '先盘点记忆库。',
+        replaceBlock: true,
+      }),
+      agentEventFixture(2, 'text_delta', {
+        messageId: 'turn-1:assistant:segment:2',
+        blockId: 'turn-1:assistant:segment:2:text',
+        delta: '草案已生成，等待确认。',
+        replaceBlock: true,
+      }),
+      agentEventFixture(3, 'user_input_required', {
+        requestId: 'memory-review-1',
+        requestKind: 'memory_review',
+        title: '审阅记忆草案',
+      }),
+    ]);
+
+    const { container } = render(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    expect(container.querySelector('.agent-turn')).toHaveAttribute('data-turn-status', 'waiting');
+    expect(container.querySelectorAll('.agent-assistant-message')).toHaveLength(2);
+    expect(container.querySelector('.agent-streaming-cursor')).not.toBeInTheDocument();
   });
 
   it('renders only a same-origin managed image receipt and ignores src/url fallbacks', () => {

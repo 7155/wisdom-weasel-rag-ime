@@ -170,6 +170,7 @@ export function AgentTurn({
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
   const timelineEntries = interleavedTurnEntries(assistantMessages, activities);
+  const streamingMessageId = activeStreamingMessageId(turn.status, assistantMessages);
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} />)}
@@ -182,7 +183,12 @@ export function AgentTurn({
             <div className="agent-turn-sequence" aria-label="本轮响应过程">
               {timelineEntries.map((entry) => entry.kind === 'message' ? (
                 <div data-timeline-kind="message" key={entry.message.id}>
-                  <MessageView sessionId={sessionId} messageId={entry.message.id} historyTarget={activeTargetId === entry.message.id} />
+                  <MessageView
+                    sessionId={sessionId}
+                    messageId={entry.message.id}
+                    historyTarget={activeTargetId === entry.message.id}
+                    streaming={entry.message.id === streamingMessageId}
+                  />
                 </div>
               ) : (
                 <div data-timeline-kind="activity" key={entry.key}>
@@ -274,6 +280,18 @@ export function interleavedTurnEntries(
   }, []);
 }
 
+function activeStreamingMessageId(
+  turnStatus: string,
+  messages: AgentMessageProjection[],
+): string {
+  if (turnStatus !== 'running') return '';
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.status === 'streaming') return message.id;
+  }
+  return '';
+}
+
 function compareTimelineItems(left: TurnTimelineItem, right: TurnTimelineItem): number {
   if (left.sequence !== undefined && right.sequence !== undefined && left.sequence !== right.sequence) {
     return left.sequence - right.sequence;
@@ -311,6 +329,7 @@ function MessageView({
   user = false,
   forkAvailable = false,
   historyTarget = false,
+  streaming,
   onForkFromMessage,
 }: {
   sessionId: string;
@@ -318,6 +337,7 @@ function MessageView({
   user?: boolean;
   forkAvailable?: boolean;
   historyTarget?: boolean;
+  streaming?: boolean;
   onForkFromMessage?: (entryId: string) => void;
 }) {
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
@@ -325,6 +345,8 @@ function MessageView({
   const visibleBlocks = user ? message.blocks : message.blocks.filter((block) => block.type !== 'error');
   const messageText = visibleBlocks.map((block) => text(block.data.text)).filter(Boolean).join('\n').trim();
   const canFork = user && forkAvailable && message.status === 'completed' && !messageId.startsWith('local:') && Boolean(messageText) && Boolean(onForkFromMessage);
+  const showStreaming = !user && (streaming ?? message.status === 'streaming');
+  const visibleStatus = showStreaming ? 'streaming' : message.status === 'streaming' ? 'completed' : message.status;
   return user ? (
     <div className="agent-user-message-shell" data-actions={canFork || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
@@ -345,9 +367,9 @@ function MessageView({
       ) : null}
     </div>
   ) : (
-    <div className="agent-assistant-message" data-status={message.status} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
-      <AgentBlocks blocks={visibleBlocks} />
-      {message.status === 'streaming' ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
+    <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
+      <AgentBlocks blocks={visibleBlocks} streaming={showStreaming} />
+      {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
     </div>
   );
 }
