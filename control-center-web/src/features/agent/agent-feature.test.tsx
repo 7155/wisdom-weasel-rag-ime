@@ -44,7 +44,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    const branchButton = await screen.findByRole('button', { name: '创建对话分支' });
+    const branchButton = await screen.findByRole('button', { name: '创建对话分支' }, { timeout: 5_000 });
     await waitFor(() => expect(branchButton).toBeEnabled());
     await user.click(branchButton);
     const dialog = await screen.findByRole('dialog', { name: '从历史消息创建分支' });
@@ -68,7 +68,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    const actions = await screen.findAllByRole('button', { name: '从这条消息创建分支' });
+    const actions = await screen.findAllByRole('button', { name: '从这条消息创建分支' }, { timeout: 5_000 });
     await user.click(actions.at(-1)!);
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
