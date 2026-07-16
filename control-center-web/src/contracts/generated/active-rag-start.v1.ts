@@ -16,5 +16,13 @@ export interface ActiveRagStartV1 {
   credentialField?: boolean;
   app?: string;
   frontAppBundleId?: string;
+  visualContext?: {
+    schemaVersion: 'rag-ime.visual-context.v1';
+    mimeType: 'image/jpeg' | 'image/png';
+    dataBase64: string;
+    pixelWidth: number;
+    pixelHeight: number;
+    source: string;
+  };
   [k: string]: unknown;
 }
