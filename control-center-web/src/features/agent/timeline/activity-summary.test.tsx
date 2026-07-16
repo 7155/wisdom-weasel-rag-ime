@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { ActivitySummary } from './ActivitySummary';
@@ -17,8 +17,14 @@ describe('Agent tool activity details', () => {
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline');
     expect(group).not.toBeNull();
     expect(group).not.toHaveAttribute('open');
+    const summary = group!.querySelector('summary')!;
+    expect(within(summary).getByText('已调用 1 个工具')).toBeInTheDocument();
+    expect(within(summary).getByText('控制中心概览')).toBeInTheDocument();
+    expect(within(summary).getByText('完成')).toBeInTheDocument();
+    expect(summary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
+    expect(summary.querySelector('.agent-activity__status')).not.toBeInTheDocument();
 
-    fireEvent.click(group!.querySelector('summary')!);
+    fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
     const row = group!.querySelector<HTMLDetailsElement>('.agent-activity-row');
     fireEvent.click(row!.querySelector('summary')!);

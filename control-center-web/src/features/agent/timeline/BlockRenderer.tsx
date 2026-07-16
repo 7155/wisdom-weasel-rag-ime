@@ -15,6 +15,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button, IconButton } from '@/components/primitives';
 import type { UiAgentBlock } from '@/contracts/ui-events';
+import { writeClipboardText } from '@/platform/clipboard';
 import { stickerAsset } from './PersonaAvatar';
 import { publicAgentErrorText } from '../public-error';
 
@@ -25,13 +26,15 @@ export function AgentBlocks({
   blocks: UiAgentBlock[];
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
 }) {
+  const tailIndex = findLastTextBlock(blocks);
   return (
-    <div className="agent-blocks">
-      {blocks.map((block) => (
+    <div className="agent-blocks" data-has-stream-tail={tailIndex >= 0 || undefined}>
+      {blocks.map((block, index) => (
         <AgentBlock
           key={block.id}
           block={block}
           onApprovalDecision={onApprovalDecision}
+          streamingTail={index === tailIndex}
         />
       ))}
     </div>
@@ -41,14 +44,16 @@ export function AgentBlocks({
 export function AgentBlock({
   block,
   onApprovalDecision,
+  streamingTail = false,
 }: {
   block: UiAgentBlock;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  streamingTail?: boolean;
 }) {
   const data = block.data;
   switch (block.type) {
     case 'text':
-      return <MarkdownBody text={text(data.text ?? data.markdown)} />;
+      return <MarkdownBody streamingTail={streamingTail} text={text(data.text ?? data.markdown)} />;
     case 'code':
       return (
         <CodeBlock
@@ -109,12 +114,12 @@ export function AgentBlock({
   }
 }
 
-export function MarkdownBody({ text: source }: { text: string }) {
+export function MarkdownBody({ streamingTail = false, text: source }: { streamingTail?: boolean; text: string }) {
   if (!source) return null;
   return (
     <div className="agent-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={streamingTail ? [remarkGfm, remarkStreamingTail] : [remarkGfm]}
         components={{
           a: ({ href, children }) => {
             const safe = safeLink(href);
@@ -127,12 +132,19 @@ export function MarkdownBody({ text: source }: { text: string }) {
               <span>{children}</span>
             );
           },
-          code: ({ className, children }) => {
+          p: ({ children, node: _node, ...props }) => <p {...props}>{children}<StreamingCursor active={hasStreamingTail(props)} /></p>,
+          li: ({ children, node: _node, ...props }) => <li {...props}>{children}<StreamingCursor active={hasStreamingTail(props)} /></li>,
+          td: ({ children, node: _node, ...props }) => <td {...props}>{children}<StreamingCursor active={hasStreamingTail(props)} /></td>,
+          h1: ({ children, node: _node, ...props }) => <h1 {...props}>{children}<StreamingCursor active={hasStreamingTail(props)} /></h1>,
+          h2: ({ children, node: _node, ...props }) => <h2 {...props}>{children}<StreamingCursor active={hasStreamingTail(props)} /></h2>,
+          h3: ({ children, node: _node, ...props }) => <h3 {...props}>{children}<StreamingCursor active={hasStreamingTail(props)} /></h3>,
+          code: ({ className, children, node: _node, ...props }) => {
             const match = /language-([\w-]+)/u.exec(className ?? '');
             const raw = String(children);
             const code = raw.replace(/\n$/u, '');
             const fenced = Boolean(match) || raw.endsWith('\n');
-            return fenced ? <CodeBlock code={code} language={match?.[1] ?? 'text'} /> : <code>{children}</code>;
+            const tail = hasStreamingTail(props);
+            return fenced ? <CodeBlock code={code} language={match?.[1] ?? 'text'} streamingTail={tail} /> : <code {...props}>{children}<StreamingCursor active={tail} /></code>;
           },
           pre: ({ children }) => <>{children}</>,
           img: ({ alt }) => <span className="agent-markdown__blocked-media">{alt || '图片'}</span>,
@@ -148,14 +160,16 @@ function CodeBlock({
   code,
   language,
   fileName,
+  streamingTail = false,
 }: {
   code: string;
   language: string;
   fileName?: string;
+  streamingTail?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   async function copy(): Promise<void> {
-    await navigator.clipboard?.writeText(code);
+    await writeClipboardText(code);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_500);
   }
@@ -175,10 +189,60 @@ function CodeBlock({
         />
       </figcaption>
       <pre data-language={language}>
-        <code>{code}</code>
+        <code data-stream-tail={streamingTail || undefined}>{code}<StreamingCursor active={streamingTail} /></code>
       </pre>
     </figure>
   );
+}
+
+function StreamingCursor({ active }: { active: boolean }) {
+  return active ? <span aria-hidden="true" className="agent-streaming-cursor agent-streaming-cursor--inline" /> : null;
+}
+
+type MarkdownAstNode = {
+  type?: string;
+  children?: MarkdownAstNode[];
+  data?: { hProperties?: Record<string, unknown> };
+};
+
+function remarkStreamingTail() {
+  return (tree: MarkdownAstNode) => {
+    let terminalPath: MarkdownAstNode[] = [];
+    const visit = (node: MarkdownAstNode, parents: MarkdownAstNode[]) => {
+      const path = [...parents, node];
+      if (node.children?.length) {
+        node.children.forEach((child) => visit(child, path));
+      } else if (['text', 'inlineCode', 'code', 'image', 'break'].includes(node.type ?? '')) {
+        terminalPath = path;
+      }
+    };
+    visit(tree, []);
+    const target = tailContainer(terminalPath);
+    if (!target) return;
+    target.data = target.data ?? {};
+    target.data.hProperties = { ...target.data.hProperties, 'data-stream-tail': 'true' };
+  };
+}
+
+function tailContainer(path: MarkdownAstNode[]) {
+  for (const type of ['code', 'tableCell', 'listItem', 'paragraph', 'heading']) {
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+      if (path[index]?.type === type) return path[index];
+    }
+  }
+  return undefined;
+}
+
+function hasStreamingTail(props: Record<string, unknown>) {
+  return props['data-stream-tail'] === true || props['data-stream-tail'] === 'true';
+}
+
+function findLastTextBlock(blocks: readonly UiAgentBlock[]) {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block?.type === 'text' && block.status === 'running' && text(block.data.text ?? block.data.markdown)) return index;
+  }
+  return -1;
 }
 
 function CitationBlock({ data }: { data: Record<string, unknown> }) {

@@ -197,6 +197,21 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertIn("window.titleVisibility = .visible", source)
         self.assertIn("window.isMovable = true", source)
 
+    def test_host_exposes_standard_and_control_edit_shortcuts(self) -> None:
+        source = (HOST / "RagImeControlWebApp.swift").read_text(encoding="utf-8")
+
+        self.assertIn("installMainMenu()", source)
+        self.assertIn("#selector(NSText.copy(_:))", source)
+        self.assertIn("#selector(NSText.paste(_:))", source)
+        self.assertIn("#selector(NSText.cut(_:))", source)
+        self.assertIn("#selector(NSText.selectAll(_:))", source)
+        self.assertIn("NSEvent.addLocalMonitorForEvents(matching: .keyDown)", source)
+        self.assertIn("modifiers.contains(.control)", source)
+        self.assertIn("event.window?.firstResponder", source)
+        self.assertIn("application.keyWindow?.firstResponder", source)
+        self.assertIn("application.sendAction(action, to: target, from: nil)", source)
+        self.assertNotIn("sendAction(action, to: nil", source)
+
     def test_preview_build_cannot_overwrite_production_app(self) -> None:
         script = HOST_BUILD.read_text(encoding="utf-8")
         self.assertIn("RagImeControlWebPreview.app", script)

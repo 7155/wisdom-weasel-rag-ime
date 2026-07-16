@@ -1144,7 +1144,7 @@ class PiRuntimeManager:
             if not isinstance(raw, Mapping):
                 continue
             entry_id = str(raw.get("entryId") or "").strip()[:240]
-            text = " ".join(str(raw.get("text") or "").split())[:8000]
+            text = _public_fork_candidate_text(raw.get("text"))
             if not entry_id or not text or entry_id in seen:
                 continue
             seen.add(entry_id)
@@ -2037,6 +2037,19 @@ def _visible_message_text(role: str, text: str) -> str:
         if question:
             return question
     return text
+
+
+def _public_fork_candidate_text(value: object) -> str:
+    """Return the public user question for a Pi branch anchor."""
+
+    normalized = " ".join(str(value or "").split())[:8000]
+    visible = " ".join(_visible_message_text("user", normalized).split())[:8000]
+    if any(
+        marker in visible
+        for marker in ("<rag-ime-deep-search-context", "<rag-ime-user-query>")
+    ):
+        return ""
+    return visible
 
 
 def _last_assistant_error(messages: list[object]) -> str:

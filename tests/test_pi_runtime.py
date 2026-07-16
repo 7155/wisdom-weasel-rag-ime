@@ -903,6 +903,21 @@ class PiRuntimeTests(unittest.TestCase):
         target_events, _ = self.events.replay(str(target["id"]))
         self.assertIn("turn_completed", [event.event_type for event in target_events])
 
+    def test_fork_catalog_exposes_only_the_public_deep_search_question(self) -> None:
+        source_id = str(self.session["id"])
+        self.runtime.prompt(
+            source_id,
+            "<rag-ime-deep-search-context>private evidence</rag-ime-deep-search-context>\n"
+            "<rag-ime-user-query>最近做了什么？</rag-ime-user-query>\n"
+            "本地时间：2026-07-16",
+        )
+        _wait_until(lambda: self.store.get(source_id)["status"] == "idle")
+
+        candidates = self.runtime.fork_candidates(source_id)
+
+        self.assertEqual(candidates, [{"entryId": "entry-user-1", "text": "最近做了什么？"}])
+        self.assertNotIn("private evidence", json.dumps(candidates, ensure_ascii=False))
+
     def test_fork_rejects_unknown_anchor_without_binding_target(self) -> None:
         source_id = str(self.session["id"])
         self.runtime.prompt(source_id, "原始消息")

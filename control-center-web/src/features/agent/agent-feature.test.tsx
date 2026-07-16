@@ -35,6 +35,8 @@ describe('Agent experience', () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
     render(<TooltipProvider><SessionRail sessions={previewSessions} selectedId="session-preview" loading={false} onSelect={onSelect} onCreate={() => {}} /></TooltipProvider>);
+    expect(screen.getByText('learnA')).toBeInTheDocument();
+    expect(screen.getByText('未指定项目')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /记忆整理/ }));
     expect(onSelect).toHaveBeenCalledWith('session-memory');
   });
@@ -44,22 +46,23 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    const branchButton = await screen.findByRole('button', { name: '创建对话分支' }, { timeout: 5_000 });
+    const branchButton = await screen.findByRole('button', { name: '查看对话路径与分支' }, { timeout: 5_000 });
     await waitFor(() => expect(branchButton).toBeEnabled());
     await user.click(branchButton);
-    const dialog = await screen.findByRole('dialog', { name: '从历史消息创建分支' });
-    expect(within(dialog).getByText(/原对话保持不变/)).toBeInTheDocument();
-    await user.click(await within(dialog).findByRole('radio', { name: /帮我整理权限模式/ }));
+    const dialog = await screen.findByRole('dialog', { name: '对话路径' });
+    expect(within(dialog).getByText(/所有消息都可回溯定位/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/private deep-search evidence/)).not.toBeInTheDocument();
+    await user.click(await within(dialog).findByRole('radio', { name: /把完成状态和附件也保留成结构化块/ }));
     await user.click(within(dialog).getByRole('button', { name: '创建分支' }));
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.forks.create',
         params: { sessionId: 'session-preview' },
-        body: expect.objectContaining({ entryId: 'entry-permissions' }),
+        body: expect.objectContaining({ entryId: 'session-preview:user-media' }),
       }),
     })));
-    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('把完成状态和附件也保留成结构化块。');
     expect(screen.getByRole('button', { name: /控制中心迁移 · 分支/ })).toHaveAttribute('aria-current', 'true');
   });
 
@@ -70,6 +73,10 @@ describe('Agent experience', () => {
 
     const actions = await screen.findAllByRole('button', { name: '从这条消息创建分支' }, { timeout: 5_000 });
     await user.click(actions.at(-1)!);
+    const dialog = await screen.findByRole('dialog', { name: '对话路径' });
+    const create = within(dialog).getByRole('button', { name: '创建分支' });
+    await waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
@@ -78,7 +85,22 @@ describe('Agent experience', () => {
         body: expect.objectContaining({ entryId: 'session-preview:user-media' }),
       }),
     })));
-    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('把完成状态和附件也保留成结构化块。');
+  });
+
+  it('lists every conversation node and jumps back to an assistant message', async () => {
+    const user = userEvent.setup();
+    renderAgent(featureTransport());
+
+    await user.click(await screen.findByRole('button', { name: '查看对话路径与分支' }));
+    const dialog = await screen.findByRole('dialog', { name: '对话路径' });
+    await user.click(within(dialog).getByRole('radio', { name: /已完成。活动明细仍可追溯/ }));
+    await user.click(within(dialog).getByRole('button', { name: '跳到节点' }));
+
+    await waitFor(() => expect(document.querySelector(
+      '[data-agent-message-id="session-preview:assistant-media"][data-history-target="true"]',
+    )).not.toBeNull());
+    expect(screen.queryByRole('dialog', { name: '对话路径' })).not.toBeInTheDocument();
   });
 
   it('exposes native fork capability without waiting for slower session catalogs', async () => {
@@ -86,7 +108,7 @@ describe('Agent experience', () => {
     const slowTools = new Promise<unknown>((resolve) => { resolveTools = resolve; });
     renderAgent(featureTransport(undefined, () => slowTools));
 
-    expect(await screen.findByRole('button', { name: '创建对话分支' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: '查看对话路径与分支' })).toBeEnabled();
     resolveTools({ ok: true, items: toolCatalog() });
   });
 
@@ -111,8 +133,11 @@ describe('Agent experience', () => {
     );
     renderAgent(transport);
 
-    const unavailable = await screen.findByRole('button', { name: '当前运行时不支持对话分支' });
-    await waitFor(() => expect(unavailable).toBeDisabled());
+    const navigator = await screen.findByRole('button', { name: '查看对话路径与分支' });
+    await waitFor(() => expect(navigator).toBeEnabled());
+    fireEvent.click(navigator);
+    expect(await screen.findByText('当前运行时未提供分支能力，历史节点仍可直接跳转。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建分支' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: '从这条消息创建分支' })).not.toBeInTheDocument();
   });
 
@@ -166,7 +191,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    expect(await screen.findByText('1 个连续对话')).toBeInTheDocument();
+    expect(await screen.findByText('1 个任务 · 1 个项目')).toBeInTheDocument();
     expect(document.querySelectorAll('.agent-session-row')).toHaveLength(1);
     expect(screen.queryByText('研究员临时会话')).not.toBeInTheDocument();
 
@@ -858,8 +883,8 @@ describe('Agent experience', () => {
 
     renderAgent(transport);
 
-    expect(await screen.findByText('已完成。活动明细仍可追溯，但正文只保留能直接阅读的结论和产物。')).toBeInTheDocument();
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById['session-preview:turn-media']?.status).toBe('completed'));
+    expect(document.querySelector('.agent-assistant-message')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
     expect(screen.queryByText('思考中')).not.toBeInTheDocument();
   });
@@ -1059,6 +1084,7 @@ describe('Agent experience', () => {
 
     await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
       purpose: 'workspace-root',
+      selection: 'directory',
       multiple: true,
       maxFiles: 4,
     }));
@@ -1366,10 +1392,18 @@ describe('Agent experience', () => {
     renderAgent(transport);
 
     expect(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '新建对话' }));
+    await user.click(screen.getByRole('button', { name: '新建任务' }));
+    const dialog = await screen.findByRole('dialog', { name: '新建任务' });
+    expect(within(dialog).getByRole('radio', { name: /learnA/ })).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: '创建任务' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
-    expect(create?.request.body).toMatchObject({ roleId: 'zhiyou-v1', roleVersion: '1' });
+    expect(create?.request.body).toMatchObject({
+      roleId: 'zhiyou-v1',
+      roleVersion: '1',
+      mode: 'coordinator',
+      workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+    });
     expect(create?.request.body).not.toHaveProperty('modelProfile');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.model.select')).toBe(false);
   });
@@ -1479,21 +1513,21 @@ describe('Agent experience', () => {
     const feature = document.querySelector('.agent-feature');
     expect(feature).toHaveAttribute('data-rail-open', 'false');
 
-    const toggle = screen.getByRole('button', { name: '展开对话列表' });
+    const toggle = screen.getByRole('button', { name: '展开任务列表' });
     await user.click(toggle);
     expect(feature).toHaveAttribute('data-rail-open', 'true');
-    const rail = screen.getByRole('dialog', { name: '连续对话' });
+    const rail = screen.getByRole('dialog', { name: '任务与项目' });
     const conversation = document.querySelector('.agent-conversation');
     expect(rail).toHaveAttribute('aria-modal', 'true');
     expect(conversation).toHaveAttribute('inert');
     expect(conversation).toHaveAttribute('aria-hidden', 'true');
-    await waitFor(() => expect(screen.getByPlaceholderText('搜索对话')).toHaveFocus());
+    await waitFor(() => expect(screen.getByPlaceholderText('搜索任务或项目')).toHaveFocus());
 
     const sessionRows = rail.querySelectorAll<HTMLButtonElement>('.agent-session-row');
     const lastSession = sessionRows.item(sessionRows.length - 1);
     lastSession.focus();
     await user.tab();
-    expect(within(rail).getByRole('button', { name: '新建对话' })).toHaveFocus();
+    expect(within(rail).getByRole('button', { name: '新建任务' })).toHaveFocus();
     await user.tab({ shift: true });
     expect(lastSession).toHaveFocus();
 
@@ -1558,11 +1592,16 @@ describe('Agent experience', () => {
     );
     const feature = container.querySelector<HTMLElement>('main.agent-feature');
     expect(feature).toHaveAttribute('data-rail-open', 'true');
+    const composer = screen.getByRole('textbox', { name: '消息' });
+    expect(composer).toBeVisible();
 
-    await user.click(screen.getByRole('button', { name: '收起对话列表' }));
+    await user.click(screen.getByRole('button', { name: '收起任务列表' }));
 
     expect(feature).toHaveAttribute('data-rail-open', 'false');
     expect(getComputedStyle(feature!).gridTemplateColumns).toBe('0 minmax(0, 1fr) 0');
+    expect(screen.getByRole('textbox', { name: '消息' })).toBe(composer);
+    expect(composer).toBeVisible();
+    expect(composer.closest('.agent-composer-wrap')).toBeInTheDocument();
   });
 
   it('selects the Session requested by the roles route handoff', async () => {
@@ -1597,7 +1636,7 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.map((request) => request.pathId)).toEqual(
       expect.arrayContaining(['agent.sessions.list', 'agent.roles.list']),
     ));
-    expect(screen.getByText('0 个连续对话')).toBeInTheDocument();
+    expect(screen.getByText('0 个任务 · 0 个项目')).toBeInTheDocument();
     expect(screen.queryByText('控制中心迁移')).not.toBeInTheDocument();
     expect(screen.queryByText('记忆整理')).not.toBeInTheDocument();
   });
@@ -1674,16 +1713,17 @@ function featureTransport(
         ok: true,
         sessionId: 'session-preview',
         items: [
-          { entryId: 'entry-start', text: '先梳理交互状态' },
-          { entryId: 'entry-permissions', text: '帮我整理权限模式' },
+          { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。' },
+          { entryId: 'session-preview:user-media', text: '把完成状态和附件也保留成结构化块。' },
+          { entryId: 'internal-context', text: '<rag-ime-deep-search-context>private deep-search evidence</rag-ime-deep-search-context>' },
         ],
       },
       'agent.session.forks.create': {
         schemaVersion: 'rag-ime.agent-session-fork-create.v1',
         ok: true,
         sourceSessionId: 'session-preview',
-        entryId: 'entry-permissions',
-        selectedText: '帮我整理权限模式',
+        entryId: 'session-preview:user-media',
+        selectedText: '把完成状态和附件也保留成结构化块。',
         session: {
           ...previewSessions[0],
           schemaVersion: 'rag-ime.agent-session.v1',

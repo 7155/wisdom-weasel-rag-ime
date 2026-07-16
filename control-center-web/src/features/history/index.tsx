@@ -22,6 +22,7 @@ import {
   Input,
   Select,
 } from '@/components/primitives';
+import { writeClipboardText } from '@/platform/clipboard';
 import {
   historyMutationPathIds,
   useHistoryDetail,
@@ -271,7 +272,7 @@ function HistoryDetailDialog({
   const copyText = async () => {
     if (!text) return;
     try {
-      await navigator.clipboard.writeText(text);
+      await writeClipboardText(text);
       setCopyState('copied');
     } catch {
       setCopyState('failed');
