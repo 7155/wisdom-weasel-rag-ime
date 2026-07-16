@@ -12,12 +12,14 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "ime_runtime",
     "ime_configuration",
     "ime_agents",
-    "ime_plugins",
+    "agent_plan",
 )
 
 COORDINATOR_TOOL_IDS = (
     "workspace_list",
     "workspace_read",
+    "workspace_search",
+    "workspace_patch",
     "workspace_shell",
 )
 

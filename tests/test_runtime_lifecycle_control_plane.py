@@ -295,6 +295,38 @@ class RuntimeLifecycleControlPlaneTests(unittest.TestCase):
         self.assertEqual(degraded["status"], "degraded")
         self.assertIn("仅采集 4 字", degraded["detail"])
 
+    def test_voice_recognition_component_explains_installed_runtime_state(self) -> None:
+        voice_status = {
+            "agent": {"running": True},
+            "recognition": {
+                "deployed": {
+                    "state": "restart_required",
+                    "secondPass": True,
+                    "semanticSmoothing": True,
+                    "fullResultReplacement": True,
+                },
+                "lastSession": {},
+            },
+        }
+
+        with patch("rag_ime.management_service.read_voice_control_status", return_value=voice_status):
+            component = self.management.runtime_status()["components"]["voiceRecognition"]
+
+        self.assertFalse(component["ok"])
+        self.assertIn("需要重启", component["detail"])
+
+    def test_runtime_status_surfaces_installation_provenance_drift(self) -> None:
+        self.management.deployment_provider = lambda: {
+            "ok": False,
+            "summary": "voice was installed from another product commit",
+            "issues": [{"component": "voice", "code": "commit_mismatch"}],
+        }
+
+        component = self.management.runtime_status()["components"]["deployment"]
+
+        self.assertFalse(component["ok"])
+        self.assertEqual(component["detail"], "voice was installed from another product commit")
+
 
 class SettingsValidationTests(unittest.TestCase):
     def setUp(self) -> None:

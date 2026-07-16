@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-session-fork-candidates.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "sessionId", "items"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-session-fork-candidates.v1"},
+    "ok": {"type": "boolean", "const": true},
+    "sessionId": {"type": "string", "minLength": 1},
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entryId", "text"],
+        "properties": {
+          "entryId": {"type": "string", "minLength": 1, "maxLength": 240},
+          "text": {"type": "string", "minLength": 1, "maxLength": 8000}
+        }
+      }
+    }
+  }
+}

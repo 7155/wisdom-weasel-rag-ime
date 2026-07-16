@@ -16,7 +16,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Check the installed Memory Book maintenance runtime.")
     parser.add_argument(
         "--app-root",
-        default=str(Path.home() / "Library/Application Support/RagIme/app"),
+        default=str(
+            Path.home()
+            / "Library/Application Support/RagIme/components/memory-book-maintenance"
+        ),
     )
     parser.add_argument(
         "--plist-path",

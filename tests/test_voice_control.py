@@ -81,7 +81,54 @@ class VoiceHotwordValidationTests(unittest.TestCase):
             self.assertTrue(status["recognition"]["deployed"]["secondPass"])
             self.assertTrue(status["recognition"]["deployed"]["semanticSmoothing"])
             self.assertTrue(status["recognition"]["deployed"]["fullResultReplacement"])
+            self.assertEqual(status["recognition"]["deployed"]["state"], "ready")
+            self.assertTrue(status["recognition"]["deployed"]["reportedByAgent"])
             self.assertEqual(status["recognition"]["lastSession"]["finalLatencyMs"], 116)
+
+    def test_old_binary_explains_missing_final_replacement_instead_of_hiding_reason(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-voice-old-build-") as tmp:
+            support = Path(tmp)
+            binary = support / "RagImeVoice"
+            binary.write_bytes(b"enable_nonstream")
+
+            status = read_voice_control_status(support, binary_path=binary)
+            deployed = status["recognition"]["deployed"]
+
+            self.assertTrue(deployed["secondPass"])
+            self.assertFalse(deployed["semanticSmoothing"])
+            self.assertFalse(deployed["fullResultReplacement"])
+            self.assertEqual(deployed["state"], "outdated")
+            self.assertIn("complete final-result contract", deployed["reason"])
+
+    def test_new_build_marker_distinguishes_installed_from_running_contract(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-voice-marker-") as tmp:
+            support = Path(tmp)
+            binary = support / "Contents" / "MacOS" / "RagImeVoice"
+            resources = support / "Contents" / "Resources"
+            binary.parent.mkdir(parents=True)
+            resources.mkdir(parents=True)
+            binary.write_bytes(b"optimized-binary-without-readable-symbols")
+            (resources / "rag-ime-voice-build-marker.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.voice-build-marker.v1",
+                        "gitCommit": "a" * 40,
+                        "gitDirty": False,
+                        "capabilities": {
+                            "finalSecondPass": True,
+                            "semanticSmoothing": True,
+                            "fullResultReplacement": True,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            deployed = read_voice_control_status(support, binary_path=binary)["recognition"]["deployed"]
+
+            self.assertEqual(deployed["state"], "restart_required")
+            self.assertTrue(deployed["buildMarkerFound"])
+            self.assertEqual(deployed["sourceCommit"], "a" * 40)
 
 
 class VoiceHotwordWorkContractTests(unittest.TestCase):

@@ -2392,6 +2392,181 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-session-fork-candidates.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-session-fork-candidates.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "sessionId",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-session-fork-candidates.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "entryId",
+            "text"
+          ],
+          "properties": {
+            "entryId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            }
+          }
+        }
+      }
+    }
+  },
+  "agent-session-fork-create.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-session-fork-create.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "sourceSessionId",
+      "entryId",
+      "selectedText",
+      "session"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-session-fork-create.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "sourceSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "entryId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "selectedText": {
+        "type": "string",
+        "maxLength": 8000
+      },
+      "session": {
+        "$ref": "#/$defs/session"
+      }
+    },
+    "$defs": {
+      "session": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "id",
+          "title",
+          "mode",
+          "status",
+          "roleId",
+          "roleVersion",
+          "modelProfile",
+          "toolProfileVersion",
+          "createdAtMs",
+          "updatedAtMs",
+          "messageCount",
+          "workspaceRoots"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-session.v1"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "assistant",
+              "coordinator"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "active",
+              "busy",
+              "faulted",
+              "archived"
+            ]
+          },
+          "roleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roleVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "modelProfile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "toolProfileVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "messageCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workspaceRoots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
   "agent-session.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-session.v1",
@@ -3106,9 +3281,12 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "agent_plan",
           "ime_plugins",
           "workspace_list",
           "workspace_read",
+          "workspace_search",
+          "workspace_patch",
           "workspace_shell"
         ]
       },
@@ -3211,9 +3389,12 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "agent_plan",
           "ime_plugins",
           "workspace_list",
           "workspace_read",
+          "workspace_search",
+          "workspace_patch",
           "workspace_shell"
         ]
       },
@@ -3250,6 +3431,10 @@ export const contractSchemas = {
           "maintenance_apply",
           "maintenance_rollback",
           "list",
+          "update",
+          "create_draft",
+          "validate",
+          "propose_install",
           "list_bases",
           "search",
           "find",
@@ -3284,10 +3469,8 @@ export const contractSchemas = {
           "room_ask",
           "room_reply",
           "room_mailbox",
-          "create_draft",
-          "validate",
-          "propose_install",
-          "run"
+          "run",
+          "apply"
         ]
       },
       "result": {

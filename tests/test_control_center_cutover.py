@@ -44,6 +44,18 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertNotIn("native-legacy", script)
         self.assertNotIn("RAG_IME_CONTROL_UI", script)
 
+    def test_full_stack_installer_fails_closed_on_mixed_runtime_generations(self) -> None:
+        entry = (ROOT / "scripts" / "build_control_center.sh").read_text(encoding="utf-8")
+        installer = (ROOT / "scripts" / "install_product_stack.sh").read_text(encoding="utf-8")
+
+        self.assertIn("install-stack", entry)
+        self.assertIn("refusing to install a mixed product stack from dirty tracked source", installer)
+        self.assertIn("install_sidecar_launch_agent.sh", installer)
+        self.assertIn("install_agent_gateway_launch_agent.sh", installer)
+        self.assertIn("install_voice_input_launch_agent.sh", installer)
+        self.assertIn("check_installed_product_components.py", installer)
+        self.assertIn("--require-current", installer)
+
     def test_web_host_owns_the_release_bundle_and_agent_deep_link(self) -> None:
         host = ROOT / "macos" / "RagImeControlWebHost"
         app = (host / "RagImeControlWebApp.swift").read_text(encoding="utf-8")

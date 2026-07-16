@@ -189,13 +189,26 @@ function runtimeActions(aiEnabled: boolean): readonly {
 }
 
 function componentLabel(id: string): string {
-  return ({ inputMethod: '输入法', sidecar: '后台服务', predictor: '本机模型', foregroundContext: '当前应用识别', hybridRag: '知识检索', memoryCompiler: '记忆整理', sqlite: '本机数据库' } as Record<string, string>)[id] ?? '其他服务';
+  return ({
+    inputMethod: '输入法',
+    sidecar: '后台服务',
+    predictor: '本机模型',
+    foregroundContext: '当前应用识别',
+    hybridRag: '知识检索',
+    memoryCompiler: '记忆整理',
+    sqlite: '本机数据库',
+    voiceAgent: '语音代理',
+    voiceMicrophone: '麦克风权限',
+    voiceAccessibility: '辅助功能权限',
+    voiceRecognition: '语音定稿',
+    deployment: '安装一致性',
+  } as Record<string, string>)[id] ?? '其他服务';
 }
 
 function componentDetail(item: Record<string, unknown>): string {
   const detail = stringValue(item.detail).trim();
   if (!detail) return booleanValue(item.ok) ? '运行正常' : '请打开详情继续检查';
-  return /ready|running|healthy|ok/i.test(detail) ? '运行正常' : /disabled|stopped/i.test(detail) ? '当前未启用' : '已返回运行信息';
+  return detail;
 }
 
 function serviceStatusLabel(value: string): string {

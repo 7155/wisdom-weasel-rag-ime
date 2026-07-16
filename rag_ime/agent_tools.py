@@ -183,6 +183,14 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "agent_plan",
+        "domain": "planning",
+        "displayName": "当前回合计划",
+        "description": "维护当前 Agent Session 的有界执行清单；它不修改用户的每日规划",
+        "operations": ("list", "update"),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "ime_plugins",
         "domain": "agents",
         "displayName": "插件制作与安装",
@@ -205,6 +213,25 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "工作区读取",
         "description": "读取授权工作区内的非敏感 UTF-8 文本",
         "operations": ("read",),
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "workspace_search",
+        "domain": "workspace",
+        "displayName": "工作区搜索",
+        "description": "在授权工作区内有界搜索非敏感文件名与 UTF-8 文本内容",
+        "operations": ("search",),
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "table",
+    },
+    {
+        "id": "workspace_patch",
+        "domain": "workspace",
+        "displayName": "精确文件修改",
+        "description": "预览精确文本替换，并在原生批准和文件哈希复验后原子写入",
+        "operations": ("apply",),
+        "operationRisks": {"apply": "R2"},
         "sessionModes": ("coordinator",),
         "resultPresentation": "tool_result",
     },
@@ -460,6 +487,7 @@ class ControlToolGateway:
             "ime_runtime": self._runtime,
             "ime_configuration": self._configuration,
             "ime_agents": self._agents,
+            "agent_plan": self._agent_plan,
             "ime_plugins": self._plugins,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
@@ -468,6 +496,8 @@ class ControlToolGateway:
                 result = self.workspace_harness.list(session, args)
             elif tool == "workspace_read":
                 result = self.workspace_harness.read(session, args)
+            elif tool == "workspace_search":
+                result = self.workspace_harness.search(session, args)
             else:
                 handler_args = dict(args)
                 handler_args["_sessionId"] = session_id
@@ -570,6 +600,44 @@ class ControlToolGateway:
             )
         raise ValueError("unsupported ime_agents operation")
 
+    def _agent_plan(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        if not session_id:
+            raise ValueError("agent plan session is missing")
+        if operation == "list":
+            plan = self.sessions.agent_plan(
+                session_id,
+                limit=_bounded_int(args.get("limit"), default=100, minimum=1, maximum=100),
+            )
+            counts = plan["counts"] if isinstance(plan.get("counts"), Mapping) else {}
+            return {
+                "summary": (
+                    f"当前计划有 {_safe_int(counts.get('pending'))} 项待办、"
+                    f"{_safe_int(counts.get('inProgress'))} 项进行中、"
+                    f"{_safe_int(counts.get('completed'))} 项已完成"
+                ),
+                "presentationKind": "task_plan",
+                "plan": plan,
+                "items": list(plan.get("items") or []),
+            }
+        if operation == "update":
+            result = self.sessions.update_agent_plan_item(
+                session_id,
+                item_id=_bounded_text(args.get("itemId"), maximum=160),
+                title=_bounded_text(args.get("title"), maximum=240),
+                status=_bounded_text(args.get("status"), maximum=40),
+            )
+            event = result["event"] if isinstance(result.get("event"), Mapping) else {}
+            plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
+            return {
+                "summary": f"计划项《{event.get('title', '')}》已更新为 {event.get('status', '')}",
+                "presentationKind": "task_plan",
+                "event": event,
+                "plan": plan,
+                "items": list(plan.get("items") or []),
+            }
+        raise ValueError("unsupported agent_plan operation")
+
     def apply_approval(self, approval: Mapping[str, object]) -> dict[str, object]:
         """Execute one already-approved operation after revalidating its preview."""
 
@@ -579,6 +647,8 @@ class ControlToolGateway:
         operation = str(approval.get("operation") or "")
         if (tool, operation) == ("workspace_shell", "run"):
             return self._apply_workspace_command(approval)
+        if (tool, operation) == ("workspace_patch", "apply"):
+            return self._apply_workspace_patch(approval)
         if (tool, operation) == ("ime_planning", "undo_task_event"):
             return self._apply_planning_undo(approval)
         if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
@@ -670,6 +740,12 @@ class ControlToolGateway:
     ) -> dict[str, object]:
         if (tool, operation) == ("workspace_shell", "run"):
             return self._prepare_workspace_command(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("workspace_patch", "apply"):
+            return self._prepare_workspace_patch(
                 session_id=session_id,
                 args=args,
                 risk_level=risk_level,
@@ -2489,6 +2565,69 @@ class ControlToolGateway:
             "auditId": str(approval.get("approvalId") or ""),
         }
 
+    def _prepare_workspace_patch(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        prepared = self.workspace_harness.prepare_patch(session, args)
+        preview = self.workspace_harness.patch_preview(prepared)
+        action_payload = preview.get("actionPayload")
+        base_state = preview.get("baseState")
+        assert isinstance(action_payload, Mapping)
+        assert isinstance(base_state, Mapping)
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_patch",
+            operation="apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_patch",
+            operation="apply",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_workspace_patch(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        session_id = str(approval.get("sessionId") or "")
+        expected_digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_patch",
+            operation="apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        session = self.sessions.get(session_id)
+        receipt = self.workspace_harness.apply_patch(session, action_payload, base_state)
+        return {
+            **receipt,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "workspace_patch",
+            "operation": "apply",
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+
     def _prepare_planning_undo(
         self,
         *,
@@ -3652,6 +3791,7 @@ def _tool_profile_allows(
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),
         "ime_agents": frozenset({"catalog", "delegate", "status", "artifact", "abort"}),
+        "agent_plan": frozenset({"list", "update"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import subprocess
 import threading
 import uuid
@@ -323,6 +324,7 @@ class PiRuntimeHostManager:
             "capabilities": {
                 "rpc": installed,
                 "sessions": True,
+                "conversationFork": False,
                 "multiSession": True,
                 "maxSessions": int(capabilities.get("maxSessions") or self.config.max_sessions),
                 "tools": True,
@@ -449,8 +451,10 @@ class PiRuntimeHostManager:
         if images:
             params["images"] = [dict(image) for image in images]
         with self._lock:
-            self._cancel_idle_locked()
             state = self._states.setdefault(session_id, _HostedSessionState())
+            if state.turn_id:
+                raise PiRuntimeError("Pi 正在处理上一轮，请等待结束或停止完成后再发送")
+            self._cancel_idle_locked()
             state.stream_pi_message_id = ""
             state.last_agent_messages = []
             state.final_error = ""
@@ -504,9 +508,50 @@ class PiRuntimeHostManager:
             )
         return result
 
+    def fork_candidates(self, session_id: str) -> list[dict[str, object]]:
+        del session_id
+        raise PiRuntimeError("conversation branching is unavailable in Pi Runtime Host protocol v2")
+
+    def fork_session(
+        self,
+        source_session_id: str,
+        target_session_id: str,
+        *,
+        entry_id: str,
+    ) -> dict[str, object]:
+        del source_session_id, target_session_id, entry_id
+        raise PiRuntimeError("conversation branching is unavailable in Pi Runtime Host protocol v2")
+
     def command_catalog(self, session_id: str) -> list[dict[str, object]]:
         self.ensure(session_id)
-        return []
+        response = self._require_client().send("session.commands", {"sessionId": session_id})
+        raw_commands = response.get("commands")
+        if not isinstance(raw_commands, list):
+            return []
+        commands: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for value in raw_commands[:200]:
+            if not isinstance(value, Mapping):
+                continue
+            source = str(value.get("source") or "").strip()
+            name = str(value.get("name") or "").strip()
+            if source not in {"extension", "prompt", "skill"}:
+                continue
+            if not re.fullmatch(r"[\w][\w.:-]{0,79}", name, flags=re.UNICODE):
+                continue
+            identity = name.casefold()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            commands.append(
+                {
+                    "name": name,
+                    "invocation": f"/{name}",
+                    "description": " ".join(str(value.get("description") or "").split())[:240],
+                    "source": source,
+                }
+            )
+        return commands
 
     def model_catalog(self, session_id: str) -> dict[str, object]:
         self.ensure(session_id)
@@ -896,7 +941,7 @@ class PiRuntimeHostManager:
             self._last_error = message
             self._status = "ready" if self._client is not None and self._client.running else "faulted"
             self._schedule_idle_locked()
-        self.sessions.set_status(session_id, "error", last_message_preview=message)
+        self.sessions.set_status(session_id, "faulted", last_message_preview=message)
         self.events.publish(session_id, "turn_failed", {"error": message}, turn_id=turn_id)
 
     def _handle_host_exit(self, exit_code: int | None, error: str) -> None:
@@ -911,7 +956,7 @@ class PiRuntimeHostManager:
             self._status = "faulted"
             self._last_error = message
         for session_id, turn_id in active:
-            self.sessions.set_status(session_id, "error", last_message_preview=message)
+            self.sessions.set_status(session_id, "faulted", last_message_preview=message)
             self.events.publish(session_id, "turn_failed", {"error": message}, turn_id=turn_id)
 
     def _schedule_idle_locked(self) -> None:

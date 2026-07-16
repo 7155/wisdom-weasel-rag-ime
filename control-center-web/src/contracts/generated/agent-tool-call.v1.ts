@@ -18,9 +18,12 @@ export interface AgentToolCallV1 {
     | 'ime_runtime'
     | 'ime_configuration'
     | 'ime_agents'
+    | 'agent_plan'
     | 'ime_plugins'
     | 'workspace_list'
     | 'workspace_read'
+    | 'workspace_search'
+    | 'workspace_patch'
     | 'workspace_shell';
   toolCallId: string;
   args: {

@@ -7,7 +7,8 @@ PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
-APP_CODE_DIR="$APP_SUPPORT_DIR/app"
+APP_CODE_DIR="$APP_SUPPORT_DIR/components/mlx-predictor"
+INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
 MODEL_REGISTRY_EXPLICIT="${RAG_IME_MODEL_REGISTRY+x}"
 MODEL_REGISTRY_ORIGIN="${RAG_IME_MODEL_REGISTRY_ORIGIN:-$([[ -n "$MODEL_REGISTRY_EXPLICIT" ]] && printf explicit || printf default)}"
 MODEL_REGISTRY_PATH="${RAG_IME_MODEL_REGISTRY:-$APP_SUPPORT_DIR/models.json}"
@@ -27,6 +28,11 @@ PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-}"
 MEMORY_PROFILE="${RAG_IME_MEMORY_PROFILE:-low}"
 HF_HOME_VALUE="${RAG_IME_HF_HOME:-}"
 DRY_RUN="${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}"
+SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+SOURCE_DIRTY="false"
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+  SOURCE_DIRTY="true"
+fi
 
 if [[ "$MODEL_REGISTRY_ORIGIN" == "explicit" && ! -f "$MODEL_REGISTRY_PATH" ]]; then
   echo "Explicit model registry does not exist: $MODEL_REGISTRY_PATH" >&2
@@ -36,6 +42,9 @@ fi
 detect_python() {
   local candidate
   local candidates=()
+  if [[ -f "$PLIST_PATH" ]]; then
+    candidates+=("$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$PLIST_PATH" 2>/dev/null || true)")
+  fi
   candidates+=("$ROOT/.venv-mlx313/bin/python")
   candidates+=("$ROOT/.venv-mlx314sys/bin/python")
   candidates+=("$ROOT/.venv-mlx/bin/python")
@@ -150,6 +159,31 @@ rm -rf "$APP_CODE_DIR/rag_ime"
 cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
 cp "$ROOT/scripts/sidecar_launch.py" "$LAUNCH_WRAPPER"
 
+"$PYTHON_EXECUTABLE" - "$INSTALL_MARKER" "$ROOT" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$PYTHON_EXECUTABLE" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "schemaVersion": "rag-ime.component-install-marker.v1",
+            "component": "mlx-predictor",
+            "sourceRoot": sys.argv[2],
+            "sourceCommit": sys.argv[3],
+            "sourceDirty": sys.argv[4] == "true",
+            "installedAt": datetime.now(timezone.utc).isoformat(),
+            "pythonExecutable": sys.argv[5],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+
 ROOT="$ROOT" \
 LABEL="$LABEL" \
 PLIST_PATH="$PLIST_PATH" \
@@ -214,6 +248,7 @@ env_vars = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONUNBUFFERED": "1",
     "RAG_IME_ROOT": app_code_dir,
+    "RAG_IME_INSTALL_MARKER": str(Path(app_code_dir) / "rag-ime-install-marker.json"),
     "RAG_IME_SOURCE_ROOT": root,
     "RAG_IME_MLX_MODEL": os.environ["MODEL"],
     "RAG_IME_MODEL_ID": os.environ["MODEL_ID"],

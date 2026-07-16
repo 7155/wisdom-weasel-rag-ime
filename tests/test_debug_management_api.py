@@ -1465,10 +1465,26 @@ class DebugManagementApiTests(unittest.TestCase):
                     }
                 ],
             }
+            fork_catalog_payload = {
+                "schemaVersion": "rag-ime.agent-session-fork-candidates.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "items": [{"entryId": "entry-user-1", "text": "从这里分支"}],
+            }
+            fork_create_payload = {
+                "schemaVersion": "rag-ime.agent-session-fork-create.v1",
+                "ok": True,
+                "sourceSessionId": session_id,
+                "entryId": "entry-user-1",
+                "selectedText": "从这里分支",
+                "session": {**created["session"], "id": "agent:forked", "title": "新分支"},
+            }
             with (
                 patch.object(self.service.agent, "model_catalog", return_value=model_catalog_payload),
                 patch.object(self.service.agent, "select_model", return_value=model_selection_payload),
                 patch.object(self.service.agent, "command_catalog", return_value=command_catalog_payload),
+                patch.object(self.service.agent, "fork_candidates", return_value=fork_catalog_payload),
+                patch.object(self.service.agent, "fork_session", return_value=fork_create_payload),
             ):
                 with urlopen(f"{base_url}/sessions/{session_id}/models", timeout=5) as response:
                     model_catalog = json.loads(response.read().decode("utf-8"))
@@ -1484,6 +1500,17 @@ class DebugManagementApiTests(unittest.TestCase):
                 )
                 with urlopen(model_request, timeout=5) as response:
                     model_selection = json.loads(response.read().decode("utf-8"))
+                with urlopen(f"{base_url}/sessions/{session_id}/forks", timeout=5) as response:
+                    fork_catalog = json.loads(response.read().decode("utf-8"))
+                fork_request = Request(
+                    f"{base_url}/sessions/{session_id}/forks",
+                    data=json.dumps({"entryId": "entry-user-1", "title": "新分支"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(fork_request, timeout=5) as response:
+                    fork_status = response.status
+                    fork_created = json.loads(response.read().decode("utf-8"))
 
             deep_runtime = {
                 "schemaVersion": "rag-ime.agent-runtime.v1",
@@ -1644,6 +1671,9 @@ class DebugManagementApiTests(unittest.TestCase):
             model_selection["session"]["modelProfile"],
             "openrouter/anthropic/claude-sonnet",
         )
+        self.assertEqual(fork_catalog["items"][0]["entryId"], "entry-user-1")
+        self.assertEqual(fork_status, 201)
+        self.assertEqual(fork_created["session"]["id"], "agent:forked")
         self.assertEqual(deep_status, 202)
         self.assertEqual(deep_search["schemaVersion"], "rag-ime.agent-deep-search.v1")
         self.assertEqual(deep_search["sessionId"], session_id)

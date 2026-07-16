@@ -11,6 +11,10 @@ export interface PublicToolResultView {
   summary: string;
   fields: PublicToolResultField[];
   sources: string[];
+  destination?: {
+    href: string;
+    label: string;
+  };
 }
 
 const toolLabels: Record<string, string> = {
@@ -24,9 +28,23 @@ const toolLabels: Record<string, string> = {
   ime_runtime: '诊断与运行时',
   ime_configuration: '历史与配置',
   ime_agents: '多 Agent 协作',
+  agent_plan: '当前回合计划',
   workspace_list: '工作区浏览',
   workspace_read: '工作区读取',
   workspace_shell: '受控命令',
+};
+
+const toolDestinations: Record<string, { href: string; label: string }> = {
+  ime_overview: { href: '#/overview', label: '打开总览' },
+  ime_input: { href: '#/input', label: '打开输入法' },
+  ime_voice: { href: '#/voice', label: '打开语音输入' },
+  ime_planning: { href: '#/planning', label: '打开规划' },
+  ime_memory: { href: '#/memory', label: '打开记忆' },
+  ime_knowledge: { href: '#/knowledge', label: '打开知识库' },
+  ime_models: { href: '#/configuration', label: '打开模型配置' },
+  ime_runtime: { href: '#/diagnostics', label: '打开诊断' },
+  ime_configuration: { href: '#/configuration', label: '打开配置' },
+  ime_agents: { href: '#/rooms', label: '打开 Rooms' },
 };
 
 const operationLabels: Record<string, string> = {
@@ -137,7 +155,12 @@ export function publicToolResultView(activity: AgentActivityProjection): PublicT
   append('status', '状态', activityStatusLabel(activity.status));
 
   const operation = firstText([envelope, carrier, payload], ['operation']);
-  if (operation) append('operation', '操作', operationLabels[operation] ?? '受控操作');
+  if (operation) {
+    const operationLabel = toolId === 'agent_plan'
+      ? ({ list: '查看计划', update: '更新计划' } as Record<string, string>)[operation]
+      : operationLabels[operation];
+    append('operation', '操作', operationLabel ?? '受控操作');
+  }
 
   const ok = firstBoolean([envelope, domain, carrier], ['ok']);
   if (ok !== undefined) append('ok', '执行结果', ok ? '成功' : '未成功');
@@ -224,6 +247,7 @@ export function publicToolResultView(activity: AgentActivityProjection): PublicT
     summary: summary || `${toolLabel}${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : '已完成'}`,
     fields,
     sources,
+    ...(toolDestinations[toolId] ? { destination: toolDestinations[toolId] } : {}),
   };
 }
 

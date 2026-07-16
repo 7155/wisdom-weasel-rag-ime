@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import subprocess
@@ -165,9 +166,14 @@ class LaunchAgentScriptTests(unittest.TestCase):
             self.assertIn("dry-run", result.stdout)
             self.assertTrue((app_dir / "rag_ime").is_dir())
             self.assertTrue((app_dir / "sidecar_launch.py").is_file())
+            marker = json.loads((app_dir / "rag-ime-install-marker.json").read_text(encoding="utf-8"))
             with plist_path.open("rb") as fh:
                 payload = plistlib.load(fh)
 
+        self.assertEqual(marker["schemaVersion"], "rag-ime.component-install-marker.v1")
+        self.assertEqual(marker["component"], "sidecar-runtime")
+        self.assertEqual(marker["sourceRoot"], str(root))
+        self.assertTrue(marker["sourceCommit"])
         self.assertEqual(payload["Label"], "com.rag-ime.sidecar")
         self.assertTrue(payload["RunAtLoad"])
         self.assertTrue(payload["KeepAlive"])
@@ -257,6 +263,16 @@ class LaunchAgentScriptTests(unittest.TestCase):
             (app_code / "rag_ime").mkdir(parents=True)
             wrapper = app_code / "sidecar_launch.py"
             wrapper.write_text("raise SystemExit(0)\n", encoding="utf-8")
+            (app_code / "rag-ime-install-marker.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.component-install-marker.v1",
+                        "component": "sidecar-runtime",
+                        "sourceCommit": "a" * 40,
+                    }
+                ),
+                encoding="utf-8",
+            )
             runtime_root = app_support / "PiRuntime"
             runtime_root.mkdir()
             (runtime_root / "current.json").write_text("{}\n", encoding="utf-8")
@@ -684,14 +700,26 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 capture_output=True,
             )
             plist_path = Path(tmp) / "Library" / "LaunchAgents" / "com.rag-ime.mlx-predictor.plist"
-            app_dir = Path(tmp) / "Library" / "Application Support" / "RagIme" / "app"
+            app_dir = (
+                Path(tmp)
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "components"
+                / "mlx-predictor"
+            )
             self.assertIn(str(plist_path), result.stdout)
             self.assertIn("dry-run", result.stdout)
             self.assertTrue((app_dir / "rag_ime").is_dir())
             self.assertTrue((app_dir / "sidecar_launch.py").is_file())
+            marker = json.loads((app_dir / "rag-ime-install-marker.json").read_text(encoding="utf-8"))
             with plist_path.open("rb") as fh:
                 payload = plistlib.load(fh)
 
+        self.assertEqual(marker["schemaVersion"], "rag-ime.component-install-marker.v1")
+        self.assertEqual(marker["component"], "mlx-predictor")
+        self.assertEqual(marker["sourceRoot"], str(root))
+        self.assertTrue(marker["sourceCommit"])
         self.assertEqual(payload["Label"], "com.rag-ime.mlx-predictor")
         self.assertFalse(payload["KeepAlive"])
         self.assertIn("mlx-predictor-server", payload["ProgramArguments"])
@@ -721,6 +749,36 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn("runtime_fingerprint = str(payload.get(\"modelFingerprint\")", script_source)
         self.assertIn("matching_sha256", script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
+
+    def test_mlx_installer_reuses_verified_python_from_existing_launch_agent(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-mlx-python-reuse-") as tmp:
+            home = Path(tmp)
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.mlx-predictor.plist"
+            plist_path.parent.mkdir(parents=True)
+            with plist_path.open("wb") as handle:
+                plistlib.dump({"ProgramArguments": [sys.executable]}, handle)
+            env = {key: value for key, value in os.environ.items() if not key.startswith("RAG_IME_")}
+            env.update(
+                {
+                    "HOME": str(home),
+                    "RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN": "1",
+                    "RAG_IME_MLX_MODEL": str(home / "model"),
+                }
+            )
+
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_mlx_predictor_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            with plist_path.open("rb") as handle:
+                payload = plistlib.load(handle)
+
+        self.assertEqual(payload["ProgramArguments"][0], sys.executable)
 
     def test_standalone_mlx_installer_infers_qwen_profile_and_model_id(self) -> None:
         root = Path(__file__).resolve().parents[1]

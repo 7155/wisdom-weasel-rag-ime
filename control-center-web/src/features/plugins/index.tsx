@@ -247,7 +247,7 @@ export function PluginsFeature() {
                 onClick={() => navigate({
                   pathname: '/agent',
                   search: new URLSearchParams({
-                    draft: '请使用插件制作 Skill 帮我创建一个受管插件。先询问用途和权限边界，再生成草稿、完成校验并提交安装提议；不要绕过控制中心的最终批准。',
+                    draft: '/skill:rag-ime-plugin-creator 帮我创建一个受管插件。先询问用途和权限边界，再生成草稿、完成校验并提交安装提议；不要绕过控制中心的最终批准。',
                   }).toString(),
                 })}
               >交给 Agent 制作</Button>

@@ -1,5 +1,5 @@
 import type { UiAgentEvent, UiAgentMessage } from './ui-events';
-import { tryParseAgentMessage } from './validators';
+import { parseAgentEvent, tryParseAgentMessage } from './validators';
 
 export type AgentTurnStatus =
   | 'queued'
@@ -28,6 +28,14 @@ export interface AgentActivityProjection {
   payload: Record<string, unknown>;
   createdAtMs: number;
   updatedAtMs: number;
+}
+
+export interface AgentToolProgressEntry {
+  eventId: string;
+  kind: 'tool_started' | 'tool_progress' | 'tool_finished';
+  status: AgentActivityProjection['status'];
+  summary: string;
+  createdAtMs: number;
 }
 
 export interface ProjectionDiagnostic {
@@ -77,6 +85,7 @@ export interface ProjectionReduction<State> {
 
 export interface AgentSnapshot {
   messages: unknown[];
+  liveEvents: unknown[];
   lastSequence: number;
   resumeToken: string;
   status?: string;
@@ -318,10 +327,7 @@ export function applyAgentSnapshot(
   state: AgentProjectionState,
   snapshot: AgentSnapshot,
 ): AgentProjectionState {
-  const next = createAgentProjection(state.sessionId);
-  next.lastSequence = Math.max(0, snapshot.lastSequence);
-  next.lastEventId = snapshot.resumeToken;
-  next.resumeToken = snapshot.resumeToken;
+  let next = createAgentProjection(state.sessionId);
   next.status = snapshot.status ?? state.status;
 
   const serverClientIds = new Set<string>();
@@ -342,6 +348,32 @@ export function applyAgentSnapshot(
     if (parsed.value.clientMessageId) serverClientIds.add(parsed.value.clientMessageId);
   }
 
+  // The transcript restores durable conversation text; the bounded live event
+  // projection restores current reasoning, tool and approval state. Snapshot
+  // events are normalized locally so their historical sequence gaps do not
+  // trigger another snapshot. The server cursor below remains authoritative
+  // for the following SSE subscription.
+  for (const rawEvent of snapshot.liveEvents) {
+    try {
+      const parsed = parseAgentEvent(rawEvent);
+      if (parsed.sessionId !== state.sessionId) throw new TypeError('foreign snapshot event');
+      const hydrated = {
+        ...parsed,
+        sequence: next.lastSequence + 1,
+      };
+      next = reduceAgentEvent(next, hydrated).state;
+    } catch {
+      appendDiagnostic(next, {
+        id: `snapshot-event-invalid:${next.diagnostics.length}`,
+        streamKind: 'agent',
+        eventType: 'snapshot_event_invalid',
+        summary: 'A malformed snapshot event was skipped.',
+        sequence: snapshot.lastSequence,
+        payload: {},
+      });
+    }
+  }
+
   for (const [clientMessageId, messageId] of Object.entries(
     state.optimisticByClientMessageId,
   )) {
@@ -354,6 +386,11 @@ export function applyAgentSnapshot(
     attachMessageToTurn(next, optimistic);
   }
   reconcileSnapshotTurnStatuses(next);
+  next.lastSequence = Math.max(0, snapshot.lastSequence);
+  next.lastEventId = snapshot.resumeToken;
+  next.resumeToken = snapshot.resumeToken;
+  next.needsSnapshot = false;
+  next.gap = undefined;
   return next;
 }
 
@@ -366,6 +403,7 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
       : [];
   return {
     messages,
+    liveEvents: Array.isArray(payload.liveEvents) ? payload.liveEvents : [],
     lastSequence: integer(payload.lastSequence ?? payload.lastEventSequence),
     resumeToken: text(payload.resumeToken ?? payload.lastEventId),
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
@@ -460,6 +498,8 @@ function upsertMessage(
   clientMessageId = message.clientMessageId ?? '',
 ): void {
   if (message.role !== 'user' && message.role !== 'assistant') return;
+  const previous = state.messagesById[message.id];
+  if (previous && previous.turnId !== message.turnId) detachMessageFromTurn(state, previous);
   const optimisticId = clientMessageId
     ? state.optimisticByClientMessageId[clientMessageId]
     : undefined;
@@ -489,13 +529,20 @@ function upsertActivity(
     text(payload.toolCallId ?? payload.approvalId ?? payload.requestId) ||
     `${event.turnId}:${event.eventType}`;
   const previous = state.activitiesById[id];
+  if (previous && previous.turnId !== event.turnId) {
+    const previousTurn = state.turnsById[previous.turnId];
+    if (previousTurn) {
+      previousTurn.activityIds = previousTurn.activityIds.filter((activityId) => activityId !== id);
+    }
+  }
+  const activityPayload = mergeActivityPayload(previous, event, payload, status);
   const activity: AgentActivityProjection = {
     id,
     turnId: event.turnId,
     kind: event.eventType,
     status,
     summary: activitySummary(payload, event.eventType),
-    payload,
+    payload: activityPayload,
     createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
     updatedAtMs: event.createdAtMs,
   };
@@ -503,6 +550,103 @@ function upsertActivity(
   state.activitiesById[id] = activity;
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
+}
+
+function mergeActivityPayload(
+  previous: AgentActivityProjection | undefined,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+  status: AgentActivityProjection['status'],
+): Record<string, unknown> {
+  if (!isToolActivityEvent(event.eventType)) return payload;
+
+  const previousPayload = previous && isToolActivityEvent(previous.kind)
+    ? previous.payload
+    : {};
+  const history = agentToolProgressHistory(previousPayload.progressHistory);
+  const nextEntry: AgentToolProgressEntry = {
+    eventId: event.eventId,
+    kind: event.eventType,
+    status,
+    summary: toolProgressSummary(payload, previousPayload, event.eventType, status),
+    createdAtMs: event.createdAtMs,
+  };
+  const progressHistory = history.some((entry) => entry.eventId === event.eventId)
+    ? history
+    : [...history, nextEntry].slice(-20);
+
+  // These events are updates for one logical tool call. Keep stable metadata
+  // and prior partial results while the latest event advances its status.
+  return {
+    ...previousPayload,
+    ...payload,
+    progressHistory,
+  };
+}
+
+export function agentToolProgressHistory(value: unknown): AgentToolProgressEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): AgentToolProgressEntry[] => {
+    const entry = record(item);
+    const kind = text(entry.kind);
+    const status = text(entry.status);
+    if (
+      !['tool_started', 'tool_progress', 'tool_finished'].includes(kind)
+      || !['running', 'waiting', 'completed', 'failed'].includes(status)
+    ) return [];
+    return [{
+      eventId: text(entry.eventId),
+      kind: kind as AgentToolProgressEntry['kind'],
+      status: status as AgentToolProgressEntry['status'],
+      summary: boundedToolProgressText(entry.summary),
+      createdAtMs: finiteTimestamp(entry.createdAtMs),
+    }];
+  }).filter((entry) => entry.eventId && entry.createdAtMs > 0);
+}
+
+function toolProgressSummary(
+  payload: Record<string, unknown>,
+  previousPayload: Record<string, unknown>,
+  eventType: AgentToolProgressEntry['kind'],
+  status: AgentActivityProjection['status'],
+): string {
+  const carrier = record(payload.result ?? payload.partialResult);
+  const details = record(carrier.details);
+  const domain = record(details.result ?? carrier.result);
+  const explicit = boundedToolProgressText(
+    domain.summary
+      ?? details.summary
+      ?? carrier.summary
+      ?? payload.summary
+      ?? payload.message
+      ?? payload.label,
+  );
+  if (explicit) return explicit;
+  const toolName = boundedToolProgressText(
+    payload.toolName ?? payload.toolId ?? previousPayload.toolName ?? previousPayload.toolId,
+  ) || '工具';
+  if (status === 'failed') return `${toolName}执行失败`;
+  if (eventType === 'tool_finished') return `${toolName}执行完成`;
+  if (eventType === 'tool_started') return `${toolName}已开始`;
+  return `${toolName}正在处理`;
+}
+
+function boundedToolProgressText(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return '';
+  const normalized = String(value)
+    .replace(/\s+/g, ' ')
+    .replace(/(?:\/Users|\/Volumes|\/private|\/tmp)\/[^\s,;，。]+/g, '本地资源')
+    .replace(/(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/gi, '敏感信息已隐藏')
+    .trim();
+  return normalized.length > 240 ? `${normalized.slice(0, 240)}…` : normalized;
+}
+
+function finiteTimestamp(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function isToolActivityEvent(value: string): value is AgentToolProgressEntry['kind'] {
+  return value === 'tool_started' || value === 'tool_progress' || value === 'tool_finished';
 }
 
 function activitySummary(payload: Record<string, unknown>, fallback: string): string {

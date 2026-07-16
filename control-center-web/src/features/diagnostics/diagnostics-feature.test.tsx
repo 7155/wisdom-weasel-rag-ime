@@ -15,7 +15,19 @@ const routes = {
     ok: true,
     runtimeRevision: 7,
     runtimeConfig: { postCommit: { enabled: true } },
-    components: { sidecar: { ok: true, status: 'ready' } },
+    components: {
+      sidecar: { ok: true, status: 'ready', detail: '运行中' },
+      voiceRecognition: {
+        ok: false,
+        status: 'error',
+        detail: '语音代理安装版本过旧，缺少完整定稿能力',
+      },
+      deployment: {
+        ok: false,
+        status: 'error',
+        detail: 'voice was installed from another product commit',
+      },
+    },
   },
   'diagnostics.predictor': { ok: true, predictor: { status: 'ready', providerName: 'local-mlx' } },
   'diagnostics.models': { ok: true, schemaVersion: 'rag-ime.models-status.v3' },
@@ -25,6 +37,16 @@ const routes = {
 afterEach(cleanup);
 
 describe('DiagnosticsFeature runtime actions', () => {
+  it('keeps backend failure reasons visible and names voice components', async () => {
+    renderFeature(new MockControlTransport({ routes }));
+
+    expect(await screen.findByText('语音定稿')).toBeInTheDocument();
+    expect(screen.getByText('语音代理安装版本过旧，缺少完整定稿能力')).toBeInTheDocument();
+    expect(screen.getByText('安装一致性')).toBeInTheDocument();
+    expect(screen.getByText('voice was installed from another product commit')).toBeInTheDocument();
+    expect(screen.queryByText('已返回运行信息')).not.toBeInTheDocument();
+  });
+
   it('runs the server-bound accessibility workflow and renders the terminal receipt', async () => {
     const user = userEvent.setup();
     const externalAction = vi.fn(async (request) => ({

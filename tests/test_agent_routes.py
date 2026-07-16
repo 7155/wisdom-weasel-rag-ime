@@ -22,6 +22,10 @@ class AgentRouteTests(unittest.TestCase):
             ("agent:123", "prompt"),
         )
         self.assertEqual(
+            agent_session_route("/api/agent/sessions/agent:123/forks"),
+            ("agent:123", "forks"),
+        )
+        self.assertEqual(
             agent_session_route("/api/agent/sessions/agent:123"),
             ("agent:123", ""),
         )

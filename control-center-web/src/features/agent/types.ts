@@ -15,7 +15,20 @@ export type SessionSummary = Pick<
   | 'updatedAtMs'
   | 'workspaceRoots'
 > &
-  Partial<Pick<AgentSessionV1, 'lastMessagePreview' | 'messageCount' | 'modelProfile'>>;
+  Partial<Pick<
+    AgentSessionV1,
+    | 'lastMessagePreview'
+    | 'messageCount'
+    | 'modelProfile'
+    | 'toolProfileVersion'
+    | 'toolAllowlistMode'
+    | 'allowedTools'
+  >>;
+
+export interface AgentPermissionSelection {
+  mode: 'assistant' | 'coordinator';
+  toolProfileVersion: 'control-center-v1' | 'subagent-readonly-v1';
+}
 
 export interface AgentSessionListResponse {
   ok: boolean;
@@ -42,12 +55,18 @@ export type AgentCommandSource = 'extension' | 'prompt' | 'skill';
 
 export type AgentProductCommandName =
   | 'new'
+  | 'resume'
+  | 'branch'
   | 'name'
   | 'compact'
   | 'model'
   | 'thinking'
+  | 'permissions'
   | 'tools'
+  | 'session'
   | 'status'
+  | 'settings'
+  | 'hotkeys'
   | 'stop'
   | 'help';
 
@@ -65,7 +84,19 @@ export function sessionItems(value: unknown): SessionSummary[] {
     : Array.isArray(value.sessions)
       ? value.sessions
       : [];
-  return source.filter(isSessionSummary);
+  // Delegated workers have durable runtime records for recovery and audit, but
+  // they are not user conversations. Keep them out of the conversation rail
+  // even when an older backend includes them in the generic session response.
+  return source.filter((item): item is SessionSummary => (
+    isSessionSummary(item) && !isTransientSubagentSession(item)
+  ));
+}
+
+export function sessionPermissionLabel(session: SessionSummary): string {
+  if (session.toolProfileVersion === 'subagent-readonly-v1') {
+    return session.mode === 'coordinator' ? '只读协调' : '只读观察';
+  }
+  return session.mode === 'coordinator' ? '运行协调' : '受控助手';
 }
 
 export function activeSessionId(value: unknown): string {
@@ -110,6 +141,10 @@ function isSessionSummary(value: unknown): value is SessionSummary {
     typeof value.title === 'string' &&
     typeof value.updatedAtMs === 'number'
   );
+}
+
+function isTransientSubagentSession(value: unknown): boolean {
+  return isRecord(value) && value.sessionKind === 'subagent_runtime';
 }
 
 function isAgentCommand(value: unknown): value is AgentCommand {

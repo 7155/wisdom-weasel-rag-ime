@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import sys
 import tempfile
 import unittest
-import sys
 from pathlib import Path
 
 from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
@@ -109,6 +110,65 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         prepared = harness.prepare_command(self.session, {"command": "pwd"})
         with self.assertRaisesRegex(WorkspaceHarnessError, "refusing unsandboxed"):
             harness.execute(prepared)
+
+    def test_search_is_bounded_and_skips_sensitive_binary_and_symlink_files(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        result = harness.search(self.session, {"query": "智鼬", "mode": "both", "limit": 10})
+
+        self.assertEqual(result["filesScanned"], 2)
+        self.assertEqual(len(result["matches"]), 1)
+        self.assertEqual(result["matches"][0]["lineNumber"], 1)
+        self.assertNotIn("must-not-leak", str(result))
+        self.assertNotIn("outside-secret-content", str(result))
+        with self.assertRaisesRegex(WorkspaceHarnessError, "coordinator"):
+            harness.search(self.assistant, {"query": "hello"})
+
+    def test_patch_preview_is_hash_bound_and_apply_is_atomic(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        path = self.root / "README.md"
+        prepared = harness.prepare_patch(
+            self.session,
+            {"path": str(path), "oldText": "hello", "newText": "你好"},
+        )
+        preview = harness.patch_preview(prepared)
+
+        self.assertIn("-hello 智鼬", prepared.diff)
+        self.assertIn("+你好 智鼬", prepared.diff)
+        receipt = harness.apply_patch(
+            self.session,
+            preview["actionPayload"],
+            preview["baseState"],
+        )
+        self.assertEqual(path.read_text(encoding="utf-8"), "你好 智鼬\n")
+        self.assertEqual(
+            receipt["postimageSha256"],
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
+
+    def test_patch_rejects_ambiguous_match_sensitive_path_and_stale_preimage(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        path = self.root / "README.md"
+        path.write_text("same same\n", encoding="utf-8")
+        with self.assertRaisesRegex(WorkspaceHarnessError, "occurrence count"):
+            harness.prepare_patch(
+                self.session,
+                {"path": str(path), "oldText": "same", "newText": "next"},
+            )
+        with self.assertRaisesRegex(WorkspaceHarnessError, "non-sensitive"):
+            harness.prepare_patch(
+                self.session,
+                {"path": str(self.root / ".env"), "oldText": "API", "newText": "KEY"},
+            )
+        path.write_text("before\n", encoding="utf-8")
+        prepared = harness.prepare_patch(
+            self.session,
+            {"path": str(path), "oldText": "before", "newText": "after"},
+        )
+        preview = harness.patch_preview(prepared)
+        path.write_text("changed\n", encoding="utf-8")
+        with self.assertRaisesRegex(WorkspaceHarnessError, "changed"):
+            harness.apply_patch(self.session, preview["actionPayload"], preview["baseState"])
+        self.assertEqual(path.read_text(encoding="utf-8"), "changed\n")
 
     @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
     def test_real_harness_runs_inside_workspace_and_denies_outside_read(self) -> None:

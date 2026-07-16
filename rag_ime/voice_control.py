@@ -21,6 +21,7 @@ MIN_HOTWORD_CHARACTERS = 2
 MAX_HOTWORD_CHARACTERS = 9
 VOICE_PROVIDER_SCHEMA_VERSION = "rag-ime.voice-provider.v1"
 VOICE_HOTKEY_SCHEMA_VERSION = "rag-ime.voice-hotkey.v1"
+VOICE_BUILD_MARKER_SCHEMA_VERSION = "rag-ime.voice-build-marker.v1"
 VOICE_PROVIDERS = frozenset(
     {"native_streaming", "realtime_websocket", "http_transcription"}
 )
@@ -366,6 +367,8 @@ def _deployed_recognition_contract(
             "semanticSmoothing": False,
             "fullResultReplacement": False,
             "reportedByAgent": False,
+            "state": "missing",
+            "reason": "installed voice binary is missing",
         }
     try:
         binary = binary_path.read_bytes()
@@ -376,26 +379,72 @@ def _deployed_recognition_contract(
             "semanticSmoothing": False,
             "fullResultReplacement": False,
             "reportedByAgent": False,
+            "state": "unreadable",
+            "reason": "installed voice binary is unreadable",
         }
     reported = agent.get("recognition") if isinstance(agent.get("recognition"), Mapping) else {}
+    marker = _voice_build_marker(binary_path)
+    marker_capabilities = (
+        marker.get("capabilities")
+        if isinstance(marker.get("capabilities"), Mapping)
+        else {}
+    )
+    reported_by_agent = bool(reported)
+    second_pass = (
+        reported.get("finalSecondPass") is True
+        or marker_capabilities.get("finalSecondPass") is True
+        or b"enable_nonstream" in binary
+    )
+    semantic_smoothing = (
+        reported.get("semanticSmoothing") is True
+        or marker_capabilities.get("semanticSmoothing") is True
+        or b"semanticSmoothing" in binary
+    )
+    full_result_replacement = (
+        reported.get("fullResultReplacement") is True
+        or marker_capabilities.get("fullResultReplacement") is True
+        or b"fullResultReplacement" in binary
+    )
+    all_capabilities = second_pass and semantic_smoothing and full_result_replacement
+    if reported_by_agent:
+        state = "ready" if all_capabilities else "unsupported"
+        reason = "running voice agent reported its recognition contract"
+    elif all_capabilities:
+        state = "restart_required"
+        reason = "installed voice binary supports final replacement but the running agent has not reported it"
+    else:
+        state = "outdated"
+        reason = "installed voice binary does not contain the complete final-result contract"
     return {
         "binaryFound": True,
-        "secondPass": reported.get("finalSecondPass") is True or b"enable_nonstream" in binary,
+        "secondPass": second_pass,
         # Short Swift dictionary keys may be encoded as immediate values and do
         # not necessarily appear as byte strings in an optimized executable.
         # The native status contract supplies runtime truth; the long Codable
         # field names remain a build-time fallback before the agent restarts.
-        "semanticSmoothing": (
-            reported.get("semanticSmoothing") is True
-            or b"semanticSmoothing" in binary
-        ),
-        "fullResultReplacement": (
-            reported.get("fullResultReplacement") is True
-            or b"fullResultReplacement" in binary
-        ),
-        "reportedByAgent": bool(reported),
+        "semanticSmoothing": semantic_smoothing,
+        "fullResultReplacement": full_result_replacement,
+        "reportedByAgent": reported_by_agent,
+        "state": state,
+        "reason": reason,
+        "buildMarkerFound": bool(marker),
+        "sourceCommit": _text(marker.get("gitCommit")),
+        "sourceDirty": marker.get("gitDirty") is True,
         "updatedAtMs": int(binary_path.stat().st_mtime * 1000),
     }
+
+
+def _voice_build_marker(binary_path: Path) -> dict[str, object]:
+    marker_path = binary_path.parent.parent / "Resources" / "rag-ime-voice-build-marker.json"
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if payload.get("schemaVersion") != VOICE_BUILD_MARKER_SCHEMA_VERSION:
+        return {}
+    return payload
 
 
 def _agent_is_running(agent: Mapping[str, object]) -> bool:

@@ -35,7 +35,7 @@
 .mgmt-page__eyebrow {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -136,7 +136,7 @@
   display: block;
   margin-top: 4px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .mgmt-list {
@@ -198,7 +198,7 @@
   min-width: 680px;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .mgmt-table caption {
@@ -238,7 +238,7 @@
   gap: var(--space-3);
   padding-top: var(--space-3);
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .mgmt-notice {
@@ -248,7 +248,7 @@
   padding: 9px 11px;
   border-left: 3px solid var(--color-info);
   background: var(--color-info-soft);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -278,7 +278,7 @@
   margin-right: 7px;
   color: var(--color-warning);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 760;
 }
 
@@ -298,7 +298,7 @@
   padding: 6px 8px;
   border-block: 1px solid var(--color-border);
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .mgmt-workflow__steps li[data-state='complete'] { color: var(--color-success); }
@@ -312,7 +312,7 @@
 }
 
 .mgmt-workflow__panel strong { font-size: 13px; }
-.mgmt-workflow__panel ul { margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.55; }
+.mgmt-workflow__panel ul { margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.55; }
 .mgmt-workflow__binding {
   display: flex;
   flex-wrap: wrap;
@@ -320,7 +320,7 @@
   gap: var(--space-2);
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 .mgmt-workflow__confirm {
   display: flex;
@@ -332,7 +332,7 @@
   background: var(--color-surface);
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
 }
 .mgmt-workflow__confirm input {
   width: 15px;
@@ -352,9 +352,9 @@
 }
 
 .mgmt-workflow__receipt > div { display: grid; min-width: 0; gap: 3px; }
-.mgmt-workflow__receipt strong { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.mgmt-workflow__receipt strong { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
 .mgmt-workflow__receipt span,
-.mgmt-workflow__receipt time { color: var(--color-text-secondary); font-size: 12px; }
+.mgmt-workflow__receipt time { color: var(--color-text-secondary); font-size: 13px; }
 .mgmt-grid-2 { display: grid; gap: var(--space-5); grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .mgmt-grid-3 { display: grid; gap: var(--space-3); grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .mgmt-stack { display: grid; gap: var(--space-3); }
@@ -369,7 +369,7 @@
   padding: var(--space-3);
   background: var(--color-surface-subtle);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   overflow: auto;
   white-space: pre-wrap;

@@ -11,8 +11,12 @@ case "$ACTION" in
   install|install-release)
     exec "$ROOT/scripts/build_control_center_web_host.sh" install-release
     ;;
+  install-stack)
+    shift || true
+    exec "$ROOT/scripts/install_product_stack.sh" "$@"
+    ;;
   *)
-    echo "usage: $0 [build|install|build-release|install-release]" >&2
+    echo "usage: $0 [build|install|build-release|install-release|install-stack]" >&2
     exit 2
     ;;
 esac

@@ -15,6 +15,8 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-memory-book-agent-") as tmp:
             home = Path(tmp) / "home"
+            model_env = Path(tmp) / "source-deepseek.env"
+            model_env.write_text("DEEPSEEK_API_KEY=fake\n", encoding="utf-8")
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_memory_book_maintenance_launch_agent.sh")],
                 cwd=root,
@@ -22,7 +24,7 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
                     **os.environ,
                     "HOME": str(home),
                     "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
-                    "RAG_IME_DEEPSEEK_ENV": str(root / ".rag-ime-data" / "deepseek.env"),
+                    "RAG_IME_DEEPSEEK_ENV": str(model_env),
                     "RAG_IME_MEMORY_BOOK_MAINTENANCE_INTERVAL_SECONDS": "900",
                     "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "1",
                 },
@@ -33,7 +35,14 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
 
             plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.memory-book-maintenance.plist"
             payload = plistlib.loads(plist_path.read_bytes())
-            app_dir = home / "Library" / "Application Support" / "RagIme" / "app"
+            app_dir = (
+                home
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "components"
+                / "memory-book-maintenance"
+            )
             installed_files = {
                 "wrapper": (app_dir / "memory_book_maintenance_launch.py").is_file(),
                 "runner": (app_dir / "scripts" / "run_memory_book_maintenance_once.sh").is_file(),

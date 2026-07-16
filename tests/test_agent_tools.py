@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tools import ControlToolGateway
-from rag_ime.agent_workspace import WorkspaceHarness
+from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
 
 
 class _Management:
@@ -604,9 +604,12 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_runtime",
                 "ime_configuration",
                 "ime_agents",
+                "agent_plan",
                 "ime_plugins",
                 "workspace_list",
                 "workspace_read",
+                "workspace_search",
+                "workspace_patch",
                 "workspace_shell",
             ],
         )
@@ -672,6 +675,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "ime_models",
                     "ime_runtime",
                     "ime_configuration",
+                    "workspace_patch",
                     "workspace_shell",
                 }
             )
@@ -679,6 +683,44 @@ class ControlToolGatewayTests(unittest.TestCase):
         assistant_call = self._tool_call("workspace_list", "list")
         with self.assertRaisesRegex(ValueError, "session mode"):
             self.gateway.execute(assistant_call)
+
+    def test_agent_plan_is_session_local_and_readonly_profile_safe(self) -> None:
+        created = self.gateway.execute(
+            self._tool_call(
+                "agent_plan",
+                "update",
+                title="验证权限模式",
+                status="pending",
+            )
+        )["result"]
+        item_id = created["event"]["itemId"]
+
+        self.assertEqual(created["presentationKind"], "task_plan")
+        self.assertEqual(created["items"][0]["title"], "验证权限模式")
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="assistant",
+            tool_profile_version="subagent-readonly-v1",
+            allowed_tools=["agent_plan"],
+        )
+        updated = self.gateway.execute(
+            self._tool_call(
+                "agent_plan",
+                "update",
+                itemId=item_id,
+                status="in_progress",
+            )
+        )["result"]
+        self.assertEqual(updated["plan"]["counts"]["inProgress"], 1)
+
+        other = self.store.create(title="other session", created_at_ms=2)
+        other_plan = self.gateway.execute(
+            {
+                **self._tool_call("agent_plan", "list"),
+                "sessionId": other["id"],
+            }
+        )["result"]
+        self.assertEqual(other_plan["items"], [])
 
     def test_coordinator_workspace_read_and_shell_use_hash_bound_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace"
@@ -751,6 +793,83 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(receipt["exitCode"], 0)
         self.assertEqual(receipt["auditId"], approval["approvalId"])
         self.assertEqual(len(executed), 1)
+
+    def test_coordinator_search_and_patch_require_native_hash_bound_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-patch"
+        workspace.mkdir()
+        target = workspace / "main.py"
+        target.write_text("print('before')\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="coordinator patch",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+        found = self.gateway.execute(
+            {
+                **self._tool_call("workspace_search", "search", query="before"),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        prepared = self.gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_patch",
+                    "apply",
+                    path=str(target),
+                    oldText="before",
+                    newText="after",
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+
+        self.assertEqual(found["matches"][0]["lineNumber"], 1)
+        self.assertEqual(target.read_text(encoding="utf-8"), "print('before')\n")
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.assertEqual(receipt["replacementCount"], 1)
+        self.assertEqual(target.read_text(encoding="utf-8"), "print('after')\n")
+
+    def test_workspace_patch_fails_closed_if_file_changes_after_native_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-stale"
+        workspace.mkdir()
+        target = workspace / "main.py"
+        target.write_text("old\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="coordinator stale patch",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=4,
+        )
+        prepared = self.gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_patch",
+                    "apply",
+                    path=str(target),
+                    oldText="old",
+                    newText="new",
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        target.write_text("changed\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(WorkspaceHarnessError, "changed"):
+            self.gateway.apply_approval(decided)
+        self.assertEqual(target.read_text(encoding="utf-8"), "changed\n")
 
     def test_task_action_requires_native_approval_then_returns_rollback_receipt(self) -> None:
         prepared = self.gateway.execute(
@@ -1467,8 +1586,11 @@ class ControlToolGatewayTests(unittest.TestCase):
             "ime_runtime",
             "ime_configuration",
             "ime_agents",
+            "agent_plan",
             "workspace_list",
             "workspace_read",
+            "workspace_search",
+            "workspace_patch",
             "workspace_shell",
         ):
             self.assertEqual(extension.count(f'name: "{tool}"'), 1)
@@ -1516,9 +1638,6 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn("sourceSessionId", calls[0][1])
         self.assertNotIn("sourceParticipantId", calls[0][1])
         self.assertEqual(calls[0][1]["kind"], "send")
-
-    def _call(self, operation: str, **args):
-        return self._tool_call("ime_memory", operation, **args)
 
     def test_agent_can_create_validate_and_propose_but_cannot_apply_a_plugin(self) -> None:
         calls: list[tuple[str, object]] = []
@@ -1574,6 +1693,9 @@ class ControlToolGatewayTests(unittest.TestCase):
             item for item in self.gateway.manifests()["items"] if item["id"] == "ime_plugins"
         )
         self.assertNotIn("apply", plugin_manifest["operations"])
+
+    def _call(self, operation: str, **args):
+        return self._tool_call("ime_memory", operation, **args)
 
     def _tool_call(self, tool: str, operation: str, **args):
         return {

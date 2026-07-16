@@ -13,8 +13,9 @@ import { AgentFeature } from './index';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from './preview-data';
 import { SessionRail } from './sessions/SessionRail';
 import { useAgentLiveStore } from './state/live-store';
+import { projectStatusPanel } from './status/AgentStatusPanel';
 import { AgentTurn } from './timeline/AgentTimeline';
-import type { ModelCatalog, ThinkingLevel } from './types';
+import { sessionItems, type ModelCatalog, type ThinkingLevel } from './types';
 
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({ data, itemContent }: { data: string[]; itemContent: (index: number, item: string) => ReactNode }) => (
@@ -36,6 +37,86 @@ describe('Agent experience', () => {
     render(<TooltipProvider><SessionRail sessions={previewSessions} selectedId="session-preview" loading={false} onSelect={onSelect} onCreate={() => {}} /></TooltipProvider>);
     await user.click(screen.getByRole('button', { name: /记忆整理/ }));
     expect(onSelect).toHaveBeenCalledWith('session-memory');
+  });
+
+  it('creates a real Pi-backed conversation branch and restores the selected message as draft', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const branchButton = await screen.findByRole('button', { name: '创建对话分支' });
+    await waitFor(() => expect(branchButton).toBeEnabled());
+    await user.click(branchButton);
+    const dialog = await screen.findByRole('dialog', { name: '从历史消息创建分支' });
+    expect(within(dialog).getByText(/原对话保持不变/)).toBeInTheDocument();
+    await user.click(await within(dialog).findByRole('radio', { name: /帮我整理权限模式/ }));
+    await user.click(within(dialog).getByRole('button', { name: '创建分支' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.forks.create',
+        params: { sessionId: 'session-preview' },
+        body: expect.objectContaining({ entryId: 'entry-permissions' }),
+      }),
+    })));
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
+    expect(screen.getByRole('button', { name: /控制中心迁移 · 分支/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('creates a branch directly from the selected user message', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const actions = await screen.findAllByRole('button', { name: '从这条消息创建分支' });
+    await user.click(actions.at(-1)!);
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.forks.create',
+        params: { sessionId: 'session-preview' },
+        body: expect.objectContaining({ entryId: 'session-preview:user-media' }),
+      }),
+    })));
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
+  });
+
+  it('does not offer branches when the active Pi protocol declares them unsupported', async () => {
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        schemaVersion: 'rag-ime.agent-runtime.v1',
+        enabled: true,
+        managed: true,
+        status: 'ready',
+        piVersion: '0.80.7',
+        idleTimeoutSeconds: 600,
+        capabilities: { conversationFork: false },
+      },
+    );
+    renderAgent(transport);
+
+    const unavailable = await screen.findByRole('button', { name: '当前运行时不支持对话分支' });
+    await waitFor(() => expect(unavailable).toBeDisabled());
+    expect(screen.queryByRole('button', { name: '从这条消息创建分支' })).not.toBeInTheDocument();
+  });
+
+  it('keeps delegated runtime sessions out of the user conversation rail', () => {
+    const parent = { ...previewSessions[0]!, id: 'session-parent', title: '用户主对话' };
+    const child = {
+      ...parent,
+      id: 'session-child-runtime',
+      title: '研究员临时会话',
+      sessionKind: 'subagent_runtime',
+    };
+
+    expect(sessionItems({ ok: true, items: [parent, child] })).toEqual([parent]);
   });
 
   it('renders one persona avatar and one activity container per assistant turn without raw payloads', async () => {
@@ -125,9 +206,101 @@ describe('Agent experience', () => {
     expect(statusPanel.querySelector('.agent-status-turn[data-state="running"] > svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-tool[data-state="running"] .agent-status-tool__icon svg')).toBeInTheDocument();
     await user.click(knowledgeStep);
+    expect(within(statusPanel).getByText('来源 2 · 进行中')).toBeInTheDocument();
     expect(within(statusPanel).getByText('信息来源')).toBeInTheDocument();
     expect(within(statusPanel).getByText('memory-design.md · 42-48 行')).toBeInTheDocument();
     expect(within(statusPanel).getByText('agent-runtime.pdf · 第 7 页')).toBeInTheDocument();
+  });
+
+  it('keeps every tool step from the current turn available in the status panel', () => {
+    const sessionId = 'session-tool-audit';
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'tool-audit',
+      text: '检查所有步骤',
+      nowMs: 1,
+    });
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    const turnId = projection.turnOrder[0]!;
+    useAgentLiveStore.getState().applyEvents(sessionId, Array.from({ length: 12 }, (_, index) => ({
+      schemaVersion: 'rag-ime.agent-event.v1' as const,
+      eventId: `tool-step-${index}`,
+      sessionId,
+      turnId,
+      sequence: index + 1,
+      createdAtMs: index + 2,
+      streamKind: 'agent' as const,
+      eventType: 'tool_started' as const,
+      payload: {
+        toolCallId: `tool-call-${index}`,
+        toolId: 'ime_knowledge',
+        operation: 'search',
+        summary: `检索步骤 ${index + 1}`,
+      },
+      resumeToken: `tool-step-${index}`,
+    })));
+
+    expect(projectStatusPanel(useAgentLiveStore.getState().projections[sessionId]).tools).toHaveLength(12);
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('projects the session-local agent plan into the right status panel', () => {
+    const sessionId = 'session-plan-panel';
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'plan-panel',
+      text: '按计划执行',
+      nowMs: 1,
+    });
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    const turnId = projection.turnOrder[0]!;
+    useAgentLiveStore.getState().applyEvents(sessionId, [{
+      schemaVersion: 'rag-ime.agent-event.v1',
+      eventId: 'agent-plan-start',
+      sessionId,
+      turnId,
+      sequence: 1,
+      createdAtMs: 2,
+      streamKind: 'agent',
+      eventType: 'tool_started',
+      payload: {
+        toolCallId: 'agent-plan-call',
+        toolId: 'agent_plan',
+        operation: 'list',
+        summary: '正在读取当前计划',
+      },
+      resumeToken: 'agent-plan-start',
+    }, {
+      schemaVersion: 'rag-ime.agent-event.v1',
+      eventId: 'agent-plan-result',
+      sessionId,
+      turnId,
+      sequence: 2,
+      createdAtMs: 3,
+      streamKind: 'agent',
+      eventType: 'tool_finished',
+      payload: {
+        toolCallId: 'agent-plan-call',
+        toolId: 'agent_plan',
+        operation: 'list',
+        summary: '当前计划已读取',
+        result: {
+          details: {
+            result: {
+              items: [
+                { itemId: 'step-1', title: '核对权限边界', status: 'completed' },
+                { itemId: 'step-2', title: '验证原生交互', status: 'in_progress' },
+              ],
+            },
+          },
+        },
+      },
+      resumeToken: 'agent-plan-result',
+    }]);
+
+    expect(projectStatusPanel(useAgentLiveStore.getState().projections[sessionId]).tasks).toEqual([
+      { id: 'agent-plan:step-1', label: '核对权限边界', status: 'completed' },
+      { id: 'agent-plan:step-2', label: '验证原生交互', status: 'running' },
+    ]);
+    useAgentLiveStore.getState().clear(sessionId);
   });
 
   it('keeps hydrated legacy history replies beside their user turns', () => {
@@ -348,11 +521,24 @@ describe('Agent experience', () => {
           approvalId: 'approval-live-1',
           payloadSha256: 'approval-live-hash',
           summary: '应用这次输入法配置变更',
+          riskLevel: 'R2',
+          preview: {
+            title: '确认输入法配置变更',
+            summary: '关闭模糊音并重新部署输入方案',
+            changes: [
+              { label: '模糊音', before: '开启', after: '关闭' },
+              { label: '输入方案', before: '', after: '小鹤双拼' },
+            ],
+          },
         },
         resumeToken: 'approval-pending-ui',
       }]);
     });
 
+    expect(await screen.findByRole('heading', { name: '确认输入法配置变更' })).toBeInTheDocument();
+    expect(screen.getByText('模糊音')).toBeInTheDocument();
+    expect(screen.getByText('开启')).toBeInTheDocument();
+    expect(screen.getByText('关闭')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: '批准并执行' }));
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
@@ -362,6 +548,112 @@ describe('Agent experience', () => {
         body: { decision: 'approve', payloadSha256: 'approval-live-hash' },
       }),
     })));
+  });
+
+  it('restores a pending approval dialog directly from the session snapshot', async () => {
+    const snapshot = previewAgentSnapshot('session-preview');
+    const transport = productionTransport({
+      'agent.session.snapshot': {
+        ...snapshot,
+        status: 'busy',
+        liveEvents: [{
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: 'session-preview:snapshot:approval-snapshot-1',
+          sessionId: 'session-preview',
+          turnId: 'approval:approval-snapshot-1',
+          sequence: 12,
+          createdAtMs: Date.now(),
+          eventType: 'approval_required',
+          payload: {
+            approvalId: 'approval-snapshot-1',
+            payloadSha256: 'c'.repeat(64),
+            summary: '恢复后继续审批',
+            preview: { title: '恢复待审批操作', changes: [] },
+          },
+          resumeToken: 'session-preview:snapshot:approval-snapshot-1',
+        }],
+      },
+    });
+    renderAgent(transport);
+
+    expect(await screen.findByRole('dialog', { name: '恢复待审批操作' })).toBeInTheDocument();
+    expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('waiting');
+  });
+
+  it('keeps approval failures visible inside the forced review dialog', async () => {
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () => { throw new Error('审批已过期，请重新发起操作'); },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-approval-error';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'approval-pending-error-ui',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'approval_required',
+        payload: {
+          approvalId: 'approval-live-error',
+          payloadSha256: 'approval-live-error-hash',
+          summary: '应用设置',
+          preview: { title: '确认应用设置', changes: [{ label: '候选数', before: '5', after: '7' }] },
+        },
+        resumeToken: 'approval-pending-error-ui',
+      }]);
+    });
+
+    await user.click(await screen.findByRole('button', { name: '批准并执行' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '确认应用设置' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('审批已过期，请重新发起操作');
+    expect(within(dialog).getByRole('button', { name: '批准并执行' })).toBeEnabled();
+  });
+
+  it('keeps the turn busy while abort is only acknowledged and prevents repeated stop clicks', async () => {
+    let resolveAbort!: (value: unknown) => void;
+    const abortPending = new Promise((resolve) => { resolveAbort = resolve; });
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => abortPending,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBeGreaterThan(0));
+    act(() => {
+      useAgentLiveStore.getState().appendOptimistic('session-preview', {
+        clientMessageId: 'stop-in-flight',
+        text: '停止这轮',
+        nowMs: Date.now(),
+      });
+    });
+
+    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+
+    const stopping = await screen.findByRole('button', { name: '正在停止本轮' });
+    expect(stopping).toBeDisabled();
+    expect(stopping).toHaveAttribute('aria-busy', 'true');
+    expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('busy');
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.abort')).toHaveLength(1);
+    resolveAbort({ ok: true });
   });
 
   it('opens memory review immediately and resumes Pi when the user defers it', async () => {
@@ -414,22 +706,27 @@ describe('Agent experience', () => {
 
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     expect(screen.getByRole('option', { name: /\/new/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/resume/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/name/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/model/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/thinking/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/permissions/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/tools/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/session/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/status/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/settings/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /\/hotkeys/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/help/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/review.*Pi 扩展/ })).toBeInTheDocument();
 
-    await user.type(composer, '/re');
+    await user.type(composer, '/rev');
     expect(screen.getByRole('option', { name: /\/review/ })).toBeInTheDocument();
     expect(screen.queryByText('/memory')).not.toBeInTheDocument();
     await user.keyboard('{Enter}');
     expect(composer).toHaveValue('/review ');
 
     await user.clear(composer);
-    await user.type(composer, '/');
+    await user.type(composer, '/n');
     await user.keyboard('{ArrowDown}{Enter}');
     expect(composer).toHaveValue('/name ');
 
@@ -444,7 +741,7 @@ describe('Agent experience', () => {
     expect(screen.queryByRole('listbox', { name: '命令面板' })).not.toBeInTheDocument();
 
     await user.clear(composer);
-    await user.type(composer, '/settings');
+    await user.type(composer, '/not-a-real-command');
     await user.click(screen.getByRole('button', { name: '发送' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('未发送给模型');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(false);
@@ -456,11 +753,40 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.commands')).toBe(true));
+    expect(transport.requests
+      .filter((call) => call.request.pathId === 'agent.tools.list')
+      .every((call) => call.request.query?.sessionId === 'session-preview')).toBe(true);
 
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     await user.click(screen.getByRole('option', { name: /\/model/ }));
     expect(await screen.findByText('模型与推理强度')).toBeInTheDocument();
     await user.keyboard('{Escape}');
+
+    await user.click(screen.getByRole('button', { name: '打开命令面板' }));
+    await user.click(screen.getByRole('option', { name: /\/permissions/ }));
+    expect(await screen.findByText('对话权限')).toBeInTheDocument();
+    const permissionPicker = document.querySelector('.agent-picker-popover');
+    expect(permissionPicker).not.toBeNull();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /受控助手/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ })).toBeInTheDocument();
+    const readonlyPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ });
+    const coordinatorPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /运行协调/ });
+    expect(coordinatorPermission).toHaveAttribute('aria-checked', 'true');
+    readonlyPermission.focus();
+    await user.keyboard(' ');
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: {
+          mode: 'assistant',
+          workspaceRoots: [],
+          toolProfileVersion: 'subagent-readonly-v1',
+          toolAllowlistMode: 'profile',
+        },
+      }),
+    })));
+    expect(await screen.findByRole('button', { name: '对话权限：只读观察' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
@@ -490,6 +816,55 @@ describe('Agent experience', () => {
 
     await user.click(screen.getByRole('option', { name: /\/status/ }));
     expect(screen.getByLabelText('当前对话状态')).toHaveAttribute('data-open', 'true');
+
+    await user.click(screen.getByRole('button', { name: '打开命令面板' }));
+    await user.click(screen.getByRole('option', { name: /\/settings/ }));
+    expect(window.location.hash).toBe('#/configuration');
+  });
+
+  it('requires a native workspace choice before enabling coordinator mode', async () => {
+    const assistantSession = {
+      ...previewSessions[0]!,
+      mode: 'assistant' as const,
+      workspaceRoots: [],
+      toolProfileVersion: 'control-center-v1',
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, items: [assistantSession] },
+    );
+    const pickFiles = vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-directory-1',
+      name: 'learnA',
+      mimeType: 'application/octet-stream',
+      byteSize: 0,
+      path: '/Volumes/undo 4t/git/learnA',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '对话权限：受控助手' }));
+    const permissionPicker = document.querySelector('.agent-picker-popover');
+    expect(permissionPicker).not.toBeNull();
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /运行协调/ }));
+
+    await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
+      purpose: 'workspace-root',
+      multiple: true,
+      maxFiles: 4,
+    }));
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        body: expect.objectContaining({
+          mode: 'coordinator',
+          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          toolAllowlistMode: 'profile',
+        }),
+      }),
+    })));
+    expect(await screen.findByRole('button', { name: '对话权限：运行协调' })).toBeInTheDocument();
   });
 
   it('sends an advertised Pi RPC command through the prompt route', async () => {
@@ -528,7 +903,7 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     const toolsCommand = screen.getByRole('option', { name: /\/tools/ });
     expect(toolsCommand).toBeDisabled();
-    expect(toolsCommand).toHaveAttribute('title', '受控模式没有可用工具');
+    expect(toolsCommand).toHaveAttribute('title', '受控助手没有可用工具');
     await user.click(screen.getByRole('button', { name: '关闭命令面板' }));
 
     act(() => {
@@ -542,7 +917,8 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '打开命令面板' }));
     const newCommand = screen.getByRole('option', { name: /\/new/ });
     expect(newCommand).toBeDisabled();
-    expect(newCommand).toHaveAttribute('title', '当前处理中，仅可查看状态或停止');
+    expect(newCommand).toHaveAttribute('title', '当前处理中，仅可切换对话、查看状态或停止');
+    expect(screen.getByRole('option', { name: /\/resume/ })).toBeEnabled();
     expect(screen.getByRole('option', { name: /\/status/ })).toBeEnabled();
     const stopCommand = screen.getByRole('option', { name: /\/stop/ });
     expect(stopCommand).toBeEnabled();
@@ -675,7 +1051,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     const user = userEvent.setup();
     renderAgent(transport);
-    const trigger = await screen.findByRole('button', { name: '受控工具：13 个' });
+    const trigger = await screen.findByRole('button', { name: '当前权限可用工具：13 个' });
 
     await user.click(trigger);
     expect(screen.getByRole('button', { name: /控制中心概览/ })).toBeInTheDocument();
@@ -846,17 +1222,81 @@ describe('Agent experience', () => {
     expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.models')).toHaveLength(2);
   });
 
-  it('starts with the session rail closed on mobile and closes it after selection', async () => {
-    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+  it('treats the mobile session rail as a focus-managed drawer', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query.includes('max-width: 760px') || query.includes('max-width: 1100px'),
+    })));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
     const user = userEvent.setup();
     renderAgent(featureTransport());
     const feature = document.querySelector('.agent-feature');
     expect(feature).toHaveAttribute('data-rail-open', 'false');
 
-    await user.click(screen.getByRole('button', { name: '展开对话列表' }));
+    const toggle = screen.getByRole('button', { name: '展开对话列表' });
+    await user.click(toggle);
     expect(feature).toHaveAttribute('data-rail-open', 'true');
+    const rail = screen.getByRole('dialog', { name: '连续对话' });
+    const conversation = document.querySelector('.agent-conversation');
+    expect(rail).toHaveAttribute('aria-modal', 'true');
+    expect(conversation).toHaveAttribute('inert');
+    expect(conversation).toHaveAttribute('aria-hidden', 'true');
+    await waitFor(() => expect(screen.getByPlaceholderText('搜索对话')).toHaveFocus());
+
+    const sessionRows = rail.querySelectorAll<HTMLButtonElement>('.agent-session-row');
+    const lastSession = sessionRows.item(sessionRows.length - 1);
+    lastSession.focus();
+    await user.tab();
+    expect(within(rail).getByRole('button', { name: '新建对话' })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(lastSession).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(feature).toHaveAttribute('data-rail-open', 'false');
+    expect(conversation).not.toHaveAttribute('inert');
+    expect(conversation).not.toHaveAttribute('aria-hidden');
+    await waitFor(() => expect(toggle).toHaveFocus());
+
+    await user.click(toggle);
+    expect(document.querySelector('.agent-rail-backdrop')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
     expect(feature).toHaveAttribute('data-rail-open', 'false');
+  });
+
+  it('treats the responsive status panel as a focus-managed dialog', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query.includes('max-width: 1100px'),
+    })));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const user = userEvent.setup();
+    renderAgent(featureTransport());
+
+    const toggle = await screen.findByRole('button', { name: '展开状态面板' });
+    await user.click(toggle);
+    const panel = screen.getByRole('dialog', { name: '当前对话状态' });
+    const conversation = document.querySelector('.agent-conversation');
+    const rail = document.querySelector('.agent-session-rail');
+    expect(panel).toHaveAttribute('aria-modal', 'true');
+    expect(conversation).toHaveAttribute('inert');
+    expect(rail).toHaveAttribute('inert');
+    await waitFor(() => expect(within(panel).getByRole('button', { name: '收起状态面板' })).toHaveFocus());
+
+    await user.tab({ shift: true });
+    expect(panel).toContainElement(document.activeElement as HTMLElement);
+    expect(conversation).not.toContainElement(document.activeElement as HTMLElement);
+
+    await user.keyboard('{Escape}');
+    expect(panel).toHaveAttribute('aria-hidden', 'true');
+    expect(conversation).not.toHaveAttribute('inert');
+    expect(rail).not.toHaveAttribute('inert');
+    await waitFor(() => expect(toggle).toHaveFocus());
   });
 
   it('releases the session rail grid column when collapsed on desktop', async () => {
@@ -942,6 +1382,22 @@ function featureTransport(
   sessionRoute: unknown = { ok: true, items: previewSessions },
   promptRoute: unknown = { ok: true },
   subagentRoute: unknown = { ok: true, items: [] },
+  approvalRoute: unknown = { ok: true },
+  abortRoute: unknown = { ok: true },
+  runtimeRoute: unknown = {
+    schemaVersion: 'rag-ime.agent-runtime.v1',
+    enabled: true,
+    managed: true,
+    status: 'ready',
+    driverId: 'managed-pi',
+    runtimeKind: 'pi_rpc',
+    runtimeVersion: 'preview',
+    piVersion: '0.80.7',
+    idleTimeoutSeconds: 600,
+    activeSessionId: null,
+    lastError: '',
+    capabilities: { conversationFork: true },
+  },
 ): MockControlTransport {
   return new MockControlTransport({
     pickedFiles: [{
@@ -964,18 +1420,44 @@ function featureTransport(
       'agent.sessions.list': sessionRoute,
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.tools.list': toolRoute,
+      'agent.runtime.get': runtimeRoute,
       'agent.session.snapshot': previewAgentSnapshot('session-preview'),
       'agent.session.models': modelCatalog,
       'agent.session.commands': commandCatalog(),
       'agent.session.prompt': promptRoute,
+      'agent.session.forks.list': {
+        schemaVersion: 'rag-ime.agent-session-fork-candidates.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        items: [
+          { entryId: 'entry-start', text: '先梳理交互状态' },
+          { entryId: 'entry-permissions', text: '帮我整理权限模式' },
+        ],
+      },
+      'agent.session.forks.create': {
+        schemaVersion: 'rag-ime.agent-session-fork-create.v1',
+        ok: true,
+        sourceSessionId: 'session-preview',
+        entryId: 'entry-permissions',
+        selectedText: '帮我整理权限模式',
+        session: {
+          ...previewSessions[0],
+          schemaVersion: 'rag-ime.agent-session.v1',
+          id: 'session-forked',
+          title: '控制中心迁移 · 分支',
+          createdAtMs: Date.now() - 1_000,
+          messageCount: 2,
+          updatedAtMs: Date.now(),
+        },
+      },
       'agent.sessions.create': { ok: true },
       'agent.session.rename': { ok: true },
       'agent.session.compact': { ok: true },
-      'agent.session.abort': { ok: true },
+      'agent.session.abort': abortRoute,
       'agent.session.mode.update': { ok: true },
       'agent.session.model.select': { ok: true },
       'agent.session.thinking.select': { ok: true },
-      'agent.approval.decide': { ok: true },
+      'agent.approval.decide': approvalRoute,
       'agent.memoryMaintenance.run': memoryRunFixture(),
       'agent.session.review.resolve': { ok: true },
       'agent.subagents.list': subagentRoute,

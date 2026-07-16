@@ -1,8 +1,8 @@
-import { ArrowUpRight, BrainCircuit, CircleDashed, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, LoaderCircle, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
-import { Button } from '@/components/primitives';
+import { Button, IconButton } from '@/components/primitives';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { ActivitySummary } from './ActivitySummary';
@@ -19,6 +19,9 @@ export function AgentTimeline({
   onRetryTurn,
   onSwitchModel,
   onApprovalDecision,
+  forkAvailable = false,
+  forkingEntryId = '',
+  onForkFromMessage,
 }: {
   sessionId: string;
   persona?: AgentPersonaV1;
@@ -27,6 +30,9 @@ export function AgentTimeline({
   onRetryTurn: (turnId: string) => void;
   onSwitchModel: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  forkAvailable?: boolean;
+  forkingEntryId?: string;
+  onForkFromMessage?: (entryId: string, message: string) => void;
 }) {
   const turnOrder = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
@@ -55,6 +61,9 @@ export function AgentTimeline({
             onRetryTurn={onRetryTurn}
             onSwitchModel={onSwitchModel}
             onApprovalDecision={onApprovalDecision}
+            forkAvailable={forkAvailable}
+            forkingEntryId={forkingEntryId}
+            onForkFromMessage={onForkFromMessage}
           />
         )}
       />
@@ -70,6 +79,9 @@ export function AgentTurn({
   onRetryTurn,
   onSwitchModel,
   onApprovalDecision,
+  forkAvailable = false,
+  forkingEntryId = '',
+  onForkFromMessage,
 }: {
   sessionId: string;
   turnId: string;
@@ -78,6 +90,9 @@ export function AgentTurn({
   onRetryTurn?: (turnId: string) => void;
   onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  forkAvailable?: boolean;
+  forkingEntryId?: string;
+  onForkFromMessage?: (entryId: string, message: string) => void;
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
   const userIds = useAgentLiveStore(useShallow((state) => {
@@ -111,7 +126,7 @@ export function AgentTurn({
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
-      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user />)}
+      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} forking={forkingEntryId === messageId} onForkFromMessage={onForkFromMessage} />)}
       {assistantIds.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <PersonaAvatar persona={persona} presence={showWorking ? 'thinking' : presence} />
@@ -161,14 +176,46 @@ function AssistantWorkingState({
   );
 }
 
-function MessageView({ sessionId, messageId, user = false }: { sessionId: string; messageId: string; user?: boolean }) {
+function MessageView({
+  sessionId,
+  messageId,
+  user = false,
+  forkAvailable = false,
+  forking = false,
+  onForkFromMessage,
+}: {
+  sessionId: string;
+  messageId: string;
+  user?: boolean;
+  forkAvailable?: boolean;
+  forking?: boolean;
+  onForkFromMessage?: (entryId: string, message: string) => void;
+}) {
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
   const visibleBlocks = user ? message.blocks : message.blocks.filter((block) => block.type !== 'error');
+  const messageText = visibleBlocks.map((block) => text(block.data.text)).filter(Boolean).join('\n').trim();
+  const canFork = user && forkAvailable && message.status === 'completed' && !messageId.startsWith('local:') && Boolean(messageText) && Boolean(onForkFromMessage);
   return user ? (
-    <div className="agent-user-message" data-status={message.status}>
-      <AgentBlocks blocks={visibleBlocks} />
-      {message.attachments.length ? <small>{message.attachments.length} 个附件</small> : null}
+    <div className="agent-user-message-shell" data-actions={canFork || undefined}>
+      <div className="agent-user-message" data-status={message.status}>
+        <AgentBlocks blocks={visibleBlocks} />
+        {message.attachments.length ? <small>{message.attachments.length} 个附件</small> : null}
+      </div>
+      {canFork ? (
+        <div className="agent-message-actions">
+          <IconButton
+            label="从这条消息创建分支"
+            icon={forking ? <LoaderCircle className="ui-spin" size={14} /> : <GitBranch size={14} />}
+            size="small"
+            disabled={forking}
+            aria-busy={forking || undefined}
+            onClick={() => onForkFromMessage?.(messageId, messageText)}
+            tooltip
+            tooltipSide="left"
+          />
+        </div>
+      ) : null}
     </div>
   ) : (
     <div className="agent-assistant-message" data-status={message.status}>

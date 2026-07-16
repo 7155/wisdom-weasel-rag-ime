@@ -56,6 +56,7 @@ export function VoiceFeature() {
   const hotwordControl = asRecord(voiceControl.hotwords);
   const recognitionControl = asRecord(voiceControl.recognition);
   const deployedRecognition = asRecord(recognitionControl.deployed);
+  const deployedRecognitionState = stringValue(deployedRecognition.state, 'unchecked');
   const lastRecognition = asRecord(recognitionControl.lastSession);
   const runtime = asRecord(queries.runtime.data);
   const components = asRecord(runtime.components);
@@ -415,12 +416,20 @@ export function VoiceFeature() {
 
         <ManagementSection title="定稿质量" description="检查语音输入能否把临时识别结果顺滑地整理成最终文本。">
           <MetricStrip items={[
-            { label: '最终二次识别', value: deployedLabel(deployedRecognition.secondPass), detail: '停顿后重新识别完整语句', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
-            { label: '语义顺滑', value: deployedLabel(deployedRecognition.semanticSmoothing), detail: '整理口头语、重复与赘余', icon: Sparkles, tone: deployedTone(deployedRecognition.semanticSmoothing) },
-            { label: '完整结果替换', value: deployedLabel(deployedRecognition.fullResultReplacement), detail: '最终稿替换临时稿，不继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
+            { label: '最终二次识别', value: deployedLabel(deployedRecognition.secondPass, deployedRecognitionState), detail: '停顿后重新识别完整语句', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
+            { label: '语义顺滑', value: deployedLabel(deployedRecognition.semanticSmoothing, deployedRecognitionState), detail: '整理口头语、重复与赘余', icon: Sparkles, tone: deployedTone(deployedRecognition.semanticSmoothing) },
+            { label: '完整结果替换', value: deployedLabel(deployedRecognition.fullResultReplacement, deployedRecognitionState), detail: '最终稿替换临时稿，不继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
             { label: '最近一次定稿', value: booleanValue(lastRecognition.finalReceived) ? '已收到' : '暂无验证', detail: finalLatencyLabel(lastRecognition.finalLatencyMs), icon: Mic, tone: booleanValue(lastRecognition.finalReceived) ? 'success' : 'warning' },
           ]} />
-          {deployedRecognition.binaryFound === false ? <InlineNotice title="语音输入尚未就绪" tone="warning">更新并重新打开应用后刷新，即可检查二次识别与语义顺滑是否可用。</InlineNotice> : null}
+          {deployedRecognitionState !== 'ready' ? (
+            <InlineNotice title={recognitionNoticeTitle(deployedRecognitionState)} tone="warning">
+              {recognitionNoticeText(deployedRecognitionState)}
+            </InlineNotice>
+          ) : !booleanValue(lastRecognition.finalReceived) ? (
+            <InlineNotice title="能力已部署，等待真实验证" tone="info">
+              三项定稿能力已经由运行中的语音代理报告；完成一次实际听写并收到 Final 后，这里会显示真实定稿耗时。
+            </InlineNotice>
+          ) : null}
         </ManagementSection>
       </QueryState>
     </ManagementPage>
@@ -581,7 +590,12 @@ function hotwordApplyTone(value: Record<string, unknown>): VoiceStatusTone {
   return 'warning';
 }
 
-function deployedLabel(value: unknown): string {
+function deployedLabel(value: unknown, state = 'unchecked'): string {
+  if (state === 'missing') return '尚未安装';
+  if (state === 'restart_required') return value === true ? '待重启生效' : '待重启检查';
+  if (state === 'outdated') return value === true ? '当前可用' : '安装版本过旧';
+  if (state === 'unsupported') return value === true ? '当前可用' : '运行版本不完整';
+  if (state === 'unreadable') return '读取失败';
   if (value === true) return '当前可用';
   if (value === false) return '当前不可用';
   return '未检查';
@@ -591,6 +605,24 @@ function deployedTone(value: unknown): VoiceStatusTone {
   if (value === true) return 'success';
   if (value === false) return 'warning';
   return 'neutral';
+}
+
+function recognitionNoticeTitle(state: string): string {
+  if (state === 'missing') return '尚未安装语音代理';
+  if (state === 'restart_required') return '安装已更新，代理需要重启';
+  if (state === 'outdated') return '语音代理版本过旧';
+  if (state === 'unreadable') return '无法读取语音代理';
+  if (state === 'unsupported') return '运行中的语音代理能力不完整';
+  return '定稿能力尚未完成检查';
+}
+
+function recognitionNoticeText(state: string): string {
+  if (state === 'restart_required') return '当前安装包已经包含完整定稿能力，但运行中的旧进程尚未报告新契约；重启语音代理后刷新。';
+  if (state === 'outdated') return '当前安装包缺少完整结果替换契约；请重新安装语音代理，而不是反复修改服务配置。';
+  if (state === 'missing') return '控制中心没有找到 RagImeVoice.app；安装语音代理后再检查麦克风与辅助功能权限。';
+  if (state === 'unreadable') return 'RagImeVoice.app 存在，但控制中心无法读取其能力标记；请重新安装并检查应用签名。';
+  if (state === 'unsupported') return '运行中的语音代理没有报告完整结果替换契约；请通过完整产品安装入口更新并重启。';
+  return '刷新后仍未取得安装版本与运行进程的能力状态。';
 }
 
 function finalLatencyLabel(value: unknown): string {

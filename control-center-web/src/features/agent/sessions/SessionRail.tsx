@@ -1,35 +1,55 @@
-import { MessageSquarePlus, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { MessageSquarePlus, Search, X } from 'lucide-react';
+import { forwardRef, useMemo, useState } from 'react';
 import { IconButton } from '@/components/primitives';
 import type { SessionSummary } from '../types';
 
-export function SessionRail({
-  sessions,
-  selectedId,
-  loading,
-  onSelect,
-  onCreate,
-}: {
+export const SessionRail = forwardRef<HTMLElement, {
   sessions: SessionSummary[];
   selectedId: string;
   loading: boolean;
+  open?: boolean;
+  modal?: boolean;
+  blocked?: boolean;
   onSelect: (sessionId: string) => void;
   onCreate: () => void;
-}) {
+  onClose?: () => void;
+}>(function SessionRail({
+  sessions,
+  selectedId,
+  loading,
+  open = true,
+  modal = false,
+  blocked = false,
+  onSelect,
+  onCreate,
+  onClose,
+}, ref) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => sessions.filter((session) => {
     const value = `${session.title} ${session.lastMessagePreview ?? ''}`.toLowerCase();
     return value.includes(query.trim().toLowerCase());
   }), [query, sessions]);
   return (
-    <aside className="agent-session-rail" aria-label="连续对话">
+    <aside
+      ref={ref}
+      className="agent-session-rail"
+      aria-label="连续对话"
+      aria-hidden={!open || blocked || undefined}
+      aria-modal={modal || undefined}
+      inert={!open || blocked ? true : undefined}
+      role={modal ? 'dialog' : undefined}
+      tabIndex={-1}
+    >
       <header>
         <div><strong>对话</strong><small>{sessions.length} 个连续对话</small></div>
-        <IconButton label="新建对话" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
+        <span className="agent-session-rail__actions">
+          <IconButton label="新建对话" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
+          {onClose ? <IconButton className="agent-session-rail__close" label="关闭对话列表" icon={<X size={17} />} onClick={onClose} /> : null}
+        </span>
       </header>
       <label className="agent-session-search">
         <Search size={14} aria-hidden="true" />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话" />
+        <input data-drawer-autofocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话" />
       </label>
       <div className="agent-session-list" aria-busy={loading || undefined}>
         {filtered.map((session) => (
@@ -51,7 +71,7 @@ export function SessionRail({
       </div>
     </aside>
   );
-}
+});
 
 function relativeTime(value: number): string {
   const delta = Math.max(0, Date.now() - value);

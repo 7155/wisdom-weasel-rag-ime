@@ -93,7 +93,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 .planning-summary-item > small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
   grid-column: 2 / -1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -118,7 +118,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 }
 
 .planning-plan dt {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 680;
 }
 
@@ -183,7 +183,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 .planning-list .mgmt-list__copy span,
 .planning-list .mgmt-list__meta,
 .planning-list .mgmt-list__status {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .planning-list .mgmt-list__copy span {

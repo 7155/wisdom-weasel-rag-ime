@@ -155,6 +155,9 @@ def main(argv: list[str] | None = None) -> int:
             bin_dir = staging / "bin"
             runtime_dir.mkdir(mode=0o700)
             bin_dir.mkdir(mode=0o700)
+            bundled_skills = package_root / "skills"
+            if bundled_skills.is_dir():
+                shutil.copytree(bundled_skills, runtime_dir / "skills")
             bundled_entrypoint = runtime_dir / "cli.mjs"
             _run(
                 [

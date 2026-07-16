@@ -63,7 +63,7 @@ main[data-route-id='voice'] .voice-native-action-group > span {
   min-width: 64px;
   margin-right: auto;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -103,7 +103,7 @@ main[data-route-id='voice'] .voice-hotword-editor {
 
 main[data-route-id='voice'] .voice-hotword-editor > span {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -116,7 +116,7 @@ main[data-route-id='voice'] .voice-hotword-editor .ui-textarea {
 
 main[data-route-id='voice'] .voice-hotword-editor > small {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 main[data-route-id='voice'] .voice-hotword-suggestions {
@@ -137,7 +137,7 @@ main[data-route-id='voice'] .voice-hotword-suggestions button {
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   transition:
     border-color var(--duration-fast) var(--ease-standard),
     background var(--duration-fast) var(--ease-standard),

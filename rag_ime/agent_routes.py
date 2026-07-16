@@ -20,6 +20,7 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "messages",
         "events",
         "prompt",
+        "forks",
         "abort",
         "review",
         "compact",

@@ -137,7 +137,7 @@ export const CONTROL_ROUTES = {
     method: 'PATCH',
     path: '/api/agent/sessions/:sessionId',
     params: { sessionId: null },
-    body: ['mode', 'workspaceRoots', 'toolProfileVersion', 'allowedTools'],
+    body: ['mode', 'workspaceRoots', 'toolProfileVersion', 'toolAllowlistMode', 'allowedTools'],
     requiredBody: ['mode'],
   },
   'agent.session.delete': {
@@ -151,6 +151,20 @@ export const CONTROL_ROUTES = {
     params: { sessionId: null },
     body: ['message', 'attachments', 'clientMessageId'],
     requiredBody: ['message'],
+  },
+  'agent.session.forks.list': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/forks',
+    params: { sessionId: null },
+    responseContract: 'agent-session-fork-candidates.v1',
+  },
+  'agent.session.forks.create': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/forks',
+    params: { sessionId: null },
+    body: ['entryId', 'title'],
+    requiredBody: ['entryId'],
+    responseContract: 'agent-session-fork-create.v1',
   },
   'agent.session.abort': {
     method: 'POST',

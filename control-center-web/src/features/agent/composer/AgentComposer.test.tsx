@@ -31,7 +31,8 @@ describe('AgentComposer macOS input methods', () => {
             onProductCommand={() => {}}
             onSend={onSend}
             onStop={() => {}}
-            onModeChange={() => {}}
+            onPermissionChange={() => {}}
+            onWorkspaceRootsChange={() => {}}
             onModelChange={() => {}}
           />
         </TooltipProvider>
@@ -84,7 +85,8 @@ describe('AgentComposer macOS input methods', () => {
           onProductCommand={() => {}}
           onSend={() => {}}
           onStop={() => {}}
-          onModeChange={() => {}}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
           onModelChange={() => {}}
         />
       </TooltipProvider>,
@@ -95,7 +97,7 @@ describe('AgentComposer macOS input methods', () => {
     const send = view.getByRole('button', { name: '发送' });
     expect(controls).toContainElement(view.getByRole('button', { name: '添加图片' }));
     expect(controls).toContainElement(view.getByRole('button', { name: /对话权限/ }));
-    expect(controls).toContainElement(view.getByRole('button', { name: /受控工具/ }));
+    expect(controls).toContainElement(view.getByRole('button', { name: /当前权限可用工具/ }));
     expect(controls).not.toContainElement(send);
     expect(send.closest('.agent-composer__toolbar')).not.toBeNull();
   });

@@ -42,6 +42,15 @@ struct NativeRoutePolicyTests {
         expect(session.request.url?.absoluteString.contains("session:alpha/prompt") == true, "session path encoding")
         expect(session.request.httpMethod == "POST", "prompt method")
 
+        let fork = try policy.resolveRequest(
+            pathId: "agent.session.forks.create",
+            parameters: ["sessionId": "session:alpha"],
+            query: [:],
+            body: ["entryId": "entry-user-1", "title": "新分支"]
+        )
+        expect(fork.request.url?.absoluteString.contains("session:alpha/forks") == true, "fork route")
+        expect(fork.request.httpMethod == "POST", "fork method")
+
         let subscription = try policy.resolveSubscription(
             pathId: "agent.session.events",
             parameters: ["sessionId": "session-a"],

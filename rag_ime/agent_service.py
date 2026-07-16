@@ -754,7 +754,10 @@ class AgentService:
             session = self.sessions.rename(session_id, str(payload.get("title") or ""))
         if "archived" in payload:
             session = self.sessions.archive(session_id, archived=_bool(payload.get("archived")))
-        if any(key in payload for key in ("mode", "toolProfileVersion", "allowedTools")):
+        if any(
+            key in payload
+            for key in ("mode", "toolProfileVersion", "toolAllowlistMode", "allowedTools")
+        ):
             requested_mode = str(payload.get("mode") or session.get("mode") or "").strip()
             role = self.personas.resolve(session["roleId"], session["roleVersion"])
             if requested_mode not in role.selectable_modes:
@@ -776,7 +779,16 @@ class AgentService:
             ).strip()
             if requested_profile not in {"control-center-v1", "subagent-readonly-v1"}:
                 raise ValueError("unsupported Agent tool profile")
-            if "allowedTools" in payload:
+            requested_allowlist_mode = str(
+                payload.get("toolAllowlistMode")
+                or ("explicit" if "allowedTools" in payload else session.get("toolAllowlistMode"))
+                or "profile"
+            ).strip()
+            if requested_allowlist_mode not in {"profile", "explicit"}:
+                raise ValueError("unsupported Agent tool allowlist mode")
+            if requested_allowlist_mode == "profile":
+                allowed_tools = None
+            elif "allowedTools" in payload:
                 raw_allowed_tools = payload.get("allowedTools")
                 if not isinstance(raw_allowed_tools, list):
                     raise ValueError("allowedTools must be an array")
@@ -791,7 +803,7 @@ class AgentService:
                 allowed_tools = (
                     [str(value) for value in session.get("allowedTools") or []]
                     if session.get("toolAllowlistMode") == "explicit"
-                    else None
+                    else []
                 )
             if requested_mode == "assistant" and any(
                 tool_id.startswith("workspace_") for tool_id in allowed_tools or []
@@ -852,16 +864,142 @@ class AgentService:
             "mediaFilesDeleted": media_files_deleted,
         }
 
+    def fork_candidates(self, session_id: str) -> dict[str, object]:
+        self._forkable_session(session_id)
+        response = {
+            "schemaVersion": "rag-ime.agent-session-fork-candidates.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "items": self.runtime.fork_candidates(session_id),
+        }
+        validate_contract(response, "agent-session-fork-candidates.v1.json")
+        return response
+
+    def fork_session(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        source = self._forkable_session(session_id)
+        entry_id = _required_text(payload, "entryId")
+        requested_title = str(payload.get("title") or "").strip()
+        title = requested_title or f"{source['title']} · 分支"
+        target = self.sessions.create(
+            title=title,
+            mode=str(source["mode"]),
+            role_id=str(source["roleId"]),
+            role_version=str(source["roleVersion"]),
+            model_profile=str(source["modelProfile"]),
+            tool_profile_version=str(source["toolProfileVersion"]),
+            workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
+            shell_policy_version=str(source.get("shellPolicyVersion") or "") or None,
+            session_kind="conversation",
+        )
+        target_id = str(target["id"])
+        allowed_tools = (
+            [str(value) for value in source.get("allowedTools") or []]
+            if source.get("toolAllowlistMode") == "explicit"
+            else None
+        )
+        target = self.sessions.set_runtime_policy(
+            target_id,
+            mode=str(source["mode"]),
+            tool_profile_version=str(source["toolProfileVersion"]),
+            allowed_tools=allowed_tools,
+            workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
+        )
+        try:
+            forked = self.runtime.fork_session(
+                session_id,
+                target_id,
+                entry_id=entry_id,
+            )
+        except Exception:
+            # The target product identity is provisional until Pi returns a
+            # distinct persisted branch. Never leave a phantom Session behind.
+            try:
+                self.sessions.delete(target_id)
+            except KeyError:
+                pass
+            raise
+        response = {
+            "schemaVersion": "rag-ime.agent-session-fork-create.v1",
+            "ok": True,
+            "sourceSessionId": session_id,
+            "entryId": entry_id,
+            "selectedText": str(forked.get("selectedText") or ""),
+            "session": forked.get("session") or self.sessions.get(target_id),
+        }
+        validate_contract(response, "agent-session-fork-create.v1.json")
+        return response
+
+    def _forkable_session(self, session_id: str) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        if str(session.get("sessionKind") or "conversation") != "conversation":
+            raise ValueError("only conversation Sessions can be forked")
+        if self.rooms.participant_for_session(session_id, active_only=False) is not None:
+            raise ValueError("room participant Sessions cannot be forked")
+        if self.delegation.owns_session(session_id):
+            raise ValueError("subagent Sessions cannot be forked")
+        if str(session.get("status") or "") != "idle":
+            raise ValueError("conversation forks are only available for idle Sessions")
+        return session
+
     def messages(self, session_id: str) -> dict[str, object]:
         # Capture the event cursor before asking Pi for its snapshot. Events that
         # arrive during the RPC are replayed; stable Pi message IDs deduplicate
         # any overlap without losing a live update.
+        session = self.sessions.get(session_id)
         last_sequence = self.sessions.max_event_sequence(session_id)
+        messages = self.runtime.messages(session_id)
+        replayed, _gap = self.events.replay(session_id)
+        live_events = [
+            event.to_payload()
+            for event in replayed
+            if event.sequence <= last_sequence
+        ]
+        visible_approval_ids = {
+            str(event.get("payload", {}).get("approvalId") or "")
+            for event in live_events
+            if event.get("eventType") == "approval_required"
+            and isinstance(event.get("payload"), Mapping)
+        }
+        for approval in reversed(
+            self.sessions.list_approvals(
+                session_id=session_id,
+                state="pending",
+                limit=100,
+            )
+        ):
+            approval_id = str(approval.get("approvalId") or "")
+            if not approval_id or approval_id in visible_approval_ids:
+                continue
+            # Approval rows are durable while the event replay buffer is not.
+            # Recreate only the public waiting-state projection; resolving the
+            # approval still goes through the authoritative approval endpoint.
+            event_id = f"{session_id}:snapshot:{approval_id}"
+            live_events.append(
+                AgentEventEnvelope(
+                    event_id=event_id,
+                    session_id=session_id,
+                    turn_id=f"approval:{approval_id}",
+                    sequence=max(1, last_sequence),
+                    created_at_ms=int(approval.get("requestedAtMs") or 0),
+                    event_type="approval_required",
+                    payload={
+                        **approval,
+                        "toolName": str(approval.get("toolId") or ""),
+                        "summary": str(approval.get("operation") or "需要批准的工具操作"),
+                    },
+                    resume_token=event_id,
+                ).to_payload()
+            )
+        # The runtime snapshot may have advanced the durable session status.
+        # Read it again so a refresh never paints an older idle/busy state.
+        session = self.sessions.get(session_id)
         return {
             "schemaVersion": "rag-ime.agent-message-list.v1",
             "ok": True,
             "sessionId": session_id,
-            "items": self.runtime.messages(session_id),
+            "items": messages,
+            "status": str(session.get("status") or "idle"),
+            "liveEvents": live_events,
             "lastSequence": last_sequence,
             "resumeToken": f"{session_id}:{last_sequence}" if last_sequence else "",
         }
@@ -1184,16 +1322,48 @@ class AgentService:
         session_id = str(current["sessionId"])
         approved = decision == "approve"
         pending_in_pi = self.runtime.has_pending_approval(session_id, approval_id)
+        current_state = str(current.get("state") or "")
+        if current_state != "pending":
+            return self._finish_terminal_approval(
+                current,
+                pending_in_pi=pending_in_pi,
+            )
         if approved and not pending_in_pi:
             raise ValueError("approval is no longer active in Pi")
+        payload_sha256 = _required_text(payload, "payloadSha256")
+        if payload_sha256 != str(current.get("payloadSha256") or ""):
+            try:
+                self.sessions.decide_approval(
+                    approval_id,
+                    approved=approved,
+                    payload_sha256=payload_sha256,
+                    decided_by="native-control-center",
+                )
+            except ValueError:
+                terminal = self.sessions.get_approval(approval_id)
+                if str(terminal.get("state") or "") not in {"expired", "stale"}:
+                    raise
+                return self._finish_terminal_approval(
+                    terminal,
+                    pending_in_pi=pending_in_pi,
+                )
         if approved and self._approval_executor is None:
             raise ValueError("approval executor is unavailable")
-        decided = self.sessions.decide_approval(
-            approval_id,
-            approved=approved,
-            payload_sha256=_required_text(payload, "payloadSha256"),
-            decided_by="native-control-center",
-        )
+        try:
+            decided = self.sessions.decide_approval(
+                approval_id,
+                approved=approved,
+                payload_sha256=payload_sha256,
+                decided_by="native-control-center",
+            )
+        except ValueError:
+            terminal = self.sessions.get_approval(approval_id)
+            if str(terminal.get("state") or "") not in {"expired", "stale"}:
+                raise
+            return self._finish_terminal_approval(
+                terminal,
+                pending_in_pi=pending_in_pi,
+            )
         final = decided
         if approved:
             try:
@@ -1286,6 +1456,15 @@ class AgentService:
                 # The native decision and mutation receipt are authoritative.
                 # A crashed Pi turn must not rewrite an applied operation as failed.
                 runtime_warning = "Pi 会话未收到审批结果，请刷新该对话"
+        else:
+            self.events.publish(
+                session_id,
+                "approval_resolved",
+                {
+                    "approvalId": approval_id,
+                    "state": str(final.get("state") or "rejected"),
+                },
+            )
         return {
             "schemaVersion": "rag-ime.agent-approval-decision.v1",
             "ok": True,
@@ -1293,6 +1472,43 @@ class AgentService:
             "runtimeNotified": runtime_notified,
             "runtimeWarning": runtime_warning,
             "memoryCheckpoint": memory_checkpoint,
+        }
+
+    def _finish_terminal_approval(
+        self,
+        approval: Mapping[str, object],
+        *,
+        pending_in_pi: bool,
+    ) -> dict[str, object]:
+        approval_id = str(approval.get("approvalId") or "")
+        session_id = str(approval.get("sessionId") or "")
+        state = str(approval.get("state") or "stale")
+        runtime_notified = False
+        runtime_warning = ""
+        if pending_in_pi:
+            try:
+                self.runtime.resolve_approval(
+                    session_id,
+                    approval_id,
+                    approved=False,
+                    resolution_state=state,
+                )
+                runtime_notified = True
+            except Exception:
+                runtime_warning = "Pi 会话未收到审批终态，请刷新该对话"
+        else:
+            self.events.publish(
+                session_id,
+                "approval_resolved",
+                {"approvalId": approval_id, "state": state},
+            )
+        return {
+            "schemaVersion": "rag-ime.agent-approval-decision.v1",
+            "ok": True,
+            "approval": dict(approval),
+            "runtimeNotified": runtime_notified,
+            "runtimeWarning": runtime_warning,
+            "memoryCheckpoint": {},
         }
 
     def finalize_external_approval(

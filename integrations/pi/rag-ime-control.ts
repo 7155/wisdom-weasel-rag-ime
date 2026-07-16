@@ -52,6 +52,10 @@ type ToolParams = {
   cwd?: string;
   timeoutSeconds?: number;
   allowNetwork?: boolean;
+  mode?: "content" | "name" | "both";
+  oldText?: string;
+  newText?: string;
+  expectedOccurrences?: number;
   agent?: "researcher" | "planner" | "worker" | "reviewer" | "delegate";
   version?: "1";
   task?: string;
@@ -63,6 +67,12 @@ type ToolParams = {
   contextMode?: "fresh" | "fork";
   wait?: boolean;
   batchId?: string;
+  itemId?: string;
+  title?: string;
+  status?:
+    | "pending" | "in_progress" | "completed"
+    | "queued" | "delivering" | "delivered" | "replied"
+    | "failed" | "stale" | "cancelled";
 };
 
 type ToolSpec = {
@@ -386,6 +396,48 @@ const toolSpecs: ToolSpec[] = [
       "worker 仍没有任意文件或 Shell 权限；所有控制中心写操作继续经过原生审批。",
     ],
   },
+  {
+    name: "agent_plan",
+    label: "当前回合计划",
+    description: "维护当前 Agent Session 的有界执行清单，不修改用户的每日规划。",
+    operations: ["list", "update"],
+    progress: {
+      list: "正在读取当前回合计划",
+      update: "正在更新当前回合计划",
+    },
+    guidelines: [
+      "这是当前 Session 的执行清单，不是用户的长期记忆或每日计划；不要把这里的更新描述成修改了用户规划。",
+      "开始复杂任务时先 list；创建计划项时提供 title 和 status，后续用返回的 itemId 更新同一项。",
+      "同一时间只能有一个 in_progress；完成当前项后再推进下一项，避免用重复标题创建新项。",
+    ],
+    parameterSchema: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: {
+            op: { const: "list" },
+            limit: { type: "integer", minimum: 1, maximum: 100 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: {
+            op: { const: "update" },
+            itemId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 240 },
+            status: {
+              type: "string",
+              enum: ["pending", "in_progress", "completed"],
+            },
+          },
+        },
+      ],
+    },
+  },
 ];
 
 const coordinatorToolSpecs: ToolSpec[] = [
@@ -404,6 +456,25 @@ const coordinatorToolSpecs: ToolSpec[] = [
     operations: ["read"],
     progress: { read: "正在读取工作区文件" },
     guidelines: ["敏感文件、数据库、二进制和符号链接由 Harness 拒绝；不要尝试绕过。"],
+  },
+  {
+    name: "workspace_search",
+    label: "工作区搜索",
+    description: "在授权工作区内有界搜索非敏感文件名与 UTF-8 文本内容。",
+    operations: ["search"],
+    progress: { search: "正在搜索授权工作区" },
+    guidelines: ["先搜索再读取；结果有文件数、大小和条数上限，敏感文件与符号链接不会进入候选。"],
+  },
+  {
+    name: "workspace_patch",
+    label: "精确文件修改",
+    description: "预览 exact-text replacement，并在原生批准与文件哈希复验后原子写入。",
+    operations: ["apply"],
+    progress: { apply: "正在准备精确文件修改预览" },
+    guidelines: [
+      "必须提供来自 workspace_read 的 oldText；默认要求只出现一次，不提供任意写文件能力。",
+      "批准后若文件内容或授权根变化，写入会失败关闭；不要用 workspace_shell 绕过。",
+    ],
   },
   {
     name: "workspace_shell",
@@ -570,6 +641,10 @@ function parametersFor(spec: ToolSpec) {
       cwd: { type: "string", maxLength: 1024 },
       timeoutSeconds: { type: "integer", minimum: 1, maximum: 120 },
       allowNetwork: { type: "boolean" },
+      mode: { type: "string", enum: ["content", "name", "both"] },
+      oldText: { type: "string", minLength: 1, maxLength: 65536 },
+      newText: { type: "string", maxLength: 131072 },
+      expectedOccurrences: { type: "integer", minimum: 1, maximum: 100 },
       agent: {
         type: "string",
         enum: ["researcher", "planner", "worker", "reviewer", "delegate"],
@@ -621,6 +696,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
     ime_models: ["status", "profiles", "probe", "cache_stats"],
     ime_runtime: ["health", "components", "diagnose"],
     ime_agents: ["catalog", "delegate", "status", "artifact", "abort"],
+    agent_plan: ["list", "update"],
   };
   return specs.flatMap((spec) => {
     const operations = spec.operations.filter((operation) => allowed[spec.name]?.includes(operation));

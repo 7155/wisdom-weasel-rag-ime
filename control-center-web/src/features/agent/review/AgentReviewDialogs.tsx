@@ -38,6 +38,12 @@ type ApplyPreview = {
   items: string[];
 };
 
+type ApprovalPreviewChange = {
+  label: string;
+  before: string;
+  after: string;
+};
+
 export function MemoryReviewDialog({
   activity,
   sessionId,
@@ -262,11 +268,16 @@ export function ApprovalReviewDialog({
   onDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => Promise<void>;
 }) {
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const approvalId = text(activity?.payload.approvalId);
   const hash = text(activity?.payload.payloadSha256);
-  useEffect(() => setSubmitting(false), [activity?.id]);
+  useEffect(() => {
+    setSubmitting(false);
+    setError('');
+  }, [activity?.id]);
   if (!activity || !approvalId || !hash) return null;
-  const title = text(activity.payload.summary) || text(activity.payload.operation) || '执行受控操作';
+  const preview = parseApprovalPreview(activity.payload.preview);
+  const title = preview.summary || text(activity.payload.summary) || text(activity.payload.operation) || '执行受控操作';
   const risk = text(activity.payload.riskLevel) || '需确认';
   return (
     <Dialog open>
@@ -278,10 +289,22 @@ export function ApprovalReviewDialog({
       >
         <DialogHeader>
           <span className="agent-review-dialog__eyebrow"><ShieldAlert size={15} />{risk}</span>
-          <DialogTitle>确认 Agent 操作</DialogTitle>
+          <DialogTitle>{preview.title || '确认 Agent 操作'}</DialogTitle>
           <DialogDescription>Agent 已暂停，必须由你明确批准或拒绝后才会继续。</DialogDescription>
         </DialogHeader>
         <div className="agent-approval-dialog__summary"><strong>{title}</strong><small>只会执行这份已绑定的操作预览。</small></div>
+        {preview.changes.length ? (
+          <dl className="agent-approval-dialog__changes" aria-label="操作预览">
+            {preview.changes.map((change, index) => (
+              <div key={`${change.label}:${index}`}>
+                <dt>{change.label}</dt>
+                {change.before ? <dd><span>原值</span><code>{change.before}</code></dd> : null}
+                <dd><span>{change.before ? '新值' : '内容'}</span><code>{change.after || '无'}</code></dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        {error ? <p className="agent-review-dialog__error" role="alert">{error}</p> : null}
         <footer className="agent-review-dialog__actions">
           <Button disabled={submitting} onClick={() => void decide('rejected')} variant="quiet">拒绝并继续</Button>
           <Button disabled={submitting} loading={submitting} onClick={() => void decide('approved')} variant="primary">批准并执行</Button>
@@ -292,12 +315,38 @@ export function ApprovalReviewDialog({
 
   async function decide(decision: 'approved' | 'rejected'): Promise<void> {
     setSubmitting(true);
+    setError('');
     try {
       await onDecision(approvalId, decision, hash);
+    } catch (reason) {
+      setError(publicAgentErrorText(reason, '审批提交失败，请检查状态后重试。'));
     } finally {
       setSubmitting(false);
     }
   }
+}
+
+function parseApprovalPreview(value: unknown): { title: string; summary: string; changes: ApprovalPreviewChange[] } {
+  const preview = record(value);
+  const source = Array.isArray(preview.changes) ? preview.changes : [];
+  const changes = source.flatMap((item): ApprovalPreviewChange[] => {
+    const change = record(item);
+    const label = previewText(change.label, 120);
+    const before = previewText(change.before, 2_000);
+    const after = previewText(change.after, 4_000);
+    return label && (before || after) ? [{ label, before, after }] : [];
+  }).slice(0, 20);
+  return {
+    title: previewText(preview.title, 160),
+    summary: previewText(preview.summary, 500),
+    changes,
+  };
+}
+
+function previewText(value: unknown, maximum: number): string {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return '';
+  const normalized = String(value).replace(/\r\n?/g, '\n').trim();
+  return normalized.length > maximum ? `${normalized.slice(0, maximum)}…` : normalized;
 }
 
 function parseMemoryRun(value: unknown): MemoryRun {

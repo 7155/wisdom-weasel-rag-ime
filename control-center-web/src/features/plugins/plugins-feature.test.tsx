@@ -45,7 +45,7 @@ describe('PluginsFeature', () => {
     await user.click(await screen.findByRole('button', { name: '交给 Agent 制作' }));
 
     expect(screen.getByTestId('test-location')).toHaveTextContent('/agent?draft=');
-    expect(screen.getByTestId('test-location')).toHaveTextContent('%E8%AF%B7');
+    expect(screen.getByTestId('test-location')).toHaveTextContent('%2Fskill%3Arag-ime-plugin-creator');
   });
 
   it('filters tools by readable purpose, availability and supported mode', async () => {

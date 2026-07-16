@@ -46,6 +46,7 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "ime_models",
     "ime_runtime",
     "ime_agents",
+    "agent_plan",
 )
 _APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
 _REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
@@ -58,14 +59,18 @@ def _tools_for_session(
     available: tuple[str, ...],
     session: Mapping[str, object],
 ) -> tuple[str, ...]:
+    selected = available
+    if str(session.get("toolAllowlistMode") or "profile") == "explicit":
+        explicit = {str(value) for value in session.get("allowedTools") or []}
+        selected = tuple(tool for tool in selected if tool in explicit)
     mode = str(session.get("mode") or "assistant")
     profile = str(session.get("toolProfileVersion") or "control-center-v1")
     if profile == "subagent-readonly-v1":
         allowed = set(_SUBAGENT_READ_ONLY_TOOLS)
-        return tuple(tool for tool in available if tool in allowed)
+        return tuple(tool for tool in selected if tool in allowed)
     return tuple(
         tool
-        for tool in available
+        for tool in selected
         if mode == "coordinator" or tool not in _COORDINATOR_TOOLS
     )
 
@@ -725,6 +730,7 @@ class PiRuntimeManager:
             "capabilities": {
                 "rpc": installed,
                 "sessions": True,
+                "conversationFork": installed,
                 "tools": bool(self.config.extension_path),
                 "imageAttachments": True,
                 "coordinator": set(_COORDINATOR_TOOLS).issubset(set(self.config.tools)),
@@ -769,8 +775,17 @@ class PiRuntimeManager:
             client = PiRpcClient(
                 self.config,
                 session=session,
-                on_event=lambda raw: self._handle_pi_event(client, session_id, raw),
-                on_exit=lambda code, error: self._handle_process_exit(client, session_id, code, error),
+                on_event=lambda raw: self._handle_pi_event(
+                    client,
+                    self._session_id_for_client(client),
+                    raw,
+                ),
+                on_exit=lambda code, error: self._handle_process_exit(
+                    client,
+                    self._session_id_for_client(client),
+                    code,
+                    error,
+                ),
             )
             self._client = client
         try:
@@ -849,6 +864,8 @@ class PiRuntimeManager:
         self.ensure(session_id)
         turn_id = f"turn:{uuid.uuid4()}"
         with self._lock:
+            if self._active_turn_id:
+                raise PiRuntimeError("Pi 正在处理上一轮，请等待结束或停止完成后再发送")
             client = self._require_client_locked(session_id)
             self._active_turn_id = turn_id
             self._active_client_message_id = str(client_message_id).strip()
@@ -944,6 +961,189 @@ class PiRuntimeManager:
                 ).to_payload()
             )
         return result
+
+    def fork_candidates(self, session_id: str) -> list[dict[str, object]]:
+        """List Pi-owned user-message anchors without inventing product checkpoints."""
+
+        with self._lifecycle_lock:
+            self._require_idle_fork_session(session_id)
+            try:
+                self._ensure_locked(session_id)
+                with self._lock:
+                    client = self._require_client_locked(session_id)
+                    self._require_quiescent_fork_locked()
+                candidates = self._fork_candidates_from_client(client)
+                with self._lock:
+                    self._schedule_idle_locked()
+                return candidates
+            finally:
+                # Reading branch anchors must not leave the product Session in
+                # the transient active state created by ensure().
+                if str(self.sessions.get(session_id).get("status") or "") == "active":
+                    self.sessions.set_status(session_id, "idle")
+
+    def fork_session(
+        self,
+        source_session_id: str,
+        target_session_id: str,
+        *,
+        entry_id: str,
+    ) -> dict[str, object]:
+        """Move the live Pi process to a real branch and bind only the target Session."""
+
+        normalized_entry_id = str(entry_id or "").strip()
+        if not normalized_entry_id:
+            raise ValueError("conversation fork entryId must not be empty")
+        with self._lifecycle_lock:
+            self._require_idle_fork_session(source_session_id)
+            target = self.sessions.get(target_session_id)
+            if str(target.get("status") or "") != "idle":
+                raise PiRuntimeError("conversation fork target must be idle")
+            if self.sessions.runtime_binding(target_session_id) is not None:
+                raise PiRuntimeError("conversation fork target is already bound")
+            self._ensure_locked(source_session_id)
+            source_binding = self.sessions.runtime_binding(source_session_id)
+            if not isinstance(source_binding, Mapping):
+                raise PiRuntimeError("conversation fork source has no runtime binding")
+            source_transcript = str(source_binding.get("transcriptRef") or "").strip()
+            with self._lock:
+                client = self._require_client_locked(source_session_id)
+                self._require_quiescent_fork_locked()
+                self._cancel_idle_locked()
+            candidates = self._fork_candidates_from_client(client)
+            selected = next(
+                (candidate for candidate in candidates if candidate["entryId"] == normalized_entry_id),
+                None,
+            )
+            if selected is None:
+                raise PiRuntimeError("conversation fork entry is not available in the source Session")
+
+            fork_started = False
+            branch_transcript: Path | None = None
+            try:
+                fork_started = True
+                fork_response = _mapping(
+                    client.send({"type": "fork", "entryId": normalized_entry_id}).get("data")
+                )
+                if bool(fork_response.get("cancelled")):
+                    raise PiRuntimeError("Pi cancelled the conversation fork")
+                state = _mapping(client.send({"type": "get_state"}).get("data"))
+                external_session_id = str(state.get("sessionId") or "").strip()
+                transcript_ref = str(state.get("sessionFile") or "").strip()
+                if not external_session_id or not transcript_ref:
+                    raise PiRuntimeError("Pi returned an incomplete conversation fork identity")
+                branch_candidate = Path(transcript_ref).expanduser()
+                if branch_candidate.is_symlink():
+                    raise PiRuntimeError("Pi conversation fork file must not be a symlink")
+                branch_transcript = branch_candidate.resolve(strict=False)
+                session_root = self.config.session_dir.expanduser().resolve(strict=False)
+                if not _is_within(branch_transcript, session_root):
+                    raise PiRuntimeError("Pi conversation fork file is outside the managed session directory")
+                if not branch_transcript.is_file():
+                    raise PiRuntimeError("Pi conversation fork file was not persisted")
+                source_path = Path(source_transcript).expanduser().resolve(strict=False) if source_transcript else None
+                if source_path is not None and branch_transcript == source_path:
+                    raise PiRuntimeError("Pi conversation fork reused the source transcript")
+
+                bound = self.sessions.bind_runtime_session(
+                    target_session_id,
+                    driver_id=self.driver_id,
+                    runtime_kind=self.runtime_kind,
+                    external_session_id=external_session_id,
+                    transcript_ref=branch_transcript.as_posix(),
+                    branch_anchor=str(state.get("leafId") or normalized_entry_id),
+                    binding_state="active",
+                    metadata={"forkedFromSessionId": source_session_id, "forkEntryId": normalized_entry_id},
+                    message_count=_integer(state.get("messageCount")),
+                )
+                with self._lock:
+                    self._active_session_id = target_session_id
+                    self._last_pi_entry_id = str(state.get("leafId") or "")
+                    self._active_turn_id = ""
+                    self._active_client_message_id = ""
+                    self._stream_pi_message_id = ""
+                    self._status = "ready"
+                    self._schedule_idle_locked()
+                self.sessions.set_status(source_session_id, "idle")
+                bound = self.sessions.set_status(target_session_id, "idle")
+                self.events.publish(
+                    target_session_id,
+                    "session_configuration_changed",
+                    {
+                        "kind": "fork",
+                        "sourceSessionId": source_session_id,
+                        "entryId": normalized_entry_id,
+                    },
+                )
+                return {
+                    "sourceSessionId": source_session_id,
+                    "targetSessionId": target_session_id,
+                    "entryId": normalized_entry_id,
+                    "selectedText": str(selected["text"]),
+                    "state": dict(state),
+                    "session": bound,
+                }
+            except Exception:
+                if fork_started:
+                    # Pi mutates its live Session during fork(). Never let that
+                    # mutated client masquerade as the source binding after a
+                    # partial failure. The source DB binding remains untouched.
+                    with self._lock:
+                        if self._client is client:
+                            self._client = None
+                            self._active_session_id = ""
+                            self._active_turn_id = ""
+                            self._active_client_message_id = ""
+                            self._stream_pi_message_id = ""
+                            self._pending_approval_requests.clear()
+                            self._pending_review_requests.clear()
+                            self._last_pi_entry_id = ""
+                            self._status = "stopped" if self.config.enabled else "disabled"
+                            self._intentional_stop = True
+                    client.stop()
+                    if (
+                        branch_transcript is not None
+                        and branch_transcript.is_file()
+                        and not branch_transcript.is_symlink()
+                    ):
+                        try:
+                            branch_transcript.unlink()
+                        except OSError:
+                            pass
+                self.sessions.set_status(source_session_id, "idle")
+                self.sessions.set_status(target_session_id, "idle")
+                raise
+
+    def _require_idle_fork_session(self, session_id: str) -> None:
+        session = self.sessions.get(session_id)
+        if str(session.get("status") or "") != "idle":
+            raise PiRuntimeError("conversation forks are only available for idle Sessions")
+
+    def _require_quiescent_fork_locked(self) -> None:
+        if self._active_turn_id:
+            raise PiRuntimeError("conversation forks are unavailable during an Agent turn")
+        if self._pending_approval_requests or self._pending_review_requests:
+            raise PiRuntimeError("conversation forks are unavailable while user input is pending")
+
+    @staticmethod
+    def _fork_candidates_from_client(client: PiRpcClient) -> list[dict[str, object]]:
+        response = client.send({"type": "get_fork_messages"})
+        data = _mapping(response.get("data"))
+        raw_messages = data.get("messages")
+        if not isinstance(raw_messages, list):
+            raise PiRuntimeError("Pi returned an invalid conversation fork catalog")
+        candidates: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw in raw_messages[:500]:
+            if not isinstance(raw, Mapping):
+                continue
+            entry_id = str(raw.get("entryId") or "").strip()[:240]
+            text = " ".join(str(raw.get("text") or "").split())[:8000]
+            if not entry_id or not text or entry_id in seen:
+                continue
+            seen.add(entry_id)
+            candidates.append({"entryId": entry_id, "text": text})
+        return candidates
 
     def _persisted_messages(self, session_id: str) -> tuple[bool, list[dict[str, object]]]:
         session = self.sessions.get(session_id)
@@ -1522,6 +1722,10 @@ class PiRuntimeManager:
         if self._active_session_id != session_id or self._client is None or not self._client.running:
             raise PiRuntimeError("requested agent session is not active")
         return self._client
+
+    def _session_id_for_client(self, client: PiRpcClient) -> str:
+        with self._lock:
+            return self._active_session_id if self._client is client else ""
 
     def _schedule_idle_locked(self) -> None:
         self._cancel_idle_locked()

@@ -49,7 +49,7 @@ main[data-route-id='diagnostics'] .diagnostics-boundary p {
   margin: 0;
   padding: 0 2px 12px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
 }
 

@@ -12,7 +12,7 @@ main[data-route-id='configuration'] .configuration-editor > * {
 main[data-route-id='configuration'] .configuration-editor__title {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -39,7 +39,7 @@ main[data-route-id='configuration'] .configuration-details {
 main[data-route-id='configuration'] .configuration-details summary {
   padding: 10px 2px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }

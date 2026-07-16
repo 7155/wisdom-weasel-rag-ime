@@ -21,7 +21,7 @@
   min-width: 800px;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .history-table caption,
@@ -136,7 +136,7 @@
 
 .history-detail__section-heading > div { display: grid; gap: 2px; min-width: 0; }
 .history-detail__section-heading h3 { margin: 0; font-size: 13px; }
-.history-detail__section-heading small { color: var(--color-text-tertiary); font-size: 12px; }
+.history-detail__section-heading small { color: var(--color-text-tertiary); font-size: 13px; }
 
 .history-detail__text pre {
   max-height: 300px;
@@ -148,7 +148,7 @@
   background: var(--color-surface-subtle);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
   overflow-wrap: anywhere;
   user-select: text;
@@ -157,7 +157,7 @@
 }
 
 .history-detail__copy-error,
-.history-detail__empty { margin: 8px 0 0; color: var(--color-text-secondary); font-size: 12px; }
+.history-detail__empty { margin: 8px 0 0; color: var(--color-text-secondary); font-size: 13px; }
 .history-detail__copy-error { color: var(--color-danger); }
 
 @media (max-width: 640px) {

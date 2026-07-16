@@ -313,6 +313,37 @@ describe('NativeControlTransport', () => {
     transport.dispose();
   });
 
+  it('accepts bounded absolute directory receipts for Agent workspace roots', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'workspace-directory-1',
+          name: 'learnA',
+          mimeType: 'application/octet-stream',
+          byteSize: 0,
+          path: '/Volumes/undo 4t/git/learnA',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'workspace-call' });
+
+    await expect(transport.pickFiles({
+      purpose: 'workspace-root',
+      multiple: true,
+      maxFiles: 4,
+    })).resolves.toEqual([expect.objectContaining({ path: '/Volumes/undo 4t/git/learnA' })]);
+    expect(sent).toEqual([{
+      id: 'workspace-call',
+      method: 'pickFiles',
+      payload: { purpose: 'workspace-root', multiple: true, maxFiles: 4 },
+    }]);
+    transport.dispose();
+  });
+
   it('selects plugin sources only as native directories', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     const bridgeWindow = fakeBridgeWindow((envelope) => {
@@ -330,6 +361,7 @@ describe('NativeControlTransport', () => {
       }));
     });
     const transport = new NativeControlTransport({ bridgeWindow });
+
     await expect(transport.pickFiles({
       purpose: 'plugin-source',
       selection: 'directory',

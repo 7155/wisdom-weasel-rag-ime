@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleDashed,
   Database,
+  ExternalLink,
   GitBranch,
   Search,
   ShieldAlert,
@@ -14,6 +15,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -23,7 +25,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/primitives';
-import type { AgentActivityProjection } from '@/contracts/agent-reducer';
+import {
+  agentToolProgressHistory,
+  type AgentActivityProjection,
+  type AgentToolProgressEntry,
+} from '@/contracts/agent-reducer';
 import { SafeFieldList } from './BlockRenderer';
 import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
@@ -35,8 +41,15 @@ export function ActivitySummary({
   activities: AgentActivityProjection[];
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
 }) {
-  if (activities.length === 0) return null;
   const running = activities.some((activity) => activity.status === 'running');
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return undefined;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  if (activities.length === 0) return null;
   const waiting = activities.some((activity) => activity.status === 'waiting');
   const failed = activities.some((activity) => activity.status === 'failed');
   const summary = aggregateSummary(activities);
@@ -84,6 +97,7 @@ export function ActivitySummary({
               <ActivityRow
                 key={activity.id}
                 activity={activity}
+                nowMs={nowMs}
                 onApprovalDecision={onApprovalDecision}
               />
             ))}
@@ -93,7 +107,7 @@ export function ActivitySummary({
       {liveActivities.length ? (
         <div className="agent-activity-live" aria-label="当前活动">
           {liveActivities.map((activity) => (
-            <ActivityRow key={activity.id} activity={activity} onApprovalDecision={onApprovalDecision} />
+            <ActivityRow key={activity.id} activity={activity} nowMs={nowMs} onApprovalDecision={onApprovalDecision} />
           ))}
         </div>
       ) : null}
@@ -113,9 +127,11 @@ export function ActivitySummary({
 
 function ActivityRow({
   activity,
+  nowMs,
   onApprovalDecision,
 }: {
   activity: AgentActivityProjection;
+  nowMs: number;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
 }) {
   const presentation = activityPresentation(activity);
@@ -129,6 +145,8 @@ function ActivityRow({
   const approvalId = text(payload.approvalId);
   const hash = text(payload.payloadSha256);
   const canDecide = activity.status === 'waiting' && approvalId && hash && onApprovalDecision;
+  const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
+  const duration = activityDuration(activity, nowMs);
   return (
     <details className="agent-activity-row">
       <summary>
@@ -137,12 +155,18 @@ function ActivityRow({
           <strong>{presentation.title}</strong>
           <small>{activity.kind === 'reasoning_summary' ? '正在整理信息与下一步' : toolView?.summary ?? visibleSummary}</small>
         </span>
-        <i data-status={activity.status}>{statusLabel(activity.status)}</i>
+        <i data-status={activity.status}>{toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}{statusLabel(activity.status)}{duration ? ` · ${duration}` : ''}</i>
       </summary>
       <div className="agent-activity-row__details">
         {presentation.detail ? <p>{presentation.detail}</p> : null}
+        <ToolProgressTimeline activity={activity} entries={progressHistory} />
         {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
         <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
+        {toolView?.destination ? (
+          <a className="agent-tool-destination" href={toolView.destination.href}>
+            {toolView.destination.label}<ExternalLink size={13} aria-hidden="true" />
+          </a>
+        ) : null}
         {canDecide ? (
           <div className="agent-activity-row__approval-actions">
             <Button size="small" variant="quiet" onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}>拒绝</Button>
@@ -151,6 +175,28 @@ function ActivityRow({
         ) : null}
       </div>
     </details>
+  );
+}
+
+function ToolProgressTimeline({
+  activity,
+  entries,
+}: {
+  activity: AgentActivityProjection;
+  entries: AgentToolProgressEntry[];
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <div className="agent-activity-row__source-panel" aria-label="工具过程记录">
+      <strong><CircleDashed size={13} />过程记录</strong>
+      <ol className="agent-activity-row__sources">
+        {entries.map((entry) => (
+          <li key={entry.eventId}>
+            {checkpointOffset(entry.createdAtMs, activity.createdAtMs)} · {entry.summary} · {statusLabel(entry.status)}
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
@@ -208,7 +254,7 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   if (toolId.includes('runtime') || toolId.includes('workspace')) {
     return { title: '运行环境', kind: 'runtime', icon: toolId.includes('workspace') ? TerminalSquare : Database };
   }
-  if (toolId.includes('planning')) return { title: '规划', kind: 'tool', icon: Bot };
+  if (toolId.includes('planning') || toolId === 'agent_plan') return { title: toolId === 'agent_plan' ? '当前回合计划' : '规划', kind: 'tool', icon: Bot };
   return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
 }
 
@@ -239,6 +285,29 @@ function statusLabel(status: AgentActivityProjection['status']): string {
     case 'failed': return '失败';
     case 'completed': return '完成';
   }
+}
+
+function activityDuration(activity: AgentActivityProjection, nowMs: number): string {
+  const endMs = activity.status === 'running' ? nowMs : activity.updatedAtMs;
+  const elapsedMs = Math.max(0, endMs - activity.createdAtMs);
+  // A restored activity with an invalid epoch should not display a fantastical timer.
+  if (!Number.isFinite(elapsedMs) || (activity.status === 'running' && elapsedMs > 7 * 24 * 60 * 60 * 1_000)) return '';
+  return elapsedLabel(elapsedMs);
+}
+
+function checkpointOffset(createdAtMs: number, startedAtMs: number): string {
+  return `+${elapsedLabel(Math.max(0, createdAtMs - startedAtMs))}`;
+}
+
+function elapsedLabel(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1_000));
+  if (totalSeconds < 60) return `${totalSeconds}秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds ? `${minutes}分${seconds}秒` : `${minutes}分`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}小时${remainingMinutes}分` : `${hours}小时`;
 }
 
 function text(value: unknown): string {

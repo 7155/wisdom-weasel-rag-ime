@@ -22,6 +22,7 @@ from .agent_runtime_driver import (
 )
 from .agent_sessions import AgentSessionStore
 from .agent_templates import AgentTemplate, agent_template, agent_template_catalog
+from .agent_tool_ids import ASSISTANT_CONTROL_TOOL_IDS
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeManager
@@ -925,15 +926,31 @@ class AgentDelegationCoordinator:
                 raise ValueError("at most two delegated tasks may run at once")
             try:
                 for ordinal, (task, template) in enumerate(zip(tasks, templates, strict=True)):
+                    parent_profile = str(parent.get("toolProfileVersion") or "control-center-v1")
+                    child_profile = (
+                        "subagent-readonly-v1"
+                        if parent_profile == "subagent-readonly-v1"
+                        else template.tool_profile_version
+                    )
                     child = self.sessions.create(
                         title=f"{template.display_name} · {_bounded_text(task['task'], maximum=72)}",
                         mode="assistant",
                         role_id=str(parent.get("roleId") or "zhiyou-v1"),
                         role_version=str(parent.get("roleVersion") or "1"),
                         model_profile=str(parent.get("modelProfile") or "pi/default"),
-                        tool_profile_version=template.tool_profile_version,
+                        tool_profile_version=child_profile,
                         session_kind="subagent_runtime",
                     )
+                    if str(parent.get("toolAllowlistMode") or "profile") == "explicit":
+                        parent_tools = {str(value) for value in parent.get("allowedTools") or []}
+                        child = self.sessions.set_runtime_policy(
+                            str(child["id"]),
+                            mode="assistant",
+                            tool_profile_version=child_profile,
+                            allowed_tools=[
+                                tool for tool in ASSISTANT_CONTROL_TOOL_IDS if tool in parent_tools
+                            ],
+                        )
                     if context_mode == "fork":
                         branch = native_forks[ordinal]
                         prepared_files.append(branch["path"])

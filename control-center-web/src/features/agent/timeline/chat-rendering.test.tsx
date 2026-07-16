@@ -88,6 +88,7 @@ describe('Agent chat rendering', () => {
     const turnId = 'turn-failed-snapshot';
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
       messages: [userMessage(sessionId, turnId), failedAssistantMessage(sessionId, turnId)],
+      liveEvents: [],
       lastSequence: 7,
       resumeToken: `${sessionId}:7`,
       status: 'responding',

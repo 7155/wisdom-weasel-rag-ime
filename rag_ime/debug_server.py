@@ -49,6 +49,7 @@ from .control_api import AgentKernelControlFacade
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from .deployment_status import audit_installed_product
 from .embeddings import embed_query, embedding_provider_from_env
 from .foreground_privacy import assess_foreground_write, storage_receipt
 from .frontend_gateway import FrontendGateway
@@ -386,6 +387,14 @@ class DebugImeService:
             predictor_provider=self.predictor_status,
             runtime_config_provider=self.runtime_config_snapshot,
             last_prediction_provider=self._last_management_prediction,
+            deployment_provider=lambda: audit_installed_product(
+                repo_root=Path(os.environ.get("RAG_IME_SOURCE_ROOT") or Path(__file__).resolve().parents[1]),
+                app_support=Path(
+                    os.environ.get("RAG_IME_APP_SUPPORT_DIR")
+                    or Path.home() / "Library" / "Application Support" / "RagIme"
+                ),
+                verify_pi_files=False,
+            ),
             cache_invalidator=self._clear_rime_cache,
             voice_support_directory=self.voice_support_directory,
         )
@@ -5513,6 +5522,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if agent_session_id and agent_action == "messages":
             self._write_json(HTTPStatus.OK, self.service.agent.messages(agent_session_id))
             return
+        if agent_session_id and agent_action == "forks":
+            try:
+                self._write_json(HTTPStatus.OK, self.service.agent.fork_candidates(agent_session_id))
+            except Exception as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
         if agent_session_id and agent_action == "commands":
             self._write_json(HTTPStatus.OK, self.service.agent.command_catalog(agent_session_id))
             return
@@ -6129,6 +6144,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "prompt":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
+            elif agent_session_id and agent_action == "forks":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.fork_session(agent_session_id, payload),
+                )
             elif agent_session_id and agent_action == "abort":
                 self._write_json(HTTPStatus.OK, self.service.agent.abort(agent_session_id))
             elif agent_session_id and agent_action == "review":

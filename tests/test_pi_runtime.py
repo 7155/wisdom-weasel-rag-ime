@@ -21,6 +21,7 @@ from rag_ime.pi_runtime import (
     _deepseek_pi_provider,
     _pi_message_payload,
     _public_pi_model,
+    _tools_for_session,
 )
 
 
@@ -35,6 +36,7 @@ session_dir = pathlib.Path(args[args.index("--session-dir") + 1])
 session_dir.mkdir(parents=True, exist_ok=True)
 session_file = session_dir / "fake-session.jsonl"
 session_file.touch()
+current_session_id = "pi-fake-1"
 entries = []
 available_models = [
     {"provider": "deepseek", "id": "deepseek-v4", "name": "DeepSeek V4", "api": "openai-completions",
@@ -58,7 +60,8 @@ for line in sys.stdin:
     kind = command.get("type")
     if kind == "get_state":
         emit({"id": request_id, "type": "response", "command": kind, "success": True, "data": {
-            "sessionId": "pi-fake-1", "sessionFile": str(session_file), "messageCount": 0,
+            "sessionId": current_session_id, "sessionFile": str(session_file), "messageCount": len(entries),
+            "leafId": entries[-1]["id"] if entries else None,
             "thinkingLevel": current_thinking, "isStreaming": False, "isCompacting": False,
             "steeringMode": "all", "followUpMode": "one-at-a-time",
             "autoCompactionEnabled": True, "pendingMessageCount": 0, "model": current_model
@@ -186,6 +189,24 @@ for line in sys.stdin:
         emit({"id": request_id, "type": "response", "command": kind, "success": True, "data": {
             "entries": selected, "leafId": entries[-1]["id"] if entries else None
         }})
+    elif kind == "get_fork_messages":
+        emit({"id": request_id, "type": "response", "command": kind, "success": True, "data": {
+            "messages": [
+                {"entryId": entry["id"], "text": str(entry["message"].get("content") or "")}
+                for entry in entries if entry.get("message", {}).get("role") == "user"
+            ]
+        }})
+    elif kind == "fork":
+        selected = next((entry for entry in entries if entry["id"] == command.get("entryId")), None)
+        if selected is None:
+            emit({"id": request_id, "type": "response", "command": kind, "success": False,
+                  "error": "fork entry not found"})
+        else:
+            current_session_id = "pi-fork-" + str(command.get("entryId"))
+            session_file = session_dir / (current_session_id + ".jsonl")
+            session_file.write_text(json.dumps({"type": "session", "id": current_session_id}) + "\n")
+            emit({"id": request_id, "type": "response", "command": kind, "success": True,
+                  "data": {"text": selected["message"].get("content", ""), "cancelled": False}})
     elif kind == "get_messages":
         emit({"id": request_id, "type": "response", "command": kind, "success": True, "data": {"messages": [
             {"role": "user", "timestamp": 100, "content": [{"type": "text", "text": "今天做了什么"}]},
@@ -198,6 +219,39 @@ for line in sys.stdin:
     else:
         emit({"id": request_id, "type": "response", "command": kind, "success": False, "error": "unsupported"})
 '''
+
+
+class PiRuntimePermissionSelectionTests(unittest.TestCase):
+    def test_explicit_allowlist_is_intersected_with_mode_and_subagent_profile(self) -> None:
+        available = (
+            "ime_overview",
+            "ime_memory",
+            "ime_input",
+            "agent_plan",
+            "workspace_search",
+            "workspace_patch",
+        )
+        assistant = _tools_for_session(
+            available,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "control-center-v1",
+                "toolAllowlistMode": "explicit",
+                "allowedTools": ["ime_overview", "workspace_search"],
+            },
+        )
+        readonly_child = _tools_for_session(
+            available,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "toolAllowlistMode": "explicit",
+                "allowedTools": ["ime_memory", "ime_input", "agent_plan"],
+            },
+        )
+
+        self.assertEqual(assistant, ("ime_overview",))
+        self.assertEqual(readonly_child, ("ime_memory", "agent_plan"))
 
 
 class PiRuntimeTests(unittest.TestCase):
@@ -683,6 +737,15 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(history[0]["turnId"], history[1]["turnId"])
         self.assertNotEqual(history[0]["id"], history[1]["id"])
 
+    def test_prompt_rejects_a_second_turn_until_the_active_turn_settles(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            self.runtime._active_turn_id = "turn:still-aborting"
+
+        with self.assertRaisesRegex(PiRuntimeError, "上一轮"):
+            self.runtime.prompt(session_id, "不要覆盖旧回合")
+
     def test_pi_user_echo_is_not_published_as_a_second_public_message(self) -> None:
         session_id = str(self.session["id"])
         self.runtime.ensure(session_id)
@@ -772,6 +835,92 @@ class PiRuntimeTests(unittest.TestCase):
 
         self.runtime.stop()
         self.assertEqual(self.runtime.runtime_status()["status"], "stopped")
+
+    def test_real_pi_fork_binds_distinct_target_and_preserves_source_binding(self) -> None:
+        source_id = str(self.session["id"])
+        self.runtime.prompt(source_id, "从这里开始新方向")
+        _wait_until(lambda: self.store.get(source_id)["status"] == "idle")
+        source_binding = self.store.runtime_binding(source_id)
+        self.assertIsNotNone(source_binding)
+
+        candidates = self.runtime.fork_candidates(source_id)
+        self.assertEqual(
+            candidates,
+            [{"entryId": "entry-user-1", "text": "从这里开始新方向"}],
+        )
+        target = self.store.create(title="新方向")
+        result = self.runtime.fork_session(
+            source_id,
+            str(target["id"]),
+            entry_id="entry-user-1",
+        )
+
+        self.assertEqual(self.store.runtime_binding(source_id), source_binding)
+        target_binding = self.store.runtime_binding(str(target["id"]))
+        self.assertIsNotNone(target_binding)
+        assert source_binding is not None and target_binding is not None
+        self.assertNotEqual(target_binding["externalSessionId"], source_binding["externalSessionId"])
+        self.assertNotEqual(target_binding["transcriptRef"], source_binding["transcriptRef"])
+        self.assertEqual(result["selectedText"], "从这里开始新方向")
+        self.assertEqual(self.runtime.runtime_status()["activeSessionId"], target["id"])
+        self.assertEqual(self.store.get(source_id)["status"], "idle")
+        self.assertEqual(self.store.get(str(target["id"]))["status"], "idle")
+
+        self.runtime.prompt(str(target["id"]), "分支后的消息")
+        _wait_until(lambda: self.store.get(str(target["id"]))["status"] == "idle")
+        target_events, _ = self.events.replay(str(target["id"]))
+        self.assertIn("turn_completed", [event.event_type for event in target_events])
+
+    def test_fork_rejects_unknown_anchor_without_binding_target(self) -> None:
+        source_id = str(self.session["id"])
+        self.runtime.prompt(source_id, "原始消息")
+        _wait_until(lambda: self.store.get(source_id)["status"] == "idle")
+        source_binding = self.store.runtime_binding(source_id)
+        target = self.store.create(title="无效分支")
+
+        with self.assertRaisesRegex(PiRuntimeError, "not available"):
+            self.runtime.fork_session(
+                source_id,
+                str(target["id"]),
+                entry_id="entry-does-not-exist",
+            )
+
+        self.assertEqual(self.store.runtime_binding(source_id), source_binding)
+        self.assertIsNone(self.store.runtime_binding(str(target["id"])))
+
+    def test_fork_state_failure_stops_mutated_client_without_rebinding_source(self) -> None:
+        source_id = str(self.session["id"])
+        self.runtime.prompt(source_id, "原始消息")
+        _wait_until(lambda: self.store.get(source_id)["status"] == "idle")
+        source_binding = self.store.runtime_binding(source_id)
+        target = self.store.create(title="故障分支")
+        with self.runtime._lock:
+            client = self.runtime._client
+        assert client is not None
+        original_send = client.send
+        forked = False
+
+        def fail_after_fork(command, *, timeout=None):
+            nonlocal forked
+            if command.get("type") == "get_state" and forked:
+                raise PiRuntimeError("state unavailable after fork")
+            response = original_send(command, timeout=timeout)
+            if command.get("type") == "fork":
+                forked = True
+            return response
+
+        with mock.patch.object(client, "send", side_effect=fail_after_fork):
+            with self.assertRaisesRegex(PiRuntimeError, "state unavailable"):
+                self.runtime.fork_session(
+                    source_id,
+                    str(target["id"]),
+                    entry_id="entry-user-1",
+                )
+
+        self.assertEqual(self.store.runtime_binding(source_id), source_binding)
+        self.assertIsNone(self.store.runtime_binding(str(target["id"])))
+        self.assertIsNone(self.runtime.runtime_status()["activeSessionId"])
+        self.assertEqual(self.store.get(source_id)["status"], "idle")
 
     def test_persisted_history_is_read_without_starting_model_runtime(self) -> None:
         session_id = str(self.session["id"])
