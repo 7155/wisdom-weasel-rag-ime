@@ -73,7 +73,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             if item["enabled"] is True
         }
 
-        self.assertEqual(len(manifests), 18)
+        self.assertEqual(len(manifests), 19)
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
                 schema = manifest["parameters"]
@@ -117,6 +117,14 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(
             self._branch(tools["agent_schedule"], "schedule")["required"],
             ["op", "instruction", "targetType", "wakeAtMs"],
+        )
+        self.assertEqual(
+            self._branch(tools["ime_browser"], "navigate")["required"],
+            ["op", "url"],
+        )
+        self.assertEqual(
+            self._branch(tools["ime_browser"], "type")["required"],
+            ["op", "refId", "text"],
         )
 
         delegate = self._branch(tools["ime_agents"], "delegate")

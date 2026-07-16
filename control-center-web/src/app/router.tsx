@@ -1,6 +1,7 @@
 import { Navigate, createHashRouter } from 'react-router-dom';
 import { PrimitivesShowcase } from '@/components/primitives';
 import { AgentFeature } from '@/features/agent';
+import { BrowserFeature } from '@/features/browser';
 import { ConfigurationFeature } from '@/features/configuration';
 import { DiagnosticsFeature } from '@/features/diagnostics';
 import { HistoryFeature } from '@/features/history';
@@ -22,6 +23,7 @@ export const router = createHashRouter([
   { path: '/rooms', element: <RoomsFeature /> },
   { path: '/roles', element: <RolesFeature /> },
   { path: '/plugins', element: <PluginsFeature /> },
+  { path: '/browser', element: <BrowserFeature /> },
   { path: '/voice', element: <VoiceFeature /> },
   { path: '/planning', element: <PlanningFeature /> },
   { path: '/memory', element: <MemoryFeature /> },

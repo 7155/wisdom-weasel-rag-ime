@@ -47,6 +47,7 @@ from .agent_routes import (
 from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
+from .browser_control import BrowserControlError, BrowserControlService
 from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
@@ -437,6 +438,10 @@ class DebugImeService:
                 / "inbox"
             ),
         )
+        self.browser_control = BrowserControlService(
+            config.db_path,
+            extension_root=os.environ.get("RAG_IME_BROWSER_EXTENSION_DIR") or None,
+        )
         self.agent_tools = ControlToolGateway(
             sessions=self.agent.sessions,
             management=self.management,
@@ -448,6 +453,7 @@ class DebugImeService:
             collaboration=self.agent,
             extensions=self.agent_extensions,
             scheduling=self.agent,
+            browser_control=self.browser_control,
         )
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
         self.control_api = AgentKernelControlFacade(
@@ -5299,6 +5305,104 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        if parsed.path == "/api/browser/extension/next":
+            if not self._browser_extension_authenticated():
+                return
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.browser_control.next_command(
+                    device_id=_query_first(query, "deviceId"),
+                    client_id=_query_first(query, "clientId") or _query_first(query, "deviceId"),
+                    timeout_seconds=float(_query_first(query, "timeoutSeconds") or 20.0),
+                ),
+            )
+            return
+        if parsed.path == "/api/browser/status":
+            self._write_json(HTTPStatus.OK, self.service.browser_control.status())
+            return
+        if parsed.path == "/api/browser/managed/bootstrap":
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "schemaVersion": "rag-ime.browser-control.v1",
+                    "ok": True,
+                    "summary": "托管浏览器正在完成隔离连接",
+                },
+            )
+            return
+        if parsed.path == "/api/browser/pairing":
+            self._write_json(HTTPStatus.OK, self.service.browser_control.pairing())
+            return
+        if parsed.path == "/api/browser/tabs":
+            self._write_json(HTTPStatus.OK, self.service.browser_control.tabs())
+            return
+        if parsed.path == "/api/browser/snapshots/latest":
+            tab_value = _query_first(query, "tabId")
+            try:
+                response = self.service.browser_control.latest_snapshot(
+                    device_id=_query_first(query, "deviceId"),
+                    tab_id=int(tab_value) if tab_value else None,
+                    include_markdown=_query_first(query, "includeMarkdown") != "false",
+                )
+            except (BrowserControlError, ValueError) as exc:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": str(exc), "code": "browser_snapshot_unavailable"},
+                )
+                return
+            self._write_json(
+                HTTPStatus.OK,
+                response,
+            )
+            return
+        if parsed.path.startswith("/api/browser/snapshots/") and parsed.path.endswith("/image"):
+            snapshot_id = parsed.path.removeprefix("/api/browser/snapshots/").removesuffix("/image").strip("/")
+            try:
+                mime_type, data = self.service.browser_control.snapshot_image(snapshot_id)
+            except BrowserControlError as exc:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": str(exc), "code": "browser_snapshot_image_unavailable"},
+                )
+                return
+            self._write_binary(
+                HTTPStatus.OK,
+                data,
+                mime_type=mime_type,
+                etag=hashlib.sha256(data).hexdigest(),
+            )
+            return
+        if parsed.path == "/api/browser/traces":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.browser_control.traces(
+                    limit=int(_query_first(query, "limit") or 50),
+                ),
+            )
+            return
+        if parsed.path == "/api/browser/permissions":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.browser_control.permissions(
+                    limit=int(_query_first(query, "limit") or 100),
+                ),
+            )
+            return
+        if parsed.path.startswith("/api/browser/permissions/"):
+            prompt_id = parsed.path.removeprefix("/api/browser/permissions/").strip("/")
+            try:
+                response = self.service.browser_control.permission_status(prompt_id)
+            except BrowserControlError as exc:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": str(exc), "code": "browser_permission_not_found"},
+                )
+                return
+            self._write_json(
+                HTTPStatus.OK,
+                response,
+            )
+            return
         knowledge_parts = _knowledge_route_parts(parsed.path)
         if knowledge_parts is not None:
             try:
@@ -6119,6 +6223,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(HTTPStatus.OK, self.service.agent.approval_result(self._read_json()))
                 return
+            if path.startswith("/api/browser/extension/"):
+                if not self._browser_extension_authenticated():
+                    return
+                payload = self._read_json()
+                if path == "/api/browser/extension/hello":
+                    response = self.service.browser_control.hello(payload)
+                elif path == "/api/browser/extension/snapshot":
+                    response = self.service.browser_control.push_snapshot(payload)
+                elif path == "/api/browser/extension/result":
+                    response = self.service.browser_control.complete_command(payload)
+                elif path == "/api/browser/extension/permission":
+                    response = self.service.browser_control.request_permission(payload)
+                else:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(HTTPStatus.OK, response)
+                return
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
@@ -6160,6 +6281,44 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
                     return
                 self._write_json(status, response)
+                return
+            if path == "/api/browser/mode":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.set_mode(payload.get("mode")))
+                return
+            if path == "/api/browser/pairing/rotate":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.rotate_pairing())
+                return
+            if path == "/api/browser/stop":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.stop())
+                return
+            if path == "/api/browser/managed/start":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.start_managed())
+                return
+            if path == "/api/browser/managed/stop":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.stop_managed())
+                return
+            if path == "/api/browser/command":
+                action = str(payload.pop("action", ""))
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.browser_control.submit_command(
+                        action,
+                        payload,
+                        session_id="control-center",
+                        timeout_seconds=float(payload.pop("timeoutSeconds", 20.0)),
+                    ),
+                )
+                return
+            if path.startswith("/api/browser/permissions/") and path.endswith("/decision"):
+                prompt_id = (
+                    path.removeprefix("/api/browser/permissions/")
+                    .removesuffix("/decision")
+                    .strip("/")
+                )
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.browser_control.decide_permission(prompt_id, payload.get("decision")),
+                )
                 return
             agent_session_id, agent_action = agent_session_route(path)
             agent_room_id, room_action = agent_room_route(path)
@@ -6676,6 +6835,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if not expected or provided != expected:
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "management token required"}
         return None
+
+    def _browser_extension_authenticated(self) -> bool:
+        provided = self.headers.get("X-RAG-IME-Browser-Token", "")
+        if provided and self.service.browser_control.authenticate(provided):
+            return True
+        self._write_json(
+            HTTPStatus.FORBIDDEN,
+            {
+                "schemaVersion": "rag-ime.browser-control.v1",
+                "ok": False,
+                "error": "browser pairing token required",
+            },
+        )
+        return False
 
     def _knowledge_control(self) -> Any:
         control = self.service.knowledge_control

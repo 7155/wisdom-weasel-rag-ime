@@ -1,0 +1,147 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it } from 'vitest';
+import { ControlTransportProvider } from '@/app/control-transport';
+import { TooltipProvider } from '@/components/primitives';
+import { MockControlTransport } from '@/test/mock-transport';
+import { BrowserFeature } from '.';
+
+afterEach(cleanup);
+
+describe('BrowserFeature', () => {
+  it('shows the paired page as visual and structured context', async () => {
+    const transport = renderBrowser();
+
+    expect(await screen.findByRole('heading', { name: '浏览器共驾', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByText('1 个浏览器在线')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Agent Runtime 文档', level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '浏览器页面截图：Agent Runtime 文档' })).toHaveAttribute(
+      'src',
+      'http://127.0.0.1:8766/api/browser/snapshots/snap-docs/image',
+    );
+    expect(screen.getByLabelText('结构化页面快照')).toHaveTextContent('[0:e1] button "运行测试"');
+    expect(transport.requests.some((call) => call.request.pathId.startsWith('memory.'))).toBe(false);
+  });
+
+  it('changes co-drive mode and resolves a pending site permission', async () => {
+    const user = userEvent.setup();
+    const transport = renderBrowser();
+
+    await screen.findByText('1 个浏览器在线');
+    await user.click(screen.getByRole('radio', { name: '协同操作' }));
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'browser.mode.update'
+      && typeof call.request.body === 'object'
+      && call.request.body !== null
+      && !Array.isArray(call.request.body)
+      && call.request.body.mode === 'codrive'
+    ))).toBe(true));
+
+    await user.click(screen.getByRole('tab', { name: /权限/ }));
+    expect(await screen.findByText('https://research.example.com')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '仅本次' }));
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'browser.permission.decide'
+      && call.request.params?.promptId === 'bperm-research'
+      && typeof call.request.body === 'object'
+      && call.request.body !== null
+      && !Array.isArray(call.request.body)
+      && call.request.body.decision === 'allow_once'
+    ))).toBe(true));
+  });
+});
+
+function renderBrowser() {
+  const now = Date.now();
+  const snapshot = {
+    ok: true,
+    schemaVersion: 'rag-ime.browser-control.v1',
+    snapshotId: 'snap-docs',
+    deviceId: 'chrome-user',
+    tabId: 17,
+    url: 'https://docs.example.com/runtime',
+    title: 'Agent Runtime 文档',
+    summary: '1 个 Frame · 2 个可交互元素',
+    markdown: '# Agent Runtime 文档\nURL: https://docs.example.com/runtime\n- [0:e1] button "运行测试"',
+    interactiveCount: 2,
+    hasScreenshot: true,
+    createdAtMs: now,
+  };
+  const transport = new MockControlTransport({
+    routes: {
+      'browser.status': {
+        ok: true,
+        mode: 'observe',
+        clients: [{
+          deviceId: 'chrome-user',
+          displayName: '我的 Chrome',
+          connected: true,
+          activeTabId: 17,
+        }],
+        latestSnapshot: snapshot,
+        managedBrowser: {
+          running: false,
+          profilePath: '/tmp/browser-profile',
+        },
+      },
+      'browser.pairing': {
+        ok: true,
+        pairingToken: 'pairing-secret',
+        tokenFingerprint: 'abcd1234',
+        extensionPath: '/Applications/RagIme/BrowserCopilot/extension',
+        bridgeUrl: 'http://127.0.0.1:8766',
+      },
+      'browser.tabs': {
+        ok: true,
+        items: [{
+          deviceId: 'chrome-user',
+          tabId: 17,
+          title: 'Agent Runtime 文档',
+          url: 'https://docs.example.com/runtime',
+          active: true,
+        }],
+      },
+      'browser.snapshot.latest': snapshot,
+      'browser.permissions': {
+        ok: true,
+        items: [{
+          promptId: 'bperm-research',
+          origin: 'https://research.example.com',
+          reason: '首次进入调研站点',
+          action: 'domain_transition',
+          status: 'pending',
+          createdAtMs: now,
+        }],
+      },
+      'browser.traces': { ok: true, items: [] },
+      'browser.mode.update': { ok: true, mode: 'codrive' },
+      'browser.permission.decide': {
+        ok: true,
+        promptId: 'bperm-research',
+        decision: 'allow_once',
+      },
+      'browser.command': { ok: true },
+      'browser.stop': { ok: true },
+      'browser.pairing.rotate': { ok: true },
+      'browser.managed.start': { ok: true },
+      'browser.managed.stop': { ok: true },
+    },
+  });
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  render(
+    <TooltipProvider delayDuration={0}>
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={client}>
+          <BrowserFeature />
+        </QueryClientProvider>
+      </ControlTransportProvider>
+    </TooltipProvider>,
+  );
+  return transport;
+}

@@ -3405,6 +3405,7 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "ime_browser",
           "agent_plan",
           "ime_plugins",
           "workspace_list",
@@ -3514,6 +3515,7 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "ime_browser",
           "agent_plan",
           "ime_plugins",
           "workspace_list",
@@ -3600,6 +3602,15 @@ export const contractSchemas = {
           "room_ask",
           "room_reply",
           "room_mailbox",
+          "tabs",
+          "snapshot",
+          "screenshot",
+          "navigate",
+          "click",
+          "type",
+          "scroll",
+          "wait",
+          "stop",
           "run",
           "apply"
         ]
@@ -3865,6 +3876,7 @@ export const contractSchemas = {
           "runtime",
           "configuration",
           "agents",
+          "browser",
           "workspace"
         ]
       },

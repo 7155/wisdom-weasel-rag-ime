@@ -19,6 +19,7 @@ export interface AgentToolCallV1 {
     | 'ime_runtime'
     | 'ime_configuration'
     | 'ime_agents'
+    | 'ime_browser'
     | 'agent_plan'
     | 'ime_plugins'
     | 'workspace_list'

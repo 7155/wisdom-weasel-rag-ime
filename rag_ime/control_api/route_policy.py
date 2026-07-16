@@ -87,6 +87,22 @@ class ControlPathId(str, Enum):
     AGENT_WAKE_SCHEDULE_RUNS = "agent.wakeSchedule.runs"
     AGENT_WAKE_SCHEDULE_ACTION = "agent.wakeSchedule.action"
 
+    BROWSER_STATUS = "browser.status"
+    BROWSER_PAIRING = "browser.pairing"
+    BROWSER_TABS = "browser.tabs"
+    BROWSER_SNAPSHOT_LATEST = "browser.snapshot.latest"
+    BROWSER_SNAPSHOT_IMAGE = "browser.snapshot.image"
+    BROWSER_TRACES = "browser.traces"
+    BROWSER_PERMISSIONS = "browser.permissions"
+    BROWSER_PERMISSION_GET = "browser.permission.get"
+    BROWSER_PERMISSION_DECIDE = "browser.permission.decide"
+    BROWSER_MODE_UPDATE = "browser.mode.update"
+    BROWSER_PAIRING_ROTATE = "browser.pairing.rotate"
+    BROWSER_COMMAND = "browser.command"
+    BROWSER_STOP = "browser.stop"
+    BROWSER_MANAGED_START = "browser.managed.start"
+    BROWSER_MANAGED_STOP = "browser.managed.stop"
+
     PLANNING_DASHBOARD = "planning.dashboard"
     PLANNING_MUTATION_PREVIEW = "planning.mutation.preview"
     PLANNING_TASK_SAVE = "planning.task.save"
@@ -455,6 +471,8 @@ _APPROVAL = {"approvalId"}
 _RUN = {"runId"}
 _ARTIFACT = {"artifactId"}
 _WAKE_SCHEDULE = {"scheduleId"}
+_BROWSER_SNAPSHOT = {"snapshotId"}
+_BROWSER_PERMISSION = {"promptId"}
 _KNOWLEDGE_BASE = {"kbId"}
 _KNOWLEDGE_DOCUMENT = {"kbId", "fileId"}
 _KNOWLEDGE_ASSET = {"kbId", "fileId", "assetId"}
@@ -540,6 +558,22 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_WAKE_SCHEDULES_CREATE, ControlMethod.POST, "/api/agent/wake-schedules", "/control/v1/agent/wake-schedules", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "instruction", "targetType", "targetSessionId", "targetRoleId", "targetRoleVersion", "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns", "planningTaskId", "confirmText"}, required_body={"instruction", "targetType", "wakeAtMs", "confirmText"}, remote_body={"title", "instruction", "targetType", "targetSessionId", "targetRoleId", "targetRoleVersion", "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns", "planningTaskId", "confirmText"}, remote_body_values={"targetType": {"session", "role"}, "recurrenceKind": {"once", "daily", "weekly"}, "confirmText": {"schedule"}}),
         _route(ControlPathId.AGENT_WAKE_SCHEDULE_RUNS, ControlMethod.GET, "/api/agent/wake-schedules/{scheduleId}/runs", "/control/v1/agent/wake-schedules/{scheduleId}/runs", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_WAKE_SCHEDULE, query={"limit"}),
         _route(ControlPathId.AGENT_WAKE_SCHEDULE_ACTION, ControlMethod.POST, "/api/agent/wake-schedules/{scheduleId}/action", "/control/v1/agent/wake-schedules/{scheduleId}/action", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_WAKE_SCHEDULE, body={"action", "confirmText"}, required_body={"action", "confirmText"}, remote_body={"action", "confirmText"}, remote_body_values={"action": {"pause", "resume", "cancel", "retry"}, "confirmText": {"apply"}}),
+
+        _route(ControlPathId.BROWSER_STATUS, ControlMethod.GET, "/api/browser/status", "/control/v1/browser/status"),
+        _route(ControlPathId.BROWSER_PAIRING, ControlMethod.GET, "/api/browser/pairing", "/control/v1/browser/pairing"),
+        _route(ControlPathId.BROWSER_TABS, ControlMethod.GET, "/api/browser/tabs", "/control/v1/browser/tabs"),
+        _route(ControlPathId.BROWSER_SNAPSHOT_LATEST, ControlMethod.GET, "/api/browser/snapshots/latest", "/control/v1/browser/snapshots/latest", query={"deviceId", "tabId", "includeMarkdown"}),
+        _route(ControlPathId.BROWSER_SNAPSHOT_IMAGE, ControlMethod.GET, "/api/browser/snapshots/{snapshotId}/image", "/control/v1/browser/snapshots/{snapshotId}/image", params=_BROWSER_SNAPSHOT, binary=True),
+        _route(ControlPathId.BROWSER_TRACES, ControlMethod.GET, "/api/browser/traces", "/control/v1/browser/traces", query={"limit"}),
+        _route(ControlPathId.BROWSER_PERMISSIONS, ControlMethod.GET, "/api/browser/permissions", "/control/v1/browser/permissions", query={"limit"}),
+        _route(ControlPathId.BROWSER_PERMISSION_GET, ControlMethod.GET, "/api/browser/permissions/{promptId}", "/control/v1/browser/permissions/{promptId}", params=_BROWSER_PERMISSION),
+        _route(ControlPathId.BROWSER_PERMISSION_DECIDE, ControlMethod.POST, "/api/browser/permissions/{promptId}/decision", "/control/v1/browser/permissions/{promptId}/decision", params=_BROWSER_PERMISSION, body={"decision"}, required_body={"decision"}),
+        _route(ControlPathId.BROWSER_MODE_UPDATE, ControlMethod.POST, "/api/browser/mode", "/control/v1/browser/mode", body={"mode"}, required_body={"mode"}),
+        _route(ControlPathId.BROWSER_PAIRING_ROTATE, ControlMethod.POST, "/api/browser/pairing/rotate", "/control/v1/browser/pairing/rotate"),
+        _route(ControlPathId.BROWSER_COMMAND, ControlMethod.POST, "/api/browser/command", "/control/v1/browser/command", body={"action", "deviceId", "tabId", "refId", "url", "text", "clear", "direction", "amount", "timeoutMs", "timeoutSeconds"}, required_body={"action"}),
+        _route(ControlPathId.BROWSER_STOP, ControlMethod.POST, "/api/browser/stop", "/control/v1/browser/stop"),
+        _route(ControlPathId.BROWSER_MANAGED_START, ControlMethod.POST, "/api/browser/managed/start", "/control/v1/browser/managed/start"),
+        _route(ControlPathId.BROWSER_MANAGED_STOP, ControlMethod.POST, "/api/browser/managed/stop", "/control/v1/browser/managed/stop"),
 
         _route(ControlPathId.PLANNING_DASHBOARD, ControlMethod.GET, "/api/planning/dashboard", "/control/v1/planning/dashboard", scopes=[ControlScope.PLANNING_READ], remote_safe=True, query={"date", "project"}),
         _route(ControlPathId.PLANNING_MUTATION_PREVIEW, ControlMethod.POST, "/api/planning/mutation/preview", "/control/v1/planning/mutation/preview", body={"kind", "payload", "expectedRuntimeRevision"}, required_body={"kind", "payload", "expectedRuntimeRevision"}),

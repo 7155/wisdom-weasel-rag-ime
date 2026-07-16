@@ -605,6 +605,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_runtime",
                 "ime_configuration",
                 "ime_agents",
+                "ime_browser",
                 "agent_plan",
                 "ime_plugins",
                 "workspace_list",
@@ -659,6 +660,12 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(configuration_tool["operationRisks"]["export"], "R1")
         self.assertEqual(configuration_tool["operationRisks"]["restore_preview"], "R0")
         self.assertEqual(configuration_tool["operationRisks"]["restore_apply"], "R3")
+        browser_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_browser")
+        self.assertEqual(browser_tool["riskLevel"], "R1")
+        self.assertEqual(browser_tool["operationRisks"]["snapshot"], "R0")
+        self.assertEqual(browser_tool["operationRisks"]["screenshot"], "R0")
+        self.assertEqual(browser_tool["operationRisks"]["navigate"], "R1")
+        self.assertEqual(browser_tool["operationRisks"]["type"], "R1")
         workspace_shell = next(
             manifest for manifest in manifests if manifest["id"] == "workspace_shell"
         )
@@ -677,6 +684,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "ime_models",
                     "ime_runtime",
                     "ime_configuration",
+                    "ime_browser",
                     "workspace_patch",
                     "workspace_shell",
                 }

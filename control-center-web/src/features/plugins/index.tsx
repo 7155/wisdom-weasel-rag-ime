@@ -51,7 +51,7 @@ const modeFilters: readonly { label: string; value: ModeFilter }[] = [
 ];
 
 const domainLabels: Record<string, string> = {
-  agents: 'Agent 协作', configuration: '配置管理', control: '控制中心', input: '输入法',
+  agents: 'Agent 协作', browser: '浏览器共驾', configuration: '配置管理', control: '控制中心', input: '输入法',
   knowledge: '知识检索', memory: '记忆', models: '模型', overview: '总览',
   planning: '规划任务', runtime: '诊断', voice: '语音输入', workspace: '工作区',
 };
@@ -73,6 +73,8 @@ const operationLabels: Record<string, string> = {
   rollback_settings: '撤销输入设置', room_ask: '向协作成员提问', room_mailbox: '查看协作消息', room_reply: '回复协作消息',
   room_send: '发送协作消息', route_status: '检查检索连接', run: '运行受控命令', search: '搜索内容',
   status: '查看当前状态', task_action: '更新任务', trace: '查看来源链路', undo_task_event: '撤销任务更新',
+  tabs: '查看浏览器标签页', snapshot: '读取页面快照', screenshot: '获取页面截图', navigate: '打开网页',
+  click: '点击页面元素', type: '向页面输入', scroll: '滚动页面', wait: '等待页面内容', stop: '停止浏览器操作',
 };
 
 export function PluginsFeature() {

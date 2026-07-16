@@ -5,6 +5,7 @@ export type RouteId =
   | 'rooms'
   | 'roles'
   | 'plugins'
+  | 'browser'
   | 'voice'
   | 'planning'
   | 'memory'
@@ -29,6 +30,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'rooms', path: '/rooms', label: 'Rooms', shortLabel: 'Room', group: 'work' },
   { id: 'roles', path: '/roles', label: '角色', shortLabel: '角色', group: 'work' },
   { id: 'plugins', path: '/plugins', label: '插件', shortLabel: '插件', group: 'work' },
+  { id: 'browser', path: '/browser', label: '浏览器', shortLabel: '浏览器', group: 'work' },
   { id: 'voice', path: '/voice', label: '语音', shortLabel: '语音', group: 'work' },
   { id: 'memory', path: '/memory', label: '记忆', shortLabel: '记忆', group: 'knowledge' },
   { id: 'knowledge', path: '/knowledge', label: '知识库', shortLabel: '知识', group: 'knowledge' },

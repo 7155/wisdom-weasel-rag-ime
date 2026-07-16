@@ -310,6 +310,26 @@ The optional voice lane, Active RAG provider, and Notion Worker each have
 separate setup in the Web Control Center; none is required for the local
 core.
 
+## Browser Co-pilot
+
+The optional Chrome extension under `integrations/browser-copilot/` adds a
+local, auditable browser lane without putting full pages into every Agent
+prompt:
+
+- the extension keeps compact multi-frame page snapshots in the existing local
+  SQLite control plane;
+- `ime_browser` reads snapshots or screenshots on demand and sends write
+  actions through the existing Agent approval flow;
+- the Control Center exposes browser selection, visual and structured page
+  views, site permissions, execution traces, pairing, and an isolated managed
+  Chrome profile;
+- first-time cross-origin navigation requests a site decision and asks the
+  Agent to retry after approval; passwords are never included in snapshots.
+
+The product installer copies the unpacked extension to
+`~/Library/Application Support/RagIme/BrowserCopilot/extension`. Load that
+directory once from `chrome://extensions` with Developer mode enabled.
+
 ## Validation And Release Gates
 
 The project distinguishes backend evidence from real foreground behavior.
@@ -339,6 +359,7 @@ See the [release-manifest template](release/release-manifest.example.json).
 | `rag_ime/` | Python sidecar, local RAG/memory core, model runtime adapters, management API, and release audit. |
 | `squirrel-patches/` | Pinned Squirrel patch, Swift overlay, and patch application checks. |
 | `control-center-web/` | React settings, diagnostics, knowledge, planning, and Agent UI. |
+| `integrations/browser-copilot/` | Local Chrome extension for compact page snapshots, screenshots, approved actions, and site-permission prompts. |
 | `macos/RagImeControlWebHost/` | Minimal AppKit/WebKit host and allowlisted native bridge for the Web Control Center. |
 | `macos/RagImeVoice/` | Headless push-to-talk agent, microphone pipeline, and cursor insertion. |
 | `macos/Shared/` | Shared native Keychain and streaming-ASR protocol code. |
@@ -407,3 +428,8 @@ applicable notices and exact corresponding source; see
   adapts the workflow to its existing local worker, SQLite storage, and Control
   Center design; it does not copy or redistribute Yuxi source code or import
   Yuxi's Neo4j/PostgreSQL/Milvus runtime stack.
+- [VCPToolBox](https://github.com/lioensky/VCPToolBox) informed the live browser
+  perception and human-Agent co-browsing direction. Browser Co-pilot is a
+  project-native implementation built on this repository's existing approval,
+  SQLite, Agent Tool, and Control Center contracts rather than copied VCP
+  extension source.

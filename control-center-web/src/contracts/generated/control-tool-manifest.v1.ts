@@ -21,6 +21,7 @@ export interface ControlToolManifestV1 {
     | 'runtime'
     | 'configuration'
     | 'agents'
+    | 'browser'
     | 'workspace';
   riskLevel: 'R0' | 'R1' | 'R2' | 'R3';
   operationRisks?: {

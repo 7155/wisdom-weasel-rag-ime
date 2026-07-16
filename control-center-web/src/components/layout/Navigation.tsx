@@ -120,7 +120,7 @@ export function MobileRouteMenu({ activeRouteId }: { activeRouteId: RouteId }) {
       <DialogContent className="shell-mobile-menu">
         <DialogHeader>
           <DialogTitle>控制中心</DialogTitle>
-          <DialogDescription>本机控制台 · 13 个工作区</DialogDescription>
+          <DialogDescription>本机控制台 · 14 个工作区</DialogDescription>
         </DialogHeader>
         <nav className="shell-mobile-menu__routes" aria-label="全部导航">
           {routeRegistry.map((route) => (

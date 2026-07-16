@@ -47,6 +47,17 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] \
 fi
 
 echo "Installing product runtime generation $SOURCE_COMMIT"
+EXTENSION_SOURCE="$ROOT/integrations/browser-copilot/extension"
+EXTENSION_DEST="$APP_SUPPORT_DIR/BrowserCopilot/extension"
+if [[ ! -f "$EXTENSION_SOURCE/manifest.json" ]]; then
+  echo "missing Browser Co-pilot extension manifest" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$EXTENSION_DEST")"
+rm -rf "$EXTENSION_DEST"
+ditto "$EXTENSION_SOURCE" "$EXTENSION_DEST"
+echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
+
 # The stack owns launch order. Prevent the standalone Sidecar installer from
 # also refreshing the gateway, otherwise launchd sees two back-to-back
 # bootout/bootstrap cycles for the same label and can reject the second one.
