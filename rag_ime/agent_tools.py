@@ -4444,30 +4444,28 @@ def _runtime_tool_parameter_schema(
             return {**configured, "oneOf": filtered}
         return dict(configured)
     argument_names = _RUNTIME_TOOL_ARGUMENTS.get(tool_id, ())
+    normalized_operations = [str(operation) for operation in operations]
+    properties = {
+        "op": {"type": "string", "enum": normalized_operations},
+        **{
+            name: dict(
+                _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES.get(
+                    (tool_id, name),
+                    _RUNTIME_TOOL_ARGUMENT_SCHEMAS[name],
+                )
+            )
+            for name in argument_names
+        },
+    }
     branches: list[dict[str, object]] = []
-    for raw_operation in operations:
-        operation = str(raw_operation)
+    for operation in normalized_operations:
         required = [
             "op",
             *_RUNTIME_TOOL_REQUIRED_ARGUMENTS.get((tool_id, operation), ()),
         ]
-        properties = {
-            "op": {"const": operation},
-            **{
-                name: dict(
-                    _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES.get(
-                        (tool_id, name),
-                        _RUNTIME_TOOL_ARGUMENT_SCHEMAS[name],
-                    )
-                )
-                for name in argument_names
-            },
-        }
         branch: dict[str, object] = {
-            "type": "object",
-            "additionalProperties": False,
             "required": required,
-            "properties": properties,
+            "properties": {"op": {"const": operation}},
         }
         alternatives = _RUNTIME_TOOL_REQUIRED_ALTERNATIVES.get((tool_id, operation), ())
         if alternatives:
@@ -4477,6 +4475,9 @@ def _runtime_tool_parameter_schema(
         branches.append(branch)
     return {
         "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": properties,
         "oneOf": branches,
     }
 

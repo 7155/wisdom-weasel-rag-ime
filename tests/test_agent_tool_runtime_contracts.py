@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,11 +12,23 @@ from rag_ime.agent_tools import ControlToolGateway
 class AgentToolRuntimeContractTest(unittest.TestCase):
     @staticmethod
     def _branch(manifest, operation: str):
-        return next(
+        schema = manifest["parameters"]
+        branch = next(
             branch
-            for branch in manifest["parameters"]["oneOf"]
+            for branch in schema["oneOf"]
             if branch["properties"]["op"]["const"] == operation
         )
+        return {
+            **branch,
+            "additionalProperties": branch.get(
+                "additionalProperties",
+                schema.get("additionalProperties"),
+            ),
+            "properties": {
+                **schema.get("properties", {}),
+                **branch.get("properties", {}),
+            },
+        }
 
     def _runtime_contracts(self, *, mode: str = "assistant", profile: str = "control-center-v1"):
         temporary = tempfile.TemporaryDirectory()
@@ -87,8 +100,24 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                     effective[manifest["name"]],
                 )
                 for branch in branches:
-                    self.assertIs(branch["additionalProperties"], False)
+                    self.assertIs(
+                        branch.get(
+                            "additionalProperties",
+                            schema.get("additionalProperties"),
+                        ),
+                        False,
+                    )
                     self.assertIn("op", branch["required"])
+
+    def test_runtime_manifest_keeps_full_catalog_schema_bounded(self) -> None:
+        _catalog, manifests = self._runtime_contracts(mode="coordinator")
+        encoded = json.dumps(
+            manifests,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        self.assertLess(len(encoded), 25_000)
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
