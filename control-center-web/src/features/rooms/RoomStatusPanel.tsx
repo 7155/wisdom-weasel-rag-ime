@@ -1,0 +1,123 @@
+import {
+  Bot,
+  Check,
+  CircleDashed,
+  FileText,
+  FolderKanban,
+  GitBranch,
+  ListChecks,
+  LoaderCircle,
+  Paperclip,
+  PanelRightClose,
+  TriangleAlert,
+  type LucideIcon,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
+import { IconButton } from '@/components/primitives';
+import type { RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
+import type { RoomSummary } from '.';
+import '../agent/agent.css';
+
+export function RoomStatusPanel({
+  room,
+  projection,
+  open,
+  onClose,
+}: {
+  room?: RoomSummary;
+  projection: RoomProjectionState;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const turn = latestRoomTurn(projection);
+  const activities = turn?.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean) ?? [];
+  const messages = turn?.messageIds.map((id) => projection.messagesById[id]).filter(Boolean) ?? [];
+  const attachments = new Set(messages.flatMap((message) => message.message?.attachments ?? []));
+  const files = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'file');
+  const artifacts = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'diff' || (block.type === 'file' && Boolean(block.data.artifactId ?? block.data.receiptId)));
+
+  return (
+    <aside aria-hidden={!open} aria-label="Room 状态" className="agent-status-panel room-status-panel" data-open={open} inert={open ? undefined : true}>
+      <header>
+        <span><strong>状态</strong><small>{turn ? roomTurnStatusLabel(turn.status) : '等待新回合'}</small></span>
+        <IconButton icon={<PanelRightClose size={17} />} label="收起 Room 状态" onClick={onClose} tooltip />
+      </header>
+      <div className="agent-status-panel__body">
+        <RoomStatusSection count={turn ? 1 : 0} icon={ListChecks} title="当前回合">
+          {turn ? (
+            <div className="agent-status-turn" data-state={turn.status}>
+              <RoomTurnIcon status={turn.status} />
+              <span><strong>{roomTurnStatusLabel(turn.status)}</strong><small>{messages.length} 条消息 · {activities.length} 条协作进展</small></span>
+            </div>
+          ) : <RoomStatusEmpty>还没有可展示的回合状态</RoomStatusEmpty>}
+        </RoomStatusSection>
+
+        <RoomStatusSection count={activities.length} icon={GitBranch} title="关键步骤">
+          {activities.length ? <div className="room-status-activities">{activities.slice(-8).map((activity) => {
+            const participant = room?.participants.find((item) => item.id === activity.participantId);
+            return <div className="room-status-activity" data-state={activity.status} key={activity.id}><RoomActivityIcon status={activity.status} /><span><strong>{participant?.displayName ?? '协作成员'}</strong><small>{roomActivitySummary(activity.summary, activity.kind)}</small></span><i>{activity.status === 'running' ? '进行中' : activity.status === 'failed' ? '未完成' : '完成'}</i></div>;
+          })}</div> : <RoomStatusEmpty>本轮还没有协作步骤</RoomStatusEmpty>}
+        </RoomStatusSection>
+
+        <RoomStatusSection count={attachments.size + files.length} icon={Paperclip} title="附件与文件">
+          {attachments.size || files.length ? <div className="agent-status-files">{attachments.size ? <RoomStatusRow detail="随 Room 消息保存" icon={Paperclip} title={`${attachments.size} 个受管附件`} /> : null}{files.map((block) => <RoomStatusRow detail={text(block.data.mimeType) || '文件'} icon={FileText} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>当前 Room 没有附件或文件</RoomStatusEmpty>}
+        </RoomStatusSection>
+
+        <RoomStatusSection count={artifacts.length} icon={FolderKanban} title="产物">
+          {artifacts.length ? <div className="agent-status-files">{artifacts.map((block) => <RoomStatusRow detail={block.type === 'diff' ? '变更产物' : '文件产物'} icon={FolderKanban} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>本轮还没有可交付产物</RoomStatusEmpty>}
+        </RoomStatusSection>
+
+        <RoomStatusSection count={room?.participants.length ?? 0} icon={Bot} title="协作成员">
+          {room?.participants.length ? <div className="room-status-participants">{room.participants.map((participant) => <RoomStatusRow detail={participant.status === 'active' ? '已加入当前 Room' : '暂未参与'} icon={Bot} key={participant.id} title={participant.displayName} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
+        </RoomStatusSection>
+      </div>
+    </aside>
+  );
+}
+
+function RoomStatusSection({ icon: Icon, title, count, children }: { icon: LucideIcon; title: string; count: number; children: ReactNode }) {
+  return <section className="agent-status-section"><header><Icon size={15} /><strong>{title}</strong>{count > 0 ? <span>{count}</span> : null}</header>{children}</section>;
+}
+
+function RoomStatusRow({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) {
+  return <div className="agent-status-row"><Icon size={14} /><span><strong>{title}</strong><small>{detail}</small></span></div>;
+}
+
+function RoomStatusEmpty({ children }: { children: ReactNode }) {
+  return <p className="agent-status-empty">{children}</p>;
+}
+
+function latestRoomTurn(projection: RoomProjectionState): RoomTurnProjection | undefined {
+  return [...projection.turnOrder].reverse().map((id) => projection.turnsById[id]).find(Boolean);
+}
+
+function RoomTurnIcon({ status }: { status: RoomTurnProjection['status'] }) {
+  if (status === 'queued' || status === 'running') return <LoaderCircle size={15} />;
+  if (status === 'failed') return <TriangleAlert size={15} />;
+  if (status === 'aborted') return <CircleDashed size={15} />;
+  return <Check size={15} />;
+}
+
+function RoomActivityIcon({ status }: { status: 'running' | 'completed' | 'failed' }) {
+  if (status === 'running') return <LoaderCircle size={14} />;
+  if (status === 'failed') return <TriangleAlert size={14} />;
+  return <Check size={14} />;
+}
+
+function roomTurnStatusLabel(status: RoomTurnProjection['status']): string {
+  return ({ queued: '等待协作', running: '协作中', completed: '已完成', failed: '未完成', aborted: '已停止' } as const)[status];
+}
+
+function roomActivitySummary(summary: string, kind: string): string {
+  const value = summary.trim();
+  if (value && value !== kind && !/\b(?:participant|route|tool|turn)_[a-z_]+\b/i.test(value)) return value;
+  if (kind === 'route_decision') return '已确定本轮负责角色';
+  if (kind === 'participant_status') return '协作状态已经同步';
+  return '协作进度已经更新';
+}
+
+function fileName(data: Record<string, unknown>): string {
+  return text(data.fileName ?? data.name ?? data.title) || '未命名文件';
+}
+
+function text(value: unknown): string { return typeof value === 'string' ? value : ''; }

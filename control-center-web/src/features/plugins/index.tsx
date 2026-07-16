@@ -5,18 +5,22 @@ import {
   FolderOpen,
   MessageCircle,
   PackageCheck,
+  PanelRightClose,
   Power,
   RefreshCw,
   RotateCcw,
   Search,
   ShieldCheck,
+  Sparkles,
   Wrench,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Button,
   EmptyState,
   Field,
+  IconButton,
   Input,
   SegmentedControl,
   Select,
@@ -72,6 +76,7 @@ const operationLabels: Record<string, string> = {
 };
 
 export function PluginsFeature() {
+  const navigate = useNavigate();
   const { catalog, installed, proposals, validate, preview, apply, transport } = usePluginCatalog();
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<ModeFilter>('all');
@@ -95,7 +100,7 @@ export function PluginsFeature() {
       return (!needle || haystack.includes(needle)) && (mode === 'all' || modes.includes(mode)) && matchesAvailability;
     });
   }, [availability, items, mode, query]);
-  const selected: ToolRecord = filtered.find((item) => itemKey(item) === selectedId) ?? filtered[0] ?? {};
+  const selected = filtered.find((item) => itemKey(item) === selectedId);
   const categories = new Set(items.map(domainLabel).filter(Boolean));
   const confirmationCount = items.filter((item) => stringValue(item.riskLevel, 'R0') !== 'R0').length;
   const installedItems = arrayRecords(asRecord(installed.data).items);
@@ -210,11 +215,11 @@ export function PluginsFeature() {
           </div>
 
           {filtered.length ? (
-            <div className="plugins-browser">
+            <div className="plugins-browser" data-detail-open={Boolean(selected)}>
               <div aria-label="工具列表" className="plugins-list" role="group">
                 {filtered.map((item) => {
                   const id = itemKey(item);
-                  const selectedItem = item === selected;
+                  const selectedItem = id === selectedId;
                   return (
                     <button aria-pressed={selectedItem} className="plugins-list__item" data-selected={selectedItem || undefined} key={id} onClick={() => setSelectedId(id)} type="button">
                       <span className="plugins-list__copy"><small>{domainLabel(item)}</small><strong>{publicToolName(item)}</strong><span>{publicToolDescription(item)}</span></span>
@@ -223,7 +228,7 @@ export function PluginsFeature() {
                   );
                 })}
               </div>
-              <ToolDetail item={selected} />
+              {selected ? <ToolDetail item={selected} onClose={() => setSelectedId('')} /> : null}
             </div>
           ) : <EmptyState description={items.length ? '没有工具符合当前筛选。' : '本机 Agent 尚未提供可用工具。'} icon={Search} title="没有匹配项" />}
         </ManagementSection>
@@ -234,6 +239,19 @@ export function PluginsFeature() {
           trailing={<StatusBadge label={`${installedItems.length} 个已安装`} tone="neutral" />}
         >
           <div className="plugin-lifecycle">
+            <div className="plugin-authoring-callout">
+              <span className="plugin-authoring-callout__icon"><Sparkles aria-hidden="true" size={18} /></span>
+              <span><strong>让 Agent 制作插件</strong><small>插件制作 Skill 会先确认用途和权限，再生成草稿、校验并提交安装提议。</small></span>
+              <Button
+                leadingIcon={<MessageCircle size={16} />}
+                onClick={() => navigate({
+                  pathname: '/agent',
+                  search: new URLSearchParams({
+                    draft: '请使用插件制作 Skill 帮我创建一个受管插件。先询问用途和权限边界，再生成草稿、完成校验并提交安装提议；不要绕过控制中心的最终批准。',
+                  }).toString(),
+                })}
+              >交给 Agent 制作</Button>
+            </div>
             <div className="plugin-lifecycle__install">
               <div className="plugin-lifecycle__source">
                 <Button disabled={lifecyclePending} leadingIcon={<FolderOpen size={16} />} onClick={() => void choosePluginSource()}>选择插件目录</Button>
@@ -313,9 +331,9 @@ export function PluginsFeature() {
   );
 }
 
-function ToolDetail({ item }: { item: ToolRecord }) {
+function ToolDetail({ item, onClose }: { item: ToolRecord; onClose: () => void }) {
   const operations = operationLabelsFor(item); const modes = stringArray(item.sessionModes); const unknownOperationCount = Math.max(0, stringArray(item.operations).length - operations.length);
-  return <aside aria-label="工具详情" className="plugins-detail"><div className="plugins-detail__heading"><span className="plugins-detail__icon"><Wrench aria-hidden="true" size={18} /></span><div><small>{domainLabel(item)}</small><h3>{publicToolName(item)}</h3><p>{publicToolDescription(item)}</p></div><StatusBadge {...availabilityBadge(item)} /></div><dl className="plugins-detail__facts"><div><dt><CheckCircle2 aria-hidden="true" size={15} />当前状态</dt><dd>{availabilityDescription(item)}</dd></div><div><dt><MessageCircle aria-hidden="true" size={15} />可用方式</dt><dd>{modes.length ? modes.map(modeLabel).join('、') : '暂无可用方式'}</dd></div><div><dt><ShieldCheck aria-hidden="true" size={15} />操作确认</dt><dd>{confirmationLabel(stringValue(item.riskLevel, 'R0'))}</dd></div></dl><div className="plugins-detail__capabilities"><h4>可以做什么</h4>{operations.length || unknownOperationCount ? <ul>{operations.map((operation) => <li key={operation}>{operation}</li>)}{unknownOperationCount ? <li>其他 {unknownOperationCount} 项能力</li> : null}</ul> : <p>目录中尚未提供能力说明。</p>}</div></aside>;
+  return <aside aria-label="工具详情" className="plugins-detail"><div className="plugins-detail__toolbar"><span>工具详情</span><IconButton icon={<PanelRightClose size={16} />} label="关闭工具详情" onClick={onClose} tooltip /></div><div className="plugins-detail__heading"><span className="plugins-detail__icon"><Wrench aria-hidden="true" size={18} /></span><div><small>{domainLabel(item)}</small><h3>{publicToolName(item)}</h3><p>{publicToolDescription(item)}</p></div><StatusBadge {...availabilityBadge(item)} /></div><dl className="plugins-detail__facts"><div><dt><CheckCircle2 aria-hidden="true" size={15} />当前状态</dt><dd>{availabilityDescription(item)}</dd></div><div><dt><MessageCircle aria-hidden="true" size={15} />可用方式</dt><dd>{modes.length ? modes.map(modeLabel).join('、') : '暂无可用方式'}</dd></div><div><dt><ShieldCheck aria-hidden="true" size={15} />操作确认</dt><dd>{confirmationLabel(stringValue(item.riskLevel, 'R0'))}</dd></div></dl><div className="plugins-detail__capabilities"><h4>可以做什么</h4>{operations.length || unknownOperationCount ? <ul>{operations.map((operation) => <li key={operation}>{operation}</li>)}{unknownOperationCount ? <li>其他 {unknownOperationCount} 项能力</li> : null}</ul> : <p>目录中尚未提供能力说明。</p>}</div></aside>;
 }
 
 function itemKey(item: ToolRecord): string { return stringValue(item.id, stringValue(item.displayName)); }

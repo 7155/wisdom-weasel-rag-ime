@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -132,7 +133,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pi_version = str(json.loads(package_json.read_text(encoding="utf-8"))["version"])
         source_commit = _run(["git", "rev-parse", "HEAD"], cwd=pi_root)
-        runtime_version = f"pi-{pi_version}-{source_commit[:12]}"
+        provider_bridge_source = ROOT / "rag_ime" / "node" / "pi_provider_bridge_bundled.ts"
+        packager_digest = hashlib.sha256(
+            provider_bridge_source.read_bytes() + Path(__file__).read_bytes()
+        ).hexdigest()[:10]
+        runtime_version = f"pi-{pi_version}-{source_commit[:12]}-raghost-{packager_digest}"
         destination = (
             Path(args.output).expanduser().resolve()
             if args.output
@@ -165,6 +170,24 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=pi_root,
             )
             bundled_entrypoint.chmod(0o755)
+            provider_bridge = runtime_dir / "provider-bridge.mjs"
+            _run(
+                [
+                    str(esbuild),
+                    str(provider_bridge_source),
+                    "--bundle",
+                    "--platform=node",
+                    "--format=esm",
+                    "--target=node22",
+                    f"--outfile={provider_bridge}",
+                    f"--alias:rag-ime-pi-auth-storage={pi_root / 'packages' / 'coding-agent' / 'src' / 'core' / 'auth-storage.ts'}",
+                    f"--alias:rag-ime-pi-model-runtime={pi_root / 'packages' / 'coding-agent' / 'src' / 'core' / 'model-runtime.ts'}",
+                    f"--alias:rag-ime-pi-openai-codex-oauth={pi_root / 'packages' / 'ai' / 'src' / 'auth' / 'oauth' / 'openai-codex.ts'}",
+                    '--banner:js=import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
+                ],
+                cwd=pi_root,
+            )
+            provider_bridge.chmod(0o755)
             packaged_node = bin_dir / "node"
             shutil.copy2(node, packaged_node)
             packaged_node.chmod(0o755)

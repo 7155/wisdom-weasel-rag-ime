@@ -183,7 +183,7 @@ main[data-route-id='input'] .input-setting-row dd strong {
 main[data-route-id='input'] .input-setting-row dt span,
 main[data-route-id='input'] .input-setting-row dd span {
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 

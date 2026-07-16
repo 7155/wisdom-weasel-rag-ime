@@ -104,7 +104,7 @@ export function HistoryFeature() {
         </ManagementSection>
 
         <ManagementSection title="筛选与分页">
-          <div className="mgmt-filter-row">
+          <div className="history-filter-row">
             <Field htmlFor="history-search" label="搜索">
               <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="文本、应用或项目" value={draftQuery} />
             </Field>

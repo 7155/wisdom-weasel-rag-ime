@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, AtSign, ExternalLink, GitBranch, MessageSquarePlus, Send, ShieldCheck, UsersRound } from 'lucide-react';
+import { Archive, ArchiveRestore, AtSign, ExternalLink, GitBranch, MessageSquarePlus, PanelRightOpen, Send, ShieldCheck, UsersRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useControlTransport } from '@/app/control-transport';
@@ -29,9 +29,10 @@ import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRender
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roleItems } from '@/features/agent/types';
 import { publicErrorText } from '@/features/overview/management-ui';
+import { RoomStatusPanel } from './RoomStatusPanel';
 import './rooms.css';
 
-interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; status: string; ordinal: number; }
+export interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; status: string; ordinal: number; }
 export interface RoomSummary { id: string; title: string; status: string; routingPolicy: string; moderatorParticipantId: string; updatedAtMs: number; participants: RoomParticipant[]; }
 interface AgentSessionPolicySummary { id: string; mode: 'assistant' | 'coordinator'; status: string; toolProfileVersion: string; toolAllowlistMode: 'profile' | 'explicit'; allowedTools: string[]; }
 interface RoomToolPolicyItem { id: string; displayName: string; description: string; sessionModes: string[]; operations: string[]; profileOperations: Record<string, string[]>; enabled: boolean; }
@@ -43,6 +44,7 @@ export function RoomsFeature() {
   const [selectedId, setSelectedId] = useState('');
   const [projection, setProjection] = useState<RoomProjectionState>(() => createRoomProjection(''));
   const projectionRef = useRef(projection);
+  const [statusOpen, setStatusOpen] = useState(() => isWideRoomStatusViewport());
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
@@ -396,13 +398,13 @@ export function RoomsFeature() {
     }
   }
   return <>
-    <main className="rooms-feature" data-route-id="rooms">
+    <main className="rooms-feature" data-route-id="rooms" data-status-open={statusOpen}>
       <aside className="rooms-rail">
         <header><span><strong>Rooms</strong><small>多 Agent 协作</small></span><div className="rooms-rail-actions"><IconButton label={includeArchived ? '隐藏已归档 Room' : '显示已归档 Room'} icon={includeArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />} aria-pressed={includeArchived} onClick={() => setIncludeArchived((current) => !current)} tooltip /><IconButton disabled={catalogLoading || creating} label="新建 Room" icon={<MessageSquarePlus size={17} />} onClick={beginCreateRoom} tooltip /></div></header>
         <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => setSelectedId(item.id)}><UsersRound size={16} /><span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
       </aside>
       <section className="room-workspace">
-        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建协作空间' : room.status === 'archived' ? '已归档' : room.routingPolicy === 'moderator' ? '由主持人协调' : '通过 @ 指派'}</small></span><div className="room-header-actions"><div className="room-participants">{room?.participants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}</div></header>
+        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建协作空间' : room.status === 'archived' ? '已归档' : room.routingPolicy === 'moderator' ? '由主持人协调' : '通过 @ 指派'}</small></span><div className="room-header-actions"><div className="room-participants">{room?.participants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 状态栏' : '展开 Room 状态'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
         <div className="room-error-slot" aria-live="polite">
           {error ? <p className="room-error" role="alert">{error}</p> : null}
           {!error && roomCatalogError ? <p className="room-error" role="alert">{roomCatalogError}</p> : null}
@@ -413,6 +415,8 @@ export function RoomsFeature() {
         </div>
         <div className="room-composer-shell">{roomCanSend && room?.routingPolicy === 'manual_mentions' ? <div className="room-mention-bar" aria-label="指派参与角色"><AtSign size={14} />{room.participants.map((participant) => <button type="button" key={participant.id} aria-pressed={draft.trimStart().startsWith(`@${participant.displayName}`)} onClick={() => addressParticipant(participant.displayName)}>{participant.displayName}</button>)}</div> : null}<div className="room-composer"><textarea rows={2} value={draft} disabled={!roomCanSend} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={!room ? '先选择或新建 Room' : room.status === 'archived' ? '恢复 Room 后继续协作' : room.routingPolicy === 'manual_mentions' ? '先选择一位角色，再输入消息…' : '向 Room 发消息…'} aria-label="Room 消息" /><IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!canSend} onClick={() => void send()} tooltip /></div></div>
       </section>
+      <button className="agent-status-backdrop room-status-backdrop" aria-label="关闭 Room 状态" onClick={() => setStatusOpen(false)} type="button" />
+      <RoomStatusPanel room={room} projection={projection} open={statusOpen} onClose={() => setStatusOpen(false)} />
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="room-create-dialog">
@@ -558,6 +562,12 @@ function agentSessionValue(value: unknown): AgentSessionPolicySummary | undefine
 function roomToolItems(value: unknown): RoomToolPolicyItem[] { const source = record(value); return (Array.isArray(source.items) ? source.items : []).flatMap((value) => { const item = record(value); if (typeof item.id !== 'string' || typeof item.displayName !== 'string') return []; const profileOperations = record(item.profileOperations); return [{ id: item.id, displayName: item.displayName, description: String(item.description ?? ''), sessionModes: Array.isArray(item.sessionModes) ? item.sessionModes.map(String) : [], operations: Array.isArray(item.operations) ? item.operations.map(String) : [], profileOperations: Object.fromEntries(Object.entries(profileOperations).map(([profile, operations]) => [profile, Array.isArray(operations) ? operations.map(String) : []])), enabled: item.enabled === true }]; }); }
 function toolAvailableForPolicy(tool: RoomToolPolicyItem, mode: string, profile: string): boolean { return tool.sessionModes.includes(mode) && (tool.profileOperations[profile] ?? []).length > 0; }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+
+function isWideRoomStatusViewport(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(min-width: 1280px)').matches
+    : false;
+}
 function isAbortError(value: unknown): boolean { return value instanceof DOMException && value.name === 'AbortError'; }
 
 export function removeOptimisticRoomMessage(

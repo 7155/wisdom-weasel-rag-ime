@@ -1,6 +1,6 @@
 main[data-route-id='plugins'] .plugins-count {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -25,7 +25,7 @@ main[data-route-id='plugins'] .plugins-count {
 
 .plugins-mode-filter > span {
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -33,7 +33,12 @@ main[data-route-id='plugins'] .plugins-count {
   display: grid;
   min-width: 0;
   border-block: 1px solid var(--color-border);
-  grid-template-columns: minmax(280px, .85fr) minmax(360px, 1.15fr);
+  grid-template-columns: minmax(0, 1fr);
+  transition: grid-template-columns var(--duration-panel) var(--ease-standard);
+}
+
+.plugins-browser[data-detail-open='true'] {
+  grid-template-columns: minmax(320px, 1fr) minmax(400px, 1fr);
 }
 
 .plugins-list {
@@ -75,7 +80,7 @@ main[data-route-id='plugins'] .plugins-count {
 .plugins-list__copy small,
 .plugins-detail__heading small {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 720;
 }
 
@@ -89,7 +94,7 @@ main[data-route-id='plugins'] .plugins-count {
   display: -webkit-box;
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -109,6 +114,17 @@ main[data-route-id='plugins'] .plugins-count {
   padding: var(--space-5);
   border-left: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
+}
+
+.plugins-detail__toolbar {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  margin: calc(var(--space-2) * -1) 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .plugins-detail__heading {
@@ -143,7 +159,7 @@ main[data-route-id='plugins'] .plugins-count {
 .plugins-detail__capabilities p {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -162,7 +178,7 @@ main[data-route-id='plugins'] .plugins-count {
 }
 
 .plugins-detail__facts dt,
-.plugins-detail__facts dd { margin: 0; font-size: 11px; line-height: 1.5; }
+.plugins-detail__facts dd { margin: 0; font-size: 12px; line-height: 1.5; }
 .plugins-detail__facts dt {
   display: flex;
   align-items: flex-start;
@@ -186,7 +202,7 @@ main[data-route-id='plugins'] .plugins-count {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-2);
   background: var(--color-surface);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -194,6 +210,38 @@ main[data-route-id='plugins'] .plugins-count {
   display: grid;
   gap: var(--space-4);
 }
+
+.plugin-authoring-callout {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-subtle);
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+}
+
+.plugin-authoring-callout__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  color: var(--color-accent);
+}
+
+.plugin-authoring-callout > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.plugin-authoring-callout strong { font-size: 13px; }
+.plugin-authoring-callout small { color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 
 .plugin-lifecycle__install {
   display: grid;
@@ -215,7 +263,7 @@ main[data-route-id='plugins'] .plugins-count {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -238,7 +286,7 @@ main[data-route-id='plugins'] .plugins-count {
 
 .plugin-lifecycle__validation span {
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .plugin-lifecycle__proposals,
@@ -277,7 +325,7 @@ main[data-route-id='plugins'] .plugins-count {
 .plugin-proposal span,
 .installed-plugin > div:first-child { display: grid; min-width: 0; gap: 2px; }
 .plugin-proposal small,
-.installed-plugin > div:first-child span { color: var(--color-text-secondary); font-size: 10px; }
+.installed-plugin > div:first-child span { color: var(--color-text-secondary); font-size: 12px; }
 
 .installed-plugin {
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -294,20 +342,23 @@ main[data-route-id='plugins'] .plugins-count {
   .plugins-filters { grid-template-columns: minmax(210px, 1fr) minmax(130px, 170px); }
   .plugins-mode-filter { grid-column: 1 / -1; }
   .plugins-mode-filter .ui-segmented { width: fit-content; }
-  .plugins-browser { grid-template-columns: minmax(250px, .8fr) minmax(330px, 1.2fr); }
+  .plugins-browser[data-detail-open='true'] { grid-template-columns: minmax(280px, .9fr) minmax(340px, 1.1fr); }
 }
 
 @media (max-width: 760px) {
   .plugins-filters { grid-template-columns: 1fr; }
   .plugins-mode-filter { grid-column: auto; }
   .plugins-mode-filter .ui-segmented { width: 100%; }
-  .plugins-browser { grid-template-columns: 1fr; }
+  .plugins-browser,
+  .plugins-browser[data-detail-open='true'] { grid-template-columns: 1fr; }
   .plugins-list { max-height: 340px; }
   .plugins-detail { min-height: 0; border-top: 1px solid var(--color-border); border-left: 0; }
   .plugins-detail__heading { grid-template-columns: 36px minmax(0, 1fr); }
   .plugins-detail__heading > .mgmt-status { grid-column: 2; }
   .plugins-detail__facts > div { grid-template-columns: 1fr; gap: 4px; }
   .plugin-lifecycle__install { align-items: stretch; grid-template-columns: 1fr; }
+  .plugin-authoring-callout { align-items: start; grid-template-columns: 36px minmax(0, 1fr); }
+  .plugin-authoring-callout .ui-button { grid-column: 1 / -1; justify-self: stretch; }
   .plugin-lifecycle__validation { grid-column: auto; flex-wrap: wrap; }
   .installed-plugin { align-items: start; grid-template-columns: minmax(0, 1fr) auto; }
   .installed-plugin__actions { grid-column: 1 / -1; }

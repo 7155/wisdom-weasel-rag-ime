@@ -21,7 +21,7 @@
 .memory-catalog-detail dl { min-width: 0; }
 .memory-catalog-detail > div:first-child > span {
   color: var(--color-accent);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -35,7 +35,7 @@
   max-width: 70ch;
   margin: 6px 0 0;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -53,10 +53,10 @@
   border-bottom: 1px solid var(--color-border);
 }
 
-.memory-catalog-detail dt { color: var(--color-text-tertiary); font-size: 9px; }
+.memory-catalog-detail dt { color: var(--color-text-tertiary); font-size: 12px; }
 .memory-catalog-detail dd {
   margin: 3px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
@@ -73,7 +73,7 @@
   padding: 3px 6px;
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .memory-action-unavailable {
@@ -82,7 +82,7 @@
   border-left: 2px solid var(--color-warning);
   background: var(--color-warning-soft);
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -110,7 +110,7 @@
   border-left: 2px solid var(--color-danger);
   background: var(--color-danger-soft);
   color: var(--color-danger);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -175,7 +175,7 @@
   justify-content: flex-end;
   gap: 6px 10px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -188,7 +188,7 @@
 .memory-graph__scope code {
   max-width: 152px;
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -196,7 +196,7 @@
 
 .memory-graph__scope strong {
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .memory-graph__scope[data-clipped='true'] span:last-child {
@@ -244,13 +244,13 @@
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .memory-node-list > header span {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .memory-node-list__scroll,
@@ -298,7 +298,7 @@
 .memory-node-list button strong,
 .memory-node-list button b {
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -308,7 +308,7 @@
 .memory-node-list button small {
   max-width: 100%;
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -321,7 +321,7 @@
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .memory-graph__truth[data-empty='true'] {
@@ -382,7 +382,7 @@
 .memory-graph__node-label,
 .memory-graph__bipartite-label {
   fill: var(--color-text);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0;
   pointer-events: none;
@@ -392,22 +392,22 @@
 .memory-graph__bipartite-count,
 .memory-graph__column-title {
   fill: var(--color-text-secondary);
-  font-size: 8px;
+  font-size: 12px;
   letter-spacing: 0;
   pointer-events: none;
 }
 
 .memory-graph__bipartite-label {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .memory-graph__bipartite-count {
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .memory-graph__column-title {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
 }
 
@@ -435,7 +435,7 @@
 .memory-graph__summary p {
   margin: 0 0 var(--space-3);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -447,7 +447,7 @@
   margin-bottom: 5px;
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -471,7 +471,7 @@
 
 .memory-graph__summary dt {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .memory-graph__summary dd {
@@ -494,7 +494,7 @@
   min-width: 520px;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .memory-graph__table caption {
@@ -554,7 +554,7 @@
 .memory-entity__summary > p {
   margin: 5px 0 var(--space-3);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -574,8 +574,8 @@
 }
 
 .memory-entity__summary dl div:nth-child(2n) { border-right: 0; }
-.memory-entity__summary dt { color: var(--color-text-tertiary); font-size: 9px; }
-.memory-entity__summary dd { margin: 3px 0 0; font-size: 11px; font-weight: 700; overflow-wrap: anywhere; }
+.memory-entity__summary dt { color: var(--color-text-tertiary); font-size: 12px; }
+.memory-entity__summary dd { margin: 3px 0 0; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
 .memory-entity__attributes {
   display: flex;
   flex-wrap: wrap;
@@ -587,7 +587,7 @@
   padding: 3px 5px;
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .memory-entity__error { color: var(--color-danger) !important; }
@@ -600,7 +600,7 @@
   border-bottom: 1px solid var(--color-border);
 }
 
-.memory-entity__rows > header span { color: var(--color-warning); font-size: 9px; }
+.memory-entity__rows > header span { color: var(--color-warning); font-size: 12px; }
 .memory-entity__row {
   display: grid;
   min-width: 0;
@@ -624,7 +624,7 @@
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-align: left;
   overflow: hidden;
@@ -635,7 +635,7 @@
 .memory-entity__row button { color: var(--color-accent); cursor: pointer; }
 .memory-entity__row small {
   color: var(--color-text-tertiary);
-  font-size: 8px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -645,7 +645,7 @@
   margin: 0;
   padding: 12px 4px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -657,7 +657,7 @@
   background: var(--color-surface-subtle);
   color: var(--color-accent);
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   transition: background var(--duration-enter) var(--ease-standard), transform var(--duration-press) var(--ease-press);
