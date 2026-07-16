@@ -319,7 +319,329 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 },
             },
         ],
-    }
+    },
+    "ime_knowledge": {
+        "type": "object",
+        "oneOf": [
+            *[
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op"],
+                    "properties": {"op": {"const": operation}},
+                }
+                for operation in ("list_bases", "status")
+            ],
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "kbId", "query"],
+                "properties": {
+                    "op": {"const": "search"},
+                    "kbId": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "query": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "topK": {"type": "integer", "minimum": 1, "maximum": 12},
+                    "searchMode": {
+                        "type": "string",
+                        "enum": ["hybrid", "lexical", "dense"],
+                    },
+                    "fileName": {"type": "string", "maxLength": 240},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "kbId", "fileId", "patterns"],
+                "properties": {
+                    "op": {"const": "find"},
+                    "kbId": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "fileId": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "patterns": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 10,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 240},
+                    },
+                    "useRegex": {"type": "boolean"},
+                    "caseSensitive": {"type": "boolean"},
+                    "maxWindows": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "windowSize": {"type": "integer", "minimum": 4, "maximum": 120},
+                    "offset": {"type": "integer", "minimum": 0, "maximum": 1_000_000},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "kbId", "fileId"],
+                "properties": {
+                    "op": {"const": "open"},
+                    "kbId": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "fileId": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "line": {"type": "integer", "minimum": 1, "maximum": 50_000_000},
+                    "offset": {"type": "integer", "minimum": 0, "maximum": 50_000_000},
+                    "windowSize": {"type": "integer", "minimum": 1, "maximum": 300},
+                },
+            },
+        ],
+    },
+    "agent_plan": {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {
+                    "op": {"const": "list"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "anyOf": [
+                    {"required": ["title"]},
+                    {"required": ["itemId"]},
+                ],
+                "properties": {
+                    "op": {"const": "update"},
+                    "itemId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160,
+                        "description": "更新已有计划项时使用 list 返回的 itemId；创建时可省略。",
+                    },
+                    "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 240,
+                        "description": "创建新计划项时必填。",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed"],
+                    },
+                },
+            },
+        ],
+    },
+}
+
+_RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
+    "query": {"type": "string", "maxLength": 500},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+    "changes": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["key", "value"],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160,
+                    "description": "只能使用 ime_input.get_settings/preview_settings 暴露的 Agent 可管理键。",
+                },
+                "value": {
+                    "oneOf": [
+                        {"type": "boolean"},
+                        {"type": "integer"},
+                        {"type": "string"},
+                    ]
+                },
+            },
+        },
+    },
+    "selectedKeys": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {"type": "string", "minLength": 1, "maxLength": 300},
+    },
+    "sourceApprovalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "description": "使用对应已应用回执中的 approvalId。",
+    },
+    "currentInput": {"type": "string", "maxLength": 240},
+    "recentContext": {"type": "string", "maxLength": 800},
+    "topK": {"type": "integer", "minimum": 1, "maximum": 12},
+    "provider": {"type": "string", "minLength": 1, "maxLength": 80},
+    "slot": {"type": "string", "enum": ["instant", "knowledge"]},
+    "endpoint": {"type": "string", "minLength": 1, "maxLength": 320},
+    "model": {"type": "string", "maxLength": 200},
+    "bookId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "traceId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "runId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "instruction": {"type": "string", "minLength": 1, "maxLength": 8_000},
+    "kind": {
+        "type": "string",
+        "enum": ["books", "atoms", "tags", "phrases", "groups", "negative"],
+    },
+    "scheduleId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "description": "使用 agent_schedule.list 返回的 scheduleId。",
+    },
+    "title": {"type": "string", "minLength": 1, "maxLength": 240},
+    "targetType": {"type": "string", "enum": ["session", "role"]},
+    "targetId": {"type": "string", "maxLength": 240},
+    "targetSessionId": {"type": "string", "maxLength": 240},
+    "targetRoleId": {"type": "string", "maxLength": 120},
+    "targetRoleVersion": {"type": "string", "maxLength": 40},
+    "planningTaskId": {"type": "string", "maxLength": 240},
+    "wakeAtMs": {"type": "integer", "minimum": 1},
+    "timezone": {"type": "string", "maxLength": 80},
+    "recurrenceKind": {"type": "string", "enum": ["once", "daily", "weekly"]},
+    "recurrenceInterval": {"type": "integer", "minimum": 1, "maximum": 30},
+    "maxRuns": {"type": "integer", "minimum": 1, "maximum": 100},
+    "status": {"type": "string", "maxLength": 40},
+    "agent": {
+        "type": "string",
+        "enum": ["researcher", "planner", "worker", "reviewer", "delegate"],
+    },
+    "version": {"type": "string", "enum": ["1"]},
+    "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+    "tasks": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "description": "批量委派；也可以改用 agent、version、task 提交单项任务。",
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["agent", "task"],
+            "properties": {
+                "agent": {
+                    "type": "string",
+                    "enum": ["researcher", "planner", "worker", "reviewer", "delegate"],
+                },
+                "version": {"type": "string", "enum": ["1"]},
+                "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+            },
+        },
+    },
+    "contextMode": {"type": "string", "enum": ["fresh", "fork"]},
+    "wait": {"type": "boolean"},
+    "batchId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "artifactId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "targetParticipantId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "clientMessageId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "replyTo": {"type": "string", "minLength": 1, "maxLength": 240},
+    "content": {"type": "string", "minLength": 1, "maxLength": 4_000},
+    "draftId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "manifest": {"type": "object"},
+    "files": {"type": "object"},
+    "sourcePath": {"type": "string", "minLength": 1, "maxLength": 1_024},
+    "validationToken": {"type": "string", "minLength": 1, "maxLength": 240},
+    "enable": {"type": "boolean"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
+    "depth": {"type": "integer", "minimum": 1, "maximum": 3},
+    "offset": {"type": "integer", "minimum": 0, "maximum": 50_000_000},
+    "mode": {"type": "string", "enum": ["content", "name", "both"]},
+    "oldText": {"type": "string", "minLength": 1, "maxLength": 65_536},
+    "newText": {"type": "string", "maxLength": 131_072},
+    "expectedOccurrences": {"type": "integer", "minimum": 1, "maximum": 100},
+    "command": {"type": "string", "minLength": 1, "maxLength": 2_000},
+    "cwd": {"type": "string", "maxLength": 1_024},
+    "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
+    "allowNetwork": {"type": "boolean"},
+    "action": {"type": "string", "minLength": 1, "maxLength": 120},
+    "caseSensitive": {"type": "boolean"},
+}
+
+_RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]] = {
+    ("workspace_list", "limit"): {"type": "integer", "minimum": 1, "maximum": 300},
+    ("workspace_read", "limit"): {"type": "integer", "minimum": 1, "maximum": 65_536},
+    ("workspace_search", "query"): {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": r"^[^\r\n\u0000]+$",
+    },
+}
+
+_RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
+    "ime_overview": ("query", "limit"),
+    "ime_input": (
+        "changes", "selectedKeys", "sourceApprovalId", "query", "currentInput",
+        "recentContext", "topK", "limit",
+    ),
+    "ime_voice": ("provider", "sourceApprovalId"),
+    "agent_schedule": (
+        "scheduleId", "title", "instruction", "targetType", "targetId",
+        "targetSessionId", "targetRoleId", "targetRoleVersion", "planningTaskId",
+        "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns",
+        "status", "limit",
+    ),
+    "ime_memory": ("query", "limit", "kind", "bookId", "traceId", "runId", "instruction"),
+    "ime_models": ("slot", "provider", "endpoint", "model", "sourceApprovalId"),
+    "ime_configuration": ("query", "limit", "action", "sourceApprovalId"),
+    "ime_agents": (
+        "agent", "version", "task", "tasks", "contextMode", "wait", "runId", "batchId",
+        "artifactId", "targetParticipantId", "clientMessageId", "replyTo", "content",
+        "status", "limit",
+    ),
+    "ime_plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
+    "workspace_list": ("path", "depth", "limit"),
+    "workspace_read": ("path", "offset", "limit"),
+    "workspace_search": ("query", "path", "mode", "caseSensitive", "limit"),
+    "workspace_patch": ("path", "oldText", "newText", "expectedOccurrences"),
+    "workspace_shell": ("command", "cwd", "timeoutSeconds", "allowNetwork"),
+}
+
+_RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("ime_input", "preview_settings"): ("changes",),
+    ("ime_input", "apply_settings"): ("changes",),
+    ("ime_input", "rollback_settings"): ("sourceApprovalId",),
+    ("ime_input", "candidate_explain"): ("query",),
+    ("ime_input", "lexicon_apply"): ("selectedKeys",),
+    ("ime_input", "lexicon_rollback"): ("sourceApprovalId",),
+    ("ime_voice", "provider_preview"): ("provider",),
+    ("ime_voice", "provider_apply"): ("provider",),
+    ("ime_voice", "provider_rollback"): ("sourceApprovalId",),
+    ("agent_schedule", "runs"): ("scheduleId",),
+    ("agent_schedule", "schedule"): ("instruction", "targetType", "wakeAtMs"),
+    ("agent_schedule", "pause"): ("scheduleId",),
+    ("agent_schedule", "resume"): ("scheduleId",),
+    ("agent_schedule", "cancel"): ("scheduleId",),
+    ("agent_schedule", "retry"): ("scheduleId",),
+    ("ime_memory", "read"): ("bookId",),
+    ("ime_memory", "trace"): ("traceId",),
+    ("ime_memory", "maintenance_review"): ("runId",),
+    ("ime_memory", "maintenance_apply"): ("runId",),
+    ("ime_memory", "maintenance_rollback"): ("runId",),
+    ("ime_models", "profile_preview"): ("slot",),
+    ("ime_models", "profile_apply"): ("slot",),
+    ("ime_models", "profile_rollback"): ("sourceApprovalId",),
+    ("ime_configuration", "restore_preview"): ("sourceApprovalId",),
+    ("ime_configuration", "restore_apply"): ("sourceApprovalId",),
+    ("ime_agents", "artifact"): ("artifactId",),
+    ("ime_agents", "room_send"): ("targetParticipantId", "clientMessageId", "content"),
+    ("ime_agents", "room_ask"): ("targetParticipantId", "clientMessageId", "content"),
+    ("ime_agents", "room_reply"): ("replyTo", "clientMessageId", "content"),
+    ("ime_plugins", "create_draft"): ("draftId", "manifest", "files"),
+    ("ime_plugins", "validate"): ("sourcePath",),
+    ("ime_plugins", "propose_install"): ("validationToken",),
+    ("workspace_read", "read"): ("path",),
+    ("workspace_search", "search"): ("query",),
+    ("workspace_patch", "apply"): ("path", "oldText", "newText"),
+    ("workspace_shell", "run"): ("command",),
+}
+
+_RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
+    tuple[str, str], tuple[tuple[str, ...], ...]
+] = {
+    ("ime_models", "profile_preview"): (("provider",), ("endpoint",), ("model",)),
+    ("ime_models", "profile_apply"): (("provider",), ("endpoint",), ("model",)),
+    ("ime_agents", "delegate"): (("tasks",), ("agent", "task")),
+    ("ime_agents", "abort"): (("runId",), ("batchId",)),
 }
 
 _RUNTIME_TOOL_USAGE: dict[str, str] = {
@@ -4106,14 +4428,41 @@ def _runtime_tool_parameter_schema(
             ]
             return {**configured, "oneOf": filtered}
         return dict(configured)
+    argument_names = _RUNTIME_TOOL_ARGUMENTS.get(tool_id, ())
+    branches: list[dict[str, object]] = []
+    for raw_operation in operations:
+        operation = str(raw_operation)
+        required = [
+            "op",
+            *_RUNTIME_TOOL_REQUIRED_ARGUMENTS.get((tool_id, operation), ()),
+        ]
+        properties = {
+            "op": {"const": operation},
+            **{
+                name: dict(
+                    _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES.get(
+                        (tool_id, name),
+                        _RUNTIME_TOOL_ARGUMENT_SCHEMAS[name],
+                    )
+                )
+                for name in argument_names
+            },
+        }
+        branch: dict[str, object] = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": required,
+            "properties": properties,
+        }
+        alternatives = _RUNTIME_TOOL_REQUIRED_ALTERNATIVES.get((tool_id, operation), ())
+        if alternatives:
+            branch["anyOf"] = [
+                {"required": list(alternative)} for alternative in alternatives
+            ]
+        branches.append(branch)
     return {
         "type": "object",
-        "properties": {
-            "op": {"type": "string", "enum": [str(value) for value in operations]},
-        },
-        "required": ["op"],
-        # The product gateway remains the mutation and validation authority.
-        "additionalProperties": True,
+        "oneOf": branches,
     }
 
 
