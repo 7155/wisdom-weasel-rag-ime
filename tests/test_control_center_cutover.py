@@ -60,6 +60,12 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("check_installed_product_components.py", installer)
         self.assertIn("--require-current", installer)
 
+        gateway_installer = (
+            ROOT / "scripts" / "install_agent_gateway_launch_agent.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("wait_for_gateway_port_release", gateway_installer)
+        self.assertIn("bootstrap_launch_agent", gateway_installer)
+
     def test_web_host_owns_the_release_bundle_and_agent_deep_link(self) -> None:
         host = ROOT / "macos" / "RagImeControlWebHost"
         app = (host / "RagImeControlWebApp.swift").read_text(encoding="utf-8")

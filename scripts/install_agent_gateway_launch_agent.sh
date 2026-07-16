@@ -139,10 +139,44 @@ if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "TRUE" ]]; then
 fi
 
 DOMAIN="gui/$(id -u)"
+
+wait_for_gateway_port_release() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  local attempt
+  for attempt in {1..25}; do
+    if ! lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "Agent Gateway port $PORT is still occupied after shutdown" >&2
+  return 1
+}
+
+bootstrap_launch_agent() {
+  local attempt
+  local error_log
+  error_log="$(mktemp "${TMPDIR:-/tmp}/rag-ime-agent-gateway-bootstrap.XXXXXX")"
+  trap 'rm -f "$error_log"' RETURN
+
+  for attempt in 1 2 3 4 5; do
+    if launchctl bootstrap "$DOMAIN" "$PLIST_PATH" 2>"$error_log"; then
+      return 0
+    fi
+    [[ "$attempt" == "5" ]] || sleep "$(awk "BEGIN { printf \"%.1f\", $attempt * 0.4 }")"
+  done
+
+  echo "launchctl bootstrap failed for $DOMAIN/$LABEL" >&2
+  cat "$error_log" >&2
+  return 1
+}
+
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 pkill -f 'sidecar_launch.py.*agent-gateway' >/dev/null 2>&1 || true
+wait_for_gateway_port_release
 launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
+sleep 0.2
+bootstrap_launch_agent
 
 deadline=$((SECONDS + 45))
 while (( SECONDS < deadline )); do
