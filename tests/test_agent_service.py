@@ -605,16 +605,15 @@ class AgentServiceTests(unittest.TestCase):
             agent_dir=self.root / "role-agent-config",
             session_dir=self.root / "role-sessions",
             logs_dir=self.root / "role-logs",
-            provider="gpt",
-            model="gpt-5.6-terra",
+            provider="deepseek",
+            model="deepseek-v4-flash",
             model_providers={
-                "gpt": {
+                "deepseek": {
                     "models": [
                         {
-                            "id": "gpt-5.6-terra",
-                            "name": "GPT-5.6 Terra",
-                            "reasoning": True,
-                            "thinkingLevelMap": {"max": "max"},
+                            "id": "deepseek-v4-flash",
+                            "name": "DeepSeek V4 Flash",
+                            "reasoning": False,
                         }
                     ]
                 }
@@ -645,9 +644,10 @@ class AgentServiceTests(unittest.TestCase):
                 "thinkingLevels": ["off", "xhigh"],
             },
         ]
-        initial_roles = {
-            item["roleId"]: item["defaults"] for item in service.list_roles()["items"]
-        }
+        with patch.object(service.runtime, "available_models", return_value=available_models):
+            initial_roles = {
+                item["roleId"]: item["defaults"] for item in service.list_roles()["items"]
+            }
         self.assertEqual(
             initial_roles["hermes-v1"],
             {

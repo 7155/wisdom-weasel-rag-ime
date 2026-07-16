@@ -377,10 +377,11 @@ class AgentService:
         }
 
     def list_roles(self) -> dict[str, object]:
+        available_models = self._available_role_models()
         return {
             "schemaVersion": "rag-ime.agent-role-list.v1",
             "ok": True,
-            "items": [self._role_payload(role) for role in [
+            "items": [self._role_payload(role, available_models=available_models) for role in [
                 *agent_role_catalog(),
                 *(persona.to_payload() for persona in self.personas.list()),
             ]],
@@ -474,13 +475,24 @@ class AgentService:
             "role": self._role_payload(role.to_payload()),
         }
 
-    def _role_payload(self, value: Mapping[str, object]) -> dict[str, object]:
+    def _role_payload(
+        self,
+        value: Mapping[str, object],
+        *,
+        available_models: set[tuple[str, str]] | None = None,
+    ) -> dict[str, object]:
         payload = dict(value)
         defaults_value = payload.get("defaults")
         defaults = dict(defaults_value) if isinstance(defaults_value, Mapping) else {}
         role = self.personas.resolve(payload.get("roleId"), payload.get("version"))
         stored = self.personas.runtime_defaults(role.role_id, role.version)
-        defaults.update(stored or self._initial_role_runtime_defaults(role))
+        defaults.update(
+            stored
+            or self._initial_role_runtime_defaults(
+                role,
+                available_models=available_models,
+            )
+        )
         payload["defaults"] = defaults
         validate_contract(payload, "agent-persona.v1.json")
         return payload
@@ -490,6 +502,7 @@ class AgentService:
         role: PersonaManifest,
         *,
         default_model_profile: str | None = None,
+        available_models: set[tuple[str, str]] | None = None,
     ) -> dict[str, str]:
         """Resolve first-use defaults without replacing explicit role preferences.
 
@@ -510,15 +523,54 @@ class AgentService:
             "rag-ime-timeline-future-v1": ("gpt-5.6-sol", "xhigh"),
         }
         timeline = timeline_models.get(role.visual_profile.avatar_asset_id)
+        if not separator or timeline is None:
+            return {"modelProfile": default_profile, "thinkingLevel": "off"}
+        model_id, thinking_level = timeline
+        resolved_models = (
+            available_models
+            if available_models is not None
+            else self._available_role_models()
+        )
+        if resolved_models is not None:
+            matching_providers = sorted(
+                model_provider
+                for model_provider, candidate_id in resolved_models
+                if candidate_id == model_id
+            )
+            if not matching_providers:
+                return {"modelProfile": default_profile, "thinkingLevel": "off"}
+            timeline_provider = "gpt" if "gpt" in matching_providers else matching_providers[0]
+            return {
+                "modelProfile": f"{timeline_provider}/{model_id}",
+                "thinkingLevel": thinking_level,
+            }
+
+        # If the live catalog is temporarily unavailable, preserve the previous
+        # fail-soft behavior only for an already configured GPT timeline.
         provider_has_timeline_models = provider == "gpt" or configured_model.startswith(
             "gpt-5.6-"
         )
-        if not separator or timeline is None or not provider_has_timeline_models:
+        if not provider_has_timeline_models:
             return {"modelProfile": default_profile, "thinkingLevel": "off"}
-        model_id, thinking_level = timeline
         return {
             "modelProfile": f"{provider}/{model_id}",
             "thinkingLevel": thinking_level,
+        }
+
+    def _available_role_models(self) -> set[tuple[str, str]] | None:
+        available_models = getattr(self.runtime, "available_models", None)
+        if not callable(available_models):
+            return None
+        try:
+            available = available_models()
+        except AgentRuntimeError:
+            return None
+        return {
+            (str(model.get("provider") or ""), str(model.get("id") or ""))
+            for model in available
+            if isinstance(model, Mapping)
+            and str(model.get("provider") or "")
+            and str(model.get("id") or "")
         }
 
     def list_agent_templates(self) -> dict[str, object]:
