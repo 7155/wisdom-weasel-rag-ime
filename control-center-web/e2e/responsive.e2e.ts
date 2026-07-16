@@ -77,26 +77,52 @@ test('voice provider rows stay inside the management grid', async ({ page }) => 
 
 test('closing the Agent session rail releases its grid column', async ({ page }) => {
   test.skip(isMobileViewport(page), 'mobile session rail is an overlay');
+  const viewport = { width: 1_280, height: 640 };
+  await page.setViewportSize(viewport);
   await page.goto('/#/agent');
   const feature = page.locator('main[data-route-id="agent"]');
   const conversation = page.locator('.agent-conversation');
+  const composer = page.getByRole('textbox', { name: '消息' });
+  const composerSurface = page.locator('.agent-composer');
   await expect(feature).toHaveAttribute('data-rail-open', 'true');
   await expect(page.locator('.agent-session-row').first()).toBeVisible();
+  await expect(composer).toBeVisible();
 
-  const before = await conversation.boundingBox();
-  await page.getByRole('button', { name: '收起对话列表' }).click();
+  const [before, composerBefore, composerSurfaceBefore, featureBefore] = await Promise.all([
+    conversation.boundingBox(),
+    composer.boundingBox(),
+    composerSurface.boundingBox(),
+    feature.boundingBox(),
+  ]);
+  expect(composerBefore).not.toBeNull();
+  expect(composerSurfaceBefore).not.toBeNull();
+  expect(featureBefore).not.toBeNull();
+  expect((composerSurfaceBefore?.y ?? 0) + (composerSurfaceBefore?.height ?? 0))
+    .toBeLessThanOrEqual((featureBefore?.y ?? 0) + (featureBefore?.height ?? 0) + 1);
+  expect((composerSurfaceBefore?.y ?? 0) + (composerSurfaceBefore?.height ?? 0))
+    .toBeLessThanOrEqual(viewport.height + 1);
+
+  await page.getByRole('button', { name: '收起任务列表' }).click();
   await expect(feature).toHaveAttribute('data-rail-open', 'false');
   await page.waitForTimeout(260);
-  const [featureBox, after] = await Promise.all([
+  const [featureBox, after, composerAfter, composerSurfaceAfter] = await Promise.all([
     feature.boundingBox(),
     conversation.boundingBox(),
+    composer.boundingBox(),
+    composerSurface.boundingBox(),
   ]);
 
   expect(before).not.toBeNull();
   expect(featureBox).not.toBeNull();
   expect(after).not.toBeNull();
+  expect(composerAfter).not.toBeNull();
+  expect(composerSurfaceAfter).not.toBeNull();
   expect((before?.x ?? 0) - (after?.x ?? 0)).toBeGreaterThan(200);
   expect(Math.abs((after?.x ?? 0) - (featureBox?.x ?? 0))).toBeLessThanOrEqual(1);
   expect((after?.width ?? 0) - (before?.width ?? 0)).toBeGreaterThan(200);
+  expect((composerSurfaceAfter?.y ?? 0) + (composerSurfaceAfter?.height ?? 0))
+    .toBeLessThanOrEqual((featureBox?.y ?? 0) + (featureBox?.height ?? 0) + 1);
+  expect((composerSurfaceAfter?.y ?? 0) + (composerSurfaceAfter?.height ?? 0))
+    .toBeLessThanOrEqual(viewport.height + 1);
   await expectNoHorizontalPageOverflow(page);
 });
