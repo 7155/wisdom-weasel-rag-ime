@@ -230,6 +230,8 @@ class AgentSurfaceRuntime:
         prompt = _voice_refinement_prompt(transcript, hotwords=hotwords)
 
         with self._session_lock(session_id):
+            if str(session.get("thinkingLevel") or "") != "off":
+                self.agent.runtime.set_thinking_level(session_id, level="off")
             with self._lock:
                 self._active_requests[request_id] = session_id
             try:
@@ -306,7 +308,7 @@ class AgentSurfaceRuntime:
                 role_id="zhiyou-v1",
                 role_version="1",
                 model_profile=self.agent.runtime_factory.default_model_profile,
-                thinking_level="minimal",
+                thinking_level="off" if tool_profile == VOICE_REFINEMENT_TOOL_PROFILE else "minimal",
                 tool_profile_version=tool_profile,
                 session_kind="subagent_runtime",
             )

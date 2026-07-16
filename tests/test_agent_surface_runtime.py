@@ -24,6 +24,7 @@ class _SurfaceRuntimeStub:
         self.prompt_session_ids: list[str] = []
         self.images: list[list[dict[str, str]]] = []
         self.messages: list[str] = []
+        self.thinking_levels: list[tuple[str, str]] = []
         self.selected = {
             "provider": "test",
             "id": "text-only",
@@ -73,6 +74,10 @@ class _SurfaceRuntimeStub:
             if item["provider"] == provider and item["id"] == model_id
         )
         return {"selected": dict(self.selected)}
+
+    def set_thinking_level(self, session_id, *, level):
+        self.thinking_levels.append((session_id, level))
+        return {"thinkingLevel": level}
 
     def abort(self, _session_id):
         return None
@@ -163,6 +168,8 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(len(hidden), 1)
         self.assertEqual(hidden[0]["toolProfileVersion"], VOICE_REFINEMENT_TOOL_PROFILE)
         self.assertEqual(hidden[0]["allowedTools"], [])
+        self.assertEqual(hidden[0]["thinkingLevel"], "off")
+        self.assertEqual(self.runtime.thinking_levels, [])
 
     def test_voice_refinement_rejects_answer_or_large_semantic_drift(self) -> None:
         with self.assertRaises(ValueError):
