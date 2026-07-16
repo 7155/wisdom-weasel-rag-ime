@@ -461,7 +461,6 @@ preserve_existing_keys = {
     "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES",
     "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES",
     "RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS",
-    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM",
     "RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES",
     "RAG_IME_EMBEDDING_PROVIDER",
     "RAG_IME_EMBEDDING_BASE_URL",
@@ -633,6 +632,14 @@ for key in (
 # the full resident-model batch so all three completions arrive together.
 env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"] = os.environ.get(
     "RAG_IME_PREDICTOR_STREAM_FIRST",
+    "0",
+)
+# Presentation streaming has the same compatibility boundary as predictor
+# streaming: an older launch agent may contain "1", but carrying that value
+# into a new Top-3 batch model makes the native panel show only the first
+# growing branch. Reset it unless the installer receives an explicit override.
+env_vars["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"] = os.environ.get(
+    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM",
     "0",
 )
 for key in (

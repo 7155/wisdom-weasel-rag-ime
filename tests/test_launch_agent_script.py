@@ -500,6 +500,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                             "RAG_IME_PREDICTOR_MODEL": "/tmp/qwen3.5-0.8b",
                             "RAG_IME_PREDICTOR_PROFILE": "qwen3_06b_ime_hot",
                             "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                            "RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1",
                             "RAG_IME_PREDICTOR_ENV": "/tmp/predictor.env",
                             "RAG_IME_PREDICTOR_API_KEY": "preserved-local-secret",
                             "RAG_IME_EMBEDDING_PROVIDER": "local-hash",
@@ -561,6 +562,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_MODEL"], "/tmp/qwen3.5-0.8b")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_PROFILE"], "qwen3_06b_ime_hot")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"], "0")
+        self.assertEqual(env_vars["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"], "0")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_ENV"], "/tmp/predictor.env")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_API_KEY"], "preserved-local-secret")
         self.assertNotIn("preserved-local-secret", result.stdout + result.stderr)
