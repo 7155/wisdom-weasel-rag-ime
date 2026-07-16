@@ -52,6 +52,10 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("refusing to install a mixed product stack from dirty tracked source", installer)
         self.assertIn("install_sidecar_launch_agent.sh", installer)
         self.assertIn("install_agent_gateway_launch_agent.sh", installer)
+        self.assertIn(
+            'RAG_IME_INSTALL_AGENT_GATEWAY=0 "$ROOT/scripts/install_sidecar_launch_agent.sh"',
+            installer,
+        )
         self.assertIn("install_voice_input_launch_agent.sh", installer)
         self.assertIn("check_installed_product_components.py", installer)
         self.assertIn("--require-current", installer)

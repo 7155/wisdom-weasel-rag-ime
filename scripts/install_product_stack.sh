@@ -47,7 +47,10 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] \
 fi
 
 echo "Installing product runtime generation $SOURCE_COMMIT"
-"$ROOT/scripts/install_sidecar_launch_agent.sh"
+# The stack owns launch order. Prevent the standalone Sidecar installer from
+# also refreshing the gateway, otherwise launchd sees two back-to-back
+# bootout/bootstrap cycles for the same label and can reject the second one.
+RAG_IME_INSTALL_AGENT_GATEWAY=0 "$ROOT/scripts/install_sidecar_launch_agent.sh"
 
 required=(--require control --require sidecar --require squirrel)
 if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]]; then
