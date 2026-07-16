@@ -1,6 +1,7 @@
 import { Activity, Clipboard, Cpu, Keyboard, RefreshCw, ServerCog } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
+import { writeClipboardText } from '@/platform/clipboard';
 import { useDiagnosticsQueries } from './api';
 import { DiagnosticsRuntimeWorkflow, type DiagnosticsRuntimeAction } from './runtime-actions';
 import {
@@ -64,7 +65,7 @@ export function DiagnosticsFeature() {
 
   const copyReport = async () => {
     try {
-      await navigator.clipboard.writeText(report);
+      await writeClipboardText(report);
       setCopyStatus('诊断快照已复制');
     } catch {
       setCopyStatus('当前环境不支持复制');

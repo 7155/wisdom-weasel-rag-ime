@@ -29,6 +29,7 @@ from .pi_runtime import (
     _pi_message_id,
     _pi_message_is_public,
     _pi_message_payload,
+    _public_fork_candidate_text,
     _public_code_tool_activity,
     _public_pi_model,
     _public_usage,
@@ -667,7 +668,9 @@ class PiRuntimeHostManager:
                     "sourceSessionId": source_session_id,
                     "targetSessionId": target_session_id,
                     "entryId": normalized_entry_id,
-                    "selectedText": str(forked.get("selectedText") or selected["text"]),
+                    # The host response can contain the raw transport prompt.
+                    # Restore only the public text confirmed by the catalog.
+                    "selectedText": str(selected["text"]),
                     "state": snapshot,
                     "session": bound,
                 }
@@ -723,7 +726,7 @@ class PiRuntimeHostManager:
             if not isinstance(raw, Mapping):
                 continue
             entry_id = str(raw.get("entryId") or "").strip()[:240]
-            text = " ".join(str(raw.get("text") or "").split())[:8000]
+            text = _public_fork_candidate_text(raw.get("text"))
             if not entry_id or not text or entry_id in seen:
                 continue
             seen.add(entry_id)

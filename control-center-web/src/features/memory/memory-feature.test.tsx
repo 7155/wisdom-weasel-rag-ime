@@ -52,8 +52,35 @@ describe('MemoryFeature relations', () => {
     renderMemory(transport);
 
     await user.click(await screen.findByRole('radio', { name: '标签' }));
+    expect(screen.getByRole('heading', { name: '标签节点目录', level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看标签图谱' })).toBeInTheDocument();
     expect((await screen.findAllByText('Agent Runtime')).length).toBeGreaterThan(0);
     expect(screen.getByText('Agent 生命周期与工具边界')).toBeInTheDocument();
+  });
+
+  it('opens the real tag graph directly from the tag catalog projection', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, eventCount: 18, memoryItemCount: 14, memoryBookCount: 4, memoryAtomCount: 10, pendingCompileEvents: 2 },
+        'memory.pages': (request: ControlRequest) => memoryPage(String(request.params?.kind ?? '')),
+        'memory.graph.get': (request: ControlRequest) => memoryGraph(String(request.query?.plane ?? '')),
+        'memory.entity.get': (request: ControlRequest) => memoryEntity(
+          String(request.params?.kind ?? ''),
+          String(request.params?.entityId ?? ''),
+        ),
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('radio', { name: '标签' }));
+    await user.click(screen.getByRole('button', { name: '查看标签图谱' }));
+
+    expect(await screen.findByRole('heading', { name: '记忆关系', level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole('group', { name: '标签当前页局部关系图' })).toBeInTheDocument();
+    await waitFor(() => expect(transport.requests.some((call) =>
+      call.request.pathId === 'memory.graph.get'
+      && call.request.query?.plane === 'tags')).toBe(true));
   });
 
   it('edits the selected stable id directly and keeps bulk organization as an Agent draft', async () => {

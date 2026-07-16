@@ -261,8 +261,12 @@ export function AgentComposer({
             {helpOpen ? <p>控制中心命令直接操作界面或 API；Pi 命令只来自当前对话的 RPC 目录。</p> : null}
           </header>
           {commands.map((command, index) => (
-            <button key={`${command.source}:${command.invocation}`} type="button" role="option" aria-selected={index === activeCommandIndex} aria-disabled={!command.enabled} disabled={!command.enabled} title={command.disabledReason} onMouseEnter={() => command.enabled && setActiveCommandIndex(index)} onClick={() => selectCommand(command)}>
-              <kbd>{command.invocation}</kbd><span><strong>{command.description || commandTitle(command.source)}</strong><small>{commandTitle(command.source)}{command.disabledReason ? ` · ${command.disabledReason}` : ''}</small></span>
+            <button key={`${command.source}:${command.invocation}`} type="button" role="option" data-source={command.source} aria-selected={index === activeCommandIndex} aria-disabled={!command.enabled} disabled={!command.enabled} title={command.disabledReason} onMouseEnter={() => command.enabled && setActiveCommandIndex(index)} onClick={() => selectCommand(command)}>
+              <kbd title={command.invocation}>{command.invocation}</kbd>
+              <span className="agent-command-palette__copy">
+                <strong>{command.description || commandTitle(command.source)}</strong>
+                <small>{commandTitle(command.source)}{command.disabledReason ? ` · ${command.disabledReason}` : ''}</small>
+              </span>
             </button>
           ))}
         </div>

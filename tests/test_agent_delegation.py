@@ -103,6 +103,35 @@ class _IgnoringAbortRuntime(_CompletingRuntime):
         self.stopped = True
 
 
+class _ManyTurnsAndToolsRuntime(_CompletingRuntime):
+    def prompt(self, session_id, _message):
+        for index in range(20):
+            self.events.publish(
+                session_id,
+                "tool_started",
+                {"toolCallId": f"tool:{index}", "toolName": "ime_knowledge"},
+                turn_id=f"turn:{index}",
+            )
+        for index in range(12):
+            turn_id = f"turn:{index}"
+            self.events.publish(
+                session_id,
+                "message_completed",
+                {
+                    "message": _assistant_message(session_id, turn_id, f"阶段 {index + 1}"),
+                    "usage": {"totalTokens": 1},
+                },
+                turn_id=turn_id,
+            )
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id="turn:11",
+        )
+        return {"accepted": True, "turnId": "turn:11"}
+
+
 class AgentDelegationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-delegation-")
@@ -155,6 +184,8 @@ class AgentDelegationTests(unittest.TestCase):
             [item["templateId"] for item in catalog["items"]],
             ["researcher", "planner", "worker", "reviewer", "delegate"],
         )
+        self.assertTrue(all(item["budget"]["maxTurns"] == 0 for item in catalog["items"]))
+        self.assertTrue(all(item["budget"]["maxToolCalls"] == 0 for item in catalog["items"]))
 
         response = coordinator.delegate(
             str(self.parent["id"]),
@@ -205,6 +236,22 @@ class AgentDelegationTests(unittest.TestCase):
                 str(self.parent["id"]),
                 {"agent": "market-shell-agent", "task": "执行任意命令"},
             )
+        coordinator.close()
+
+    def test_default_templates_do_not_stop_on_fixed_turn_or_tool_counts(self) -> None:
+        coordinator = self.coordinator(_ManyTurnsAndToolsRuntime)
+        batch = coordinator.delegate(
+            str(self.parent["id"]),
+            {"agent": "researcher", "task": "完成需要多轮检索的任务"},
+        )["batch"]
+
+        run = batch["runs"][0]
+        self.assertEqual(run["state"], "completed")
+        self.assertEqual(run["budget"]["maxTurns"], 0)
+        self.assertEqual(run["budget"]["maxToolCalls"], 0)
+        self.assertEqual(run["usage"]["turnCount"], 12)
+        self.assertEqual(run["usage"]["toolCount"], 20)
+        self.assertEqual(run["supervision"]["phase"], "none")
         coordinator.close()
 
     def test_artifact_inspection_requires_the_owning_parent_session(self) -> None:

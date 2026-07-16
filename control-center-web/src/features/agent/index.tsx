@@ -9,7 +9,8 @@ import type { UiAgentEvent } from '@/contracts/ui-events';
 import { AgentComposer } from './composer/AgentComposer';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
 import { SessionRail } from './sessions/SessionRail';
-import { ConversationForkDialog } from './sessions/ConversationForkDialog';
+import { ConversationForkDialog, type ConversationNode } from './sessions/ConversationForkDialog';
+import { NewSessionDialog, type NewSessionInput } from './sessions/NewSessionDialog';
 import { AgentStatusPanel } from './status/AgentStatusPanel';
 import { useMediaQuery, useModalPanel } from './overlay-dialog';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
@@ -61,8 +62,10 @@ export function AgentFeature() {
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
   const [helpRequest, setHelpRequest] = useState(0);
   const [requestedApproval, setRequestedApproval] = useState<AgentActivityProjection>();
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
-  const [forkingEntryId, setForkingEntryId] = useState('');
+  const [forkDialogInitialEntryId, setForkDialogInitialEntryId] = useState('');
+  const [timelineJumpRequest, setTimelineJumpRequest] = useState<{ messageId: string; requestId: number }>();
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(() => isWideStatusViewport());
   const [error, setError] = useState('');
@@ -95,6 +98,24 @@ export function AgentFeature() {
     state.projections[selectedId],
     (activity) => activity.kind === 'approval_required',
   ));
+  const selectedProjection = useAgentLiveStore((state) => state.projections[selectedId]);
+  const conversationNodes = useMemo((): ConversationNode[] => {
+    const projection = selectedProjection;
+    if (!projection) return [];
+    return projection.messageOrder
+      .map((messageId) => projection.messagesById[messageId])
+      .filter((message) => message && (message.role === 'user' || message.role === 'assistant'))
+      .map((message) => ({
+        entryId: message!.id,
+        role: message!.role as ConversationNode['role'],
+        text: conversationNodeText(message!.blocks),
+        createdAtMs: message!.createdAtMs,
+      }))
+      .filter((node) => node.text.length > 0);
+  }, [selectedProjection]);
+  const projectPaths = useMemo(() => sessions
+    .flatMap((item) => item.workspaceRoots ?? [])
+    .filter((path, index, values) => path.startsWith('/') && values.indexOf(path) === index), [sessions]);
   const approvalForReview = pendingApproval ?? requestedApproval;
   const railModal = mobileViewport && railOpen;
   const statusModal = statusOverlayViewport && statusOpen;
@@ -156,7 +177,8 @@ export function AgentFeature() {
     setCatalog(undefined);
     setCommands([]);
     setConversationForkAvailable(false);
-    setForkingEntryId('');
+    setForkDialogInitialEntryId('');
+    setTimelineJumpRequest(undefined);
   }, [selectedId]);
   useEffect(() => {
     if (!requestedDraft) return;
@@ -269,6 +291,7 @@ export function AgentFeature() {
     ?? personas[0];
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
   const busy = hasActiveTurn;
+  const branchBlocked = busy || sending;
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
   useEffect(() => {
     if (!busy) setStopping(false);
@@ -303,31 +326,36 @@ export function AgentFeature() {
     if (mobileViewport) setRailOpen(false);
   }
 
-  async function createSession(): Promise<void> {
+  async function createSession(input: NewSessionInput): Promise<boolean> {
     const creationPersona = defaultPersona;
     if (!creationPersona) {
       setError('角色目录尚未加载，暂时不能创建对话。');
-      return;
+      return false;
     }
     try {
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.sessions.create',
-        body: { title: '新对话', mode: 'assistant', roleId: creationPersona.roleId, roleVersion: creationPersona.version, toolProfileVersion: creationPersona.defaults.toolProfileVersion, workspaceRoots: [] },
+        body: { title: input.title, mode: 'coordinator', roleId: creationPersona.roleId, roleVersion: creationPersona.version, toolProfileVersion: creationPersona.defaults.toolProfileVersion, workspaceRoots: input.workspaceRoots },
       });
       const created = isRecord(response.session) ? response.session as unknown as SessionSummary : undefined;
       if (created?.id) await loadSessions(created.id);
       else if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
-        const mockSession = { ...previewSessions[0], id: `session-${Date.now()}`, title: '新对话', updatedAtMs: Date.now(), messageCount: 0, lastMessagePreview: '' };
+        const mockSession = { ...previewSessions[0], id: `session-${Date.now()}`, title: input.title, mode: 'coordinator' as const, workspaceRoots: input.workspaceRoots, updatedAtMs: Date.now(), messageCount: 0, lastMessagePreview: '' };
         setSessions((current) => [mockSession, ...current]);
         setSelectedId(mockSession.id);
       }
-    } catch (requestError) { setError(errorText(requestError)); }
+      setError('');
+      return true;
+    } catch (requestError) {
+      setError(errorText(requestError));
+      return false;
+    }
   }
 
   async function send(): Promise<void> {
     if (!session || sending) return;
     const value = draft.trim();
-    if (value === '/new') { setDraft(''); await createSession(); return; }
+    if (value === '/new') { setDraft(''); setNewSessionOpen(true); return; }
     if (value === '/resume') { setDraft(''); setRailOpen(true); return; }
     if (value === '/branch') { setDraft(''); openForkDialog(); return; }
     if (isCommand(value, '/name')) {
@@ -463,7 +491,7 @@ export function AgentFeature() {
     switch (command) {
       case 'new':
         setDraft('');
-        void createSession();
+        setNewSessionOpen(true);
         break;
       case 'resume':
         setDraft('');
@@ -506,17 +534,14 @@ export function AgentFeature() {
     }
   }
 
-  function openForkDialog(): void {
+  function openForkDialog(initialEntryId = ''): void {
     if (!session) return;
-    if (!conversationForkAvailable) {
-      setError('当前 Pi 运行时不支持对话分支。');
-      return;
-    }
-    if (busy || session.status === 'busy' || session.status === 'active') {
-      setError('请先等待当前回合结束或停止本轮，再创建对话分支。');
-      return;
-    }
+    setForkDialogInitialEntryId(initialEntryId);
     setForkDialogOpen(true);
+  }
+
+  function jumpToMessage(messageId: string): void {
+    setTimelineJumpRequest({ messageId, requestId: Date.now() });
   }
 
   async function acceptFork(created: SessionSummary, selectedText: string): Promise<void> {
@@ -526,29 +551,6 @@ export function AgentFeature() {
     setAttachments([]);
     setError('');
     if (mobileViewport) setRailOpen(false);
-  }
-
-  async function forkFromMessage(entryId: string, selectedText: string): Promise<void> {
-    if (!session || !conversationForkAvailable || busy || forkingEntryId) return;
-    setForkingEntryId(entryId);
-    setError('');
-    try {
-      const response = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.session.forks.create',
-        params: { sessionId: session.id },
-        body: { entryId, title: `${session.title} · 分支` },
-      });
-      const created = (isRecord(response.session) ? response.session : {}) as unknown as SessionSummary;
-      if (!created.id) throw new Error('后端没有返回新分支会话。');
-      const restored = typeof response.selectedText === 'string' && response.selectedText.trim()
-        ? response.selectedText
-        : selectedText;
-      await acceptFork(created, restored);
-    } catch (requestError) {
-      setError(publicAgentErrorText(requestError, '创建对话分支失败。'));
-    } finally {
-      setForkingEntryId('');
-    }
   }
 
   async function stop(): Promise<void> {
@@ -696,7 +698,7 @@ export function AgentFeature() {
     } catch (requestError) { setError(errorText(requestError)); }
   }
 
-  async function pickWorkspaceRoots(): Promise<string[] | null> {
+  async function pickWorkspaceRoots(single = false): Promise<string[] | null> {
     if (!transport.pickFiles) {
       setError('当前平台不能选择本地工作区；请在桌面控制中心中配置运行协调权限。');
       return null;
@@ -704,8 +706,9 @@ export function AgentFeature() {
     try {
       const picked = await transport.pickFiles({
         purpose: 'workspace-root',
-        multiple: true,
-        maxFiles: 4,
+        selection: 'directory',
+        multiple: !single,
+        maxFiles: single ? 1 : 4,
       });
       const roots = picked
         .map((item) => item.path?.trim() ?? '')
@@ -808,30 +811,43 @@ export function AgentFeature() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
-      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal} onSelect={selectSession} onCreate={() => void createSession()} onClose={closeMobileRail} />
+      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onClose={closeMobileRail} />
       <button className="agent-rail-backdrop" aria-hidden="true" tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section className="agent-conversation" aria-hidden={railModal || statusModal || undefined} inert={railModal || statusModal ? true : undefined}>
         <header className="agent-conversation__header">
-          <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
-          <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${persona?.displayName ?? '智鼬'} · ${sessionPermissionLabel(session)}` : '选择一个对话'}</small></span>
+          <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起任务列表' : '展开任务列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
+          <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${sessionProjectName(session)} · 本地 · ${sessionPermissionLabel(session)}` : '选择一个任务'}</small></span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
-            <IconButton label={conversationForkAvailable ? '创建对话分支' : '当前运行时不支持对话分支'} icon={<GitBranch size={17} />} onClick={openForkDialog} disabled={!session || busy || !conversationForkAvailable} tooltip />
+            <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
             <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable} forkingEntryId={forkingEntryId} onForkFromMessage={(entryId, message) => { void forkFromMessage(entryId, message); }} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" tabIndex={-1} onClick={closeStatusPanel} type="button" />
       <AgentStatusPanel ref={statusRef} sessionId={selectedId} open={statusOpen} modal={statusModal} onClose={closeStatusPanel} />
       <MemoryReviewDialog activity={pendingApproval ? undefined : pendingMemoryReview} sessionId={selectedId} onError={setError} />
       <ApprovalReviewDialog activity={approvalForReview} onDecision={decideApproval} />
+      <NewSessionDialog
+        open={newSessionOpen}
+        projects={projectPaths}
+        defaultRoots={session?.workspaceRoots?.length ? session.workspaceRoots : projectPaths.slice(0, 1)}
+        onOpenChange={setNewSessionOpen}
+        onPickRoots={() => pickWorkspaceRoots(true)}
+        onCreate={createSession}
+      />
       <ConversationForkDialog
         open={forkDialogOpen}
         sessionId={session?.id ?? ''}
         sessionTitle={session?.title ?? '新对话'}
+        nodes={conversationNodes}
+        initialEntryId={forkDialogInitialEntryId}
+        branchAvailable={conversationForkAvailable}
+        branchBlocked={branchBlocked}
         onOpenChange={setForkDialogOpen}
+        onJump={jumpToMessage}
         onCreated={(created, selectedText) => { void acceptFork(created, selectedText); }}
       />
     </main>
@@ -839,6 +855,17 @@ export function AgentFeature() {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function conversationNodeText(blocks: Array<{ type: string; data: Record<string, unknown> }>): string {
+  const value = blocks.map((block) => {
+    const candidates = [block.data.text, block.data.markdown, block.data.code, block.data.message, block.data.summary];
+    return candidates.find((item): item is string => typeof item === 'string' && item.trim().length > 0) ?? '';
+  }).filter(Boolean).join('\n').replace(/\s+/gu, ' ').trim();
+  return value.slice(0, 480) || '非文本消息';
+}
+function sessionProjectName(session: SessionSummary): string {
+  const root = session.workspaceRoots?.[0] ?? '';
+  return root.split('/').filter(Boolean).at(-1) ?? '未指定项目';
+}
 function isCommand(value: string, invocation: string): boolean {
   return value === invocation || value.startsWith(`${invocation} `);
 }

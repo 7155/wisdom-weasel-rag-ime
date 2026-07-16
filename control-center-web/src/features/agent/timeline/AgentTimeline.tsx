@@ -1,6 +1,6 @@
-import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, LoaderCircle, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import { Virtuoso } from 'react-virtuoso';
+import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button, IconButton } from '@/components/primitives';
 import type { AgentActivityProjection, AgentMessageProjection } from '@/contracts/agent-reducer';
@@ -22,7 +22,7 @@ export function AgentTimeline({
   onOpenApproval,
   onRequestPermission,
   forkAvailable = false,
-  forkingEntryId = '',
+  jumpRequest,
   onForkFromMessage,
 }: {
   sessionId: string;
@@ -35,9 +35,11 @@ export function AgentTimeline({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
   forkAvailable?: boolean;
-  forkingEntryId?: string;
-  onForkFromMessage?: (entryId: string, message: string) => void;
+  jumpRequest?: { messageId: string; requestId: number };
+  onForkFromMessage?: (entryId: string) => void;
 }) {
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [activeTargetId, setActiveTargetId] = useState('');
   const turnOrder = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     if (!projection) return emptyIds;
@@ -46,10 +48,41 @@ export function AgentTimeline({
       return Boolean(turn && (turn.messageIds.length > 0 || turn.activityIds.length > 0));
     });
   }));
+  useEffect(() => {
+    if (!jumpRequest?.messageId) return;
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    const index = projection?.turnOrder.findIndex(
+      (turnId) => projection.turnsById[turnId]?.messageIds.includes(jumpRequest.messageId),
+    ) ?? -1;
+    if (index < 0) return;
+    setActiveTargetId(jumpRequest.messageId);
+    virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' });
+    let attempts = 0;
+    let focusTimer = 0;
+    let clearTimer = 0;
+    const focusWhenMounted = () => {
+      const target = document.querySelector<HTMLElement>(`[data-agent-message-id="${cssEscape(jumpRequest.messageId)}"]`);
+      if (target) {
+        target.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+        target.focus({ preventScroll: true });
+        clearTimer = window.setTimeout(() => setActiveTargetId(''), 2_400);
+        return;
+      }
+      attempts += 1;
+      if (attempts < 30) focusTimer = window.setTimeout(focusWhenMounted, 50);
+      else setActiveTargetId('');
+    };
+    focusWhenMounted();
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [jumpRequest?.messageId, jumpRequest?.requestId, sessionId]);
   if (turnOrder.length === 0) return <AgentWelcome persona={persona} onSuggestion={onSuggestion} />;
   return (
     <div className="agent-timeline" aria-label="对话时间线">
       <Virtuoso
+        ref={virtuosoRef}
         key={sessionId}
         data={turnOrder}
         followOutput="smooth"
@@ -68,7 +101,7 @@ export function AgentTimeline({
             onOpenApproval={onOpenApproval}
             onRequestPermission={onRequestPermission}
             forkAvailable={forkAvailable}
-            forkingEntryId={forkingEntryId}
+            activeTargetId={activeTargetId}
             onForkFromMessage={onForkFromMessage}
           />
         )}
@@ -88,7 +121,7 @@ export function AgentTurn({
   onOpenApproval,
   onRequestPermission,
   forkAvailable = false,
-  forkingEntryId = '',
+  activeTargetId = '',
   onForkFromMessage,
 }: {
   sessionId: string;
@@ -101,8 +134,8 @@ export function AgentTurn({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
   forkAvailable?: boolean;
-  forkingEntryId?: string;
-  onForkFromMessage?: (entryId: string, message: string) => void;
+  activeTargetId?: string;
+  onForkFromMessage?: (entryId: string) => void;
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
   const userIds = useAgentLiveStore(useShallow((state) => {
@@ -139,7 +172,7 @@ export function AgentTurn({
   const timelineEntries = interleavedTurnEntries(assistantMessages, activities);
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
-      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} forking={forkingEntryId === messageId} onForkFromMessage={onForkFromMessage} />)}
+      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} />)}
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <PersonaAvatar persona={persona} presence={showWorking ? 'thinking' : presence} />
@@ -149,7 +182,7 @@ export function AgentTurn({
             <div className="agent-turn-sequence" aria-label="本轮响应过程">
               {timelineEntries.map((entry) => entry.kind === 'message' ? (
                 <div data-timeline-kind="message" key={entry.message.id}>
-                  <MessageView sessionId={sessionId} messageId={entry.message.id} />
+                  <MessageView sessionId={sessionId} messageId={entry.message.id} historyTarget={activeTargetId === entry.message.id} />
                 </div>
               ) : (
                 <div data-timeline-kind="activity" key={entry.key}>
@@ -277,15 +310,15 @@ function MessageView({
   messageId,
   user = false,
   forkAvailable = false,
-  forking = false,
+  historyTarget = false,
   onForkFromMessage,
 }: {
   sessionId: string;
   messageId: string;
   user?: boolean;
   forkAvailable?: boolean;
-  forking?: boolean;
-  onForkFromMessage?: (entryId: string, message: string) => void;
+  historyTarget?: boolean;
+  onForkFromMessage?: (entryId: string) => void;
 }) {
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
@@ -293,7 +326,7 @@ function MessageView({
   const messageText = visibleBlocks.map((block) => text(block.data.text)).filter(Boolean).join('\n').trim();
   const canFork = user && forkAvailable && message.status === 'completed' && !messageId.startsWith('local:') && Boolean(messageText) && Boolean(onForkFromMessage);
   return user ? (
-    <div className="agent-user-message-shell" data-actions={canFork || undefined}>
+    <div className="agent-user-message-shell" data-actions={canFork || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
         <AgentBlocks blocks={visibleBlocks} />
         {message.attachments.length ? <small>{message.attachments.length} 个附件</small> : null}
@@ -302,11 +335,9 @@ function MessageView({
         <div className="agent-message-actions">
           <IconButton
             label="从这条消息创建分支"
-            icon={forking ? <LoaderCircle className="ui-spin" size={14} /> : <GitBranch size={14} />}
+            icon={<GitBranch size={14} />}
             size="small"
-            disabled={forking}
-            aria-busy={forking || undefined}
-            onClick={() => onForkFromMessage?.(messageId, messageText)}
+            onClick={() => onForkFromMessage?.(messageId)}
             tooltip
             tooltipSide="left"
           />
@@ -314,7 +345,7 @@ function MessageView({
       ) : null}
     </div>
   ) : (
-    <div className="agent-assistant-message" data-status={message.status}>
+    <div className="agent-assistant-message" data-status={message.status} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <AgentBlocks blocks={visibleBlocks} />
       {message.status === 'streaming' ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
     </div>
@@ -353,6 +384,12 @@ const emptyIds: string[] = [];
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function cssEscape(value: string): string {
+  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(value)
+    : value.replace(/["\\]/gu, '\\$&');
 }
 
 function workingDetail(activities: AgentActivityProjection[]): string {

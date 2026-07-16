@@ -61,6 +61,12 @@ export function ActivitySummary({
   const failed = activities.some((activity) => activity.status === 'failed');
   const summary = aggregateSummary(activities);
   const title = running ? '正在处理' : waiting ? '等待你的确认' : failed ? '活动中有失败项' : '活动已完成';
+  const inlineTools = compactToolSummary(activities);
+  const inlineTitle = inlineTools.count
+    ? `已调用 ${inlineTools.count} 个工具`
+    : title;
+  const inlineSummary = inlineTools.names || summary;
+  const inlineStatus = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : '完成';
   const pendingApprovals = activities.flatMap((activity) => {
     const approvalId = text(activity.payload.approvalId);
     const hash = text(activity.payload.payloadSha256);
@@ -98,10 +104,23 @@ export function ActivitySummary({
     </div>
   ));
   if (inline) {
+    const InlineIcon = failed
+      ? TriangleAlert
+      : waiting
+        ? ShieldAlert
+        : inlineTools.count
+          ? Wrench
+          : activityPresentation(activities[activities.length - 1]!).icon;
     return (
       <div className="agent-activity-group" data-layout="interleaved">
-        <details className="agent-activity agent-activity--inline" open={running || waiting || undefined} data-state={state}>
-          <summary aria-label={`${title}，${summary}`}>{summaryContent}</summary>
+        <details className="agent-activity agent-activity--inline" open={running || waiting || failed || undefined} data-state={state}>
+          <summary aria-label={`${inlineTitle}，${inlineSummary}，${inlineStatus}`}>
+            <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />
+            <strong>{inlineTitle}</strong>
+            <span>{inlineSummary}</span>
+            <i data-status={state}>{inlineStatus}</i>
+            <ChevronRight aria-hidden="true" size={15} />
+          </summary>
           <div className="agent-activity__inline-timeline">
             {activities.map((activity) => (
               <ActivityRow
@@ -203,7 +222,7 @@ function ActivityRow({
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const duration = activityDuration(activity, nowMs);
   return (
-    <details className="agent-activity-row">
+    <details className="agent-activity-row" open={activity.status === 'failed' || activity.status === 'waiting' || undefined}>
       <summary>
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
@@ -364,6 +383,20 @@ function aggregateSummary(activities: AgentActivityProjection[]): string {
   return [...counts.entries()]
     .map(([label, count]) => `${label} ${count}`)
     .join(' · ');
+}
+
+function compactToolSummary(activities: AgentActivityProjection[]) {
+  const calls = new Set<string>();
+  const names = new Set<string>();
+  for (const activity of activities) {
+    if (!['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind)) continue;
+    calls.add(text(activity.payload.toolCallId) || activity.id);
+    names.add(activityPresentation(activity).title);
+  }
+  return {
+    count: calls.size,
+    names: [...names].slice(0, 3).join('、'),
+  };
 }
 
 function statusLabel(status: AgentActivityProjection['status']): string {

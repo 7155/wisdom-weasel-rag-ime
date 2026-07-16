@@ -1421,9 +1421,28 @@ class AgentService:
                     resume_token=event_id,
                 ).to_payload()
             )
-        # The runtime snapshot may have advanced the durable session status.
-        # Read it again so a refresh never paints an older idle/busy state.
+        # Runtime binding state and turn lifecycle are deliberately separate:
+        # AgentSessionStore uses `active` for an open Pi transcript, while the
+        # composer only needs to know whether this exact Session owns a live
+        # turn. Reconcile the durable row against the runtime's busy identities
+        # so reopening an old transcript cannot resurrect its last answer as a
+        # multi-day in-flight turn.
         session = self.sessions.get(session_id)
+        persisted_status = str(session.get("status") or "idle")
+        if persisted_status in {"active", "busy"}:
+            runtime_status = self.runtime.runtime_status()
+            runtime_state = str(runtime_status.get("status") or "")
+            busy_session_ids = {
+                str(value)
+                for value in runtime_status.get("activeSessionIds") or []
+                if str(value)
+            }
+            active_session_id = str(runtime_status.get("activeSessionId") or "")
+            if runtime_state == "busy" and active_session_id:
+                busy_session_ids.add(active_session_id)
+            effective_status = "busy" if session_id in busy_session_ids else "idle"
+            if effective_status != persisted_status:
+                session = self.sessions.set_status(session_id, effective_status)
         return {
             "schemaVersion": "rag-ime.agent-message-list.v1",
             "ok": True,

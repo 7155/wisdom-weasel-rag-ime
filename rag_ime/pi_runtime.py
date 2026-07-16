@@ -1154,7 +1154,7 @@ class PiRuntimeManager:
             if not isinstance(raw, Mapping):
                 continue
             entry_id = str(raw.get("entryId") or "").strip()[:240]
-            text = " ".join(str(raw.get("text") or "").split())[:8000]
+            text = _public_fork_candidate_text(raw.get("text"))
             if not entry_id or not text or entry_id in seen:
                 continue
             seen.add(entry_id)
@@ -2049,6 +2049,19 @@ def _visible_message_text(role: str, text: str) -> str:
     return text
 
 
+def _public_fork_candidate_text(value: object) -> str:
+    """Return the public user question for a Pi branch anchor."""
+
+    normalized = " ".join(str(value or "").split())[:8000]
+    visible = " ".join(_visible_message_text("user", normalized).split())[:8000]
+    if any(
+        marker in visible
+        for marker in ("<rag-ime-deep-search-context", "<rag-ime-user-query>")
+    ):
+        return ""
+    return visible
+
+
 def _last_assistant_error(messages: list[object]) -> str:
     for item in reversed(messages):
         message = _mapping(item)
@@ -2320,6 +2333,11 @@ def _pi_model_configuration_from_environment() -> tuple[
             providers["deepseek"] = _deepseek_pi_provider(
                 model_base_url,
                 model=deepseek_model,
+                supports_reasoning=knowledge.pi_supports_reasoning,
+                supports_reasoning_effort=knowledge.pi_supports_reasoning_effort,
+                supports_usage_in_streaming=knowledge.pi_supports_usage_in_streaming,
+                requires_reasoning_content=knowledge.pi_requires_reasoning_content,
+                thinking_format=knowledge.pi_thinking_format,
             )
             provider_environment["DEEPSEEK_API_KEY"] = knowledge.api_key
             deepseek_error = ""
@@ -2369,26 +2387,29 @@ def _pi_model_configuration_from_environment() -> tuple[
     return provider, model, model_base_url, provider_environment, providers, ""
 
 
-def _deepseek_pi_provider(base_url: str, *, model: str = "") -> dict[str, object]:
-    endpoint = urlsplit(base_url)
-    native_endpoint = (endpoint.hostname or "").lower() == "api.deepseek.com"
+def _deepseek_pi_provider(
+    base_url: str,
+    *,
+    model: str = "",
+    supports_reasoning: bool = True,
+    supports_reasoning_effort: bool = True,
+    supports_usage_in_streaming: bool = True,
+    requires_reasoning_content: bool = True,
+    thinking_format: str = "deepseek",
+) -> dict[str, object]:
     provider: dict[str, object] = {
         "baseUrl": base_url,
         "apiKey": "$DEEPSEEK_API_KEY",
         "compat": {
             "supportsStore": False,
             "supportsDeveloperRole": False,
-            "supportsReasoningEffort": native_endpoint,
-            "supportsUsageInStreaming": native_endpoint,
-            "requiresReasoningContentOnAssistantMessages": native_endpoint,
-            "thinkingFormat": "deepseek" if native_endpoint else "openai",
+            "supportsReasoningEffort": supports_reasoning_effort,
+            "supportsUsageInStreaming": supports_usage_in_streaming,
+            "requiresReasoningContentOnAssistantMessages": requires_reasoning_content,
+            "thinkingFormat": thinking_format,
         },
     }
-    if not native_endpoint:
-        # Third-party OpenAI-compatible gateways commonly expose DeepSeek model
-        # names without implementing DeepSeek's proprietary thinking envelope.
-        # Keep their request shape to portable Chat Completions fields instead
-        # of advertising reasoning controls that Pi cannot truthfully provide.
+    if not supports_reasoning:
         model_ids = {"deepseek-v4-flash", "deepseek-v4-pro"}
         if model.strip():
             model_ids.add(model.strip())

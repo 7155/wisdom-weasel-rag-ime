@@ -8,8 +8,10 @@ from .contracts.json_schema import validate_contract
 @dataclass(frozen=True)
 class AgentTemplateBudget:
     max_depth: int = 2
-    max_turns: int = 8
-    max_tool_calls: int = 12
+    # Zero means "no fixed task quota". Long-running work is still bounded by
+    # tokens, duration, output size, approvals, and explicit cancellation.
+    max_turns: int = 0
+    max_tool_calls: int = 0
     max_total_tokens: int = 32_000
     max_duration_ms: int = 300_000
     max_output_chars: int = 12_000
@@ -55,8 +57,8 @@ class AgentTemplate:
 
 _READ_ONLY_BUDGET = AgentTemplateBudget(
     max_depth=2,
-    max_turns=8,
-    max_tool_calls=12,
+    max_turns=0,
+    max_tool_calls=0,
     max_total_tokens=32_000,
     max_duration_ms=300_000,
     max_output_chars=12_000,
@@ -64,8 +66,8 @@ _READ_ONLY_BUDGET = AgentTemplateBudget(
 
 _WORKER_BUDGET = AgentTemplateBudget(
     max_depth=2,
-    max_turns=12,
-    max_tool_calls=20,
+    max_turns=0,
+    max_tool_calls=0,
     max_total_tokens=48_000,
     max_duration_ms=420_000,
     max_output_chars=16_000,

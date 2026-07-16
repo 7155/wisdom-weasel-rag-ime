@@ -129,7 +129,7 @@ class AgentDelegationStore:
                         _required_text(value, "templateVersion"),
                         ordinal,
                         _bounded_task(value.get("task")),
-                        _bounded_int(value.get("maxTurns"), minimum=1, maximum=32),
+                        _bounded_int(value.get("maxTurns"), minimum=0, maximum=32),
                         _bounded_int(value.get("maxToolCalls"), minimum=0, maximum=64),
                         _bounded_int(value.get("maxTotalTokens"), minimum=256, maximum=262_144),
                         _bounded_int(value.get("maxDurationMs"), minimum=1_000, maximum=900_000),
@@ -1241,11 +1241,15 @@ class AgentDelegationCoordinator:
                 (output_chars, int(budget["maxOutputChars"]), "output budget exceeded"),
             )
             for current, maximum, reason in checks:
-                if current > maximum:
+                # maxTurns/maxToolCalls use zero as an explicit unlimited
+                # sentinel. Other safety budgets always remain positive.
+                if maximum > 0 and current > maximum:
                     schedule_hard_budget(reason, event)
                     return
+                if maximum <= 0:
+                    continue
                 threshold = max(1, int(maximum * _SOFT_BUDGET_RATIO + 0.999))
-                if maximum > 0 and current >= threshold and reason not in soft_reasons:
+                if current >= threshold and reason not in soft_reasons:
                     soft_reasons.add(reason)
                     self.store.append_budget_event(run_id, reason, phase="soft")
                     persist_runtime_event(event)

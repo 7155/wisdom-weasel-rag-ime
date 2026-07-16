@@ -602,6 +602,50 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], "idle")
         self.assertEqual(response["liveEvents"], [event.to_payload()])
 
+    def test_message_snapshot_treats_open_transcript_as_idle_without_a_live_turn(self) -> None:
+        session = self.service.create_session({"title": "旧会话恢复"})["session"]
+        session_id = str(session["id"])
+        self.service.sessions.set_status(session_id, "active")
+        with (
+            patch.object(self.service.runtime, "messages", return_value=[]),
+            patch.object(
+                self.service.runtime,
+                "runtime_status",
+                return_value={
+                    "status": "ready",
+                    "activeSessionId": session_id,
+                    "activeSessionIds": [],
+                    "openSessionIds": [session_id],
+                },
+            ),
+        ):
+            response = self.service.messages(session_id)
+
+        self.assertEqual(response["status"], "idle")
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
+
+    def test_message_snapshot_keeps_the_exact_runtime_turn_busy(self) -> None:
+        session = self.service.create_session({"title": "当前回合"})["session"]
+        session_id = str(session["id"])
+        self.service.sessions.set_status(session_id, "active")
+        with (
+            patch.object(self.service.runtime, "messages", return_value=[]),
+            patch.object(
+                self.service.runtime,
+                "runtime_status",
+                return_value={
+                    "status": "busy",
+                    "activeSessionId": session_id,
+                    "activeSessionIds": [session_id],
+                    "openSessionIds": [session_id],
+                },
+            ),
+        ):
+            response = self.service.messages(session_id)
+
+        self.assertEqual(response["status"], "busy")
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "busy")
+
     def test_message_snapshot_reconstructs_durable_pending_approval(self) -> None:
         session = self.service.create_session({"title": "待审批恢复"})["session"]
         session_id = str(session["id"])

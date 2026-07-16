@@ -278,6 +278,21 @@ class PiRuntimeV2Tests(unittest.TestCase):
         _wait_until(lambda: self.store.get(second_id)["status"] == "idle")
         self.assertEqual(self.runtime.messages(second_id)[0]["blocks"][0]["data"]["text"], "只发送到新分支")
 
+    def test_v2_fork_catalog_exposes_only_the_public_deep_search_question(self) -> None:
+        first_id = str(self.first["id"])
+        self.runtime.prompt(
+            first_id,
+            "<rag-ime-deep-search-context>private evidence</rag-ime-deep-search-context>\n"
+            "<rag-ime-user-query>最近做了什么？</rag-ime-user-query>\n"
+            "本地时间：2026-07-16",
+        )
+        _wait_until(lambda: self.store.get(first_id)["status"] == "idle")
+
+        candidates = self.runtime.fork_candidates(first_id)
+
+        self.assertEqual(candidates, [{"entryId": "entry-user-1", "text": "最近做了什么？"}])
+        self.assertNotIn("private evidence", json.dumps(candidates, ensure_ascii=False))
+
     def test_v2_fork_rejects_unknown_anchor_without_binding_target(self) -> None:
         first_id = str(self.first["id"])
         second_id = str(self.second["id"])

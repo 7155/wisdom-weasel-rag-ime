@@ -14,7 +14,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
         },
         "postCommit": {
             "enabled": True,
-            "idleTriggerMs": 420,
+            "idleTriggerMs": 220,
             "minDeltaChars": 2,
             "maxCallsPer10s": 6,
             "cooldownMs": 1500,
@@ -216,7 +216,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "interaction.composition.showOnlyRime", "type": "boolean", "label": "输入拼音时只显示 Rime 候选", "default": True},
                 {"key": "interaction.postCommit.showPendingStatus", "type": "boolean", "label": "预测开始时立即显示反馈", "default": False},
                 {"key": "interaction.postCommit.enabled", "type": "boolean", "label": "启用提交后预测", "default": True},
-                {"key": "interaction.postCommit.idleTriggerMs", "type": "integer", "label": "停顿触发时间", "default": 420},
+                {"key": "interaction.postCommit.idleTriggerMs", "type": "integer", "label": "停顿触发时间", "default": 220},
                 {"key": "interaction.postCommit.minDeltaChars", "type": "integer", "label": "最少新增字符数", "default": 2},
                 {"key": "interaction.postCommit.maxCallsPer10s", "type": "integer", "label": "10 秒最大模型调用", "default": 6},
                 {"key": "interaction.postCommit.cooldownMs", "type": "integer", "label": "空结果冷却", "default": 1500},

@@ -391,10 +391,12 @@ export function applyAgentSnapshot(
   }
 
   // liveEvents is a bounded journal and may end with an old busy/aborting
-  // marker after a runtime restart. The Session row is read after the runtime
-  // snapshot, so its terminal status is authoritative for stale-busy recovery.
+  // marker after a runtime restart. `active` means the persisted Pi transcript
+  // is open; only `busy`/`working`/`waiting` mean a turn is running. Treat an
+  // active-but-quiescent snapshot as terminal so reopening an old conversation
+  // cannot turn its last completed answer into a multi-day "thinking" turn.
   const replayStatus = next.status;
-  if (snapshot.status && ['idle', 'ready', 'stopped'].includes(snapshot.status)) {
+  if (snapshot.status && ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status)) {
     next.status = snapshot.status;
     const lastTurn = next.turnsById[next.turnOrder[next.turnOrder.length - 1] ?? ''];
     if (lastTurn && ['queued', 'running', 'waiting'].includes(lastTurn.status)) {
@@ -876,7 +878,9 @@ function snapshotFromEvent(event: UiAgentEvent, fallbackSequence: number): Agent
 function turnStatusFromRuntime(status: string): AgentTurnStatus {
   if (status === 'waiting') return 'waiting';
   if (status === 'failed' || status === 'faulted') return 'failed';
-  if (status === 'idle' || status === 'ready' || status === 'stopped') return 'completed';
+  if (status === 'idle' || status === 'ready' || status === 'stopped' || status === 'active') {
+    return 'completed';
+  }
   return 'running';
 }
 

@@ -334,7 +334,10 @@ env_vars = {
     "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": os.environ.get("RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS", os.environ["RAG_IME_PROFILE_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS"]),
     "RAG_IME_PROGRESSIVE_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": os.environ.get("RAG_IME_PROGRESSIVE_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS", "2500"),
     "RAG_IME_POST_COMMIT_PENDING_PREVIEW": os.environ.get("RAG_IME_POST_COMMIT_PENDING_PREVIEW", os.environ["RAG_IME_PROFILE_ASSISTANT_PENDING_PREVIEW"]),
-    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM": os.environ.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "1"),
+    # The resident MiniMind model returns a complete Top-3 batch in the first
+    # foreground window. Token-prefix presentation used to expose only the
+    # first growing phrase (for example "先记录") and hid the other branches.
+    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM": os.environ.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "0"),
     "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
     "RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES": "32",
     "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES": "16",
@@ -432,7 +435,6 @@ preserve_existing_keys = {
     "RAG_IME_PREDICTOR_TEMPERATURE",
     "RAG_IME_PREDICTOR_TOP_P",
     "RAG_IME_PREDICTOR_DISABLE_THINKING",
-    "RAG_IME_PREDICTOR_STREAM_FIRST",
     "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS",
     "RAG_IME_PREDICTOR_FAILURE_LATENCY_MS",
     "RAG_IME_PREDICTOR_EXTRA_BODY_JSON",
@@ -459,7 +461,6 @@ preserve_existing_keys = {
     "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES",
     "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES",
     "RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS",
-    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM",
     "RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES",
     "RAG_IME_EMBEDDING_PROVIDER",
     "RAG_IME_EMBEDDING_BASE_URL",
@@ -626,6 +627,21 @@ for key in (
         value = existing_env.get(key)
     if value:
         env_vars[key] = value
+# Do not inherit the old one-candidate stream mode across model upgrades. An
+# explicit install-time override remains supported, but the product default is
+# the full resident-model batch so all three completions arrive together.
+env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"] = os.environ.get(
+    "RAG_IME_PREDICTOR_STREAM_FIRST",
+    "0",
+)
+# Presentation streaming has the same compatibility boundary as predictor
+# streaming: an older launch agent may contain "1", but carrying that value
+# into a new Top-3 batch model makes the native panel show only the first
+# growing branch. Reset it unless the installer receives an explicit override.
+env_vars["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"] = os.environ.get(
+    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM",
+    "0",
+)
 for key in (
     "RAG_IME_PI_EXECUTABLE",
     "RAG_IME_PI_NODE",

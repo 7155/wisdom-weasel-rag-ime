@@ -22,6 +22,14 @@ class DeepSeekConfig:
     request_timeout_seconds: float = 60.0
     thinking: str = ""
     reasoning_effort: str = "low"
+    # Pi capabilities are declared by the configured Provider rather than
+    # inferred from the endpoint hostname.  Compatible gateways can expose
+    # the same contract as api.deepseek.com.
+    pi_supports_reasoning: bool = True
+    pi_supports_reasoning_effort: bool = True
+    pi_supports_usage_in_streaming: bool = True
+    pi_requires_reasoning_content: bool = True
+    pi_thinking_format: str = "deepseek"
     max_tokens: int = 96
     # The explicit generation lane has no UI character limit, but it still
     # sends a large transport budget. Omitting max_tokens lets some compatible
@@ -84,6 +92,25 @@ def load_deepseek_config(env_path: str | Path | None = None, env: Mapping[str, s
             "RAG_IME_DEEPSEEK_REASONING_EFFORT",
             "DEEPSEEK_REASONING_EFFORT",
             default="low",
+        ),
+        pi_supports_reasoning=_bool_value(
+            _first_value(values, "RAG_IME_DEEPSEEK_PI_SUPPORTS_REASONING"),
+            default=True,
+        ),
+        pi_supports_reasoning_effort=_bool_value(
+            _first_value(values, "RAG_IME_DEEPSEEK_PI_SUPPORTS_REASONING_EFFORT"),
+            default=True,
+        ),
+        pi_supports_usage_in_streaming=_bool_value(
+            _first_value(values, "RAG_IME_DEEPSEEK_PI_SUPPORTS_USAGE_IN_STREAMING"),
+            default=True,
+        ),
+        pi_requires_reasoning_content=_bool_value(
+            _first_value(values, "RAG_IME_DEEPSEEK_PI_REQUIRES_REASONING_CONTENT"),
+            default=True,
+        ),
+        pi_thinking_format=_pi_thinking_format(
+            _first_value(values, "RAG_IME_DEEPSEEK_PI_THINKING_FORMAT", default="deepseek")
         ),
         max_tokens=_int_value(
             _first_value(values, "RAG_IME_DEEPSEEK_MAX_TOKENS", "DEEPSEEK_MAX_TOKENS"),
@@ -162,6 +189,13 @@ def _bool_value(value: str, *, default: bool) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _pi_thinking_format(value: str) -> str:
+    normalized = value.strip().lower() or "deepseek"
+    if normalized not in {"deepseek", "openai"}:
+        raise ValueError("Pi DeepSeek thinking format must be deepseek or openai")
+    return normalized
 
 
 def _float_value(value: str, *, default: float) -> float:

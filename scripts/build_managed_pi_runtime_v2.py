@@ -57,6 +57,55 @@ def _default_node() -> str:
     return shutil.which("node") or ""
 
 
+def _source_revision(pi_root: Path) -> tuple[str, str]:
+    commit = _run(["git", "rev-parse", "HEAD"], cwd=pi_root)
+    tracked_diff = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--binary",
+            "HEAD",
+            "--",
+            "packages",
+            "package.json",
+            "package-lock.json",
+            "tsconfig.json",
+        ],
+        cwd=pi_root,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ).stdout
+    untracked_output = _run(
+        [
+            "git",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "packages",
+            "package.json",
+            "package-lock.json",
+            "tsconfig.json",
+        ],
+        cwd=pi_root,
+    )
+    untracked = [line for line in untracked_output.splitlines() if line.strip()]
+    if not tracked_diff and not untracked:
+        return commit, ""
+    digest = hashlib.sha256()
+    digest.update(tracked_diff)
+    for relative in sorted(untracked):
+        path = pi_root / relative
+        if not path.is_file() or path.is_symlink():
+            continue
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+    dirty_digest = digest.hexdigest()[:12]
+    return f"{commit}+dirty.{dirty_digest}", dirty_digest
+
+
 def _smoke_runtime(node: Path, entrypoint: Path) -> dict[str, object]:
     request = {
         "protocolVersion": "2",
@@ -132,14 +181,16 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         pi_version = str(json.loads(package_json.read_text(encoding="utf-8"))["version"])
-        source_commit = _run(["git", "rev-parse", "HEAD"], cwd=pi_root)
+        source_commit, dirty_digest = _source_revision(pi_root)
         provider_bridge_source = ROOT / "rag_ime" / "node" / "pi_provider_bridge_bundled.ts"
         packager_digest = hashlib.sha256(
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:10]
-        runtime_version = f"pi-{pi_version}-{source_commit[:12]}-raghost-{packager_digest}"
+        commit_prefix = source_commit.split("+", 1)[0][:12]
+        dirty_suffix = f"-d{dirty_digest[:8]}" if dirty_digest else ""
+        runtime_version = f"pi-{pi_version}-{commit_prefix}{dirty_suffix}-raghost-{packager_digest}"
         destination = (
             Path(args.output).expanduser().resolve()
             if args.output

@@ -139,6 +139,25 @@ describe('AgentEventReducer', () => {
     expect(recovered.messagesById['turn-1:assistant'].status).toBe('aborted');
   });
 
+  it('does not reopen the last completed transcript turn when Pi marks the Session active', () => {
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage('server-user', 'user', 'turn-history', '调用 ime_overview'),
+        serverMessage('server-assistant', 'assistant', 'turn-history', '控制中心运行正常。'),
+      ],
+      liveEvents: [rawAgentEvent(43, 'status_changed', { status: 'ready' })],
+      lastSequence: 43,
+      resumeToken: 'session-1:43',
+      // AgentSessionStore uses active for an open transcript binding. It is
+      // not evidence that Pi currently owns an in-flight turn.
+      status: 'active',
+    });
+
+    expect(recovered.status).toBe('active');
+    expect(recovered.turnsById['turn-history'].status).toBe('completed');
+    expect(recovered.messagesById['server-assistant'].status).toBe('completed');
+  });
+
   it('keeps bounded progress checkpoints for one logical tool call', () => {
     const started = reduceAgentEvent(
       createAgentProjection('session-1'),

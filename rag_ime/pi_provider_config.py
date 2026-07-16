@@ -79,6 +79,13 @@ def load_pi_provider_config(path: str | Path) -> PiProviderBundle:
                 "supportsUsageInStreaming": True,
                 "maxTokensField": "max_completion_tokens",
                 "thinkingFormat": "openai",
+                # A custom OpenAI-compatible gateway is still allowed to use
+                # the official prompt-cache request field.  Keep the stable
+                # Pi session id in the body and in affinity headers so one
+                # conversation does not bounce between cache buckets.
+                "supportsPromptCacheKey": True,
+                "sendSessionAffinityHeaders": True,
+                "sessionAffinityFormat": "openai-nosession",
             },
             "models": models,
         }

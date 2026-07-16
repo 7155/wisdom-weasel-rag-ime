@@ -154,6 +154,56 @@ const knowledgeParameterSchema: Record<string, unknown> = {
   ],
 };
 
+const planningParameterSchema: Record<string, unknown> = {
+  type: "object",
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: { const: "dashboard" },
+        date: { type: "string", maxLength: 24 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "taskId", "date", "action"],
+      properties: {
+        op: { const: "task_action" },
+        taskId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 240,
+          description: "Use the exact tasks[].id returned by dashboard; never infer it from a title.",
+        },
+        date: {
+          type: "string",
+          minLength: 1,
+          maxLength: 24,
+          description: "Use the exact date returned by dashboard.",
+        },
+        action: { type: "string", enum: ["complete", "start", "reopen", "cancel"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "eventId"],
+      properties: {
+        op: { const: "undo_task_event" },
+        eventId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 240,
+          description: "Use taskEventId from a previously applied task_action receipt.",
+        },
+      },
+    },
+  ],
+};
+
 const toolSpecs: ToolSpec[] = [
   {
     name: "ime_overview",
@@ -242,6 +292,7 @@ const toolSpecs: ToolSpec[] = [
       "执行 task_action 前先调用 dashboard，并使用其中真实存在的 taskId、date 和当前状态。",
       "只能撤销先前工具回执明确给出的 taskEventId，不能猜测 eventId。",
     ],
+    parameterSchema: planningParameterSchema,
   },
   {
     name: "agent_schedule",

@@ -5,7 +5,7 @@ import type { UiAgentBlock, UiAgentMessage } from '@/contracts/ui-events';
 import { agentEventFixture } from '@/test/fixtures/events';
 import { useAgentLiveStore } from '../state/live-store';
 import { AgentTurn, interleavedTurnEntries } from './AgentTimeline';
-import { AgentBlock, MarkdownBody } from './BlockRenderer';
+import { AgentBlock, AgentBlocks, MarkdownBody } from './BlockRenderer';
 
 afterEach(() => {
   cleanup();
@@ -114,6 +114,31 @@ describe('Agent chat rendering', () => {
     expect(container.querySelector('pre[data-language="ts"]')).toHaveTextContent('const ready = true;');
     expect(container.querySelector('pre[data-language="text"]')).toHaveTextContent('plain fenced block');
     expect(container.querySelectorAll('.agent-code-block')).toHaveLength(2);
+  });
+
+  it('anchors the streaming cursor inside the final Markdown text container', () => {
+    const blocks: UiAgentBlock[] = [{
+      id: 'streaming-text',
+      type: 'text',
+      status: 'running',
+      presentationKind: 'markdown',
+      data: { text: '- 保留 `Markdown`\n- 光标紧贴最后一项' },
+    }];
+    const { container } = render(
+      <div className="agent-assistant-message" data-status="streaming">
+        <AgentBlocks blocks={blocks} />
+        <span aria-label="正在生成" className="agent-streaming-cursor" />
+      </div>,
+    );
+
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0]).not.toHaveAttribute('data-stream-tail');
+    expect(items[1]).toHaveAttribute('data-stream-tail', 'true');
+    expect(within(items[0]!).getByText('Markdown').tagName).toBe('CODE');
+    expect(items[1]!.querySelector('.agent-streaming-cursor--inline')).toBeInTheDocument();
+    expect(container.querySelector('.agent-blocks')).toHaveAttribute('data-has-stream-tail', 'true');
+    expect(screen.getByLabelText('正在生成')).toBe(container.querySelector('.agent-blocks')?.nextElementSibling);
   });
 
   it('renders only a same-origin managed image receipt and ignores src/url fallbacks', () => {
