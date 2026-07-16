@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { expectNoHorizontalPageOverflow, routes } from './helpers';
+import { expectNoHorizontalPageOverflow, routes, settleAgentTimeline } from './helpers';
 
 type RouteEvidence = {
   routeId: string;
@@ -37,6 +37,14 @@ test.describe('full route layout health', () => {
       await expect(page.locator('.shell-topbar__title h1')).toHaveText(route.label);
       await expectNoHorizontalPageOverflow(page);
       await page.waitForTimeout(120);
+      if (route.id === 'agent') {
+        await expect(main.locator('.agent-turn').first()).toBeVisible();
+        await settleAgentTimeline(page);
+      }
+      await expect.poll(
+        async () => (await collectRouteEvidence(page, route.id, route.label)).interactiveCount,
+        { message: `${route.id} did not expose a usable control after loading` },
+      ).toBeGreaterThan(0);
 
       const routeEvidence = await collectRouteEvidence(page, route.id, route.label);
       evidence.push(routeEvidence);
@@ -124,14 +132,42 @@ async function collectRouteEvidence(page: Page, routeId: string, title: string):
         || element.tagName.toLowerCase();
       return `${element.tagName.toLowerCase()}.${element.className || '<none>'}: ${label.trim().slice(0, 80)}`;
     };
+    const centerInsideClippingAncestors = (element: HTMLElement) => {
+      const bounds = element.getBoundingClientRect();
+      const centerX = bounds.left + bounds.width / 2;
+      const centerY = bounds.top + bounds.height / 2;
+      let ancestor = element.parentElement;
+      while (ancestor && ancestor !== main) {
+        const style = getComputedStyle(ancestor);
+        const ancestorBounds = ancestor.getBoundingClientRect();
+        if (
+          /(auto|scroll|hidden|clip)/u.test(style.overflowX)
+          && (centerX < ancestorBounds.left || centerX >= ancestorBounds.right)
+        ) return false;
+        if (
+          /(auto|scroll|hidden|clip)/u.test(style.overflowY)
+          && (centerY < ancestorBounds.top || centerY >= ancestorBounds.bottom)
+        ) return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    };
     const interactives = [...main.querySelectorAll<HTMLElement>(
       'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)',
     )].filter(isVisible);
+    const mobileNavigation = document.querySelector<HTMLElement>('.shell-mobile-nav');
+    const visibleBottom = mobileNavigation && isVisible(mobileNavigation)
+      ? mobileNavigation.getBoundingClientRect().top
+      : window.innerHeight;
     const inViewport = interactives.filter((element) => {
       const rect = element.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
-      return centerX >= 0 && centerX < window.innerWidth && centerY >= 0 && centerY < window.innerHeight;
+      return centerX >= 0
+        && centerX < window.innerWidth
+        && centerY >= 0
+        && centerY < visibleBottom
+        && centerInsideClippingAncestors(element);
     });
     const blockedControls = inViewport.flatMap((element) => {
       const rect = element.getBoundingClientRect();
@@ -152,6 +188,7 @@ async function collectRouteEvidence(page: Page, routeId: string, title: string):
     const rect = main.getBoundingClientRect();
     const horizontalOverflowSources = [...main.querySelectorAll<HTMLElement>('*')]
       .filter(isVisible)
+      .filter(centerInsideClippingAncestors)
       .filter((element) => {
         const bounds = element.getBoundingClientRect();
         const style = getComputedStyle(element);
@@ -159,7 +196,34 @@ async function collectRouteEvidence(page: Page, routeId: string, title: string):
           && bounds.right > rect.right + 1;
       })
       .slice(0, 12)
-      .map(describe);
+      .map((element) => {
+        const bounds = element.getBoundingClientRect();
+        const turn = element.closest<HTMLElement>('.agent-turn');
+        const turnBounds = turn?.getBoundingClientRect();
+        const assistantTurn = element.closest<HTMLElement>('.agent-assistant-turn');
+        const assistantBounds = assistantTurn?.getBoundingClientRect();
+        const assistantBody = element.closest<HTMLElement>('.agent-assistant-turn__body');
+        const bodyBounds = assistantBody?.getBoundingClientRect();
+        const blocks = element.closest<HTMLElement>('.agent-blocks');
+        const blocksBounds = blocks?.getBoundingClientRect();
+        const parentBounds = element.parentElement?.getBoundingClientRect();
+        const turnEvidence = turn && turnBounds
+          ? ` turn=${Math.round(turnBounds.left)}..${Math.round(turnBounds.right)}:${getComputedStyle(turn).boxSizing}`
+          : '';
+        const assistantEvidence = assistantBounds
+          ? ` assistant=${Math.round(assistantBounds.left)}..${Math.round(assistantBounds.right)}`
+          : '';
+        const bodyEvidence = bodyBounds
+          ? ` body=${Math.round(bodyBounds.left)}..${Math.round(bodyBounds.right)}`
+          : '';
+        const blocksEvidence = blocksBounds
+          ? ` blocks=${Math.round(blocksBounds.left)}..${Math.round(blocksBounds.right)}`
+          : '';
+        const parentEvidence = parentBounds
+          ? ` parent=${Math.round(parentBounds.left)}..${Math.round(parentBounds.right)}`
+          : '';
+        return `${describe(element)} [${Math.round(bounds.left)}..${Math.round(bounds.right)} / ${Math.round(rect.right)}${turnEvidence}${assistantEvidence}${bodyEvidence}${blocksEvidence}${parentEvidence}]`;
+      });
     return {
       routeId: values.routeId,
       title: values.title,
@@ -197,6 +261,12 @@ async function expectControlsActionable(page: Page, routeId: string): Promise<vo
     const centerX = box.x + box.width / 2;
     const centerY = box.y + box.height / 2;
     if (centerX < 0 || centerX >= viewport.width || centerY < 0 || centerY >= viewport.height) continue;
+    const receivesPointer = await control.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return Boolean(hit && (element === hit || element.contains(hit)));
+    });
+    if (!receivesPointer) continue;
     await control.click({ timeout: 2_000, trial: true });
   }
 }

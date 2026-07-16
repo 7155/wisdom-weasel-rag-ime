@@ -1,6 +1,11 @@
 import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import {
+  Virtuoso,
+  type ScrollSeekConfiguration,
+  type ScrollSeekPlaceholderProps,
+  type VirtuosoHandle,
+} from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button, IconButton } from '@/components/primitives';
 import type { AgentActivityProjection, AgentMessageProjection } from '@/contracts/agent-reducer';
@@ -85,9 +90,12 @@ export function AgentTimeline({
         ref={virtuosoRef}
         key={sessionId}
         data={turnOrder}
+        computeItemKey={(_index, turnId) => turnId}
         followOutput="smooth"
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
-        increaseViewportBy={{ top: 500, bottom: 500 }}
+        increaseViewportBy={{ top: 320, bottom: 520 }}
+        components={timelineComponents}
+        scrollSeekConfiguration={agentScrollSeekConfiguration}
         itemContent={(_index, turnId) => (
           <AgentTurn
             key={turnId}
@@ -107,6 +115,27 @@ export function AgentTimeline({
         )}
       />
     </div>
+  );
+}
+
+export const agentScrollSeekConfiguration = {
+  enter: (velocity) => Math.abs(velocity) > 900,
+  exit: (velocity) => Math.abs(velocity) < 120,
+} satisfies ScrollSeekConfiguration;
+
+const timelineComponents = {
+  ScrollSeekPlaceholder: AgentTurnTombstone,
+};
+
+function AgentTurnTombstone({
+  height,
+}: ScrollSeekPlaceholderProps) {
+  return (
+    <div
+      aria-hidden="true"
+      className="agent-turn-tombstone"
+      style={{ height }}
+    />
   );
 }
 

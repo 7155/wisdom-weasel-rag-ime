@@ -230,6 +230,29 @@ export const CONTROL_ROUTES = {
     body: ['kind', 'targetParticipantId', 'clientMessageId', 'replyTo', 'content'],
     requiredBody: ['kind', 'clientMessageId', 'content'],
   },
+  'agent.session.contextItems.list': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/context-items',
+    params: { sessionId: null },
+    query: ['status', 'limit'],
+  },
+  'agent.session.contextItems.ack': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/context-items/:itemId/ack',
+    params: { sessionId: null, itemId: null },
+  },
+  'agent.session.contextTraces.list': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/context-traces',
+    params: { sessionId: null },
+    query: ['limit'],
+  },
+  'agent.session.contextTrace.get': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/context-traces/:traceId',
+    params: { sessionId: null, traceId: null },
+    responseContract: 'agent-context-trace.v1',
+  },
   'agent.artifact.get': {
     method: 'GET',
     path: '/api/agent/artifacts/:artifactId',

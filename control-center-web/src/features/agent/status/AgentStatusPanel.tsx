@@ -33,6 +33,12 @@ import type { AgentActivityProjection, AgentProjectionState, AgentTurnStatus } f
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import { useAgentLiveStore } from '../state/live-store';
 import { publicToolResultView } from '../timeline/public-tool-result';
+import { ContextRuntimeSections } from './ContextRuntimePanel';
+
+type IdleWindow = Window & typeof globalThis & {
+  requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
 
 export const AgentStatusPanel = forwardRef<HTMLElement, {
   sessionId: string;
@@ -46,6 +52,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   onClose,
 }, ref) {
   const transport = useControlTransport();
+  const contentReady = useDeferredStatusContent(open);
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
   const subagents = useQuery({
@@ -55,8 +62,8 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
       query: { sessionId, limit: 50 },
       signal,
     }),
-    enabled: open && Boolean(sessionId),
-    refetchInterval: open
+    enabled: open && contentReady && Boolean(sessionId),
+    refetchInterval: open && contentReady
       ? (query) => hasActiveSubagentRuns(subagentRuns(query.state.data)) ? 1_000 : 5_000
       : false,
     retry: false,
@@ -79,7 +86,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
         <span><strong>状态</strong><small>{view.turn ? turnStatusLabel(view.turn.status) : '等待新回合'}</small></span>
         <IconButton icon={<PanelRightClose size={17} />} label="收起状态面板" onClick={onClose} tooltip />
       </header>
-      <div className="agent-status-panel__body">
+      {contentReady ? <div className="agent-status-panel__body">
         <StatusSection icon={ListChecks} title="当前回合" count={view.tasks.length}>
           {view.turn ? (
             <div className="agent-status-turn" data-state={view.turn.status}>
@@ -135,10 +142,43 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
             </div>
           ) : null}
         </StatusSection>
-      </div>
+
+        <ContextRuntimeSections sessionId={sessionId} open={open} />
+      </div> : <div aria-hidden="true" className="agent-status-panel__body agent-status-panel__body--pending" />}
     </aside>
   );
 });
+
+function useDeferredStatusContent(open: boolean): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (!open) {
+      setReady(false);
+      return;
+    }
+    const idleWindow = window as IdleWindow;
+    let secondFrame = 0;
+    let idleHandle = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        if (idleWindow.requestIdleCallback) {
+          idleHandle = idleWindow.requestIdleCallback(() => setReady(true), { timeout: 120 });
+        } else {
+          idleHandle = window.setTimeout(() => setReady(true), 0);
+        }
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      if (idleHandle) {
+        if (idleWindow.cancelIdleCallback) idleWindow.cancelIdleCallback(idleHandle);
+        else window.clearTimeout(idleHandle);
+      }
+    };
+  }, [open]);
+  return ready;
+}
 
 function StatusSection({
   icon: Icon,

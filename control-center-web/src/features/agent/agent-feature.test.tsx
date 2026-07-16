@@ -1561,12 +1561,12 @@ describe('Agent experience', () => {
     });
     const user = userEvent.setup();
     renderAgent(featureTransport());
-    const feature = document.querySelector('.agent-feature');
-    expect(feature).toHaveAttribute('data-rail-open', 'false');
+    const feature = () => document.querySelector('.agent-feature');
+    expect(feature()).toHaveAttribute('data-rail-open', 'false');
 
-    const toggle = screen.getByRole('button', { name: '展开任务列表' });
+    const toggle = await screen.findByRole('button', { name: '展开任务列表' });
     await user.click(toggle);
-    expect(feature).toHaveAttribute('data-rail-open', 'true');
+    expect(feature()).toHaveAttribute('data-rail-open', 'true');
     const rail = screen.getByRole('dialog', { name: '任务与项目' });
     const conversation = document.querySelector('.agent-conversation');
     expect(rail).toHaveAttribute('aria-modal', 'true');
@@ -1583,7 +1583,7 @@ describe('Agent experience', () => {
     expect(lastSession).toHaveFocus();
 
     await user.keyboard('{Escape}');
-    expect(feature).toHaveAttribute('data-rail-open', 'false');
+    expect(feature()).toHaveAttribute('data-rail-open', 'false');
     expect(conversation).not.toHaveAttribute('inert');
     expect(conversation).not.toHaveAttribute('aria-hidden');
     await waitFor(() => expect(toggle).toHaveFocus());
@@ -1591,7 +1591,7 @@ describe('Agent experience', () => {
     await user.click(toggle);
     expect(document.querySelector('.agent-rail-backdrop')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
-    expect(feature).toHaveAttribute('data-rail-open', 'false');
+    expect(feature()).toHaveAttribute('data-rail-open', 'false');
   });
 
   it('treats the responsive status panel as a focus-managed dialog', async () => {
@@ -1641,15 +1641,15 @@ describe('Agent experience', () => {
         </ControlTransportProvider>
       </MemoryRouter>,
     );
-    const feature = container.querySelector<HTMLElement>('main.agent-feature');
-    expect(feature).toHaveAttribute('data-rail-open', 'true');
-    const composer = screen.getByRole('textbox', { name: '消息' });
+    const feature = () => container.querySelector<HTMLElement>('main.agent-feature');
+    expect(feature()).toHaveAttribute('data-rail-open', 'true');
+    const composer = await screen.findByRole('textbox', { name: '消息' });
     expect(composer).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: '收起任务列表' }));
 
-    expect(feature).toHaveAttribute('data-rail-open', 'false');
-    expect(getComputedStyle(feature!).gridTemplateColumns).toBe('0 minmax(0, 1fr) 0');
+    expect(feature()).toHaveAttribute('data-rail-open', 'false');
+    expect(getComputedStyle(feature()!).gridTemplateColumns).toBe('0 minmax(0, 1fr) 0');
     expect(screen.getByRole('textbox', { name: '消息' })).toBe(composer);
     expect(composer).toBeVisible();
     expect(composer.closest('.agent-composer-wrap')).toBeInTheDocument();

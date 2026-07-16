@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-context-item.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "itemId", "sessionId", "sourceKind", "sourceId",
+    "lane", "lifecycle", "status", "title", "summary", "availableAtMs",
+    "expiresAtMs", "deliveredTurnId", "createdAtMs", "updatedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-context-item.v1"},
+    "itemId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "sourceKind": {"type": "string", "minLength": 1},
+    "sourceId": {"type": "string"},
+    "lane": {"type": "string", "enum": ["result", "status", "notification", "room", "schedule", "fact"]},
+    "lifecycle": {"type": "string", "enum": ["once", "turn", "until_ack", "persistent"]},
+    "status": {"type": "string", "enum": ["pending", "delivered", "consumed", "acknowledged", "expired"]},
+    "title": {"type": "string", "minLength": 1},
+    "summary": {"type": "string"},
+    "availableAtMs": {"type": "integer", "minimum": 0},
+    "expiresAtMs": {"type": ["integer", "null"], "minimum": 0},
+    "deliveredTurnId": {"type": "string"},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0}
+  }
+}

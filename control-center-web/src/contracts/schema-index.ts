@@ -624,6 +624,283 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-context-item.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-context-item.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "itemId",
+      "sessionId",
+      "sourceKind",
+      "sourceId",
+      "lane",
+      "lifecycle",
+      "status",
+      "title",
+      "summary",
+      "availableAtMs",
+      "expiresAtMs",
+      "deliveredTurnId",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-context-item.v1"
+      },
+      "itemId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceId": {
+        "type": "string"
+      },
+      "lane": {
+        "type": "string",
+        "enum": [
+          "result",
+          "status",
+          "notification",
+          "room",
+          "schedule",
+          "fact"
+        ]
+      },
+      "lifecycle": {
+        "type": "string",
+        "enum": [
+          "once",
+          "turn",
+          "until_ack",
+          "persistent"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "delivered",
+          "consumed",
+          "acknowledged",
+          "expired"
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1
+      },
+      "summary": {
+        "type": "string"
+      },
+      "availableAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "expiresAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "deliveredTurnId": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "agent-context-trace.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-context-trace.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "traceId",
+      "sessionId",
+      "turnId",
+      "sourceKind",
+      "status",
+      "finalFingerprint",
+      "nodes",
+      "edges",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-context-trace.v1"
+      },
+      "traceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "turnId": {
+        "type": "string"
+      },
+      "sourceKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "building",
+          "accepted",
+          "failed"
+        ]
+      },
+      "finalFingerprint": {
+        "type": "string",
+        "pattern": "^$|^sha256:[a-f0-9]{16}$"
+      },
+      "nodes": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "edges": {
+        "type": "array",
+        "maxItems": 128,
+        "items": {
+          "$ref": "#/$defs/edge"
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "node": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodeId",
+          "ordinal",
+          "stage",
+          "label",
+          "sourceKind",
+          "disposition",
+          "summary",
+          "charCount",
+          "tokenEstimate",
+          "durationMs",
+          "fingerprint",
+          "reason",
+          "metadata",
+          "createdAtMs"
+        ],
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "included",
+              "omitted",
+              "redacted",
+              "failed"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "charCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokenEstimate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^$|^sha256:[a-f0-9]{16}$"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "edge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "target"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
   "agent-control-bootstrap.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-control-bootstrap.v1",

@@ -34,6 +34,36 @@ def agent_session_route(path: str) -> tuple[str, str]:
     return session_id, action
 
 
+def agent_context_item_route(path: str) -> tuple[str, str, str]:
+    prefix = "/api/agent/sessions/"
+    if not path.startswith(prefix):
+        return "", "", ""
+    parts = path[len(prefix) :].strip("/").split("/")
+    if len(parts) == 2 and parts[1] == "context-items":
+        session_id = unquote(parts[0]).strip()
+        return (session_id, "", "list") if session_id else ("", "", "")
+    if len(parts) == 4 and parts[1] == "context-items" and parts[3] == "ack":
+        session_id = unquote(parts[0]).strip()
+        item_id = unquote(parts[2]).strip()
+        return (session_id, item_id, "ack") if session_id and item_id else ("", "", "")
+    return "", "", ""
+
+
+def agent_context_trace_route(path: str) -> tuple[str, str]:
+    prefix = "/api/agent/sessions/"
+    if not path.startswith(prefix):
+        return "", ""
+    parts = path[len(prefix) :].strip("/").split("/")
+    if len(parts) == 2 and parts[1] == "context-traces":
+        session_id = unquote(parts[0]).strip()
+        return (session_id, "") if session_id else ("", "")
+    if len(parts) == 3 and parts[1] == "context-traces":
+        session_id = unquote(parts[0]).strip()
+        trace_id = unquote(parts[2]).strip()
+        return (session_id, trace_id) if session_id and trace_id else ("", "")
+    return "", ""
+
+
 def agent_approval_route(path: str) -> tuple[str, str]:
     prefix = "/api/agent/approvals/"
     if not path.startswith(prefix):

@@ -54,7 +54,40 @@ def _default_node() -> str:
     )
     if codex_runtime.is_file():
         return str(codex_runtime)
+    managed_root = (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "RagIme"
+        / "PiRuntime"
+    )
+    pointer = managed_root / "current.json"
+    try:
+        version = str(json.loads(pointer.read_text(encoding="utf-8"))["version"])
+    except (KeyError, json.JSONDecodeError, OSError):
+        version = ""
+    managed_node = managed_root / version / "bin" / "node"
+    if version and managed_node.is_file():
+        return str(managed_node)
     return shutil.which("node") or ""
+
+
+def _node_relocation_error(node: Path) -> str:
+    if sys.platform != "darwin":
+        return ""
+    try:
+        linked = subprocess.run(
+            ["otool", "-L", str(node)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "could not inspect Node dynamic-library dependencies"
+    if "@rpath/libnode." in linked:
+        return "Node depends on an external libnode dylib and is not relocatable"
+    return ""
 
 
 def _source_revision(pi_root: Path) -> tuple[str, str]:
@@ -177,6 +210,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if not node.is_file():
         print("managed Pi runtime build failed: Node executable is missing", file=sys.stderr)
+        return 1
+    node_relocation_error = _node_relocation_error(node)
+    if node_relocation_error:
+        print(
+            "managed Pi runtime build failed: "
+            f"{node_relocation_error}; set RAG_IME_MANAGED_NODE to a standalone Node binary",
+            file=sys.stderr,
+        )
         return 1
 
     try:

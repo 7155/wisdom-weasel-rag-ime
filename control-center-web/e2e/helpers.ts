@@ -46,6 +46,18 @@ export async function expectNoHorizontalPageOverflow(page: Page): Promise<void> 
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
 }
 
+export async function settleAgentTimeline(page: Page): Promise<void> {
+  const scroller = page.locator('main[data-route-id="agent"] [data-testid="virtuoso-scroller"]');
+  await expect(scroller).toBeVisible();
+  await scroller.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => scroller.evaluate(
+    (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
+  )).toBeLessThanOrEqual(1);
+  await page.waitForTimeout(50);
+}
+
 export function percentile(values: readonly number[], ratio: number): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((left, right) => left - right);

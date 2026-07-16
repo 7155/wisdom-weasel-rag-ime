@@ -343,6 +343,7 @@ class PiRuntimeHostManager:
                 "managedPlugins": bool(capabilities.get("managedPlugins", True)),
                 "sessionSnapshot": True,
                 "settledEvents": True,
+                "transientContext": bool(capabilities.get("transientContext")),
                 "imageAttachments": True,
                 "coordinator": True,
                 "modelConfigured": self.config.model_configured,

@@ -38,6 +38,8 @@ from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
     agent_approval_route,
     agent_artifact_route,
+    agent_context_item_route,
+    agent_context_trace_route,
     agent_media_route,
     agent_room_route,
     agent_session_route,
@@ -5266,6 +5268,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        context_session_id, context_item_id, context_item_action = agent_context_item_route(
+            parsed.path
+        )
+        context_trace_session_id, context_trace_id = agent_context_trace_route(parsed.path)
         agent_room_id, room_action = agent_room_route(parsed.path)
         wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(parsed.path)
         subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
@@ -5399,6 +5405,36 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "includeInternal": _query_first(query, "includeInternal"),
                         "limit": _query_first(query, "limit"),
                     }
+                ),
+            )
+            return
+        if context_session_id and context_item_action == "list":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_context_items(
+                    context_session_id,
+                    {
+                        "status": _query_first(query, "status"),
+                        "limit": _query_first(query, "limit"),
+                    },
+                ),
+            )
+            return
+        if context_trace_session_id and not context_trace_id:
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_context_traces(
+                    context_trace_session_id,
+                    {"limit": _query_first(query, "limit")},
+                ),
+            )
+            return
+        if context_trace_session_id and context_trace_id:
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.context_trace(
+                    context_trace_session_id,
+                    context_trace_id,
                 ),
             )
             return
@@ -6162,6 +6198,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(status, response)
                 return
             agent_session_id, agent_action = agent_session_route(path)
+            context_session_id, context_item_id, context_item_action = agent_context_item_route(path)
             agent_room_id, room_action = agent_room_route(path)
             subagent_run_id, subagent_action = agent_subagent_route(path)
             wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(path)
@@ -6197,6 +6234,14 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.agent_surface_cancel(payload))
             elif path == "/api/agent/sessions":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
+            elif context_session_id and context_item_id and context_item_action == "ack":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.acknowledge_context_item(
+                        context_session_id,
+                        context_item_id,
+                    ),
+                )
             elif path == "/api/agent/wake-schedules":
                 self._write_json(
                     HTTPStatus.CREATED,

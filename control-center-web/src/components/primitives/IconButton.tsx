@@ -19,6 +19,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
     tooltip = false,
     tooltipSide = 'bottom',
     type = 'button',
+    onPointerUp,
     ...props
   },
   ref,
@@ -30,6 +31,10 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       className={cn('ui-icon-button', className)}
       data-size={size}
       aria-label={label}
+      onPointerUp={(event) => {
+        onPointerUp?.(event);
+        if (!event.defaultPrevented) event.currentTarget.blur();
+      }}
       {...props}
     >
       <span aria-hidden="true">{icon}</span>

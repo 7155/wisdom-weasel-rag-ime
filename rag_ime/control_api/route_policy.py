@@ -51,6 +51,10 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_EVENTS = "agent.session.events"
     AGENT_SESSION_INTERCOM_LIST = "agent.session.intercom.list"
     AGENT_SESSION_INTERCOM_SEND = "agent.session.intercom.send"
+    AGENT_SESSION_CONTEXT_ITEMS_LIST = "agent.session.contextItems.list"
+    AGENT_SESSION_CONTEXT_ITEM_ACK = "agent.session.contextItems.ack"
+    AGENT_SESSION_CONTEXT_TRACES_LIST = "agent.session.contextTraces.list"
+    AGENT_SESSION_CONTEXT_TRACE_GET = "agent.session.contextTrace.get"
     AGENT_ARTIFACT_GET = "agent.artifact.get"
     AGENT_MEDIA_LIST = "agent.media.list"
     AGENT_DEEP_SEARCH = "agent.deep-search"
@@ -454,6 +458,8 @@ _ROOM = {"roomId"}
 _APPROVAL = {"approvalId"}
 _RUN = {"runId"}
 _ARTIFACT = {"artifactId"}
+_CONTEXT_ITEM = {"sessionId", "itemId"}
+_CONTEXT_TRACE = {"sessionId", "traceId"}
 _WAKE_SCHEDULE = {"scheduleId"}
 _KNOWLEDGE_BASE = {"kbId"}
 _KNOWLEDGE_DOCUMENT = {"kbId", "fileId"}
@@ -504,6 +510,10 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_EVENTS, ControlMethod.GET, "/api/agent/sessions/{sessionId}/events", "/control/v1/agent/sessions/{sessionId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_SESSION, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_SESSION_INTERCOM_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"status", "limit"}),
         _route(ControlPathId.AGENT_SESSION_INTERCOM_SEND, ControlMethod.POST, "/api/agent/sessions/{sessionId}/intercom", "/control/v1/agent/sessions/{sessionId}/intercom", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"kind", "targetParticipantId", "clientMessageId", "replyTo", "content"}, required_body={"kind", "clientMessageId", "content"}, remote_body={"kind", "targetParticipantId", "clientMessageId", "replyTo", "content"}, remote_body_values={"kind": {"send", "ask", "reply"}}),
+        _route(ControlPathId.AGENT_SESSION_CONTEXT_ITEMS_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-items", "/control/v1/agent/sessions/{sessionId}/context-items", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"status", "limit"}),
+        _route(ControlPathId.AGENT_SESSION_CONTEXT_ITEM_ACK, ControlMethod.POST, "/api/agent/sessions/{sessionId}/context-items/{itemId}/ack", "/control/v1/agent/sessions/{sessionId}/context-items/{itemId}/ack", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_CONTEXT_ITEM),
+        _route(ControlPathId.AGENT_SESSION_CONTEXT_TRACES_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-traces", "/control/v1/agent/sessions/{sessionId}/context-traces", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"limit"}),
+        _route(ControlPathId.AGENT_SESSION_CONTEXT_TRACE_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-traces/{traceId}", "/control/v1/agent/sessions/{sessionId}/context-traces/{traceId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_CONTEXT_TRACE),
         _route(ControlPathId.AGENT_ARTIFACT_GET, ControlMethod.GET, "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ARTIFACT, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_MEDIA_LIST, ControlMethod.GET, "/api/agent/media", "/control/v1/agent/media", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_DEEP_SEARCH, ControlMethod.POST, "/api/agent/deep-search", "/control/v1/agent/deep-search", body={"query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"}, required_body={"query", "privacyDisposition"}),

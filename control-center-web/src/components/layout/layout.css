@@ -241,7 +241,6 @@
   min-width: 0;
   min-height: calc(100dvh - var(--topbar-height));
 }
-
 .shell-route-stage > main {
   width: min(100%, var(--content-max));
   min-height: calc(100dvh - var(--topbar-height));

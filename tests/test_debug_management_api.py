@@ -14,6 +14,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
@@ -1643,6 +1644,62 @@ class DebugManagementApiTests(unittest.TestCase):
             with urlopen(f"{base_url}/media?sessionId={session_id}", timeout=5) as response:
                 media_list = json.loads(response.read().decode("utf-8"))
 
+            context_item = self.service.agent.context_runtime.enqueue(
+                session_id=session_id,
+                source_kind="test_task",
+                source_id="task:http",
+                lane="status",
+                lifecycle="until_ack",
+                title="异步任务已完成",
+                summary="等待确认",
+            )
+            trace_id = self.service.agent.context_runtime.begin_trace(
+                session_id,
+                source_kind="user",
+            )
+            self.service.agent.context_runtime.add_trace_node(
+                trace_id,
+                stage="input",
+                label="当前输入",
+                source_kind="user",
+                content="private prompt",
+            )
+            self.service.agent.context_runtime.finalize_trace(
+                trace_id,
+                status="accepted",
+                turn_id="turn:http:trace",
+                final_content="private prompt",
+            )
+            encoded_session = quote(session_id, safe="")
+            encoded_item = quote(str(context_item["itemId"]), safe="")
+            encoded_trace = quote(trace_id, safe="")
+            with urlopen(
+                f"{base_url}/sessions/{encoded_session}/context-items?limit=10",
+                timeout=5,
+            ) as response:
+                context_items = json.loads(response.read().decode("utf-8"))
+            with urlopen(
+                f"{base_url}/sessions/{encoded_session}/context-traces?limit=10",
+                timeout=5,
+            ) as response:
+                context_traces = json.loads(response.read().decode("utf-8"))
+            with urlopen(
+                f"{base_url}/sessions/{encoded_session}/context-traces/{encoded_trace}",
+                timeout=5,
+            ) as response:
+                context_trace = json.loads(response.read().decode("utf-8"))
+            context_ack_request = Request(
+                (
+                    f"{base_url}/sessions/{encoded_session}/context-items/"
+                    f"{encoded_item}/ack"
+                ),
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(context_ack_request, timeout=5) as response:
+                context_ack = json.loads(response.read().decode("utf-8"))
+
             update_request = Request(
                 f"{base_url}/sessions/{session_id}",
                 data=json.dumps({"title": "深度检索"}).encode("utf-8"),
@@ -1694,6 +1751,11 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(media_content, PNG_1X1)
         self.assertEqual(media_headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(media_list["items"][0]["fileName"], "screen.png")
+        self.assertEqual(context_items["items"][0]["title"], "异步任务已完成")
+        self.assertEqual(context_traces["items"][0]["traceId"], trace_id)
+        self.assertEqual(context_trace["nodes"][0]["label"], "当前输入")
+        self.assertNotIn("private prompt", json.dumps(context_trace))
+        self.assertEqual(context_ack["item"]["status"], "acknowledged")
         self.assertEqual(updated["session"]["title"], "深度检索")
         self.assertEqual(deleted["sessionId"], session_id)
 

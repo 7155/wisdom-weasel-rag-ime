@@ -10,6 +10,8 @@ import type { AgentApprovalV1 } from './generated/agent-approval.v1';
 import type { AgentArtifactInspectionV1 } from './generated/agent-artifact-inspection.v1';
 import type { AgentArtifactRefV1 } from './generated/agent-artifact-ref.v1';
 import type { AgentConfigurationV1 } from './generated/agent-configuration.v1';
+import type { AgentContextItemV1 } from './generated/agent-context-item.v1';
+import type { AgentContextTraceV1 } from './generated/agent-context-trace.v1';
 import type { AgentControlBootstrapV1 } from './generated/agent-control-bootstrap.v1';
 import type { AgentControlEventV1 } from './generated/agent-control-event.v1';
 import type { AgentEventV1 } from './generated/agent-event.v1';
@@ -71,6 +73,8 @@ export type {
   AgentArtifactInspectionV1,
   AgentArtifactRefV1,
   AgentConfigurationV1,
+  AgentContextItemV1,
+  AgentContextTraceV1,
   AgentControlBootstrapV1,
   AgentControlEventV1,
   AgentEventV1,
@@ -133,6 +137,8 @@ export interface ContractTypeMap {
   'agent-artifact-inspection.v1': AgentArtifactInspectionV1;
   'agent-artifact-ref.v1': AgentArtifactRefV1;
   'agent-configuration.v1': AgentConfigurationV1;
+  'agent-context-item.v1': AgentContextItemV1;
+  'agent-context-trace.v1': AgentContextTraceV1;
   'agent-control-bootstrap.v1': AgentControlBootstrapV1;
   'agent-control-event.v1': AgentControlEventV1;
   'agent-event.v1': AgentEventV1;

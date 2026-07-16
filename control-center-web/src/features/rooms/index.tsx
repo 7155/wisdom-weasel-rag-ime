@@ -469,7 +469,7 @@ export function RoomsFeature() {
         </div>
         <div className="room-composer-shell">{roomCanSend && room?.routingPolicy === 'manual_mentions' ? <div className="room-mention-bar" aria-label="指派参与角色"><AtSign size={14} />{room.participants.map((participant) => <button type="button" key={participant.id} aria-pressed={draft.trimStart().startsWith(`@${participant.displayName}`)} onClick={() => addressParticipant(participant.displayName)}>{participant.displayName}</button>)}</div> : null}<div className="room-composer"><textarea rows={2} value={draft} disabled={!roomCanSend} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={!room ? '先选择或新建 Room' : room.status === 'archived' ? '恢复 Room 后继续协作' : room.routingPolicy === 'manual_mentions' ? '先选择一位角色，再输入消息…' : '向 Room 发消息…'} aria-label="Room 消息" /><IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!canSend} onClick={() => void send()} tooltip /></div></div>
       </section>
-      <button className="agent-status-backdrop room-status-backdrop" aria-label="关闭 Room 状态" onClick={() => setStatusOpen(false)} type="button" />
+      <button className="agent-status-backdrop room-status-backdrop" aria-label="关闭 Room 状态" disabled={!statusOpen} onClick={() => setStatusOpen(false)} type="button" />
       <RoomStatusPanel room={room} projection={projection} open={statusOpen} onClose={() => setStatusOpen(false)} />
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>

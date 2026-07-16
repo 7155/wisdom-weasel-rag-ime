@@ -22,7 +22,7 @@
 .role-inspector { align-self: start; border-left: 1px solid var(--color-border); padding-left: 24px; }
 .role-inspector__hero { display: flex; align-items: center; gap: 16px; padding-bottom: 18px; }
 .role-inspector__hero > span { min-width: 0; }
-.role-inspector small { color: var(--color-accent); font: 700 12px var(--font-mono); }
+.role-inspector small { color: var(--color-accent); font: 700 13px var(--font-mono); }
 .role-inspector h3 { margin: 3px 0 6px; font-size: 20px; }
 .role-inspector p { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
 .role-inspector dl { display: grid; margin: 0; border-top: 1px solid var(--color-border); }

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import secrets
+import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
@@ -18,6 +19,7 @@ from .agent_configuration import (
     default_agent_configuration,
     runtime_policy_from_configuration,
 )
+from .agent_context_runtime import AgentContextRuntime, compose_runtime_prompt
 from .agent_events import AgentEventHub
 from .agent_delegation import AgentDelegationCoordinator
 from .agent_media import AgentMediaStore
@@ -82,6 +84,8 @@ class AgentService:
         self.runtime_factory = runtime_factory or PiRuntimeDriverFactory(configured)
         self.sessions = AgentSessionStore(db_path)
         self.sessions.initialize()
+        self.context_runtime = AgentContextRuntime(db_path)
+        self.context_runtime.initialize()
         seed_configuration = dict(
             configuration_defaults
             or default_agent_configuration(
@@ -94,6 +98,7 @@ class AgentService:
         self.configuration_store.initialize(seed_configuration)
         self.control_events = AgentControlEventHub(self.configuration_store)
         self._configuration_lock = RLock()
+        self._context_source_token = object()
         self._room_turn_lock = RLock()
         self._pending_room_turn_by_session: dict[str, str] = {}
         self._room_turn_by_session_turn: dict[tuple[str, str], str] = {}
@@ -191,6 +196,62 @@ class AgentService:
         """Bind the backend-owned tool catalog without exposing gateway credentials."""
 
         self._tool_manifest_provider = provider
+
+    def list_context_items(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        self.sessions.get(session_id)
+        value = dict(payload or {})
+        items = self.context_runtime.list_items(
+            session_id,
+            status=str(value.get("status") or ""),
+            limit=_integer(value.get("limit"), default=100, minimum=1, maximum=500),
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-context-inbox.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "items": items,
+        }
+
+    def acknowledge_context_item(
+        self,
+        session_id: str,
+        item_id: str,
+    ) -> dict[str, object]:
+        self.sessions.get(session_id)
+        return {
+            "schemaVersion": "rag-ime.agent-context-item-ack.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "item": self.context_runtime.acknowledge(session_id, item_id),
+        }
+
+    def list_context_traces(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        self.sessions.get(session_id)
+        value = dict(payload or {})
+        return {
+            "schemaVersion": "rag-ime.agent-context-trace-list.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "items": self.context_runtime.list_traces(
+                session_id,
+                limit=_integer(value.get("limit"), default=30, minimum=1, maximum=100),
+            ),
+        }
+
+    def context_trace(self, session_id: str, trace_id: str) -> dict[str, object]:
+        self.sessions.get(session_id)
+        trace = self.context_runtime.trace(trace_id)
+        if trace["sessionId"] != session_id:
+            raise KeyError(trace_id)
+        return trace
 
     def _runtime_tool_manifest(
         self,
@@ -744,23 +805,40 @@ class AgentService:
         instruction = str(claim.get("instruction") or "")
         planning_task_id = str(claim.get("planningTaskId") or "")
         planning_context = (
-            f"\n关联规划任务 ID：{planning_task_id}。如果任务已经完成，可以通过 ime_planning "
+            f"关联规划任务 ID：{planning_task_id}。如果任务已经完成，可以通过 ime_planning "
             "提出状态更新，但仍需用户批准。"
             if planning_task_id
             else ""
         )
-        message = (
-            "这是一个现在到期的受管日程任务。请开始执行任务，并在本回合说明完成结果、"
-            "未完成原因或需要用户批准的下一步。任何写入和外部操作仍必须遵守当前 Session 的工具与审批边界。\n\n"
-            f"预约：{str(claim.get('title') or '未命名任务')}\n"
-            f"任务：{instruction}{planning_context}"
+        title = str(claim.get("title") or "未命名任务")
+        self.context_runtime.enqueue(
+            session_id=session_id,
+            source_kind="wake_schedule",
+            source_id=run_id,
+            lane="schedule",
+            lifecycle="turn",
+            dedupe_key=f"wake:{run_id}",
+            title=f"预约到期：{title}",
+            summary="受管日程已唤醒当前 Agent 线程",
+            payload={
+                "instruction": instruction,
+                "planningTaskId": planning_task_id,
+                "planningContext": planning_context,
+                "policy": (
+                    "开始执行并说明完成结果、未完成原因或需要批准的下一步；"
+                    "任何写入和外部操作仍遵守当前 Session 的工具与审批边界。"
+                ),
+            },
         )
+        message = f"预约任务已到期：{title}"
         try:
             accepted = self.prompt(
                 session_id,
                 {
                     "message": message,
                     "clientMessageId": run_id,
+                    "_contextSource": "schedule",
+                    "_contextSourceToken": self._context_source_token,
                 },
             )
         except AgentRuntimeError as exc:
@@ -1546,12 +1624,18 @@ class AgentService:
             attachment_ids = [str(item) for item in raw_attachments]
         else:
             raise ValueError("attachments must be an array of managed mediaId values")
+        context_source = (
+            str(payload.get("_contextSource") or "user")
+            if payload.get("_contextSourceToken") is self._context_source_token
+            else "user"
+        )
         return self._prompt_with_checkpoint(
             session_id=session_id,
             message=message,
             checkpoint_text=message,
             attachment_ids=attachment_ids,
             client_message_id=client_message_id,
+            context_source=context_source,
         )
 
     def deep_search(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -1578,6 +1662,7 @@ class AgentService:
             message=prompt_message,
             checkpoint_text=question,
             attachment_ids=[],
+            context_source="deep_search",
         )
         return {
             "schemaVersion": "rag-ime.agent-deep-search.v1",
@@ -1627,17 +1712,19 @@ class AgentService:
         checkpoint_text: str,
         attachment_ids: list[str],
         client_message_id: str = "",
+        context_source: str = "user",
     ) -> dict[str, object]:
         if attachment_ids:
             selected = self.runtime.model_catalog(session_id).get("selected")
             if not isinstance(selected, Mapping) or selected.get("supportsImages") is not True:
                 raise ValueError("当前模型不支持图片，请切换到支持图片的模型后重试")
         images = self.media.pi_images(session_id, attachment_ids)
-        accepted = self.runtime.prompt(
+        accepted, context_trace_id, delivered_context = self._runtime_prompt_with_context(
             session_id,
             message,
             images=images,
             client_message_id=client_message_id,
+            source_kind=context_source,
         )
         self.media.bind_to_pi_entry(
             session_id=session_id,
@@ -1693,8 +1780,145 @@ class AgentService:
             "sessionId": session_id,
             "memoryCheckpoint": memory_checkpoint,
             "attachments": attachment_receipts,
+            "contextTraceId": context_trace_id,
+            "contextItemsDelivered": delivered_context,
             **accepted,
         }
+
+    def _runtime_prompt_with_context(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        images: list[Mapping[str, str]] | None = None,
+        client_message_id: str = "",
+        source_kind: str,
+    ) -> tuple[dict[str, object], str, int]:
+        trace_id = self.context_runtime.begin_trace(
+            session_id,
+            source_kind=source_kind,
+        )
+        input_node = self.context_runtime.add_trace_node(
+            trace_id,
+            stage="input",
+            label="当前输入",
+            source_kind=source_kind,
+            content=message,
+            summary="已接收当前回合输入",
+            metadata={
+                "hasImages": bool(images),
+                "imageCount": len(images or []),
+            },
+        )
+        session = self.sessions.get(session_id)
+        session_node = self.context_runtime.add_trace_node(
+            trace_id,
+            stage="session",
+            label="Session 与角色",
+            source_kind="gateway",
+            parents=[input_node],
+            summary="已解析当前 Session、角色、模式与运行偏好",
+            metadata={
+                "mode": str(session.get("mode") or ""),
+                "roleId": str(session.get("roleId") or ""),
+                "modelConfigured": bool(session.get("modelProfile")),
+                "workspaceCount": len(session.get("workspaceRoots") or []),
+            },
+        )
+        tool_count = len(self._runtime_tool_manifest(session))
+        tool_node = self.context_runtime.add_trace_node(
+            trace_id,
+            stage="tools",
+            label="动态工具目录",
+            source_kind="gateway",
+            parents=[session_node],
+            summary="已按当前模式、权限和工作区生成工具目录",
+            metadata={"toolCount": tool_count},
+        )
+        materialized = self.context_runtime.materialize(session_id)
+        inbox_node = self.context_runtime.add_trace_node(
+            trace_id,
+            stage="context_inbox",
+            label="异步上下文收件箱",
+            source_kind="gateway",
+            parents=[session_node],
+            disposition="included" if materialized["itemIds"] else "omitted",
+            summary=(
+                f"本回合加入 {len(materialized['itemIds'])} 条分流上下文"
+                if materialized["itemIds"]
+                else "本回合没有待投递的异步上下文"
+            ),
+            char_count=int(materialized["charCount"]),
+            reason="" if materialized["itemIds"] else "inbox empty",
+            metadata={"itemCount": len(materialized["itemIds"])},
+        )
+        runtime_message = compose_runtime_prompt(message, str(materialized["prompt"]))
+        request_node = self.context_runtime.add_trace_node(
+            trace_id,
+            stage="runtime_request",
+            label="Pi Runtime 请求",
+            source_kind="gateway",
+            parents=[input_node, tool_node, inbox_node],
+            summary="完成预算化组装并交给 Pi Runtime",
+            content=runtime_message,
+            metadata={
+                "contextItemCount": len(materialized["itemIds"]),
+                "toolCount": tool_count,
+            },
+        )
+        started = time.perf_counter()
+        try:
+            accepted = self.runtime.prompt(
+                session_id,
+                runtime_message,
+                images=images,
+                client_message_id=client_message_id,
+            )
+        except Exception as exc:
+            duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+            try:
+                self.context_runtime.add_trace_node(
+                    trace_id,
+                    stage="runtime_result",
+                    label="Pi Runtime 拒绝",
+                    source_kind="runtime",
+                    disposition="failed",
+                    parents=[request_node],
+                    summary="运行时未接受当前回合",
+                    duration_ms=duration_ms,
+                    reason=_public_error(exc),
+                )
+                self.context_runtime.finalize_trace(
+                    trace_id,
+                    status="failed",
+                    final_content=runtime_message,
+                )
+            except Exception:
+                pass
+            raise
+        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        turn_id = str(accepted.get("turnId") or "")
+        self.context_runtime.mark_delivered(
+            list(materialized["itemIds"]),
+            turn_id=turn_id,
+        )
+        self.context_runtime.add_trace_node(
+            trace_id,
+            stage="runtime_result",
+            label="Pi Runtime 已接受",
+            source_kind="runtime",
+            parents=[request_node],
+            summary="运行时已建立回合，后续事件通过 Session 流返回",
+            duration_ms=duration_ms,
+            metadata={"accepted": True},
+        )
+        self.context_runtime.finalize_trace(
+            trace_id,
+            status="accepted",
+            turn_id=turn_id,
+            final_content=runtime_message,
+        )
+        return dict(accepted), trace_id, len(materialized["itemIds"])
 
     def abort(self, session_id: str) -> dict[str, object]:
         self.runtime.abort(session_id)
@@ -2383,17 +2607,36 @@ class AgentService:
             ),
             "reply": "这是对你先前提问的关联回复，请继续当前协作任务。",
         }.get(kind, "这是协作信息；仅在当前任务需要时使用，不必机械复述。")
-        prompt = (
-            "房间协作消息（由 RAG-IME Agent Kernel 审计投递）\n"
-            f"消息 ID：{item.get('id')}\n"
-            f"类型：{kind}\n"
-            f"来自：{source.get('displayName')}（{source.get('id')}）\n"
-            f"接收者：{target.get('displayName')}（{target.get('id')}）\n"
-            f"关联消息：{item.get('replyTo') or '无'}\n\n"
-            f"{item.get('content')}\n\n"
-            f"{reply_instruction}"
+        self.context_runtime.enqueue(
+            session_id=target_session_id,
+            source_kind="room_intercom",
+            source_id=str(item.get("id") or ""),
+            lane="room",
+            lifecycle="turn",
+            dedupe_key=f"room:{item.get('id')}",
+            title=f"来自 {source.get('displayName')} 的房间协作消息",
+            summary=f"{kind} · {reply_instruction}",
+            payload={
+                "messageId": str(item.get("id") or ""),
+                "kind": kind,
+                "sourceParticipantId": str(source.get("id") or ""),
+                "sourceDisplayName": str(source.get("displayName") or ""),
+                "targetParticipantId": str(target.get("id") or ""),
+                "replyTo": str(item.get("replyTo") or ""),
+                "content": str(item.get("content") or ""),
+                "replyInstruction": reply_instruction,
+            },
         )
-        return self.runtime.prompt(target_session_id, prompt)
+        accepted, trace_id, delivered = self._runtime_prompt_with_context(
+            target_session_id,
+            "请处理刚收到的房间协作消息，并继续当前协作任务。",
+            source_kind="room",
+        )
+        return {
+            **accepted,
+            "contextTraceId": trace_id,
+            "contextItemsDelivered": delivered,
+        }
 
     def _publish_room_intercom_audit(
         self,

@@ -26,11 +26,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                    31, 32, 33, 34, 35, 36, 37,
+                    31, 32, 33, 34, 35, 36, 37, 38,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 37)
+            self.assertEqual(status["currentVersion"], 38)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -73,6 +73,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_role_runtime_preferences", tables)
             self.assertIn("agent_session_tool_policies", tables)
             self.assertIn("agent_plan_events", tables)
+            self.assertIn("agent_context_traces", tables)
+            self.assertIn("agent_context_trace_nodes", tables)
+            self.assertIn("agent_context_items", tables)
             self.assertIn("agent_wake_schedules", tables)
             self.assertIn("agent_wake_runs", tables)
             room_columns = {

@@ -1,0 +1,475 @@
+import {
+  Check,
+  ChevronRight,
+  CircleDot,
+  Clock3,
+  Inbox,
+  LoaderCircle,
+  Network,
+  TriangleAlert,
+} from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useControlTransport } from '@/app/control-transport';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/primitives';
+import type { AgentContextItemV1 } from '@/contracts/generated/agent-context-item.v1';
+import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
+
+interface ContextTraceSummary {
+  traceId: string;
+  sessionId: string;
+  turnId: string;
+  sourceKind: string;
+  status: AgentContextTraceV1['status'];
+  finalFingerprint: string;
+  nodeCount: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export function ContextRuntimeSections({ sessionId, open }: { sessionId: string; open: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <>
+      <section className="agent-status-section agent-context-runtime">
+        <header>
+          <Network size={15} />
+          <strong>上下文运行时</strong>
+        </header>
+        <button
+          aria-expanded={expanded}
+          className="agent-context-runtime-trigger"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          <span>
+            <strong>{expanded ? '收起上下文状态' : '查看上下文状态'}</strong>
+            <small>异步收件箱与本轮组装管线</small>
+          </span>
+          <ChevronRight size={14} />
+        </button>
+      </section>
+      {open && expanded ? <ContextRuntimeDetails sessionId={sessionId} /> : null}
+    </>
+  );
+}
+
+function ContextRuntimeDetails({ sessionId }: { sessionId: string }) {
+  const transport = useControlTransport();
+  const [acknowledgingId, setAcknowledgingId] = useState('');
+  const [ackError, setAckError] = useState('');
+  const itemsQuery = useQuery({
+    queryKey: ['agent', 'context-runtime', 'items', sessionId],
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.session.contextItems.list',
+      params: { sessionId },
+      query: { limit: 30 },
+      signal,
+    }),
+    enabled: Boolean(sessionId),
+    refetchInterval: 3_000,
+    retry: false,
+  });
+  const tracesQuery = useQuery({
+    queryKey: ['agent', 'context-runtime', 'traces', sessionId],
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.session.contextTraces.list',
+      params: { sessionId },
+      query: { limit: 20 },
+      signal,
+    }),
+    enabled: Boolean(sessionId),
+    refetchInterval: 3_000,
+    retry: false,
+  });
+  const items = useMemo(() => contextItems(itemsQuery.data), [itemsQuery.data]);
+  const traces = useMemo(() => contextTraceSummaries(tracesQuery.data), [tracesQuery.data]);
+  const activeItems = items.filter((item) => item.status === 'pending' || item.status === 'delivered');
+
+  async function acknowledge(itemId: string): Promise<void> {
+    if (acknowledgingId) return;
+    setAcknowledgingId(itemId);
+    setAckError('');
+    try {
+      await transport.request({
+        pathId: 'agent.session.contextItems.ack',
+        params: { sessionId, itemId },
+      });
+      await itemsQuery.refetch();
+    } catch {
+      setAckError('暂时无法确认，请稍后重试');
+    } finally {
+      setAcknowledgingId('');
+    }
+  }
+
+  return (
+    <>
+      <section className="agent-status-section agent-context-inbox">
+        <header>
+          <Inbox size={15} />
+          <strong>上下文收件箱</strong>
+          {activeItems.length > 0 ? <span>{activeItems.length}</span> : null}
+        </header>
+        {itemsQuery.isPending ? <ContextEmpty animated>正在读取分流上下文</ContextEmpty> : null}
+        {itemsQuery.error ? <ContextEmpty tone="danger">上下文收件箱暂时不可用</ContextEmpty> : null}
+        {ackError ? <ContextEmpty tone="danger">{ackError}</ContextEmpty> : null}
+        {!itemsQuery.isPending && !itemsQuery.error && activeItems.length === 0
+          ? <ContextEmpty>没有等待处理的异步信息</ContextEmpty>
+          : null}
+        {activeItems.length ? (
+          <div className="agent-context-items">
+            {activeItems.slice(0, 4).map((item) => (
+              <article key={item.itemId}>
+                <CircleDot size={13} />
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{contextItemDetail(item)}</small>
+                </span>
+                {item.lifecycle === 'until_ack' || item.lifecycle === 'persistent' ? (
+                  <Button
+                    aria-label={`确认 ${item.title}`}
+                    loading={acknowledgingId === item.itemId}
+                    onClick={() => void acknowledge(item.itemId)}
+                    size="small"
+                    variant="quiet"
+                  >
+                    确认
+                  </Button>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="agent-status-section agent-context-traces">
+        <header>
+          <Network size={15} />
+          <strong>上下文管线</strong>
+          {traces.length > 0 ? <span>{traces.length}</span> : null}
+        </header>
+        {tracesQuery.isPending ? <ContextEmpty animated>正在读取组装记录</ContextEmpty> : null}
+        {tracesQuery.error ? <ContextEmpty tone="danger">上下文管线暂时不可用</ContextEmpty> : null}
+        {!tracesQuery.isPending && !tracesQuery.error && traces.length === 0
+          ? <ContextEmpty>发送消息后会记录组装阶段</ContextEmpty>
+          : null}
+        {traces.length ? (
+          <ContextPipelineDialog sessionId={sessionId} traces={traces}>
+            <button className="agent-context-trace-trigger" type="button">
+              <span>
+                <strong>{contextSourceLabel(traces[0].sourceKind)}</strong>
+                <small>{traceSummary(traces[0])}</small>
+              </span>
+              <ChevronRight size={14} />
+            </button>
+          </ContextPipelineDialog>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+function ContextPipelineDialog({
+  sessionId,
+  traces,
+  children,
+}: {
+  sessionId: string;
+  traces: ContextTraceSummary[];
+  children: ReactNode;
+}) {
+  const transport = useControlTransport();
+  const [open, setOpen] = useState(false);
+  const [selectedTraceId, setSelectedTraceId] = useState(traces[0]?.traceId ?? '');
+  useEffect(() => {
+    if (!traces.some((trace) => trace.traceId === selectedTraceId)) {
+      setSelectedTraceId(traces[0]?.traceId ?? '');
+    }
+  }, [selectedTraceId, traces]);
+  const traceQuery = useQuery({
+    queryKey: ['agent', 'context-runtime', 'trace', sessionId, selectedTraceId],
+    queryFn: ({ signal }) => transport.request<AgentContextTraceV1>({
+      pathId: 'agent.session.contextTrace.get',
+      params: { sessionId, traceId: selectedTraceId },
+      signal,
+    }),
+    enabled: open && Boolean(selectedTraceId),
+    retry: false,
+  });
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogContent className="agent-context-pipeline-dialog">
+        <DialogHeader>
+          <DialogTitle>上下文管线</DialogTitle>
+          <DialogDescription>查看每个阶段如何形成当前 Pi Runtime 请求。原始提示词与敏感路径不会在这里显示。</DialogDescription>
+        </DialogHeader>
+        <div className="agent-context-pipeline-layout">
+          <nav aria-label="上下文组装记录">
+            {traces.map((trace) => (
+              <button
+                aria-current={trace.traceId === selectedTraceId ? 'true' : undefined}
+                key={trace.traceId}
+                onClick={() => setSelectedTraceId(trace.traceId)}
+                type="button"
+              >
+                <span><strong>{contextSourceLabel(trace.sourceKind)}</strong><small>{formatContextTime(trace.createdAtMs)}</small></span>
+                <i data-state={trace.status}>{traceStatusLabel(trace.status)}</i>
+              </button>
+            ))}
+          </nav>
+          <section className="agent-context-pipeline-detail" aria-live="polite">
+            {traceQuery.isPending ? <ContextEmpty animated>正在读取管线</ContextEmpty> : null}
+            {traceQuery.error ? <ContextEmpty tone="danger">这条管线暂时无法读取</ContextEmpty> : null}
+            {traceQuery.data ? <ContextTraceGraph trace={traceQuery.data} /> : null}
+          </section>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ContextTraceGraph({ trace }: { trace: AgentContextTraceV1 }) {
+  const layers = useMemo(() => contextTraceLayers(trace), [trace]);
+  const [selectedNodeId, setSelectedNodeId] = useState(trace.nodes.at(-1)?.nodeId ?? '');
+  useEffect(() => {
+    if (!trace.nodes.some((node) => node.nodeId === selectedNodeId)) {
+      setSelectedNodeId(trace.nodes.at(-1)?.nodeId ?? '');
+    }
+  }, [selectedNodeId, trace]);
+  const selected = trace.nodes.find((node) => node.nodeId === selectedNodeId);
+  return (
+    <>
+      <div className="agent-context-trace-meta">
+        <span><Clock3 size={14} />{formatContextTime(trace.createdAtMs)}</span>
+        <span data-state={trace.status}>{traceStatusLabel(trace.status)}</span>
+        <span>{trace.nodes.length} 个阶段</span>
+      </div>
+      <div className="agent-context-dag" aria-label="上下文组装阶段图">
+        {layers.map((layer, index) => (
+          <div className="agent-context-dag__layer" key={`layer:${index}`}>
+            {layer.map((node) => (
+              <button
+                aria-pressed={node.nodeId === selectedNodeId}
+                data-state={node.disposition}
+                key={node.nodeId}
+                onClick={() => setSelectedNodeId(node.nodeId)}
+                type="button"
+              >
+                <span>{node.ordinal}</span>
+                <strong>{node.label}</strong>
+                <small>{node.summary || dispositionLabel(node.disposition)}</small>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+      {selected ? (
+        <section className="agent-context-node-detail">
+          <header>
+            <span>
+              <strong>{selected.label}</strong>
+              <small>{selected.summary || dispositionLabel(selected.disposition)}</small>
+            </span>
+            <i data-state={selected.disposition}>{dispositionLabel(selected.disposition)}</i>
+          </header>
+          <dl>
+            <div><dt>来源</dt><dd>{contextSourceLabel(selected.sourceKind)}</dd></div>
+            <div><dt>字符</dt><dd>{selected.charCount}</dd></div>
+            <div><dt>Token 估算</dt><dd>{selected.tokenEstimate}</dd></div>
+            <div><dt>耗时</dt><dd>{selected.durationMs} ms</dd></div>
+          </dl>
+          {Object.keys(selected.metadata).length ? (
+            <div className="agent-context-node-metadata">
+              {Object.entries(selected.metadata).map(([key, value]) => (
+                <span key={key}><b>{metadataLabel(key)}</b>{String(value)}</span>
+              ))}
+            </div>
+          ) : null}
+          {selected.reason ? <p><TriangleAlert size={14} />{selected.reason}</p> : null}
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+export function contextTraceLayers(trace: AgentContextTraceV1): AgentContextTraceV1['nodes'][] {
+  const parents = new Map<string, string[]>();
+  for (const edge of trace.edges) {
+    const list = parents.get(edge.target) ?? [];
+    list.push(edge.source);
+    parents.set(edge.target, list);
+  }
+  const depth = new Map<string, number>();
+  const resolveDepth = (nodeId: string, visiting = new Set<string>()): number => {
+    const cached = depth.get(nodeId);
+    if (cached !== undefined) return cached;
+    if (visiting.has(nodeId)) return 0;
+    const nextVisiting = new Set(visiting).add(nodeId);
+    const parentIds = parents.get(nodeId) ?? [];
+    const value = parentIds.length
+      ? Math.max(...parentIds.map((parentId) => resolveDepth(parentId, nextVisiting))) + 1
+      : 0;
+    depth.set(nodeId, value);
+    return value;
+  };
+  const layers: AgentContextTraceV1['nodes'][] = [];
+  for (const node of trace.nodes) {
+    const nodeDepth = Math.min(resolveDepth(node.nodeId), 12);
+    (layers[nodeDepth] ??= []).push(node);
+  }
+  return layers.filter(Boolean);
+}
+
+export function contextItems(value: unknown): AgentContextItemV1[] {
+  const items = Array.isArray(record(value).items) ? record(value).items as unknown[] : [];
+  return items.filter(isContextItem);
+}
+
+export function contextTraceSummaries(value: unknown): ContextTraceSummary[] {
+  const items = Array.isArray(record(value).items) ? record(value).items as unknown[] : [];
+  return items.flatMap((item) => {
+    const candidate = record(item);
+    const status = text(candidate.status);
+    if (!text(candidate.traceId) || !['building', 'accepted', 'failed'].includes(status)) return [];
+    return [{
+      traceId: text(candidate.traceId),
+      sessionId: text(candidate.sessionId),
+      turnId: text(candidate.turnId),
+      sourceKind: text(candidate.sourceKind),
+      status: status as ContextTraceSummary['status'],
+      finalFingerprint: text(candidate.finalFingerprint),
+      nodeCount: number(candidate.nodeCount),
+      createdAtMs: number(candidate.createdAtMs),
+      updatedAtMs: number(candidate.updatedAtMs),
+    }];
+  });
+}
+
+function isContextItem(value: unknown): value is AgentContextItemV1 {
+  const item = record(value);
+  return item.schemaVersion === 'rag-ime.agent-context-item.v1'
+    && Boolean(text(item.itemId))
+    && Boolean(text(item.sessionId))
+    && ['result', 'status', 'notification', 'room', 'schedule', 'fact'].includes(text(item.lane))
+    && ['once', 'turn', 'until_ack', 'persistent'].includes(text(item.lifecycle))
+    && ['pending', 'delivered', 'consumed', 'acknowledged', 'expired'].includes(text(item.status));
+}
+
+function contextItemDetail(item: AgentContextItemV1): string {
+  const lane = ({
+    result: '结果',
+    status: '状态',
+    notification: '通知',
+    room: 'Room',
+    schedule: '日程',
+    fact: '事实',
+  } as const)[item.lane];
+  return `${lane} · ${lifecycleLabel(item.lifecycle)}${item.summary ? ` · ${item.summary}` : ''}`;
+}
+
+function lifecycleLabel(value: AgentContextItemV1['lifecycle']): string {
+  return ({
+    once: '投递一次',
+    turn: '本回合',
+    until_ack: '确认前保留',
+    persistent: '持续可见',
+  } as const)[value];
+}
+
+function traceSummary(trace: ContextTraceSummary): string {
+  return `${trace.nodeCount} 个阶段 · ${formatContextTime(trace.createdAtMs)} · ${traceStatusLabel(trace.status)}`;
+}
+
+function traceStatusLabel(value: AgentContextTraceV1['status']): string {
+  if (value === 'accepted') return '已交给 Runtime';
+  if (value === 'failed') return '组装失败';
+  return '正在组装';
+}
+
+function dispositionLabel(value: AgentContextTraceV1['nodes'][number]['disposition']): string {
+  if (value === 'included') return '已加入';
+  if (value === 'omitted') return '未加入';
+  if (value === 'redacted') return '已隐藏';
+  return '失败';
+}
+
+function contextSourceLabel(value: string): string {
+  return ({
+    user: '用户输入',
+    schedule: '日程唤醒',
+    room: 'Room 协作',
+    room_intercom: 'Room 消息',
+    gateway: '产品层 Gateway',
+    runtime: 'Pi Runtime',
+    wake_schedule: '日程',
+  } as Record<string, string>)[value] ?? (value || '未知来源');
+}
+
+function metadataLabel(value: string): string {
+  return ({
+    accepted: '已接受',
+    contextItemCount: '上下文项',
+    hasImages: '包含图片',
+    imageCount: '图片',
+    itemCount: '收件箱项',
+    mode: '模式',
+    modelConfigured: '模型已配置',
+    roleId: '角色',
+    toolCount: '工具',
+    workspaceCount: '工作区',
+  } as Record<string, string>)[value] ?? value;
+}
+
+function formatContextTime(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '时间未知';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(value);
+}
+
+function ContextEmpty({
+  children,
+  animated = false,
+  tone = 'neutral',
+}: {
+  children: ReactNode;
+  animated?: boolean;
+  tone?: 'neutral' | 'danger';
+}) {
+  return (
+    <p className="agent-status-empty" data-animated={animated || undefined} data-tone={tone}>
+      {animated ? <LoaderCircle size={13} /> : null}
+      {children}
+    </p>
+  );
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function number(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}

@@ -37,6 +37,28 @@ import {
 import './agent.css';
 
 export function AgentFeature() {
+  const ready = useDeferredAgentWorkspace();
+  if (!ready) {
+    const mobileViewport = isMobileViewport();
+    return (
+      <main
+        aria-busy="true"
+        aria-label="正在准备 Agent 工作区"
+        className="agent-feature agent-feature--pending"
+        data-rail-open={!mobileViewport}
+        data-route-id="agent"
+        data-status-open={!mobileViewport && isWideStatusViewport()}
+      >
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+      </main>
+    );
+  }
+  return <AgentWorkspace />;
+}
+
+function AgentWorkspace() {
   const transport = useControlTransport();
   const mobileViewport = useMediaQuery('(max-width: 760px)');
   const statusOverlayViewport = useMediaQuery('(max-width: 1100px)');
@@ -812,7 +834,7 @@ export function AgentFeature() {
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
       <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onClose={closeMobileRail} />
-      <button className="agent-rail-backdrop" aria-hidden="true" tabIndex={-1} onClick={closeMobileRail} type="button" />
+      <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section className="agent-conversation" aria-hidden={railModal || statusModal || undefined} inert={railModal || statusModal ? true : undefined}>
         <header className="agent-conversation__header">
           <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起任务列表' : '展开任务列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
@@ -824,9 +846,11 @@ export function AgentFeature() {
           </div>
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
-        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        {session ? (
+          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        ) : <AgentComposerPending />}
       </section>
-      <button className="agent-status-backdrop" aria-hidden="true" tabIndex={-1} onClick={closeStatusPanel} type="button" />
+      <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />
       <AgentStatusPanel ref={statusRef} sessionId={selectedId} open={statusOpen} modal={statusModal} onClose={closeStatusPanel} />
       <MemoryReviewDialog activity={pendingApproval ? undefined : pendingMemoryReview} sessionId={selectedId} onError={setError} />
       <ApprovalReviewDialog activity={approvalForReview} onDecision={decideApproval} />
@@ -851,6 +875,31 @@ export function AgentFeature() {
         onCreated={(created, selectedText) => { void acceptFork(created, selectedText); }}
       />
     </main>
+  );
+}
+
+function useDeferredAgentWorkspace(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => setReady(true));
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, []);
+  return ready;
+}
+
+function AgentComposerPending() {
+  return (
+    <div aria-label="正在准备对话" className="agent-composer-wrap" role="status">
+      <div className="agent-composer agent-composer--pending">
+        <span>正在准备对话</span>
+      </div>
+    </div>
   );
 }
 

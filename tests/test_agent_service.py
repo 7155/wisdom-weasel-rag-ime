@@ -407,8 +407,10 @@ class AgentServiceTests(unittest.TestCase):
             self.service._dispatch_scheduled_wake(claim)
 
         message = prompt.call_args.args[1]["message"]
-        self.assertIn("列出完成项并汇报", message)
-        self.assertIn("task:today", message)
+        self.assertEqual(message, "预约任务已到期：整理今日工作")
+        context_items = self.service.list_context_items(str(session["id"]))["items"]
+        self.assertEqual(context_items[0]["sourceKind"], "wake_schedule")
+        self.assertEqual(context_items[0]["lane"], "schedule")
         self.assertEqual(
             self.service.get_wake_schedule(str(schedule["id"]))["status"],
             "running",

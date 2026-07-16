@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { expectNoHorizontalPageOverflow, percentile } from './helpers';
+import { expectNoHorizontalPageOverflow, percentile, settleAgentTimeline } from './helpers';
 
 test('production Agent scene preserves Turn aggregation and composer responsiveness', async ({
   page,
@@ -64,6 +64,7 @@ test('production Agent scene matches the desktop and mobile visual baselines', a
 }, testInfo) => {
   await openAgentScene(page, testInfo.project.name);
   await page.waitForFunction(() => [...document.images].every((image) => image.complete));
+  await settleAgentTimeline(page);
   await expectNoHorizontalPageOverflow(page);
   await expect(page).toHaveScreenshot('agent-preview.png', {
     fullPage: false,
@@ -82,7 +83,10 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   await expect(page.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
   await expect(page.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
   await page.getByRole('button', { name: '新建 Room' }).click();
-  await expect(page.getByText('真实角色目录至少需要两个角色才能创建 Room。')).toBeVisible();
+  const createRoomDialog = page.getByRole('dialog');
+  await expect(createRoomDialog.getByRole('heading', { name: '新建协作 Room' })).toBeVisible();
+  await expect(createRoomDialog.getByText('参与角色 3/4')).toBeVisible();
+  await expect(createRoomDialog.getByRole('button', { name: '创建 Room' })).toBeDisabled();
   await expectNoHorizontalPageOverflow(page);
   await testInfo.attach(`room-scene-${testInfo.project.name}`, {
     body: await page.screenshot({ animations: 'disabled', fullPage: false }),
@@ -113,7 +117,7 @@ async function openAgentScene(page: Page, projectName: string): Promise<void> {
       'data-rail-open',
       'false',
     );
-    await page.getByRole('button', { name: '展开对话列表' }).click();
+    await page.getByRole('button', { name: '展开任务列表' }).click();
     await expect(page.locator('main[data-route-id="agent"]')).toHaveAttribute(
       'data-rail-open',
       'true',

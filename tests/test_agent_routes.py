@@ -5,6 +5,8 @@ import unittest
 from rag_ime.agent_routes import (
     agent_approval_route,
     agent_artifact_route,
+    agent_context_item_route,
+    agent_context_trace_route,
     agent_media_route,
     agent_room_route,
     agent_session_route,
@@ -65,6 +67,36 @@ class AgentRouteTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(agent_session_route(path), ("", ""))
+
+    def test_context_routes_are_strict_and_url_decoded(self) -> None:
+        self.assertEqual(
+            agent_context_item_route("/api/agent/sessions/agent%3A123/context-items"),
+            ("agent:123", "", "list"),
+        )
+        self.assertEqual(
+            agent_context_item_route(
+                "/api/agent/sessions/agent%3A123/context-items/context-item%3A456/ack"
+            ),
+            ("agent:123", "context-item:456", "ack"),
+        )
+        self.assertEqual(
+            agent_context_trace_route("/api/agent/sessions/agent%3A123/context-traces"),
+            ("agent:123", ""),
+        )
+        self.assertEqual(
+            agent_context_trace_route(
+                "/api/agent/sessions/agent%3A123/context-traces/context-trace%3A456"
+            ),
+            ("agent:123", "context-trace:456"),
+        )
+        for path in (
+            "/api/agent/sessions/agent:123/context-items/item:1",
+            "/api/agent/sessions/agent:123/context-items/item:1/delete",
+            "/api/agent/sessions/agent:123/context-traces/trace:1/extra",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(agent_context_item_route(path), ("", "", ""))
+                self.assertEqual(agent_context_trace_route(path), ("", ""))
 
     def test_approval_routes_are_strict_and_url_decoded(self) -> None:
         self.assertEqual(

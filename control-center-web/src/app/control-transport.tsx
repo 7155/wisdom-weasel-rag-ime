@@ -233,6 +233,28 @@ function previewResponse(pathId: ControlPathId): unknown {
           },
         ],
       };
+    case 'agent.session.contextItems.list':
+      return { ok: true, items: [] };
+    case 'agent.session.contextTraces.list':
+      return {
+        ok: true,
+        items: [{
+          traceId: 'context-trace:preview',
+          sessionId: 'session-preview',
+          turnId: 'turn-preview',
+          sourceKind: 'user',
+          status: 'accepted',
+          finalFingerprint: 'sha256:0123456789abcdef',
+          nodeCount: 5,
+          createdAtMs: Date.now() - 18_000,
+          updatedAtMs: Date.now() - 17_000,
+        }],
+      };
+    case 'agent.session.contextTrace.get':
+      return (request: ControlRequest) => previewContextTrace(
+        stringValue(record(request.params).sessionId) || 'session-preview',
+        stringValue(record(request.params).traceId) || 'context-trace:preview',
+      );
     case 'agent.rooms.list':
       return { ok: true, rooms: [] };
     case 'agent.room.snapshot':
@@ -471,6 +493,70 @@ function previewSubagentArtifact(): Record<string, unknown> {
     returnedRecords: records.length,
     truncated: false,
     limits: { requestedRecords: 60, maxRecords: 500, maxOutputBytes: 262_144 },
+  };
+}
+
+function previewContextTrace(
+  sessionId: string,
+  traceId: string,
+): Record<string, unknown> {
+  const createdAtMs = Date.now() - 18_000;
+  const nodes = [
+    previewContextNode('node:1:input', 1, 'input', '当前消息', 'user', '收到本轮用户输入', 126, 32, 0, createdAtMs),
+    previewContextNode('node:2:session', 2, 'session', '角色与会话', 'gateway', '装配角色、模型和会话策略', 860, 215, 2, createdAtMs + 2),
+    previewContextNode('node:3:tools', 3, 'tools', '工具目录', 'gateway', '按权限暴露本轮可用工具', 1_420, 355, 4, createdAtMs + 4),
+    previewContextNode('node:4:inbox', 4, 'inbox', '异步上下文', 'context_runtime', '没有等待注入的异步结果', 0, 0, 1, createdAtMs + 5, 'omitted'),
+    previewContextNode('node:5:runtime-request', 5, 'runtime_request', 'Pi Runtime 请求', 'gateway', '已形成受限运行时请求', 2_406, 602, 7, createdAtMs + 7),
+  ];
+  return {
+    schemaVersion: 'rag-ime.agent-context-trace.v1',
+    traceId,
+    sessionId,
+    turnId: 'turn-preview',
+    sourceKind: 'user',
+    status: 'accepted',
+    finalFingerprint: 'sha256:0123456789abcdef',
+    nodes,
+    edges: [
+      { source: nodes[0].nodeId, target: nodes[1].nodeId },
+      { source: nodes[1].nodeId, target: nodes[2].nodeId },
+      { source: nodes[1].nodeId, target: nodes[3].nodeId },
+      { source: nodes[2].nodeId, target: nodes[4].nodeId },
+      { source: nodes[3].nodeId, target: nodes[4].nodeId },
+    ],
+    createdAtMs,
+    updatedAtMs: createdAtMs + 7,
+  };
+}
+
+function previewContextNode(
+  nodeId: string,
+  ordinal: number,
+  stage: string,
+  label: string,
+  sourceKind: string,
+  summary: string,
+  charCount: number,
+  tokenEstimate: number,
+  durationMs: number,
+  createdAtMs: number,
+  disposition: 'included' | 'omitted' = 'included',
+): Record<string, unknown> {
+  return {
+    nodeId,
+    ordinal,
+    stage,
+    label,
+    sourceKind,
+    disposition,
+    summary,
+    charCount,
+    tokenEstimate,
+    durationMs,
+    fingerprint: charCount ? `sha256:${String(ordinal).repeat(16)}` : '',
+    reason: disposition === 'omitted' ? '本轮没有可投递项目' : '',
+    metadata: stage === 'tools' ? { toolCount: 18 } : {},
+    createdAtMs,
   };
 }
 

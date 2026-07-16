@@ -53,6 +53,7 @@ for line in sys.stdin:
         result(request, {"protocol": "rag-ime.pi-runtime-host", "protocolVersion": "2", "hostVersion": "test",
                          "piVersion": "0.80.7", "capabilities": {"multiSession": True, "maxSessions": 4,
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
+                         "transientContext": True,
                          "conversationFork": True}})
     elif method == "session.open":
         session = sessions.setdefault(session_id, {
@@ -256,6 +257,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["conversationFork"])
         self.runtime.prompt(first_id, "从这条消息建立分支")
         _wait_until(lambda: self.store.get(first_id)["status"] == "idle")
+        self.assertTrue(self.runtime.runtime_status()["capabilities"]["transientContext"])
         source_binding = self.store.runtime_binding(first_id)
 
         self.assertEqual(

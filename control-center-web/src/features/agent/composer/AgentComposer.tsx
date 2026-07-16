@@ -361,7 +361,7 @@ function ToolPicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button aria-label={label} className="agent-composer__picker" data-status={status} size="small" variant="quiet" disabled={status !== 'ready' || !tools.length || disabled} leadingIcon={<Wrench size={15} />}>{text}</Button>
+        <Button aria-label={label} className="agent-composer__picker" data-status={status} size="small" title={label} variant="quiet" disabled={status !== 'ready' || !tools.length || disabled} leadingIcon={<Wrench size={15} />}>{text}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-tool-picker">
         <header><strong>受控工具</strong><small>当前模式可用 {availableCount} / 目录共 {tools.length}</small></header>
@@ -409,7 +409,7 @@ function PermissionPicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button aria-label={`对话权限：${current.label}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!session || disabled} leadingIcon={current.icon === 'network' ? <Network size={15} /> : current.icon === 'lock' ? <LockKeyhole size={15} /> : <ShieldCheck size={15} />}>{current.label}</Button>
+        <Button aria-label={`对话权限：${current.label}`} className="agent-composer__picker" size="small" title={`对话权限：${current.label}`} variant="quiet" disabled={!session || disabled} leadingIcon={current.icon === 'network' ? <Network size={15} /> : current.icon === 'lock' ? <LockKeyhole size={15} /> : <ShieldCheck size={15} />}>{current.label}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-picker-popover">
         <header><LockKeyhole size={16} /><span><strong>对话权限</strong><small>模式、工具范围与审批共同生效</small></span></header>
@@ -568,7 +568,7 @@ function ModelTree({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button aria-label={`模型：${selectedModel?.name ?? '未选择'}，思考强度：${thinkingLabel(thinking)}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!catalog || disabled} leadingIcon={<BrainCircuit size={15} />}>{selectedModel?.name ?? '选择模型'} · {thinkingLabel(thinking)}</Button>
+        <Button aria-label={`模型：${selectedModel?.name ?? '未选择'}，思考强度：${thinkingLabel(thinking)}`} className="agent-composer__picker" size="small" title={`模型：${selectedModel?.name ?? '未选择'}，思考强度：${thinkingLabel(thinking)}`} variant="quiet" disabled={!catalog || disabled} leadingIcon={<BrainCircuit size={15} />}>{selectedModel?.name ?? '选择模型'} · {thinkingLabel(thinking)}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-model-tree">
         <header><strong>模型与推理强度</strong></header>

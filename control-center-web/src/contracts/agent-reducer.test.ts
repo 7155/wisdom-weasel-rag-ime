@@ -22,6 +22,34 @@ describe('AgentEventReducer', () => {
     expect(textOf(second.state.messagesById['turn-1:assistant'])).toBe('你好');
   });
 
+  it('keeps completed turns referentially stable while the active tail streams', () => {
+    const hydrated = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage('stable-user', 'user', 'stable-turn', '之前的问题'),
+        serverMessage('stable-assistant', 'assistant', 'stable-turn', '之前的回答'),
+        serverMessage('active-user', 'user', 'turn-1', '继续'),
+      ],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'responding',
+    });
+    const stableTurn = hydrated.turnsById['stable-turn'];
+    const activeTurn = hydrated.turnsById['turn-1'];
+    const stableMessage = hydrated.messagesById['stable-assistant'];
+
+    const streamed = reduceAgentEvent(
+      hydrated,
+      agentEvent(1, 'text_delta', { delta: '新的流式内容' }),
+    ).state;
+
+    expect(streamed.turnsById['stable-turn']).toBe(stableTurn);
+    expect(streamed.messagesById['stable-assistant']).toBe(stableMessage);
+    expect(streamed.turnsById['turn-1']).not.toBe(activeTurn);
+    expect(hydrated.turnsById['turn-1'].messageIds).not.toContain('turn-1:assistant');
+    expect(streamed.turnsById['turn-1'].messageIds).toContain('turn-1:assistant');
+  });
+
   it('preserves assistant segments around a tool call instead of replacing earlier text', () => {
     let state = createAgentProjection('session-1');
     const events = [

@@ -629,7 +629,7 @@ function upsertActivity(
     `${event.turnId}:${event.eventType}`;
   const previous = state.activitiesById[id];
   if (previous && previous.turnId !== event.turnId) {
-    const previousTurn = state.turnsById[previous.turnId];
+    const previousTurn = writableTurn(state, previous.turnId);
     if (previousTurn) {
       previousTurn.activityIds = previousTurn.activityIds.filter((activityId) => activityId !== id);
     }
@@ -804,7 +804,7 @@ function ensureTurn(
   nowMs: number,
 ): AgentTurnProjection {
   const turnId = requestedTurnId || 'unscoped';
-  let turn = state.turnsById[turnId];
+  let turn = writableTurn(state, turnId);
   if (!turn) {
     turn = {
       id: turnId,
@@ -828,7 +828,7 @@ function attachMessageToTurn(state: AgentProjectionState, message: UiAgentMessag
 
 function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
   for (const turnId of state.turnOrder) {
-    const turn = state.turnsById[turnId];
+    const turn = writableTurn(state, turnId);
     if (!turn) continue;
     const messages = turn.messageIds
       .map((messageId) => state.messagesById[messageId])
@@ -841,7 +841,10 @@ function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
     else turn.status = 'completed';
   }
 
-  const lastTurn = state.turnsById[state.turnOrder[state.turnOrder.length - 1] ?? ''];
+  const lastTurn = writableTurn(
+    state,
+    state.turnOrder[state.turnOrder.length - 1] ?? '',
+  );
   const runtimeStatus = turnStatusFromRuntime(state.status);
   if (lastTurn && runtimeStatus !== 'completed' && lastTurn.status === 'completed') {
     lastTurn.status = runtimeStatus;
@@ -849,7 +852,7 @@ function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
 }
 
 function detachMessageFromTurn(state: AgentProjectionState, message: UiAgentMessage): void {
-  const turn = state.turnsById[message.turnId];
+  const turn = writableTurn(state, message.turnId);
   if (!turn) return;
   turn.messageIds = turn.messageIds.filter((id) => id !== message.id);
   if (turn.messageIds.length === 0 && turn.activityIds.length === 0) {
@@ -889,12 +892,10 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
     ...state,
     messagesById: { ...state.messagesById },
     messageOrder: [...state.messageOrder],
-    turnsById: Object.fromEntries(
-      Object.entries(state.turnsById).map(([id, turn]) => [
-        id,
-        { ...turn, messageIds: [...turn.messageIds], activityIds: [...turn.activityIds] },
-      ]),
-    ),
+    // Turn values are copied only when a reducer writes to them. Streaming
+    // deltas therefore keep every completed turn referentially stable instead
+    // of cloning the whole conversation on every token batch.
+    turnsById: { ...state.turnsById },
     turnOrder: [...state.turnOrder],
     activitiesById: { ...state.activitiesById },
     activityOrder: [...state.activityOrder],
@@ -902,6 +903,21 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
     diagnostics: [...state.diagnostics],
     ...(state.gap ? { gap: { ...state.gap } } : {}),
   };
+}
+
+function writableTurn(
+  state: AgentProjectionState,
+  turnId: string,
+): AgentTurnProjection | undefined {
+  const current = state.turnsById[turnId];
+  if (!current) return undefined;
+  const copy = {
+    ...current,
+    messageIds: [...current.messageIds],
+    activityIds: [...current.activityIds],
+  };
+  state.turnsById[turnId] = copy;
+  return copy;
 }
 
 function record(value: unknown): Record<string, unknown> {

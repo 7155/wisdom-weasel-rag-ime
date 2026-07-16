@@ -4,8 +4,19 @@ import { TooltipProvider } from '@/components/primitives';
 import type { UiAgentBlock, UiAgentMessage } from '@/contracts/ui-events';
 import { agentEventFixture } from '@/test/fixtures/events';
 import { useAgentLiveStore } from '../state/live-store';
-import { AgentTurn, interleavedTurnEntries } from './AgentTimeline';
-import { AgentBlock, AgentBlocks, MarkdownBody } from './BlockRenderer';
+import {
+  AgentTurn,
+  agentScrollSeekConfiguration,
+  interleavedTurnEntries,
+} from './AgentTimeline';
+import {
+  AgentBlock,
+  AgentBlocks,
+  MarkdownBody,
+  partitionStreamingMarkdown,
+  partitionStreamingMarkdownFragments,
+} from './BlockRenderer';
+import { agentRendererPolicy, TRUSTED_AGENT_RENDERERS } from './renderer-registry';
 
 afterEach(() => {
   cleanup();
@@ -139,6 +150,87 @@ describe('Agent chat rendering', () => {
     expect(items[1]!.querySelector('.agent-streaming-cursor--inline')).toBeInTheDocument();
     expect(container.querySelector('.agent-blocks')).toHaveAttribute('data-has-stream-tail', 'true');
     expect(screen.getByLabelText('正在生成')).toBe(container.querySelector('.agent-blocks')?.nextElementSibling);
+  });
+
+  it('moves completed top-level sections out of the active Markdown window', () => {
+    const source = [
+      '开场说明已经稳定。',
+      '',
+      '## 已完成阶段',
+      '',
+      '这一阶段也已经稳定。',
+      '',
+      '## 正在生成',
+      '',
+      '当前尾部',
+    ].join('\n');
+
+    expect(partitionStreamingMarkdown(source)).toEqual({
+      stable: [
+        '开场说明已经稳定。',
+        '',
+        '## 已完成阶段',
+        '',
+        '这一阶段也已经稳定。',
+        '',
+        '## 正在生成',
+        '',
+        '',
+      ].join('\n'),
+      active: '当前尾部',
+    });
+  });
+
+  it('does not treat headings inside a fenced block as streaming section boundaries', () => {
+    const source = [
+      '稳定说明。',
+      '',
+      '```md',
+      '',
+      '# 这是代码，不是新章节',
+      '```',
+    ].join('\n');
+
+    expect(partitionStreamingMarkdown(source)).toEqual({
+      stable: '稳定说明。\n\n',
+      active: ['```md', '', '# 这是代码，不是新章节', '```'].join('\n'),
+    });
+  });
+
+  it('keeps earlier streaming Markdown fragments immutable as new paragraphs arrive', () => {
+    const first = partitionStreamingMarkdownFragments('第一段。\n\n第二段还在生成');
+    const second = partitionStreamingMarkdownFragments('第一段。\n\n第二段完成。\n\n第三段还在生成');
+
+    expect(first).toEqual({
+      stableFragments: ['第一段。\n\n'],
+      active: '第二段还在生成',
+    });
+    expect(second).toEqual({
+      stableFragments: ['第一段。\n\n', '第二段完成。\n\n'],
+      active: '第三段还在生成',
+    });
+    expect(second.stableFragments[0]).toBe(first.stableFragments[0]);
+  });
+
+  it('only renders explicitly trusted non-executable block policies', () => {
+    expect(agentRendererPolicy('text')).toMatchObject({
+      streaming: 'incremental',
+      executableContent: false,
+    });
+    expect(agentRendererPolicy('image')).toMatchObject({
+      isolation: 'managed-receipt',
+      executableContent: false,
+    });
+    expect(agentRendererPolicy('html')).toBeUndefined();
+    expect(agentRendererPolicy('script')).toBeUndefined();
+    expect(Object.values(TRUSTED_AGENT_RENDERERS).every((item) => !item.executableContent)).toBe(true);
+  });
+
+  it('uses measured tombstones only while the user scrolls quickly', () => {
+    expect(agentScrollSeekConfiguration.enter(901)).toBe(true);
+    expect(agentScrollSeekConfiguration.enter(300)).toBe(false);
+    expect(agentScrollSeekConfiguration.exit(119)).toBe(true);
+    expect(agentScrollSeekConfiguration.exit(500)).toBe(false);
   });
 
   it('removes stale segment cursors while a turn is waiting for confirmation', () => {
