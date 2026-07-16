@@ -42,6 +42,12 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
         self.assertTrue(first["stored"])
         self.assertEqual(duplicate["status"], "already_checkpointed")
         self.assertEqual(first["source"]["sourceRole"], "user")
+        self.assertEqual(first["source"]["sourceKind"], "user_final")
+        self.assertEqual(
+            (first["source"]["ownerKind"], first["source"]["ownerId"]),
+            ("user", "default"),
+        )
+        self.assertEqual(first["source"]["disposition"], "pending")
         with closing(sqlite3.connect(self.db_path)) as conn:
             event = conn.execute(
                 "SELECT source, committed_text, project FROM input_events WHERE id = ?",
@@ -78,6 +84,34 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM input_events").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM agent_memory_sources").fetchone()[0], 0)
 
+    def test_transient_subagent_input_and_compaction_never_become_role_memory(self) -> None:
+        child = self.sessions.create(
+            title="临时研究子 Agent",
+            role_id="zhiyou-v1",
+            session_kind="subagent_runtime",
+            created_at_ms=250,
+        )
+
+        user = self.store.checkpoint_user_message(
+            session_id=str(child["id"]),
+            pi_entry_id="pi-entry:delegated-task",
+            turn_id="turn:delegated-task",
+            text="请临时检查这段实现",
+            created_at_ms=251,
+        )
+        compaction = self.store.checkpoint_compaction(
+            session_id=str(child["id"]),
+            result={"summary": "临时子任务认为需要调整实现。"},
+            trigger="automatic",
+            created_at_ms=252,
+        )
+
+        self.assertEqual(user["status"], "skipped_transient_session")
+        self.assertEqual(compaction["status"], "skipped_transient_session")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM input_events").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM agent_memory_sources").fetchone()[0], 0)
+
     def test_only_applied_tool_receipt_is_checkpointed(self) -> None:
         result = self.store.checkpoint_tool_receipt(
             {
@@ -94,8 +128,119 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
 
         self.assertTrue(result["stored"])
         self.assertEqual(result["source"]["sourceRole"], "tool_receipt")
+        self.assertEqual(result["source"]["sourceKind"], "tool_receipt")
+        self.assertEqual(
+            (result["source"]["ownerKind"], result["source"]["ownerId"]),
+            ("shared", "wisdom-weasel-rag-ime"),
+        )
         listed = self.store.list_for_session(str(self.session["id"]))
         self.assertEqual([item["sourceId"] for item in listed], [result["source"]["sourceId"]])
+
+    def test_compaction_summary_is_role_owned_and_idempotent(self) -> None:
+        first = self.store.checkpoint_compaction(
+            session_id=str(self.session["id"]),
+            result={
+                "summary": "用户决定把桌面感知改为 Accessibility Tree，并保留截图兜底。",
+                "firstKeptEntryId": "pi-entry:user:9",
+                "tokensBefore": 12_000,
+                "estimatedTokensAfter": 2_400,
+            },
+            trigger="automatic",
+            created_at_ms=400,
+        )
+        duplicate = self.store.checkpoint_compaction(
+            session_id=str(self.session["id"]),
+            result={
+                "summary": "用户决定把桌面感知改为 Accessibility Tree，并保留截图兜底。",
+                "firstKeptEntryId": "pi-entry:user:9",
+                "tokensBefore": 12_000,
+                "estimatedTokensAfter": 2_400,
+            },
+            trigger="manual",
+            created_at_ms=500,
+        )
+
+        self.assertTrue(first["stored"])
+        self.assertEqual(duplicate["status"], "already_checkpointed")
+        source = first["source"]
+        self.assertEqual(source["sourceKind"], "session_compaction")
+        self.assertEqual(source["trustClass"], "session_summary")
+        self.assertEqual(
+            (source["ownerKind"], source["ownerId"]),
+            ("agent", self.session["roleId"]),
+        )
+        self.assertEqual(source["coverageEndEntryId"], "pi-entry:user:9")
+        self.assertTrue(source["metadata"]["coverageEndExclusive"])
+
+    def test_not_for_memory_is_reversible_and_audited(self) -> None:
+        checkpoint = self.store.checkpoint_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:noise",
+            turn_id="turn:noise",
+            text="嗯嗯那个这个测试一下",
+            created_at_ms=600,
+        )
+        source_id = str(checkpoint["source"]["sourceId"])
+
+        forgotten = self.store.set_disposition(
+            source_id,
+            disposition="not_for_memory",
+            reason_code="input_noise_filler",
+            actor_kind="rule",
+            run_id="curation:1",
+            created_at_ms=700,
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                """
+                INSERT INTO memory_curation_cursors(
+                    owner_kind, owner_id, project, lane,
+                    last_source_created_at_ms, last_source_id, next_due_at_ms,
+                    status, updated_at_ms
+                ) VALUES (
+                    'user', 'default', 'wisdom-weasel-rag-ime', 'daily',
+                    600, ?, 999999, 'idle', 700
+                )
+                """,
+                (source_id,),
+            )
+        restored = self.store.set_disposition(
+            source_id,
+            disposition="pending",
+            reason_code="user_restored",
+            actor_kind="rollback",
+            run_id="curation:rollback:1",
+            created_at_ms=800,
+        )
+
+        self.assertEqual(forgotten["source"]["disposition"], "not_for_memory")
+        self.assertEqual(restored["source"]["disposition"], "pending")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.execute(
+                """
+                SELECT last_source_created_at_ms, last_source_id, next_due_at_ms
+                FROM memory_curation_cursors
+                WHERE owner_kind = 'user' AND owner_id = 'default'
+                """
+            ).fetchone()
+            transitions = conn.execute(
+                """
+                SELECT previous_disposition, new_disposition, reason_code, actor_kind
+                FROM memory_source_disposition_events
+                WHERE source_id = ?
+                ORDER BY created_at_ms
+                """,
+                (source_id,),
+            ).fetchall()
+        self.assertEqual(cursor, (0, "", 0))
+        self.assertEqual(
+            transitions,
+            [
+                ("", "pending", "checkpoint_created", "system"),
+                ("pending", "not_for_memory", "input_noise_filler", "rule"),
+                ("not_for_memory", "pending", "user_restored", "rollback"),
+            ],
+        )
 
 
 if __name__ == "__main__":

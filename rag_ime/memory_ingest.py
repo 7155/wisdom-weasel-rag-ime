@@ -227,17 +227,27 @@ def upsert_memory_item(
     tags: tuple[str, ...],
     embedding_provider: EmbeddingProvider | None,
     tag_source: str = "legacy_auto",
+    owner_kind: str = "user",
+    owner_id: str = "default",
 ) -> int:
-    existing = conn.execute("SELECT id, created_at_ms FROM memory_items WHERE memory_id = ?", (memory_id,)).fetchone()
+    existing = conn.execute(
+        "SELECT id, created_at_ms, owner_kind, owner_id FROM memory_items WHERE memory_id = ?",
+        (memory_id,),
+    ).fetchone()
+    if existing is not None and (
+        str(existing["owner_kind"] or "user"),
+        str(existing["owner_id"] or "default"),
+    ) != (owner_kind, owner_id):
+        raise ValueError("memory item id is already owned by another scope")
     if existing is None:
         cur = conn.execute(
             """
             INSERT INTO memory_items(
                 memory_id, kind, text, normalized_text, summary, source_event_id,
                 project, app, confidence, quality_score, status, privacy_class,
-                created_at_ms, updated_at_ms, metadata_json
+                owner_kind, owner_id, created_at_ms, updated_at_ms, metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 memory_id,
@@ -252,6 +262,8 @@ def upsert_memory_item(
                 quality_score,
                 status,
                 privacy_class,
+                owner_kind,
+                owner_id,
                 created_at_ms,
                 updated_at_ms,
                 json.dumps(metadata, ensure_ascii=False, sort_keys=True),
@@ -265,7 +277,8 @@ def upsert_memory_item(
             UPDATE memory_items
             SET kind = ?, text = ?, normalized_text = ?, summary = ?, source_event_id = ?,
                 project = ?, app = ?, confidence = ?, quality_score = ?, status = ?,
-                privacy_class = ?, updated_at_ms = ?, metadata_json = ?
+                privacy_class = ?, owner_kind = ?, owner_id = ?,
+                updated_at_ms = ?, metadata_json = ?
             WHERE id = ?
             """,
             (
@@ -280,6 +293,8 @@ def upsert_memory_item(
                 quality_score,
                 status,
                 privacy_class,
+                owner_kind,
+                owner_id,
                 updated_at_ms,
                 json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                 memory_item_id,

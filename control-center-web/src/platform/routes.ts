@@ -550,8 +550,8 @@ export const CONTROL_ROUTES = {
   'memory.pages': {
     method: 'GET',
     path: '/api/memory/:kind',
-    params: { kind: ['books', 'atoms', 'tags', 'phrases', 'groups', 'negative'] },
-    query: ['limit', 'cursor', 'query', 'status'],
+    params: { kind: ['books', 'atoms', 'tags', 'phrases', 'evidence', 'groups', 'negative'] },
+    query: ['limit', 'cursor', 'query', 'status', 'ownerKind', 'ownerId'],
   },
   'memory.graph.get': {
     method: 'GET',
@@ -572,6 +572,12 @@ export const CONTROL_ROUTES = {
     path: '/api/memory/edit',
     body: ['kind', 'id', 'title', 'text', 'summary', 'note', 'description', 'tags', 'aliases', 'type', 'color', 'reason', 'active'],
     requiredBody: ['kind', 'id'],
+  },
+  'memory.source.disposition': {
+    method: 'POST',
+    path: '/api/memory/source/disposition',
+    body: ['sourceId', 'disposition'],
+    requiredBody: ['sourceId', 'disposition'],
   },
   'memory.book.archive.preview': {
     method: 'POST',

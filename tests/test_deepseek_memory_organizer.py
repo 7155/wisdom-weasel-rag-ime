@@ -10,10 +10,33 @@ from rag_ime.deepseek_config import load_deepseek_config
 from rag_ime.deepseek_memory_organizer import (
     DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION,
     DeepSeekMemoryOrganizer,
+    _owner_memory_model_bundle,
 )
 
 
 class DeepSeekMemoryOrganizerTests(unittest.TestCase):
+    def test_owner_bundle_samples_long_fragment_provenance_across_full_range(self) -> None:
+        projected = _owner_memory_model_bundle(
+            {
+                "inputs": [
+                    {
+                        "sourceRef": "S1",
+                        "sourceKind": "user_final",
+                        "trustClass": "user_claim",
+                        "createdAtMs": 1,
+                        "sourceEventIds": list(range(1, 5_001)),
+                        "text": "重建后的完整输入",
+                    }
+                ]
+            }
+        )
+
+        source_ids = projected["inputs"][0]["sourceEventIds"]
+        self.assertEqual(len(source_ids), 64)
+        self.assertEqual(source_ids[0], 1)
+        self.assertEqual(source_ids[-1], 5_000)
+        self.assertTrue(all(left < right for left, right in zip(source_ids, source_ids[1:])))
+
     def test_deepseek_config_reads_dedicated_env_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / "deepseek.env"
@@ -199,6 +222,91 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         request_payload = captured["payload"]
         self.assertIn(DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION, request_payload["messages"][1]["content"])
         self.assertIn("不直接写入正式记忆", DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION)
+
+    def test_owner_curator_requires_source_coverage_and_defines_not_for_memory_examples(self) -> None:
+        config = load_deepseek_config(
+            env={
+                "DEEPSEEK_API_KEY": "secret",
+                "RAG_IME_DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+                "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+            }
+        )
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                body = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "sourceDecisions": [
+                                            {
+                                                "sourceRef": "S1",
+                                                "disposition": "remember",
+                                                "reasonCode": "durable_constraint",
+                                                "confidence": 0.95,
+                                            }
+                                        ],
+                                        "memoryAtoms": [],
+                                        "phraseCandidates": [{"text": "不应写入词库"}],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                }
+                return json.dumps(body, ensure_ascii=False).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        payload = DeepSeekMemoryOrganizer(config, urlopen=fake_urlopen).curate_owner_memory(
+            bundle={
+                "inputs": [
+                    {
+                        "sourceRef": "S1",
+                        "sourceKind": "user_final",
+                        "trustClass": "user_claim",
+                        "createdAtMs": 1,
+                        "sourceEventIds": [11],
+                        "text": "不要截图",
+                    },
+                    {
+                        "sourceRef": "S2",
+                        "sourceKind": "user_final",
+                        "trustClass": "user_claim",
+                        "createdAtMs": 2,
+                        "sourceEventIds": [12],
+                        "text": "嗯嗯那个这个",
+                    },
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            owner_kind="user",
+            owner_id="default",
+        )
+
+        self.assertEqual(
+            [(item["sourceRef"], item["disposition"]) for item in payload["sourceDecisions"]],
+            [("S1", "remember"), ("S2", "needs_review")],
+        )
+        self.assertEqual(payload["phraseCandidates"], [])
+        request_payload = captured["payload"]
+        system_prompt = request_payload["messages"][0]["content"]
+        self.assertIn("not_for_memory", system_prompt)
+        self.assertIn("输入法或语音噪声", system_prompt)
+        self.assertIn("不要截图", system_prompt)
+        self.assertIn("不应请求助手逐轮输出", system_prompt)
 
     def test_memory_organizer_repairs_missing_phrase_pinyin_with_bounded_second_request(self) -> None:
         config = load_deepseek_config(

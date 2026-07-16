@@ -93,6 +93,25 @@ preferences, decisions, and requirements may supersede older memory without
 deleting its source. Temporary plans decay quickly, project state decays at a
 medium rate, and stable preferences decay slowly.
 
+Memory curation starts from an immutable evidence ledger rather than from the
+retrieval index. Eligible evidence is limited to final user input, explicit
+remember actions, applied tool receipts, and role-session compaction summaries.
+Generated side candidates, assistant turns, screenshots, fixtures, and model
+output are not memory sources. Once per day, each user, shared scope, or role is
+curated independently within its project. Deterministic noise rules run first;
+the configured organizer classifies the rest and can only create a review
+draft. Apply and rollback move every covered source together, including all
+low-level commits reconstructed into one Rime utterance.
+
+Forgetting is a reversible evidence disposition, not source deletion. Restoring
+rewinds the owner cursor so the evidence is classified again. Automatically
+excluded sensitive input remains non-restorable; create a separate, redacted
+explicit memory instead.
+
+The maintenance runner uses this owner-scoped path by default. The previous
+global compiler is retained only for compatibility and requires
+`RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE=1`.
+
 ### Personal Knowledge Base
 
 **Status: in development; local review workflow is implemented.**
@@ -228,6 +247,15 @@ Explicit workflows
   -> RagImeControl.app
   -> local evidence and optional configured remote provider
   -> reviewed result, draft, or explicit insertion
+
+Daily memory curation
+  -> immutable final-input / receipt / compaction evidence
+  -> owner + project cursor
+  -> deterministic noise filter
+  -> bounded organizer classification
+  -> review draft
+  -> apply or rollback
+  -> owner-scoped retrieval documents
 ```
 
 Squirrel is the only real input-method frontend in this repository. The
@@ -244,8 +272,9 @@ project does not claim a Linux, Fcitx5, IBus, or second InputMethodKit runtime.
 - Remote generation is limited to explicit workflows. Selected text or context
   leaves the Mac only after a user-configured action invokes that provider.
 - Raw typing history is not silently promoted into searchable memory. Memory
-  organization creates a validated draft that the user reviews, applies, or
-  rolls back.
+  evidence is classified daily, and semantic organization creates a validated
+  draft that the user reviews, applies, or rolls back. Evidence can be forgotten
+  and restored without deleting its audit trail.
 - Model weights, local databases, personal input history, API keys, build
   artifacts, and machine-local configuration must never be committed.
 

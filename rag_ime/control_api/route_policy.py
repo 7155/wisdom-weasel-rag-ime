@@ -109,6 +109,7 @@ class ControlPathId(str, Enum):
     MEMORY_GRAPH_GET = "memory.graph.get"
     MEMORY_ENTITY_GET = "memory.entity.get"
     MEMORY_EDIT = "memory.edit"
+    MEMORY_SOURCE_DISPOSITION = "memory.source.disposition"
     MEMORY_BOOK_ARCHIVE_PREVIEW = "memory.book.archive.preview"
     MEMORY_BOOK_ARCHIVE_APPLY = "memory.book.archive.apply"
     MEMORY_BOOK_ARCHIVE_ROLLBACK = "memory.book.archive.rollback"
@@ -471,7 +472,14 @@ _KNOWLEDGE_BASE = {"kbId"}
 _KNOWLEDGE_DOCUMENT = {"kbId", "fileId"}
 _KNOWLEDGE_ASSET = {"kbId", "fileId", "assetId"}
 _KNOWLEDGE_JOB = {"kbId", "jobId"}
-_PAGE_QUERY = {"limit", "cursor", "query", "status"}
+_PAGE_QUERY = {
+    "limit",
+    "cursor",
+    "query",
+    "status",
+    "ownerKind",
+    "ownerId",
+}
 _LAST_EVENT_QUERY = {"lastEventId"}
 
 
@@ -571,10 +579,11 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.PLANNING_TASK_EVENT_UNDO, ControlMethod.POST, "/api/planning/task-event/undo", "/control/v1/planning/task-event/undo", body={"eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.PLANNING_MUTATION_ROLLBACK, ControlMethod.POST, "/api/planning/mutation/rollback", "/control/v1/planning/mutation/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_SUMMARY, ControlMethod.GET, "/api/memory/summary", "/control/v1/memory/summary", scopes=[ControlScope.MEMORY_READ], remote_safe=True),
-        _route(ControlPathId.MEMORY_PAGES, ControlMethod.GET, "/api/memory/{kind}", "/control/v1/memory/{kind}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind"}, param_values={"kind": {"books", "atoms", "tags", "phrases", "groups", "negative"}}, query=_PAGE_QUERY),
+        _route(ControlPathId.MEMORY_PAGES, ControlMethod.GET, "/api/memory/{kind}", "/control/v1/memory/{kind}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind"}, param_values={"kind": {"books", "atoms", "tags", "phrases", "evidence", "groups", "negative"}}, query=_PAGE_QUERY),
         _route(ControlPathId.MEMORY_GRAPH_GET, ControlMethod.GET, "/api/memory/graph", "/control/v1/memory/graph", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"plane", "project", "status", "query", "focusId", "depth", "nodeLimit", "edgeLimit", "minWeight"}, required_query={"plane"}),
         _route(ControlPathId.MEMORY_ENTITY_GET, ControlMethod.GET, "/api/memory/entities/{kind}/{entityId}", "/control/v1/memory/entities/{kind}/{entityId}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind", "entityId"}, param_values={"kind": {"tag", "group", "book"}}, query={"project", "connectionsLimit", "connectionsCursor", "membersLimit", "membersCursor"}),
         _route(ControlPathId.MEMORY_EDIT, ControlMethod.POST, "/api/memory/edit", "/control/v1/memory/edit", body={"kind", "id", "title", "text", "summary", "note", "description", "tags", "aliases", "type", "color", "reason", "active"}, required_body={"kind", "id"}),
+        _route(ControlPathId.MEMORY_SOURCE_DISPOSITION, ControlMethod.POST, "/api/memory/source/disposition", "/control/v1/memory/source/disposition", body={"sourceId", "disposition"}, required_body={"sourceId", "disposition"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_PREVIEW, ControlMethod.POST, "/api/memory/book/archive/preview", "/control/v1/memory/book/archive/preview", body={"bookId", "archived", "reason", "expectedRuntimeRevision"}, required_body={"bookId", "archived", "expectedRuntimeRevision"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_APPLY, ControlMethod.POST, "/api/memory/book/archive/apply", "/control/v1/memory/book/archive/apply", body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}, required_body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_ROLLBACK, ControlMethod.POST, "/api/memory/book/archive/rollback", "/control/v1/memory/book/archive/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),

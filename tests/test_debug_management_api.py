@@ -28,6 +28,7 @@ from rag_ime.memory_book_compiler import (
     memory_book_plan_from_compile_output,
     store_memory_book_plan,
 )
+from rag_ime.management_service import page_request
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
 from rag_ime.predictor import OpenAICompatiblePredictionConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
@@ -1254,6 +1255,255 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         self.assertEqual(stale_status["pendingDraftCount"], 0)
         self.assertEqual(stale_status["runs"][0]["status"], "superseded")
+
+    def test_memory_catalog_filters_owner_scopes_and_reports_owner_labels(self) -> None:
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1000),
+                source="pi_agent_user",
+                committed_text="角色记忆归属测试",
+                privacy_disposition="allowed",
+                recent_context="",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        event_id = int(event_ref.split(":", 1)[1])
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            for role_id, atom_id, text in (
+                ("role-a", "atom:owner-catalog-a", "甲角色私有事实"),
+                ("role-b", "atom:owner-catalog-b", "乙角色私有事实"),
+            ):
+                apply_memory_book_plan(
+                    conn,
+                    memory_book_plan_from_compile_output(
+                        {
+                            "memoryAtoms": [
+                                {
+                                    "atomId": atom_id,
+                                    "canonicalText": text,
+                                    "sourceEventIds": [event_id],
+                                }
+                            ]
+                        },
+                        project="wisdom-weasel-rag-ime",
+                        provider="test",
+                        model="test",
+                        owner_kind="agent",
+                        owner_id=role_id,
+                        run_kind="daily_curation",
+                    ),
+                )
+
+        page = self.service.management.memory_page(
+            "atoms",
+            page_request(
+                {
+                    "limit": 20,
+                    "ownerKind": "agent",
+                    "ownerId": "role-a",
+                }
+            ),
+        )
+        summary = self.service.management.memory_summary()
+
+        self.assertEqual([item["id"] for item in page["items"]], ["atom:owner-catalog-a"])
+        self.assertEqual(page["items"][0]["ownerKind"], "agent")
+        self.assertEqual(page["items"][0]["ownerId"], "role-a")
+        owners = {
+            (item["ownerKind"], item["ownerId"])
+            for item in summary["owners"]
+        }
+        self.assertIn(("agent", "role-a"), owners)
+        self.assertIn(("agent", "role-b"), owners)
+
+    def test_memory_evidence_catalog_supports_audited_forget_and_restore(self) -> None:
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1000),
+                source="manual_commit",
+                committed_text="这条输入应该可以手动遗忘后恢复",
+                privacy_disposition="allowed",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        self.assertTrue(event_ref.startswith("event:"))
+        page = self.service.management.memory_page(
+            "evidence",
+            page_request(
+                {
+                    "limit": 20,
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                }
+            ),
+        )
+        summary = self.service.management.memory_summary()
+        source = page["items"][0]
+        source_id = str(source["id"])
+
+        forgotten = self.service.management.memory_source_disposition(
+            {
+                "sourceId": source_id,
+                "disposition": "not_for_memory",
+            }
+        )
+        restored = self.service.management.memory_source_disposition(
+            {
+                "sourceId": source_id,
+                "disposition": "pending",
+            }
+        )
+
+        self.assertGreaterEqual(summary["evidenceSourceCount"], 1)
+        self.assertEqual(source["status"], "pending")
+        self.assertEqual(forgotten["source"]["disposition"], "not_for_memory")
+        self.assertEqual(restored["source"]["disposition"], "pending")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            transitions = conn.execute(
+                """
+                SELECT new_disposition, reason_code, actor_kind
+                FROM memory_source_disposition_events
+                WHERE source_id = ?
+                ORDER BY created_at_ms, event_id
+                """,
+                (source_id,),
+            ).fetchall()
+        self.assertEqual(
+            [tuple(row) for row in transitions[-2:]],
+            [
+                ("not_for_memory", "user_forgotten", "user"),
+                ("pending", "user_restored", "user"),
+            ],
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                """
+                UPDATE agent_memory_sources
+                SET disposition = 'consolidated'
+                WHERE source_id = ?
+                """,
+                (source_id,),
+            )
+        with self.assertRaisesRegex(
+            ValueError,
+            "transition is not allowed",
+        ):
+            self.service.management.memory_source_disposition(
+                {
+                    "sourceId": source_id,
+                    "disposition": "not_for_memory",
+                }
+            )
+
+    def test_memory_evidence_catalog_never_echoes_sensitive_source_text(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1000),
+                source="manual_commit",
+                committed_text="临时 token=sk-abcdefghijk 不要显示",
+                privacy_disposition="allowed",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+
+        page = self.service.management.memory_page(
+            "evidence",
+            page_request({"limit": 20, "status": "not_for_memory"}),
+        )
+
+        self.assertEqual(len(page["items"]), 1)
+        self.assertTrue(page["items"][0]["sensitive"])
+        self.assertFalse(page["items"][0]["canRestore"])
+        self.assertEqual(page["items"][0]["text"], "")
+        self.assertNotIn("sk-abcdefghijk", page["items"][0]["title"])
+        with self.assertRaisesRegex(
+            ValueError,
+            "sensitive memory evidence cannot be restored",
+        ):
+            self.service.management.memory_source_disposition(
+                {
+                    "sourceId": page["items"][0]["id"],
+                    "disposition": "pending",
+                }
+            )
+
+    def test_agent_memory_run_review_and_apply_are_owner_scoped(self) -> None:
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1000),
+                source="pi_agent_user",
+                committed_text="甲角色的待审阅长期事实",
+                privacy_disposition="allowed",
+                recent_context="",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        event_id = int(event_ref.split(":", 1)[1])
+        plan = memory_book_plan_from_compile_output(
+            {
+                "memoryAtoms": [
+                    {
+                        "atomId": "atom:owner-review-a",
+                        "canonicalText": "甲角色的待审阅长期事实",
+                        "sourceEventIds": [event_id],
+                    }
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="test",
+            model="test",
+            owner_kind="agent",
+            owner_id="role-a",
+            run_kind="manual_curation",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            store_memory_book_plan(conn, plan)
+
+        with self.assertRaisesRegex(ValueError, "owner scope"):
+            self.service.agent_memory_maintenance_run(
+                {
+                    "runId": plan["runId"],
+                    "project": "wisdom-weasel-rag-ime",
+                    "visibleOwners": [
+                        {"ownerKind": "agent", "ownerId": "role-b"}
+                    ],
+                }
+            )
+        review = self.service.agent_memory_maintenance_run(
+            {
+                "runId": plan["runId"],
+                "project": "wisdom-weasel-rag-ime",
+                "visibleOwners": [
+                    {"ownerKind": "agent", "ownerId": "role-a"}
+                ],
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "approved role"):
+            self.service.knowledge_workbench_database_apply(
+                {
+                    "runId": plan["runId"],
+                    "confirm": "apply",
+                    "expectedOwnerKind": "agent",
+                    "expectedOwnerId": "role-b",
+                }
+            )
+        applied = self.service.knowledge_workbench_database_apply(
+            {
+                "runId": plan["runId"],
+                "confirm": "apply",
+                "expectedOwnerKind": "agent",
+                "expectedOwnerId": "role-a",
+            }
+        )
+
+        self.assertEqual(review["run"]["ownerKind"], "agent")
+        self.assertEqual(review["run"]["ownerId"], "role-a")
+        self.assertEqual(review["run"]["runKind"], "manual_curation")
+        self.assertTrue(applied["ok"])
 
     def test_knowledge_database_draft_requires_confirmation_and_supports_rollback(self) -> None:
         event_ref = self.core.record_event(

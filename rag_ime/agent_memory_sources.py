@@ -15,8 +15,41 @@ from .memory_ingest import looks_sensitive, sync_event_to_memory_v2
 from .text_utils import compact_whitespace
 
 
+_OWNER_KINDS = frozenset({"user", "shared", "agent", "session", "room"})
+_SOURCE_KINDS = frozenset(
+    {
+        "user_final",
+        "tool_receipt",
+        "session_compaction",
+        "session_digest",
+        "explicit_memory",
+    }
+)
+_TRUST_CLASSES = frozenset(
+    {
+        "user_claim",
+        "applied_receipt",
+        "session_summary",
+        "assistant_claim",
+        "explicit_command",
+    }
+)
+_DISPOSITIONS = frozenset(
+    {
+        "pending",
+        "remember",
+        "not_for_memory",
+        "needs_review",
+        "consolidated",
+        "expired",
+    }
+)
+_DISPOSITION_ACTORS = frozenset({"rule", "model", "user", "system", "rollback"})
+_CURATION_ELIGIBLE_DISPOSITIONS = frozenset({"pending", "remember", "needs_review"})
+
+
 class AgentMemorySourceStore:
-    """Checkpoint final Agent inputs without touching IME phrase frequency."""
+    """Immutable Agent evidence plus a reversible curation disposition."""
 
     def __init__(self, db_path: str | Path, *, project: str = "") -> None:
         self.db_path = Path(db_path)
@@ -54,6 +87,10 @@ class AgentMemorySourceStore:
             pi_entry_id=entry_id,
             turn_id=turn_id,
             source_role="user",
+            source_kind="user_final",
+            trust_class="user_claim",
+            owner_kind="user",
+            owner_id="default",
             source="pi_agent_user",
             canonical=canonical,
             tags=("agent-session", "final-user-message"),
@@ -84,9 +121,91 @@ class AgentMemorySourceStore:
             turn_id="",
             approval_id=approval_id,
             source_role="tool_receipt",
+            source_kind="tool_receipt",
+            trust_class="applied_receipt",
+            owner_kind="shared",
+            owner_id=self.project or "default",
             source="pi_agent_tool_receipt",
             canonical=summary,
             tags=("agent-session", "approved-tool-receipt"),
+            created_at_ms=created_at_ms,
+        )
+
+    def checkpoint_compaction(
+        self,
+        *,
+        session_id: str,
+        result: Mapping[str, object],
+        trigger: str,
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        compacted = _compaction_payload(result)
+        summary = compact_whitespace(str(compacted.get("summary") or ""))
+        if not summary:
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": True,
+                "stored": False,
+                "status": "skipped_missing_summary",
+            }
+        if looks_sensitive(summary):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": True,
+                "stored": False,
+                "status": "skipped_sensitive",
+            }
+        normalized_trigger = compact_whitespace(trigger).lower() or "automatic"
+        coverage_start = compact_whitespace(
+            str(
+                compacted.get("coverageStartEntryId")
+                or compacted.get("firstSummarizedEntryId")
+                or ""
+            )
+        )
+        coverage_end = compact_whitespace(
+            str(
+                compacted.get("coverageEndEntryId")
+                or compacted.get("lastSummarizedEntryId")
+                or compacted.get("firstKeptEntryId")
+                or ""
+            )
+        )
+        digest = hashlib.sha256(
+            f"{coverage_start}\0{coverage_end}\0{summary}".encode("utf-8")
+        ).hexdigest()
+        metadata = {
+            "trigger": normalized_trigger[:40],
+            "firstKeptEntryId": compact_whitespace(
+                str(compacted.get("firstKeptEntryId") or "")
+            ),
+            "tokensBefore": _optional_non_negative_int(compacted.get("tokensBefore")),
+            "estimatedTokensAfter": _optional_non_negative_int(
+                compacted.get("estimatedTokensAfter")
+            ),
+            "coverageEndExclusive": bool(
+                compacted.get("firstKeptEntryId")
+                and not compacted.get("lastSummarizedEntryId")
+                and not compacted.get("coverageEndEntryId")
+            ),
+        }
+        return self._checkpoint(
+            session_id=session_id,
+            pi_entry_id=f"compaction:{digest[:32]}",
+            turn_id="",
+            # source_role is the legacy two-value compatibility column. The
+            # authoritative classification is source_kind.
+            source_role="user",
+            source_kind="session_compaction",
+            trust_class="session_summary",
+            owner_kind="agent",
+            owner_id="",
+            source="pi_agent_compaction",
+            canonical=summary,
+            tags=("agent-session", "session-compaction"),
+            coverage_start_entry_id=coverage_start,
+            coverage_end_entry_id=coverage_end,
+            metadata=metadata,
             created_at_ms=created_at_ms,
         )
 
@@ -114,30 +233,210 @@ class AgentMemorySourceStore:
             raise KeyError(source_id)
         return _source_payload(row)
 
+    def list_for_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        disposition: str = "",
+        project: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        owner = _owner(owner_kind, owner_id)
+        normalized_disposition = compact_whitespace(disposition)
+        if normalized_disposition and normalized_disposition not in _DISPOSITIONS:
+            raise ValueError("unsupported memory source disposition")
+        clauses = ["s.owner_kind = ?", "s.owner_id = ?"]
+        values: list[object] = [owner[0], owner[1]]
+        normalized_project = (
+            self.project if project is None else compact_whitespace(project)
+        )
+        if normalized_project:
+            clauses.append("(e.project = ? OR e.project = '')")
+            values.append(normalized_project)
+        if normalized_disposition:
+            clauses.append("s.disposition = ?")
+            values.append(normalized_disposition)
+        values.append(max(1, min(int(limit), 500)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT s.* FROM agent_memory_sources AS s
+                JOIN input_events AS e ON e.id = s.input_event_id
+                WHERE {' AND '.join(clauses)}
+                ORDER BY s.created_at_ms DESC, s.source_id DESC
+                LIMIT ?
+                """,  # noqa: S608 - clauses are fixed above.
+                tuple(values),
+            ).fetchall()
+        return [_source_payload(row) for row in rows]
+
+    def set_disposition(
+        self,
+        source_id: str,
+        *,
+        disposition: str,
+        reason_code: str,
+        actor_kind: str,
+        run_id: str = "",
+        metadata: Mapping[str, object] | None = None,
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized_disposition = compact_whitespace(disposition)
+        normalized_actor = compact_whitespace(actor_kind)
+        normalized_reason = compact_whitespace(reason_code)[:120]
+        if normalized_disposition not in _DISPOSITIONS:
+            raise ValueError("unsupported memory source disposition")
+        if normalized_actor not in _DISPOSITION_ACTORS:
+            raise ValueError("unsupported memory disposition actor")
+        if not normalized_reason:
+            raise ValueError("memory disposition reason is required")
+        timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_memory_sources WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(source_id)
+            previous = str(row["disposition"])
+            if normalized_actor in {"user", "rollback"}:
+                _assert_source_curation_not_running(
+                    conn,
+                    row,
+                    timestamp=timestamp,
+                )
+            if previous == normalized_disposition and str(row["disposition_reason"]) == normalized_reason:
+                return {
+                    "schemaVersion": "rag-ime.agent-memory-disposition.v1",
+                    "ok": True,
+                    "changed": False,
+                    "source": _source_payload(row),
+                }
+            conn.execute(
+                """
+                UPDATE agent_memory_sources
+                SET disposition = ?, disposition_reason = ?,
+                    disposition_updated_at_ms = ?, processed_at_ms = ?,
+                    curation_run_id = ?
+                WHERE source_id = ?
+                """,
+                (
+                    normalized_disposition,
+                    normalized_reason,
+                    timestamp,
+                    timestamp,
+                    compact_whitespace(run_id),
+                    source_id,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_source_disposition_events(
+                    event_id, source_id, previous_disposition, new_disposition,
+                    reason_code, actor_kind, run_id, created_at_ms, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"memory-disposition:{uuid.uuid4()}",
+                    source_id,
+                    previous,
+                    normalized_disposition,
+                    normalized_reason,
+                    normalized_actor,
+                    compact_whitespace(run_id),
+                    timestamp,
+                    _json_object(metadata),
+                ),
+            )
+            updated = conn.execute(
+                "SELECT * FROM agent_memory_sources WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+            if normalized_actor in {"user", "rollback"}:
+                _invalidate_source_review_drafts(
+                    conn,
+                    source_id=source_id,
+                    timestamp=timestamp,
+                )
+                if normalized_disposition in _CURATION_ELIGIBLE_DISPOSITIONS:
+                    _rewind_curation_cursors_for_source(
+                        conn,
+                        source=updated,
+                        timestamp=timestamp,
+                    )
+        return {
+            "schemaVersion": "rag-ime.agent-memory-disposition.v1",
+            "ok": True,
+            "changed": True,
+            "source": _source_payload(updated),
+        }
+
     def _checkpoint(
         self,
         *,
         session_id: str,
         pi_entry_id: str,
         source_role: str,
+        source_kind: str,
+        trust_class: str,
+        owner_kind: str,
+        owner_id: str,
         source: str,
         canonical: str,
         tags: tuple[str, ...],
         turn_id: str = "",
         approval_id: str = "",
+        coverage_start_entry_id: str = "",
+        coverage_end_entry_id: str = "",
+        metadata: Mapping[str, object] | None = None,
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         if source_role not in {"user", "tool_receipt"}:
             raise ValueError("unsupported Agent memory source role")
+        if source_kind not in _SOURCE_KINDS:
+            raise ValueError("unsupported Agent memory source kind")
+        if trust_class not in _TRUST_CLASSES:
+            raise ValueError("unsupported Agent memory trust class")
+        normalized_owner_kind = compact_whitespace(owner_kind)
+        if normalized_owner_kind not in _OWNER_KINDS:
+            raise ValueError("unsupported Agent memory owner kind")
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         with self._connect() as conn:
+            session = conn.execute(
+                """
+                SELECT role_id, role_version, session_kind
+                FROM agent_sessions
+                WHERE id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if session is None:
+                raise KeyError(session_id)
+            if (
+                str(session["session_kind"] or "conversation") != "conversation"
+                and source_kind in {"user_final", "session_compaction"}
+            ):
+                return {
+                    "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                    "ok": True,
+                    "stored": False,
+                    "status": "skipped_transient_session",
+                }
+            role_id = compact_whitespace(str(session["role_id"] or ""))
+            role_version = compact_whitespace(str(session["role_version"] or ""))
+            normalized_owner_id = compact_whitespace(owner_id)
+            if normalized_owner_kind == "agent" and not normalized_owner_id:
+                normalized_owner_id = role_id
+            if not normalized_owner_id:
+                normalized_owner_id = "default"
             existing = conn.execute(
                 """
                 SELECT * FROM agent_memory_sources
-                WHERE session_id = ? AND pi_entry_id = ? AND source_role = ? AND source_revision = 1
+                WHERE session_id = ? AND pi_entry_id = ? AND source_kind = ? AND source_revision = 1
                 """,
-                (session_id, pi_entry_id, source_role),
+                (session_id, pi_entry_id, source_kind),
             ).fetchone()
             if existing is not None:
                 payload = _source_payload(existing)
@@ -187,14 +486,27 @@ class AgentMemorySourceStore:
                 context_group_level="session",
                 embedding_provider=None,
             )
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET owner_kind = ?, owner_id = ?
+                WHERE source_event_id = ?
+                """,
+                (normalized_owner_kind, normalized_owner_id, event_id),
+            )
             source_id = f"agent-memory:{uuid.uuid4()}"
             conn.execute(
                 """
                 INSERT INTO agent_memory_sources(
                     source_id, session_id, pi_entry_id, input_event_id, source_role,
                     source_revision, canonical_text_sha256, status, turn_id,
-                    approval_id, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, 1, ?, 'active', ?, ?, ?)
+                    approval_id, created_at_ms, owner_kind, owner_id, role_id,
+                    role_version, source_kind, trust_class, disposition,
+                    coverage_start_entry_id, coverage_end_entry_id, metadata_json
+                ) VALUES (
+                    ?, ?, ?, ?, ?, 1, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    'pending', ?, ?, ?
+                )
                 """,
                 (
                     source_id,
@@ -206,7 +518,25 @@ class AgentMemorySourceStore:
                     compact_whitespace(turn_id),
                     compact_whitespace(approval_id),
                     timestamp,
+                    normalized_owner_kind,
+                    normalized_owner_id,
+                    role_id,
+                    role_version,
+                    source_kind,
+                    trust_class,
+                    compact_whitespace(coverage_start_entry_id),
+                    compact_whitespace(coverage_end_entry_id),
+                    _json_object(metadata),
                 ),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_source_disposition_events(
+                    event_id, source_id, previous_disposition, new_disposition,
+                    reason_code, actor_kind, created_at_ms, metadata_json
+                ) VALUES (?, ?, '', 'pending', 'checkpoint_created', 'system', ?, '{}')
+                """,
+                (f"memory-disposition:{uuid.uuid4()}", source_id, timestamp),
             )
             row = conn.execute(
                 "SELECT * FROM agent_memory_sources WHERE source_id = ?",
@@ -236,6 +566,206 @@ class AgentMemorySourceStore:
             conn.close()
 
 
+def _assert_source_curation_not_running(
+    conn: sqlite3.Connection,
+    source: sqlite3.Row,
+    *,
+    timestamp: int,
+) -> None:
+    event = conn.execute(
+        "SELECT project FROM input_events WHERE id = ?",
+        (int(source["input_event_id"]),),
+    ).fetchone()
+    event_project = compact_whitespace(
+        str(event["project"] or "") if event is not None else ""
+    )
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM memory_curation_cursors
+        WHERE owner_kind = ? AND owner_id = ? AND lane = 'daily'
+          AND status = 'running'
+          AND updated_at_ms > ?
+          AND (project = '' OR ? = '' OR project = ?)
+        LIMIT 1
+        """,
+        (
+            str(source["owner_kind"]),
+            str(source["owner_id"]),
+            max(0, timestamp - 60 * 60 * 1000),
+            event_project,
+            event_project,
+        ),
+    ).fetchone()
+    if row is not None:
+        raise ValueError("memory source curation is currently running")
+
+
+def _invalidate_source_review_drafts(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    timestamp: int,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT run.run_id
+        FROM memory_cleanup_runs AS run
+        JOIN json_each(
+            CASE
+                WHEN json_valid(run.metadata_json) THEN run.metadata_json
+                ELSE '{}'
+            END,
+            '$.sourceIds'
+        ) AS source
+        WHERE run.status = 'draft'
+          AND run.run_kind IN ('daily_curation', 'manual_curation')
+          AND CAST(source.value AS TEXT) = ?
+        """,
+        (source_id,),
+    ).fetchall()
+    run_ids = [str(row["run_id"]) for row in rows]
+    if not run_ids:
+        return
+    placeholders = ",".join("?" for _ in run_ids)
+    conn.execute(
+        f"""
+        UPDATE memory_cleanup_runs
+        SET status = 'superseded'
+        WHERE run_id IN ({placeholders})
+        """,  # noqa: S608 - placeholders contain no user-controlled SQL.
+        tuple(run_ids),
+    )
+    conn.execute(
+        f"""
+        UPDATE memory_curation_cursors
+        SET status = 'idle', next_due_at_ms = 0, last_error = '',
+            updated_at_ms = ?
+        WHERE last_run_id IN ({placeholders})
+        """,  # noqa: S608 - placeholders contain no user-controlled SQL.
+        (timestamp, *run_ids),
+    )
+
+
+def _rewind_curation_cursors_for_source(
+    conn: sqlite3.Connection,
+    *,
+    source: sqlite3.Row,
+    timestamp: int,
+) -> None:
+    event = conn.execute(
+        "SELECT project FROM input_events WHERE id = ?",
+        (int(source["input_event_id"]),),
+    ).fetchone()
+    event_project = compact_whitespace(
+        str(event["project"] or "") if event is not None else ""
+    )
+    source_position = (
+        int(source["created_at_ms"] or 0),
+        str(source["source_id"]),
+    )
+    cursors = conn.execute(
+        """
+        SELECT *
+        FROM memory_curation_cursors
+        WHERE owner_kind = ? AND owner_id = ? AND lane = 'daily'
+        """,
+        (str(source["owner_kind"]), str(source["owner_id"])),
+    ).fetchall()
+    for cursor in cursors:
+        cursor_project = compact_whitespace(str(cursor["project"] or ""))
+        if (
+            cursor_project
+            and event_project
+            and cursor_project != event_project
+        ):
+            continue
+        cursor_position = (
+            int(cursor["last_source_created_at_ms"] or 0),
+            str(cursor["last_source_id"] or ""),
+        )
+        active_draft = (
+            str(cursor["status"] or "") == "waiting_review"
+            and bool(cursor["last_run_id"])
+            and conn.execute(
+                """
+                SELECT 1
+                FROM memory_cleanup_runs
+                WHERE run_id = ? AND status = 'draft'
+                """,
+                (str(cursor["last_run_id"]),),
+            ).fetchone()
+            is not None
+        )
+        next_position = cursor_position
+        if cursor_position >= source_position:
+            placeholders = ",".join(
+                "?" for _ in _CURATION_ELIGIBLE_DISPOSITIONS
+            )
+            previous = conn.execute(
+                f"""
+                SELECT candidate.created_at_ms, candidate.source_id
+                FROM agent_memory_sources AS candidate
+                JOIN input_events AS candidate_event
+                  ON candidate_event.id = candidate.input_event_id
+                WHERE candidate.owner_kind = ? AND candidate.owner_id = ?
+                  AND candidate.status = 'active'
+                  AND candidate.disposition IN ({placeholders})
+                  AND (
+                      ? = ''
+                      OR candidate_event.project = ?
+                      OR candidate_event.project = ''
+                  )
+                  AND (
+                      candidate.created_at_ms < ?
+                      OR (
+                          candidate.created_at_ms = ?
+                          AND candidate.source_id < ?
+                      )
+                  )
+                ORDER BY candidate.created_at_ms DESC, candidate.source_id DESC
+                LIMIT 1
+                """,
+                (
+                    str(source["owner_kind"]),
+                    str(source["owner_id"]),
+                    *_CURATION_ELIGIBLE_DISPOSITIONS,
+                    cursor_project,
+                    cursor_project,
+                    source_position[0],
+                    source_position[0],
+                    source_position[1],
+                ),
+            ).fetchone()
+            next_position = (
+                (
+                    int(previous["created_at_ms"] or 0),
+                    str(previous["source_id"] or ""),
+                )
+                if previous is not None
+                else (0, "")
+            )
+        conn.execute(
+            """
+            UPDATE memory_curation_cursors
+            SET last_source_created_at_ms = ?, last_source_id = ?,
+                next_due_at_ms = 0, status = ?, last_error = '',
+                updated_at_ms = ?
+            WHERE owner_kind = ? AND owner_id = ? AND project = ?
+              AND lane = 'daily'
+            """,
+            (
+                next_position[0],
+                next_position[1],
+                "waiting_review" if active_draft else "idle",
+                timestamp,
+                str(source["owner_kind"]),
+                str(source["owner_id"]),
+                cursor_project,
+            ),
+        )
+
+
 def _source_payload(row: sqlite3.Row) -> dict[str, object]:
     payload = {
         "schemaVersion": "rag-ime.agent-memory-source.v1",
@@ -247,6 +777,27 @@ def _source_payload(row: sqlite3.Row) -> dict[str, object]:
         "sourceRevision": int(row["source_revision"]),
         "canonicalTextSha256": str(row["canonical_text_sha256"]),
         "status": str(row["status"]),
+        "ownerKind": str(row["owner_kind"]),
+        "ownerId": str(row["owner_id"]),
+        "roleId": str(row["role_id"]),
+        "roleVersion": str(row["role_version"]),
+        "sourceKind": str(row["source_kind"]),
+        "trustClass": str(row["trust_class"]),
+        "disposition": str(row["disposition"]),
+        "dispositionReason": str(row["disposition_reason"]),
+        "dispositionUpdatedAtMs": (
+            int(row["disposition_updated_at_ms"])
+            if row["disposition_updated_at_ms"] is not None
+            else None
+        ),
+        "processedAtMs": (
+            int(row["processed_at_ms"]) if row["processed_at_ms"] is not None else None
+        ),
+        "curationRunId": str(row["curation_run_id"]),
+        "coverageStartEntryId": str(row["coverage_start_entry_id"]),
+        "coverageEndEntryId": str(row["coverage_end_entry_id"]),
+        "expiresAtMs": int(row["expires_at_ms"]) if row["expires_at_ms"] is not None else None,
+        "metadata": _loaded_json_object(row["metadata_json"]),
         "createdAtMs": int(row["created_at_ms"]),
         "supersededAtMs": (
             int(row["superseded_at_ms"]) if row["superseded_at_ms"] is not None else None
@@ -258,3 +809,81 @@ def _source_payload(row: sqlite3.Row) -> dict[str, object]:
 
 def _json_tags(tags: tuple[str, ...]) -> str:
     return json.dumps(list(tags), ensure_ascii=False, separators=(",", ":"))
+
+
+def _owner(owner_kind: object, owner_id: object) -> tuple[str, str]:
+    kind = compact_whitespace(str(owner_kind or ""))
+    identity = compact_whitespace(str(owner_id or ""))
+    if kind not in _OWNER_KINDS:
+        raise ValueError("unsupported memory owner kind")
+    if not identity:
+        raise ValueError("memory owner id must not be empty")
+    return kind, identity
+
+
+def _json_object(value: Mapping[str, object] | None) -> str:
+    return json.dumps(
+        _json_safe(dict(value or {})),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _loaded_json_object(value: object) -> dict[str, object]:
+    try:
+        payload = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _json_safe(value: object, *, depth: int = 0) -> object:
+    if depth > 4:
+        return str(value)[:500]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value if not isinstance(value, str) else value[:2000]
+    if isinstance(value, Mapping):
+        return {
+            str(key)[:120]: _json_safe(item, depth=depth + 1)
+            for key, item in list(value.items())[:80]
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item, depth=depth + 1) for item in value[:80]]
+    return str(value)[:500]
+
+
+def _compaction_payload(result: Mapping[str, object]) -> dict[str, object]:
+    current: Mapping[str, object] = result
+    for key in ("result", "data", "compaction"):
+        nested = current.get(key)
+        if isinstance(nested, Mapping) and not compact_whitespace(str(current.get("summary") or "")):
+            current = nested
+    payload = dict(current)
+    details = current.get("details")
+    if isinstance(details, Mapping):
+        for key in (
+            "summary",
+            "firstKeptEntryId",
+            "firstSummarizedEntryId",
+            "lastSummarizedEntryId",
+            "coverageStartEntryId",
+            "coverageEndEntryId",
+            "tokensBefore",
+            "estimatedTokensAfter",
+        ):
+            current_value = payload.get(key)
+            detail_value = details.get(key)
+            if (current_value is None or current_value == "") and (
+                detail_value is not None and detail_value != ""
+            ):
+                payload[key] = detail_value
+    return payload
+
+
+def _optional_non_negative_int(value: object) -> int | None:
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return max(0, parsed)

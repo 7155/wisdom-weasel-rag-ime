@@ -102,6 +102,8 @@ from .memory_generator import (
 )
 from .models import MemoryAction
 from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
+from .memory_ownership import normalize_memory_owner, resolve_visible_memory_owners
+from .owner_memory_curation import OwnerMemoryCurator, owner_memory_curation_status
 from .payloads import action_response_payload, suggestions_response_payload
 from .pi_provider_auth import PiProviderAuthError, PiProviderAuthService
 from .pi_runtime import PiRuntimeConfig
@@ -2165,6 +2167,7 @@ class DebugImeService:
                 "requiredConfirm": "apply",
             }
         with self.core._connect() as conn:  # type: ignore[attr-defined]
+            _require_expected_memory_run_owner(conn, run_id=run_id, payload=payload)
             run = apply_stored_memory_book_run(conn, run_id=run_id)
             retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
         self._clear_rime_cache()
@@ -2369,6 +2372,7 @@ class DebugImeService:
                 "requiredConfirm": "rollback",
             }
         with self.core._connect() as conn:  # type: ignore[attr-defined]
+            _require_expected_memory_run_owner(conn, run_id=run_id, payload=payload)
             run = rollback_memory_book_run(conn, run_id=run_id)
             retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
         self._clear_rime_cache()
@@ -2759,6 +2763,95 @@ class DebugImeService:
         instruction = compact_whitespace(_string(payload.get("instruction")))[:800] or (
             "根据新增最终消息和已验证工具回执增量整理长期记忆；只生成可审阅草案，不自动应用。"
         )
+        requested_owner_kind = _string(payload.get("ownerKind"))
+        requested_owner_id = _string(payload.get("ownerId"))
+        if requested_owner_kind or requested_owner_id:
+            owner_kind, owner_id = normalize_memory_owner(
+                requested_owner_kind,
+                requested_owner_id,
+            )
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                return {
+                    "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+                    "ok": False,
+                    "error": "local SQLite core required",
+                }
+            project = _string(payload.get("project")) or self.config.project
+            config = load_deepseek_config()
+            curator = OwnerMemoryCurator(
+                self.core.db_path,
+                organizer=DeepSeekMemoryOrganizer(config),
+                project=project,
+            )
+            curator.initialize()
+            report = curator.run_due(
+                manual=True,
+                owner_kind=owner_kind,
+                owner_id=owner_id,
+                instruction=instruction,
+            )
+            scopes = list(
+                dict(report.get("status") or {}).get("scopes") or []
+            )
+            scope = next(
+                (
+                    dict(item)
+                    for item in scopes
+                    if isinstance(item, dict)
+                    and _string(item.get("ownerKind")) == owner_kind
+                    and _string(item.get("ownerId")) == owner_id
+                ),
+                {},
+            )
+            results = [
+                dict(item)
+                for item in report.get("results") or []
+                if isinstance(item, dict)
+            ]
+            result = next(
+                (
+                    item
+                    for item in results
+                    if _string(item.get("ownerKind")) == owner_kind
+                    and _string(item.get("ownerId")) == owner_id
+                ),
+                {},
+            )
+            run_id = _string(result.get("runId")) or _string(scope.get("lastRunId"))
+            stored_run: dict[str, object] = {}
+            if run_id:
+                with self.core._connect() as conn:  # type: ignore[attr-defined]
+                    stored_run = memory_book_run_payload(conn, run_id=run_id)
+            stored_draft = _string(stored_run.get("status")) == "draft"
+            return {
+                "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+                "ok": bool(report.get("ok")),
+                "dryRun": True,
+                "applySupported": True,
+                "applyRequiresReview": True,
+                "storedDraft": stored_draft,
+                "reusedDraft": bool(
+                    result.get("reason") == "draft_pending_review"
+                    or (
+                        result.get("skipped") is True
+                        and _string(scope.get("dueReason")) == "draft_pending_review"
+                    )
+                ),
+                "source": {
+                    "ownerKind": owner_kind,
+                    "ownerId": owner_id,
+                    "eventCount": int(result.get("sourceCount") or 0),
+                    "pendingSourceCount": int(scope.get("pendingSourceCount") or 0),
+                    "modelSourceCount": int(result.get("modelSourceCount") or 0),
+                },
+                "plan": {},
+                "validation": {
+                    "ok": bool(report.get("ok")),
+                    "errors": [] if report.get("ok") else [result.get("error") or "curation_failed"],
+                },
+                "storedRun": stored_run,
+                "curation": report,
+            }
         request = KnowledgeWorkbenchRequest(
             question=instruction,
             mode="database_organize",
@@ -2779,10 +2872,20 @@ class DebugImeService:
         if not run_id:
             raise ValueError("runId is required")
         requested_project = _string(payload.get("project")) or self.config.project
+        visible_owners = _memory_visible_owners_from_payload(
+            payload,
+            project=requested_project,
+        )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             run = memory_book_run_payload(conn, run_id=run_id)
             if not run.get("provider"):
                 raise ValueError(f"memory book run not found: {run_id}")
+            run_owner = (
+                _string(run.get("ownerKind")),
+                _string(run.get("ownerId")),
+            )
+            if visible_owners is not None and run_owner not in visible_owners:
+                raise ValueError("memory book run is outside the current owner scope")
             metadata = dict(run.get("metadata") or {})
             project = _string(metadata.get("project"))
             if project != requested_project:
@@ -2857,6 +2960,9 @@ class DebugImeService:
                 "summary": _string(run.get("summary"))[:240],
                 "provider": _string(run.get("provider")),
                 "model": _string(run.get("model")),
+                "ownerKind": _string(run.get("ownerKind")),
+                "ownerId": _string(run.get("ownerId")),
+                "runKind": _string(run.get("runKind")),
                 "bundleHash": _string(metadata.get("bundleHash")),
                 "sourceCursor": dict(metadata.get("sourceCursor") or {}),
                 "diffCount": len(diffs),
@@ -2877,6 +2983,14 @@ class DebugImeService:
             }
         project = _string(payload.get("project")) or self.config.project
         limit = _bounded_int(payload.get("limit"), default=8, minimum=1, maximum=30)
+        requested_owner_kind = _string(payload.get("ownerKind"))
+        requested_owner_id = _string(payload.get("ownerId"))
+        owner_filter: tuple[str, str] | None = None
+        if requested_owner_kind or requested_owner_id:
+            owner_filter = normalize_memory_owner(
+                requested_owner_kind,
+                requested_owner_id,
+            )
         current_ms = int(time.time() * 1000)
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             last_event_row = conn.execute(
@@ -2895,15 +3009,29 @@ class DebugImeService:
                 idle_ms=idle_ms,
                 current_ms=current_ms,
             )
+            owner_curation = owner_memory_curation_status(
+                conn,
+                project=project,
+                current_ms=current_ms,
+                owner_kind="" if owner_filter is None else owner_filter[0],
+                owner_id="" if owner_filter is None else owner_filter[1],
+            )
             rows = conn.execute(
                 """
                 SELECT r.run_id, r.created_at_ms, r.status, r.summary, r.metadata_json,
+                       r.owner_kind, r.owner_id, r.run_kind,
                        (SELECT COUNT(*) FROM memory_cleanup_diffs d WHERE d.run_id = r.run_id) AS diff_count
                 FROM memory_cleanup_runs r
                 WHERE r.run_id LIKE 'memory_book_%'
+                  AND (? = '' OR (r.owner_kind = ? AND r.owner_id = ?))
                 ORDER BY r.created_at_ms DESC, r.id DESC
                 LIMIT 100
-                """
+                """,
+                (
+                    "" if owner_filter is None else owner_filter[0],
+                    "" if owner_filter is None else owner_filter[0],
+                    "" if owner_filter is None else owner_filter[1],
+                ),
             ).fetchall()
         runs: list[dict[str, object]] = []
         for row in rows:
@@ -2923,6 +3051,7 @@ class DebugImeService:
                 to_event_id = 0
             if (
                 run_status == "draft"
+                and compact_whitespace(str(metadata.get("runKind") or "legacy")) == "legacy"
                 and to_event_id > 0
                 and to_event_id <= int(compile_state.get("lastCompiledEventId") or 0)
             ):
@@ -2936,6 +3065,9 @@ class DebugImeService:
                     "diffCount": int(row["diff_count"] or 0),
                     "bundleHash": str(metadata.get("bundleHash") or ""),
                     "sourceCursor": source_cursor,
+                    "ownerKind": str(row["owner_kind"] or ""),
+                    "ownerId": str(row["owner_id"] or ""),
+                    "runKind": str(row["run_kind"] or ""),
                 }
             )
             if len(runs) >= limit:
@@ -2946,12 +3078,19 @@ class DebugImeService:
             "policy": "review",
             "autoApply": False,
             "scheduledDraftOnly": True,
-            "due": due,
-            "dueReason": reason,
+            # The owner-scoped evidence curator is the authoritative scheduled
+            # lane. Legacy compile state remains diagnostic only.
+            "due": bool(owner_curation.get("due")),
+            "dueReason": (
+                "owner_daily"
+                if owner_curation.get("due")
+                else "not_due"
+            ),
             "idleMs": idle_ms,
             "compileState": compile_state,
             "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
             "runs": runs,
+            "ownerCuration": owner_curation,
         }
         validate_contract(response, "agent-memory-maintenance-status.v1.json")
         return response
@@ -5744,6 +5883,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             "/api/memory/atoms",
             "/api/memory/tags",
             "/api/memory/phrases",
+            "/api/memory/evidence",
             "/api/memory/groups",
             "/api/memory/negative",
         }:
@@ -5758,6 +5898,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                             "cursor": _query_first(query, "cursor"),
                             "query": _query_first(query, "query"),
                             "status": _query_first(query, "status"),
+                            "ownerKind": _query_first(query, "ownerKind"),
+                            "ownerId": _query_first(query, "ownerId"),
                         }
                     ),
                 ),
@@ -6369,6 +6511,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
             elif path == "/api/memory/edit":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_edit(payload))
+            elif path == "/api/memory/source/disposition":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.memory_source_disposition(payload),
+                )
             elif path == "/api/memory/book/archive-status":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
             elif path == "/api/memory/book/archive/preview":
@@ -7462,6 +7609,49 @@ def _cleanup_diff_payload_for_debug(conn, *, diff_id: int) -> dict[str, object]:
 
 def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _memory_visible_owners_from_payload(
+    payload: Mapping[str, object],
+    *,
+    project: str,
+) -> tuple[tuple[str, str], ...] | None:
+    if "visibleOwners" not in payload:
+        return None
+    raw = payload.get("visibleOwners")
+    values: list[tuple[str, str]] = []
+    for item in raw if isinstance(raw, (list, tuple)) else []:
+        if isinstance(item, Mapping):
+            values.append(
+                (
+                    _string(item.get("ownerKind")),
+                    _string(item.get("ownerId")),
+                )
+            )
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            values.append((_string(item[0]), _string(item[1])))
+    if not values:
+        return ()
+    return resolve_visible_memory_owners(values, project=project)
+
+
+def _require_expected_memory_run_owner(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    payload: Mapping[str, object],
+) -> None:
+    expected_kind = _string(payload.get("expectedOwnerKind"))
+    expected_id = _string(payload.get("expectedOwnerId"))
+    if not expected_kind and not expected_id:
+        return
+    expected = normalize_memory_owner(expected_kind, expected_id)
+    run = memory_book_run_payload(conn, run_id=run_id)
+    if not run.get("provider"):
+        raise ValueError(f"memory book run not found: {run_id}")
+    actual = (_string(run.get("ownerKind")), _string(run.get("ownerId")))
+    if actual != expected:
+        raise ValueError("memory book run owner does not match the approved role")
 
 
 def _nested_agent_configuration_value(

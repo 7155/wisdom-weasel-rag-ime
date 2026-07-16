@@ -17,6 +17,7 @@ from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_driver import (
     AgentRuntimeDriver,
     AgentRuntimeError,
+    CompactionObserver,
     RuntimeDriverContext,
     RuntimeDriverFactory,
 )
@@ -819,6 +820,7 @@ class AgentDelegationCoordinator:
         runtime_factory: Callable[..., PiRuntimeManager] | None = None,
         runtime_driver_factory: RuntimeDriverFactory | None = None,
         tool_gateway_token: str = "",
+        compaction_observer: CompactionObserver | None = None,
         artifact_root: str | Path | None = None,
         cancellation_grace_ms: int = _DEFAULT_CANCELLATION_GRACE_MS,
         subagent_session_retention_ms: int | None = None,
@@ -838,6 +840,7 @@ class AgentDelegationCoordinator:
         self._tool_gateway_token = str(
             tool_gateway_token or runtime_config.tool_gateway_token
         )
+        self._compaction_observer = compaction_observer
         self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
         self._subagent_session_retention_ms = max(
             0,
@@ -1324,6 +1327,7 @@ class AgentDelegationCoordinator:
                     events=self.events,
                     media_resolver=self.media_resolver,
                     tool_gateway_token=self._tool_gateway_token,
+                    compaction_observer=self._compaction_observer,
                 ),
                 purpose="delegated",
                 session_context_provider=lambda _session: context,

@@ -29,6 +29,7 @@ from .memory_cleanup import (
     rollback_cleanup_run,
 )
 from .memory_dedup import select_diverse
+from .memory_evidence_ledger import checkpoint_input_event_evidence
 from .memory_ingest import sync_event_to_memory_v2
 from .memory_models import CandidateFeedbackV2, CleanupRunPlan, ImeQueryContext, MemoryCandidateV2
 from .memory_optimizer_models import ContextFrame, OptimizerResult, RawRetrievalHit
@@ -211,6 +212,12 @@ class LocalSqliteCoreClient:
                     "phrase_stats",
                     "phrase_project_stats",
                     "phrase_app_stats",
+                    "memory_source_disposition_events",
+                    "agent_memory_sources",
+                    "memory_curation_cursors",
+                    "memory_source_event_links",
+                    "memory_source_generations",
+                    "memory_graph_source_dirty",
                 )
             )
         )
@@ -336,6 +343,26 @@ class LocalSqliteCoreClient:
                     context_group_level=event.context_group_level,
                     embedding_provider=self.embedding_provider,
                 )
+            # The immutable evidence ledger is independent of the optional
+            # derived-memory projection. Its backfill can repair bookkeeping,
+            # so no ledger defect may reject a real foreground commit.
+            conn.execute("SAVEPOINT input_memory_evidence")
+            try:
+                checkpoint_input_event_evidence(
+                    conn,
+                    event_id=event_id,
+                    created_at_ms=created_at,
+                    source=event.source,
+                    committed_text=text,
+                    project=event.project,
+                    app=event.app,
+                    provider_name=event.provider_name,
+                    tags=tuple(event.tags),
+                )
+            except Exception:
+                conn.execute("ROLLBACK TO input_memory_evidence")
+            finally:
+                conn.execute("RELEASE input_memory_evidence")
             # Explicit phrases such as "完成了模型优化" may close an
             # unambiguous open task. The detector returns before touching SQL
             # for ordinary input, so it does not add work to the hot path.

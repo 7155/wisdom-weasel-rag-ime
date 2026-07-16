@@ -85,13 +85,13 @@ def build_memory_book_source_bundle(
     cutoff_ms = now_ms() - max(1, int(since_days)) * 24 * 60 * 60 * 1000
     rows = conn.execute(
         """
-        SELECT id, created_at_ms, source, committed_text, recent_context, app, project, tags_json,
-               context_group_id, context_group_level
-        FROM input_events
-        WHERE id > ?
-          AND created_at_ms >= ?
-          AND (? = '' OR project = ? OR project = '')
-        ORDER BY id ASC
+        SELECT e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
+               e.app, e.project, e.tags_json, e.context_group_id, e.context_group_level
+        FROM input_events AS e
+        WHERE e.id > ?
+          AND e.created_at_ms >= ?
+          AND (? = '' OR e.project = ? OR e.project = '')
+        ORDER BY e.id ASC
         LIMIT ?
         """,
         (cursor, cutoff_ms, project, project, max(1, int(limit))),
@@ -155,7 +155,10 @@ def build_memory_book_source_bundle(
     max_event_id = max(raw_event_ids, default=cursor)
     pending_count = int(
         conn.execute(
-            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            """
+            SELECT COUNT(*) FROM input_events AS e
+            WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
+            """,
             (cursor, project, project),
         ).fetchone()[0]
     )
@@ -206,7 +209,7 @@ def _reconstruct_memory_source_events(
     def flush_fragments() -> None:
         if not fragment_run:
             return
-        result.append(_collapse_rime_fragment_run(fragment_run))
+        result.append(collapse_rime_fragment_run(fragment_run))
         fragment_run.clear()
 
     for event in raw_events:
@@ -215,7 +218,7 @@ def _reconstruct_memory_source_events(
             excluded_counts[source] = excluded_counts.get(source, 0) + 1
             continue
         if source == _RIME_FRAGMENT_SOURCE:
-            if fragment_run and not _rime_fragments_belong_together(fragment_run[-1], event):
+            if fragment_run and not rime_fragments_belong_together(fragment_run[-1], event):
                 flush_fragments()
             fragment_run.append(event)
             continue
@@ -240,7 +243,10 @@ def _reconstruct_memory_source_events(
     }
 
 
-def _rime_fragments_belong_together(previous: dict[str, object], current: dict[str, object]) -> bool:
+def rime_fragments_belong_together(
+    previous: dict[str, object],
+    current: dict[str, object],
+) -> bool:
     if compact_whitespace(str(previous.get("app") or "")) != compact_whitespace(str(current.get("app") or "")):
         return False
     if compact_whitespace(str(previous.get("contextGroupId") or "")) != compact_whitespace(
@@ -265,17 +271,37 @@ def _rime_fragments_belong_together(previous: dict[str, object], current: dict[s
     return False
 
 
-def _collapse_rime_fragment_run(events: list[dict[str, object]]) -> dict[str, object]:
+def collapse_rime_fragment_run(events: list[dict[str, object]]) -> dict[str, object]:
     source_event_ids = [
         event_id
         for event in events
         for event_id in _positive_ints(event.get("sourceEventIds") or [event.get("eventId")])
     ]
     source_event_ids = list(dict.fromkeys(source_event_ids))
-    committed = compact_whitespace("".join(str(item.get("text") or "") for item in events))
-    contexts = [compact_whitespace(str(item.get("recentContext") or "")) for item in events]
-    contexts = [item for item in contexts if item]
-    reconstructed = max([committed, *contexts], key=len, default=committed)
+    source_ids = _unique_strings(
+        [
+            source_id
+            for event in events
+            for source_id in _strings(event.get("sourceIds"))
+        ],
+        limit=50_000,
+    )
+    committed_parts: list[str] = []
+    committed_chars = 0
+    reconstructed = ""
+    for item in events:
+        fragment = str(item.get("text") or "")
+        if fragment and committed_chars < 16_000:
+            remaining = 16_000 - committed_chars
+            committed_parts.append(fragment[:remaining])
+            committed_chars += min(len(fragment), remaining)
+        context = compact_whitespace(str(item.get("recentContext") or ""))
+        if len(context) > len(reconstructed):
+            reconstructed = context
+    committed = compact_whitespace("".join(committed_parts))
+    if len(committed) > len(reconstructed):
+        reconstructed = committed
+    reconstructed = reconstructed[:16_000]
     last = dict(events[-1])
     tags = _unique_strings(
         [tag for item in events for tag in _strings(item.get("sourceMetadataTags"))],
@@ -285,6 +311,7 @@ def _collapse_rime_fragment_run(events: list[dict[str, object]]) -> dict[str, ob
         {
             "eventId": source_event_ids[-1] if source_event_ids else _optional_int(last.get("eventId")),
             "sourceEventIds": source_event_ids,
+            "sourceIds": source_ids,
             "source": "reconstructed_user_input",
             "text": reconstructed,
             "recentContext": "",
@@ -368,7 +395,10 @@ def memory_compile_state(conn: sqlite3.Connection, *, project: str) -> dict[str,
     last_event_id = int(row["last_compiled_event_id"] or 0) if row is not None else 0
     pending = int(
         conn.execute(
-            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            """
+            SELECT COUNT(*) FROM input_events AS e
+            WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
+            """,
             (last_event_id, project, project),
         ).fetchone()[0]
     )
@@ -412,7 +442,11 @@ def memory_book_plan_from_compile_output(
     provider: str,
     model: str,
     source_bundle: dict[str, object] | None = None,
+    owner_kind: str = "user",
+    owner_id: str = "default",
+    run_kind: str = "legacy",
 ) -> dict[str, object]:
+    normalized_owner_kind, normalized_owner_id = _memory_owner(owner_kind, owner_id)
     diffs: list[dict[str, object]] = []
     warnings = list(compile_output.get("warnings") or [])
     tag_merges = _planned_tag_merges(compile_output, source_bundle=source_bundle)
@@ -574,6 +608,8 @@ def memory_book_plan_from_compile_output(
             "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
             "reusedExistingBookId": compact_whitespace(str((existing_book or {}).get("bookId") or "")),
             "previousStatus": compact_whitespace(str((existing_book or {}).get("status") or "")),
+            "ownerKind": normalized_owner_kind,
+            "ownerId": normalized_owner_id,
         }
         diffs.append({"op": "upsert_memory_book", "targetId": book_id, "payload": payload, "status": "pending"})
     for item in _list_of_dicts(compile_output.get("memoryAtoms")):
@@ -617,6 +653,8 @@ def memory_book_plan_from_compile_output(
             "qualityScore": _bounded_float(item.get("qualityScore"), default=0.5),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
             "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
+            "ownerKind": normalized_owner_kind,
+            "ownerId": normalized_owner_id,
         }
         diffs.append({"op": "upsert_memory_atom", "targetId": atom_id, "payload": payload, "status": "pending"})
     for item in _list_of_dicts(compile_output.get("tagEdges")):
@@ -777,11 +815,22 @@ def memory_book_plan_from_compile_output(
     if len(proposed_tag_names) > 1 and isolated_proposed_tags:
         warnings.append(f"isolated_semantic_tags_in_draft:{len(isolated_proposed_tags)}")
     run_id = f"memory_book_{now_ms()}"
-    if source_bundle and not any(diff.get("op") == "upsert_memory_book" for diff in diffs):
+    if (
+        compact_whitespace(run_kind) in {"", "legacy"}
+        and source_bundle
+        and not any(diff.get("op") == "upsert_memory_book" for diff in diffs)
+    ):
         daily_book = _synthesize_daily_book_diff_from_diffs(diffs, project=project, source_bundle=source_bundle)
         if daily_book:
             diffs.insert(0, daily_book)
             warnings.append("daily_book_synthesized_from_atoms")
+    for diff in diffs:
+        if diff.get("op") not in {"upsert_memory_book", "upsert_memory_atom"}:
+            continue
+        payload = diff.get("payload")
+        if isinstance(payload, dict):
+            payload["ownerKind"] = normalized_owner_kind
+            payload["ownerId"] = normalized_owner_id
     if not diffs and source_bundle:
         # Never turn raw history into semantic memory when the organizer did
         # not produce a governed result. The cursor stays pending so a later
@@ -809,6 +858,9 @@ def memory_book_plan_from_compile_output(
                 "isolatedProposedTags": isolated_proposed_tags,
             },
             "project": project,
+            "ownerKind": normalized_owner_kind,
+            "ownerId": normalized_owner_id,
+            "runKind": compact_whitespace(run_kind) or "legacy",
             "bundleHash": str((source_bundle or {}).get("bundleHash") or ""),
             "sourceCursor": dict((source_bundle or {}).get("cursor") or {}),
             "legalContextGroupIds": list((source_bundle or {}).get("legalContextGroupIds") or []),
@@ -1064,6 +1116,8 @@ def memory_book_run_is_stale(conn: sqlite3.Connection, *, run: Mapping[str, obje
     if compact_whitespace(str(run.get("status") or "")) != "draft":
         return False
     metadata = dict(run.get("metadata") or {})
+    if compact_whitespace(str(metadata.get("runKind") or "legacy")) != "legacy":
+        return False
     project = compact_whitespace(str(metadata.get("project") or ""))
     source_cursor = dict(metadata.get("sourceCursor") or {})
     try:
@@ -1129,6 +1183,10 @@ def _supersede_project_memory_book_drafts(
     run_id = compact_whitespace(str(plan.get("runId") or ""))
     metadata = dict(plan.get("metadata") or {})
     project = compact_whitespace(str(metadata.get("project") or ""))
+    owner_kind, owner_id = _memory_owner(
+        metadata.get("ownerKind") or "user",
+        metadata.get("ownerId") or "default",
+    )
     if not project:
         return
     rows = conn.execute(
@@ -1136,8 +1194,9 @@ def _supersede_project_memory_book_drafts(
         SELECT run_id, metadata_json
         FROM memory_cleanup_runs
         WHERE status = 'draft' AND run_id LIKE 'memory_book_%' AND run_id != ?
+          AND owner_kind = ? AND owner_id = ?
         """,
-        (run_id,),
+        (run_id, owner_kind, owner_id),
     ).fetchall()
     superseded: list[str] = []
     for row in rows:
@@ -1269,9 +1328,19 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
                 """,
                 (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
             )
-        _sync_run_status(conn, run_id)
+        resolved_status = _sync_run_status(conn, run_id)
         if rows:
             _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
+            _transition_owner_curation_sources(
+                conn,
+                run=current,
+                applied=True,
+            )
+        elif resolved_status == "empty":
+            _resolve_owner_curation_review_without_writes(
+                conn,
+                run=current,
+            )
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1301,13 +1370,201 @@ def rollback_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[s
         _rollback_memory_book_diff(conn, row=row)
         conn.execute("UPDATE memory_cleanup_diffs SET status = 'rolled_back' WHERE id = ?", (int(row["id"]),))
     _sync_run_status(conn, run_id)
+    if rows:
+        _transition_owner_curation_sources(
+            conn,
+            run=current,
+            applied=False,
+        )
     return memory_book_run_payload(conn, run_id=run_id)
+
+
+def _transition_owner_curation_sources(
+    conn: sqlite3.Connection,
+    *,
+    run: dict[str, object],
+    applied: bool,
+) -> None:
+    run_kind = compact_whitespace(str(run.get("runKind") or ""))
+    if run_kind not in {"daily_curation", "manual_curation"}:
+        return
+    run_id = compact_whitespace(str(run.get("runId") or ""))
+    owner_kind = compact_whitespace(str(run.get("ownerKind") or ""))
+    owner_id = compact_whitespace(str(run.get("ownerId") or ""))
+    metadata = dict(run.get("metadata") or {})
+    # One reconstructed Rime utterance can cover thousands of low-level
+    # commits. Keep every physical evidence id so apply/rollback cannot leave
+    # the tail silently stranded behind the curation cursor.
+    source_ids = _unique_strings(metadata.get("sourceIds") or [], limit=50_000)
+    if not run_id or not source_ids:
+        return
+    previous_disposition = "remember" if applied else "consolidated"
+    new_disposition = "consolidated" if applied else "remember"
+    reason_code = "curation_applied" if applied else "curation_rolled_back"
+    actor_kind = "system" if applied else "rollback"
+    rows = conn.execute(
+        """
+        WITH selected_source_ids(source_id) AS (
+            SELECT DISTINCT CAST(value AS TEXT)
+            FROM json_each(?)
+        )
+        SELECT source.source_id AS source_id,
+               source.created_at_ms AS created_at_ms
+        FROM agent_memory_sources AS source
+        JOIN selected_source_ids AS selected
+          ON selected.source_id = source.source_id
+        WHERE source.owner_kind = ? AND source.owner_id = ?
+          AND source.curation_run_id = ?
+          AND source.disposition = ?
+        ORDER BY source.created_at_ms, source.source_id
+        """,
+        (
+            json.dumps(source_ids, ensure_ascii=False, separators=(",", ":")),
+            owner_kind,
+            owner_id,
+            run_id,
+            previous_disposition,
+        ),
+    ).fetchall()
+    timestamp = now_ms()
+    for row in rows:
+        source_id = str(row["source_id"])
+        conn.execute(
+            """
+            UPDATE agent_memory_sources
+            SET disposition = ?, disposition_reason = ?,
+                disposition_updated_at_ms = ?, processed_at_ms = ?
+            WHERE source_id = ?
+            """,
+            (
+                new_disposition,
+                reason_code,
+                timestamp,
+                timestamp,
+                source_id,
+            ),
+        )
+        event_id = (
+            "memory-disposition:"
+            + stable_text_hash(
+                f"{run_id}\0{source_id}\0{new_disposition}"
+            ).removeprefix("sha256:")[:40]
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO memory_source_disposition_events(
+                event_id, source_id, previous_disposition, new_disposition,
+                reason_code, actor_kind, run_id, created_at_ms, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                source_id,
+                previous_disposition,
+                new_disposition,
+                reason_code,
+                actor_kind,
+                run_id,
+                timestamp,
+                json.dumps(
+                    {"source": "memory_book_apply", "runKind": run_kind},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            ),
+        )
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    if applied:
+        conn.execute(
+            """
+            UPDATE memory_curation_cursors
+            SET status = 'idle', last_error = '', updated_at_ms = ?
+            WHERE owner_kind = ? AND owner_id = ? AND project = ?
+              AND lane = 'daily' AND last_run_id = ?
+            """,
+            (timestamp, owner_kind, owner_id, project, run_id),
+        )
+    elif rows:
+        earliest_ms = min(int(row["created_at_ms"] or 0) for row in rows)
+        conn.execute(
+            """
+            UPDATE memory_curation_cursors
+            SET last_source_created_at_ms = ?,
+                last_source_id = '',
+                next_due_at_ms = 0,
+                status = 'idle',
+                last_error = '',
+                updated_at_ms = ?
+            WHERE owner_kind = ? AND owner_id = ? AND project = ?
+              AND lane = 'daily' AND last_run_id = ?
+            """,
+            (
+                max(0, earliest_ms - 1),
+                timestamp,
+                owner_kind,
+                owner_id,
+                project,
+                run_id,
+            ),
+        )
+
+
+def _resolve_owner_curation_review_without_writes(
+    conn: sqlite3.Connection,
+    *,
+    run: dict[str, object],
+) -> None:
+    """Close an owner review when every proposed semantic write was rejected.
+
+    The raw evidence remains in its prior disposition and audit history. Only
+    the review draft and cursor are resolved, so a rejected synthesis is not
+    silently reinterpreted as a request to forget its source evidence.
+    """
+    run_kind = compact_whitespace(str(run.get("runKind") or ""))
+    if run_kind not in {"daily_curation", "manual_curation"}:
+        return
+    run_id = compact_whitespace(str(run.get("runId") or ""))
+    owner_kind = compact_whitespace(str(run.get("ownerKind") or ""))
+    owner_id = compact_whitespace(str(run.get("ownerId") or ""))
+    metadata = dict(run.get("metadata") or {})
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    if not run_id or not owner_kind or not owner_id:
+        return
+    metadata.update(
+        {
+            "curationOutcome": "review_rejected_all_writes",
+            "reviewResolvedAtMs": now_ms(),
+        }
+    )
+    timestamp = int(metadata["reviewResolvedAtMs"])
+    conn.execute(
+        """
+        UPDATE memory_cleanup_runs
+        SET summary = ?, metadata_json = ?
+        WHERE run_id = ? AND status = 'empty'
+        """,
+        (
+            "审阅完成：未应用任何长期记忆变更",
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            run_id,
+        ),
+    )
+    conn.execute(
+        """
+        UPDATE memory_curation_cursors
+        SET status = 'idle', last_error = '', updated_at_ms = ?
+        WHERE owner_kind = ? AND owner_id = ? AND project = ?
+          AND lane = 'daily' AND last_run_id = ?
+        """,
+        (timestamp, owner_kind, owner_id, project, run_id),
+    )
 
 
 def memory_book_run_payload(conn: sqlite3.Connection, *, run_id: str) -> dict[str, object]:
     run = conn.execute(
         """
-        SELECT run_id, created_at_ms, provider, model, status, summary, metadata_json
+        SELECT run_id, created_at_ms, provider, model, status, summary, metadata_json,
+               owner_kind, owner_id, run_kind
         FROM memory_cleanup_runs
         WHERE run_id = ?
         """,
@@ -1329,6 +1586,9 @@ def memory_book_run_payload(conn: sqlite3.Connection, *, run_id: str) -> dict[st
         "provider": "" if run is None else str(run["provider"]),
         "model": "" if run is None else str(run["model"]),
         "summary": "" if run is None else str(run["summary"]),
+        "ownerKind": "" if run is None else str(run["owner_kind"]),
+        "ownerId": "" if run is None else str(run["owner_id"]),
+        "runKind": "" if run is None else str(run["run_kind"]),
         "metadata": {} if run is None else json.loads(run["metadata_json"] or "{}"),
         "diffs": [
             {
@@ -1358,7 +1618,7 @@ def find_newer_applied_memory_book_run(
     """
 
     current = conn.execute(
-        "SELECT id, metadata_json FROM memory_cleanup_runs WHERE run_id = ?",
+        "SELECT id, metadata_json, owner_kind, owner_id FROM memory_cleanup_runs WHERE run_id = ?",
         (run_id,),
     ).fetchone()
     if current is None:
@@ -1375,9 +1635,10 @@ def find_newer_applied_memory_book_run(
         SELECT id, run_id, created_at_ms, status, metadata_json
         FROM memory_cleanup_runs
         WHERE id > ? AND status IN ('applied', 'partial') AND run_id LIKE 'memory_book_%'
+          AND owner_kind = ? AND owner_id = ?
         ORDER BY id DESC
         """,
-        (int(current["id"]),),
+        (int(current["id"]), str(current["owner_kind"]), str(current["owner_id"])),
     ).fetchall()
     for row in rows:
         try:
@@ -1399,10 +1660,21 @@ def find_newer_applied_memory_book_run(
 def _persist_memory_book_run(conn: sqlite3.Connection, plan: dict[str, object]) -> None:
     run_id = compact_whitespace(str(plan.get("runId") or ""))
     created_at = now_ms()
+    metadata = dict(plan.get("metadata") or {})
+    owner_kind, owner_id = _memory_owner(
+        metadata.get("ownerKind") or "user",
+        metadata.get("ownerId") or "default",
+    )
+    run_kind = compact_whitespace(str(metadata.get("runKind") or "legacy"))
+    if run_kind not in {"legacy", "daily_curation", "manual_curation", "dream_insight"}:
+        raise ValueError("unsupported memory curation run kind")
     conn.execute(
         """
-        INSERT OR REPLACE INTO memory_cleanup_runs(run_id, created_at_ms, provider, model, status, summary, metadata_json)
-        VALUES (?, ?, ?, ?, 'draft', ?, ?)
+        INSERT OR REPLACE INTO memory_cleanup_runs(
+            run_id, created_at_ms, provider, model, status, summary, metadata_json,
+            owner_kind, owner_id, run_kind
+        )
+        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -1410,7 +1682,10 @@ def _persist_memory_book_run(conn: sqlite3.Connection, plan: dict[str, object]) 
             str(plan.get("provider") or ""),
             str(plan.get("model") or ""),
             str(plan.get("summary") or ""),
-            json.dumps(dict(plan.get("metadata") or {}), ensure_ascii=False, sort_keys=True),
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            owner_kind,
+            owner_id,
+            run_kind,
         ),
     )
     conn.execute("DELETE FROM memory_cleanup_diffs WHERE run_id = ?", (run_id,))
@@ -1470,8 +1745,16 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
     elif op == "upsert_memory_atom":
         _restore_or_delete_row(conn, table="memory_atoms", pk="id", rollback=rollback)
         _restore_semantic_group_members(conn, rollback)
-        for alias_id in rollback.get("createdAliasIds", []) or []:
-            conn.execute("DELETE FROM memory_aliases WHERE id = ?", (str(alias_id),))
+        if rollback.get("previous"):
+            atom_id = compact_whitespace(str(rollback.get("pkValue") or ""))
+            conn.execute("DELETE FROM memory_aliases WHERE memory_atom_id = ?", (atom_id,))
+            conn.execute("DELETE FROM memory_atom_tags WHERE memory_atom_id = ?", (atom_id,))
+            for alias in rollback.get("previousAliases", []) or []:
+                if isinstance(alias, dict):
+                    _insert_or_replace_dict(conn, "memory_aliases", alias)
+            for tag in rollback.get("previousAtomTags", []) or []:
+                if isinstance(tag, dict):
+                    _insert_or_replace_dict(conn, "memory_atom_tags", tag)
     elif op == "upsert_tag_edge":
         edge = rollback.get("edge")
         if isinstance(edge, dict):
@@ -1649,16 +1932,18 @@ def _apply_semantic_tag(conn: sqlite3.Connection, payload: dict[str, object]) ->
 def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
     book_id = str(payload["bookId"])
     previous = _row_dict(conn.execute("SELECT * FROM memory_books WHERE book_id = ?", (book_id,)).fetchone())
+    _assert_memory_owner_unchanged(previous, payload, target_kind="book")
     timestamp = now_ms()
     conn.execute(
         """
         INSERT INTO memory_books(
             book_id, book_type, book_key, title, summary, normalized_text, project, app,
             tags_json, surface_hints_json, query_expansions_json, source_event_ids_json,
-            memory_atom_ids_json, status, confidence, quality_score, created_at_ms, updated_at_ms,
-            metadata_json, archived_at_ms, last_active_at_ms, archive_reason
+            memory_atom_ids_json, owner_kind, owner_id, status, confidence, quality_score,
+            created_at_ms, updated_at_ms, metadata_json, archived_at_ms,
+            last_active_at_ms, archive_reason
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 COALESCE((SELECT created_at_ms FROM memory_books WHERE book_id = ?), ?),
                 ?, ?, NULL, ?, '')
         ON CONFLICT(book_id) DO UPDATE SET
@@ -1674,6 +1959,8 @@ def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             query_expansions_json = excluded.query_expansions_json,
             source_event_ids_json = excluded.source_event_ids_json,
             memory_atom_ids_json = excluded.memory_atom_ids_json,
+            owner_kind = excluded.owner_kind,
+            owner_id = excluded.owner_id,
             status = excluded.status,
             confidence = excluded.confidence,
             quality_score = excluded.quality_score,
@@ -1697,6 +1984,8 @@ def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             json.dumps(_strings(payload.get("queryExpansions")), ensure_ascii=False),
             json.dumps(_positive_ints(payload.get("sourceEventIds")), ensure_ascii=False),
             json.dumps(_strings(payload.get("memoryAtomIds")), ensure_ascii=False),
+            str(payload.get("ownerKind") or "user"),
+            str(payload.get("ownerId") or "default"),
             str(payload.get("status") or "active"),
             _bounded_float(payload.get("confidence"), default=0.5),
             _bounded_float(payload.get("qualityScore"), default=0.5),
@@ -1719,16 +2008,49 @@ def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> 
 def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
     atom_id = str(payload["atomId"])
     previous = _row_dict(conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (atom_id,)).fetchone())
+    previous_aliases = [
+        _row_dict(row)
+        for row in conn.execute(
+            "SELECT * FROM memory_aliases WHERE memory_atom_id = ? ORDER BY created_at_ms, id",
+            (atom_id,),
+        ).fetchall()
+    ]
+    previous_atom_tags = [
+        _row_dict(row)
+        for row in conn.execute(
+            "SELECT * FROM memory_atom_tags WHERE memory_atom_id = ? ORDER BY tag_id",
+            (atom_id,),
+        ).fetchall()
+    ]
+    _assert_memory_owner_unchanged(previous, payload, target_kind="atom")
     timestamp = now_ms()
     canonical = str(payload.get("canonicalText") or "")
     conn.execute(
         """
-        INSERT OR REPLACE INTO memory_atoms(
+        INSERT INTO memory_atoms(
             id, kind, text, canonical_text, source_event_ids_json, source_memory_ids_json,
             scope_app, scope_project, language, confidence, quality_score, echo_risk,
-            privacy_level, status, created_at_ms, updated_at_ms, last_used_at_ms
+            privacy_level, owner_kind, owner_id, status, created_at_ms, updated_at_ms,
+            last_used_at_ms
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'zh', ?, ?, 0.0, 'local', ?, COALESCE((SELECT created_at_ms FROM memory_atoms WHERE id = ?), ?), ?, NULL)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'zh', ?, ?, 0.0, 'local', ?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(id) DO UPDATE SET
+            kind = excluded.kind,
+            text = excluded.text,
+            canonical_text = excluded.canonical_text,
+            source_event_ids_json = excluded.source_event_ids_json,
+            source_memory_ids_json = excluded.source_memory_ids_json,
+            scope_app = excluded.scope_app,
+            scope_project = excluded.scope_project,
+            language = excluded.language,
+            confidence = excluded.confidence,
+            quality_score = excluded.quality_score,
+            echo_risk = excluded.echo_risk,
+            privacy_level = excluded.privacy_level,
+            owner_kind = excluded.owner_kind,
+            owner_id = excluded.owner_id,
+            status = excluded.status,
+            updated_at_ms = excluded.updated_at_ms
         """,
         (
             atom_id,
@@ -1741,8 +2063,9 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             str(payload.get("project") or ""),
             _bounded_float(payload.get("confidence"), default=0.5),
             _bounded_float(payload.get("qualityScore"), default=0.5),
+            str(payload.get("ownerKind") or "user"),
+            str(payload.get("ownerId") or "default"),
             str(payload.get("status") or "active"),
-            atom_id,
             timestamp,
             timestamp,
         ),
@@ -1787,6 +2110,8 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         "pkValue": atom_id,
         "previous": previous,
         "createdAliasIds": created_alias_ids,
+        "previousAliases": previous_aliases,
+        "previousAtomTags": previous_atom_tags,
         **memberships,
     }
 
@@ -2095,6 +2420,7 @@ def _insert_or_replace_dict(conn: sqlite3.Connection, table: str, row: dict[str,
 def _apply_phrase_candidate(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
     memory_id = str(payload["memoryId"])
     previous = _row_dict(conn.execute("SELECT * FROM memory_items WHERE memory_id = ?", (memory_id,)).fetchone())
+    _assert_memory_owner_unchanged(previous, payload, target_kind="phrase")
     text = str(payload.get("text") or "")
     evidence_ids = _positive_ints(payload.get("sourceEventIds"))
     timestamp = now_ms()
@@ -2118,6 +2444,8 @@ def _apply_phrase_candidate(conn: sqlite3.Connection, payload: dict[str, object]
         tags=tuple(_strings(payload.get("tags"))),
         embedding_provider=None,
         tag_source="dsv4",
+        owner_kind=str(payload.get("ownerKind") or "user"),
+        owner_id=str(payload.get("ownerId") or "default"),
     )
     memberships = _sync_semantic_group_members(
         conn,
@@ -2326,14 +2654,17 @@ def _ensure_tag(conn: sqlite3.Connection, tag: str, *, source: str = "dsv4") -> 
     return int(cur.lastrowid)
 
 
-def _sync_run_status(conn: sqlite3.Connection, run_id: str) -> None:
+def _sync_run_status(conn: sqlite3.Connection, run_id: str) -> str:
     rows = conn.execute("SELECT status FROM memory_cleanup_diffs WHERE run_id = ?", (run_id,)).fetchall()
     statuses = {str(row["status"]) for row in rows}
     effective_statuses = statuses - {"rejected"}
     if not statuses:
         status = "empty"
     elif not effective_statuses:
-        status = "draft"
+        # This helper runs only when applying or rolling back a run, not while
+        # individual review choices are being edited. Reaching it with every
+        # diff rejected therefore resolves the review as an empty run.
+        status = "empty"
     elif effective_statuses == {"applied"}:
         status = "applied"
     elif effective_statuses == {"rolled_back"}:
@@ -2343,6 +2674,7 @@ def _sync_run_status(conn: sqlite3.Connection, run_id: str) -> None:
     else:
         status = "draft"
     conn.execute("UPDATE memory_cleanup_runs SET status = ? WHERE run_id = ?", (status, run_id))
+    return status
 
 
 def _synthesize_daily_book_diff_from_diffs(
@@ -2416,10 +2748,12 @@ def _synthesize_daily_book_diff_from_diffs(
 
 def _unique_strings(values: list[str], *, limit: int) -> list[str]:
     result: list[str] = []
+    seen: set[str] = set()
     for value in values:
         text = compact_whitespace(value)
-        if text and text not in result:
+        if text and text not in seen:
             result.append(text)
+            seen.add(text)
         if len(result) >= limit:
             break
     return result
@@ -2825,6 +3159,8 @@ def _ensure_compile_state_table(conn: sqlite3.Connection) -> None:
 
 def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object]) -> None:
     metadata = dict(plan.get("metadata") or {})
+    if compact_whitespace(str(metadata.get("runKind") or "legacy")) != "legacy":
+        return
     project = compact_whitespace(str(metadata.get("project") or ""))
     cursor = dict(metadata.get("sourceCursor") or {})
     to_event_id = max(0, int(cursor.get("toEventId") or 0))
@@ -2833,7 +3169,10 @@ def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object])
     _ensure_compile_state_table(conn)
     pending = int(
         conn.execute(
-            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            """
+            SELECT COUNT(*) FROM input_events AS e
+            WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
+            """,
             (to_event_id, project, project),
         ).fetchone()[0]
     )
@@ -3232,6 +3571,36 @@ def _resolved_semantic_group_ids(
 def _normalized_rime_pinyin(value: object) -> str:
     pinyin = " ".join(compact_whitespace(str(value or "")).lower().split())
     return pinyin if _RIME_PINYIN_RE.fullmatch(pinyin) else ""
+
+
+def _memory_owner(owner_kind: object, owner_id: object) -> tuple[str, str]:
+    kind = compact_whitespace(str(owner_kind or ""))
+    identity = compact_whitespace(str(owner_id or ""))
+    if kind not in {"user", "shared", "agent", "session", "room"}:
+        raise ValueError("unsupported memory owner kind")
+    if not identity:
+        raise ValueError("memory owner id must not be empty")
+    return kind, identity
+
+
+def _assert_memory_owner_unchanged(
+    previous: dict[str, object] | None,
+    payload: dict[str, object],
+    *,
+    target_kind: str,
+) -> None:
+    if not previous:
+        return
+    previous_owner = (
+        compact_whitespace(str(previous.get("owner_kind") or "user")),
+        compact_whitespace(str(previous.get("owner_id") or "default")),
+    )
+    requested_owner = _memory_owner(
+        payload.get("ownerKind") or "user",
+        payload.get("ownerId") or "default",
+    )
+    if previous_owner != requested_owner:
+        raise ValueError(f"memory {target_kind} id is already owned by another scope")
 
 
 def _validate_required_text(errors: list[dict[str, object]], index: int, op: str, payload: dict[str, object], field: str) -> None:

@@ -1292,6 +1292,7 @@ export const contractSchemas = {
           "pending_events",
           "idle",
           "daily",
+          "owner_daily",
           "not_due"
         ]
       },
@@ -1333,6 +1334,52 @@ export const contractSchemas = {
         "type": "integer",
         "minimum": 0
       },
+      "ownerCuration": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "ok",
+          "project",
+          "policy",
+          "due",
+          "pendingSourceCount",
+          "needsReviewSourceCount",
+          "scopes"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.owner-memory-curation-status.v1"
+          },
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "project": {
+            "type": "string"
+          },
+          "policy": {
+            "type": "object"
+          },
+          "due": {
+            "type": "boolean"
+          },
+          "pendingSourceCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "needsReviewSourceCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
       "runs": {
         "type": "array",
         "items": {
@@ -1344,7 +1391,10 @@ export const contractSchemas = {
             "summary",
             "diffCount",
             "bundleHash",
-            "sourceCursor"
+            "sourceCursor",
+            "ownerKind",
+            "ownerId",
+            "runKind"
           ],
           "properties": {
             "runId": {
@@ -1378,6 +1428,29 @@ export const contractSchemas = {
             },
             "sourceCursor": {
               "type": "object"
+            },
+            "ownerKind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "shared",
+                "agent",
+                "session",
+                "room"
+              ]
+            },
+            "ownerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runKind": {
+              "type": "string",
+              "enum": [
+                "legacy",
+                "daily_curation",
+                "manual_curation",
+                "dream_insight"
+              ]
             }
           }
         }
@@ -1398,6 +1471,18 @@ export const contractSchemas = {
       "sourceRevision",
       "canonicalTextSha256",
       "status",
+      "ownerKind",
+      "ownerId",
+      "roleId",
+      "roleVersion",
+      "sourceKind",
+      "trustClass",
+      "disposition",
+      "dispositionReason",
+      "curationRunId",
+      "coverageStartEntryId",
+      "coverageEndEntryId",
+      "metadata",
       "createdAtMs"
     ],
     "properties": {
@@ -1444,6 +1529,93 @@ export const contractSchemas = {
           "archived",
           "tombstoned"
         ]
+      },
+      "ownerKind": {
+        "type": "string",
+        "enum": [
+          "user",
+          "shared",
+          "agent",
+          "session",
+          "room"
+        ]
+      },
+      "ownerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roleId": {
+        "type": "string"
+      },
+      "roleVersion": {
+        "type": "string"
+      },
+      "sourceKind": {
+        "type": "string",
+        "enum": [
+          "user_final",
+          "tool_receipt",
+          "session_compaction",
+          "session_digest",
+          "explicit_memory"
+        ]
+      },
+      "trustClass": {
+        "type": "string",
+        "enum": [
+          "user_claim",
+          "applied_receipt",
+          "session_summary",
+          "assistant_claim",
+          "explicit_command"
+        ]
+      },
+      "disposition": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "remember",
+          "not_for_memory",
+          "needs_review",
+          "consolidated",
+          "expired"
+        ]
+      },
+      "dispositionReason": {
+        "type": "string"
+      },
+      "dispositionUpdatedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "processedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "curationRunId": {
+        "type": "string"
+      },
+      "coverageStartEntryId": {
+        "type": "string"
+      },
+      "coverageEndEntryId": {
+        "type": "string"
+      },
+      "expiresAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "metadata": {
+        "type": "object"
       },
       "createdAtMs": {
         "type": "integer",

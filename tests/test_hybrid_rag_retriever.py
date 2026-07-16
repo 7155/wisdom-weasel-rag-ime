@@ -11,6 +11,7 @@ from rag_ime.hybrid_rag_models import HybridRagQuery
 from rag_ime.hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
+from rag_ime.memory_ownership import agent_visible_memory_owners
 from rag_ime.models import InputEvent
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.retrieval_vector_index import rebuild_retrieval_doc_vectors, warm_retrieval_doc_vector_cache
@@ -287,6 +288,86 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertEqual(compatibility["限制模型调用"], 0.75)
         self.assertEqual(compatibility["保持普通拼音稳定"], 0.2)
         self.assertEqual(payload["lanes"]["bm25_raw"]["implementation"], "lexical_substring_fallback")
+
+    def test_owner_visibility_is_enforced_before_alias_and_retrieval_lanes(self) -> None:
+        event_id = self._record_event("公共输入法记忆", tags=("输入法",))
+        with self.connect() as conn:
+            for role_id, atom_id, text, alias in (
+                ("role-a", "atom:role-a-private", "甲角色的私有海盐方案", "海盐密钥甲"),
+                ("role-b", "atom:role-b-private", "乙角色的私有薄荷方案", "薄荷密钥乙"),
+            ):
+                apply_memory_book_plan(
+                    conn,
+                    memory_book_plan_from_compile_output(
+                        {
+                            "memoryAtoms": [
+                                {
+                                    "atomId": atom_id,
+                                    "kind": "preference",
+                                    "canonicalText": text,
+                                    "aliases": [alias],
+                                    "surfaceHints": [text],
+                                    "sourceEventIds": [event_id],
+                                    "confidence": 0.95,
+                                    "qualityScore": 0.95,
+                                }
+                            ]
+                        },
+                        project="wisdom-weasel-rag-ime",
+                        provider="test",
+                        model="test",
+                        owner_kind="agent",
+                        owner_id=role_id,
+                        run_kind="daily_curation",
+                    ),
+                )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+
+            default_payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="海盐密钥甲",
+                    project="wisdom-weasel-rag-ime",
+                ),
+            )
+            role_a_payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="海盐密钥甲",
+                    project="wisdom-weasel-rag-ime",
+                    visible_owners=agent_visible_memory_owners(
+                        project="wisdom-weasel-rag-ime",
+                        role_id="role-a",
+                    ),
+                ),
+            )
+            role_b_payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="海盐密钥甲",
+                    project="wisdom-weasel-rag-ime",
+                    visible_owners=agent_visible_memory_owners(
+                        project="wisdom-weasel-rag-ime",
+                        role_id="role-b",
+                    ),
+                ),
+            )
+
+        self.assertNotIn("海盐密钥甲", default_payload["query"]["matchedAliases"])
+        self.assertFalse(
+            any(item["source_id"] == "atom:role-a-private" for item in default_payload["hits"])
+        )
+        self.assertIn("海盐密钥甲", role_a_payload["query"]["matchedAliases"])
+        self.assertTrue(
+            any(item["source_id"] == "atom:role-a-private" for item in role_a_payload["hits"])
+        )
+        self.assertTrue(
+            all(item["metadata"]["ownerId"] != "role-b" for item in role_a_payload["hits"])
+        )
+        self.assertNotIn("海盐密钥甲", role_b_payload["query"]["matchedAliases"])
+        self.assertFalse(
+            any(item["source_id"] == "atom:role-a-private" for item in role_b_payload["hits"])
+        )
 
     def _record_event(self, text: str, *, recent_context: str = "", tags: tuple[str, ...] = ()) -> int:
         memory_id = self.core.record_event(

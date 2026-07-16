@@ -98,8 +98,10 @@ env_keys = [
     "RAG_IME_DEEPSEEK_MAX_TOKENS",
     "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_DIR",
+    "RAG_IME_MEMORY_BOOK_MAINTENANCE_STALE_LOCK_SECONDS",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT",
+    "RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE",
     "RAG_IME_PYTHON",
     "SSL_CERT_FILE",
 ]
@@ -115,6 +117,8 @@ environment = {
     # The scheduled job may prepare a review draft, but it never applies
     # memory changes. Apply/rollback stays behind the native approval path.
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "0",
+    # The owner-scoped evidence curator supersedes the old global organizer.
+    "RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE": "0",
 }
 environment["RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER"] = "scheduled"
 for key in env_keys:

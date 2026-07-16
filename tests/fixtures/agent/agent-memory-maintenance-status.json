@@ -21,6 +21,9 @@
       "createdAtMs": 1783951200000,
       "status": "draft",
       "summary": "记忆整理草案",
+      "ownerKind": "user",
+      "ownerId": "default",
+      "runKind": "legacy",
       "diffCount": 3,
       "bundleHash": "sha256:current",
       "sourceCursor": {

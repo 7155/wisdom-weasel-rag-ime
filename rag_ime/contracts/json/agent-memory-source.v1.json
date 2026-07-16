@@ -2,7 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "rag-ime.contract.agent-memory-source.v1",
   "type": "object",
-  "required": ["schemaVersion", "sourceId", "sessionId", "piEntryId", "inputEventId", "sourceRole", "sourceRevision", "canonicalTextSha256", "status", "createdAtMs"],
+  "required": [
+    "schemaVersion",
+    "sourceId",
+    "sessionId",
+    "piEntryId",
+    "inputEventId",
+    "sourceRole",
+    "sourceRevision",
+    "canonicalTextSha256",
+    "status",
+    "ownerKind",
+    "ownerId",
+    "roleId",
+    "roleVersion",
+    "sourceKind",
+    "trustClass",
+    "disposition",
+    "dispositionReason",
+    "curationRunId",
+    "coverageStartEntryId",
+    "coverageEndEntryId",
+    "metadata",
+    "createdAtMs"
+  ],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-memory-source.v1"},
     "sourceId": {"type": "string", "minLength": 1},
@@ -13,6 +36,30 @@
     "sourceRevision": {"type": "integer", "minimum": 1},
     "canonicalTextSha256": {"type": "string", "minLength": 64},
     "status": {"type": "string", "enum": ["active", "superseded", "archived", "tombstoned"]},
+    "ownerKind": {"type": "string", "enum": ["user", "shared", "agent", "session", "room"]},
+    "ownerId": {"type": "string", "minLength": 1},
+    "roleId": {"type": "string"},
+    "roleVersion": {"type": "string"},
+    "sourceKind": {
+      "type": "string",
+      "enum": ["user_final", "tool_receipt", "session_compaction", "session_digest", "explicit_memory"]
+    },
+    "trustClass": {
+      "type": "string",
+      "enum": ["user_claim", "applied_receipt", "session_summary", "assistant_claim", "explicit_command"]
+    },
+    "disposition": {
+      "type": "string",
+      "enum": ["pending", "remember", "not_for_memory", "needs_review", "consolidated", "expired"]
+    },
+    "dispositionReason": {"type": "string"},
+    "dispositionUpdatedAtMs": {"type": ["integer", "null"], "minimum": 0},
+    "processedAtMs": {"type": ["integer", "null"], "minimum": 0},
+    "curationRunId": {"type": "string"},
+    "coverageStartEntryId": {"type": "string"},
+    "coverageEndEntryId": {"type": "string"},
+    "expiresAtMs": {"type": ["integer", "null"], "minimum": 0},
+    "metadata": {"type": "object"},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "supersededAtMs": {"type": ["integer", "null"]}
   }

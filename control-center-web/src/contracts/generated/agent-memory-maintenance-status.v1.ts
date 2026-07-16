@@ -11,7 +11,7 @@ export interface AgentMemoryMaintenanceStatusV1 {
   autoApply: false;
   scheduledDraftOnly: true;
   due: boolean;
-  dueReason: 'pending_events' | 'idle' | 'daily' | 'not_due';
+  dueReason: 'pending_events' | 'idle' | 'daily' | 'owner_daily' | 'not_due';
   idleMs: number;
   compileState: {
     project: string;
@@ -22,6 +22,21 @@ export interface AgentMemoryMaintenanceStatusV1 {
     [k: string]: unknown;
   };
   pendingDraftCount: number;
+  ownerCuration?: {
+    schemaVersion: 'rag-ime.owner-memory-curation-status.v1';
+    ok: true;
+    project: string;
+    policy: {
+      [k: string]: unknown;
+    };
+    due: boolean;
+    pendingSourceCount: number;
+    needsReviewSourceCount: number;
+    scopes: {
+      [k: string]: unknown;
+    }[];
+    [k: string]: unknown;
+  };
   runs: {
     runId: string;
     createdAtMs: number;
@@ -32,6 +47,9 @@ export interface AgentMemoryMaintenanceStatusV1 {
     sourceCursor: {
       [k: string]: unknown;
     };
+    ownerKind: 'user' | 'shared' | 'agent' | 'session' | 'room';
+    ownerId: string;
+    runKind: 'legacy' | 'daily_curation' | 'manual_curation' | 'dream_insight';
     [k: string]: unknown;
   }[];
   [k: string]: unknown;

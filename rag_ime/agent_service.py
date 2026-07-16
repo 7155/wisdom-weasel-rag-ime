@@ -134,6 +134,7 @@ class AgentService:
                 tool_gateway_token=self.tool_token,
                 tool_gateway_url=self.tool_gateway_url,
                 tool_manifest_provider=self._runtime_tool_manifest,
+                compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
         )
@@ -156,6 +157,7 @@ class AgentService:
             media_resolver=self.media.resolve_pi_image,
             runtime_driver_factory=self.runtime_factory,
             tool_gateway_token=self.tool_token,
+            compaction_observer=self._checkpoint_runtime_compaction,
         )
         self.room_intercom = AgentRoomIntercomRouter(
             AgentRoomIntercomStore(db_path),
@@ -2135,7 +2137,13 @@ class AgentService:
         return {"schemaVersion": "rag-ime.agent-abort.v1", "ok": True, "sessionId": session_id}
 
     def compact(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
-        result = self.runtime.compact(session_id, str(payload.get("instructions") or ""))
+        result = dict(
+            self.runtime.compact(session_id, str(payload.get("instructions") or ""))
+        )
+        if not isinstance(result.get("memoryCheckpoint"), Mapping):
+            result["memoryCheckpoint"] = dict(
+                self._checkpoint_runtime_compaction(session_id, result, "manual")
+            )
         maintenance = self._probe_memory_maintenance(session_id, trigger="compaction")
         return {
             "schemaVersion": "rag-ime.agent-compact.v1",
@@ -2144,6 +2152,27 @@ class AgentService:
             "result": result,
             "memoryMaintenance": maintenance,
         }
+
+    def _checkpoint_runtime_compaction(
+        self,
+        session_id: str,
+        result: Mapping[str, object],
+        trigger: str,
+    ) -> Mapping[str, object]:
+        try:
+            return self.memory_sources.checkpoint_compaction(
+                session_id=session_id,
+                result=result,
+                trigger=trigger,
+            )
+        except Exception as exc:
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": False,
+                "stored": False,
+                "status": "checkpoint_failed",
+                "error": _public_error(exc),
+            }
 
     def _probe_memory_maintenance(self, session_id: str, *, trigger: str) -> dict[str, object]:
         if self._memory_maintenance_probe is None:
@@ -2668,6 +2697,9 @@ class AgentService:
                 events=self.events,
                 media_resolver=self.media.resolve_pi_image,
                 tool_gateway_token=self.tool_token,
+                tool_gateway_url=self.tool_gateway_url,
+                tool_manifest_provider=self._runtime_tool_manifest,
+                compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
         )
@@ -2684,6 +2716,9 @@ class AgentService:
                 events=self.events,
                 media_resolver=self.media.resolve_pi_image,
                 tool_gateway_token=self.tool_token,
+                tool_gateway_url=self.tool_gateway_url,
+                tool_manifest_provider=self._runtime_tool_manifest,
+                compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
         )

@@ -124,6 +124,14 @@ for line in sys.stdin:
             "selectedText": selected["text"] if selected["role"] == "user" else "",
             "branchAnchor": params["entryId"], "snapshot": target, "evictedSessionId": None,
         })
+    elif method == "session.compact":
+        result(request, {
+            "summary": "用户要求角色每天整理主题书。",
+            "coverageStartEntryId": "entry-user-1",
+            "coverageEndEntryId": "entry-assistant-1",
+            "tokensBefore": 1200,
+            "estimatedTokensAfter": 320,
+        })
     elif method == "session.close":
         result(request, {"closed": sessions.pop(session_id, None) is not None})
     elif method == "plugins.list":
@@ -148,6 +156,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             sequence_loader=self.store.max_event_sequence,
             event_recorder=self._record_event,
         )
+        self.compactions: list[tuple[str, dict[str, object], str]] = []
         self.runtime = PiRuntimeHostManager(
             config=PiRuntimeConfig(
                 enabled=True,
@@ -170,11 +179,58 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "description": "memory operations",
                 "parameters": {"type": "object", "properties": {"op": {"type": "string"}}},
             }],
+            compaction_observer=self._observe_compaction,
         )
 
     def tearDown(self) -> None:
         self.runtime.stop()
         self.tmp.cleanup()
+
+    def _observe_compaction(
+        self,
+        session_id: str,
+        result: dict[str, object],
+        trigger: str,
+    ) -> dict[str, object]:
+        self.compactions.append((session_id, dict(result), trigger))
+        return {
+            "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+            "ok": True,
+            "stored": True,
+            "status": "checkpointed",
+        }
+
+    def test_manual_and_automatic_compaction_notify_memory_checkpoint_observer(self) -> None:
+        session_id = str(self.first["id"])
+
+        manual = self.runtime.compact(session_id, "保留长期决定")
+        self.runtime._handle_host_event(  # noqa: SLF001 - protocol integration boundary
+            {
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": "turn:auto-compact",
+                "payload": {
+                    "type": "compaction_end",
+                    "trigger": "automatic",
+                    "result": {
+                        "summary": "自动压缩保留了桌面语义操控约束。",
+                        "coverageStartEntryId": "entry-user-2",
+                        "coverageEndEntryId": "entry-assistant-2",
+                    },
+                },
+            }
+        )
+
+        self.assertTrue(manual["memoryCheckpoint"]["stored"])
+        self.assertEqual(
+            [(item[0], item[2]) for item in self.compactions],
+            [(session_id, "manual"), (session_id, "automatic")],
+        )
+        self.assertEqual(
+            self.compactions[1][1]["coverageEndEntryId"],
+            "entry-assistant-2",
+        )
 
     def test_one_host_keeps_multiple_sessions_open_and_syncs_dynamic_tools(self) -> None:
         first_id = str(self.first["id"])

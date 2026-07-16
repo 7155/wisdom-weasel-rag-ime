@@ -27,10 +27,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                     31, 32, 33, 34, 35, 36, 37, 40, 41,
+                    43,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 41)
+            self.assertEqual(status["currentVersion"], 43)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -53,6 +54,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_approvals", tables)
             self.assertIn("agent_runtime_events", tables)
             self.assertIn("agent_memory_sources", tables)
+            self.assertIn("memory_source_disposition_events", tables)
+            self.assertIn("memory_curation_cursors", tables)
             self.assertIn("agent_media", tables)
             self.assertIn("agent_message_media", tables)
             self.assertIn("agent_rooms", tables)
@@ -95,6 +98,19 @@ class DatabaseMigrationTests(unittest.TestCase):
                 row[1] for row in conn.execute("PRAGMA table_info(agent_sessions)")
             }
             self.assertIn("session_kind", session_columns)
+            memory_source_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(agent_memory_sources)")
+            }
+            self.assertTrue(
+                {
+                    "owner_kind",
+                    "owner_id",
+                    "source_kind",
+                    "trust_class",
+                    "disposition",
+                    "coverage_end_entry_id",
+                }.issubset(memory_source_columns)
+            )
             run_foreign_keys = {
                 str(row[3]): (str(row[2]), str(row[6]))
                 for row in conn.execute("PRAGMA foreign_key_list(agent_subagent_runs)")

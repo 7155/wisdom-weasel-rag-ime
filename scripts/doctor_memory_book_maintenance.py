@@ -84,7 +84,10 @@ def main() -> int:
 
     latest = _latest_run(runs_dir)
     if latest is None:
-        message = f"no Memory Book plan/validate output found in {runs_dir}"
+        message = (
+            "no owner-curation or legacy Memory Book validation output found "
+            f"in {runs_dir}"
+        )
         (errors if args.require_run else warnings).append(message)
     else:
         if not latest["validationOk"]:
@@ -140,15 +143,52 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 def _latest_run(runs_dir: Path) -> dict[str, Any] | None:
     validations = sorted(runs_dir.glob("memory-book-*.validate.json"), key=lambda item: item.stat().st_mtime)
-    if not validations:
+    owner_runs = sorted(
+        runs_dir.glob("owner-memory-*.json"),
+        key=lambda item: item.stat().st_mtime,
+    )
+    latest_validation = validations[-1] if validations else None
+    latest_owner = owner_runs[-1] if owner_runs else None
+    if latest_validation is None and latest_owner is None:
         return None
-    validate_path = validations[-1]
+    if (
+        latest_owner is not None
+        and (
+            latest_validation is None
+            or latest_owner.stat().st_mtime >= latest_validation.stat().st_mtime
+        )
+    ):
+        owner = _load_json(latest_owner) or {}
+        age_hours = max(
+            0.0,
+            (time.time() - latest_owner.stat().st_mtime) / 3600.0,
+        )
+        results = [
+            item
+            for item in owner.get("results", [])
+            if isinstance(item, dict)
+        ]
+        return {
+            "mode": "owner_scoped",
+            "ownerCurationPath": str(latest_owner),
+            "validationOk": bool(owner.get("ok")),
+            "reviewRequired": any(
+                bool(item.get("reviewRequired"))
+                for item in results
+            ),
+            "ranScopeCount": int(owner.get("ranScopeCount") or 0),
+            "ageHours": round(age_hours, 3),
+        }
+
+    assert latest_validation is not None
+    validate_path = latest_validation
     stem = validate_path.name.removesuffix(".validate.json")
     plan_path = runs_dir / f"{stem}.json"
     preview_path = runs_dir / f"{stem}.preview.json"
     validate = _load_json(validate_path) or {}
     age_hours = max(0.0, (time.time() - validate_path.stat().st_mtime) / 3600.0)
     return {
+        "mode": "legacy",
         "planPath": str(plan_path),
         "previewPath": str(preview_path),
         "validatePath": str(validate_path),

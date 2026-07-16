@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .agent_memory_sources import AgentMemorySourceStore
 from .config_portability import (
     apply_user_configuration,
     export_portable_backup,
@@ -35,7 +36,8 @@ from .daily_planner import (
 from .memory_actions import execute_memory_action
 from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_book_archive_status
 from .memory_graph_read import read_memory_entity, read_memory_graph
-from .memory_ingest import normalize_text
+from .memory_ingest import looks_sensitive, normalize_text
+from .memory_ownership import normalize_memory_owner, sql_memory_owner_predicate
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
 from .management_work_contract import (
@@ -605,6 +607,7 @@ class ManagementService:
             "atoms": self._memory_atoms,
             "tags": self._memory_tags,
             "phrases": self._memory_phrases,
+            "evidence": self._memory_evidence,
             "groups": self._memory_groups,
             "negative": self._negative_memory,
         }
@@ -619,7 +622,16 @@ class ManagementService:
             "items": items,
             "nextCursor": next_cursor,
             "limit": request.limit,
-            "rawTextVisible": kind in {"books", "atoms", "phrases", "tags", "groups", "negative"},
+            "rawTextVisible": kind
+            in {
+                "books",
+                "atoms",
+                "phrases",
+                "evidence",
+                "tags",
+                "groups",
+                "negative",
+            },
         }
 
     def history_page(self, request: PageRequest) -> dict[str, object]:
@@ -1782,6 +1794,114 @@ class ManagementService:
             "memoryId": item_id,
         }
 
+    def memory_source_disposition(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        source_id = compact_whitespace(str(payload.get("sourceId") or ""))
+        disposition = compact_whitespace(
+            str(payload.get("disposition") or "")
+        ).lower()
+        if not source_id:
+            raise ValueError("memory source id is required")
+        if disposition not in {"pending", "not_for_memory"}:
+            raise ValueError(
+                "memory source disposition must be pending or not_for_memory"
+            )
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT event.project, event.committed_text,
+                       source.disposition, source.disposition_reason
+                FROM agent_memory_sources AS source
+                JOIN input_events AS event ON event.id = source.input_event_id
+                WHERE source.source_id = ?
+                """,
+                (source_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"memory source not found: {source_id}")
+        event_project = compact_whitespace(str(row["project"] or ""))
+        if (
+            self.project
+            and event_project
+            and event_project != self.project
+        ):
+            raise ValueError("memory source belongs to another project")
+        previous_disposition = compact_whitespace(
+            str(row["disposition"] or "")
+        )
+        sensitive = (
+            str(row["disposition_reason"] or "") == "sensitive_input"
+            or looks_sensitive(str(row["committed_text"] or ""))
+        )
+        if disposition == "pending":
+            if sensitive:
+                raise ValueError(
+                    "sensitive memory evidence cannot be restored"
+                )
+            allowed_previous = {"pending", "not_for_memory", "expired"}
+        else:
+            allowed_previous = {
+                "pending",
+                "remember",
+                "needs_review",
+                "not_for_memory",
+            }
+        if previous_disposition not in allowed_previous:
+            raise ValueError(
+                "memory source disposition transition is not allowed"
+            )
+
+        action = "restore" if disposition == "pending" else "forget"
+        store = AgentMemorySourceStore(
+            self.db_path,
+            project=self.project,
+        )
+        if previous_disposition == disposition:
+            result = {
+                "schemaVersion": "rag-ime.agent-memory-disposition.v1",
+                "ok": True,
+                "changed": False,
+                "source": store.get(source_id),
+            }
+        else:
+            result = store.set_disposition(
+                source_id,
+                disposition=disposition,
+                reason_code=(
+                    "user_restored"
+                    if disposition == "pending"
+                    else "user_forgotten"
+                ),
+                actor_kind="user",
+                metadata={"surface": "control_center", "action": action},
+            )
+        audit_id = self._audit(
+            f"memory_source_{action}",
+            "memory_source",
+            source_id,
+            dict(payload),
+            result,
+        )
+        self._bump_runtime_revision()
+        if self.cache_invalidator is not None:
+            self.cache_invalidator()
+        self.events.publish(
+            "memory_changed",
+            {
+                "kind": "evidence",
+                "action": action,
+                "sourceId": source_id,
+            },
+        )
+        return {
+            **self.revision(audit_id=int(audit_id)).payload(),
+            **result,
+            "ok": True,
+            "action": action,
+        }
+
     def memory_edit(self, payload: Mapping[str, object]) -> dict[str, object]:
         kind = str(payload.get("kind") or payload.get("itemType") or "").strip().lower()
         item_id = str(payload.get("id") or payload.get("memoryId") or "").strip()
@@ -2155,7 +2275,7 @@ class ManagementService:
         detail = f"待整理 {pending} 条" if ok else "编译记录不完整"
         return _component("memoryCompiler", ok, detail, metadata)
 
-    def _summary_counts(self) -> dict[str, int]:
+    def _summary_counts(self) -> dict[str, object]:
         names = {
             "eventCount": "input_events",
             "memoryItemCount": "memory_items",
@@ -2163,7 +2283,7 @@ class ManagementService:
             "memoryAtomCount": "memory_atoms",
             "retrievalDocCount": "memory_retrieval_docs",
         }
-        result: dict[str, int] = {}
+        result: dict[str, object] = {}
         with self._connect() as conn:
             tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
             for key, table in names.items():
@@ -2172,6 +2292,74 @@ class ManagementService:
                 result["pendingCompileEvents"] = int(conn.execute("SELECT COALESCE(SUM(pending_event_count), 0) FROM memory_compile_state").fetchone()[0])
             else:
                 result["pendingCompileEvents"] = 0
+            if "agent_memory_sources" in tables:
+                source_counts = conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS evidence_count,
+                        SUM(CASE WHEN disposition = 'not_for_memory' THEN 1 ELSE 0 END)
+                            AS forgotten_count,
+                        SUM(CASE WHEN disposition = 'needs_review' THEN 1 ELSE 0 END)
+                            AS needs_review_count
+                    FROM agent_memory_sources
+                    WHERE status = 'active'
+                    """
+                ).fetchone()
+                result["evidenceSourceCount"] = int(
+                    source_counts["evidence_count"] or 0
+                )
+                result["forgottenSourceCount"] = int(
+                    source_counts["forgotten_count"] or 0
+                )
+                result["needsReviewSourceCount"] = int(
+                    source_counts["needs_review_count"] or 0
+                )
+            else:
+                result["evidenceSourceCount"] = 0
+                result["forgottenSourceCount"] = 0
+                result["needsReviewSourceCount"] = 0
+            if {
+                "memory_items",
+                "memory_atoms",
+                "memory_books",
+                "agent_memory_sources",
+            }.issubset(tables):
+                owner_rows = conn.execute(
+                    """
+                    WITH owner_records AS (
+                        SELECT owner_kind, owner_id FROM memory_items
+                        UNION ALL
+                        SELECT owner_kind, owner_id FROM memory_atoms
+                        UNION ALL
+                        SELECT owner_kind, owner_id FROM memory_books
+                        UNION ALL
+                        SELECT owner_kind, owner_id FROM agent_memory_sources
+                        WHERE status = 'active'
+                    )
+                    SELECT owner_kind, owner_id, COUNT(*) AS item_count
+                    FROM owner_records
+                    GROUP BY owner_kind, owner_id
+                    ORDER BY
+                        CASE owner_kind
+                            WHEN 'user' THEN 0
+                            WHEN 'shared' THEN 1
+                            WHEN 'agent' THEN 2
+                            WHEN 'session' THEN 3
+                            ELSE 4
+                        END,
+                        owner_id
+                    """
+                ).fetchall()
+                result["owners"] = [
+                    {
+                        "ownerKind": str(row["owner_kind"]),
+                        "ownerId": str(row["owner_id"]),
+                        "itemCount": int(row["item_count"] or 0),
+                    }
+                    for row in owner_rows
+                ]
+            else:
+                result["owners"] = []
         return result
 
     def _memory_books(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
@@ -2180,23 +2368,26 @@ class ManagementService:
         like = f"%{request.query}%"
         event_ranges: dict[str, tuple[int, int]] = {}
         atoms_by_book: dict[str, list[dict[str, object]]] = {}
+        owner_clause, owner_params = _page_owner_filter(request, table_alias="memory_books")
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT rowid AS row_cursor, book_id AS id, title, summary,
                        book_type AS type, project, app, tags_json,
                        source_event_ids_json, memory_atom_ids_json,
+                       owner_kind, owner_id,
                        status, confidence, quality_score, created_at_ms, updated_at_ms,
                        archived_at_ms, last_active_at_ms, archive_reason
                 FROM memory_books
                 WHERE (? = 0 OR rowid < ?)
                   AND (? = '' OR title LIKE ? OR summary LIKE ? OR project LIKE ? OR app LIKE ? OR book_type LIKE ?)
                   AND (? = '' OR status = ?)
+                  AND {owner_clause}
                 ORDER BY rowid DESC LIMIT ?
                 """,
                 (
                     cursor, cursor, request.query, like, like, like, like, like,
-                    request.status, request.status, limit + 1,
+                    request.status, request.status, *owner_params, limit + 1,
                 ),
             ).fetchall()
             for row in rows:
@@ -2218,9 +2409,10 @@ class ManagementService:
                                status, confidence, updated_at_ms AS updatedAtMs
                         FROM memory_atoms
                         WHERE id IN ({atom_placeholders}) AND privacy_level != 'sensitive'
+                          AND owner_kind = ? AND owner_id = ?
                         ORDER BY updated_at_ms DESC
                         """,
-                        atom_ids,
+                        (*atom_ids, str(row["owner_kind"]), str(row["owner_id"])),
                     ).fetchall()
                     atoms_by_book[str(row["id"])] = [dict(atom) for atom in atom_rows]
         has_more = len(rows) > limit
@@ -2229,6 +2421,8 @@ class ManagementService:
         for row in rows:
             item = dict(row)
             item.pop("row_cursor", None)
+            item["ownerKind"] = str(item.pop("owner_kind", "user") or "user")
+            item["ownerId"] = str(item.pop("owner_id", "default") or "default")
             item["tags"] = _json_list(item.pop("tags_json", "[]"))
             item["sourceEventCount"] = len(_json_list(item.pop("source_event_ids_json", "[]")))
             item["atomCount"] = len(_json_list(item.pop("memory_atom_ids_json", "[]")))
@@ -2247,24 +2441,27 @@ class ManagementService:
         limit = request.limit
         cursor = _cursor_int(request.cursor)
         like = f"%{request.query}%"
+        owner_clause, owner_params = _page_owner_filter(request, table_alias="memory_atoms")
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT rowid AS row_cursor, id, kind AS type,
                        COALESCE(NULLIF(canonical_text, ''), text) AS text,
                        source_event_ids_json, scope_project AS project,
-                       scope_app AS app, status, confidence, quality_score,
+                       scope_app AS app, owner_kind, owner_id,
+                       status, confidence, quality_score,
                        created_at_ms, last_used_at_ms, updated_at_ms
                 FROM memory_atoms
                 WHERE privacy_level != 'sensitive'
                   AND (? = 0 OR rowid < ?)
                   AND (? = '' OR text LIKE ? OR canonical_text LIKE ? OR kind LIKE ? OR scope_project LIKE ? OR scope_app LIKE ?)
                   AND (? = '' OR status = ?)
+                  AND {owner_clause}
                 ORDER BY rowid DESC LIMIT ?
                 """,
                 (
                     cursor, cursor, request.query, like, like, like, like, like,
-                    request.status, request.status, limit + 1,
+                    request.status, request.status, *owner_params, limit + 1,
                 ),
             ).fetchall()
             tag_rows = conn.execute(
@@ -2284,6 +2481,8 @@ class ManagementService:
         for row in rows:
             item = dict(row)
             item.pop("row_cursor", None)
+            item["ownerKind"] = str(item.pop("owner_kind", "user") or "user")
+            item["ownerId"] = str(item.pop("owner_id", "default") or "default")
             text = str(item.get("text") or "")
             item["textHash"] = _text_hash(text)
             item["textChars"] = len(text)
@@ -2369,9 +2568,10 @@ class ManagementService:
         limit = request.limit
         cursor = _cursor_int(request.cursor)
         like = f"%{request.query}%"
+        owner_clause, owner_params = _page_owner_filter(request, table_alias="mi")
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     mi.id AS row_cursor,
                     mi.memory_id,
@@ -2379,6 +2579,8 @@ class ManagementService:
                     mi.normalized_text,
                     mi.project,
                     mi.app,
+                    mi.owner_kind,
+                    mi.owner_id,
                     mi.status,
                     mi.confidence,
                     mi.quality_score,
@@ -2393,6 +2595,7 @@ class ManagementService:
                   AND (? = 0 OR mi.id < ?)
                   AND (? = '' OR mi.text LIKE ? OR mi.normalized_text LIKE ? OR mi.project LIKE ? OR mi.app LIKE ?)
                   AND (? = '' OR mi.status = ?)
+                  AND {owner_clause}
                 ORDER BY mi.id DESC
                 LIMIT ?
                 """,
@@ -2406,6 +2609,7 @@ class ManagementService:
                     like,
                     request.status,
                     request.status,
+                    *owner_params,
                     limit + 1,
                 ),
             ).fetchall()
@@ -2430,6 +2634,8 @@ class ManagementService:
                     "text": text,
                     "project": str(row["project"] or ""),
                     "app": str(row["app"] or ""),
+                    "ownerKind": str(row["owner_kind"] or "user"),
+                    "ownerId": str(row["owner_id"] or "default"),
                     "status": str(row["status"]),
                     "confidence": float(row["confidence"]),
                     "qualityScore": float(row["quality_score"]),
@@ -2437,6 +2643,123 @@ class ManagementService:
                     "firstSeenMs": int(row["first_seen_ms"]),
                     "lastSeenMs": int(row["last_seen_ms"]),
                     "updatedAtMs": int(row["updated_at_ms"]),
+                }
+            )
+        next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
+        return items, next_cursor
+
+    def _memory_evidence(
+        self,
+        request: PageRequest,
+    ) -> tuple[list[dict[str, object]], str]:
+        limit = request.limit
+        cursor = _cursor_int(request.cursor)
+        like = f"%{request.query}%"
+        owner_clause, owner_params = _page_owner_filter(
+            request,
+            table_alias="source",
+        )
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    event.id AS row_cursor,
+                    source.source_id,
+                    source.source_kind,
+                    source.trust_class,
+                    source.disposition,
+                    source.disposition_reason,
+                    source.owner_kind,
+                    source.owner_id,
+                    source.curation_run_id,
+                    source.created_at_ms,
+                    source.disposition_updated_at_ms,
+                    source.metadata_json,
+                    event.source AS transport_source,
+                    event.committed_text,
+                    event.project,
+                    event.app
+                FROM agent_memory_sources AS source
+                JOIN input_events AS event ON event.id = source.input_event_id
+                WHERE source.status = 'active'
+                  AND (? = 0 OR event.id < ?)
+                  AND (
+                      ? = ''
+                      OR event.committed_text LIKE ?
+                      OR source.source_kind LIKE ?
+                      OR source.disposition_reason LIKE ?
+                      OR event.project LIKE ?
+                      OR event.app LIKE ?
+                  )
+                  AND (? = '' OR source.disposition = ?)
+                  AND {owner_clause}
+                ORDER BY event.id DESC
+                LIMIT ?
+                """,
+                (
+                    cursor,
+                    cursor,
+                    request.query,
+                    like,
+                    like,
+                    like,
+                    like,
+                    like,
+                    request.status,
+                    request.status,
+                    *owner_params,
+                    limit + 1,
+                ),
+            ).fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items: list[dict[str, object]] = []
+        for row in rows:
+            raw_text = compact_whitespace(str(row["committed_text"] or ""))
+            sensitive = (
+                str(row["disposition_reason"] or "") == "sensitive_input"
+                or looks_sensitive(raw_text)
+            )
+            display_text = "敏感输入已排除，正文不显示" if sensitive else raw_text
+            disposition = str(row["disposition"] or "pending")
+            items.append(
+                {
+                    "id": str(row["source_id"]),
+                    "itemId": str(row["source_id"]),
+                    "type": str(row["source_kind"] or "user_final"),
+                    "source": str(row["transport_source"] or ""),
+                    "title": display_text[:160] or "空输入证据",
+                    "detail": str(row["disposition_reason"] or "")
+                    or _memory_disposition_label(disposition),
+                    "text": "" if sensitive else raw_text,
+                    "textPreview": display_text,
+                    "textHash": _text_hash(raw_text),
+                    "textChars": len(raw_text),
+                    "sensitive": sensitive,
+                    "project": str(row["project"] or ""),
+                    "app": str(row["app"] or ""),
+                    "ownerKind": str(row["owner_kind"] or "user"),
+                    "ownerId": str(row["owner_id"] or "default"),
+                    "status": disposition,
+                    "disposition": disposition,
+                    "dispositionReason": str(
+                        row["disposition_reason"] or ""
+                    ),
+                    "trustClass": str(row["trust_class"] or ""),
+                    "curationRunId": str(row["curation_run_id"] or ""),
+                    "metadata": _json_mapping(row["metadata_json"]),
+                    "createdAtMs": int(row["created_at_ms"] or 0),
+                    "updatedAtMs": int(
+                        row["disposition_updated_at_ms"]
+                        or row["created_at_ms"]
+                        or 0
+                    ),
+                    "canForget": disposition
+                    in {"pending", "remember", "needs_review"},
+                    "canRestore": (
+                        disposition in {"not_for_memory", "expired"}
+                        and not sensitive
+                    ),
                 }
             )
         next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
@@ -3224,13 +3547,46 @@ def page_request(payload: Mapping[str, object]) -> PageRequest:
         limit = int(payload.get("limit") or 50)
     except (TypeError, ValueError):
         limit = 50
+    visible_owners: list[tuple[str, str]] = []
+    raw_owners = payload.get("visibleOwners")
+    if isinstance(raw_owners, (list, tuple)):
+        for value in raw_owners:
+            try:
+                if isinstance(value, Mapping):
+                    owner = normalize_memory_owner(value.get("ownerKind"), value.get("ownerId"))
+                elif isinstance(value, (list, tuple)) and len(value) == 2:
+                    owner = normalize_memory_owner(value[0], value[1])
+                else:
+                    continue
+            except ValueError:
+                continue
+            if owner not in visible_owners:
+                visible_owners.append(owner)
+    if payload.get("ownerKind") or payload.get("ownerId"):
+        owner = normalize_memory_owner(
+            payload.get("ownerKind"),
+            payload.get("ownerId"),
+        )
+        if owner not in visible_owners:
+            visible_owners.append(owner)
     return PageRequest(
         limit=max(1, min(limit, 100)),
         cursor=str(payload.get("cursor") or ""),
         query=str(payload.get("query") or "").strip(),
         status=str(payload.get("status") or payload.get("filter") or "").strip(),
         kind=str(payload.get("kind") or "").strip(),
+        visible_owners=tuple(visible_owners),
     )
+
+
+def _page_owner_filter(
+    request: PageRequest,
+    *,
+    table_alias: str,
+) -> tuple[str, tuple[str, ...]]:
+    if not request.visible_owners:
+        return "1 = 1", ()
+    return sql_memory_owner_predicate(request.visible_owners, table_alias=table_alias)
 
 
 def _component(component_id: str, ok: bool, detail: str, metadata: Mapping[str, object]) -> dict[str, object]:
@@ -3404,6 +3760,27 @@ def _json_list(value: object) -> list[object]:
     except (TypeError, ValueError, json.JSONDecodeError):
         return []
     return list(parsed) if isinstance(parsed, list) else []
+
+
+def _json_mapping(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _memory_disposition_label(value: str) -> str:
+    return {
+        "pending": "等待每日整理",
+        "remember": "已判定值得保留",
+        "not_for_memory": "已从长期记忆排除",
+        "needs_review": "需要再次判断",
+        "consolidated": "已整理进长期记忆",
+        "expired": "已过期",
+    }.get(value, value)
 
 
 def _string_list_value(value: object) -> list[str]:

@@ -56,6 +56,7 @@ function detectTransport(): 'native' | 'http' | 'mock' {
 function createPreviewTransport(): MockControlTransport {
   let nextSessionId = 1;
   let nextWakeScheduleId = 1;
+  let previewEvidenceDisposition = 'not_for_memory';
   const sessions: Record<string, unknown>[] = [
     previewSession('session-preview', '控制中心迁移', 'zhiyou-v1', Date.now()),
     previewSession('session-memory', '记忆整理', 'zhiyou-v1', Date.now() - 360_000),
@@ -173,6 +174,15 @@ function createPreviewTransport(): MockControlTransport {
       items: [],
     };
   };
+  routes['memory.pages'] = (request: ControlRequest) =>
+    previewMemoryPage(request, previewEvidenceDisposition);
+  routes['memory.source.disposition'] = (request: ControlRequest) => {
+    const disposition = stringValue(record(request.body).disposition);
+    if (disposition === 'pending' || disposition === 'not_for_memory') {
+      previewEvidenceDisposition = disposition;
+    }
+    return { ok: true, changed: true };
+  };
   return new MockControlTransport({
     routes,
     capabilities: { routeIds: Object.keys(routes) as ControlPathId[] },
@@ -288,10 +298,26 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'planning.dashboard':
       return { ok: true, date: new Date().toISOString().slice(0, 10), tasks: [], goals: [] };
     case 'memory.summary':
-      return { ok: true, books: 12, atoms: 248, phrases: 640, groups: 9 };
+      return {
+        ok: true,
+        runtimeRevision: 43,
+        eventCount: 1_284,
+        memoryItemCount: 326,
+        evidenceSourceCount: 1_108,
+        memoryBookCount: 12,
+        memoryAtomCount: 248,
+        forgottenSourceCount: 37,
+        needsReviewSourceCount: 4,
+        owners: [
+          { ownerKind: 'user', ownerId: 'default', itemCount: 292 },
+          { ownerKind: 'agent', ownerId: 'zhiyou-v1', itemCount: 34 },
+        ],
+      };
     case 'memory.pages':
     case 'history.page':
       return { ok: true, items: [], nextCursor: '' };
+    case 'memory.source.disposition':
+      return { ok: true, changed: true };
     case 'knowledgeBases.list':
       return { ok: true, items: [previewKnowledgeBase()] };
     case 'knowledgeBases.get':
@@ -383,6 +409,70 @@ function previewResponse(pathId: ControlPathId): unknown {
     default:
       return { ok: true, schemaVersion: 'rag-ime.control-preview.v1' };
   }
+}
+
+function previewMemoryPage(
+  request: ControlRequest,
+  evidenceDisposition: string,
+): Record<string, unknown> {
+  const kind = stringValue(record(request.params).kind);
+  if (kind === 'evidence') {
+    return {
+      ok: true,
+      items: [
+        {
+          id: 'input-memory:preview-noise',
+          title: '嗯嗯那个这个',
+          detail: evidenceDisposition === 'not_for_memory'
+            ? 'input_noise_filler'
+            : 'user_restored',
+          status: evidenceDisposition,
+          disposition: evidenceDisposition,
+          source: 'squirrel_rime_commit_burst',
+          type: 'user_final',
+          ownerKind: 'user',
+          ownerId: 'default',
+          updatedAtMs: Date.now() - 86_400_000,
+        },
+        {
+          id: 'agent-memory:preview-compaction',
+          title: '桌面上下文默认读取 Accessibility Tree，截图仅作兜底。',
+          detail: 'durable_role_summary',
+          status: 'remember',
+          disposition: 'remember',
+          source: 'pi_agent_compaction',
+          type: 'session_compaction',
+          ownerKind: 'agent',
+          ownerId: 'zhiyou-v1',
+          updatedAtMs: Date.now() - 3_600_000,
+        },
+      ],
+      nextCursor: '',
+      limit: 50,
+    };
+  }
+  if (kind === 'books') {
+    return {
+      ok: true,
+      items: [
+        {
+          id: 'book:preview-memory-governance',
+          title: '记忆治理与桌面上下文',
+          summary: '按用户、角色和项目隔离证据；每日整理先生成可审阅草案。',
+          status: 'active',
+          source: 'memory_book',
+          type: 'topic',
+          ownerKind: 'user',
+          ownerId: 'default',
+          tags: ['记忆治理', '桌面上下文'],
+          updatedAtMs: Date.now() - 7_200_000,
+        },
+      ],
+      nextCursor: '',
+      limit: 50,
+    };
+  }
+  return { ok: true, items: [], nextCursor: '', limit: 50 };
 }
 
 function previewKnowledgeBase(): Record<string, unknown> {

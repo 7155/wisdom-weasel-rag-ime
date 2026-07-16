@@ -22,7 +22,7 @@
     "autoApply": {"type": "boolean", "const": false},
     "scheduledDraftOnly": {"type": "boolean", "const": true},
     "due": {"type": "boolean"},
-    "dueReason": {"type": "string", "enum": ["pending_events", "idle", "daily", "not_due"]},
+    "dueReason": {"type": "string", "enum": ["pending_events", "idle", "daily", "owner_daily", "not_due"]},
     "idleMs": {"type": "integer", "minimum": 0},
     "compileState": {
       "type": "object",
@@ -36,11 +36,37 @@
       }
     },
     "pendingDraftCount": {"type": "integer", "minimum": 0},
+    "ownerCuration": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "ok",
+        "project",
+        "policy",
+        "due",
+        "pendingSourceCount",
+        "needsReviewSourceCount",
+        "scopes"
+      ],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.owner-memory-curation-status.v1"},
+        "ok": {"type": "boolean", "const": true},
+        "project": {"type": "string"},
+        "policy": {"type": "object"},
+        "due": {"type": "boolean"},
+        "pendingSourceCount": {"type": "integer", "minimum": 0},
+        "needsReviewSourceCount": {"type": "integer", "minimum": 0},
+        "scopes": {"type": "array", "items": {"type": "object"}}
+      }
+    },
     "runs": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["runId", "createdAtMs", "status", "summary", "diffCount", "bundleHash", "sourceCursor"],
+        "required": [
+          "runId", "createdAtMs", "status", "summary", "diffCount",
+          "bundleHash", "sourceCursor", "ownerKind", "ownerId", "runKind"
+        ],
         "properties": {
           "runId": {"type": "string", "minLength": 1},
           "createdAtMs": {"type": "integer", "minimum": 0},
@@ -48,7 +74,10 @@
           "summary": {"type": "string"},
           "diffCount": {"type": "integer", "minimum": 0},
           "bundleHash": {"type": "string"},
-          "sourceCursor": {"type": "object"}
+          "sourceCursor": {"type": "object"},
+          "ownerKind": {"type": "string", "enum": ["user", "shared", "agent", "session", "room"]},
+          "ownerId": {"type": "string", "minLength": 1},
+          "runKind": {"type": "string", "enum": ["legacy", "daily_curation", "manual_curation", "dream_insight"]}
         }
       }
     }

@@ -15,6 +15,7 @@ from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery
 from .hybrid_rag_ranker import rank_hybrid_hits
 from .memory_book_lifecycle import set_memory_book_archive_status
 from .memory_ingest import normalize_text
+from .memory_ownership import resolve_visible_memory_owners, sql_memory_owner_predicate
 from .query_expansion import build_query_expansion
 from .retrieval_vector_index import load_retrieval_doc_vectors
 from .text_utils import compact_whitespace, token_terms
@@ -34,6 +35,7 @@ def retrieve_hybrid_rag_candidates(
     embedding_provider: EmbeddingProvider | None = None,
 ) -> dict[str, object]:
     started = time.perf_counter()
+    visible_owners = resolve_visible_memory_owners(query.visible_owners, project=query.project)
     expansion = build_query_expansion(
         conn,
         query_text=query.query_text,
@@ -43,6 +45,7 @@ def retrieve_hybrid_rag_candidates(
         committed_tail=query.committed_tail,
         project=query.project,
         app=query.app,
+        visible_owners=visible_owners,
     )
     docs = _active_docs(conn, query=query)
     blocked = _blocked_sets(conn)
@@ -68,6 +71,7 @@ def retrieve_hybrid_rag_candidates(
             blocked=blocked,
             project=query.project,
             app=query.app,
+            visible_owners=visible_owners,
             limit=max(8, query.top_k * 4),
         )
     bm25_tags_hits = []
@@ -81,6 +85,7 @@ def retrieve_hybrid_rag_candidates(
             blocked=blocked,
             project=query.project,
             app=query.app,
+            visible_owners=visible_owners,
             limit=max(8, query.top_k * 4),
         )
     tagmemo_hits = []
@@ -94,6 +99,7 @@ def retrieve_hybrid_rag_candidates(
             blocked=blocked,
             project=query.project,
             app=query.app,
+            visible_owners=visible_owners,
             limit=max(8, query.top_k * 4),
         )
     feedback_hits = (
@@ -165,6 +171,10 @@ def retrieve_hybrid_rag_candidates(
             "activatedTags": list(expansion.activated_tags),
             "negativeTags": list(expansion.negative_tags),
             "expansionTerms": list(expansion.expansion_terms),
+            "visibleOwners": [
+                {"ownerKind": kind, "ownerId": identity}
+                for kind, identity in visible_owners
+            ],
         },
         "lanes": {
             name: {
@@ -373,16 +383,23 @@ def retrieve_hybrid_rag_candidate_objects(
 
 
 def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dict[str, object]]:
+    visible_owners = resolve_visible_memory_owners(query.visible_owners, project=query.project)
+    owner_clause, owner_params = sql_memory_owner_predicate(
+        visible_owners,
+        table_alias="memory_retrieval_docs",
+    )
     rows = conn.execute(
-        """
+        f"""
         SELECT doc_id, doc_type, source_id, raw_text, tags_text, aliases_text, surface_hints_text,
-               query_expansions_text, time_key, project, app, updated_at_ms, metadata_json
+               query_expansions_text, time_key, project, app, owner_kind, owner_id,
+               updated_at_ms, metadata_json
         FROM memory_retrieval_docs
         WHERE status = 'active'
           AND (? = '' OR project = ? OR project = '')
           AND (? = '' OR app = ? OR app = '')
+          AND {owner_clause}
         """,
-        (query.project, query.project, query.app, query.app),
+        (query.project, query.project, query.app, query.app, *owner_params),
     ).fetchall()
     current_group = ContextGroup(
         context_group_id=compact_whitespace(query.context_group_id),
@@ -418,6 +435,8 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
             "time_key": str(row["time_key"] or ""),
             "project": str(row["project"] or ""),
             "app": str(row["app"] or ""),
+            "owner_kind": str(row["owner_kind"] or ""),
+            "owner_id": str(row["owner_id"] or ""),
             "updated_at_ms": int(row["updated_at_ms"] or 0),
             "metadata": metadata,
         })
@@ -464,6 +483,7 @@ def _rank_fts5_docs(
     blocked: dict[str, set[str]],
     project: str,
     app: str,
+    visible_owners: tuple[tuple[str, str], ...],
     limit: int,
 ) -> tuple[list[HybridRagHit], str]:
     """Run a column-scoped FTS5 BM25 query, with an explicit safe fallback.
@@ -480,9 +500,13 @@ def _rank_fts5_docs(
     docs_by_id = {str(doc["doc_id"]): doc for doc in docs}
     if not docs_by_id:
         return [], "sqlite_fts5_bm25"
+    owner_clause, owner_params = sql_memory_owner_predicate(
+        visible_owners,
+        table_alias="d",
+    )
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT d.doc_id, bm25(memory_retrieval_docs_fts) AS bm25_score
             FROM memory_retrieval_docs_fts
             JOIN memory_retrieval_docs AS d
@@ -491,10 +515,19 @@ def _rank_fts5_docs(
               AND d.status = 'active'
               AND (? = '' OR d.project = ? OR d.project = '')
               AND (? = '' OR d.app = ? OR d.app = '')
+              AND {owner_clause}
             ORDER BY bm25(memory_retrieval_docs_fts) ASC, d.updated_at_ms DESC
             LIMIT ?
             """,
-            (match_query, project, project, app, app, max(1, limit * 8)),
+            (
+                match_query,
+                project,
+                project,
+                app,
+                app,
+                *owner_params,
+                max(1, limit * 8),
+            ),
         ).fetchall()
     except sqlite3.OperationalError:
         return (
@@ -730,6 +763,8 @@ def _hit_from_doc(doc: dict[str, object], *, lane: str, rank: int, raw_score: fl
     metadata = dict(doc.get("metadata") or {})
     metadata["projectScope"] = bool(doc.get("project"))
     metadata["appScope"] = bool(doc.get("app"))
+    metadata["ownerKind"] = str(doc.get("owner_kind") or "")
+    metadata["ownerId"] = str(doc.get("owner_id") or "")
     if doc.get("doc_type") == "book" and not compact_whitespace(str(metadata.get("bookTitle") or "")):
         metadata["bookTitle"] = _book_title(str(doc.get("raw_text") or ""))
     return HybridRagHit(

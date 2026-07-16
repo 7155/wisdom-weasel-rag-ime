@@ -450,7 +450,12 @@ class _Facade:
             "reusedDraft": False,
             "source": {"bundleHash": "sha256:bundle", "eventCount": 7},
             "validation": {"ok": True, "errors": []},
-            "storedRun": {"runId": "memory_book_draft", "status": "draft"},
+            "storedRun": {
+                "runId": "memory_book_draft",
+                "status": "draft",
+                "ownerKind": payload["ownerKind"],
+                "ownerId": payload["ownerId"],
+            },
             "instruction": payload["instruction"],
         }
 
@@ -466,6 +471,9 @@ class _Facade:
                 "runId": payload["runId"],
                 "status": status,
                 "summary": "Pi 记忆整理草案",
+                "ownerKind": "agent",
+                "ownerId": "zhiyou-v1",
+                "runKind": "manual_curation",
                 "bundleHash": "sha256:bundle",
                 "sourceCursor": {"fromEventId": 10, "toEventId": 16},
                 "diffCount": 3,

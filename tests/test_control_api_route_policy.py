@@ -39,6 +39,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "memory.graph.get",
                 "memory.entity.get",
                 "memory.edit",
+                "memory.source.disposition",
                 "memory.book.archive.preview",
                 "memory.book.archive.apply",
                 "memory.book.archive.rollback",
@@ -514,6 +515,19 @@ class ControlRoutePolicyTests(unittest.TestCase):
             params={"kind": "books"},
         )
         self.policy.authorize(allowed, ControlAccessContext.native())
+        self.policy.authorize(
+            ControlRequest(
+                request_id="request-evidence",
+                path_id=ControlPathId.MEMORY_PAGES.value,
+                params={"kind": "evidence"},
+                query={
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "status": "not_for_memory",
+                },
+            ),
+            ControlAccessContext.native(),
+        )
 
         rejected = ControlRequest(
             request_id="request-2",
@@ -573,6 +587,35 @@ class ControlRoutePolicyTests(unittest.TestCase):
                     ),
                     ControlAccessContext.native(),
                 )
+
+    def test_memory_source_disposition_is_local_only_and_allowlisted(self) -> None:
+        request = ControlRequest(
+            request_id="request-memory-source",
+            path_id=ControlPathId.MEMORY_SOURCE_DISPOSITION.value,
+            body={
+                "sourceId": "input-memory:42",
+                "disposition": "not_for_memory",
+            },
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                request,
+                ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+            )
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-memory-source-invalid",
+                    path_id=ControlPathId.MEMORY_SOURCE_DISPOSITION.value,
+                    body={
+                        "sourceId": "input-memory:42",
+                        "disposition": "pending",
+                        "rawText": "not allowed",
+                    },
+                ),
+                ControlAccessContext.native(),
+            )
 
     def test_memory_entity_allows_public_book_summary_but_not_raw_atoms(self) -> None:
         allowed = ControlRequest(

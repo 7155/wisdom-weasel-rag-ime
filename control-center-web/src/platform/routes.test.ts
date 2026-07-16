@@ -103,6 +103,7 @@ const canonicalPathIds = [
   'memory.graph.get',
   'memory.entity.get',
   'memory.edit',
+  'memory.source.disposition',
   'memory.book.archive.preview',
   'memory.book.archive.apply',
   'memory.book.archive.rollback',
@@ -302,6 +303,39 @@ describe('control route policy', () => {
     ).toThrow(/body field/);
   });
 
+  it('allowlists reversible evidence dispositions and owner filters', () => {
+    expect(() =>
+      assertControlRequest({
+        pathId: 'memory.pages',
+        params: { kind: 'evidence' },
+        query: {
+          ownerKind: 'user',
+          ownerId: 'default',
+          status: 'not_for_memory',
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertControlRequest({
+        pathId: 'memory.source.disposition',
+        body: {
+          sourceId: 'input-memory:42',
+          disposition: 'not_for_memory',
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertControlRequest({
+        pathId: 'memory.source.disposition',
+        body: {
+          sourceId: 'input-memory:42',
+          disposition: 'pending',
+          rawText: 'client-owned',
+        },
+      } as never),
+    ).toThrow(/body field/);
+  });
+
   it('requires one event id for a history detail read', () => {
     expect(() => assertControlRequest({
       pathId: 'history.detail',
@@ -382,6 +416,9 @@ describe('control route policy', () => {
     ).toThrow(ControlRoutePolicyError);
     expect(() => resolveControlPath('memory.pages', { kind: 'private-db' })).toThrow(
       /not allowlisted/,
+    );
+    expect(resolveControlPath('memory.pages', { kind: 'evidence' })).toBe(
+      '/api/memory/evidence',
     );
     expect(resolveControlPath('memory.entity.get', { kind: 'group', entityId: 'group:input-method' })).toBe(
       '/api/memory/entities/group/group%3Ainput-method',

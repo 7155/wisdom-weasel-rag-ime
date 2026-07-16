@@ -14,6 +14,7 @@ from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
 from .contracts.json_schema import validate_contract
 from .management_service import ManagementService, page_request
+from .memory_ownership import agent_visible_memory_owners
 from .settings_schema import default_settings, flatten_settings, settings_schema
 
 
@@ -1299,11 +1300,17 @@ class ControlToolGateway:
         run_id = _bounded_text(args.get("runId"), maximum=240)
         if not run_id:
             raise ValueError(f"runId is required for ime_memory.{operation}")
+        visible_owners, mutable_owner = self._memory_owner_context(session_id)
         review = self._facade_call(
             "agent_memory_maintenance_run",
-            {"runId": run_id, "project": self.project},
+            {
+                "runId": run_id,
+                "project": self.project,
+                "visibleOwners": _owner_payloads(visible_owners),
+            },
         )
         run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
+        _require_memory_run_owner(run, mutable_owner)
         applying = operation == "maintenance_apply"
         if applying and review.get("canApply") is not True:
             raise ValueError("memory draft is not currently applicable")
@@ -1312,7 +1319,12 @@ class ControlToolGateway:
         revision_hash = _bounded_text(review.get("revisionHash"), maximum=96)
         if not revision_hash:
             raise ValueError("memory run revision is unavailable")
-        action_payload = {"runId": run_id, "project": self.project}
+        action_payload = {
+            "runId": run_id,
+            "project": self.project,
+            "expectedOwnerKind": mutable_owner[0],
+            "expectedOwnerId": mutable_owner[1],
+        }
         base_state = {
             "revisionHash": revision_hash,
             "status": _bounded_text(run.get("status"), maximum=40),
@@ -1409,12 +1421,28 @@ class ControlToolGateway:
             raise ValueError("approval payload no longer matches its preview")
         run_id = _bounded_text(action_payload.get("runId"), maximum=240)
         project = _bounded_text(action_payload.get("project"), maximum=160)
+        expected_owner = (
+            _bounded_text(action_payload.get("expectedOwnerKind"), maximum=40),
+            _bounded_text(action_payload.get("expectedOwnerId"), maximum=160),
+        )
         if not run_id or project != self.project:
             raise ValueError("approved memory action payload is invalid")
+        if not all(expected_owner):
+            raise ValueError("approved memory owner is invalid")
+        session_id = _bounded_text(approval.get("sessionId"), maximum=240)
+        visible_owners, mutable_owner = self._memory_owner_context(session_id)
+        if expected_owner != mutable_owner:
+            raise ValueError("approved memory owner no longer matches the session role")
         current = self._facade_call(
             "agent_memory_maintenance_run",
-            {"runId": run_id, "project": self.project},
+            {
+                "runId": run_id,
+                "project": self.project,
+                "visibleOwners": _owner_payloads(visible_owners),
+            },
         )
+        current_run = current.get("run") if isinstance(current.get("run"), Mapping) else {}
+        _require_memory_run_owner(current_run, expected_owner)
         if (
             _bounded_text(current.get("revisionHash"), maximum=96)
             != _bounded_text(base_state.get("revisionHash"), maximum=96)
@@ -1429,15 +1457,25 @@ class ControlToolGateway:
             raise ValueError("memory run is no longer rollbackable")
         action_result = self._facade_call(
             "knowledge_workbench_database_apply" if applying else "knowledge_workbench_database_rollback",
-            {"runId": run_id, "confirm": "apply" if applying else "rollback"},
+            {
+                "runId": run_id,
+                "confirm": "apply" if applying else "rollback",
+                "expectedOwnerKind": expected_owner[0],
+                "expectedOwnerId": expected_owner[1],
+            },
         )
         if action_result.get("ok") is not True:
             raise ValueError(_bounded_text(action_result.get("error"), maximum=240) or "memory action failed")
         after = self._facade_call(
             "agent_memory_maintenance_run",
-            {"runId": run_id, "project": self.project},
+            {
+                "runId": run_id,
+                "project": self.project,
+                "visibleOwners": _owner_payloads(visible_owners),
+            },
         )
         after_run = after.get("run") if isinstance(after.get("run"), Mapping) else {}
+        _require_memory_run_owner(after_run, expected_owner)
         after_status = _bounded_text(after_run.get("status"), maximum=40)
         mutation_applied = (
             after_status in {"applied", "partial"}
@@ -3679,6 +3717,9 @@ class ControlToolGateway:
         }
 
     def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        visible_owners, mutable_owner = self._memory_owner_context(session_id)
+        visible_owner_payload = _owner_payloads(visible_owners)
         if operation == "catalog":
             return self._catalog(args)
         if operation == "read":
@@ -3697,6 +3738,8 @@ class ControlToolGateway:
                 {
                     "project": self.project,
                     "limit": _bounded_int(args.get("limit"), default=10, minimum=1, maximum=30),
+                    "ownerKind": mutable_owner[0],
+                    "ownerId": mutable_owner[1],
                 },
             )
             draft_count = _safe_int(payload.get("pendingDraftCount"))
@@ -3713,6 +3756,8 @@ class ControlToolGateway:
                 {
                     "project": self.project,
                     "instruction": _bounded_text(args.get("instruction"), maximum=800),
+                    "ownerKind": mutable_owner[0],
+                    "ownerId": mutable_owner[1],
                 },
             )
             if payload.get("ok") is not True or payload.get("storedDraft") is not True:
@@ -3726,9 +3771,14 @@ class ControlToolGateway:
                 raise ValueError("memory draft generation returned no runId")
             review = self._facade_call(
                 "agent_memory_maintenance_run",
-                {"runId": run_id, "project": self.project},
+                {
+                    "runId": run_id,
+                    "project": self.project,
+                    "visibleOwners": visible_owner_payload,
+                },
             )
             run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
+            _require_memory_run_owner(run, mutable_owner)
             diff_count = _safe_int(run.get("diffCount"))
             reused = payload.get("reusedDraft") is True
             return {
@@ -3749,9 +3799,14 @@ class ControlToolGateway:
                 raise ValueError("runId is required for ime_memory.maintenance_review")
             review = self._facade_call(
                 "agent_memory_maintenance_run",
-                {"runId": run_id, "project": self.project},
+                {
+                    "runId": run_id,
+                    "project": self.project,
+                    "visibleOwners": visible_owner_payload,
+                },
             )
             run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
+            _require_memory_run_owner(run, mutable_owner)
             return {
                 "summary": f"已读取记忆草案 {run_id} 的 {_safe_int(run.get('diffCount'))} 项差异",
                 "reviewRequired": True,
@@ -3765,7 +3820,16 @@ class ControlToolGateway:
             raise ValueError("unsupported memory list kind")
         query = _bounded_text(args.get("query"), maximum=240)
         limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=20)
-        page = self.management.memory_page(kind, page_request({"query": query, "limit": limit}))
+        page = self.management.memory_page(
+            kind,
+            page_request(
+                {
+                    "query": query,
+                    "limit": limit,
+                    "visibleOwners": visible_owner_payload,
+                }
+            ),
+        )
         items = page.get("items", []) if isinstance(page, Mapping) else []
         return {
             "summary": f"检索到 {len(items)} 条 {kind} 记忆记录",
@@ -4010,7 +4074,16 @@ class ControlToolGateway:
     def _catalog(self, args: Mapping[str, object]) -> dict[str, object]:
         query = _bounded_text(args.get("query"), maximum=240)
         limit = _bounded_int(args.get("limit"), default=5, minimum=1, maximum=8)
-        request = page_request({"query": query, "limit": limit})
+        visible_owners, _mutable_owner = self._memory_owner_context(
+            _bounded_text(args.get("_sessionId"), maximum=240)
+        )
+        request = page_request(
+            {
+                "query": query,
+                "limit": limit,
+                "visibleOwners": _owner_payloads(visible_owners),
+            }
+        )
         books = self.management.memory_page("books", request).get("items", [])
         groups = self.management.memory_page("groups", request).get("items", [])
         tags = self.management.memory_page("tags", request).get("items", [])
@@ -4036,7 +4109,18 @@ class ControlToolGateway:
         book_id = _bounded_text(args.get("bookId"), maximum=240)
         if not book_id:
             raise ValueError("bookId is required for ime_memory.read")
-        report = self.management.memory_page("books", page_request({"limit": 500}))
+        visible_owners, _mutable_owner = self._memory_owner_context(
+            _bounded_text(args.get("_sessionId"), maximum=240)
+        )
+        report = self.management.memory_page(
+            "books",
+            page_request(
+                {
+                    "limit": 500,
+                    "visibleOwners": _owner_payloads(visible_owners),
+                }
+            ),
+        )
         match = next(
             (
                 item
@@ -4100,6 +4184,22 @@ class ControlToolGateway:
             "items": items,
         }
 
+    def _memory_owner_context(
+        self,
+        session_id: str,
+    ) -> tuple[tuple[tuple[str, str], ...], tuple[str, str]]:
+        if not session_id:
+            raise ValueError("memory tool session is missing")
+        session = self.sessions.get(session_id)
+        role_id = _bounded_text(session.get("roleId"), maximum=160)
+        mutable_owner = ("agent", role_id) if role_id else ("session", session_id)
+        visible = agent_visible_memory_owners(
+            project=self.project,
+            role_id=role_id,
+            session_id=session_id,
+        )
+        return visible, mutable_owner
+
 
 def _catalog_book(item: Mapping[str, object]) -> dict[str, object]:
     return {
@@ -4110,6 +4210,8 @@ def _catalog_book(item: Mapping[str, object]) -> dict[str, object]:
         "tags": _string_list(item.get("tags"), limit=20),
         "atomCount": _safe_int(item.get("atomCount")),
         "updatedAtMs": _safe_int(item.get("updated_at_ms") or item.get("updatedAtMs")),
+        "ownerKind": _bounded_text(item.get("ownerKind"), maximum=40),
+        "ownerId": _bounded_text(item.get("ownerId"), maximum=160),
     }
 
 
@@ -4132,6 +4234,27 @@ def _catalog_tag(item: Mapping[str, object]) -> dict[str, object]:
         "itemCount": _safe_int(item.get("item_count")),
         "updatedAtMs": _safe_int(item.get("updated_at_ms") or item.get("updatedAtMs")),
     }
+
+
+def _owner_payloads(
+    owners: tuple[tuple[str, str], ...],
+) -> list[dict[str, str]]:
+    return [
+        {"ownerKind": owner_kind, "ownerId": owner_id}
+        for owner_kind, owner_id in owners
+    ]
+
+
+def _require_memory_run_owner(
+    run: Mapping[str, object],
+    expected_owner: tuple[str, str],
+) -> None:
+    actual = (
+        _bounded_text(run.get("ownerKind"), maximum=40),
+        _bounded_text(run.get("ownerId"), maximum=160),
+    )
+    if actual != expected_owner:
+        raise ValueError("memory run is outside the current role")
 
 
 def _safe_lexicon_review_entry(item: Mapping[str, object]) -> dict[str, object]:

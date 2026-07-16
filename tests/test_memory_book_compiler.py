@@ -15,6 +15,7 @@ from rag_ime.memory_book_compiler import (
     apply_memory_book_plan,
     apply_stored_memory_book_run,
     build_memory_book_source_bundle,
+    collapse_rime_fragment_run,
     find_newer_applied_memory_book_run,
     find_memory_book_draft_for_bundle,
     inspect_memory_book_plan,
@@ -72,6 +73,24 @@ class MemoryBookCompilerTests(unittest.TestCase):
         with redirect_stdout(stdout):
             code = main(["--db-path", str(self.db_path), *args])
         return code, json.loads(stdout.getvalue())
+
+    def test_rime_reconstruction_retains_all_physical_source_ids(self) -> None:
+        collapsed = collapse_rime_fragment_run(
+            [
+                {
+                    "sourceIds": [f"input-memory:{index}"],
+                    "sourceEventIds": [index],
+                    "text": "片",
+                    "recentContext": f"累计上下文{index}",
+                    "createdAtMs": index,
+                }
+                for index in range(1, 301)
+            ]
+        )
+
+        self.assertEqual(len(collapsed["sourceIds"]), 300)
+        self.assertEqual(collapsed["sourceIds"][-1], "input-memory:300")
+        self.assertEqual(len(collapsed["sourceEventIds"]), 300)
 
     def test_memory_book_preview_is_dry_run(self) -> None:
         original = cli_module.DeepSeekMemoryOrganizer
@@ -709,6 +728,109 @@ class MemoryBookCompilerTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_aliases").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_items WHERE memory_id = 'phrase:多路召回'").fetchone()[0], 0)
 
+    def test_owner_scoped_atom_cannot_be_taken_over_by_another_role(self) -> None:
+        compile_output = {
+            "memoryAtoms": [
+                {
+                    "atomId": "atom:role-owned",
+                    "kind": "preference",
+                    "canonicalText": "只属于甲角色的长期偏好",
+                    "aliases": ["甲角色偏好"],
+                    "sourceEventIds": [self.event_id],
+                    "confidence": 0.9,
+                    "qualityScore": 0.9,
+                }
+            ]
+        }
+        first = memory_book_plan_from_compile_output(
+            compile_output,
+            project="wisdom-weasel-rag-ime",
+            provider="test",
+            model="test",
+            owner_kind="agent",
+            owner_id="role-a",
+            run_kind="daily_curation",
+        )
+        second = memory_book_plan_from_compile_output(
+            compile_output,
+            project="wisdom-weasel-rag-ime",
+            provider="test",
+            model="test",
+            owner_kind="agent",
+            owner_id="role-b",
+            run_kind="daily_curation",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            apply_memory_book_plan(conn, first)
+            with self.assertRaisesRegex(ValueError, "owned by another scope"):
+                apply_memory_book_plan(conn, second)
+            owner = conn.execute(
+                "SELECT owner_kind, owner_id FROM memory_atoms WHERE id = 'atom:role-owned'"
+            ).fetchone()
+
+        self.assertEqual((owner["owner_kind"], owner["owner_id"]), ("agent", "role-a"))
+
+    def test_atom_upsert_does_not_cascade_delete_existing_aliases(self) -> None:
+        first_output = {
+            "memoryAtoms": [
+                {
+                    "atomId": "atom:stable-upsert",
+                    "kind": "project_fact",
+                    "canonicalText": "第一次整理的稳定事实",
+                    "aliases": ["旧称"],
+                    "sourceEventIds": [self.event_id],
+                }
+            ]
+        }
+        second_output = {
+            "memoryAtoms": [
+                {
+                    "atomId": "atom:stable-upsert",
+                    "kind": "project_fact",
+                    "canonicalText": "第二次整理后的稳定事实",
+                    "aliases": ["新称"],
+                    "sourceEventIds": [self.event_id],
+                }
+            ]
+        }
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    first_output,
+                    project="wisdom-weasel-rag-ime",
+                    provider="test",
+                    model="test",
+                ),
+            )
+            second_plan = memory_book_plan_from_compile_output(
+                second_output,
+                project="wisdom-weasel-rag-ime",
+                provider="test",
+                model="test",
+            )
+            apply_memory_book_plan(conn, second_plan)
+            aliases = {
+                str(row["alias"])
+                for row in conn.execute(
+                    "SELECT alias FROM memory_aliases WHERE memory_atom_id = 'atom:stable-upsert'"
+                ).fetchall()
+            }
+            rollback_memory_book_run(conn, run_id=str(second_plan["runId"]))
+            restored = conn.execute(
+                "SELECT canonical_text FROM memory_atoms WHERE id = 'atom:stable-upsert'"
+            ).fetchone()
+            restored_aliases = {
+                str(row["alias"])
+                for row in conn.execute(
+                    "SELECT alias FROM memory_aliases WHERE memory_atom_id = 'atom:stable-upsert'"
+                ).fetchall()
+            }
+
+        self.assertEqual(aliases, {"旧称", "新称"})
+        self.assertEqual(restored["canonical_text"], "第一次整理的稳定事实")
+        self.assertEqual(restored_aliases, {"旧称"})
+
     def test_stored_workbench_draft_can_be_applied_and_rolled_back(self) -> None:
         plan = memory_book_plan_from_compile_output(
             sample_compile_output(self.event_id),
@@ -727,6 +849,123 @@ class MemoryBookCompilerTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
+
+    def test_owner_run_transitions_every_physical_source_beyond_legacy_cap(self) -> None:
+        first_event_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=10_000,
+                    source="manual_commit",
+                    committed_text="一条重建后的长输入",
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        run_id = "memory_book_owner_many_physical_sources"
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            first_source = conn.execute(
+                """
+                SELECT source_id, session_id
+                FROM agent_memory_sources
+                WHERE input_event_id = ?
+                """,
+                (first_event_id,),
+            ).fetchone()
+            assert first_source is not None
+            source_ids = [str(first_source["source_id"])]
+            for index in range(1, 300):
+                event = conn.execute(
+                    """
+                    INSERT INTO input_events(
+                        created_at_ms, source, committed_text, project
+                    ) VALUES (?, 'squirrel_rime_commit_burst', ?, ?)
+                    """,
+                    (
+                        10_000 + index,
+                        f"片段{index}",
+                        "wisdom-weasel-rag-ime",
+                    ),
+                )
+                event_id = int(event.lastrowid)
+                source_id = f"input-memory:bulk:{index}"
+                source_ids.append(source_id)
+                conn.execute(
+                    """
+                    INSERT INTO agent_memory_sources(
+                        source_id, session_id, pi_entry_id, input_event_id,
+                        source_role, canonical_text_sha256, created_at_ms
+                    ) VALUES (?, ?, ?, ?, 'user', ?, ?)
+                    """,
+                    (
+                        source_id,
+                        str(first_source["session_id"]),
+                        f"input-event:bulk:{index}",
+                        event_id,
+                        "a" * 64,
+                        10_000 + index,
+                    ),
+                )
+            conn.execute(
+                """
+                UPDATE agent_memory_sources
+                SET disposition = 'remember',
+                    disposition_reason = 'durable_user_intent',
+                    curation_run_id = ?
+                WHERE source_id IN (
+                    SELECT CAST(value AS TEXT) FROM json_each(?)
+                )
+                """,
+                (run_id, json.dumps(source_ids)),
+            )
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": "重建后的长输入仍是一个可审阅事实",
+                            "sourceEventIds": [first_event_id],
+                        }
+                    ]
+                },
+                project="wisdom-weasel-rag-ime",
+                provider="fixture",
+                model="fixture",
+                owner_kind="user",
+                owner_id="default",
+                run_kind="daily_curation",
+            )
+            plan["runId"] = run_id
+            plan["metadata"].update(
+                {
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "runKind": "daily_curation",
+                    "sourceIds": source_ids,
+                }
+            )
+            store_memory_book_plan(conn, plan)
+            apply_stored_memory_book_run(conn, run_id=run_id)
+            consolidated = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM agent_memory_sources
+                WHERE curation_run_id = ? AND disposition = 'consolidated'
+                """,
+                (run_id,),
+            ).fetchone()[0]
+            rollback_memory_book_run(conn, run_id=run_id)
+            remembered = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM agent_memory_sources
+                WHERE curation_run_id = ? AND disposition = 'remember'
+                """,
+                (run_id,),
+            ).fetchone()[0]
+
+        self.assertEqual(consolidated, 300)
+        self.assertEqual(remembered, 300)
 
     def test_memory_book_runs_must_roll_back_in_reverse_apply_order(self) -> None:
         first = memory_book_plan_from_compile_output(

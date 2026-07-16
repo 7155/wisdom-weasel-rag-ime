@@ -174,6 +174,72 @@ class RetrievalDocsTests(unittest.TestCase):
         self.assertEqual(first["docCount"], second["docCount"])
         self.assertEqual(first_rows, second_rows)
 
+    def test_project_rebuild_preserves_other_project_fts_rows(self) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_retrieval_docs(
+                    doc_id, doc_type, source_id, raw_text, tags_text, aliases_text,
+                    surface_hints_text, query_expansions_text, time_key, project, app,
+                    owner_kind, owner_id, status, updated_at_ms, metadata_json
+                ) VALUES (
+                    'phrase:other-project', 'phrase', 'phrase:other-project',
+                    '另一个项目的专属记忆', '', '', '专属记忆', '', '',
+                    'other-project', '', 'user', 'default', 'active', ?, '{}'
+                )
+                """,
+                (now_ms(),),
+            )
+            rowid = int(
+                conn.execute(
+                    "SELECT rowid FROM memory_retrieval_docs WHERE doc_id = 'phrase:other-project'"
+                ).fetchone()[0]
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_retrieval_docs_fts(
+                    rowid, raw_text, tags_text, aliases_text, surface_hints_text,
+                    query_expansions_text, time_key, project, app
+                ) VALUES (?, '另一个项目的专属记忆', '', '', '专属记忆', '', '', 'other-project', '')
+                """,
+                (rowid,),
+            )
+
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+
+            normalized = conn.execute(
+                "SELECT COUNT(*) FROM memory_retrieval_docs WHERE doc_id = 'phrase:other-project'"
+            ).fetchone()[0]
+            indexed = conn.execute(
+                "SELECT COUNT(*) FROM memory_retrieval_docs_fts WHERE rowid = ?",
+                (rowid,),
+            ).fetchone()[0]
+
+        self.assertEqual(normalized, 1)
+        self.assertEqual(indexed, 1)
+
+    def test_retrieval_docs_never_publish_raw_event_items(self) -> None:
+        self._record_seed_event()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET status = 'active'
+                WHERE kind = 'raw_event'
+                """
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            raw_docs = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM memory_retrieval_docs
+                WHERE doc_type = 'item'
+                  AND json_extract(metadata_json, '$.kind') = 'raw_event'
+                """
+            ).fetchone()[0]
+
+        self.assertEqual(raw_docs, 0)
+
     def test_rebuild_retrieval_docs_cli(self) -> None:
         self._record_seed_event()
         stdout = io.StringIO()

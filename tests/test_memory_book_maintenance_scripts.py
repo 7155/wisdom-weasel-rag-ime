@@ -69,6 +69,7 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"], "2048")
         self.assertTrue(env_vars["RAG_IME_DEEPSEEK_ENV"].endswith("Application Support/RagIme/deepseek.env"))
         self.assertEqual(env_vars["RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY"], "0")
+        self.assertEqual(env_vars["RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE"], "0")
 
     def test_install_discovers_existing_app_support_model_env(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -104,11 +105,19 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         source = (root / "scripts" / "run_memory_book_maintenance_once.sh").read_text(encoding="utf-8")
 
         self.assertIn("RAG_IME_MEMORY_BOOK_MAINTENANCE_LOCK_DIR", source)
+        self.assertIn("RAG_IME_MEMORY_BOOK_MAINTENANCE_STALE_LOCK_SECONDS", source)
+        self.assertIn("owner.pid", source)
+        self.assertIn('mv "$LOCK_DIR" "$stale_lock_dir"', source)
         self.assertIn("maintenance_lock_held", source)
         self.assertIn("trap cleanup_lock EXIT INT TERM", source)
         self.assertIn('APPLY="${RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY:-0}"', source)
+        self.assertIn(
+            'LEGACY_MAINTENANCE="${RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE:-0}"',
+            source,
+        )
         self.assertIn('RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"', source)
         self.assertIn("--save-draft", source)
+        self.assertIn('"mode": "owner_scoped"', source)
         self.assertIn('"reviewRequired": applied != "true"', source)
         self.assertIn('if [[ "$APPLY" == "1"', source)
 

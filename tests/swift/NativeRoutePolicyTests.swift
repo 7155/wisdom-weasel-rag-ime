@@ -211,7 +211,12 @@ struct NativeRoutePolicyTests {
         _ = try policy.resolveRequest(
             pathId: "memory.pages",
             parameters: ["kind": "books"],
-            query: ["limit": "50", "cursor": "next"],
+            query: [
+                "limit": "50",
+                "cursor": "next",
+                "ownerKind": "agent",
+                "ownerId": "librarian-v1",
+            ],
             body: nil,
             scope: .remote
         )

@@ -22,6 +22,7 @@ from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
     AgentRuntimeDriver,
+    CompactionObserver,
     RuntimeDriverContext,
     SessionContextProvider,
 )
@@ -455,6 +456,7 @@ class PiRuntimeDriverFactory:
                 media_resolver=context.media_resolver,
                 session_context_provider=session_context_provider,
                 tool_manifest_provider=context.tool_manifest_provider,
+                compaction_observer=context.compaction_observer,
             )
         return PiRuntimeManager(
             config=config,
@@ -463,6 +465,7 @@ class PiRuntimeDriverFactory:
             media_resolver=context.media_resolver,
             session_context_provider=session_context_provider,
             tool_manifest_provider=context.tool_manifest_provider,
+            compaction_observer=context.compaction_observer,
         )
 
     def reconfigure(self, config: object) -> None:
@@ -681,6 +684,7 @@ class PiRuntimeManager:
         media_resolver: Callable[[str, str, str], str] | None = None,
         session_context_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
         tool_manifest_provider: Callable[[Mapping[str, object]], list[Mapping[str, object]]] | None = None,
+        compaction_observer: CompactionObserver | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -688,6 +692,7 @@ class PiRuntimeManager:
         self._media_resolver = media_resolver
         self._session_context_provider = session_context_provider
         self._tool_manifest_provider = tool_manifest_provider
+        self._compaction_observer = compaction_observer
         self._lifecycle_lock = threading.RLock()
         self._lock = threading.RLock()
         self._client: PiRpcClient | None = None
@@ -1454,10 +1459,34 @@ class PiRuntimeManager:
             command["customInstructions"] = instructions.strip()[:2000]
         try:
             response = client.send(command, timeout=max(60.0, self.config.command_timeout_seconds))
-            return dict(_mapping(response.get("data")))
+            result = dict(_mapping(response.get("data")))
+            checkpoint = self._observe_compaction(session_id, result, "manual")
+            if checkpoint:
+                result["memoryCheckpoint"] = checkpoint
+            return result
         finally:
             with self._lock:
                 self._schedule_idle_locked()
+
+    def _observe_compaction(
+        self,
+        session_id: str,
+        result: Mapping[str, object],
+        trigger: str,
+    ) -> dict[str, object]:
+        if self._compaction_observer is None:
+            return {}
+        try:
+            checkpoint = self._compaction_observer(session_id, result, trigger)
+        except Exception as exc:
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": False,
+                "stored": False,
+                "status": "checkpoint_failed",
+                "error": _redact_runtime_text(str(exc)),
+            }
+        return dict(checkpoint or {})
 
     def stop(self) -> None:
         with self._lifecycle_lock:
@@ -1493,6 +1522,18 @@ class PiRuntimeManager:
             turn_id = self._active_turn_id
             client_message_id = self._active_client_message_id
         event_type = str(raw.get("type") or "")
+        if event_type == "compaction_end":
+            compaction = (
+                dict(_mapping(raw.get("result")))
+                if isinstance(raw.get("result"), Mapping)
+                else dict(raw)
+            )
+            self._observe_compaction(
+                session_id,
+                compaction,
+                str(raw.get("trigger") or "").strip() or "automatic",
+            )
+            return
         if event_type == "message_update":
             update = _mapping(raw.get("assistantMessageEvent"))
             update_type = str(update.get("type") or "")

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .agent_events import AgentEventHub
-from .agent_runtime_driver import AgentRuntimeError
+from .agent_runtime_driver import AgentRuntimeError, CompactionObserver
 from .agent_sessions import AgentSessionStore
 from .pi_runtime import (
     _APPROVAL_TITLE_PREFIX,
@@ -261,6 +261,7 @@ class PiRuntimeHostManager:
         media_resolver: Callable[[str, str, str], str] | None = None,
         session_context_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
         tool_manifest_provider: Callable[[Mapping[str, object]], list[Mapping[str, object]]] | None = None,
+        compaction_observer: CompactionObserver | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -268,6 +269,7 @@ class PiRuntimeHostManager:
         self._media_resolver = media_resolver
         self._session_context_provider = session_context_provider
         self._tool_manifest_provider = tool_manifest_provider
+        self._compaction_observer = compaction_observer
         self._lifecycle_lock = threading.RLock()
         self._lock = threading.RLock()
         self._client: PiRuntimeHostClient | None = None
@@ -876,11 +878,15 @@ class PiRuntimeHostManager:
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
         self.ensure(session_id)
-        return self._require_client().send(
+        result = self._require_client().send(
             "session.compact",
             {"sessionId": session_id, "instructions": str(instructions).strip()[:2000]},
             timeout=max(60.0, self.config.command_timeout_seconds),
         )
+        checkpoint = self._observe_compaction(session_id, result, "manual")
+        if checkpoint:
+            result["memoryCheckpoint"] = checkpoint
+        return result
 
     def has_pending_approval(self, session_id: str, approval_id: str) -> bool:
         with self._lock:
@@ -1022,6 +1028,18 @@ class PiRuntimeHostManager:
         turn_id = str(envelope.get("turnId") or "")
         client_message_id = str(envelope.get("clientMessageId") or "")
         event_type = str(raw.get("type") or "")
+        if event_type == "compaction_end":
+            compaction = (
+                dict(_mapping(raw.get("result")))
+                if isinstance(raw.get("result"), Mapping)
+                else dict(raw)
+            )
+            self._observe_compaction(
+                session_id,
+                compaction,
+                str(raw.get("trigger") or "").strip() or "automatic",
+            )
+            return
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             if turn_id and turn_id in state.retired_turn_ids:
@@ -1157,6 +1175,26 @@ class PiRuntimeHostManager:
             return
         if event_type == "extension_error":
             self._turn_failed(session_id, turn_id, PiRuntimeError(str(raw.get("error") or "Pi extension failed")))
+
+    def _observe_compaction(
+        self,
+        session_id: str,
+        result: Mapping[str, object],
+        trigger: str,
+    ) -> dict[str, object]:
+        if self._compaction_observer is None:
+            return {}
+        try:
+            checkpoint = self._compaction_observer(session_id, result, trigger)
+        except Exception as exc:
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": False,
+                "stored": False,
+                "status": "checkpoint_failed",
+                "error": _redact_runtime_text(str(exc)),
+            }
+        return dict(checkpoint or {})
 
     def _handle_ui_request(self, session_id: str, turn_id: str, raw: Mapping[str, object]) -> None:
         method = str(raw.get("method") or "")

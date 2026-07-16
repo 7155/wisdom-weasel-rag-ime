@@ -55,3 +55,4 @@ class PageRequest:
     query: str = ""
     status: str = ""
     kind: str = ""
+    visible_owners: tuple[tuple[str, str], ...] = ()

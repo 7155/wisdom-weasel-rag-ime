@@ -99,6 +99,11 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(self.db_path.stat().st_mode & 0o777, 0o600)
 
     def test_reset_clears_v2_governance_state_for_deterministic_gates(self) -> None:
+        self.adapter.commit_text(
+            "重置前的真实输入证据",
+            source="manual_commit",
+            privacy_disposition="allowed",
+        )
         self.core.add_memory_tombstone(
             target_type="phrase",
             target_value="默认本地完成, 不上传个人输入历史",
@@ -118,6 +123,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             migration_count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
             self.assertGreater(conn.execute("SELECT COUNT(*) FROM memory_tombstones").fetchone()[0], 0)
             self.assertGreater(conn.execute("SELECT COUNT(*) FROM memory_feedback_events").fetchone()[0], 0)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM agent_memory_sources").fetchone()[0], 0)
 
         self.core.reset()
 
@@ -127,6 +133,12 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_tombstones").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_candidate_suppressions").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_feedback_events").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM agent_memory_sources").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_source_disposition_events").fetchone()[0],
+                0,
+            )
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_source_event_links").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], migration_count)
 
         # Reset clears memory data without replaying already-applied product migrations.

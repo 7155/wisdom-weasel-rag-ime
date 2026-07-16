@@ -14,6 +14,26 @@ export interface AgentMemorySourceV1 {
   sourceRevision: number;
   canonicalTextSha256: string;
   status: 'active' | 'superseded' | 'archived' | 'tombstoned';
+  ownerKind: 'user' | 'shared' | 'agent' | 'session' | 'room';
+  ownerId: string;
+  roleId: string;
+  roleVersion: string;
+  sourceKind:
+    'user_final' | 'tool_receipt' | 'session_compaction' | 'session_digest' | 'explicit_memory';
+  trustClass:
+    'user_claim' | 'applied_receipt' | 'session_summary' | 'assistant_claim' | 'explicit_command';
+  disposition:
+    'pending' | 'remember' | 'not_for_memory' | 'needs_review' | 'consolidated' | 'expired';
+  dispositionReason: string;
+  dispositionUpdatedAtMs?: number | null;
+  processedAtMs?: number | null;
+  curationRunId: string;
+  coverageStartEntryId: string;
+  coverageEndEntryId: string;
+  expiresAtMs?: number | null;
+  metadata: {
+    [k: string]: unknown;
+  };
   createdAtMs: number;
   supersededAtMs?: number | null;
   [k: string]: unknown;

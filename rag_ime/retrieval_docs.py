@@ -20,18 +20,49 @@ def rebuild_retrieval_docs(
     include_items: bool = True,
 ) -> dict[str, object]:
     ensure_memory_v2_schema(conn)
+    selected_doc_types = tuple(
+        doc_type
+        for enabled, values in (
+            (include_items, ("item", "phrase")),
+            (include_atoms, ("atom",)),
+            (include_books, ("book",)),
+        )
+        if enabled
+        for doc_type in values
+    )
+    type_placeholders = ", ".join("?" for _ in selected_doc_types)
+    existing_rows = (
+        conn.execute(
+            f"""SELECT doc_id, raw_text, tags_text, aliases_text, surface_hints_text,
+                       query_expansions_text, project, app, owner_kind, owner_id,
+                       metadata_json
+                FROM memory_retrieval_docs
+                WHERE (? = '' OR project = ? OR project = '')
+                  AND doc_type IN ({type_placeholders})""",
+            (project, project, *selected_doc_types),
+        ).fetchall()
+        if selected_doc_types
+        else []
+    )
     existing = {
         str(row["doc_id"]): tuple(str(row[key] or "") for key in (
             "raw_text", "tags_text", "aliases_text", "surface_hints_text",
-            "query_expansions_text", "project", "app", "metadata_json",
+            "query_expansions_text", "project", "app", "owner_kind", "owner_id",
+            "metadata_json",
         ))
-        for row in conn.execute(
-            """SELECT doc_id, raw_text, tags_text, aliases_text, surface_hints_text,
-                      query_expansions_text, project, app, metadata_json
-               FROM memory_retrieval_docs"""
-        ).fetchall()
+        for row in existing_rows
     }
-    conn.execute("DELETE FROM memory_retrieval_docs_fts")
+    if selected_doc_types:
+        conn.execute(
+            f"""DELETE FROM memory_retrieval_docs_fts
+                WHERE rowid IN (
+                    SELECT rowid
+                    FROM memory_retrieval_docs
+                    WHERE (? = '' OR project = ? OR project = '')
+                      AND doc_type IN ({type_placeholders})
+                )""",
+            (project, project, *selected_doc_types),
+        )
     docs: list[dict[str, object]] = []
     tombstones = _active_tombstone_sets(conn)
     if include_items:
@@ -50,24 +81,25 @@ def rebuild_retrieval_docs(
         metadata_json = json.dumps(doc.get("metadata") or {}, ensure_ascii=False, sort_keys=True)
         signature = tuple(str(doc[key] or "") for key in (
             "raw_text", "tags_text", "aliases_text", "surface_hints_text",
-            "query_expansions_text", "project", "app",
+            "query_expansions_text", "project", "app", "owner_kind", "owner_id",
         )) + (metadata_json,)
         if existing.get(str(doc["doc_id"])) not in {None, signature}:
             conn.execute("DELETE FROM memory_retrieval_doc_vectors WHERE doc_id = ?", (doc["doc_id"],))
-        cur = conn.execute(
+        conn.execute(
             """
             INSERT INTO memory_retrieval_docs(
                 doc_id, doc_type, source_id, raw_text, tags_text, aliases_text,
                 surface_hints_text, query_expansions_text, time_key, project, app,
-                status, updated_at_ms, metadata_json
+                owner_kind, owner_id, status, updated_at_ms, metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             ON CONFLICT(doc_id) DO UPDATE SET
                 doc_type=excluded.doc_type, source_id=excluded.source_id,
                 raw_text=excluded.raw_text, tags_text=excluded.tags_text,
                 aliases_text=excluded.aliases_text, surface_hints_text=excluded.surface_hints_text,
                 query_expansions_text=excluded.query_expansions_text, time_key=excluded.time_key,
-                project=excluded.project, app=excluded.app, status='active',
+                project=excluded.project, app=excluded.app,
+                owner_kind=excluded.owner_kind, owner_id=excluded.owner_id, status='active',
                 updated_at_ms=excluded.updated_at_ms, metadata_json=excluded.metadata_json
             """,
             (
@@ -82,6 +114,8 @@ def rebuild_retrieval_docs(
                 doc["time_key"],
                 doc["project"],
                 doc["app"],
+                doc["owner_kind"],
+                doc["owner_id"],
                 timestamp,
                 metadata_json,
             ),
@@ -127,11 +161,12 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
     rows = conn.execute(
         """
         SELECT id, memory_id, kind, text, normalized_text, summary, source_event_id,
-               project, app, status, privacy_class, metadata_json, updated_at_ms
+               project, app, owner_kind, owner_id, status, privacy_class,
+               metadata_json, updated_at_ms
         FROM memory_items
         WHERE status IN ('active', 'approved')
           AND privacy_class != 'sensitive'
-          AND NOT (kind = 'raw_event' AND status = 'hidden')
+          AND kind != 'raw_event'
           AND (? = '' OR project = ? OR project = '')
         ORDER BY updated_at_ms DESC, id DESC
         """,
@@ -163,6 +198,8 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "time_key": "",
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
+                "owner_kind": str(row["owner_kind"] or "user"),
+                "owner_id": str(row["owner_id"] or "default"),
                 "metadata": {
                     **metadata,
                     "kind": str(row["kind"]),
@@ -171,6 +208,8 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "source": "memory_items",
                     "contextGroupId": context_group_id,
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
+                    "ownerKind": str(row["owner_kind"] or "user"),
+                    "ownerId": str(row["owner_id"] or "default"),
                 },
             }
         )
@@ -181,7 +220,8 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
     rows = conn.execute(
         """
         SELECT id, kind, text, canonical_text, source_event_ids_json, scope_project,
-               scope_app, status, quality_score, confidence, updated_at_ms
+               scope_app, owner_kind, owner_id, status, quality_score, confidence,
+               updated_at_ms
         FROM memory_atoms
         WHERE status IN ('active', 'approved')
           AND privacy_level != 'sensitive'
@@ -211,6 +251,8 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "time_key": "",
                 "project": str(row["scope_project"] or ""),
                 "app": str(row["scope_app"] or ""),
+                "owner_kind": str(row["owner_kind"] or "user"),
+                "owner_id": str(row["owner_id"] or "default"),
                 "metadata": {
                     "kind": str(row["kind"]),
                     "atomId": atom_id,
@@ -218,6 +260,8 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "source": "memory_atoms",
                     "contextGroupId": _first_event_context_group(conn, source_event_ids),
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
+                    "ownerKind": str(row["owner_kind"] or "user"),
+                    "ownerId": str(row["owner_id"] or "default"),
                 },
             }
         )
@@ -229,7 +273,8 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         """
         SELECT book_id, book_type, book_key, title, summary, project, app, tags_json,
                surface_hints_json, query_expansions_json, source_event_ids_json, memory_atom_ids_json,
-               status, confidence, quality_score, metadata_json, updated_at_ms,
+               owner_kind, owner_id, status, confidence, quality_score, metadata_json,
+               updated_at_ms,
                archived_at_ms, last_active_at_ms, archive_reason
         FROM memory_books
         WHERE status IN ('active', 'approved', 'archived')
@@ -261,6 +306,8 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "time_key": f"{book_type}:{book_key}" if book_type and book_key else book_key,
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
+                "owner_kind": str(row["owner_kind"] or "user"),
+                "owner_id": str(row["owner_id"] or "default"),
                 "metadata": {
                     **stored_metadata,
                     "bookType": book_type,
@@ -277,6 +324,8 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                     "contextGroupId": compact_whitespace(str(stored_metadata.get("contextGroupId") or ""))
                     or _first_event_context_group(conn, source_event_ids),
+                    "ownerKind": str(row["owner_kind"] or "user"),
+                    "ownerId": str(row["owner_id"] or "default"),
                 },
             }
         )

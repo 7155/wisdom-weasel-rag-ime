@@ -158,6 +158,69 @@ describe('MemoryFeature relations', () => {
     expect(document.body).not.toHaveTextContent('rawJson');
   });
 
+  it('restores forgotten input evidence without exposing a raw-memory edit form', async () => {
+    const user = userEvent.setup();
+    let disposition = 'not_for_memory';
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': {
+          ok: true,
+          eventCount: 18,
+          memoryItemCount: 14,
+          memoryBookCount: 4,
+          memoryAtomCount: 10,
+          evidenceSourceCount: 1,
+          forgottenSourceCount: 1,
+          needsReviewSourceCount: 0,
+          owners: [{ ownerKind: 'user', ownerId: 'default', itemCount: 1 }],
+        },
+        'memory.pages': (request: ControlRequest) => {
+          if (request.params?.kind !== 'evidence') {
+            return { ok: true, items: [], nextCursor: '', limit: 50 };
+          }
+          return {
+            ok: true,
+            items: [{
+              id: 'input-memory:42',
+              title: '嗯嗯那个这个',
+              detail: 'input_noise_filler',
+              status: disposition,
+              disposition,
+              source: 'squirrel_rime_commit_burst',
+              type: 'user_final',
+              ownerKind: 'user',
+              ownerId: 'default',
+              updatedAtMs: 1_900_000_100_020,
+            }],
+            nextCursor: '',
+            limit: 50,
+          };
+        },
+        'memory.source.disposition': (request: ControlRequest) => {
+          expect(request.body).toEqual({
+            sourceId: 'input-memory:42',
+            disposition: 'pending',
+          });
+          disposition = 'pending';
+          return { ok: true, changed: true };
+        },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('radio', { name: '证据' }));
+    await user.click(await screen.findByRole('button', { name: /嗯嗯那个这个/ }));
+    expect(screen.queryByText('编辑内容')).not.toBeInTheDocument();
+    const workflow = screen.getByText('恢复证据').closest('.mgmt-workflow');
+    expect(workflow).not.toBeNull();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '恢复' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'memory.source.disposition'),
+    ).toHaveLength(1));
+    expect(await screen.findByText('遗忘证据')).toBeInTheDocument();
+  });
+
   it('loads bounded tag/group graphs and links keyboard node selection to accessible tables', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({

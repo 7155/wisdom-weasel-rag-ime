@@ -5,13 +5,26 @@ import type { MutationAvailability } from '@/features/overview/management-mutati
 import { asRecord, stringValue } from '@/features/overview/management-ui';
 import type { ControlTransport, JsonValue } from '@/platform/transport';
 
-export type MemoryKind = 'books' | 'atoms' | 'tags' | 'phrases' | 'groups' | 'negative';
+export type MemoryKind =
+  | 'books'
+  | 'atoms'
+  | 'tags'
+  | 'phrases'
+  | 'evidence'
+  | 'groups'
+  | 'negative';
 export type MemoryEntityKind = 'tag' | 'group' | 'book';
 
 export const memoryQueryKeys = {
   root: ['memory'] as const,
   summary: () => [...memoryQueryKeys.root, 'summary'] as const,
-  page: (kind: MemoryKind, query: string, status: string) => [...memoryQueryKeys.root, 'page', kind, query, status] as const,
+  page: (
+    kind: MemoryKind,
+    query: string,
+    status: string,
+    ownerKind: string,
+    ownerId: string,
+  ) => [...memoryQueryKeys.root, 'page', kind, query, status, ownerKind, ownerId] as const,
   graph: (plane: 'groups' | 'tags', query: string, focusId: string) => [
     ...memoryQueryKeys.root,
     'graph',
@@ -36,18 +49,30 @@ export type MemoryBookArchiveRequest = {
   body: Record<string, JsonValue>;
 };
 
-export function useMemoryQueries(kind: MemoryKind, query: string, status: string) {
+export function useMemoryQueries(
+  kind: MemoryKind,
+  query: string,
+  status: string,
+  ownerKind = '',
+  ownerId = '',
+) {
   const transport = useControlTransport();
   const summary = useQuery({
     queryKey: memoryQueryKeys.summary(),
     queryFn: ({ signal }) => transport.request({ pathId: 'memory.summary', signal }),
   });
   const pages = useInfiniteQuery({
-    queryKey: memoryQueryKeys.page(kind, query, status),
+    queryKey: memoryQueryKeys.page(kind, query, status, ownerKind, ownerId),
     queryFn: ({ pageParam, signal }) => transport.request({
       pathId: 'memory.pages',
       params: { kind },
-      query: { limit: 50, cursor: String(pageParam), ...(query ? { query } : {}), ...(status ? { status } : {}) },
+      query: {
+        limit: 50,
+        cursor: String(pageParam),
+        ...(query ? { query } : {}),
+        ...(status ? { status } : {}),
+        ...(ownerKind && ownerId ? { ownerKind, ownerId } : {}),
+      },
       signal,
     }),
     initialPageParam: '',
