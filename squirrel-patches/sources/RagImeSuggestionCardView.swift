@@ -56,8 +56,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   static let rowHeight: CGFloat = 40
   static let actionHeight: CGFloat = 40
   static let maximumPredictionCandidates = 4
-  static let minimumPredictionWidth: CGFloat = 320
-  static let preferredPredictionWidth: CGFloat = 376
+  static let minimumPredictionWidth: CGFloat = 196
+  static let pendingPredictionWidth: CGFloat = 248
+  static let actionPredictionWidth: CGFloat = 264
   static let maximumPredictionWidth: CGFloat = 460
   static let minimumExplicitResultHeight: CGFloat = 176
   static let maximumExplicitResultHeight: CGFloat = 300

@@ -402,7 +402,7 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "traceRagImePanelTe
 require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "same_snapshot_stable_ids" "Assistant Overlay snapshot diff"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "passive_mouse_fallback" "passive missing-anchor fallback"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "assistant_panel_created" "Assistant Overlay lifecycle tracing"
-require_text "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" "preferredPredictionWidth" "stable prediction panel width"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" "actionPredictionWidth" "content-sized prediction panel width"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSuggestionRowView.swift" "shortcutPlate" "stable shortcut keycap lane"
 if [[ -f "$SQUIRREL_WORKDIR/sources/InputSource.swift" ]]; then
   require_text "$SQUIRREL_WORKDIR/sources/InputSource.swift" "static var inputSourceIDPrefix: String" "brandable input-source prefix"

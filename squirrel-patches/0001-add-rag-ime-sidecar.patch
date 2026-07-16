@@ -64,7 +64,7 @@ index 813deaeb0b6fe9bb147f6e7c9327271ab40a5a3a..bd1032bb06d9b794374421d3c5759bd6
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..48487387bc7892aafab140b913f5916f079c7fb3
+index 0000000000000000000000000000000000000000..b430070c6a888a88f8a25edb8f9e165f1158d6db
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,15 @@
@@ -72,8 +72,8 @@ index 0000000000000000000000000000000000000000..48487387bc7892aafab140b913f5916f
 +rag_ime:
 +  enabled: true
 +  sidecar_url: http://127.0.0.1:8766/api
-+  python: /usr/local/bin/python3
-+  repo_root: /Volumes/undo 4t/git/learnA/wisdom-weasel-rag-ime-control-web
++  python: /opt/homebrew/bin/python3
++  repo_root: /Volumes/undo 4t/git/learnA/rag-ime-release-main
 +  db_path: /Users/undo/Library/Application Support/RagIme/rag-ime.sqlite
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
@@ -212,10 +212,10 @@ index f998248d94a4ce09ada9850edbff104a9ef9611f..a56500e18f044ce567db38c66da0cd7f
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..966509f6388a0570e9f387b4532871570d30b2d6
+index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45ee4285a8
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,706 @@
+@@ -0,0 +1,730 @@
 +import AppKit
 +import QuartzCore
 +
@@ -636,27 +636,29 @@ index 0000000000000000000000000000000000000000..966509f6388a0570e9f387b453287157
 +    let realCandidates = payload.candidates.filter(RagImeSuggestionCardView.isRealCandidate)
 +    let hasAction = payload.candidates.contains(where: RagImeSuggestionCardView.isActionCandidate)
 +    let configuredMaximumWidth = maximumWidth(for: payload)
-+    let width = min(
-+      configuredMaximumWidth,
-+      max(RagImeSuggestionCardView.minimumPredictionWidth, RagImeSuggestionCardView.preferredPredictionWidth)
++    let predictionWidth = compactPredictionWidth(
++      candidates: realCandidates,
++      hasAction: hasAction,
++      maximumWidth: configuredMaximumWidth,
++      fontSize: candidateFontSize(for: payload)
 +    )
 +    switch state {
 +    case .pendingPrediction:
 +      return NSSize(
-+        width: min(configuredMaximumWidth, RagImeSuggestionCardView.minimumPredictionWidth),
++        width: min(configuredMaximumWidth, RagImeSuggestionCardView.pendingPredictionWidth),
 +        height: RagImeSuggestionCardView.pendingHeight
 +      )
 +    case .compactPrediction, .expandedPredictions:
 +      return NSSize(
-+        width: width,
++        width: predictionWidth,
 +        height: RagImeSuggestionCardView.predictionHeight(candidateCount: realCandidates.count, hasAction: hasAction)
 +      )
 +    case .explicitGenerating: return NSSize(width: 78, height: RagImeSuggestionCardView.thinkingHeight)
 +    case .explicitNoSuggestion, .explicitError:
-+      return NSSize(width: max(320, width), height: RagImeSuggestionCardView.errorHeight)
++      return NSSize(width: max(320, predictionWidth), height: RagImeSuggestionCardView.errorHeight)
 +    case .explicitResult:
 +      let text = realCandidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
-+      let resultWidth = min(configuredMaximumWidth, max(440, width))
++      let resultWidth = min(configuredMaximumWidth, max(440, predictionWidth))
 +      return NSSize(
 +        width: max(RagImeSuggestionCardView.minimumPredictionWidth, resultWidth),
 +        height: RagImeSuggestionCardView.explicitResultHeight(text: text, width: resultWidth)
@@ -914,6 +916,28 @@ index 0000000000000000000000000000000000000000..966509f6388a0570e9f387b453287157
 +          RagImeSuggestionCardView.minimumPredictionWidth),
 +      520
 +    )
++  }
++
++  private func compactPredictionWidth(
++    candidates: [RagImeDisplayCandidate],
++    hasAction: Bool,
++    maximumWidth: CGFloat,
++    fontSize: CGFloat
++  ) -> CGFloat {
++    let attributes: [NSAttributedString.Key: Any] = [
++      .font: RagImeAssistantTypography.candidate(pointSize: fontSize, primary: true),
++    ]
++    let widestText = candidates.map { candidate -> CGFloat in
++      let text = candidate.text.isEmpty ? candidate.insertText : candidate.text
++      return ceil((text as NSString).size(withAttributes: attributes).width)
++    }.max() ?? 0
++    let rowWidth = 56 + widestText + 16
++    let actionWidth = hasAction ? RagImeSuggestionCardView.actionPredictionWidth : 0
++    let contentWidth = max(
++      RagImeSuggestionCardView.minimumPredictionWidth,
++      max(rowWidth, actionWidth)
++    )
++    return min(maximumWidth, contentWidth)
 +  }
 +
 +  private func fadeAnimationEnabled(for payload: RagImeAssistantOverlayPayload) -> Bool {
@@ -3099,10 +3123,10 @@ index 0000000000000000000000000000000000000000..44575b28c5cc52e62faa7b1ada3ad208
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..bdd2c3bdfc410509ed13101fc51dcf8148b02b7c
+index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247cbb62e713
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,736 @@
 +import AppKit
 +import QuartzCore
 +
@@ -3161,8 +3185,9 @@ index 0000000000000000000000000000000000000000..bdd2c3bdfc410509ed13101fc51dcf81
 +  static let rowHeight: CGFloat = 40
 +  static let actionHeight: CGFloat = 40
 +  static let maximumPredictionCandidates = 4
-+  static let minimumPredictionWidth: CGFloat = 320
-+  static let preferredPredictionWidth: CGFloat = 376
++  static let minimumPredictionWidth: CGFloat = 196
++  static let pendingPredictionWidth: CGFloat = 248
++  static let actionPredictionWidth: CGFloat = 264
 +  static let maximumPredictionWidth: CGFloat = 460
 +  static let minimumExplicitResultHeight: CGFloat = 176
 +  static let maximumExplicitResultHeight: CGFloat = 300

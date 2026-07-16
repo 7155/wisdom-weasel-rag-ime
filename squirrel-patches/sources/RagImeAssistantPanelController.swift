@@ -418,27 +418,29 @@ final class RagImeAssistantPanelController {
     let realCandidates = payload.candidates.filter(RagImeSuggestionCardView.isRealCandidate)
     let hasAction = payload.candidates.contains(where: RagImeSuggestionCardView.isActionCandidate)
     let configuredMaximumWidth = maximumWidth(for: payload)
-    let width = min(
-      configuredMaximumWidth,
-      max(RagImeSuggestionCardView.minimumPredictionWidth, RagImeSuggestionCardView.preferredPredictionWidth)
+    let predictionWidth = compactPredictionWidth(
+      candidates: realCandidates,
+      hasAction: hasAction,
+      maximumWidth: configuredMaximumWidth,
+      fontSize: candidateFontSize(for: payload)
     )
     switch state {
     case .pendingPrediction:
       return NSSize(
-        width: min(configuredMaximumWidth, RagImeSuggestionCardView.minimumPredictionWidth),
+        width: min(configuredMaximumWidth, RagImeSuggestionCardView.pendingPredictionWidth),
         height: RagImeSuggestionCardView.pendingHeight
       )
     case .compactPrediction, .expandedPredictions:
       return NSSize(
-        width: width,
+        width: predictionWidth,
         height: RagImeSuggestionCardView.predictionHeight(candidateCount: realCandidates.count, hasAction: hasAction)
       )
     case .explicitGenerating: return NSSize(width: 78, height: RagImeSuggestionCardView.thinkingHeight)
     case .explicitNoSuggestion, .explicitError:
-      return NSSize(width: max(320, width), height: RagImeSuggestionCardView.errorHeight)
+      return NSSize(width: max(320, predictionWidth), height: RagImeSuggestionCardView.errorHeight)
     case .explicitResult:
       let text = realCandidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
-      let resultWidth = min(configuredMaximumWidth, max(440, width))
+      let resultWidth = min(configuredMaximumWidth, max(440, predictionWidth))
       return NSSize(
         width: max(RagImeSuggestionCardView.minimumPredictionWidth, resultWidth),
         height: RagImeSuggestionCardView.explicitResultHeight(text: text, width: resultWidth)
@@ -696,6 +698,28 @@ final class RagImeAssistantPanelController {
           RagImeSuggestionCardView.minimumPredictionWidth),
       520
     )
+  }
+
+  private func compactPredictionWidth(
+    candidates: [RagImeDisplayCandidate],
+    hasAction: Bool,
+    maximumWidth: CGFloat,
+    fontSize: CGFloat
+  ) -> CGFloat {
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: RagImeAssistantTypography.candidate(pointSize: fontSize, primary: true),
+    ]
+    let widestText = candidates.map { candidate -> CGFloat in
+      let text = candidate.text.isEmpty ? candidate.insertText : candidate.text
+      return ceil((text as NSString).size(withAttributes: attributes).width)
+    }.max() ?? 0
+    let rowWidth = 56 + widestText + 16
+    let actionWidth = hasAction ? RagImeSuggestionCardView.actionPredictionWidth : 0
+    let contentWidth = max(
+      RagImeSuggestionCardView.minimumPredictionWidth,
+      max(rowWidth, actionWidth)
+    )
+    return min(maximumWidth, contentWidth)
   }
 
   private func fadeAnimationEnabled(for payload: RagImeAssistantOverlayPayload) -> Bool {

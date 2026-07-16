@@ -195,7 +195,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("RagImeSuggestionCardView.minimumPredictionWidth", controller_text)
         self.assertIn("RagImeSuggestionCardView.maximumPredictionWidth", controller_text)
         self.assertIn(
-            "width: min(configuredMaximumWidth, RagImeSuggestionCardView.minimumPredictionWidth)",
+            "width: min(configuredMaximumWidth, RagImeSuggestionCardView.pendingPredictionWidth)",
             controller_text,
         )
         self.assertIn("assistant_panel_frame_transition_started", controller_text)
@@ -208,9 +208,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("assistant_overlay_session_actions_preserved", patch_text)
         self.assertIn('metadata["frontendPreservedAction"] = .bool(true)', patch_text)
         self.assertIn("snapshotId: payload.snapshotId", patch_text)
-        self.assertIn("static let minimumPredictionWidth: CGFloat = 320", card_text)
-        self.assertIn("static let preferredPredictionWidth: CGFloat = 376", card_text)
+        self.assertIn("static let minimumPredictionWidth: CGFloat = 196", card_text)
+        self.assertIn("static let pendingPredictionWidth: CGFloat = 248", card_text)
+        self.assertIn("static let actionPredictionWidth: CGFloat = 264", card_text)
         self.assertIn("static let maximumPredictionWidth: CGFloat = 460", card_text)
+        self.assertIn("func compactPredictionWidth(", controller_text)
+        self.assertIn("(text as NSString).size(withAttributes: attributes).width", controller_text)
         self.assertIn("static let rowHeight: CGFloat = 40", card_text)
         self.assertIn("static let actionHeight: CGFloat = 40", card_text)
         self.assertIn("static let maximumPredictionCandidates = 4", card_text)
@@ -1095,8 +1098,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("payload.snapshotId == renderedSnapshotId", controller_text)
         self.assertIn("stableIds == renderedStableIds", controller_text)
         self.assertIn("same_snapshot_stable_ids", controller_text)
-        self.assertIn("RagImeSuggestionCardView.preferredPredictionWidth", controller_text)
-        self.assertNotIn("let longest = realCandidates.map", controller_text)
+        self.assertIn("RagImeSuggestionCardView.actionPredictionWidth", controller_text)
+        self.assertNotIn("RagImeSuggestionCardView.preferredPredictionWidth", controller_text)
         self.assertIn('resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"', card_text)
         self.assertIn('NSTextField(labelWithString: "Tab 插入")', card_text)
         self.assertIn('resultShortcutLabel.toolTip = "结果就绪后按 Tab 插入"', card_text)
