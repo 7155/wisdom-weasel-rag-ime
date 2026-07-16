@@ -47,7 +47,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       toolProfileVersion: 'control-center-v1',
     },
     safetyPolicyVersion: 'control-center-safe-v1',
-    selectableModes: ['assistant'],
+    selectableModes: ['assistant', 'coordinator'],
   },
   {
     schemaVersion: 'rag-ime.agent-persona.v1',
@@ -68,7 +68,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       toolProfileVersion: 'control-center-v1',
     },
     safetyPolicyVersion: 'control-center-safe-v1',
-    selectableModes: ['assistant'],
+    selectableModes: ['assistant', 'coordinator'],
   },
 ];
 

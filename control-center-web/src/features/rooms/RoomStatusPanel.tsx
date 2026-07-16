@@ -67,8 +67,12 @@ export function RoomStatusPanel({
           {artifacts.length ? <div className="agent-status-files">{artifacts.map((block) => <RoomStatusRow detail={block.type === 'diff' ? '变更产物' : '文件产物'} icon={FolderKanban} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>本轮还没有可交付产物</RoomStatusEmpty>}
         </RoomStatusSection>
 
+        <RoomStatusSection count={room?.workspaceRoots?.length ?? 0} icon={FolderKanban} title="项目路径">
+          {room?.workspaceRoots?.length ? <div className="agent-status-files">{room.workspaceRoots.map((path) => <RoomStatusRow detail={path} icon={FolderKanban} key={path} title={pathName(path)} />)}</div> : <RoomStatusEmpty>这个旧 Room 尚未绑定项目路径</RoomStatusEmpty>}
+        </RoomStatusSection>
+
         <RoomStatusSection count={room?.participants.length ?? 0} icon={Bot} title="协作成员">
-          {room?.participants.length ? <div className="room-status-participants">{room.participants.map((participant) => <RoomStatusRow detail={participant.status === 'active' ? '已加入当前 Room' : '暂未参与'} icon={Bot} key={participant.id} title={participant.displayName} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
+          {room?.participants.length ? <div className="room-status-participants">{room.participants.map((participant) => <RoomStatusRow detail={`${collaborationRoleLabel(participant.collaborationRole)} · ${participant.status === 'active' ? '已加入' : '暂未参与'}`} icon={Bot} key={participant.id} title={participant.displayName} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
         </RoomStatusSection>
       </div>
     </aside>
@@ -121,3 +125,9 @@ function fileName(data: Record<string, unknown>): string {
 }
 
 function text(value: unknown): string { return typeof value === 'string' ? value : ''; }
+function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }
+function collaborationRoleLabel(role: string | undefined): string {
+  if (role === 'coordinator') return '调控者';
+  if (role === 'researcher') return '只读调研';
+  return '执行者';
+}

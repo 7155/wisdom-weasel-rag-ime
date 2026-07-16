@@ -257,8 +257,8 @@ export const CONTROL_ROUTES = {
   'agent.rooms.create': {
     method: 'POST',
     path: '/api/agent/rooms',
-    body: ['title', 'participants', 'routingPolicy', 'moderatorRoleId'],
-    requiredBody: ['participants'],
+    body: ['title', 'participants', 'routingPolicy', 'moderatorRoleId', 'workspaceRoots'],
+    requiredBody: ['participants', 'workspaceRoots'],
   },
   'agent.room.get': {
     method: 'GET',

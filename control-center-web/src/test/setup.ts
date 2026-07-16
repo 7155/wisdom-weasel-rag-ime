@@ -6,6 +6,16 @@ Object.defineProperty(window, 'scrollTo', {
   writable: true,
 });
 
+Object.defineProperty(globalThis, 'ResizeObserver', {
+  configurable: true,
+  value: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+  writable: true,
+});
+
 Object.defineProperties(HTMLElement.prototype, {
   hasPointerCapture: { configurable: true, value: () => false },
   releasePointerCapture: { configurable: true, value: () => undefined },

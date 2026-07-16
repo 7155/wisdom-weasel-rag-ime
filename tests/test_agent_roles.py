@@ -32,7 +32,7 @@ class AgentRoleTests(unittest.TestCase):
         self.assertTrue(all(item["safetyPolicyVersion"] == "control-center-safe-v1" for item in catalog))
         self.assertNotIn("systemPrompt", catalog[0])
         self.assertNotIn("personaPrompt", catalog[0])
-        self.assertEqual(catalog[1]["selectableModes"], ["assistant"])
+        self.assertTrue(all(item["selectableModes"] == ["assistant", "coordinator"] for item in catalog))
         self.assertEqual(catalog[0]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-present-v1")
         self.assertEqual(catalog[1]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-past-v1")
         self.assertEqual(catalog[2]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-future-v1")

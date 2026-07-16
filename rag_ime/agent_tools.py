@@ -4395,9 +4395,24 @@ def _tool_profile_allows(
         "ime_knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),
-        "ime_agents": frozenset({"catalog", "delegate", "status", "artifact", "abort"}),
+        "ime_agents": frozenset(
+            {
+                "catalog",
+                "delegate",
+                "status",
+                "artifact",
+                "abort",
+                "room_send",
+                "room_ask",
+                "room_reply",
+                "room_mailbox",
+            }
+        ),
         "agent_schedule": frozenset({"list", "runs"}),
         "agent_plan": frozenset({"list", "update"}),
+        "workspace_list": frozenset({"list"}),
+        "workspace_read": frozenset({"read"}),
+        "workspace_search": frozenset({"search"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())

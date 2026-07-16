@@ -162,12 +162,25 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertIn("action", audit_properties)
 
     def test_readonly_profile_filters_parameter_branches_with_operations(self) -> None:
-        catalog, manifests = self._runtime_contracts(profile="subagent-readonly-v1")
+        catalog, manifests = self._runtime_contracts(
+            mode="coordinator",
+            profile="subagent-readonly-v1",
+        )
         effective = {
             item["id"]: set(item["effectiveOperations"])
             for item in catalog
             if item["enabled"] is True
         }
+        self.assertEqual(effective["workspace_list"], {"list"})
+        self.assertEqual(effective["workspace_read"], {"read"})
+        self.assertEqual(effective["workspace_search"], {"search"})
+        self.assertTrue(
+            {"room_send", "room_ask", "room_reply", "room_mailbox"}.issubset(
+                effective["ime_agents"]
+            )
+        )
+        self.assertNotIn("workspace_patch", effective)
+        self.assertNotIn("workspace_shell", effective)
 
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):

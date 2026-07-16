@@ -47,6 +47,9 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "ime_runtime",
     "ime_agents",
     "agent_plan",
+    "workspace_list",
+    "workspace_read",
+    "workspace_search",
 )
 _APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
 _REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"

@@ -116,6 +116,7 @@ describe('Rooms experience', () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [] },
       'agent.roles.list': { ok: true, items: roleCatalog },
+      'agent.sessions.list': { ok: true, items: [{ id: 'existing', mode: 'coordinator', workspaceRoots: ['/Volumes/work/learnA'] }] },
       'agent.rooms.create': { ok: true, room: created },
       'agent.room.snapshot': roomSnapshot('room-created', [], '发布前检查'),
     } });
@@ -138,9 +139,39 @@ describe('Rooms experience', () => {
       })),
       routingPolicy: 'moderator',
       moderatorRoleId: userCreatedPersona.roleId,
+      workspaceRoots: ['/Volumes/work/learnA'],
     });
     expect(await screen.findByRole('button', { name: '打开 Room：发布前检查' })).toHaveAttribute('aria-current', 'true');
     expect(screen.queryByRole('dialog', { name: '新建协作 Room' })).not.toBeInTheDocument();
+  });
+
+  it('requires a project path and defaults collaboration control to 智鼬·未来', async () => {
+    const transport = new MockControlTransport({
+      pickedFiles: [{ id: 'workspace', name: 'learnA', mimeType: 'inode/directory', byteSize: 0, path: '/Volumes/work/learnA' }],
+      routes: {
+        'agent.rooms.list': { ok: true, items: [] },
+        'agent.roles.list': { ok: true, items: previewPersonas },
+        'agent.sessions.list': { ok: true, items: [] },
+      },
+    });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '新建 Room' }));
+    expect(screen.getByRole('button', { name: '创建 Room' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Room 主持人' })).toHaveTextContent('智鼬·未来');
+
+    await user.click(screen.getByRole('button', { name: '选择项目目录' }));
+    expect(transport.filePickCalls).toEqual([{
+      purpose: 'workspace-root',
+      selection: 'directory',
+      multiple: false,
+      maxFiles: 1,
+    }]);
+    expect(screen.getByText('/Volumes/work/learnA')).toBeInTheDocument();
   });
 
   it('archives a Room only after the real API confirms the state change', async () => {
@@ -274,12 +305,14 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('dialog', { name: '新建协作 Room' })).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toBeChecked();
   });
 
   it('keeps a Room creation failure inside the dialog and preserves the draft', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [] },
       'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.sessions.list': { ok: true, items: [{ id: 'existing', mode: 'coordinator', workspaceRoots: ['/Volumes/work/learnA'] }] },
       'agent.rooms.create': () => { throw new Error('Room 名称已存在'); },
     } });
     const user = userEvent.setup();
@@ -392,6 +425,7 @@ describe('Rooms experience', () => {
         mode: 'coordinator',
         toolProfileVersion: 'subagent-readonly-v1',
         allowedTools: ['ime_overview'],
+        workspaceRoots: ['/Volumes/work/learnA'],
       },
     });
   });
@@ -525,10 +559,11 @@ function roomSummary(roomId: string, title: string): RoomSummary {
     status: 'active',
     routingPolicy: 'moderator',
     moderatorParticipantId: `${roomId}:p1`,
+    workspaceRoots: ['/Volumes/work/learnA'],
     updatedAtMs: 2,
     participants: [
-      { id: `${roomId}:p1`, sessionId: `${roomId}:s1`, roleId: 'zhiyou-v1', roleVersion: '1', displayName: '智鼬', status: 'active', ordinal: 0 },
-      { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'hermes-v1', roleVersion: '1', displayName: '智鼬·初识', status: 'active', ordinal: 1 },
+      { id: `${roomId}:p1`, sessionId: `${roomId}:s1`, roleId: 'zhiyou-v1', roleVersion: '1', displayName: '智鼬', collaborationRole: 'coordinator', status: 'active', ordinal: 0 },
+      { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'hermes-v1', roleVersion: '1', displayName: '智鼬·初识', collaborationRole: 'researcher', status: 'active', ordinal: 1 },
     ],
   };
 }

@@ -1,4 +1,5 @@
-import { Archive, ArchiveRestore, AtSign, ExternalLink, GitBranch, MessageSquarePlus, PanelRightOpen, Send, ShieldCheck, UsersRound } from 'lucide-react';
+import { Archive, ArchiveRestore, AtSign, ExternalLink, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, PanelRightOpen, Send, ShieldCheck, UsersRound } from 'lucide-react';
+import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useControlTransport } from '@/app/control-transport';
@@ -32,9 +33,9 @@ import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomStatusPanel } from './RoomStatusPanel';
 import './rooms.css';
 
-export interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; status: string; ordinal: number; }
-export interface RoomSummary { id: string; title: string; status: string; routingPolicy: string; moderatorParticipantId: string; updatedAtMs: number; participants: RoomParticipant[]; }
-interface AgentSessionPolicySummary { id: string; mode: 'assistant' | 'coordinator'; status: string; toolProfileVersion: string; toolAllowlistMode: 'profile' | 'explicit'; allowedTools: string[]; }
+export interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; collaborationRole?: 'coordinator' | 'executor' | 'researcher'; status: string; ordinal: number; }
+export interface RoomSummary { id: string; title: string; status: string; routingPolicy: string; moderatorParticipantId: string; workspaceRoots?: string[]; updatedAtMs: number; participants: RoomParticipant[]; }
+interface AgentSessionPolicySummary { id: string; mode: 'assistant' | 'coordinator'; status: string; toolProfileVersion: string; toolAllowlistMode: 'profile' | 'explicit'; allowedTools: string[]; workspaceRoots: string[]; }
 interface RoomToolPolicyItem { id: string; displayName: string; description: string; sessionModes: string[]; operations: string[]; profileOperations: Record<string, string[]>; enabled: boolean; }
 
 export function RoomsFeature() {
@@ -56,6 +57,9 @@ export function RoomsFeature() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState('');
   const [createTitle, setCreateTitle] = useState('');
+  const [projectPaths, setProjectPaths] = useState<string[]>([]);
+  const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([]);
+  const [workspacePicking, setWorkspacePicking] = useState(false);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const [routingPolicy, setRoutingPolicy] = useState<'moderator' | 'manual_mentions'>('moderator');
   const [moderatorRoleId, setModeratorRoleId] = useState('');
@@ -77,10 +81,12 @@ export function RoomsFeature() {
     void Promise.allSettled([
       transport.request({ pathId: 'agent.rooms.list', query: { limit: 100, ...(includeArchived ? { includeArchived: true } : {}) } }),
       transport.request({ pathId: 'agent.roles.list' }),
-    ]).then(([roomResult, roleResult]) => {
+      transport.request({ pathId: 'agent.sessions.list', query: { limit: 200 } }),
+    ]).then(([roomResult, roleResult, sessionResult]) => {
       if (!active) return;
+      const loadedRooms = roomResult.status === 'fulfilled' ? roomItems(roomResult.value) : [];
       if (roomResult.status === 'fulfilled') {
-        const items = roomItems(roomResult.value);
+        const items = loadedRooms;
         setRooms(items);
         setSelectedId((current) => items.some((item) => item.id === current)
           ? current
@@ -95,6 +101,13 @@ export function RoomsFeature() {
       } else {
         setRoleCatalogError(publicErrorText(roleResult.reason, '角色目录暂时无法读取，请稍后重试。'));
       }
+      const loadedSessions = sessionResult.status === 'fulfilled'
+        ? agentSessionItems(sessionResult.value)
+        : [];
+      setProjectPaths(uniquePaths([
+        ...loadedRooms.flatMap((item) => item.workspaceRoots ?? []),
+        ...loadedSessions.flatMap((item) => item.workspaceRoots),
+      ]));
     }).finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
   }, [includeArchived, transport]);
@@ -246,18 +259,51 @@ export function RoomsFeature() {
     setError('');
   }
   function beginCreateRoom(): void {
-    if (personas.length < 2) {
+    const eligiblePersonas = personas.filter((persona) => persona.selectableModes.includes('coordinator'));
+    if (eligiblePersonas.length < 2) {
       setError('真实角色目录至少需要两个角色才能创建 Room。');
       return;
     }
-    const defaults = personas.slice(0, 2).map((persona) => persona.roleId);
+    const timelineDefaults = ['vcp-v1', 'zhiyou-v1', 'hermes-v1']
+      .map((roleId) => eligiblePersonas.find((persona) => persona.roleId === roleId)?.roleId)
+      .filter((roleId): roleId is string => Boolean(roleId));
+    const defaults = timelineDefaults.length >= 2
+      ? timelineDefaults
+      : eligiblePersonas.slice(0, Math.min(3, eligiblePersonas.length)).map((persona) => persona.roleId);
     setError('');
     setCreateError('');
     setCreateTitle('');
+    setWorkspaceRoots(projectPaths.slice(0, 1));
     setSelectedRoleIds(defaults);
-    setModeratorRoleId(defaults[0] ?? '');
+    setModeratorRoleId(defaults.includes('vcp-v1') ? 'vcp-v1' : defaults[0] ?? '');
     setRoutingPolicy('moderator');
     setCreateOpen(true);
+  }
+  async function pickWorkspaceRoot(): Promise<void> {
+    if (workspacePicking || creating) return;
+    if (!transport.pickFiles) {
+      setCreateError('当前平台不能选择本地工作区，请在桌面控制中心中创建 Room。');
+      return;
+    }
+    setWorkspacePicking(true);
+    setCreateError('');
+    try {
+      const picked = await transport.pickFiles({
+        purpose: 'workspace-root',
+        selection: 'directory',
+        multiple: false,
+        maxFiles: 1,
+      });
+      const roots = uniquePaths(picked.map((item) => item.path ?? ''));
+      if (roots.length) {
+        setWorkspaceRoots(roots);
+        setProjectPaths((current) => uniquePaths([...roots, ...current]));
+      }
+    } catch (pickError) {
+      setCreateError(publicErrorText(pickError, '工作区选择失败，请稍后重试。'));
+    } finally {
+      setWorkspacePicking(false);
+    }
   }
   function toggleParticipant(roleId: string): void {
     setCreateError('');
@@ -279,6 +325,10 @@ export function RoomsFeature() {
       setCreateError('请选择 2 至 4 个角色。');
       return;
     }
+    if (!workspaceRoots.length) {
+      setCreateError('请先选择这个 Room 使用的项目路径。');
+      return;
+    }
     const title = createTitle.trim();
     if (!title) return;
     if (routingPolicy === 'moderator' && !selectedRoleIds.includes(moderatorRoleId)) {
@@ -294,6 +344,7 @@ export function RoomsFeature() {
           title,
           participants,
           routingPolicy,
+          workspaceRoots,
           ...(routingPolicy === 'moderator' ? { moderatorRoleId } : {}),
         },
       });
@@ -385,6 +436,9 @@ export function RoomsFeature() {
           mode: policyMode,
           toolProfileVersion: policyProfile,
           allowedTools: policyAllowedTools,
+          workspaceRoots: policyMode === 'coordinator'
+            ? room?.workspaceRoots ?? policySession.workspaceRoots
+            : [],
         },
       });
       const updated = agentSessionValue(record(response).session);
@@ -404,7 +458,7 @@ export function RoomsFeature() {
         <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => setSelectedId(item.id)}><UsersRound size={16} /><span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
       </aside>
       <section className="room-workspace">
-        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建协作空间' : room.status === 'archived' ? '已归档' : room.routingPolicy === 'moderator' ? '由主持人协调' : '通过 @ 指派'}</small></span><div className="room-header-actions"><div className="room-participants">{room?.participants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 状态栏' : '展开 Room 状态'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
+        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建协作空间' : room.status === 'archived' ? '已归档' : `${roomPathName(room)} · ${room.routingPolicy === 'moderator' ? '由主持人协调' : '通过 @ 指派'}`}</small></span><div className="room-header-actions"><div className="room-participants">{room?.participants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 状态栏' : '展开 Room 状态'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
         <div className="room-error-slot" aria-live="polite">
           {error ? <p className="room-error" role="alert">{error}</p> : null}
           {!error && roomCatalogError ? <p className="room-error" role="alert">{roomCatalogError}</p> : null}
@@ -420,15 +474,21 @@ export function RoomsFeature() {
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="room-create-dialog">
-        <DialogHeader><DialogTitle>新建协作 Room</DialogTitle><DialogDescription>选择 2 至 4 个真实角色，并决定这次协作由谁协调。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>新建协作 Room</DialogTitle><DialogDescription>先绑定项目路径，再分配调控、执行与只读调研角色。</DialogDescription></DialogHeader>
         <form id="room-create-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void createRoom(); }}>
           {createError ? <p className="room-dialog-error" role="alert">{createError}</p> : null}
-          <label className="room-create-field"><span>名称</span><input autoFocus maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder="例如：发布前检查" aria-label="Room 名称" /></label>
-          <fieldset><legend>参与角色 <small>{selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}</strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
+          <section className="room-create-projects" aria-label="项目路径">
+            <header><strong>项目路径</strong><small>必选</small></header>
+            {projectPaths.length ? <RadioGroup.Root aria-label="最近项目" value={workspaceRoots[0] ?? ''} onValueChange={(value) => { setWorkspaceRoots([value]); setCreateError(''); }}>{projectPaths.map((path) => <RadioGroup.Item key={path} value={path} title={path}><FolderOpen size={16} /><span><strong>{pathName(path)}</strong><small>{path}</small></span></RadioGroup.Item>)}</RadioGroup.Root> : null}
+            {workspaceRoots[0] && !projectPaths.includes(workspaceRoots[0]) ? <div className="room-create-project-picked" title={workspaceRoots.join('\n')}><FolderOpen size={16} /><span><strong>{pathName(workspaceRoots[0])}</strong><small>{workspaceRoots[0]}</small></span></div> : null}
+            <Button type="button" variant="quiet" leadingIcon={workspacePicking ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />} disabled={workspacePicking || creating} onClick={() => void pickWorkspaceRoot()}>{workspaceRoots.length ? '选择其他目录' : '选择项目目录'}</Button>
+          </section>
+          <label className="room-create-field"><span>名称</span><input maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder="例如：发布前检查" aria-label="Room 名称" /></label>
+          <fieldset><legend>参与角色 <small>{selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes('coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{roomRoleLabel(persona.roleId, moderatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
           <fieldset><legend>协调方式</legend><div className="room-routing-options"><label><input type="radio" name="room-routing" checked={routingPolicy === 'moderator'} onChange={() => { setRoutingPolicy('moderator'); setCreateError(''); }} />由一位角色协调</label><label><input type="radio" name="room-routing" checked={routingPolicy === 'manual_mentions'} onChange={() => { setRoutingPolicy('manual_mentions'); setCreateError(''); }} />通过 @ 指派</label></div></fieldset>
           {routingPolicy === 'moderator' ? <label className="room-create-field"><span>主持人</span><Select aria-label="Room 主持人" onValueChange={(value) => { setModeratorRoleId(value); setCreateError(''); }} options={selectedRoleIds.flatMap((roleId) => { const persona = personas.find((item) => item.roleId === roleId); return persona ? [{ value: roleId, label: persona.displayName }] : []; })} value={moderatorRoleId} /></label> : null}
         </form>
-        <DialogFooter><Button variant="quiet" disabled={creating} onClick={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={!createTitle.trim() || selectedRoleIds.length < 2}>创建 Room</Button></DialogFooter>
+        <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={!workspaceRoots.length || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>创建 Room</Button></DialogFooter>
       </DialogContent>
     </Dialog>
     <Dialog open={archiveOpen} onOpenChange={(open) => { if (!archiving) setArchiveOpen(open); }}>
@@ -557,11 +617,20 @@ function agentSessionHref(sessionId: string): string { return `#/agent?${new URL
 
 function roomItems(value: unknown): RoomSummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : Array.isArray(source.rooms) ? source.rooms : []).filter(isRoom); }
 function isRoom(value: unknown): value is RoomSummary { const item = record(value); return typeof item.id === 'string' && typeof item.title === 'string' && Array.isArray(item.participants); }
-function agentSessionItems(value: unknown): AgentSessionPolicySummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : []).map(agentSessionValue).filter((item): item is AgentSessionPolicySummary => Boolean(item)); }
-function agentSessionValue(value: unknown): AgentSessionPolicySummary | undefined { const item = record(value); if (typeof item.id !== 'string' || !['assistant', 'coordinator'].includes(String(item.mode))) return undefined; return { id: item.id, mode: item.mode as AgentSessionPolicySummary['mode'], status: String(item.status ?? ''), toolProfileVersion: String(item.toolProfileVersion || 'control-center-v1'), toolAllowlistMode: item.toolAllowlistMode === 'explicit' ? 'explicit' : 'profile', allowedTools: Array.isArray(item.allowedTools) ? item.allowedTools.map(String) : [] }; }
+function agentSessionItems(value: unknown): AgentSessionPolicySummary[] { const source = record(value); const items = Array.isArray(source.items) ? source.items : Array.isArray(source.sessions) ? source.sessions : []; return items.map(agentSessionValue).filter((item): item is AgentSessionPolicySummary => Boolean(item)); }
+function agentSessionValue(value: unknown): AgentSessionPolicySummary | undefined { const item = record(value); if (typeof item.id !== 'string' || !['assistant', 'coordinator'].includes(String(item.mode))) return undefined; return { id: item.id, mode: item.mode as AgentSessionPolicySummary['mode'], status: String(item.status ?? ''), toolProfileVersion: String(item.toolProfileVersion || 'control-center-v1'), toolAllowlistMode: item.toolAllowlistMode === 'explicit' ? 'explicit' : 'profile', allowedTools: Array.isArray(item.allowedTools) ? item.allowedTools.map(String) : [], workspaceRoots: Array.isArray(item.workspaceRoots) ? item.workspaceRoots.map(String) : [] }; }
 function roomToolItems(value: unknown): RoomToolPolicyItem[] { const source = record(value); return (Array.isArray(source.items) ? source.items : []).flatMap((value) => { const item = record(value); if (typeof item.id !== 'string' || typeof item.displayName !== 'string') return []; const profileOperations = record(item.profileOperations); return [{ id: item.id, displayName: item.displayName, description: String(item.description ?? ''), sessionModes: Array.isArray(item.sessionModes) ? item.sessionModes.map(String) : [], operations: Array.isArray(item.operations) ? item.operations.map(String) : [], profileOperations: Object.fromEntries(Object.entries(profileOperations).map(([profile, operations]) => [profile, Array.isArray(operations) ? operations.map(String) : []])), enabled: item.enabled === true }]; }); }
 function toolAvailableForPolicy(tool: RoomToolPolicyItem, mode: string, profile: string): boolean { return tool.sessionModes.includes(mode) && (tool.profileOperations[profile] ?? []).length > 0; }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function uniquePaths(values: string[]): string[] { return values.map((value) => value.trim()).filter((value, index, all) => value.startsWith('/') && all.indexOf(value) === index).slice(0, 12); }
+function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }
+function roomPathName(room: RoomSummary): string { return room.workspaceRoots?.[0] ? pathName(room.workspaceRoots[0]) : '未绑定项目'; }
+function roomRoleLabel(roleId: string, moderatorRoleId: string): string {
+  if (roleId === moderatorRoleId) return roleId === 'hermes-v1' ? '调控 · 只读' : '调控者';
+  if (roleId === 'hermes-v1') return '只读调研';
+  if (roleId === 'zhiyou-v1') return '执行者';
+  return '协作角色';
+}
 
 function isWideRoomStatusViewport(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'

@@ -152,6 +152,7 @@ _HERMES_V1 = PersonaManifest(
         accent_token="blue",
     ),
     defaults=_PAST_DEFAULTS,
+    selectable_modes=("assistant", "coordinator"),
 )
 
 _VCP_V1 = PersonaManifest(
@@ -170,6 +171,7 @@ _VCP_V1 = PersonaManifest(
         accent_token="rose",
     ),
     defaults=_FUTURE_DEFAULTS,
+    selectable_modes=("assistant", "coordinator"),
 )
 
 _PERSONAS = (_ZHIYOU_V1, _HERMES_V1, _VCP_V1)

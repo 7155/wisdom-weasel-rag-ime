@@ -246,11 +246,32 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def test_room_requires_a_workspace_before_participant_sessions_are_created(self) -> None:
+        with self.assertRaisesRegex(ValueError, "authorized workspace"):
+            self.service.create_room(
+                {
+                    "title": "没有项目的协作",
+                    "workspaceRoots": [],
+                    "participants": [
+                        {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                        {"roleId": "vcp-v1", "roleVersion": "1"},
+                    ],
+                }
+            )
+        self.assertEqual(self.service.list_sessions()["items"], [])
+
     def test_service_creates_fresh_sessions_routes_one_speaker_and_mirrors_events(self) -> None:
+        self.service.personas.set_runtime_defaults(
+            "vcp-v1",
+            "1",
+            model_profile="openai/gpt-5.4",
+            thinking_level="max",
+        )
         created = self.service.create_room(
             {
                 "title": "产品讨论",
                 "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
                 "participants": [
                     {"roleId": "zhiyou-v1", "roleVersion": "1"},
                     {"roleId": "hermes-v1", "roleVersion": "1"},
@@ -259,9 +280,24 @@ class AgentRoomServiceTests(unittest.TestCase):
             }
         )
         room = created["room"]
+        self.assertEqual(room["workspaceRoots"], [str(self.root.resolve())])
         self.assertEqual(room["lastEventSequence"], 1)
         self.assertEqual(len(room["participants"]), 3)
         hermes = next(item for item in room["participants"] if item["roleId"] == "hermes-v1")
+        current = next(item for item in room["participants"] if item["roleId"] == "zhiyou-v1")
+        future = next(item for item in room["participants"] if item["roleId"] == "vcp-v1")
+        self.assertEqual(hermes["collaborationRole"], "researcher")
+        self.assertEqual(current["collaborationRole"], "executor")
+        self.assertEqual(future["collaborationRole"], "executor")
+        hermes_session = self.service.sessions.get(str(hermes["sessionId"]))
+        current_session = self.service.sessions.get(str(current["sessionId"]))
+        future_session = self.service.sessions.get(str(future["sessionId"]))
+        self.assertEqual(hermes_session["mode"], "coordinator")
+        self.assertEqual(hermes_session["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertEqual(current_session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(future_session["modelProfile"], "openai/gpt-5.4")
+        self.assertEqual(future_session["thinkingLevel"], "max")
+        self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
 
         with patch.object(self.service, "prompt", return_value={"turnId": "turn:hermes"}) as prompt:
             accepted = self.service.post_room_message(
@@ -271,10 +307,12 @@ class AgentRoomServiceTests(unittest.TestCase):
                     "clientMessageId": "room-client-1",
                 },
             )
-        prompt.assert_called_once_with(
-            str(hermes["sessionId"]),
-            {"message": "@智鼬·初识 请先诊断状态"},
-        )
+        prompt.assert_called_once()
+        self.assertEqual(prompt.call_args.args[0], str(hermes["sessionId"]))
+        room_prompt = prompt.call_args.args[1]["message"]
+        self.assertIn("你是只读调研者", room_prompt)
+        self.assertIn(str(self.root.resolve()), room_prompt)
+        self.assertIn("@智鼬·初识 请先诊断状态", room_prompt)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
 
@@ -337,6 +375,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service.create_room(
                 {
                     "title": "重复角色",
+                    "workspaceRoots": [str(self.root)],
                     "participants": [
                         {"roleId": "vcp-v1", "roleVersion": "1"},
                         {"roleId": "vcp-v1", "roleVersion": "1"},
@@ -350,18 +389,36 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "title": "主持房间",
                 "routingPolicy": "moderator",
                 "moderatorRoleId": "vcp-v1",
+                "workspaceRoots": [str(self.root)],
                 "participants": [
                     {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
                     {"roleId": "vcp-v1", "roleVersion": "1"},
                 ],
             }
         )
+        future = next(
+            item for item in created["room"]["participants"] if item["roleId"] == "vcp-v1"
+        )
+        self.assertEqual(future["collaborationRole"], "coordinator")
         room_id = str(created["room"]["id"])
+        with patch.object(self.service, "prompt", return_value={"turnId": "turn:future"}) as prompt:
+            accepted = self.service.post_room_message(
+                room_id,
+                {"message": "请协调大家检查当前项目"},
+            )
+        self.assertEqual(accepted["participant"]["id"], future["id"])
+        moderator_prompt = prompt.call_args.args[1]["message"]
+        self.assertIn("你是本轮调控者", moderator_prompt)
+        self.assertIn("ime_agents.room_ask", moderator_prompt)
+        self.assertIn("role=researcher", moderator_prompt)
+        self.assertIn("role=executor", moderator_prompt)
+
         updated = self.service.update_room(room_id, {"archived": True})
         self.assertEqual(updated["room"]["status"], "archived")
         self.assertEqual(self.service.list_rooms()["items"], [])
         self.assertEqual(len(self.service.list_rooms({"includeArchived": True})["items"]), 1)
-        self.assertEqual(len(self.service.list_sessions()["items"]), 2)
+        self.assertEqual(len(self.service.list_sessions()["items"]), 3)
         archived_member = updated["room"]["participants"][0]
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(archived_member["sessionId"]))
@@ -370,6 +427,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         room = self.service.create_room(
             {
                 "title": "安全投影",
+                "workspaceRoots": [str(self.root)],
                 "participants": [
                     {"roleId": "zhiyou-v1", "roleVersion": "1"},
                     {"roleId": "hermes-v1", "roleVersion": "1"},

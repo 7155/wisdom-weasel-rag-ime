@@ -710,6 +710,22 @@ class ControlRoutePolicyTests(unittest.TestCase):
             device_id="phone-1",
             scopes={ControlScope.AGENT_WRITE.value},
         )
+        room_request = ControlRequest(
+            request_id="request-room",
+            path_id=ControlPathId.AGENT_ROOMS_CREATE.value,
+            body={
+                "title": "workspace room",
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+                "workspaceRoots": ["/Users/undo/project"],
+            },
+        )
+        self.policy.authorize(room_request, ControlAccessContext.native())
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(room_request, context)
+
         workspace_request = ControlRequest(
             request_id="request-1",
             path_id=ControlPathId.AGENT_SESSIONS_CREATE.value,

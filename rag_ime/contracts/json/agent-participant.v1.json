@@ -11,6 +11,7 @@
     "roleId",
     "roleVersion",
     "displayName",
+    "collaborationRole",
     "status",
     "ordinal",
     "createdAtMs",
@@ -24,6 +25,10 @@
     "roleId": {"type": "string", "minLength": 1},
     "roleVersion": {"type": "string", "minLength": 1},
     "displayName": {"type": "string", "minLength": 1, "maxLength": 40},
+    "collaborationRole": {
+      "type": "string",
+      "enum": ["coordinator", "executor", "researcher"]
+    },
     "status": {"type": "string", "enum": ["active", "muted", "removed"]},
     "ordinal": {"type": "integer", "minimum": 0, "maximum": 3},
     "createdAtMs": {"type": "integer", "minimum": 0},

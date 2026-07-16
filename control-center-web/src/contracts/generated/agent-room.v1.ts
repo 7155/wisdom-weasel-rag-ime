@@ -11,6 +11,11 @@ export interface AgentRoomV1 {
   status: 'active' | 'archived';
   routingPolicy: 'manual_mentions' | 'moderator';
   moderatorParticipantId: string;
+  /**
+   * @maxItems 4
+   */
+  workspaceRoots:
+    [] | [string] | [string, string] | [string, string, string] | [string, string, string, string];
   createdAtMs: number;
   updatedAtMs: number;
   lastEventSequence: number;

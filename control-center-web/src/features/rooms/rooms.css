@@ -84,6 +84,25 @@
 .room-policy-tools small { color: var(--color-text-tertiary); font-size: 13px; }
 .room-create-form { display: grid; gap: 16px; }
 .room-dialog-error { margin: 0; padding: 8px 10px; border-radius: var(--radius-2); background: var(--color-danger-soft); color: var(--color-danger); font-size: 13px; }
+.room-create-projects { display: grid; gap: 7px; }
+.room-create-projects > header { display: flex; align-items: baseline; justify-content: space-between; color: var(--color-text-secondary); font-size: 13px; }
+.room-create-projects > header small { color: var(--color-accent); font-weight: 700; }
+.room-create-projects [role='radiogroup'] { display: grid; max-height: 132px; gap: 5px; overflow-y: auto; }
+.room-create-projects [role='radio'],
+.room-create-project-picked { display: grid; width: 100%; min-width: 0; min-height: 44px; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-2); padding: 7px 9px; background: var(--color-surface); color: var(--color-text-secondary); text-align: left; }
+.room-create-projects [role='radio'] { cursor: pointer; }
+.room-create-projects [role='radio'][data-state='checked'] { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-text-primary); }
+.room-create-projects [role='radio'] > span,
+.room-create-project-picked > span { display: grid; min-width: 0; gap: 1px; }
+.room-create-projects [role='radio'] strong,
+.room-create-projects [role='radio'] small,
+.room-create-project-picked strong,
+.room-create-project-picked small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-create-projects [role='radio'] strong,
+.room-create-project-picked strong { font-size: 13px; }
+.room-create-projects [role='radio'] small,
+.room-create-project-picked small { color: var(--color-text-tertiary); font-size: 12px; }
+.room-create-projects > .ui-button { width: fit-content; }
 .room-create-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .room-create-form legend, .room-create-field > span { display: flex; align-items: baseline; gap: 6px; margin-bottom: 7px; color: var(--color-text-secondary); font-size: 13px; font-weight: 700; }
 .room-create-form legend small { color: var(--color-text-tertiary); font-size: 13px; font-weight: 500; }
@@ -96,7 +115,8 @@
 .room-role-options > label:has(input:checked) { border-color: var(--color-accent); background: var(--color-accent-soft); }
 .room-role-options > label > span { display: grid; min-width: 0; gap: 2px; }
 .room-role-options strong, .room-role-options small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.room-role-options strong { font-size: 13px; }
+.room-role-options strong { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; }
+.room-role-options strong em { flex: 0 0 auto; border: 1px solid var(--color-border-strong); border-radius: var(--radius-round); padding: 1px 5px; color: var(--color-text-tertiary); font-size: 11px; font-style: normal; font-weight: 600; }
 .room-role-options small { color: var(--color-text-tertiary); font-size: 13px; }
 .room-routing-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .room-routing-options label { display: flex; min-height: 38px; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-2); color: var(--color-text-secondary); font-size: 13px; cursor: pointer; }

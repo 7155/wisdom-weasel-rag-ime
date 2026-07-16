@@ -59,6 +59,7 @@ class AgentRoomStore:
         title: str,
         routing_policy: str,
         participants: Sequence[Mapping[str, object]],
+        workspace_roots: Sequence[str] = (),
         moderator_ordinal: int = 0,
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
@@ -72,6 +73,9 @@ class AgentRoomStore:
             raise ValueError("agent room requires between 2 and 4 participants")
         if not 0 <= moderator_ordinal < len(values):
             raise ValueError("agent room moderator ordinal is out of range")
+        roots = _workspace_roots(workspace_roots)
+        if len(roots) > 4:
+            raise ValueError("agent room accepts at most four workspace roots")
 
         timestamp = _timestamp(created_at_ms)
         room_id = f"room:{uuid.uuid4()}"
@@ -83,8 +87,8 @@ class AgentRoomStore:
                 """
                 INSERT INTO agent_rooms(
                     id, title, routing_policy, moderator_participant_id, status,
-                    room_file, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+                    room_file, workspace_roots_json, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
                 """,
                 (
                     room_id,
@@ -92,6 +96,7 @@ class AgentRoomStore:
                     routing_policy,
                     moderator_id,
                     str(room_file),
+                    json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     timestamp,
                     timestamp,
                 ),
@@ -101,12 +106,15 @@ class AgentRoomStore:
                 role_id = _required_text(value, "roleId")
                 role_version = _required_text(value, "roleVersion")
                 display_name = " ".join(_required_text(value, "displayName").split())[:40]
+                collaboration_role = str(value.get("collaborationRole") or "executor").strip()
+                if collaboration_role not in {"coordinator", "executor", "researcher"}:
+                    raise ValueError("unsupported room collaboration role")
                 conn.execute(
                     """
                     INSERT INTO agent_room_participants(
                         id, room_id, session_id, role_id, role_version, display_name,
-                        participant_status, ordinal, created_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                        collaboration_role, participant_status, ordinal, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                     """,
                     (
                         participant_id,
@@ -115,6 +123,7 @@ class AgentRoomStore:
                         role_id,
                         role_version,
                         display_name,
+                        collaboration_role,
                         ordinal,
                         timestamp,
                     ),
@@ -539,6 +548,11 @@ def _room_payload(row: sqlite3.Row, participants: Sequence[sqlite3.Row]) -> dict
         "status": str(row["status"]),
         "routingPolicy": str(row["routing_policy"]),
         "moderatorParticipantId": str(row["moderator_participant_id"] or ""),
+        "workspaceRoots": [
+            str(value)
+            for value in json.loads(str(row["workspace_roots_json"] or "[]"))
+            if str(value).strip()
+        ],
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
         "lastEventSequence": int(row["last_event_sequence"]),
@@ -557,6 +571,7 @@ def _participant_payload(row: sqlite3.Row) -> dict[str, object]:
         "roleId": str(row["role_id"]),
         "roleVersion": str(row["role_version"]),
         "displayName": str(row["display_name"]),
+        "collaborationRole": str(row["collaboration_role"] or "executor"),
         "status": str(row["participant_status"]),
         "ordinal": int(row["ordinal"]),
         "createdAtMs": int(row["created_at_ms"]),
@@ -564,6 +579,18 @@ def _participant_payload(row: sqlite3.Row) -> dict[str, object]:
     }
     validate_contract(payload, "agent-participant.v1.json")
     return payload
+
+
+def _workspace_roots(values: Sequence[str]) -> list[str]:
+    roots: list[str] = []
+    for value in values:
+        path = str(value or "").strip()
+        if not path:
+            continue
+        normalized = str(Path(path).expanduser().resolve(strict=False))
+        if normalized not in roots:
+            roots.append(normalized)
+    return roots
 
 
 def _room_event_payload(row: sqlite3.Row) -> dict[str, object]:

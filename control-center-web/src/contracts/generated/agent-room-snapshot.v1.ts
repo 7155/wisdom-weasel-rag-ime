@@ -24,6 +24,11 @@ export interface Room {
   status: 'active' | 'archived';
   routingPolicy: 'manual_mentions' | 'moderator';
   moderatorParticipantId: string;
+  /**
+   * @maxItems 4
+   */
+  workspaceRoots:
+    [] | [string] | [string, string] | [string, string, string] | [string, string, string, string];
   createdAtMs: number;
   updatedAtMs: number;
   lastEventSequence: number;
@@ -44,6 +49,7 @@ export interface Participant {
   roleId: string;
   roleVersion: string;
   displayName: string;
+  collaborationRole: 'coordinator' | 'executor' | 'researcher';
   status: 'active' | 'muted' | 'removed';
   ordinal: number;
   createdAtMs: number;

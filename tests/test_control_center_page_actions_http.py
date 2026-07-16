@@ -203,6 +203,7 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
             {
                 "title": "页面验收 Room",
                 "routingPolicy": "manual_mentions",
+                "workspaceRoots": [self.tmp.name],
                 "participants": [
                     {"roleId": "zhiyou-v1", "roleVersion": "1"},
                     {"roleId": "hermes-v1", "roleVersion": "1"},

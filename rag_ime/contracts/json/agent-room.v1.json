@@ -10,6 +10,7 @@
     "status",
     "routingPolicy",
     "moderatorParticipantId",
+    "workspaceRoots",
     "createdAtMs",
     "updatedAtMs",
     "lastEventSequence",
@@ -22,6 +23,12 @@
     "status": {"type": "string", "enum": ["active", "archived"]},
     "routingPolicy": {"type": "string", "enum": ["manual_mentions", "moderator"]},
     "moderatorParticipantId": {"type": "string"},
+    "workspaceRoots": {
+      "type": "array",
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
     "createdAtMs": {"type": "integer", "minimum": 0},
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "lastEventSequence": {"type": "integer", "minimum": 0},

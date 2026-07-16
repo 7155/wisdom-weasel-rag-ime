@@ -42,6 +42,7 @@
         "roleId",
         "roleVersion",
         "displayName",
+        "collaborationRole",
         "status",
         "ordinal",
         "createdAtMs",
@@ -62,6 +63,10 @@
           "minLength": 1,
           "maxLength": 40
         },
+        "collaborationRole": {
+          "type": "string",
+          "enum": ["coordinator", "executor", "researcher"]
+        },
         "status": {
           "type": "string",
           "enum": ["active", "muted", "removed"]
@@ -81,6 +86,7 @@
         "status",
         "routingPolicy",
         "moderatorParticipantId",
+        "workspaceRoots",
         "createdAtMs",
         "updatedAtMs",
         "lastEventSequence",
@@ -103,6 +109,12 @@
           "enum": ["manual_mentions", "moderator"]
         },
         "moderatorParticipantId": {"type": "string"},
+        "workspaceRoots": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
         "createdAtMs": {"type": "integer", "minimum": 0},
         "updatedAtMs": {"type": "integer", "minimum": 0},
         "lastEventSequence": {"type": "integer", "minimum": 0},

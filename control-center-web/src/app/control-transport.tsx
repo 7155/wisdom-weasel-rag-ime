@@ -4,6 +4,7 @@ import { NativeBridgeUnavailableError, NativeControlTransport } from '@/platform
 import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/routes';
 import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
+import { previewPersonas } from '@/features/agent/preview-data';
 
 const ControlTransportContext = createContext<ControlTransport | null>(null);
 
@@ -66,6 +67,7 @@ function createPreviewTransport(): MockControlTransport {
       .map((pathId) => [pathId, previewResponse(pathId)]),
   ) as Partial<Record<ControlPathId, MockRouteHandler>>;
   routes['agent.sessions.list'] = () => ({ ok: true, sessions: [...sessions] });
+  routes['agent.roles.list'] = () => ({ ok: true, roles: previewPersonas });
   routes['agent.sessions.create'] = (request: ControlRequest) => {
     const body = record(request.body);
     const session = previewSession(

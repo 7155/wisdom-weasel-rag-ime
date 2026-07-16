@@ -371,16 +371,17 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(renamed["roleId"], "hermes-v1")
         self.assertEqual(renamed["roleVersion"], "1")
 
-        with self.assertRaisesRegex(ValueError, "not available for coordinator"):
-            self.service.create_session(
-                {
-                    "title": "越权角色",
-                    "mode": "coordinator",
-                    "roleId": "vcp-v1",
-                    "roleVersion": "1",
-                    "workspaceRoots": [self.root.as_posix()],
-                }
-            )
+        coordinator = self.service.create_session(
+            {
+                "title": "未来协调",
+                "mode": "coordinator",
+                "roleId": "vcp-v1",
+                "roleVersion": "1",
+                "workspaceRoots": [self.root.as_posix()],
+            }
+        )["session"]
+        self.assertEqual(coordinator["mode"], "coordinator")
+        self.assertEqual(coordinator["workspaceRoots"], [str(self.root.resolve())])
 
     def test_scheduled_thread_wake_stays_running_until_agent_settles(self) -> None:
         session = self.service.create_session({"title": "定时整理"})["session"]
@@ -534,6 +535,7 @@ class AgentServiceTests(unittest.TestCase):
         room = self.service.create_room(
             {
                 "title": "雨天协作",
+                "workspaceRoots": [str(self.root)],
                 "participants": [
                     {"roleId": created_role["roleId"], "roleVersion": "1"},
                     {"roleId": "hermes-v1", "roleVersion": "1"},
@@ -556,6 +558,7 @@ class AgentServiceTests(unittest.TestCase):
         room = self.service.create_room(
             {
                 "title": "边界讨论",
+                "workspaceRoots": [str(self.root)],
                 "participants": [
                     {"roleId": "hermes-v1", "roleVersion": "1"},
                     {"roleId": "vcp-v1", "roleVersion": "1"},

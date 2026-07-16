@@ -1579,6 +1579,7 @@ export const contractSchemas = {
       "roleId",
       "roleVersion",
       "displayName",
+      "collaborationRole",
       "status",
       "ordinal",
       "createdAtMs",
@@ -1613,6 +1614,14 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1,
         "maxLength": 40
+      },
+      "collaborationRole": {
+        "type": "string",
+        "enum": [
+          "coordinator",
+          "executor",
+          "researcher"
+        ]
       },
       "status": {
         "type": "string",
@@ -2045,6 +2054,7 @@ export const contractSchemas = {
           "roleId",
           "roleVersion",
           "displayName",
+          "collaborationRole",
           "status",
           "ordinal",
           "createdAtMs",
@@ -2079,6 +2089,14 @@ export const contractSchemas = {
             "type": "string",
             "minLength": 1,
             "maxLength": 40
+          },
+          "collaborationRole": {
+            "type": "string",
+            "enum": [
+              "coordinator",
+              "executor",
+              "researcher"
+            ]
           },
           "status": {
             "type": "string",
@@ -2115,6 +2133,7 @@ export const contractSchemas = {
           "status",
           "routingPolicy",
           "moderatorParticipantId",
+          "workspaceRoots",
           "createdAtMs",
           "updatedAtMs",
           "lastEventSequence",
@@ -2150,6 +2169,15 @@ export const contractSchemas = {
           },
           "moderatorParticipantId": {
             "type": "string"
+          },
+          "workspaceRoots": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "createdAtMs": {
             "type": "integer",
@@ -2259,6 +2287,7 @@ export const contractSchemas = {
       "status",
       "routingPolicy",
       "moderatorParticipantId",
+      "workspaceRoots",
       "createdAtMs",
       "updatedAtMs",
       "lastEventSequence",
@@ -2294,6 +2323,15 @@ export const contractSchemas = {
       },
       "moderatorParticipantId": {
         "type": "string"
+      },
+      "workspaceRoots": {
+        "type": "array",
+        "maxItems": 4,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "createdAtMs": {
         "type": "integer",

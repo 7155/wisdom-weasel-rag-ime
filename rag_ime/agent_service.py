@@ -867,14 +867,28 @@ class AgentService:
             raise ValueError("room participants must be an array")
         if not 2 <= len(raw_participants) <= 4:
             raise ValueError("agent room requires between 2 and 4 participants")
+        raw_workspace_roots = payload.get("workspaceRoots")
+        if not isinstance(raw_workspace_roots, list):
+            raise ValueError("workspaceRoots must be an array")
+        workspace_roots = [
+            str(value or "").strip()
+            for value in raw_workspace_roots
+            if str(value or "").strip()
+        ]
+        if not workspace_roots:
+            raise ValueError("agent room requires an authorized workspace")
+        if len(workspace_roots) > 4:
+            raise ValueError("agent room accepts at most four workspace roots")
         roles = []
         seen_roles: set[tuple[str, str]] = set()
         for raw in raw_participants:
             if not isinstance(raw, Mapping):
                 raise ValueError("each room participant must be an object")
             role = self.personas.resolve(raw.get("roleId"), raw.get("roleVersion") or "1")
-            if "assistant" not in role.selectable_modes:
-                raise ValueError(f"role {role.role_id}@{role.version} cannot join a room")
+            if "coordinator" not in role.selectable_modes:
+                raise ValueError(
+                    f"role {role.role_id}@{role.version} cannot join a workspace room"
+                )
             key = (role.role_id, role.version)
             if key in seen_roles:
                 raise ValueError("room participant roles must be unique in the first room version")
@@ -884,26 +898,43 @@ class AgentService:
         routing_policy = str(payload.get("routingPolicy") or "manual_mentions")
         moderator_role_id = str(payload.get("moderatorRoleId") or "").strip()
         moderator_ordinal = 0
-        if routing_policy == "moderator" and moderator_role_id:
+        if routing_policy == "moderator":
+            if not moderator_role_id:
+                moderator_role_id = next(
+                    (role.role_id for role in roles if role.role_id == "vcp-v1"),
+                    roles[0].role_id,
+                )
             matches = [index for index, role in enumerate(roles) if role.role_id == moderator_role_id]
             if len(matches) != 1:
                 raise ValueError("moderatorRoleId must identify one room participant")
             moderator_ordinal = matches[0]
 
         room_title = " ".join(str(payload.get("title") or "新群聊").split())[:120]
-        session_defaults = self.configuration_store.snapshot()["configuration"]["sessionDefaults"]
         created_session_ids: list[str] = []
         participants: list[dict[str, object]] = []
         try:
-            for role in roles:
-                session = self.sessions.create(
-                    title=f"{room_title} · {role.display_name}",
-                    mode="assistant",
-                    role_id=role.role_id,
-                    role_version=role.version,
-                    model_profile=str(session_defaults["modelProfile"]),
-                    tool_profile_version=role.defaults.tool_profile_version,
+            for ordinal, role in enumerate(roles):
+                collaboration_role = (
+                    "coordinator"
+                    if routing_policy == "moderator" and ordinal == moderator_ordinal
+                    else "researcher" if role.role_id == "hermes-v1"
+                    else "executor"
                 )
+                tool_profile = (
+                    "subagent-readonly-v1"
+                    if role.role_id == "hermes-v1"
+                    else role.defaults.tool_profile_version
+                )
+                session = self.create_session(
+                    {
+                        "title": f"{room_title} · {role.display_name}",
+                        "mode": "coordinator",
+                        "roleId": role.role_id,
+                        "roleVersion": role.version,
+                        "toolProfileVersion": tool_profile,
+                        "workspaceRoots": workspace_roots,
+                    }
+                )["session"]
                 created_session_ids.append(str(session["id"]))
                 participants.append(
                     {
@@ -911,12 +942,14 @@ class AgentService:
                         "roleId": role.role_id,
                         "roleVersion": role.version,
                         "displayName": role.display_name,
+                        "collaborationRole": collaboration_role,
                     }
                 )
             room = self.rooms.create(
                 title=room_title,
                 routing_policy=routing_policy,
                 participants=participants,
+                workspace_roots=workspace_roots,
                 moderator_ordinal=moderator_ordinal,
             )
         except Exception:
@@ -938,6 +971,7 @@ class AgentService:
                         "participantId": item["id"],
                         "displayName": item["displayName"],
                         "roleId": item["roleId"],
+                        "collaborationRole": item["collaborationRole"],
                     }
                     for item in room["participants"]
                     if isinstance(item, Mapping)
@@ -992,7 +1026,10 @@ class AgentService:
         target_session_id = str(target["sessionId"])
         self._begin_room_turn(target_session_id, room_turn_id)
         try:
-            accepted = self.prompt(target_session_id, {"message": message})
+            accepted = self.prompt(
+                target_session_id,
+                {"message": _room_participant_prompt(room, target, message)},
+            )
         except Exception as exc:
             self._cancel_room_turn(target_session_id, room_turn_id)
             self.room_events.publish(
@@ -2549,6 +2586,58 @@ def _public_room_message(value: object) -> dict[str, object] | None:
         if isinstance(item, str)
     ][:32]
     return public
+
+
+def _room_participant_prompt(
+    room: Mapping[str, object],
+    target: Mapping[str, object],
+    message: str,
+) -> str:
+    """Give a Room participant enough bounded context to perform its real role."""
+
+    participant_lines = []
+    for value in room.get("participants", []):
+        if not isinstance(value, Mapping):
+            continue
+        participant_lines.append(
+            "- "
+            f"{_bounded_text(value.get('displayName'), maximum=40)} "
+            f"[participantId={_bounded_text(value.get('id'), maximum=240)}; "
+            f"role={_bounded_text(value.get('collaborationRole'), maximum=40) or 'executor'}]"
+        )
+    workspace_lines = [
+        f"- {_bounded_text(value, maximum=1_000)}"
+        for value in room.get("workspaceRoots", [])
+        if _bounded_text(value, maximum=1_000)
+    ]
+    role = _bounded_text(target.get("collaborationRole"), maximum=40) or "executor"
+    role_instruction = {
+        "coordinator": (
+            "你是本轮调控者。先判断是否需要分工；需要调研时用 ime_agents.room_ask "
+            "询问只读调研者，需要明确执行时用 ime_agents.room_send 指派执行者，"
+            "再结合回信汇总结论。简单请求可以直接回答，不要为了展示协作而机械分派。"
+        ),
+        "researcher": (
+            "你是只读调研者。只使用当前只读工具浏览、读取和搜索授权工作区，"
+            "不得写文件或运行 Shell；如果这是 room_ask 投递的任务，完成后用 "
+            "ime_agents.room_reply 返回有证据的结论。"
+        ),
+    }.get(
+        role,
+        "你是执行者。可以在授权工作区内完成明确操作，但写入、Shell 和外部动作仍必须遵守工具审批边界。",
+    )
+    return (
+        "受管协作 Room 上下文（由 RAG-IME Agent Kernel 提供）\n"
+        f"Room：{_bounded_text(room.get('title'), maximum=120)}\n"
+        f"你的身份：{_bounded_text(target.get('displayName'), maximum=40)}（{role}）\n"
+        f"{role_instruction}\n\n"
+        "授权项目路径：\n"
+        f"{chr(10).join(workspace_lines) or '- 未提供'}\n\n"
+        "协作成员：\n"
+        f"{chr(10).join(participant_lines) or '- 未提供'}\n\n"
+        "用户在 Room 中的请求：\n"
+        f"{message}"
+    )
 
 
 def _room_scalar_projection(
