@@ -41,6 +41,7 @@ from .agent_rooms import AgentRoomEventHub, AgentRoomStore
 from .agent_roles import PersonaManifest, agent_role_catalog
 from .agent_sessions import AgentSessionStore
 from .agent_tool_ids import CONTROL_TOOL_IDS
+from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .contracts.json_schema import validate_contract
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
@@ -62,6 +63,8 @@ class AgentService:
         process_id_provider: Callable[[], int] = os.getpid,
         tool_gateway_url: str = "http://127.0.0.1:8766/api/agent/tool/execute",
         tool_gateway_token: str = "",
+        wake_scheduler_enabled: bool = False,
+        wake_scheduler_poll_seconds: float = 1.0,
     ) -> None:
         self.personas = AgentPersonaStore(db_path)
         self.personas.initialize()
@@ -159,6 +162,18 @@ class AgentService:
         self._memory_maintenance_probe: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._process_id_provider = process_id_provider
         self.project = str(project or "")
+        self.wake_schedules = AgentWakeScheduleStore(db_path)
+        self.wake_schedules.initialize()
+        self.wake_scheduler = AgentWakeScheduler(
+            store=self.wake_schedules,
+            dispatch=self._dispatch_scheduled_wake,
+            enabled=wake_scheduler_enabled,
+            poll_seconds=wake_scheduler_poll_seconds,
+            max_parallel=2,
+        )
+        self._remove_wake_observer = self.events.add_observer(
+            self.wake_scheduler.observe_event
+        )
 
     def bind_approval_executor(
         self,
@@ -572,6 +587,209 @@ class AgentService:
             and str(model.get("provider") or "")
             and str(model.get("id") or "")
         }
+
+    def preview_wake_schedule(
+        self,
+        payload: Mapping[str, object],
+        *,
+        requested_by_session_id: str = "",
+    ) -> dict[str, object]:
+        candidate = dict(payload)
+        if (
+            str(candidate.get("targetType") or "session").strip().lower() == "session"
+            and not str(candidate.get("targetSessionId") or "").strip()
+            and requested_by_session_id
+        ):
+            candidate["targetType"] = "session"
+            candidate["targetSessionId"] = requested_by_session_id
+        normalized = self._validated_wake_schedule(candidate)
+        return {
+            "schemaVersion": "rag-ime.agent-wake-schedule-preview.v1",
+            "ok": True,
+            "requestedBySessionId": str(requested_by_session_id or ""),
+            "schedule": normalized,
+        }
+
+    def list_wake_schedules(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        value = dict(payload or {})
+        items = self.wake_schedules.list(
+            status=str(value.get("status") or ""),
+            target_type=str(value.get("targetType") or ""),
+            target_id=str(value.get("targetId") or ""),
+            created_by_session_id=str(value.get("createdBySessionId") or ""),
+            limit=_integer(value.get("limit"), default=100, minimum=1, maximum=500),
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-wake-schedule-list.v1",
+            "ok": True,
+            "schedulerActive": self.wake_scheduler.enabled,
+            "items": items,
+        }
+
+    def get_wake_schedule(self, schedule_id: str) -> dict[str, object]:
+        return self.wake_schedules.get(schedule_id)
+
+    def create_wake_schedule(
+        self,
+        payload: Mapping[str, object],
+        *,
+        created_by_session_id: str = "",
+        require_confirmation: bool = True,
+    ) -> dict[str, object]:
+        if require_confirmation and str(payload.get("confirmText") or "").strip() != "schedule":
+            raise ValueError("wake schedule creation requires confirmText=schedule")
+        normalized = self._validated_wake_schedule(payload)
+        schedule = self.wake_schedules.create(
+            normalized,
+            created_by_session_id=created_by_session_id,
+        )
+        self.wake_scheduler.wake()
+        return {
+            "schemaVersion": "rag-ime.agent-wake-schedule-create.v1",
+            "ok": True,
+            "schedule": schedule,
+        }
+
+    def wake_schedule_runs(
+        self,
+        schedule_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        value = dict(payload or {})
+        return {
+            "schemaVersion": "rag-ime.agent-wake-run-list.v1",
+            "ok": True,
+            "schedule": self.wake_schedules.get(schedule_id),
+            "items": self.wake_schedules.runs(
+                schedule_id,
+                limit=_integer(value.get("limit"), default=100, minimum=1, maximum=500),
+            ),
+        }
+
+    def wake_schedule_action(
+        self,
+        schedule_id: str,
+        payload: Mapping[str, object],
+        *,
+        require_confirmation: bool = True,
+    ) -> dict[str, object]:
+        if require_confirmation and str(payload.get("confirmText") or "").strip() != "apply":
+            raise ValueError("wake schedule changes require confirmText=apply")
+        schedule = self.wake_schedules.action(
+            schedule_id,
+            str(payload.get("action") or ""),
+        )
+        self.wake_scheduler.wake()
+        return {
+            "schemaVersion": "rag-ime.agent-wake-schedule-action.v1",
+            "ok": True,
+            "schedule": schedule,
+        }
+
+    def _validated_wake_schedule(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        normalized = self.wake_schedules.validate_create(payload)
+        if normalized["targetType"] == "session":
+            session = self.sessions.get(str(normalized["targetSessionId"]))
+            if str(session.get("sessionKind") or "conversation") != "conversation":
+                raise ValueError("only a conversation thread can be scheduled")
+            if str(session.get("status") or "") == "archived":
+                raise ValueError("archived Agent threads cannot be scheduled")
+            if self.rooms.participant_for_session(str(session["id"]), active_only=False) is not None:
+                raise ValueError("Room participant threads must be woken through the Room workflow")
+            normalized["targetDisplayName"] = str(session.get("title") or "Agent thread")
+        else:
+            role = self.personas.resolve(
+                normalized["targetRoleId"],
+                normalized["targetRoleVersion"],
+            )
+            if "assistant" not in role.selectable_modes:
+                raise ValueError("scheduled role wakes require an assistant-capable Persona")
+            normalized["targetDisplayName"] = role.display_name
+        return normalized
+
+    def _dispatch_scheduled_wake(self, claim: Mapping[str, object]) -> None:
+        run_id = str(claim.get("runId") or "")
+        target_type = str(claim.get("targetType") or "")
+        if target_type == "session":
+            session = self.sessions.get(str(claim.get("targetSessionId") or ""))
+            if str(session.get("status") or "") == "busy":
+                self.wake_schedules.defer(
+                    run_id,
+                    reason="目标线程仍在执行上一回合，已顺延一分钟",
+                    delay_ms=60_000,
+                )
+                return
+            if str(session.get("status") or "") == "archived":
+                raise ValueError("scheduled Agent thread is archived")
+        elif target_type == "role":
+            created = self.create_session(
+                {
+                    "title": f"预约 · {str(claim.get('title') or 'Agent 任务')}",
+                    "mode": "assistant",
+                    "roleId": str(claim.get("targetRoleId") or ""),
+                    "roleVersion": str(claim.get("targetRoleVersion") or "1"),
+                }
+            )
+            session = dict(created["session"])
+        else:
+            raise ValueError("scheduled wake target is invalid")
+
+        session_id = str(session["id"])
+        instruction = str(claim.get("instruction") or "")
+        planning_task_id = str(claim.get("planningTaskId") or "")
+        planning_context = (
+            f"\n关联规划任务 ID：{planning_task_id}。如果任务已经完成，可以通过 ime_planning "
+            "提出状态更新，但仍需用户批准。"
+            if planning_task_id
+            else ""
+        )
+        message = (
+            "这是一个现在到期的受管日程任务。请开始执行任务，并在本回合说明完成结果、"
+            "未完成原因或需要用户批准的下一步。任何写入和外部操作仍必须遵守当前 Session 的工具与审批边界。\n\n"
+            f"预约：{str(claim.get('title') or '未命名任务')}\n"
+            f"任务：{instruction}{planning_context}"
+        )
+        try:
+            accepted = self.prompt(
+                session_id,
+                {
+                    "message": message,
+                    "clientMessageId": run_id,
+                },
+            )
+        except AgentRuntimeError as exc:
+            if (
+                target_type == "session"
+                and "上一轮" in str(exc)
+                and self.sessions.get(session_id).get("status") == "busy"
+            ):
+                self.wake_schedules.defer(
+                    run_id,
+                    reason="目标线程刚刚开始其他回合，已顺延一分钟",
+                    delay_ms=60_000,
+                )
+                return
+            raise
+        turn_id = str(accepted.get("turnId") or "")
+        self.wake_schedules.accept(
+            run_id,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+        # A very short turn can settle before the prompt RPC returns. Replay the
+        # bounded event buffer after binding the run so that terminal state is
+        # never lost in that race.
+        replayed, _gap = self.events.replay(session_id)
+        for event in replayed:
+            if event.turn_id == turn_id and event.event_type in {"turn_completed", "turn_failed"}:
+                self.wake_scheduler.observe_event(event)
+                break
 
     def list_agent_templates(self) -> dict[str, object]:
         return self.delegation.catalog()
@@ -1939,6 +2157,8 @@ class AgentService:
         )
 
     def close(self) -> None:
+        self._remove_wake_observer()
+        self.wake_scheduler.close()
         self.room_intercom.close()
         self.delegation.close()
         self.runtime.stop()
@@ -2148,7 +2368,12 @@ class AgentService:
         )
 
 
-def agent_service_from_environment(db_path: str | Path, *, project: str = "") -> AgentService:
+def agent_service_from_environment(
+    db_path: str | Path,
+    *,
+    project: str = "",
+    wake_scheduler_enabled: bool = True,
+) -> AgentService:
     return AgentService(
         db_path=db_path,
         runtime_config=PiRuntimeConfig.from_environment(),
@@ -2157,6 +2382,7 @@ def agent_service_from_environment(db_path: str | Path, *, project: str = "") ->
             "RAG_IME_AGENT_TOOL_URL",
             "http://127.0.0.1:8766/api/agent/tool/execute",
         ),
+        wake_scheduler_enabled=wake_scheduler_enabled,
     )
 
 
@@ -2179,6 +2405,7 @@ def agent_service_from_settings(
     settings: Mapping[str, object],
     *,
     project: str = "",
+    wake_scheduler_enabled: bool = True,
 ) -> AgentService:
     runtime_config = pi_runtime_config_from_settings(settings)
     agent = settings.get("agent") if isinstance(settings.get("agent"), Mapping) else {}
@@ -2206,6 +2433,7 @@ def agent_service_from_settings(
             "RAG_IME_AGENT_TOOL_URL",
             "http://127.0.0.1:8766/api/agent/tool/execute",
         ),
+        wake_scheduler_enabled=wake_scheduler_enabled,
     )
 
 

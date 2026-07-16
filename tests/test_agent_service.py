@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -373,6 +374,117 @@ class AgentServiceTests(unittest.TestCase):
                     "workspaceRoots": [self.root.as_posix()],
                 }
             )
+
+    def test_scheduled_thread_wake_stays_running_until_agent_settles(self) -> None:
+        session = self.service.create_session({"title": "定时整理"})["session"]
+        wake_at_ms = int(time.time() * 1000) + 2_000
+        schedule = self.service.create_wake_schedule(
+            {
+                "title": "整理今日工作",
+                "instruction": "列出完成项并汇报",
+                "targetType": "session",
+                "targetSessionId": session["id"],
+                "wakeAtMs": wake_at_ms,
+                "planningTaskId": "task:today",
+                "confirmText": "schedule",
+            }
+        )["schedule"]
+        claim = self.service.wake_schedules.claim_due(now_ms=wake_at_ms)[0]
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"accepted": True, "turnId": "turn:wake"},
+        ) as prompt:
+            self.service._dispatch_scheduled_wake(claim)
+
+        message = prompt.call_args.args[1]["message"]
+        self.assertIn("列出完成项并汇报", message)
+        self.assertIn("task:today", message)
+        self.assertEqual(
+            self.service.get_wake_schedule(str(schedule["id"]))["status"],
+            "running",
+        )
+
+        self.service.events.publish(
+            str(session["id"]),
+            "turn_completed",
+            {},
+            turn_id="turn:wake",
+        )
+        finished = self.service.get_wake_schedule(str(schedule["id"]))
+        self.assertEqual(finished["status"], "completed")
+        self.assertEqual(finished["latestRun"]["state"], "completed")
+
+    def test_scheduled_role_wake_creates_visible_persona_session(self) -> None:
+        wake_at_ms = int(time.time() * 1000) + 2_000
+        schedule = self.service.create_wake_schedule(
+            {
+                "title": "研究任务",
+                "instruction": "核对今天的研究结论",
+                "targetType": "role",
+                "targetRoleId": "hermes-v1",
+                "targetRoleVersion": "1",
+                "wakeAtMs": wake_at_ms,
+                "confirmText": "schedule",
+            }
+        )["schedule"]
+        claim = self.service.wake_schedules.claim_due(now_ms=wake_at_ms)[0]
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"accepted": True, "turnId": "turn:role-wake"},
+        ) as prompt:
+            self.service._dispatch_scheduled_wake(claim)
+
+        created_session_id = prompt.call_args.args[0]
+        created = self.service.sessions.get(created_session_id)
+        self.assertEqual(created["title"], "预约 · 研究任务")
+        self.assertEqual(created["roleId"], "hermes-v1")
+        running = self.service.get_wake_schedule(str(schedule["id"]))
+        self.assertEqual(running["latestRun"]["sessionId"], created_session_id)
+
+    def test_busy_scheduled_thread_is_deferred_without_consuming_run(self) -> None:
+        session = self.service.create_session({"title": "正在执行"})["session"]
+        wake_at_ms = int(time.time() * 1000) + 2_000
+        schedule = self.service.create_wake_schedule(
+            {
+                "title": "稍后继续",
+                "instruction": "继续现有任务",
+                "targetType": "session",
+                "targetSessionId": session["id"],
+                "wakeAtMs": wake_at_ms,
+                "confirmText": "schedule",
+            }
+        )["schedule"]
+        claim = self.service.wake_schedules.claim_due(now_ms=wake_at_ms)[0]
+        self.service.sessions.set_status(str(session["id"]), "busy")
+
+        with patch.object(self.service, "prompt") as prompt:
+            self.service._dispatch_scheduled_wake(claim)
+
+        prompt.assert_not_called()
+        deferred = self.service.get_wake_schedule(str(schedule["id"]))
+        self.assertEqual(deferred["status"], "scheduled")
+        self.assertEqual(deferred["runCount"], 0)
+        self.assertEqual(deferred["latestRun"]["state"], "deferred")
+
+    def test_agent_can_preview_a_wake_for_its_current_thread_without_repeating_id(self) -> None:
+        session = self.service.create_session({"title": "当前 Agent"})["session"]
+
+        preview = self.service.preview_wake_schedule(
+            {
+                "title": "稍后继续",
+                "instruction": "继续整理当前结论",
+                "targetType": "session",
+                "wakeAtMs": int(time.time() * 1000) + 60_000,
+            },
+            requested_by_session_id=str(session["id"]),
+        )
+
+        self.assertEqual(preview["schedule"]["targetSessionId"], session["id"])
+        self.assertEqual(preview["schedule"]["targetDisplayName"], "当前 Agent")
 
     def test_user_created_persona_can_start_a_real_session(self) -> None:
         created_role = self.service.create_role(

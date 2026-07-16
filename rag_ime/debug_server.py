@@ -37,6 +37,7 @@ from .agent_routes import (
     agent_room_route,
     agent_session_route,
     agent_subagent_route,
+    agent_wake_schedule_route,
 )
 from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
@@ -354,6 +355,10 @@ class DebugImeService:
             config.db_path,
             self.settings_store.get_settings(include_sensitive=True),
             project=config.project,
+            # Only the dedicated 8768 Agent Gateway owns the durable scheduler.
+            # The 8766 Sidecar and local preview servers share the same SQLite
+            # database but must never race to claim the same wake schedule.
+            wake_scheduler_enabled=config.server_name == "agent gateway",
         )
         runtime_factory_config = getattr(self.agent.runtime_factory, "config", None)
         self.pi_provider_auth = config.pi_provider_auth_service or PiProviderAuthService.from_runtime(
@@ -425,6 +430,7 @@ class DebugImeService:
             delegation=self.agent.delegation,
             collaboration=self.agent,
             extensions=self.agent_extensions,
+            scheduling=self.agent,
         )
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
         self.control_api = AgentKernelControlFacade(
@@ -5233,6 +5239,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         agent_room_id, room_action = agent_room_route(parsed.path)
+        wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(parsed.path)
         subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
         artifact_id = agent_artifact_route(parsed.path)
         if agent_room_id and room_action == "events":
@@ -5365,6 +5372,39 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "limit": _query_first(query, "limit"),
                     }
                 ),
+            )
+            return
+        if parsed.path == "/api/agent/wake-schedules":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_wake_schedules(
+                    {
+                        "status": _query_first(query, "status"),
+                        "targetType": _query_first(query, "targetType"),
+                        "targetId": _query_first(query, "targetId"),
+                        "createdBySessionId": _query_first(query, "createdBySessionId"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if wake_schedule_id and wake_schedule_action == "runs":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.wake_schedule_runs(
+                    wake_schedule_id,
+                    {"limit": _query_first(query, "limit")},
+                ),
+            )
+            return
+        if wake_schedule_id and not wake_schedule_action:
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "schemaVersion": "rag-ime.agent-wake-schedule-get.v1",
+                    "ok": True,
+                    "schedule": self.service.agent.get_wake_schedule(wake_schedule_id),
+                },
             )
             return
         if parsed.path == "/api/agent/rooms":
@@ -6096,6 +6136,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             agent_session_id, agent_action = agent_session_route(path)
             agent_room_id, room_action = agent_room_route(path)
             subagent_run_id, subagent_action = agent_subagent_route(path)
+            wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(path)
             approval_id, approval_action = agent_approval_route(path)
             if path == "/api/agent/runtime/ensure":
                 self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
@@ -6122,6 +6163,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
             elif path == "/api/agent/sessions":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
+            elif path == "/api/agent/wake-schedules":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.create_wake_schedule(payload),
+                )
+            elif wake_schedule_id and wake_schedule_action == "action":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.wake_schedule_action(wake_schedule_id, payload),
+                )
             elif path == "/api/agent/roles":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_role(payload))
             elif path == "/api/agent/roles/runtime-defaults":

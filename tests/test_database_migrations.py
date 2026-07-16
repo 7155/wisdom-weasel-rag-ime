@@ -68,6 +68,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_role_runtime_preferences", tables)
             self.assertIn("agent_session_tool_policies", tables)
             self.assertIn("agent_plan_events", tables)
+            self.assertIn("agent_wake_schedules", tables)
+            self.assertIn("agent_wake_runs", tables)
             session_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_sessions)")
             }

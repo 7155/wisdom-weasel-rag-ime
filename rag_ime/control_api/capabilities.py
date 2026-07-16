@@ -104,6 +104,7 @@ def build_capabilities(
             "boundedArtifacts": ControlPathId.AGENT_ARTIFACT_GET.value in route_ids,
             "agentMediaList": ControlPathId.AGENT_MEDIA_LIST.value in route_ids,
             "agentDeepSearch": ControlPathId.AGENT_DEEP_SEARCH.value in route_ids,
+            "agentWakeScheduling": ControlPathId.AGENT_WAKE_SCHEDULES_CREATE.value in route_ids,
             "globalControlEvents": ControlPathId.CONTROL_EVENTS.value in route_ids,
         },
         "native": {

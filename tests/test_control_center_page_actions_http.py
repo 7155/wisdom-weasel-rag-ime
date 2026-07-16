@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -235,6 +236,63 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         self.assertEqual(denied_status, 400, denied)
         self.assertFalse(denied["ok"])
         self.assertTrue(str(denied.get("error") or "").strip())
+
+    def test_agent_wake_schedule_http_flow_persists_and_requires_confirmation(self) -> None:
+        session_status, session_response = self._request(
+            "POST",
+            "/api/agent/sessions",
+            {"title": "预约目标线程"},
+        )
+        self.assertEqual(session_status, 201, session_response)
+        session = session_response["session"]
+        wake_at_ms = int(time.time() * 1000) + 120_000
+        denied_status, denied = self._request(
+            "POST",
+            "/api/agent/wake-schedules",
+            {
+                "title": "缺少确认",
+                "instruction": "不应创建",
+                "targetType": "session",
+                "targetSessionId": session["id"],
+                "wakeAtMs": wake_at_ms,
+            },
+        )
+        self.assertEqual(denied_status, 400, denied)
+
+        created_status, created_response = self._request(
+            "POST",
+            "/api/agent/wake-schedules",
+            {
+                "title": "稍后整理",
+                "instruction": "整理今天的待办并汇报",
+                "targetType": "session",
+                "targetSessionId": session["id"],
+                "wakeAtMs": wake_at_ms,
+                "timezone": "Asia/Shanghai",
+                "recurrenceKind": "once",
+                "confirmText": "schedule",
+            },
+        )
+        self.assertEqual(created_status, 201, created_response)
+        created = created_response["schedule"]
+        schedule_id = str(created["id"])
+
+        listed = self._ok("GET", "/api/agent/wake-schedules?limit=20")
+        self.assertTrue(any(item["id"] == schedule_id for item in listed["items"]))
+        self.assertFalse(listed["schedulerActive"])
+
+        runs = self._ok(
+            "GET",
+            f"/api/agent/wake-schedules/{quote(schedule_id, safe='')}/runs?limit=20",
+        )
+        self.assertEqual(runs["items"], [])
+
+        paused = self._ok(
+            "POST",
+            f"/api/agent/wake-schedules/{quote(schedule_id, safe='')}/action",
+            {"action": "pause", "confirmText": "apply"},
+        )
+        self.assertEqual(paused["schedule"]["status"], "paused")
 
     def test_configuration_file_routes_bind_preview_to_file_and_runtime_revision(self) -> None:
         root = Path(self.tmp.name)

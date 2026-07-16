@@ -192,6 +192,124 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   white-space: nowrap;
 }
 
+.planning-wake-list {
+  display: grid;
+  margin-top: var(--space-3);
+  border-block: 1px solid var(--color-border);
+}
+
+.planning-wake-row {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 14px 10px;
+  border-bottom: 1px solid var(--color-border);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.planning-wake-row:last-child { border-bottom: 0; }
+
+.planning-wake-row__copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.planning-wake-row__title {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.planning-wake-row__title strong {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.planning-wake-row__copy p,
+.planning-wake-row__copy span,
+.planning-wake-row__copy em {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.planning-wake-row__copy p { color: var(--color-text-secondary); }
+.planning-wake-row__copy span { color: var(--color-text-tertiary); }
+.planning-wake-row__copy em {
+  color: var(--color-danger);
+  font-style: normal;
+}
+
+.planning-wake-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.planning-wake-form {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+  margin-block: var(--space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.planning-wake-form__wide { grid-column: 1 / -1; }
+
+.ui-dialog.planning-wake-dialog {
+  width: min(820px, calc(100vw - 40px));
+}
+
+.ui-dialog.planning-wake-history-dialog {
+  width: min(680px, calc(100vw - 40px));
+}
+
+.planning-wake-history {
+  display: grid;
+  max-height: min(480px, 55dvh);
+  margin-block: var(--space-4);
+  border-block: 1px solid var(--color-border);
+  overflow: auto;
+}
+
+.planning-wake-history__row {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: var(--space-3);
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--color-border);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.planning-wake-history__row:last-child { border-bottom: 0; }
+
+.planning-wake-history__row > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.planning-wake-history__row strong,
+.planning-wake-history__row span,
+.planning-wake-history__row em {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.planning-wake-history__row span { color: var(--color-text-secondary); }
+.planning-wake-history__row em {
+  color: var(--color-danger);
+  font-style: normal;
+}
+
 .ui-dialog.planning-dialog {
   width: min(920px, calc(100vw - 40px));
   max-height: min(820px, calc(100dvh - 40px));
@@ -286,6 +404,13 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   .planning-list .mgmt-list__meta {
     display: none;
   }
+
+  .planning-wake-row {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planning-wake-row__actions { justify-content: flex-start; }
 }
 
 @media (max-width: 560px) {
@@ -331,4 +456,10 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   .planning-dialog__selects {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .planning-wake-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planning-wake-form__wide { grid-column: auto; }
 }

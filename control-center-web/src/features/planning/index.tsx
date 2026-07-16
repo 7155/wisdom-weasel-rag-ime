@@ -37,6 +37,7 @@ import {
   numberValue,
   stringValue,
 } from '@/features/overview/management-ui';
+import { AgentWakeSchedules } from './AgentWakeSchedules';
 import './planning.css';
 
 export function PlanningFeature() {
@@ -310,6 +311,8 @@ export function PlanningFeature() {
             </div>
           ) : <EmptyState description="这一天还没有任务。" icon={CalendarDays} title="任务列表为空" />}
         </ManagementSection>
+
+        <AgentWakeSchedules tasks={tasks} />
 
         <Dialog onOpenChange={setHintsDialogOpen} open={hintsDialogOpen}>
           <DialogContent className="planning-dialog planning-detail-dialog">

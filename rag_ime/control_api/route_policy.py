@@ -82,6 +82,10 @@ class ControlPathId(str, Enum):
     AGENT_SUBAGENT_GET = "agent.subagent.get"
     AGENT_SUBAGENT_ABORT = "agent.subagent.abort"
     AGENT_MEMORY_SOURCES_LIST = "agent.memorySources.list"
+    AGENT_WAKE_SCHEDULES_LIST = "agent.wakeSchedules.list"
+    AGENT_WAKE_SCHEDULES_CREATE = "agent.wakeSchedules.create"
+    AGENT_WAKE_SCHEDULE_RUNS = "agent.wakeSchedule.runs"
+    AGENT_WAKE_SCHEDULE_ACTION = "agent.wakeSchedule.action"
 
     PLANNING_DASHBOARD = "planning.dashboard"
     PLANNING_MUTATION_PREVIEW = "planning.mutation.preview"
@@ -450,6 +454,7 @@ _ROOM = {"roomId"}
 _APPROVAL = {"approvalId"}
 _RUN = {"runId"}
 _ARTIFACT = {"artifactId"}
+_WAKE_SCHEDULE = {"scheduleId"}
 _KNOWLEDGE_BASE = {"kbId"}
 _KNOWLEDGE_DOCUMENT = {"kbId", "fileId"}
 _KNOWLEDGE_ASSET = {"kbId", "fileId", "assetId"}
@@ -531,6 +536,10 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SUBAGENT_GET, ControlMethod.GET, "/api/agent/subagents/runs/{runId}", "/control/v1/agent/subagents/runs/{runId}", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, params=_RUN, query={"sessionId"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_SUBAGENT_ABORT, ControlMethod.POST, "/api/agent/subagents/runs/{runId}/abort", "/control/v1/agent/subagents/runs/{runId}/abort", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, params=_RUN, body={"sessionId"}, required_body={"sessionId"}, remote_body={"sessionId"}),
         _route(ControlPathId.AGENT_MEMORY_SOURCES_LIST, ControlMethod.GET, "/api/agent/memory-sources", "/control/v1/agent/memory-sources", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
+        _route(ControlPathId.AGENT_WAKE_SCHEDULES_LIST, ControlMethod.GET, "/api/agent/wake-schedules", "/control/v1/agent/wake-schedules", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"status", "targetType", "targetId", "createdBySessionId", "limit"}),
+        _route(ControlPathId.AGENT_WAKE_SCHEDULES_CREATE, ControlMethod.POST, "/api/agent/wake-schedules", "/control/v1/agent/wake-schedules", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "instruction", "targetType", "targetSessionId", "targetRoleId", "targetRoleVersion", "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns", "planningTaskId", "confirmText"}, required_body={"instruction", "targetType", "wakeAtMs", "confirmText"}, remote_body={"title", "instruction", "targetType", "targetSessionId", "targetRoleId", "targetRoleVersion", "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns", "planningTaskId", "confirmText"}, remote_body_values={"targetType": {"session", "role"}, "recurrenceKind": {"once", "daily", "weekly"}, "confirmText": {"schedule"}}),
+        _route(ControlPathId.AGENT_WAKE_SCHEDULE_RUNS, ControlMethod.GET, "/api/agent/wake-schedules/{scheduleId}/runs", "/control/v1/agent/wake-schedules/{scheduleId}/runs", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_WAKE_SCHEDULE, query={"limit"}),
+        _route(ControlPathId.AGENT_WAKE_SCHEDULE_ACTION, ControlMethod.POST, "/api/agent/wake-schedules/{scheduleId}/action", "/control/v1/agent/wake-schedules/{scheduleId}/action", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_WAKE_SCHEDULE, body={"action", "confirmText"}, required_body={"action", "confirmText"}, remote_body={"action", "confirmText"}, remote_body_values={"action": {"pause", "resume", "cancel", "retry"}, "confirmText": {"apply"}}),
 
         _route(ControlPathId.PLANNING_DASHBOARD, ControlMethod.GET, "/api/planning/dashboard", "/control/v1/planning/dashboard", scopes=[ControlScope.PLANNING_READ], remote_safe=True, query={"date", "project"}),
         _route(ControlPathId.PLANNING_MUTATION_PREVIEW, ControlMethod.POST, "/api/planning/mutation/preview", "/control/v1/planning/mutation/preview", body={"kind", "payload", "expectedRuntimeRevision"}, required_body={"kind", "payload", "expectedRuntimeRevision"}),

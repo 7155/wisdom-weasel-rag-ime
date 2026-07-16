@@ -221,11 +221,42 @@ describe('Planning WorkContract UI', () => {
     expect(await within(workflow as HTMLElement).findByText('页面内容已经变化，请重新预览。')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).queryByText(/receipt-task-save/)).not.toBeInTheDocument();
   });
+
+  it('creates and pauses a durable Agent wake schedule from the planning page', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlanning();
+    await user.click(await screen.findByRole('button', { name: '新建预约' }));
+
+    await user.type(screen.getByLabelText('预约名称 *'), '稍后继续迁移');
+    await user.type(screen.getByLabelText('醒来后做什么 *'), '检查构建结果并汇报剩余问题');
+    await user.click(screen.getByRole('button', { name: '确认预约' }));
+
+    await waitFor(() => expect(findRequest(transport, 'agent.wakeSchedules.create')).toMatchObject({
+      body: {
+        title: '稍后继续迁移',
+        instruction: '检查构建结果并汇报剩余问题',
+        targetType: 'session',
+        targetSessionId: 'session-planning',
+        recurrenceKind: 'once',
+        maxRuns: 1,
+        confirmText: 'schedule',
+      },
+    }));
+    expect(await screen.findByText('稍后继续迁移')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '暂停预约' }));
+    await waitFor(() => expect(findRequest(transport, 'agent.wakeSchedule.action')).toMatchObject({
+      params: { scheduleId: 'wake:test' },
+      body: { action: 'pause', confirmText: 'apply' },
+    }));
+    expect(await screen.findByText('已暂停')).toBeInTheDocument();
+  });
 });
 
 class PlanningTransport implements ControlTransport {
   readonly kind = 'mock' as const;
   readonly requests: ControlRequest[] = [];
+  readonly wakeSchedules: Record<string, unknown>[] = [];
 
   constructor(private readonly failTaskSave = false) {}
 
@@ -241,8 +272,14 @@ class PlanningTransport implements ControlTransport {
         'planning.task.action',
         'planning.taskEvent.undo',
         'planning.mutation.rollback',
+        'agent.sessions.list',
+        'agent.roles.list',
+        'agent.wakeSchedules.list',
+        'agent.wakeSchedules.create',
+        'agent.wakeSchedule.runs',
+        'agent.wakeSchedule.action',
       ] as unknown as ControlPathId[],
-      features: { managementWorkContract: true, planningWorkContract: true },
+      features: { managementWorkContract: true, planningWorkContract: true, agentWakeScheduling: true },
       native: { pickFiles: false, managedAgentImageImport: false, revealPath: false, approvedExternalActions: false, keychain: false, tcc: false },
     };
   }
@@ -251,6 +288,35 @@ class PlanningTransport implements ControlTransport {
     this.requests.push(request);
     const pathId = String(request.pathId);
     if (pathId === 'planning.dashboard') return planningDashboard() as Response;
+    if (pathId === 'agent.sessions.list') return {
+      ok: true,
+      items: [{ id: 'session-planning', title: '规划对话', status: 'idle', updatedAtMs: now }],
+    } as Response;
+    if (pathId === 'agent.roles.list') return { ok: true, items: [] } as Response;
+    if (pathId === 'agent.wakeSchedules.list') return {
+      ok: true,
+      schedulerActive: true,
+      items: [...this.wakeSchedules],
+    } as Response;
+    if (pathId === 'agent.wakeSchedules.create') {
+      const body = request.body as Record<string, unknown>;
+      const schedule = {
+        id: 'wake:test',
+        ...body,
+        status: 'scheduled',
+        runCount: 0,
+        nextWakeAtMs: Number(body.wakeAtMs),
+        latestRun: {},
+      };
+      this.wakeSchedules.splice(0, this.wakeSchedules.length, schedule);
+      return { ok: true, schedule } as Response;
+    }
+    if (pathId === 'agent.wakeSchedule.action') {
+      const schedule = this.wakeSchedules[0];
+      if (schedule) schedule.status = 'paused';
+      return { ok: true, schedule } as Response;
+    }
+    if (pathId === 'agent.wakeSchedule.runs') return { ok: true, items: [] } as Response;
     if (pathId === 'planning.mutation.preview') {
       const body = request.body as { kind?: unknown };
       const action = body.kind === 'task.action';

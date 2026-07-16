@@ -12,6 +12,7 @@ export interface AgentToolCallV1 {
     | 'ime_input'
     | 'ime_voice'
     | 'ime_planning'
+    | 'agent_schedule'
     | 'ime_memory'
     | 'ime_knowledge'
     | 'ime_models'

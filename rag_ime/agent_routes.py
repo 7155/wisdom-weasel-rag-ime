@@ -110,3 +110,20 @@ def agent_subagent_route(path: str) -> tuple[str, str]:
     if not run_id or action not in {"", "abort"}:
         return "", ""
     return run_id, action
+
+
+def agent_wake_schedule_route(path: str) -> tuple[str, str]:
+    prefix = "/api/agent/wake-schedules/"
+    if not path.startswith(prefix):
+        return "", ""
+    remainder = path[len(prefix) :].strip("/")
+    if not remainder:
+        return "", ""
+    parts = remainder.split("/")
+    if len(parts) > 2:
+        return "", ""
+    schedule_id = unquote(parts[0]).strip()
+    action = parts[1] if len(parts) == 2 else ""
+    if not schedule_id or action not in {"", "runs", "action"}:
+        return "", ""
+    return schedule_id, action

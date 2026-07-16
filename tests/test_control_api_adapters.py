@@ -138,6 +138,23 @@ class ControlTargetAdapterTests(unittest.TestCase):
 
         self.assertEqual(prepared.body["attachments"], ["media-1"])
 
+    def test_wake_schedule_adapter_encodes_target_and_preserves_confirmation(self) -> None:
+        request = ControlRequest(
+            request_id="request-wake",
+            path_id=ControlPathId.AGENT_WAKE_SCHEDULE_ACTION.value,
+            params={"scheduleId": "wake:abc"},
+            body={"action": "pause", "confirmText": "apply"},
+        )
+        route = self.policy.authorize(request, ControlAccessContext.native())
+
+        prepared = Local8766Adapter().prepare(route, request, ControlAccessContext.native())
+
+        self.assertEqual(
+            prepared.path,
+            "/api/agent/wake-schedules/wake%3Aabc/action",
+        )
+        self.assertEqual(prepared.body, {"action": "pause", "confirmText": "apply"})
+
 
 if __name__ == "__main__":
     unittest.main()

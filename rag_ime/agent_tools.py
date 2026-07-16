@@ -76,6 +76,21 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "agent_schedule",
+        "domain": "planning",
+        "displayName": "Agent 预约唤醒",
+        "description": "查看预约，并在原生批准后安排自己、其他线程或角色于指定时间执行任务",
+        "operations": ("list", "runs", "schedule", "pause", "resume", "cancel", "retry"),
+        "operationRisks": {
+            "schedule": "R2",
+            "pause": "R1",
+            "resume": "R2",
+            "cancel": "R1",
+            "retry": "R2",
+        },
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "ime_memory",
         "domain": "memory",
         "displayName": "记忆与工具书",
@@ -333,6 +348,7 @@ class ControlToolGateway:
         delegation: object | None = None,
         collaboration: object | None = None,
         extensions: object | None = None,
+        scheduling: object | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -344,6 +360,7 @@ class ControlToolGateway:
         self.delegation = delegation
         self.collaboration = collaboration
         self.extensions = extensions
+        self.scheduling = scheduling
 
     def manifests(self, *, session_id: str = "") -> dict[str, object]:
         session = self.sessions.get(session_id) if session_id else None
@@ -481,6 +498,7 @@ class ControlToolGateway:
             "ime_input": self._input,
             "ime_voice": self._voice,
             "ime_planning": self._planning,
+            "agent_schedule": self._agent_schedule,
             "ime_memory": self._memory,
             "ime_knowledge": self._knowledge,
             "ime_models": self._models,
@@ -651,6 +669,8 @@ class ControlToolGateway:
             return self._apply_workspace_patch(approval)
         if (tool, operation) == ("ime_planning", "undo_task_event"):
             return self._apply_planning_undo(approval)
+        if tool == "agent_schedule":
+            return self._apply_agent_schedule(approval)
         if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
             return self._apply_memory_mutation(approval)
         if tool == "ime_input" and operation in {"apply_settings", "rollback_settings"}:
@@ -753,6 +773,13 @@ class ControlToolGateway:
         if (tool, operation) == ("ime_planning", "undo_task_event"):
             return self._prepare_planning_undo(
                 session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "agent_schedule":
+            return self._prepare_agent_schedule(
+                session_id=session_id,
+                operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
@@ -3073,6 +3100,200 @@ class ControlToolGateway:
             "dashboard": _safe_payload(dashboard),
         }
 
+    def _agent_schedule(
+        self,
+        operation: str,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        if self.scheduling is None:
+            raise ValueError("Agent wake scheduling is unavailable")
+        if operation == "list":
+            result = self.scheduling.list_wake_schedules(  # type: ignore[attr-defined]
+                {
+                    "status": args.get("status"),
+                    "targetType": args.get("targetType"),
+                    "targetId": args.get("targetId"),
+                    "limit": args.get("limit"),
+                }
+            )
+            items = result.get("items") if isinstance(result, Mapping) else []
+            return {
+                "summary": f"共有 {len(items) if isinstance(items, list) else 0} 个可见预约",
+                "schedulerActive": bool(result.get("schedulerActive")),
+                "items": _safe_payload(items),
+            }
+        if operation == "runs":
+            schedule_id = _bounded_text(args.get("scheduleId"), maximum=240)
+            if not schedule_id:
+                raise ValueError("scheduleId is required for agent_schedule.runs")
+            result = self.scheduling.wake_schedule_runs(  # type: ignore[attr-defined]
+                schedule_id,
+                {"limit": args.get("limit")},
+            )
+            return {
+                "summary": "已读取预约执行记录",
+                "schedule": _safe_payload(result.get("schedule")),
+                "items": _safe_payload(result.get("items")),
+            }
+        raise ValueError("Agent schedule changes require native approval")
+
+    def _prepare_agent_schedule(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        if self.scheduling is None:
+            raise ValueError("Agent wake scheduling is unavailable")
+        if operation == "schedule":
+            preview_result = self.scheduling.preview_wake_schedule(  # type: ignore[attr-defined]
+                args,
+                requested_by_session_id=session_id,
+            )
+            schedule = (
+                preview_result.get("schedule")
+                if isinstance(preview_result.get("schedule"), Mapping)
+                else {}
+            )
+            action_payload = {
+                key: schedule.get(key)
+                for key in (
+                    "title",
+                    "instruction",
+                    "targetType",
+                    "targetSessionId",
+                    "targetRoleId",
+                    "targetRoleVersion",
+                    "planningTaskId",
+                    "timezone",
+                    "recurrenceKind",
+                    "recurrenceInterval",
+                    "maxRuns",
+                    "wakeAtMs",
+                )
+            }
+            base_state: dict[str, object] = {}
+            target_name = _bounded_text(schedule.get("targetDisplayName"), maximum=120)
+            summary = f"安排{target_name or 'Agent'}在指定时间执行《{schedule.get('title', '')}》"
+            changes = [
+                {"label": "唤醒对象", "before": "未安排", "after": target_name},
+                {
+                    "label": "执行次数",
+                    "before": "0 次",
+                    "after": f"最多 {_safe_int(schedule.get('maxRuns'))} 次",
+                },
+            ]
+        else:
+            schedule_id = _bounded_text(args.get("scheduleId"), maximum=240)
+            if not schedule_id:
+                raise ValueError(f"scheduleId is required for agent_schedule.{operation}")
+            schedule = self.scheduling.get_wake_schedule(schedule_id)  # type: ignore[attr-defined]
+            action_payload = {"scheduleId": schedule_id, "action": operation}
+            base_state = {
+                "status": str(schedule.get("status") or ""),
+                "updatedAtMs": _safe_int(schedule.get("updatedAtMs")),
+            }
+            labels = {
+                "pause": "暂停预约",
+                "resume": "恢复预约",
+                "cancel": "取消预约",
+                "retry": "重新执行预约",
+            }
+            summary = f"{labels[operation]}《{schedule.get('title', '')}》"
+            changes = [
+                {
+                    "label": "预约状态",
+                    "before": str(schedule.get("status") or ""),
+                    "after": operation,
+                }
+            ]
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="agent_schedule",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        preview = {
+            "title": "确认 Agent 预约",
+            "summary": summary,
+            "operationLabel": "安排未来 Agent 执行" if operation == "schedule" else summary,
+            "changes": changes,
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="agent_schedule",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{summary}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_agent_schedule(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        if self.scheduling is None:
+            raise ValueError("Agent wake scheduling is unavailable")
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload")
+            if isinstance(preview.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="agent_schedule",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("Agent schedule approval no longer matches its preview")
+        if operation == "schedule":
+            result = self.scheduling.create_wake_schedule(  # type: ignore[attr-defined]
+                action_payload,
+                created_by_session_id=str(approval.get("sessionId") or ""),
+                require_confirmation=False,
+            )
+        else:
+            schedule_id = _bounded_text(action_payload.get("scheduleId"), maximum=240)
+            current = self.scheduling.get_wake_schedule(schedule_id)  # type: ignore[attr-defined]
+            if (
+                str(current.get("status") or "") != str(base_state.get("status") or "")
+                or _safe_int(current.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+            ):
+                raise ValueError("Agent schedule changed after the approval preview was created")
+            result = self.scheduling.wake_schedule_action(  # type: ignore[attr-defined]
+                schedule_id,
+                {"action": operation},
+                require_confirmation=False,
+            )
+        schedule = result.get("schedule") if isinstance(result, Mapping) else {}
+        return {
+            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "agent_schedule",
+            "operation": operation,
+            "summary": f"预约《{schedule.get('title', '')}》已更新",
+            "schedule": _safe_payload(schedule),
+            "undoAvailable": False,
+        }
+
     def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation == "catalog":
             return self._catalog(args)
@@ -3791,6 +4012,7 @@ def _tool_profile_allows(
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),
         "ime_agents": frozenset({"catalog", "delegate", "status", "artifact", "abort"}),
+        "agent_schedule": frozenset({"list", "runs"}),
         "agent_plan": frozenset({"list", "update"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")

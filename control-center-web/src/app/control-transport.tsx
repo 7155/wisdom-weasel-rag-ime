@@ -54,10 +54,12 @@ function detectTransport(): 'native' | 'http' | 'mock' {
 
 function createPreviewTransport(): MockControlTransport {
   let nextSessionId = 1;
+  let nextWakeScheduleId = 1;
   const sessions: Record<string, unknown>[] = [
     previewSession('session-preview', '控制中心迁移', 'zhiyou-v1', Date.now()),
     previewSession('session-memory', '记忆整理', 'zhiyou-v1', Date.now() - 360_000),
   ];
+  const wakeSchedules: Record<string, unknown>[] = [];
   const routes = Object.fromEntries(
     (Object.keys(CONTROL_ROUTES) as ControlPathId[])
       .filter((pathId) => !controlRoute(pathId).subscription)
@@ -118,6 +120,53 @@ function createPreviewTransport(): MockControlTransport {
       entryId,
       selectedText,
       session,
+    };
+  };
+  routes['agent.wakeSchedules.list'] = () => ({ ok: true, schedulerActive: true, items: [...wakeSchedules] });
+  routes['agent.wakeSchedules.create'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const now = Date.now();
+    const schedule = {
+      id: `wake:preview-${nextWakeScheduleId++}`,
+      title: stringValue(body.title) || '预览预约',
+      instruction: stringValue(body.instruction),
+      targetType: stringValue(body.targetType) || 'session',
+      targetSessionId: stringValue(body.targetSessionId),
+      targetRoleId: stringValue(body.targetRoleId),
+      targetRoleVersion: stringValue(body.targetRoleVersion),
+      planningTaskId: stringValue(body.planningTaskId),
+      timezone: stringValue(body.timezone) || 'Asia/Shanghai',
+      recurrenceKind: stringValue(body.recurrenceKind) || 'once',
+      recurrenceInterval: Number(body.recurrenceInterval) || 1,
+      maxRuns: Number(body.maxRuns) || 1,
+      runCount: 0,
+      status: 'scheduled',
+      nextWakeAtMs: Number(body.wakeAtMs) || now + 30 * 60_000,
+      lastWakeAtMs: 0,
+      lastError: '',
+      createdAtMs: now,
+      updatedAtMs: now,
+      latestRun: {},
+    };
+    wakeSchedules.unshift(schedule);
+    return { ok: true, schedule };
+  };
+  routes['agent.wakeSchedule.action'] = (request: ControlRequest) => {
+    const scheduleId = stringValue(record(request.params).scheduleId);
+    const schedule = wakeSchedules.find((item) => item.id === scheduleId);
+    if (!schedule) throw new Error('预约不存在');
+    const action = stringValue(record(request.body).action);
+    schedule.status = ({ pause: 'paused', resume: 'scheduled', cancel: 'cancelled', retry: 'scheduled' } as Record<string, string>)[action] ?? schedule.status;
+    schedule.updatedAtMs = Date.now();
+    if (action === 'retry') schedule.nextWakeAtMs = Date.now() + 1_000;
+    return { ok: true, schedule: { ...schedule } };
+  };
+  routes['agent.wakeSchedule.runs'] = (request: ControlRequest) => {
+    const scheduleId = stringValue(record(request.params).scheduleId);
+    return {
+      ok: true,
+      schedule: wakeSchedules.find((item) => item.id === scheduleId) ?? {},
+      items: [],
     };
   };
   return new MockControlTransport({

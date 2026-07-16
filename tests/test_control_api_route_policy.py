@@ -448,6 +448,14 @@ class ControlRoutePolicyTests(unittest.TestCase):
             "/api/agent/rooms/{roomId}/snapshot",
         )
         self.assertTrue(room_snapshot["remoteSafe"])
+
+        wake_action = entries[ControlPathId.AGENT_WAKE_SCHEDULE_ACTION.value]
+        self.assertEqual(wake_action["method"], "POST")
+        self.assertEqual(
+            wake_action["target"]["8768"],
+            "/control/v1/agent/wake-schedules/{scheduleId}/action",
+        )
+        self.assertTrue(wake_action["remoteSafe"])
         self.assertFalse(room_snapshot["subscription"])
 
         tools = entries[ControlPathId.AGENT_TOOLS_LIST.value]

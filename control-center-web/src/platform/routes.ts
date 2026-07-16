@@ -397,6 +397,30 @@ export const CONTROL_ROUTES = {
     query: ['sessionId', 'limit'],
     requiredQuery: ['sessionId'],
   },
+  'agent.wakeSchedules.list': {
+    method: 'GET',
+    path: '/api/agent/wake-schedules',
+    query: ['status', 'targetType', 'targetId', 'createdBySessionId', 'limit'],
+  },
+  'agent.wakeSchedules.create': {
+    method: 'POST',
+    path: '/api/agent/wake-schedules',
+    body: ['title', 'instruction', 'targetType', 'targetSessionId', 'targetRoleId', 'targetRoleVersion', 'wakeAtMs', 'timezone', 'recurrenceKind', 'recurrenceInterval', 'maxRuns', 'planningTaskId', 'confirmText'],
+    requiredBody: ['instruction', 'targetType', 'wakeAtMs', 'confirmText'],
+  },
+  'agent.wakeSchedule.runs': {
+    method: 'GET',
+    path: '/api/agent/wake-schedules/:scheduleId/runs',
+    params: { scheduleId: null },
+    query: ['limit'],
+  },
+  'agent.wakeSchedule.action': {
+    method: 'POST',
+    path: '/api/agent/wake-schedules/:scheduleId/action',
+    params: { scheduleId: null },
+    body: ['action', 'confirmText'],
+    requiredBody: ['action', 'confirmText'],
+  },
 
   'planning.dashboard': {
     method: 'GET',

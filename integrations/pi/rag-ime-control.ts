@@ -13,6 +13,7 @@ const resolvedReviewRunIds = new Set<string>();
 
 type ToolParams = {
   op: string;
+  title?: string;
   changes?: Array<{ key: string; value: boolean | number | string }>;
   selectedKeys?: string[];
   sourceApprovalId?: string;
@@ -29,6 +30,17 @@ type ToolParams = {
   instruction?: string;
   eventId?: string;
   taskId?: string;
+  planningTaskId?: string;
+  scheduleId?: string;
+  targetType?: "session" | "role";
+  targetSessionId?: string;
+  targetRoleId?: string;
+  targetRoleVersion?: string;
+  wakeAtMs?: number;
+  timezone?: string;
+  recurrenceKind?: "once" | "daily" | "weekly";
+  recurrenceInterval?: number;
+  maxRuns?: number;
   kind?: string;
   date?: string;
   project?: string;
@@ -229,6 +241,27 @@ const toolSpecs: ToolSpec[] = [
       "task_action 只创建 60 秒有效的差异预览；聊天里的同意文字不能替代控制中心原生审批。",
       "执行 task_action 前先调用 dashboard，并使用其中真实存在的 taskId、date 和当前状态。",
       "只能撤销先前工具回执明确给出的 taskEventId，不能猜测 eventId。",
+    ],
+  },
+  {
+    name: "agent_schedule",
+    label: "Agent 预约唤醒",
+    description: "查看预约，并在原生批准后安排自己、其他线程或角色于指定时间执行任务。",
+    operations: ["list", "runs", "schedule", "pause", "resume", "cancel", "retry"],
+    progress: {
+      list: "正在查看 Agent 预约",
+      runs: "正在读取预约执行记录",
+      schedule: "正在准备未来 Agent 任务审批",
+      pause: "正在准备暂停预约",
+      resume: "正在准备恢复预约",
+      cancel: "正在准备取消预约",
+      retry: "正在准备重新执行预约",
+    },
+    guidelines: [
+      "schedule 必须给出未来的 wakeAtMs 和清楚的 instruction。targetType=session 且省略 targetSessionId 时预约当前线程；指定其他线程或角色时必须使用真实 ID，不要猜测。",
+      "安排、恢复和重试会触发未来模型执行，聊天中的同意不能替代控制中心原生审批。",
+      "先用 list 核对真实 scheduleId，再执行 pause、resume、cancel、retry 或 runs。",
+      "预约唤醒不会扩大目标 Session 的 Tool、文件、Shell 或审批权限。",
     ],
   },
   {
@@ -625,9 +658,21 @@ function parametersFor(spec: ToolSpec) {
       bookId: { type: "string", maxLength: 240 },
       traceId: { type: "string", maxLength: 240 },
       runId: { type: "string", maxLength: 240 },
-      instruction: { type: "string", maxLength: 800 },
+      instruction: { type: "string", maxLength: 8000 },
       eventId: { type: "string", maxLength: 240 },
       taskId: { type: "string", maxLength: 240 },
+      planningTaskId: { type: "string", maxLength: 240 },
+      title: { type: "string", minLength: 1, maxLength: 120 },
+      scheduleId: { type: "string", maxLength: 240 },
+      targetType: { type: "string", enum: ["session", "role"] },
+      targetSessionId: { type: "string", maxLength: 240 },
+      targetRoleId: { type: "string", maxLength: 120 },
+      targetRoleVersion: { type: "string", maxLength: 40 },
+      wakeAtMs: { type: "integer", minimum: 1 },
+      timezone: { type: "string", maxLength: 80 },
+      recurrenceKind: { type: "string", enum: ["once", "daily", "weekly"] },
+      recurrenceInterval: { type: "integer", minimum: 1, maximum: 30 },
+      maxRuns: { type: "integer", minimum: 1, maximum: 100 },
       kind: { type: "string", enum: ["books", "atoms", "tags", "phrases", "groups", "negative"] },
       date: { type: "string", maxLength: 24 },
       project: { type: "string", maxLength: 160 },
@@ -696,6 +741,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
     ime_models: ["status", "profiles", "probe", "cache_stats"],
     ime_runtime: ["health", "components", "diagnose"],
     ime_agents: ["catalog", "delegate", "status", "artifact", "abort"],
+    agent_schedule: ["list", "runs"],
     agent_plan: ["list", "update"],
   };
   return specs.flatMap((spec) => {

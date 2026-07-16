@@ -13,6 +13,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "ime_configuration",
     "ime_agents",
     "agent_plan",
+    "agent_schedule",
 )
 
 COORDINATOR_TOOL_IDS = (

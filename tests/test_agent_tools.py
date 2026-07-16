@@ -598,6 +598,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_input",
                 "ime_voice",
                 "ime_planning",
+                "agent_schedule",
                 "ime_memory",
                 "ime_knowledge",
                 "ime_models",
@@ -671,6 +672,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "ime_input",
                     "ime_voice",
                     "ime_planning",
+                    "agent_schedule",
                     "ime_memory",
                     "ime_models",
                     "ime_runtime",
@@ -1580,6 +1582,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "ime_input",
             "ime_voice",
             "ime_planning",
+            "agent_schedule",
             "ime_memory",
             "ime_knowledge",
             "ime_models",
@@ -1693,6 +1696,75 @@ class ControlToolGatewayTests(unittest.TestCase):
             item for item in self.gateway.manifests()["items"] if item["id"] == "ime_plugins"
         )
         self.assertNotIn("apply", plugin_manifest["operations"])
+
+    def test_agent_schedule_requires_approval_and_applies_the_bound_preview(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        class _Scheduling:
+            def preview_wake_schedule(self, payload, *, requested_by_session_id=""):
+                calls.append(("preview", requested_by_session_id))
+                return {
+                    "ok": True,
+                    "schedule": {
+                        **dict(payload),
+                        "title": "明早复盘",
+                        "targetDisplayName": "当前线程",
+                        "targetType": "session",
+                        "targetSessionId": requested_by_session_id,
+                        "targetRoleId": "",
+                        "targetRoleVersion": "",
+                        "planningTaskId": "",
+                        "timezone": "Asia/Shanghai",
+                        "recurrenceKind": "once",
+                        "recurrenceInterval": 1,
+                        "maxRuns": 1,
+                    },
+                }
+
+            def create_wake_schedule(self, payload, *, created_by_session_id="", require_confirmation=True):
+                calls.append(("create", dict(payload)))
+                self.created_by_session_id = created_by_session_id
+                self.require_confirmation = require_confirmation
+                return {
+                    "ok": True,
+                    "schedule": {"id": "wake:1", "title": payload["title"], "status": "scheduled"},
+                }
+
+            def list_wake_schedules(self, payload):
+                return {"ok": True, "schedulerActive": True, "items": []}
+
+        scheduling = _Scheduling()
+        self.gateway.scheduling = scheduling
+        listed = self.gateway.execute(
+            self._tool_call("agent_schedule", "list")
+        )["result"]
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "agent_schedule",
+                "schedule",
+                title="明早复盘",
+                instruction="整理今天的结果",
+                targetType="session",
+                targetSessionId=self.session["id"],
+                wakeAtMs=1_900_000_000_000,
+            )
+        )["result"]
+
+        self.assertTrue(listed["schedulerActive"])
+        self.assertTrue(prepared["approvalRequired"])
+        self.assertEqual(prepared["approval"]["riskLevel"], "R2")
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+
+        self.assertTrue(receipt["mutationApplied"])
+        self.assertEqual(receipt["schedule"]["id"], "wake:1")
+        self.assertEqual(scheduling.created_by_session_id, self.session["id"])
+        self.assertFalse(scheduling.require_confirmation)
 
     def _call(self, operation: str, **args):
         return self._tool_call("ime_memory", operation, **args)

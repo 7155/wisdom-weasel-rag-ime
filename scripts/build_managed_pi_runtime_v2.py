@@ -135,7 +135,9 @@ def main(argv: list[str] | None = None) -> int:
         source_commit = _run(["git", "rev-parse", "HEAD"], cwd=pi_root)
         provider_bridge_source = ROOT / "rag_ime" / "node" / "pi_provider_bridge_bundled.ts"
         packager_digest = hashlib.sha256(
-            provider_bridge_source.read_bytes() + Path(__file__).read_bytes()
+            provider_bridge_source.read_bytes()
+            + Path(__file__).read_bytes()
+            + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:10]
         runtime_version = f"pi-{pi_version}-{source_commit[:12]}-raghost-{packager_digest}"
         destination = (

@@ -8,6 +8,7 @@ from rag_ime.agent_routes import (
     agent_media_route,
     agent_room_route,
     agent_session_route,
+    agent_wake_schedule_route,
 )
 
 
@@ -141,6 +142,27 @@ class AgentRouteTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(agent_artifact_route(path), "")
+
+    def test_wake_schedule_routes_are_strict_and_url_decoded(self) -> None:
+        self.assertEqual(
+            agent_wake_schedule_route("/api/agent/wake-schedules/wake%3A123/runs"),
+            ("wake:123", "runs"),
+        )
+        self.assertEqual(
+            agent_wake_schedule_route("/api/agent/wake-schedules/wake%3A123/action"),
+            ("wake:123", "action"),
+        )
+        self.assertEqual(
+            agent_wake_schedule_route("/api/agent/wake-schedules/wake%3A123"),
+            ("wake:123", ""),
+        )
+        for path in (
+            "/api/agent/wake-schedules",
+            "/api/agent/wake-schedules/wake:123/unknown",
+            "/api/agent/wake-schedules/wake:123/runs/extra",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(agent_wake_schedule_route(path), ("", ""))
 
 
 if __name__ == "__main__":

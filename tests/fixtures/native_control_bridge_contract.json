@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 138,
+  "routeCount": 142,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -72,6 +72,10 @@
     "agent.subagent.get",
     "agent.subagent.abort",
     "agent.memorySources.list",
+    "agent.wakeSchedules.list",
+    "agent.wakeSchedules.create",
+    "agent.wakeSchedule.runs",
+    "agent.wakeSchedule.action",
     "planning.dashboard",
     "planning.mutation.preview",
     "planning.task.save",
