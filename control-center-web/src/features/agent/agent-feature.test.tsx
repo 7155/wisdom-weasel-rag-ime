@@ -159,7 +159,8 @@ describe('Agent experience', () => {
     const slowTools = new Promise<unknown>((resolve) => { resolveTools = resolve; });
     renderAgent(featureTransport(undefined, () => slowTools));
 
-    expect(await screen.findByRole('button', { name: '查看对话路径与分支' })).toBeEnabled();
+    const branchButton = await screen.findByRole('button', { name: '查看对话路径与分支' });
+    await waitFor(() => expect(branchButton).toBeEnabled());
     resolveTools({ ok: true, items: toolCatalog() });
   });
 
