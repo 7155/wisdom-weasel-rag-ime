@@ -1,4 +1,4 @@
-import { Archive, BookOpen, BrainCircuit, Database, RefreshCw, Search, Tags } from 'lucide-react';
+import { Archive, BookOpen, BrainCircuit, Database, Network, RefreshCw, Search, Tags } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -117,7 +117,17 @@ export function MemoryFeature() {
             <TabsTrigger value="organize">整理</TabsTrigger>
           </TabsList>
           <TabsContent value="catalog">
-            <ManagementSection title="记忆目录" description="按类型、状态和内容查找记忆。">
+            <ManagementSection
+              title={kind === 'tags' ? '标签节点目录' : '记忆目录'}
+              description={kind === 'tags'
+                ? '检索和管理图谱中的标签节点；节点关系在标签图谱中呈现。'
+                : '按类型、状态和内容查找记忆。'}
+              trailing={kind === 'tags' ? (
+                <Button leadingIcon={<Network size={14} />} onClick={() => setView('relations')} size="small">
+                  查看标签图谱
+                </Button>
+              ) : undefined}
+            >
               <div className="mgmt-stack">
                 <SegmentedControl aria-label="记忆类型" items={kinds} onValueChange={(next) => { setKind(next); setSelectedId(''); setEditOpen(false); }} value={kind} />
                 <div className="mgmt-filter-row">
