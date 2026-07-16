@@ -172,7 +172,9 @@ final class VoiceInputCoordinator {
             pcmFrameCount: 0,
             droppedPCMFrameCount: 0,
             partialRevisionCount: 0,
-            finalReceived: false
+            finalReceived: false,
+            finalRevisedPartial: nil,
+            localSmoothingApplied: nil
         )
         overlay.showListening(anchor: insertion.anchorPoint)
         onStateChanged?()
@@ -264,20 +266,25 @@ final class VoiceInputCoordinator {
         case .final(let text):
             finalTimeout?.cancel()
             finalTimeout = nil
-            guard !text.isEmpty else {
+            let providerFinalText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalText = VoiceFinalTextNormalizer.normalize(providerFinalText)
+            guard !finalText.isEmpty else {
                 fail("没有识别到语音")
                 return
             }
-            guard apply(text: text, isFinal: true) else { return }
+            let partialText = reconciler.currentText
+            guard apply(text: finalText, isFinal: true) else { return }
             telemetry = updatingTelemetry(
                 networkState: "completed",
                 finalLatencyMs: releasedAtMs.map { max(0, nowMs - $0) },
-                finalReceived: true
+                finalReceived: true,
+                finalRevisedPartial: !partialText.isEmpty && partialText != finalText,
+                localSmoothingApplied: providerFinalText != finalText
             )
             if interactionSource == .hotkey {
-                recordCommittedVoiceTextIfNeeded(text)
+                recordCommittedVoiceTextIfNeeded(finalText)
             }
-            overlay.showDone(text)
+            overlay.showDone(finalText)
             finishSession()
         case .failure(let message):
             telemetry = updatingTelemetry(networkState: "failed")
@@ -414,7 +421,9 @@ final class VoiceInputCoordinator {
         pcmFrameCount: Int? = nil,
         droppedPCMFrameCount: Int? = nil,
         partialRevisionCount: Int? = nil,
-        finalReceived: Bool? = nil
+        finalReceived: Bool? = nil,
+        finalRevisedPartial: Bool? = nil,
+        localSmoothingApplied: Bool? = nil
     ) -> VoiceSessionTelemetry {
         VoiceSessionTelemetry(
             networkState: networkState ?? telemetry.networkState,
@@ -425,7 +434,9 @@ final class VoiceInputCoordinator {
             pcmFrameCount: pcmFrameCount ?? telemetry.pcmFrameCount,
             droppedPCMFrameCount: droppedPCMFrameCount ?? telemetry.droppedPCMFrameCount,
             partialRevisionCount: partialRevisionCount ?? telemetry.partialRevisionCount,
-            finalReceived: finalReceived ?? telemetry.finalReceived
+            finalReceived: finalReceived ?? telemetry.finalReceived,
+            finalRevisedPartial: finalRevisedPartial ?? telemetry.finalRevisedPartial,
+            localSmoothingApplied: localSmoothingApplied ?? telemetry.localSmoothingApplied
         )
     }
 }

@@ -298,6 +298,8 @@ def read_voice_control_status(
             "lastSession": {
                 "finalReceived": telemetry.get("finalReceived") is True,
                 "finalLatencyMs": _optional_nonnegative_int(telemetry.get("finalLatencyMs")),
+                "finalRevisedPartial": telemetry.get("finalRevisedPartial") is True,
+                "localSmoothingApplied": telemetry.get("localSmoothingApplied") is True,
                 "partialRevisionCount": _nonnegative_int(telemetry.get("partialRevisionCount")),
                 "droppedPcmFrameCount": _nonnegative_int(telemetry.get("droppedPCMFrameCount")),
             },

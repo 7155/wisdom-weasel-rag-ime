@@ -114,6 +114,39 @@ struct VoiceTranscriptRevision: Equatable {
     let isFinal: Bool
 }
 
+enum VoiceFinalTextNormalizer {
+    // Provider-side DDC is best effort. Keep a narrow local fallback for the
+    // common accidental repetitions that are especially disruptive in dictation.
+    private static let repeatedPhrases = [
+        "相当于", "我觉得", "依然", "还是", "这个", "那个", "就是", "然后",
+        "现在", "当前", "可以", "应该", "因为", "所以", "还有", "但是",
+        "不能", "不会", "一个", "我们", "你们", "他们", "其实", "这样", "那么",
+    ]
+
+    static func normalize(_ rawText: String) -> String {
+        var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        for phrase in repeatedPhrases {
+            let escaped = NSRegularExpression.escapedPattern(for: phrase)
+            text = text.replacingOccurrences(
+                of: "\(escaped)(?:[\\t ]*\(escaped))+",
+                with: phrase,
+                options: .regularExpression
+            )
+        }
+        text = text.replacingOccurrences(
+            of: "[\\t ]+([，。！？；：,.!?;:])",
+            with: "$1",
+            options: .regularExpression
+        )
+        text = text.replacingOccurrences(
+            of: "[\\t ]{2,}",
+            with: " ",
+            options: .regularExpression
+        )
+        return text
+    }
+}
+
 struct VoiceTranscriptReconciler {
     private(set) var currentText = ""
 

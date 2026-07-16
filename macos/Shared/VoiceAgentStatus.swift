@@ -43,6 +43,8 @@ struct VoiceSessionTelemetry: Codable, Equatable {
     let droppedPCMFrameCount: Int
     let partialRevisionCount: Int
     let finalReceived: Bool
+    var finalRevisedPartial: Bool? = nil
+    var localSmoothingApplied: Bool? = nil
 
     static let idle = VoiceSessionTelemetry(
         networkState: "idle",
@@ -53,7 +55,9 @@ struct VoiceSessionTelemetry: Codable, Equatable {
         pcmFrameCount: 0,
         droppedPCMFrameCount: 0,
         partialRevisionCount: 0,
-        finalReceived: false
+        finalReceived: false,
+        finalRevisedPartial: nil,
+        localSmoothingApplied: nil
     )
 }
 

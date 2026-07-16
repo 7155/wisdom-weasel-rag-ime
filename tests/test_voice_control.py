@@ -61,6 +61,8 @@ class VoiceHotwordValidationTests(unittest.TestCase):
                         "telemetry": {
                             "finalReceived": True,
                             "finalLatencyMs": 116,
+                            "finalRevisedPartial": True,
+                            "localSmoothingApplied": True,
                             "partialRevisionCount": 42,
                             "droppedPCMFrameCount": 0,
                         },
@@ -84,6 +86,8 @@ class VoiceHotwordValidationTests(unittest.TestCase):
             self.assertEqual(status["recognition"]["deployed"]["state"], "ready")
             self.assertTrue(status["recognition"]["deployed"]["reportedByAgent"])
             self.assertEqual(status["recognition"]["lastSession"]["finalLatencyMs"], 116)
+            self.assertTrue(status["recognition"]["lastSession"]["finalRevisedPartial"])
+            self.assertTrue(status["recognition"]["lastSession"]["localSmoothingApplied"])
 
     def test_old_binary_explains_missing_final_replacement_instead_of_hiding_reason(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-old-build-") as tmp:

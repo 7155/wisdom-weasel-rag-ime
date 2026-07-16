@@ -45,7 +45,10 @@ const hotkeys = [
   { value: 'option_space', label: 'Option + 空格' },
 ] as const;
 
-const suggestedHotwords = ['Pi', 'API Key', 'SK', 'Skill', 'GPT-5.6', '智鼬'] as const;
+const suggestedHotwords = [
+  'Pi', 'Codex', 'Agent', 'Runtime', 'Session', 'Tool', 'Skill', 'API Key', 'SK',
+  'MiniMind', '补全模型', 'GPT-5.6', 'Luna', 'Terra', '智鼬',
+] as const;
 
 export function VoiceFeature() {
   const queries = useVoiceQueries();
@@ -416,9 +419,9 @@ export function VoiceFeature() {
 
         <ManagementSection title="定稿质量" description="检查语音输入能否把临时识别结果顺滑地整理成最终文本。">
           <MetricStrip items={[
-            { label: '最终二次识别', value: deployedLabel(deployedRecognition.secondPass, deployedRecognitionState), detail: '停顿后重新识别完整语句', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
-            { label: '语义顺滑', value: deployedLabel(deployedRecognition.semanticSmoothing, deployedRecognitionState), detail: '整理口头语、重复与赘余', icon: Sparkles, tone: deployedTone(deployedRecognition.semanticSmoothing) },
-            { label: '完整结果替换', value: deployedLabel(deployedRecognition.fullResultReplacement, deployedRecognitionState), detail: '最终稿替换临时稿，不继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
+            { label: '最终二次识别', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '服务端二遍识别是尽力而为，不等于通用文字校对', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
+            { label: '语义顺滑', value: smoothingLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '本地会保守清理常见口语重复，领域词依靠热词', icon: Sparkles, tone: deployedTone(deployedRecognition.semanticSmoothing) },
+            { label: '完整结果替换', value: replacementLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '最终稿替换临时稿，不继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
             { label: '最近一次定稿', value: booleanValue(lastRecognition.finalReceived) ? '已收到' : '暂无验证', detail: finalLatencyLabel(lastRecognition.finalLatencyMs), icon: Mic, tone: booleanValue(lastRecognition.finalReceived) ? 'success' : 'warning' },
           ]} />
           {deployedRecognitionState !== 'ready' ? (
@@ -428,6 +431,10 @@ export function VoiceFeature() {
           ) : !booleanValue(lastRecognition.finalReceived) ? (
             <InlineNotice title="能力已部署，等待真实验证" tone="info">
               三项定稿能力已经由运行中的语音代理报告；完成一次实际听写并收到 Final 后，这里会显示真实定稿耗时。
+            </InlineNotice>
+          ) : lastRecognition.finalRevisedPartial !== true && lastRecognition.localSmoothingApplied !== true ? (
+            <InlineNotice title="本次定稿没有修订文本" tone="info">
+              二遍识别已执行，但最终稿与临时稿相同。容易混淆的项目词请加入上方热词；这比把“已请求”误写成“已纠错”更准确。
             </InlineNotice>
           ) : null}
         </ManagementSection>
@@ -605,6 +612,43 @@ function deployedTone(value: unknown): VoiceStatusTone {
   if (value === true) return 'success';
   if (value === false) return 'warning';
   return 'neutral';
+}
+
+function finalRevisionLabel(
+  deployed: Record<string, unknown>,
+  last: Record<string, unknown>,
+  state: string,
+): string {
+  if (!booleanValue(last.finalReceived)) return requestedCapabilityLabel(deployed.secondPass, state);
+  return booleanValue(last.finalRevisedPartial) ? '本次有修订' : '本次无变化';
+}
+
+function smoothingLabel(
+  deployed: Record<string, unknown>,
+  last: Record<string, unknown>,
+  state: string,
+): string {
+  if (booleanValue(last.localSmoothingApplied)) return '本次已整理';
+  return requestedCapabilityLabel(deployed.semanticSmoothing, state);
+}
+
+function replacementLabel(
+  deployed: Record<string, unknown>,
+  last: Record<string, unknown>,
+  state: string,
+): string {
+  if (!booleanValue(last.finalReceived)) return enabledCapabilityLabel(deployed.fullResultReplacement, state);
+  return booleanValue(last.finalRevisedPartial) ? '本次已替换' : '本次无需替换';
+}
+
+function requestedCapabilityLabel(value: unknown, state: string): string {
+  const label = deployedLabel(value, state);
+  return label === '当前可用' ? '服务端已请求' : label;
+}
+
+function enabledCapabilityLabel(value: unknown, state: string): string {
+  const label = deployedLabel(value, state);
+  return label === '当前可用' ? '已启用' : label;
 }
 
 function recognitionNoticeTitle(state: string): string {

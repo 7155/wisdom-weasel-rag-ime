@@ -112,7 +112,7 @@ class VoiceInputTests(unittest.TestCase):
         final_start = coordinator.index("case .final(let text):", partial_start)
         failure_start = coordinator.index("case .failure(let message):", final_start)
         self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[partial_start:final_start])
-        self.assertIn("recordCommittedVoiceTextIfNeeded(text)", coordinator[final_start:failure_start])
+        self.assertIn("recordCommittedVoiceTextIfNeeded(finalText)", coordinator[final_start:failure_start])
         self.assertIn("if interactionSource == .hotkey", coordinator[final_start:failure_start])
         self.assertIn('case agentComposer = "agent_composer"', coordinator)
         self.assertIn('insertion.appBundleIdentifier == "com.rag-ime.control"', coordinator)
@@ -418,6 +418,18 @@ enum Harness {
         let corrected = secondPass.revise(to: "豆包 API 已修正。", isFinal: true)!
         precondition(corrected.replacementUTF16Length == 2)
         precondition(corrected.text == "豆包 API 已修正。")
+        precondition(
+            VoiceFinalTextNormalizer.normalize("还有就是我怀疑它依然依然都在。")
+                == "还有就是我怀疑它依然都在。"
+        )
+        precondition(
+            VoiceFinalTextNormalizer.normalize("当前用的补全模型还是 还是 60M？")
+                == "当前用的补全模型还是 60M？"
+        )
+        precondition(
+            VoiceFinalTextNormalizer.normalize("这个功能非常非常重要。")
+                == "这个功能非常非常重要。"
+        )
 
         let json: [String: Any] = ["result": ["utterances": [["text": "边说"], ["text": "边写"]]]]
         precondition(VolcengineStreamingASRClient.transcript(from: json) == "边说边写")
@@ -547,7 +559,9 @@ enum Harness {
             pcmFrameCount: 7,
             droppedPCMFrameCount: 0,
             partialRevisionCount: 2,
-            finalReceived: false
+            finalReceived: false,
+            finalRevisedPartial: nil,
+            localSmoothingApplied: nil
         )
         let encoded = try! JSONEncoder().encode(telemetry)
         precondition(try! JSONDecoder().decode(VoiceSessionTelemetry.self, from: encoded) == telemetry)

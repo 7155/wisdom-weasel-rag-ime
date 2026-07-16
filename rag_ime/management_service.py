@@ -2049,7 +2049,7 @@ class ManagementService:
             and deployed_recognition.get("fullResultReplacement") is True
         )
         recognition_detail = {
-            "ready": "二次识别、语义顺滑与完整结果替换均由运行中的语音代理确认",
+            "ready": "语音代理已启用二遍识别请求和完整结果替换；真实修订效果以最近一次定稿为准",
             "restart_required": "语音代理安装已更新，需要重启后确认完整定稿能力",
             "outdated": "语音代理安装版本过旧，缺少完整定稿能力",
             "missing": "未找到语音代理安装包",
