@@ -295,6 +295,53 @@ class PiRuntimeV2Tests(unittest.TestCase):
         with self.runtime._lock:
             self.assertEqual(self.runtime._states[session_id].turn_id, "")
 
+    def test_abort_settled_error_is_terminal_aborted_not_faulted(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-abort-settled-error"
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = turn_id
+        self.store.set_status(session_id, "busy")
+
+        self.runtime.abort(session_id)
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "This operation was aborted",
+                    "content": [],
+                }],
+            },
+        })
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {"type": "agent_settled"},
+        })
+
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        events = self.events.replay(session_id)[0]
+        self.assertFalse(any(item.event_type == "turn_failed" for item in events))
+        completed = [item for item in events if item.event_type == "turn_completed"]
+        self.assertEqual(completed[-1].payload["status"], "aborted")
+        self.assertEqual(completed[-1].payload["terminalEvent"], "agent_settled")
+
+    def test_open_idle_session_can_list_fork_candidates(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        self.assertEqual(self.store.get(session_id)["status"], "active")
+
+        self.assertEqual(self.runtime.fork_candidates(session_id), [])
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+
     def test_turn_failure_uses_supported_faulted_status_and_publishes_event(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.ensure(session_id)

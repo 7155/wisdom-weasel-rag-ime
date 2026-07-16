@@ -1148,7 +1148,9 @@ class AgentService:
             raise ValueError("room participant Sessions cannot be forked")
         if self.delegation.owns_session(session_id):
             raise ValueError("subagent Sessions cannot be forked")
-        if str(session.get("status") or "") != "idle":
+        # `active` means the persisted Pi transcript is open, not that a turn
+        # is running. The runtime performs the authoritative quiescence check.
+        if str(session.get("status") or "") not in {"idle", "active"}:
             raise ValueError("conversation forks are only available for idle Sessions")
         return session
 

@@ -243,6 +243,7 @@ class _HostedSessionState:
     pending_approvals: dict[str, str] = field(default_factory=dict)
     pending_reviews: dict[str, str] = field(default_factory=dict)
     abort_timer: threading.Timer | None = field(default=None, repr=False)
+    abort_requested_turn_id: str = ""
     retired_turn_ids: set[str] = field(default_factory=set)
 
 
@@ -471,6 +472,7 @@ class PiRuntimeHostManager:
             state.stream_pi_message_id = ""
             state.last_agent_messages = []
             state.final_error = ""
+            state.abort_requested_turn_id = ""
         try:
             accepted = client.send("session.prompt", params)
         except Exception as exc:
@@ -696,7 +698,7 @@ class PiRuntimeHostManager:
 
     def _require_idle_fork_session(self, session_id: str) -> None:
         session = self.sessions.get(session_id)
-        if str(session.get("status") or "") != "idle":
+        if str(session.get("status") or "") not in {"idle", "active"}:
             raise PiRuntimeError("conversation forks are only available for idle Sessions")
 
     def _require_quiescent_fork_locked(self, session_id: str) -> None:
@@ -793,13 +795,28 @@ class PiRuntimeHostManager:
 
     def abort(self, session_id: str) -> None:
         client = self._require_client()
-        client.send("session.abort", {"sessionId": session_id})
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             turn_id = state.turn_id
+            if not turn_id:
+                self.sessions.set_status(session_id, "idle")
+                return
+            # Mark the exact turn before sending the RPC. The host is allowed
+            # to emit agent_settled before the abort ACK reaches this thread.
+            state.abort_requested_turn_id = turn_id
+        try:
+            client.send("session.abort", {"sessionId": session_id})
+        except Exception:
+            with self._lock:
+                state = self._states.get(session_id)
+                if state is not None and state.abort_requested_turn_id == turn_id:
+                    state.abort_requested_turn_id = ""
+            raise
+        with self._lock:
+            state = self._states.setdefault(session_id, _HostedSessionState())
             # The host can emit agent_settled before the abort ACK arrives.
             # Do not regress an already terminal turn back to "aborting".
-            if not turn_id:
+            if state.turn_id != turn_id:
                 return
             if state.abort_timer is not None:
                 state.abort_timer.cancel()
@@ -1046,19 +1063,34 @@ class PiRuntimeHostManager:
                     return
                 messages = list(state.last_agent_messages)
                 final_error = state.final_error
+                aborted = state.abort_requested_turn_id == turn_id
                 if state.abort_timer is not None:
                     state.abort_timer.cancel()
                     state.abort_timer = None
-                if not final_error:
+                if aborted or not final_error:
+                    if aborted:
+                        if len(state.retired_turn_ids) >= 64:
+                            state.retired_turn_ids.pop()
+                        state.retired_turn_ids.add(turn_id)
                     state.turn_id = ""
                     state.client_message_id = ""
                     state.stream_pi_message_id = ""
                     state.last_agent_messages = []
                     state.final_error = ""
+                    state.abort_requested_turn_id = ""
                     state.pending_approvals.clear()
                     state.pending_reviews.clear()
                     self._status = "ready"
                     self._schedule_idle_locked()
+            if aborted:
+                self.sessions.set_status(session_id, "idle")
+                self.events.publish(
+                    session_id,
+                    "turn_completed",
+                    {"status": "aborted", "aborted": True, "terminalEvent": "agent_settled"},
+                    turn_id=turn_id,
+                )
+                return
             if final_error:
                 self._turn_failed(session_id, turn_id, PiRuntimeError(final_error))
                 return
@@ -1152,6 +1184,7 @@ class PiRuntimeHostManager:
             state.turn_id = ""
             state.client_message_id = ""
             state.stream_pi_message_id = ""
+            state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
             state.pending_reviews.clear()
             self._last_error = message
@@ -1196,6 +1229,7 @@ class PiRuntimeHostManager:
             state.stream_pi_message_id = ""
             state.last_agent_messages = []
             state.final_error = ""
+            state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
             state.pending_reviews.clear()
             self._status = "ready"

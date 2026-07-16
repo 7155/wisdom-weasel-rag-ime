@@ -276,6 +276,26 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertFalse(runtime.target_session_id)
 
+    def test_conversation_fork_accepts_quiescent_open_session(self) -> None:
+        source = self.service.create_session({"title": "已打开但空闲"})["session"]
+        session_id = str(source["id"])
+        transcript = self.root / "open-idle-source.jsonl"
+        transcript.touch()
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-open-idle-source",
+            transcript_ref=str(transcript),
+            message_count=1,
+        )
+        runtime = _ForkRuntime(self.service.sessions, self.root)
+        self.service.runtime = runtime
+
+        catalog = self.service.fork_candidates(session_id)
+
+        self.assertEqual(catalog["items"][0]["entryId"], "entry-user-1")
+
     def test_kernel_configuration_drives_new_sessions_and_runtime_policy(self) -> None:
         initial = self.service.configuration()["configuration"]
         defaults = self.service.update_configuration(
