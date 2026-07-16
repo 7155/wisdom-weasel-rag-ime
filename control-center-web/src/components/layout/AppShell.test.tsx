@@ -2,7 +2,11 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App } from '@/app/App';
-import { publishConnectionState, publishGlobalNotice } from '@/components/feedback';
+import { GlobalFeedbackProvider, publishConnectionState, publishGlobalNotice } from '@/components/feedback';
+import { TooltipProvider } from '@/components/primitives';
+import { MotionProvider } from '@/design/motion';
+import { ThemeProvider } from '@/design/themes';
+import { AppShell } from './AppShell';
 
 describe('control center shell', () => {
   afterEach(cleanup);
@@ -45,7 +49,17 @@ describe('control center shell', () => {
 
   it('persists theme, motion, and sidebar preferences', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(
+      <ThemeProvider>
+        <MotionProvider>
+          <TooltipProvider>
+            <GlobalFeedbackProvider>
+              <AppShell><main aria-label="测试页面" /></AppShell>
+            </GlobalFeedbackProvider>
+          </TooltipProvider>
+        </MotionProvider>
+      </ThemeProvider>,
+    );
 
     await user.click(screen.getByRole('button', { name: '外观与动效' }));
     await user.click(screen.getByRole('menuitemradio', { name: '深色' }));

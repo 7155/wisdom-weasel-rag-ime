@@ -1249,8 +1249,9 @@ describe('Agent experience', () => {
 
     expect(await screen.findByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '受控工具目录加载失败' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '受控工具目录加载失败' })).toHaveTextContent('工具 · 未加载');
+    const unavailableTools = await screen.findByRole('button', { name: '受控工具目录加载失败' });
+    expect(unavailableTools).toBeDisabled();
+    expect(unavailableTools).toHaveTextContent('工具 · 未加载');
   });
 
   it('opens the backend active conversation instead of a newer empty Session', async () => {
