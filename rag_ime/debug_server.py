@@ -1893,6 +1893,9 @@ class DebugImeService:
     def agent_surface_complete(self, payload: dict[str, Any]) -> dict[str, object]:
         return self.agent_surface.complete(payload)
 
+    def agent_surface_refine_voice(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.agent_surface.refine_voice(payload)
+
     def agent_surface_cancel(self, payload: dict[str, Any]) -> dict[str, object]:
         return self.agent_surface.cancel(payload)
 
@@ -6188,6 +6191,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
             elif path == "/api/agent/surface/complete":
                 self._write_json(HTTPStatus.OK, self.service.agent_surface_complete(payload))
+            elif path == "/api/agent/surface/refine-voice":
+                self._write_json(HTTPStatus.OK, self.service.agent_surface_refine_voice(payload))
             elif path == "/api/agent/surface/cancel":
                 self._write_json(HTTPStatus.OK, self.service.agent_surface_cancel(payload))
             elif path == "/api/agent/sessions":

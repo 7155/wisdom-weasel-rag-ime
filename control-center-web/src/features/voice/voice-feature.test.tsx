@@ -14,6 +14,17 @@ const hash = 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 afterEach(cleanup);
 
 describe('VoiceFeature', () => {
+  it('shows provider response evidence and the independent third-pass result', async () => {
+    renderVoiceWithHotwordWrites();
+
+    expect(await screen.findByText('本次已纠错')).toBeInTheDocument();
+    expect(screen.getByText('已执行独立第三遍校对')).toBeInTheDocument();
+    expect(screen.getByText('火山响应证据')).toBeInTheDocument();
+    expect(screen.getByText(/stream_snapshot → nonstream/)).toBeInTheDocument();
+    expect(screen.getByText(/utterances 1 条/)).toBeInTheDocument();
+    expect(screen.getByText(/additions 字段：duration、result_type/)).toBeInTheDocument();
+  });
+
   it('applies provider and hotkey through the settings WorkContract instead of Agent handoff', async () => {
     const user = userEvent.setup();
     const transport = renderVoiceWithHotwordWrites();
@@ -234,8 +245,25 @@ function renderVoiceWithHotwordWrites(): MockControlTransport {
               secondPass: true,
               semanticSmoothing: true,
               fullResultReplacement: true,
+              providerResponseMetadata: true,
+              thirdPassRefinement: true,
+              state: 'ready',
             },
-            lastSession: { finalReceived: true, finalLatencyMs: 116 },
+            lastSession: {
+              finalReceived: true,
+              finalLatencyMs: 116,
+              providerResponseStage: 'nonstream',
+              providerResponseStages: ['stream_snapshot', 'nonstream'],
+              providerResponseCount: 2,
+              providerResponseSequence: -17,
+              providerUtteranceMetadata: [{ start_time: '0', end_time: '116' }],
+              providerAdditionFields: { duration: '116', result_type: 'nonstream' },
+              thirdPassRequested: true,
+              thirdPassApplied: true,
+              thirdPassChanged: true,
+              thirdPassLatencyMs: 842,
+              thirdPassModel: 'gpt/gpt-5.6-luna',
+            },
           },
         },
       },

@@ -3,6 +3,7 @@ import Foundation
 enum VoiceASREvent: Equatable {
     case partial(String)
     case final(String)
+    case responseMetadata(VoiceASRResponseMetadata)
     case failure(String)
     case transport(String)
 }
@@ -419,6 +420,7 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
         }
         guard frame.messageType == .fullServerResponse,
               let json = try? JSONSerialization.jsonObject(with: frame.payload) as? [String: Any] else { return }
+        callback(.responseMetadata(Self.responseMetadata(from: json, frame: frame)))
         let text = Self.transcript(from: json)
         if !text.isEmpty { lastTranscript = text }
         if frame.isFinal {
@@ -449,6 +451,102 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
             if !joined.isEmpty { return joined }
         }
         return ""
+    }
+
+    static func responseMetadata(
+        from json: [String: Any],
+        frame: VoiceASRParsedFrame
+    ) -> VoiceASRResponseMetadata {
+        let result: [String: Any]
+        if let object = json["result"] as? [String: Any] {
+            result = object
+        } else if let array = json["result"] as? [[String: Any]], let first = array.first {
+            result = first
+        } else {
+            result = [:]
+        }
+        let utterances = Self.metadataArray(result["utterances"])
+        let additions = Self.metadataDictionary(result["additions"]).isEmpty
+            ? Self.metadataDictionary(json["additions"])
+            : Self.metadataDictionary(result["additions"])
+        let stage = [
+            result["stage"], result["result_type"],
+            additions["stage"], additions["result_type"],
+            json["stage"], json["result_type"],
+            result["type"], additions["type"], json["type"],
+        ]
+            .compactMap(Self.safeMetadataValue)
+            .first
+            ?? (frame.isFinal ? "transport_final" : "stream_snapshot")
+        return VoiceASRResponseMetadata(
+            stage: stage,
+            sequence: frame.sequence.map(Int.init),
+            isFinalFrame: frame.isFinal,
+            resultFields: result.keys
+                .filter { !Self.sensitiveMetadataKeys.contains($0.lowercased()) }
+                .sorted(),
+            utteranceMetadata: utterances.prefix(16).map { utterance in
+                Self.safeMetadataDictionary(utterance, maximumFields: 12)
+            },
+            additionFields: Self.safeMetadataDictionary(additions, maximumFields: 24)
+        )
+    }
+
+    private static let sensitiveMetadataKeys: Set<String> = [
+        "text", "words", "tokens", "transcript", "content", "audio", "data",
+    ]
+
+    private static func metadataDictionary(_ value: Any?) -> [String: Any] {
+        if let value = value as? [String: Any] {
+            return value
+        }
+        guard let string = value as? String,
+              let data = string.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return decoded
+    }
+
+    private static func metadataArray(_ value: Any?) -> [[String: Any]] {
+        if let value = value as? [[String: Any]] {
+            return value
+        }
+        guard let string = value as? String,
+              let data = string.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return decoded
+    }
+
+    private static func safeMetadataDictionary(
+        _ value: [String: Any],
+        maximumFields: Int
+    ) -> [String: String] {
+        var result: [String: String] = [:]
+        for key in value.keys.sorted() {
+            guard result.count < maximumFields,
+                  !sensitiveMetadataKeys.contains(key.lowercased()),
+                  let safeValue = safeMetadataValue(value[key]) else { continue }
+            result[String(key.prefix(80))] = String(safeValue.prefix(160))
+        }
+        return result
+    }
+
+    private static func safeMetadataValue(_ value: Any?) -> String? {
+        switch value {
+        case let string as String:
+            return string
+        case let number as NSNumber:
+            return number.stringValue
+        case let array as [Any]:
+            return "array:\(array.count)"
+        case let dictionary as [String: Any]:
+            return "object:\(dictionary.count)"
+        default:
+            return nil
+        }
     }
 
     private func fail(_ message: String) {

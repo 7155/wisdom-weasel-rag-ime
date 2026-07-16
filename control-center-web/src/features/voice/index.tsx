@@ -420,9 +420,9 @@ export function VoiceFeature() {
         <ManagementSection title="定稿质量" description="检查语音输入能否把临时识别结果顺滑地整理成最终文本。">
           <MetricStrip items={[
             { label: '最终二次识别', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '服务端二遍识别是尽力而为，不等于通用文字校对', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
-            { label: '语义顺滑', value: smoothingLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '本地会保守清理常见口语重复，领域词依靠热词', icon: Sparkles, tone: deployedTone(deployedRecognition.semanticSmoothing) },
+            { label: '第三遍文字校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
             { label: '完整结果替换', value: replacementLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '最终稿替换临时稿，不继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
-            { label: '最近一次定稿', value: booleanValue(lastRecognition.finalReceived) ? '已收到' : '暂无验证', detail: finalLatencyLabel(lastRecognition.finalLatencyMs), icon: Mic, tone: booleanValue(lastRecognition.finalReceived) ? 'success' : 'warning' },
+            { label: '最近一次定稿', value: booleanValue(lastRecognition.finalReceived) ? '已收到' : '暂无验证', detail: providerResponseSummary(lastRecognition), icon: Mic, tone: booleanValue(lastRecognition.finalReceived) ? 'success' : 'warning' },
           ]} />
           {deployedRecognitionState !== 'ready' ? (
             <InlineNotice title={recognitionNoticeTitle(deployedRecognitionState)} tone="warning">
@@ -432,9 +432,22 @@ export function VoiceFeature() {
             <InlineNotice title="能力已部署，等待真实验证" tone="info">
               三项定稿能力已经由运行中的语音代理报告；完成一次实际听写并收到 Final 后，这里会显示真实定稿耗时。
             </InlineNotice>
+          ) : booleanValue(lastRecognition.thirdPassApplied) ? (
+            <InlineNotice title="已执行独立第三遍校对" tone="success">
+              {thirdPassResultSummary(lastRecognition)}
+            </InlineNotice>
+          ) : booleanValue(lastRecognition.thirdPassRequested) ? (
+            <InlineNotice title="第三遍校对失败，已保留火山 Final" tone="warning">
+              {stringValue(lastRecognition.thirdPassError, '校对服务没有返回可安全采用的独立文本。')}
+            </InlineNotice>
           ) : lastRecognition.finalRevisedPartial !== true && lastRecognition.localSmoothingApplied !== true ? (
-            <InlineNotice title="本次定稿没有修订文本" tone="info">
-              二遍识别已执行，但最终稿与临时稿相同。容易混淆的项目词请加入上方热词；这比把“已请求”误写成“已纠错”更准确。
+            <InlineNotice title="火山 Final 与临时稿相同" tone="info">
+              已记录响应阶段及 utterances/additions 元数据；下次相同情况会自动进入独立第三遍文字校对。
+            </InlineNotice>
+          ) : null}
+          {booleanValue(lastRecognition.finalReceived) && stringValue(lastRecognition.providerResponseStage) ? (
+            <InlineNotice title="火山响应证据" tone="info">
+              {providerMetadataDetail(lastRecognition)}
             </InlineNotice>
           ) : null}
         </ManagementSection>
@@ -623,13 +636,38 @@ function finalRevisionLabel(
   return booleanValue(last.finalRevisedPartial) ? '本次有修订' : '本次无变化';
 }
 
-function smoothingLabel(
+function thirdPassLabel(
   deployed: Record<string, unknown>,
   last: Record<string, unknown>,
   state: string,
 ): string {
-  if (booleanValue(last.localSmoothingApplied)) return '本次已整理';
-  return requestedCapabilityLabel(deployed.semanticSmoothing, state);
+  if (booleanValue(last.thirdPassApplied)) {
+    return booleanValue(last.thirdPassChanged) ? '本次已纠错' : '本次无需改动';
+  }
+  if (booleanValue(last.thirdPassRequested)) return '本次执行失败';
+  if (booleanValue(last.finalReceived)) return '本次未触发';
+  return enabledCapabilityLabel(deployed.thirdPassRefinement, state) === '已启用'
+    ? '已启用，等待触发'
+    : deployedLabel(deployed.thirdPassRefinement, state);
+}
+
+function thirdPassDetail(last: Record<string, unknown>): string {
+  if (booleanValue(last.thirdPassApplied)) {
+    const latency = durationLabel(last.thirdPassLatencyMs);
+    const model = stringValue(last.thirdPassModel);
+    return model ? `${latency} · ${model}` : latency;
+  }
+  if (booleanValue(last.thirdPassRequested)) return '失败时保留火山 Final，不污染已输入文字';
+  return '火山 Final 与临时稿相同时，交给无工具 Pi Session 做保守校对';
+}
+
+function thirdPassTone(
+  deployed: Record<string, unknown>,
+  last: Record<string, unknown>,
+): VoiceStatusTone {
+  if (booleanValue(last.thirdPassApplied)) return 'success';
+  if (booleanValue(last.thirdPassRequested)) return 'warning';
+  return deployedTone(deployed.thirdPassRefinement);
 }
 
 function replacementLabel(
@@ -674,4 +712,42 @@ function finalLatencyLabel(value: unknown): string {
     return '尚无实际听写数据';
   }
   return `定稿用时 ${Math.round(value)} 毫秒`;
+}
+
+function durationLabel(value: unknown): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return '耗时未记录';
+  }
+  return `${Math.round(value)} 毫秒`;
+}
+
+function providerResponseSummary(last: Record<string, unknown>): string {
+  const latency = finalLatencyLabel(last.finalLatencyMs);
+  const stage = stringValue(last.providerResponseStage);
+  const count = typeof last.providerResponseCount === 'number' ? last.providerResponseCount : 0;
+  if (!stage) return latency;
+  return `${latency} · ${stage}${count > 0 ? ` · ${count} 帧响应` : ''}`;
+}
+
+function providerMetadataDetail(last: Record<string, unknown>): string {
+  const stages = stringArray(last.providerResponseStages);
+  const utterances = Array.isArray(last.providerUtteranceMetadata)
+    ? last.providerUtteranceMetadata.length
+    : 0;
+  const additions = Object.keys(asRecord(last.providerAdditionFields));
+  const sequence = typeof last.providerResponseSequence === 'number'
+    ? `；最终序号 ${last.providerResponseSequence}`
+    : '';
+  const stageText = stages.length > 0 ? stages.join(' → ') : stringValue(last.providerResponseStage, '未知');
+  const additionText = additions.length > 0 ? additions.join('、') : '无';
+  return `阶段 ${stageText}${sequence}；utterances ${utterances} 条；additions 字段：${additionText}。转写正文不会写入诊断元数据。`;
+}
+
+function thirdPassResultSummary(last: Record<string, unknown>): string {
+  const changed = booleanValue(last.thirdPassChanged)
+    ? '独立校对稿已替换火山 Final'
+    : '独立校对确认无需修改';
+  const latency = durationLabel(last.thirdPassLatencyMs);
+  const model = stringValue(last.thirdPassModel);
+  return `${changed}；耗时 ${latency}${model ? `；模型 ${model}` : ''}。`;
 }

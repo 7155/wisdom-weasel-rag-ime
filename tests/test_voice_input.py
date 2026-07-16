@@ -88,6 +88,8 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("let recognition: VoiceRecognitionContract?", status)
         self.assertIn("semanticSmoothing: true", status)
         self.assertIn("fullResultReplacement: true", status)
+        self.assertIn("providerResponseMetadata: true", status)
+        self.assertIn("thirdPassRefinement: true", status)
         self.assertIn("voice-agent-status.json", status)
         self.assertIn(".posixPermissions: 0o600", status)
         for marker in (
@@ -111,9 +113,14 @@ class VoiceInputTests(unittest.TestCase):
         partial_start = coordinator.index("case .partial(let text):")
         final_start = coordinator.index("case .final(let text):", partial_start)
         failure_start = coordinator.index("case .failure(let message):", final_start)
+        complete_start = coordinator.index("private func completeFinal(")
+        complete_end = coordinator.index("@discardableResult", complete_start)
         self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[partial_start:final_start])
-        self.assertIn("recordCommittedVoiceTextIfNeeded(finalText)", coordinator[final_start:failure_start])
-        self.assertIn("if interactionSource == .hotkey", coordinator[final_start:failure_start])
+        self.assertIn("completeFinal(", coordinator[final_start:failure_start])
+        self.assertIn("recordCommittedVoiceTextIfNeeded(finalText)", coordinator[complete_start:complete_end])
+        self.assertIn("if interactionSource == .hotkey", coordinator[complete_start:complete_end])
+        self.assertIn("partialText == providerFinalText", coordinator)
+        self.assertIn("VoiceThirdPassRefiner.refine(", coordinator)
         self.assertIn('case agentComposer = "agent_composer"', coordinator)
         self.assertIn('insertion.appBundleIdentifier == "com.rag-ime.control"', coordinator)
         self.assertIn("appBundleIdentifier", insertion)
@@ -437,6 +444,36 @@ enum Harness {
             "result": ["text": "豆包 API 已修正。", "utterances": [["text": "豆包"]]]
         ]
         precondition(VolcengineStreamingASRClient.transcript(from: secondPassJSON) == "豆包 API 已修正。")
+        let metadataJSON: [String: Any] = [
+            "result": [[
+                "text": "不会进入诊断元数据",
+                "utterances": [[
+                    "text": "也不能进入诊断元数据",
+                    "start_time": 0,
+                    "end_time": 133,
+                    "definite": true,
+                ]],
+                "additions": "{\"duration\":133,\"stage\":\"nonstream\"}",
+            ]],
+        ]
+        let metadataFrame = VoiceASRParsedFrame(
+            messageType: .fullServerResponse,
+            flags: VoiceASRFlags.negativeSequence.rawValue,
+            sequence: -17,
+            errorCode: nil,
+            payload: Data()
+        )
+        let metadata = VolcengineStreamingASRClient.responseMetadata(
+            from: metadataJSON,
+            frame: metadataFrame
+        )
+        precondition(metadata.stage == "nonstream")
+        precondition(metadata.sequence == -17)
+        precondition(metadata.isFinalFrame)
+        precondition(metadata.utteranceMetadata.count == 1)
+        precondition(metadata.utteranceMetadata[0]["end_time"] == "133")
+        precondition(metadata.utteranceMetadata[0]["text"] == nil)
+        precondition(metadata.additionFields["duration"] == "133")
 
         let hotwords = try! VoiceASRHotwordConfig.validated(
             enabled: true,

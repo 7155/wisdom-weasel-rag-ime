@@ -406,6 +406,7 @@ class AgentSessionStore:
             "subagent-readonly-v1",
             "subagent-worker-v1",
             "ime-surface-v1",
+            "voice-refinement-v1",
         }:
             raise ValueError("unsupported Agent tool profile")
         current = self.get(session_id)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import hashlib
 import json
 import threading
@@ -21,6 +22,8 @@ from .text_utils import compact_whitespace
 
 SURFACE_TOOL_PROFILE = "ime-surface-v1"
 SURFACE_SESSION_TITLE_PREFIX = "输入法联想"
+VOICE_REFINEMENT_TOOL_PROFILE = "voice-refinement-v1"
+VOICE_REFINEMENT_SESSION_TITLE_PREFIX = "语音定稿"
 _MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
 _SUPPORTED_SCREENSHOT_TYPES = {"image/jpeg", "image/png"}
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -199,6 +202,65 @@ class AgentSurfaceRuntime:
             "visualContextUsed": bool(visual),
         }
 
+    def refine_voice(self, payload: Mapping[str, object]) -> dict[str, object]:
+        if str(payload.get("privacyDisposition") or "") != "allowed":
+            raise ValueError("voice refinement requires allowed foreground privacy")
+        request_id = _bounded_text(payload.get("requestId"), maximum=200)
+        if not request_id:
+            raise ValueError("voice refinement requestId is required")
+        transcript = str(payload.get("transcript") or "").strip()[:12_000]
+        if not transcript:
+            raise ValueError("voice refinement transcript is required")
+        app = _bounded_text(payload.get("frontAppBundleId"), maximum=300) or "unknown"
+        hotwords = _bounded_string_list(
+            payload.get("hotwords"),
+            maximum_items=32,
+            maximum_chars=32,
+        )
+        session = self._internal_session(
+            app,
+            title_prefix=VOICE_REFINEMENT_SESSION_TITLE_PREFIX,
+            tool_profile=VOICE_REFINEMENT_TOOL_PROFILE,
+        )
+        session_id = str(session["id"])
+        timeout_seconds = max(
+            1.0,
+            min(30.0, int(payload.get("latencyBudgetMs") or 8_000) / 1000),
+        )
+        prompt = _voice_refinement_prompt(transcript, hotwords=hotwords)
+
+        with self._session_lock(session_id):
+            with self._lock:
+                self._active_requests[request_id] = session_id
+            try:
+                accepted = self.agent.runtime.prompt(
+                    session_id,
+                    prompt,
+                    images=[],
+                    client_message_id=request_id,
+                )
+                turn_id = str(accepted.get("turnId") or "")
+                if not turn_id:
+                    raise RuntimeError("Pi did not return a voice refinement turn id")
+                raw_text = self._wait_for_turn(session_id, turn_id, timeout_seconds=timeout_seconds)
+            finally:
+                with self._lock:
+                    self._active_requests.pop(request_id, None)
+        refined = _validated_voice_refinement(raw_text, source=transcript)
+        selected = self.agent.runtime.model_catalog(session_id).get("selected")
+        model = (
+            f"{selected.get('provider')}/{selected.get('id')}"
+            if isinstance(selected, Mapping)
+            else ""
+        )
+        return {
+            "schemaVersion": "rag-ime.voice-refinement.v1",
+            "ok": True,
+            "text": refined,
+            "changed": refined != transcript,
+            "model": model,
+        }
+
     def cancel(self, payload: Mapping[str, object]) -> dict[str, object]:
         request_id = _bounded_text(payload.get("requestId"), maximum=200)
         with self._lock:
@@ -212,7 +274,20 @@ class AgentSurfaceRuntime:
         }
 
     def _surface_session(self, app: str) -> Mapping[str, object]:
-        title = _surface_session_title(app)
+        return self._internal_session(
+            app,
+            title_prefix=SURFACE_SESSION_TITLE_PREFIX,
+            tool_profile=SURFACE_TOOL_PROFILE,
+        )
+
+    def _internal_session(
+        self,
+        app: str,
+        *,
+        title_prefix: str,
+        tool_profile: str,
+    ) -> Mapping[str, object]:
+        title = _internal_session_title(app, title_prefix=title_prefix)
         with self._lock:
             for session in self.agent.sessions.list(
                 include_archived=False,
@@ -221,7 +296,7 @@ class AgentSurfaceRuntime:
             ):
                 if (
                     session.get("sessionKind") == "subagent_runtime"
-                    and session.get("toolProfileVersion") == SURFACE_TOOL_PROFILE
+                    and session.get("toolProfileVersion") == tool_profile
                     and session.get("title") == title
                 ):
                     return session
@@ -232,13 +307,13 @@ class AgentSurfaceRuntime:
                 role_version="1",
                 model_profile=self.agent.runtime_factory.default_model_profile,
                 thinking_level="minimal",
-                tool_profile_version=SURFACE_TOOL_PROFILE,
+                tool_profile_version=tool_profile,
                 session_kind="subagent_runtime",
             )
             return self.agent.sessions.set_runtime_policy(
                 str(session["id"]),
                 mode="assistant",
-                tool_profile_version=SURFACE_TOOL_PROFILE,
+                tool_profile_version=tool_profile,
                 allowed_tools=[],
                 workspace_roots=[],
             )
@@ -305,8 +380,68 @@ class AgentSurfaceRuntime:
 
 
 def _surface_session_title(app: str) -> str:
+    return _internal_session_title(app, title_prefix=SURFACE_SESSION_TITLE_PREFIX)
+
+
+def _internal_session_title(app: str, *, title_prefix: str) -> str:
     digest = hashlib.sha256(app.encode("utf-8")).hexdigest()[:12]
-    return f"{SURFACE_SESSION_TITLE_PREFIX} · {digest}"
+    return f"{title_prefix} · {digest}"
+
+
+def _voice_refinement_prompt(transcript: str, *, hotwords: list[str]) -> str:
+    return (
+        "你是语音转写的第三遍文字校对器。只输出校对后的原文，不解释，不回答原文中的问题，不使用 Markdown。\n"
+        "只允许：修正有把握的同音或近音误识别、删除口头重复和无意义语气词、整理标点与空格。\n"
+        "必须保留原意、事实、语气、人称、数字、英文、代码和专有名词；不得扩写、总结、补充信息或改变立场。\n"
+        f"优先词表：{json.dumps(hotwords, ensure_ascii=False)}\n"
+        "<transcript>\n"
+        f"{transcript}\n"
+        "</transcript>"
+    )
+
+
+def _validated_voice_refinement(value: str, *, source: str) -> str:
+    refined = str(value or "").strip()
+    if refined.startswith("```") and refined.endswith("```"):
+        lines = refined.splitlines()
+        refined = "\n".join(lines[1:-1]).strip()
+    for prefix in ("校对结果：", "校对结果:", "修订结果：", "修订结果:", "结果：", "结果:"):
+        if refined.startswith(prefix):
+            refined = refined[len(prefix) :].strip()
+            break
+    if len(refined) < max(1, int(len(source) * 0.55)) or len(refined) > max(
+        len(source) + 24,
+        int(len(source) * 1.3),
+    ):
+        raise ValueError("voice refinement changed transcript length beyond the safe boundary")
+    source_compact = "".join(source.split())
+    refined_compact = "".join(refined.split())
+    similarity = difflib.SequenceMatcher(None, source_compact, refined_compact).ratio()
+    if similarity < 0.5:
+        raise ValueError("voice refinement diverged from the source transcript")
+    return refined
+
+
+def _bounded_string_list(
+    value: object,
+    *,
+    maximum_items: int,
+    maximum_chars: int,
+) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        normalized = _bounded_text(item, maximum=maximum_chars)
+        key = normalized.casefold()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+        if len(result) >= maximum_items:
+            break
+    return result
 
 
 def validate_visual_context(value: object) -> dict[str, object]:

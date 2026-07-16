@@ -300,6 +300,41 @@ def read_voice_control_status(
                 "finalLatencyMs": _optional_nonnegative_int(telemetry.get("finalLatencyMs")),
                 "finalRevisedPartial": telemetry.get("finalRevisedPartial") is True,
                 "localSmoothingApplied": telemetry.get("localSmoothingApplied") is True,
+                "providerResponseStage": _text(telemetry.get("providerResponseStage"))[:80],
+                "providerResponseStages": _bounded_text_list(
+                    telemetry.get("providerResponseStages"),
+                    maximum_items=24,
+                    maximum_chars=80,
+                ),
+                "providerResponseCount": _nonnegative_int(
+                    telemetry.get("providerResponseCount")
+                ),
+                "providerResponseSequence": _optional_int(
+                    telemetry.get("providerResponseSequence")
+                ),
+                "providerFinalFrame": telemetry.get("providerFinalFrame") is True,
+                "providerResultFields": _bounded_text_list(
+                    telemetry.get("providerResultFields"),
+                    maximum_items=32,
+                    maximum_chars=80,
+                ),
+                "providerUtteranceMetadata": _bounded_metadata_list(
+                    telemetry.get("providerUtteranceMetadata"),
+                    maximum_items=16,
+                    maximum_fields=12,
+                ),
+                "providerAdditionFields": _bounded_metadata(
+                    telemetry.get("providerAdditionFields"),
+                    maximum_fields=24,
+                ),
+                "thirdPassRequested": telemetry.get("thirdPassRequested") is True,
+                "thirdPassApplied": telemetry.get("thirdPassApplied") is True,
+                "thirdPassChanged": telemetry.get("thirdPassChanged") is True,
+                "thirdPassLatencyMs": _optional_nonnegative_int(
+                    telemetry.get("thirdPassLatencyMs")
+                ),
+                "thirdPassModel": _text(telemetry.get("thirdPassModel"))[:160],
+                "thirdPassError": _text(telemetry.get("thirdPassError"))[:300],
                 "partialRevisionCount": _nonnegative_int(telemetry.get("partialRevisionCount")),
                 "droppedPcmFrameCount": _nonnegative_int(telemetry.get("droppedPCMFrameCount")),
             },
@@ -368,6 +403,8 @@ def _deployed_recognition_contract(
             "secondPass": False,
             "semanticSmoothing": False,
             "fullResultReplacement": False,
+            "providerResponseMetadata": False,
+            "thirdPassRefinement": False,
             "reportedByAgent": False,
             "state": "missing",
             "reason": "installed voice binary is missing",
@@ -380,6 +417,8 @@ def _deployed_recognition_contract(
             "secondPass": False,
             "semanticSmoothing": False,
             "fullResultReplacement": False,
+            "providerResponseMetadata": False,
+            "thirdPassRefinement": False,
             "reportedByAgent": False,
             "state": "unreadable",
             "reason": "installed voice binary is unreadable",
@@ -407,7 +446,23 @@ def _deployed_recognition_contract(
         or marker_capabilities.get("fullResultReplacement") is True
         or b"fullResultReplacement" in binary
     )
-    all_capabilities = second_pass and semantic_smoothing and full_result_replacement
+    provider_response_metadata = (
+        reported.get("providerResponseMetadata") is True
+        or marker_capabilities.get("providerResponseMetadata") is True
+        or b"providerResponseStage" in binary
+    )
+    third_pass_refinement = (
+        reported.get("thirdPassRefinement") is True
+        or marker_capabilities.get("thirdPassRefinement") is True
+        or b"thirdPassRequested" in binary
+    )
+    all_capabilities = (
+        second_pass
+        and semantic_smoothing
+        and full_result_replacement
+        and provider_response_metadata
+        and third_pass_refinement
+    )
     if reported_by_agent:
         state = "ready" if all_capabilities else "unsupported"
         reason = "running voice agent reported its recognition contract"
@@ -426,6 +481,8 @@ def _deployed_recognition_contract(
         # field names remain a build-time fallback before the agent restarts.
         "semanticSmoothing": semantic_smoothing,
         "fullResultReplacement": full_result_replacement,
+        "providerResponseMetadata": provider_response_metadata,
+        "thirdPassRefinement": third_pass_refinement,
         "reportedByAgent": reported_by_agent,
         "state": state,
         "reason": reason,
@@ -477,3 +534,60 @@ def _optional_nonnegative_int(value: object) -> int | None:
     if value is None:
         return None
     return _nonnegative_int(value)
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bounded_text_list(
+    value: object,
+    *,
+    maximum_items: int,
+    maximum_chars: int,
+) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        _text(item)[:maximum_chars]
+        for item in value[:maximum_items]
+        if _text(item)
+    ]
+
+
+def _bounded_metadata(
+    value: object,
+    *,
+    maximum_fields: int,
+) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    for key in sorted(value, key=lambda item: str(item)):
+        if len(result) >= maximum_fields:
+            break
+        normalized_key = _text(key)[:80]
+        normalized_value = _text(value[key])[:160]
+        if normalized_key and normalized_value:
+            result[normalized_key] = normalized_value
+    return result
+
+
+def _bounded_metadata_list(
+    value: object,
+    *,
+    maximum_items: int,
+    maximum_fields: int,
+) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        _bounded_metadata(item, maximum_fields=maximum_fields)
+        for item in value[:maximum_items]
+        if isinstance(item, Mapping)
+    ]

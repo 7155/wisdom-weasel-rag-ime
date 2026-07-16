@@ -1,5 +1,14 @@
 import Foundation
 
+struct VoiceASRResponseMetadata: Codable, Equatable, Sendable {
+    let stage: String
+    let sequence: Int?
+    let isFinalFrame: Bool
+    let resultFields: [String]
+    let utteranceMetadata: [[String: String]]
+    let additionFields: [String: String]
+}
+
 protocol VoiceStreamingASRClient: AnyObject {
     func start()
     func appendPCM(_ data: Data)

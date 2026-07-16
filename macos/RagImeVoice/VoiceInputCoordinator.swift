@@ -30,6 +30,7 @@ final class VoiceInputCoordinator {
     private var hotkeyInstalled = false
     private var sessionGeneration = 0
     private var finalTimeout: DispatchWorkItem?
+    private var thirdPassTask: URLSessionDataTask?
     private var telemetry = VoiceSessionTelemetry.idle
     private var releasedAtMs: Int?
     private var committedVoiceTextRecorded = false
@@ -57,7 +58,9 @@ final class VoiceInputCoordinator {
         case .idle: return VoiceAudioRecorder.permissionGranted ? "语音输入已就绪" : "首次使用时申请麦克风权限"
         case .starting: return "正在启动语音输入"
         case .recording: return interactionSource == .agentComposer ? "正在向智鼬输入" : "正在听写"
-        case .finalizing: return interactionSource == .agentComposer ? "正在整理对话草稿" : "正在等待最终定稿"
+        case .finalizing:
+            if thirdPassTask != nil { return "正在进行第三遍文字校对" }
+            return interactionSource == .agentComposer ? "正在整理对话草稿" : "正在等待最终定稿"
         }
     }
 
@@ -267,25 +270,45 @@ final class VoiceInputCoordinator {
             finalTimeout?.cancel()
             finalTimeout = nil
             let providerFinalText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let finalText = VoiceFinalTextNormalizer.normalize(providerFinalText)
-            guard !finalText.isEmpty else {
+            let locallySmoothedText = VoiceFinalTextNormalizer.normalize(providerFinalText)
+            guard !locallySmoothedText.isEmpty else {
                 fail("没有识别到语音")
                 return
             }
             let partialText = reconciler.currentText
-            guard apply(text: finalText, isFinal: true) else { return }
-            telemetry = updatingTelemetry(
-                networkState: "completed",
-                finalLatencyMs: releasedAtMs.map { max(0, nowMs - $0) },
-                finalReceived: true,
-                finalRevisedPartial: !partialText.isEmpty && partialText != finalText,
-                localSmoothingApplied: providerFinalText != finalText
-            )
-            if interactionSource == .hotkey {
-                recordCommittedVoiceTextIfNeeded(finalText)
+            let providerFinalLatencyMs = releasedAtMs.map { max(0, nowMs - $0) }
+            let shouldRunThirdPass = credentials?.provider == .nativeStreaming
+                && !partialText.isEmpty
+                && partialText == providerFinalText
+            if shouldRunThirdPass {
+                startThirdPass(
+                    providerFinalText: providerFinalText,
+                    locallySmoothedText: locallySmoothedText,
+                    partialText: partialText,
+                    providerFinalLatencyMs: providerFinalLatencyMs
+                )
+                return
             }
-            overlay.showDone(finalText)
-            finishSession()
+            completeFinal(
+                providerFinalText: providerFinalText,
+                finalText: locallySmoothedText,
+                partialText: partialText,
+                providerFinalLatencyMs: providerFinalLatencyMs
+            )
+        case .responseMetadata(let metadata):
+            telemetry.providerResponseStage = metadata.stage
+            var stages = telemetry.providerResponseStages ?? []
+            if stages.count < 24 {
+                stages.append(metadata.stage)
+            }
+            telemetry.providerResponseStages = stages
+            telemetry.providerResponseCount = (telemetry.providerResponseCount ?? 0) + 1
+            telemetry.providerResponseSequence = metadata.sequence
+            telemetry.providerFinalFrame = metadata.isFinalFrame
+            telemetry.providerResultFields = metadata.resultFields
+            telemetry.providerUtteranceMetadata = metadata.utteranceMetadata
+            telemetry.providerAdditionFields = metadata.additionFields
+            onStateChanged?()
         case .failure(let message):
             telemetry = updatingTelemetry(networkState: "failed")
             finalTimeout?.cancel()
@@ -302,6 +325,93 @@ final class VoiceInputCoordinator {
             telemetry = updatingTelemetry(networkState: networkState)
             onStateChanged?()
         }
+    }
+
+    private func startThirdPass(
+        providerFinalText: String,
+        locallySmoothedText: String,
+        partialText: String,
+        providerFinalLatencyMs: Int?
+    ) {
+        guard let insertion else {
+            completeFinal(
+                providerFinalText: providerFinalText,
+                finalText: locallySmoothedText,
+                partialText: partialText,
+                providerFinalLatencyMs: providerFinalLatencyMs
+            )
+            return
+        }
+        let generation = sessionGeneration
+        let startedAtMs = nowMs
+        let requestID = "voice-\(UUID().uuidString.lowercased())"
+        telemetry = updatingTelemetry(
+            networkState: "third_pass",
+            finalLatencyMs: providerFinalLatencyMs,
+            finalReceived: true,
+            finalRevisedPartial: false,
+            localSmoothingApplied: providerFinalText != locallySmoothedText
+        )
+        telemetry.thirdPassRequested = true
+        thirdPassTask = VoiceThirdPassRefiner.refine(
+            transcript: locallySmoothedText,
+            appBundleIdentifier: insertion.appBundleIdentifier,
+            hotwords: hotwordConfig.effectiveWords,
+            requestID: requestID
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, generation == self.sessionGeneration, self.state == .finalizing else { return }
+                self.thirdPassTask = nil
+                let latency = max(0, self.nowMs - startedAtMs)
+                switch result {
+                case .success(let refinement):
+                    self.telemetry.thirdPassApplied = true
+                    self.telemetry.thirdPassChanged = refinement.changed
+                    self.telemetry.thirdPassLatencyMs = latency
+                    self.telemetry.thirdPassModel = refinement.model
+                    self.completeFinal(
+                        providerFinalText: providerFinalText,
+                        finalText: VoiceFinalTextNormalizer.normalize(refinement.text),
+                        partialText: partialText,
+                        providerFinalLatencyMs: providerFinalLatencyMs
+                    )
+                case .failure(let error):
+                    self.telemetry.thirdPassApplied = false
+                    self.telemetry.thirdPassChanged = false
+                    self.telemetry.thirdPassLatencyMs = latency
+                    self.telemetry.thirdPassError = error.localizedDescription
+                    self.completeFinal(
+                        providerFinalText: providerFinalText,
+                        finalText: locallySmoothedText,
+                        partialText: partialText,
+                        providerFinalLatencyMs: providerFinalLatencyMs
+                    )
+                }
+            }
+        }
+        overlay.showFinalizing()
+        onStateChanged?()
+    }
+
+    private func completeFinal(
+        providerFinalText: String,
+        finalText: String,
+        partialText: String,
+        providerFinalLatencyMs: Int?
+    ) {
+        guard apply(text: finalText, isFinal: true) else { return }
+        telemetry = updatingTelemetry(
+            networkState: "completed",
+            finalLatencyMs: providerFinalLatencyMs,
+            finalReceived: true,
+            finalRevisedPartial: !partialText.isEmpty && partialText != finalText,
+            localSmoothingApplied: providerFinalText != VoiceFinalTextNormalizer.normalize(providerFinalText)
+        )
+        if interactionSource == .hotkey {
+            recordCommittedVoiceTextIfNeeded(finalText)
+        }
+        overlay.showDone(finalText)
+        finishSession()
     }
 
     @discardableResult
@@ -360,6 +470,8 @@ final class VoiceInputCoordinator {
         hotkeyPressed = false
         finalTimeout?.cancel()
         finalTimeout = nil
+        thirdPassTask?.cancel()
+        thirdPassTask = nil
         recorder.stop()
         asr?.cancel()
         if let removal = reconciler.clear() { try? insertion?.apply(removal) }
@@ -370,11 +482,15 @@ final class VoiceInputCoordinator {
     private func fail(_ message: String) {
         recorder.stop()
         asr?.cancel()
+        thirdPassTask?.cancel()
+        thirdPassTask = nil
         overlay.showError(message, anchor: insertion?.anchorPoint)
         finishSession()
     }
 
     private func finishSession() {
+        thirdPassTask?.cancel()
+        thirdPassTask = nil
         recorder.onPCM = nil
         recorder.onLevel = nil
         asr = nil
@@ -436,7 +552,21 @@ final class VoiceInputCoordinator {
             partialRevisionCount: partialRevisionCount ?? telemetry.partialRevisionCount,
             finalReceived: finalReceived ?? telemetry.finalReceived,
             finalRevisedPartial: finalRevisedPartial ?? telemetry.finalRevisedPartial,
-            localSmoothingApplied: localSmoothingApplied ?? telemetry.localSmoothingApplied
+            localSmoothingApplied: localSmoothingApplied ?? telemetry.localSmoothingApplied,
+            providerResponseStage: telemetry.providerResponseStage,
+            providerResponseStages: telemetry.providerResponseStages,
+            providerResponseCount: telemetry.providerResponseCount,
+            providerResponseSequence: telemetry.providerResponseSequence,
+            providerFinalFrame: telemetry.providerFinalFrame,
+            providerResultFields: telemetry.providerResultFields,
+            providerUtteranceMetadata: telemetry.providerUtteranceMetadata,
+            providerAdditionFields: telemetry.providerAdditionFields,
+            thirdPassRequested: telemetry.thirdPassRequested,
+            thirdPassApplied: telemetry.thirdPassApplied,
+            thirdPassChanged: telemetry.thirdPassChanged,
+            thirdPassLatencyMs: telemetry.thirdPassLatencyMs,
+            thirdPassModel: telemetry.thirdPassModel,
+            thirdPassError: telemetry.thirdPassError
         )
     }
 }

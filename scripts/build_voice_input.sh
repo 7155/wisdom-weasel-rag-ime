@@ -55,6 +55,8 @@ target.write_text(
                 "finalSecondPass": True,
                 "semanticSmoothing": True,
                 "fullResultReplacement": True,
+                "providerResponseMetadata": True,
+                "thirdPassRefinement": True,
             },
         },
         ensure_ascii=False,

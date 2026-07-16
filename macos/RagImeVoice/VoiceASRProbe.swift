@@ -12,7 +12,7 @@ enum VoiceASRProbe {
             switch event {
             case .partial(let text), .final(let text): finalText = text
             case .failure(let message): failure = message
-            case .transport: break
+            case .responseMetadata, .transport: break
             }
         }
 
@@ -43,7 +43,7 @@ enum VoiceASRProbe {
             resultBox.apply(event)
             switch event {
             case .final, .failure: completed.signal()
-            case .partial, .transport: break
+            case .partial, .responseMetadata, .transport: break
             }
         }
         client.start()

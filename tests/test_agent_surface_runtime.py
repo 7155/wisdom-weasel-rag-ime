@@ -12,6 +12,8 @@ from rag_ime.agent_surface_runtime import (
     AgentSurfaceRuntime,
     PiSurfaceCompletionProvider,
     SURFACE_TOOL_PROFILE,
+    VOICE_REFINEMENT_TOOL_PROFILE,
+    _validated_voice_refinement,
 )
 from rag_ime.deepseek_completion import DeepSeekCompletionRequest
 
@@ -21,6 +23,7 @@ class _SurfaceRuntimeStub:
         self.events = events
         self.prompt_session_ids: list[str] = []
         self.images: list[list[dict[str, str]]] = []
+        self.messages: list[str] = []
         self.selected = {
             "provider": "test",
             "id": "text-only",
@@ -36,17 +39,23 @@ class _SurfaceRuntimeStub:
         ]
 
     def prompt(self, session_id, message, *, images=None, client_message_id=""):
-        del message, client_message_id
+        del client_message_id
         turn_id = f"turn-{len(self.prompt_session_ids) + 1}"
         self.prompt_session_ids.append(session_id)
+        self.messages.append(message)
         self.images.append([dict(item) for item in images or []])
+        answer = (
+            "这个项目在哪里注入这些工具？如果使用自定义配置，就要把工具和功能都注入进去，对吧？"
+            if "第三遍文字校对器" in message
+            else "继续完成这段文字。"
+        )
         self.events.publish(
             session_id,
             "message_completed",
             {
                 "message": {
                     "role": "assistant",
-                    "blocks": [{"type": "text", "data": {"text": "继续完成这段文字。"}}],
+                    "blocks": [{"type": "text", "data": {"text": answer}}],
                 }
             },
             turn_id=turn_id,
@@ -132,6 +141,35 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.selected["id"], "gpt-5.6-luna")
         self.assertEqual(self.runtime.images[0][0]["mimeType"], "image/jpeg")
         self.assertEqual(base64.b64decode(self.runtime.images[0][0]["data"]), b"jpeg-fixture")
+
+    def test_voice_refinement_uses_separate_tool_free_session_and_preserves_scope(self) -> None:
+        source = "这个项目是在哪里注入这些工具的？如果你要是用自使用自定义的话，就得把工具和功能都注入进去，对吧？"
+
+        result = self.surface.refine_voice(
+            {
+                "privacyDisposition": "allowed",
+                "requestId": "voice-refine-1",
+                "frontAppBundleId": "com.example.Editor",
+                "transcript": source,
+                "hotwords": ["Pi", "Tool", "Skill"],
+                "latencyBudgetMs": 2_000,
+            }
+        )
+
+        self.assertTrue(result["changed"])
+        self.assertIn("自定义配置", result["text"])
+        self.assertIn("第三遍文字校对器", self.runtime.messages[-1])
+        hidden = self.sessions.list(include_internal=True)
+        self.assertEqual(len(hidden), 1)
+        self.assertEqual(hidden[0]["toolProfileVersion"], VOICE_REFINEMENT_TOOL_PROFILE)
+        self.assertEqual(hidden[0]["allowedTools"], [])
+
+    def test_voice_refinement_rejects_answer_or_large_semantic_drift(self) -> None:
+        with self.assertRaises(ValueError):
+            _validated_voice_refinement(
+                "当然可以。首先需要修改系统提示词，然后注册工具。",
+                source="这个项目是在哪里注入这些工具的？",
+            )
 
 
 if __name__ == "__main__":

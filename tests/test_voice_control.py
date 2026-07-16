@@ -57,12 +57,32 @@ class VoiceHotwordValidationTests(unittest.TestCase):
                             "finalSecondPass": True,
                             "semanticSmoothing": True,
                             "fullResultReplacement": True,
+                            "providerResponseMetadata": True,
+                            "thirdPassRefinement": True,
                         },
                         "telemetry": {
                             "finalReceived": True,
                             "finalLatencyMs": 116,
                             "finalRevisedPartial": True,
                             "localSmoothingApplied": True,
+                            "providerResponseStage": "nonstream",
+                            "providerResponseStages": ["stream_snapshot", "nonstream"],
+                            "providerResponseCount": 2,
+                            "providerResponseSequence": -17,
+                            "providerFinalFrame": True,
+                            "providerResultFields": ["additions", "utterances"],
+                            "providerUtteranceMetadata": [
+                                {"start_time": "0", "end_time": "116", "definite": "true"}
+                            ],
+                            "providerAdditionFields": {
+                                "duration": "116",
+                                "result_type": "nonstream",
+                            },
+                            "thirdPassRequested": True,
+                            "thirdPassApplied": True,
+                            "thirdPassChanged": True,
+                            "thirdPassLatencyMs": 842,
+                            "thirdPassModel": "gpt/gpt-5.6-luna",
                             "partialRevisionCount": 42,
                             "droppedPCMFrameCount": 0,
                         },
@@ -83,11 +103,21 @@ class VoiceHotwordValidationTests(unittest.TestCase):
             self.assertTrue(status["recognition"]["deployed"]["secondPass"])
             self.assertTrue(status["recognition"]["deployed"]["semanticSmoothing"])
             self.assertTrue(status["recognition"]["deployed"]["fullResultReplacement"])
+            self.assertTrue(status["recognition"]["deployed"]["providerResponseMetadata"])
+            self.assertTrue(status["recognition"]["deployed"]["thirdPassRefinement"])
             self.assertEqual(status["recognition"]["deployed"]["state"], "ready")
             self.assertTrue(status["recognition"]["deployed"]["reportedByAgent"])
             self.assertEqual(status["recognition"]["lastSession"]["finalLatencyMs"], 116)
             self.assertTrue(status["recognition"]["lastSession"]["finalRevisedPartial"])
             self.assertTrue(status["recognition"]["lastSession"]["localSmoothingApplied"])
+            last = status["recognition"]["lastSession"]
+            self.assertEqual(last["providerResponseStage"], "nonstream")
+            self.assertEqual(last["providerResponseStages"], ["stream_snapshot", "nonstream"])
+            self.assertEqual(last["providerResponseSequence"], -17)
+            self.assertEqual(last["providerUtteranceMetadata"][0]["end_time"], "116")
+            self.assertEqual(last["providerAdditionFields"]["duration"], "116")
+            self.assertTrue(last["thirdPassApplied"])
+            self.assertEqual(last["thirdPassModel"], "gpt/gpt-5.6-luna")
 
     def test_old_binary_explains_missing_final_replacement_instead_of_hiding_reason(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-old-build-") as tmp:
@@ -101,6 +131,8 @@ class VoiceHotwordValidationTests(unittest.TestCase):
             self.assertTrue(deployed["secondPass"])
             self.assertFalse(deployed["semanticSmoothing"])
             self.assertFalse(deployed["fullResultReplacement"])
+            self.assertFalse(deployed["providerResponseMetadata"])
+            self.assertFalse(deployed["thirdPassRefinement"])
             self.assertEqual(deployed["state"], "outdated")
             self.assertIn("complete final-result contract", deployed["reason"])
 
@@ -122,6 +154,8 @@ class VoiceHotwordValidationTests(unittest.TestCase):
                             "finalSecondPass": True,
                             "semanticSmoothing": True,
                             "fullResultReplacement": True,
+                            "providerResponseMetadata": True,
+                            "thirdPassRefinement": True,
                         },
                     }
                 ),

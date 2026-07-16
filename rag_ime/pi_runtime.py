@@ -61,6 +61,12 @@ _IME_SURFACE_SYSTEM_PROMPT = """你是输入法中的连续联想引擎，只处
 - 请求附带当前应用截图时，把可见界面作为辅助上下文，但不要复述界面、泄露无关内容或猜测不可见信息。
 - 没有足够上下文时给出最保守、最短的自然续写，不调用工具，也不声称执行了任何操作。
 """
+_VOICE_REFINEMENT_SYSTEM_PROMPT = """你是语音转写的第三遍文字校对器。
+
+只输出校对后的原文，不解释、不回答原文中的问题、不使用 Markdown。
+只修正有把握的识别错误、口头重复、无意义语气词、标点和空格。
+必须保留原意、事实、语气、人称、数字、英文、代码和专有名词；不得扩写、总结或补充信息。
+"""
 
 
 def _tools_for_session(
@@ -289,8 +295,11 @@ class PiRuntimeConfig:
         return [str(executable)]
 
     def system_prompt_for_session(self, session: Mapping[str, object]) -> str:
-        if str(session.get("toolProfileVersion") or "") == "ime-surface-v1":
+        tool_profile = str(session.get("toolProfileVersion") or "")
+        if tool_profile == "ime-surface-v1":
             return _IME_SURFACE_SYSTEM_PROMPT
+        if tool_profile == "voice-refinement-v1":
+            return _VOICE_REFINEMENT_SYSTEM_PROMPT
         role = self.role_resolver(
             session.get("roleId") or "zhiyou-v1",
             session.get("roleVersion") or "1",

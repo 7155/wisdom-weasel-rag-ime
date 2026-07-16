@@ -25,11 +25,15 @@ struct VoiceRecognitionContract: Codable, Equatable {
     let finalSecondPass: Bool
     let semanticSmoothing: Bool
     let fullResultReplacement: Bool
+    let providerResponseMetadata: Bool?
+    let thirdPassRefinement: Bool?
 
     static let current = VoiceRecognitionContract(
         finalSecondPass: true,
         semanticSmoothing: true,
-        fullResultReplacement: true
+        fullResultReplacement: true,
+        providerResponseMetadata: true,
+        thirdPassRefinement: true
     )
 }
 
@@ -45,6 +49,20 @@ struct VoiceSessionTelemetry: Codable, Equatable {
     let finalReceived: Bool
     var finalRevisedPartial: Bool? = nil
     var localSmoothingApplied: Bool? = nil
+    var providerResponseStage: String? = nil
+    var providerResponseStages: [String]? = nil
+    var providerResponseCount: Int? = nil
+    var providerResponseSequence: Int? = nil
+    var providerFinalFrame: Bool? = nil
+    var providerResultFields: [String]? = nil
+    var providerUtteranceMetadata: [[String: String]]? = nil
+    var providerAdditionFields: [String: String]? = nil
+    var thirdPassRequested: Bool? = nil
+    var thirdPassApplied: Bool? = nil
+    var thirdPassChanged: Bool? = nil
+    var thirdPassLatencyMs: Int? = nil
+    var thirdPassModel: String? = nil
+    var thirdPassError: String? = nil
 
     static let idle = VoiceSessionTelemetry(
         networkState: "idle",
