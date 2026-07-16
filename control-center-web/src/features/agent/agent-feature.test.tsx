@@ -81,6 +81,15 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('帮我整理权限模式');
   });
 
+  it('exposes native fork capability without waiting for slower session catalogs', async () => {
+    let resolveTools!: (value: unknown) => void;
+    const slowTools = new Promise<unknown>((resolve) => { resolveTools = resolve; });
+    renderAgent(featureTransport(undefined, () => slowTools));
+
+    expect(await screen.findByRole('button', { name: '创建对话分支' })).toBeEnabled();
+    resolveTools({ ok: true, items: toolCatalog() });
+  });
+
   it('does not offer branches when the active Pi protocol declares them unsupported', async () => {
     const transport = featureTransport(
       undefined,

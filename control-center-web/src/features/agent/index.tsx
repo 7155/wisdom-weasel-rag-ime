@@ -211,11 +211,25 @@ export function AgentFeature() {
     }
     async function loadSessionCatalogs(): Promise<void> {
       setToolCatalogStatus('loading');
-      const [modelResult, commandResult, toolResult, runtimeResult] = await Promise.allSettled([
+      const runtimeRequest = transport.request({ pathId: 'agent.runtime.get' });
+      void runtimeRequest.then(
+        (value) => {
+          if (!active) return;
+          const runtimePayload = isRecord(value) ? value : {};
+          const runtimeCapabilities = isRecord(runtimePayload.capabilities)
+            ? runtimePayload.capabilities
+            : {};
+          setConversationForkAvailable(runtimeCapabilities.conversationFork === true);
+        },
+        () => {
+          if (active) setConversationForkAvailable(false);
+        },
+      );
+      const [modelResult, commandResult, toolResult] = await Promise.allSettled([
         transport.request({ pathId: 'agent.session.models', params: { sessionId: selectedId } }),
         transport.request({ pathId: 'agent.session.commands', params: { sessionId: selectedId } }),
         transport.request({ pathId: 'agent.tools.list', query: { sessionId: selectedId } }),
-        transport.request({ pathId: 'agent.runtime.get' }),
+        runtimeRequest,
       ]);
       if (!active) return;
       const notices: string[] = [];
@@ -241,13 +255,6 @@ export function AgentFeature() {
         setToolCatalogStatus('failed');
         notices.push('工具目录暂时不可用，模型不会获得工具能力。');
       }
-      const runtimePayload = runtimeResult.status === 'fulfilled' && isRecord(runtimeResult.value)
-        ? runtimeResult.value
-        : {};
-      const runtimeCapabilities = isRecord(runtimePayload.capabilities)
-        ? runtimePayload.capabilities
-        : {};
-      setConversationForkAvailable(runtimeCapabilities.conversationFork === true);
       if (notices.length) setError(notices.join(' '));
     }
     void (async () => {
