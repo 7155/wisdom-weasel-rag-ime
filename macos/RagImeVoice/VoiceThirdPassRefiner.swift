@@ -8,6 +8,7 @@ struct VoiceThirdPassResult: Equatable {
 
 enum VoiceThirdPassRefiner {
     private static let endpoint = URL(string: "http://127.0.0.1:8768/api/agent/surface/refine-voice")!
+    private static let latencyBudgetMs = 12_000
 
     @discardableResult
     static func refine(
@@ -24,7 +25,7 @@ enum VoiceThirdPassRefiner {
             "privacyDisposition": "allowed",
             "transcript": transcript,
             "hotwords": Array(hotwords.prefix(32)),
-            "latencyBudgetMs": 8_000,
+            "latencyBudgetMs": latencyBudgetMs,
         ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
             completion(.failure(VoiceThirdPassError.invalidRequest))
@@ -32,7 +33,7 @@ enum VoiceThirdPassRefiner {
         }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 9
+        request.timeoutInterval = 14
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
         let task = URLSession(configuration: .ephemeral).dataTask(with: request) { data, response, error in
