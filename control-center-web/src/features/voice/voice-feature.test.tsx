@@ -252,6 +252,8 @@ function renderVoiceWithHotwordWrites(): MockControlTransport {
             lastSession: {
               finalReceived: true,
               finalLatencyMs: 116,
+              finalRevisedPartial: true,
+              providerFinalRevisedPartial: false,
               providerResponseStage: 'nonstream',
               providerResponseStages: ['stream_snapshot', 'nonstream'],
               providerResponseCount: 2,

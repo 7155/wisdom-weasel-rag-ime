@@ -48,6 +48,7 @@ struct VoiceSessionTelemetry: Codable, Equatable {
     let partialRevisionCount: Int
     let finalReceived: Bool
     var finalRevisedPartial: Bool? = nil
+    var providerFinalRevisedPartial: Bool? = nil
     var localSmoothingApplied: Bool? = nil
     var providerResponseStage: String? = nil
     var providerResponseStages: [String]? = nil

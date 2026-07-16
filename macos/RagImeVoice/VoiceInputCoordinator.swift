@@ -276,6 +276,8 @@ final class VoiceInputCoordinator {
                 return
             }
             let partialText = reconciler.currentText
+            telemetry.providerFinalRevisedPartial = !partialText.isEmpty
+                && partialText != providerFinalText
             let providerFinalLatencyMs = releasedAtMs.map { max(0, nowMs - $0) }
             let shouldRunThirdPass = credentials?.provider == .nativeStreaming
                 && !partialText.isEmpty
@@ -552,6 +554,7 @@ final class VoiceInputCoordinator {
             partialRevisionCount: partialRevisionCount ?? telemetry.partialRevisionCount,
             finalReceived: finalReceived ?? telemetry.finalReceived,
             finalRevisedPartial: finalRevisedPartial ?? telemetry.finalRevisedPartial,
+            providerFinalRevisedPartial: telemetry.providerFinalRevisedPartial,
             localSmoothingApplied: localSmoothingApplied ?? telemetry.localSmoothingApplied,
             providerResponseStage: telemetry.providerResponseStage,
             providerResponseStages: telemetry.providerResponseStages,

@@ -633,7 +633,7 @@ function finalRevisionLabel(
   state: string,
 ): string {
   if (!booleanValue(last.finalReceived)) return requestedCapabilityLabel(deployed.secondPass, state);
-  return booleanValue(last.finalRevisedPartial) ? '本次有修订' : '本次无变化';
+  return booleanValue(last.providerFinalRevisedPartial) ? '火山返回独立修订' : '火山稿无变化';
 }
 
 function thirdPassLabel(

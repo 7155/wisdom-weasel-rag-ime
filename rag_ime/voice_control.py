@@ -299,6 +299,9 @@ def read_voice_control_status(
                 "finalReceived": telemetry.get("finalReceived") is True,
                 "finalLatencyMs": _optional_nonnegative_int(telemetry.get("finalLatencyMs")),
                 "finalRevisedPartial": telemetry.get("finalRevisedPartial") is True,
+                "providerFinalRevisedPartial": (
+                    telemetry.get("providerFinalRevisedPartial") is True
+                ),
                 "localSmoothingApplied": telemetry.get("localSmoothingApplied") is True,
                 "providerResponseStage": _text(telemetry.get("providerResponseStage"))[:80],
                 "providerResponseStages": _bounded_text_list(

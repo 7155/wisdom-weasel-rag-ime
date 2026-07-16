@@ -96,6 +96,7 @@ class VoiceInputTests(unittest.TestCase):
             "networkState",
             "firstPartialLatencyMs",
             "finalLatencyMs",
+            "providerFinalRevisedPartial",
             "pcmFrameCount",
             "droppedPCMFrameCount",
             "partialRevisionCount",

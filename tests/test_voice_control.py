@@ -64,6 +64,7 @@ class VoiceHotwordValidationTests(unittest.TestCase):
                             "finalReceived": True,
                             "finalLatencyMs": 116,
                             "finalRevisedPartial": True,
+                            "providerFinalRevisedPartial": False,
                             "localSmoothingApplied": True,
                             "providerResponseStage": "nonstream",
                             "providerResponseStages": ["stream_snapshot", "nonstream"],
@@ -109,6 +110,9 @@ class VoiceHotwordValidationTests(unittest.TestCase):
             self.assertTrue(status["recognition"]["deployed"]["reportedByAgent"])
             self.assertEqual(status["recognition"]["lastSession"]["finalLatencyMs"], 116)
             self.assertTrue(status["recognition"]["lastSession"]["finalRevisedPartial"])
+            self.assertFalse(
+                status["recognition"]["lastSession"]["providerFinalRevisedPartial"]
+            )
             self.assertTrue(status["recognition"]["lastSession"]["localSmoothingApplied"])
             last = status["recognition"]["lastSession"]
             self.assertEqual(last["providerResponseStage"], "nonstream")
