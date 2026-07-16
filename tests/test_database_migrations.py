@@ -26,7 +26,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                    31, 32, 33, 34, 35, 36, 37, 40,
+                    31, 32, 33, 34, 35, 36, 37, 39, 40,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
@@ -58,6 +58,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_rooms", tables)
             self.assertIn("agent_room_participants", tables)
             self.assertIn("agent_room_events", tables)
+            self.assertIn("agent_room_topics", tables)
+            self.assertIn("agent_room_artifacts", tables)
             self.assertIn("agent_subagent_batches", tables)
             self.assertIn("agent_subagent_runs", tables)
             self.assertIn("agent_subagent_events", tables)
@@ -86,6 +88,8 @@ class DatabaseMigrationTests(unittest.TestCase):
                 for row in conn.execute("PRAGMA table_info(agent_room_participants)")
             }
             self.assertIn("workspace_roots_json", room_columns)
+            self.assertIn("routing_mode", room_columns)
+            self.assertIn("active_topic_id", room_columns)
             self.assertIn("collaboration_role", participant_columns)
             session_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_sessions)")

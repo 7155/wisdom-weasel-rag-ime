@@ -34,7 +34,9 @@ export function RoomStatusPanel({
   const messages = turn?.messageIds.map((id) => projection.messagesById[id]).filter(Boolean) ?? [];
   const attachments = new Set(messages.flatMap((message) => message.message?.attachments ?? []));
   const files = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'file');
-  const artifacts = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'diff' || (block.type === 'file' && Boolean(block.data.artifactId ?? block.data.receiptId)));
+  const deliveredArtifacts = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'diff' || (block.type === 'file' && Boolean(block.data.artifactId ?? block.data.receiptId)));
+  const sharedArtifacts = (room?.artifacts ?? []).filter((artifact) => artifact.status === 'active');
+  const activeTopics = (room?.topics ?? []).filter((topic) => topic.status === 'active');
 
   return (
     <aside aria-hidden={!open} aria-label="Room 状态" className="agent-status-panel room-status-panel" data-open={open} inert={open ? undefined : true}>
@@ -63,12 +65,16 @@ export function RoomStatusPanel({
           {attachments.size || files.length ? <div className="agent-status-files">{attachments.size ? <RoomStatusRow detail="随 Room 消息保存" icon={Paperclip} title={`${attachments.size} 个受管附件`} /> : null}{files.map((block) => <RoomStatusRow detail={text(block.data.mimeType) || '文件'} icon={FileText} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>当前 Room 没有附件或文件</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={artifacts.length} icon={FolderKanban} title="产物">
-          {artifacts.length ? <div className="agent-status-files">{artifacts.map((block) => <RoomStatusRow detail={block.type === 'diff' ? '变更产物' : '文件产物'} icon={FolderKanban} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>本轮还没有可交付产物</RoomStatusEmpty>}
+        <RoomStatusSection count={sharedArtifacts.length + deliveredArtifacts.length} icon={FolderKanban} title="共享资料与产物">
+          {sharedArtifacts.length || deliveredArtifacts.length ? <div className="agent-status-files">{sharedArtifacts.map((artifact) => <RoomStatusRow detail={`${artifact.mediaType || '共享文件'} · ${pathName(artifact.path)}`} icon={FileText} key={artifact.id} title={artifact.displayName} />)}{deliveredArtifacts.map((block) => <RoomStatusRow detail={block.type === 'diff' ? '变更产物' : '文件产物'} icon={FolderKanban} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>当前 Room 还没有共享资料或产物</RoomStatusEmpty>}
+        </RoomStatusSection>
+
+        <RoomStatusSection count={activeTopics.length} icon={GitBranch} title="话题">
+          {activeTopics.length ? <div className="agent-status-files">{activeTopics.map((topic) => <RoomStatusRow detail={topic.id === room?.activeTopicId ? '当前话题' : topic.summary || '可切换话题'} icon={GitBranch} key={topic.id} title={topic.title} />)}</div> : <RoomStatusEmpty>当前 Room 还没有话题</RoomStatusEmpty>}
         </RoomStatusSection>
 
         <RoomStatusSection count={room?.workspaceRoots?.length ?? 0} icon={FolderKanban} title="项目路径">
-          {room?.workspaceRoots?.length ? <div className="agent-status-files">{room.workspaceRoots.map((path) => <RoomStatusRow detail={path} icon={FolderKanban} key={path} title={pathName(path)} />)}</div> : <RoomStatusEmpty>这个旧 Room 尚未绑定项目路径</RoomStatusEmpty>}
+          {room?.workspaceRoots?.length ? <div className="agent-status-files">{room.workspaceRoots.map((path) => <RoomStatusRow detail={path} icon={FolderKanban} key={path} title={pathName(path)} />)}</div> : <RoomStatusEmpty>{room?.roomKind === 'roleplay' ? '角色群聊不绑定项目路径' : '这个旧 Room 尚未绑定项目路径'}</RoomStatusEmpty>}
         </RoomStatusSection>
 
         <RoomStatusSection count={room?.participants.length ?? 0} icon={Bot} title="协作成员">

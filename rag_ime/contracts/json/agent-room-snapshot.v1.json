@@ -104,11 +104,19 @@
           "maxLength": 120
         },
         "status": {"type": "string", "enum": ["active", "archived"]},
+        "roomKind": {"type": "string", "enum": ["collaboration", "roleplay"]},
+        "avatar": {"type": "string", "maxLength": 80},
+        "description": {"type": "string", "maxLength": 500},
+        "scenarioPrompt": {"type": "string", "maxLength": 8000},
         "routingPolicy": {
           "type": "string",
-          "enum": ["manual_mentions", "moderator"]
+          "enum": ["manual_mentions", "moderator", "sequential", "natural", "invite_only"]
         },
+        "routingConfig": {"type": "object"},
         "moderatorParticipantId": {"type": "string"},
+        "nextSpeakerOrdinal": {"type": "integer", "minimum": 0, "maximum": 3},
+        "activeTopicId": {"type": "string"},
+        "configRevision": {"type": "integer", "minimum": 1},
         "workspaceRoots": {
           "type": "array",
           "maxItems": 4,
@@ -123,6 +131,16 @@
           "minItems": 2,
           "maxItems": 4,
           "items": {"$ref": "#/$defs/participant"}
+        },
+        "topics": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {"type": "object"}
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"type": "object"}
         }
       }
     },
@@ -160,6 +178,9 @@
             "participant_delta",
             "participant_activity",
             "participant_message",
+            "room_config_changed",
+            "topic_changed",
+            "artifact_changed",
             "turn_completed",
             "turn_failed",
             "snapshot_required"
@@ -167,6 +188,7 @@
         },
         "participantId": {"type": ["string", "null"]},
         "sourceSessionId": {"type": "string"},
+        "topicId": {"type": "string"},
         "createdAtMs": {"type": "integer", "minimum": 0},
         "payload": {"type": "object"},
         "resumeToken": {"type": "string", "minLength": 1}

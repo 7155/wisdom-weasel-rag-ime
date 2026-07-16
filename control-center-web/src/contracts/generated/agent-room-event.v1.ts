@@ -17,11 +17,15 @@ export interface AgentRoomEventV1 {
     | 'participant_delta'
     | 'participant_activity'
     | 'participant_message'
+    | 'room_config_changed'
+    | 'topic_changed'
+    | 'artifact_changed'
     | 'turn_completed'
     | 'turn_failed'
     | 'snapshot_required';
   participantId: string | null;
   sourceSessionId: string;
+  topicId?: string;
   createdAtMs: number;
   payload: {
     [k: string]: unknown;

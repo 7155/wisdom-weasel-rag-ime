@@ -34,6 +34,9 @@ export const knownRoomEventTypes = [
   'participant_message',
   'turn_completed',
   'turn_failed',
+  'room_config_changed',
+  'topic_changed',
+  'artifact_changed',
   'snapshot_required',
 ] as const satisfies readonly AgentRoomEventV1['eventType'][];
 
@@ -80,6 +83,7 @@ export interface UiRoomEvent {
   roomId: string;
   sequence: number;
   turnId: string;
+  topicId: string;
   participantId: string | null;
   sourceSessionId: string;
   createdAtMs: number;
@@ -147,6 +151,7 @@ export function normalizeRoomEvent(value: Record<string, unknown>): UiRoomEvent 
     roomId: String(value.roomId),
     sequence: Number(value.sequence),
     turnId: String(value.turnId),
+    topicId: String(value.topicId ?? ''),
     participantId: value.participantId === null ? null : String(value.participantId),
     sourceSessionId: String(value.sourceSessionId),
     createdAtMs: Number(value.createdAtMs),

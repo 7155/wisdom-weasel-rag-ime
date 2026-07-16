@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, AtSign, ExternalLink, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, PanelRightOpen, Send, ShieldCheck, UsersRound } from 'lucide-react';
+import { Archive, ArchiveRestore, AtSign, BriefcaseBusiness, ExternalLink, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, PanelRightOpen, Plus, Send, Settings2, ShieldCheck, Sparkles, UsersRound } from 'lucide-react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
@@ -34,7 +34,29 @@ import { RoomStatusPanel } from './RoomStatusPanel';
 import './rooms.css';
 
 export interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; collaborationRole?: 'coordinator' | 'executor' | 'researcher'; status: string; ordinal: number; }
-export interface RoomSummary { id: string; title: string; status: string; routingPolicy: string; moderatorParticipantId: string; workspaceRoots?: string[]; updatedAtMs: number; participants: RoomParticipant[]; }
+export type RoomKind = 'collaboration' | 'roleplay';
+export type RoomRoutingPolicy = 'moderator' | 'manual_mentions' | 'sequential' | 'natural' | 'invite_only';
+export interface RoomTopic { id: string; roomId: string; title: string; summary: string; status: 'active' | 'archived'; ordinal: number; createdAtMs: number; updatedAtMs: number; }
+export interface RoomArtifact { id: string; roomId: string; topicId: string; displayName: string; path: string; mediaType: string; status: 'active' | 'archived'; createdAtMs: number; updatedAtMs: number; }
+export interface RoomSummary {
+  id: string;
+  title: string;
+  status: string;
+  roomKind?: RoomKind;
+  avatar?: string;
+  description?: string;
+  scenarioPrompt?: string;
+  routingPolicy: RoomRoutingPolicy;
+  routingConfig?: { maxResponders?: number; naturalJitter?: number; fallbackParticipantId?: string };
+  moderatorParticipantId: string;
+  activeTopicId?: string;
+  configRevision?: number;
+  workspaceRoots?: string[];
+  topics?: RoomTopic[];
+  artifacts?: RoomArtifact[];
+  updatedAtMs: number;
+  participants: RoomParticipant[];
+}
 interface AgentSessionPolicySummary { id: string; mode: 'assistant' | 'coordinator'; status: string; toolProfileVersion: string; toolAllowlistMode: 'profile' | 'explicit'; allowedTools: string[]; workspaceRoots: string[]; }
 interface RoomToolPolicyItem { id: string; displayName: string; description: string; sessionModes: string[]; operations: string[]; profileOperations: Record<string, string[]>; enabled: boolean; }
 
@@ -57,12 +79,33 @@ export function RoomsFeature() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState('');
   const [createTitle, setCreateTitle] = useState('');
+  const [createRoomKind, setCreateRoomKind] = useState<RoomKind>('collaboration');
+  const [createAvatar, setCreateAvatar] = useState('briefcase');
+  const [createDescription, setCreateDescription] = useState('');
+  const [createScenarioPrompt, setCreateScenarioPrompt] = useState('');
   const [projectPaths, setProjectPaths] = useState<string[]>([]);
   const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([]);
   const [workspacePicking, setWorkspacePicking] = useState(false);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
-  const [routingPolicy, setRoutingPolicy] = useState<'moderator' | 'manual_mentions'>('moderator');
+  const [routingPolicy, setRoutingPolicy] = useState<RoomRoutingPolicy>('moderator');
   const [moderatorRoleId, setModeratorRoleId] = useState('');
+  const [invitedParticipantId, setInvitedParticipantId] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTitle, setSettingsTitle] = useState('');
+  const [settingsAvatar, setSettingsAvatar] = useState('members');
+  const [settingsDescription, setSettingsDescription] = useState('');
+  const [settingsScenarioPrompt, setSettingsScenarioPrompt] = useState('');
+  const [settingsRoutingPolicy, setSettingsRoutingPolicy] = useState<RoomRoutingPolicy>('moderator');
+  const [settingsModeratorParticipantId, setSettingsModeratorParticipantId] = useState('');
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+  const [topicsOpen, setTopicsOpen] = useState(false);
+  const [topicTitle, setTopicTitle] = useState('');
+  const [topicSummary, setTopicSummary] = useState('');
+  const [topicEditingId, setTopicEditingId] = useState('');
+  const [topicSaving, setTopicSaving] = useState(false);
+  const [topicError, setTopicError] = useState('');
+  const [artifactPicking, setArtifactPicking] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [policyParticipant, setPolicyParticipant] = useState<RoomParticipant>();
@@ -171,7 +214,7 @@ export function RoomsFeature() {
         projectionRef.current = next;
         setProjection(next);
         setSnapshotLoading(false);
-        const snapshotRoom: RoomSummary = snapshot.room;
+        const snapshotRoom = snapshot.room as unknown as RoomSummary;
         setRooms((current) => current.map((item) => item.id === snapshotRoom.id ? snapshotRoom : item));
         setError('');
         const subscriptionGeneration = requestGeneration;
@@ -183,7 +226,11 @@ export function RoomsFeature() {
           },
           {
             next: (event) => {
-              if (active && subscriptionGeneration === generation) batcher.push(event);
+              if (!active || subscriptionGeneration !== generation) return;
+              batcher.push(event);
+              if (['room_config_changed', 'topic_changed', 'artifact_changed'].includes(event.eventType)) {
+                scheduleSnapshotReload();
+              }
             },
             error: (streamError) => {
               if (active && subscriptionGeneration === generation) {
@@ -217,12 +264,22 @@ export function RoomsFeature() {
   const visibleTurnOrder = projection.roomId === selectedId ? projection.turnOrder : [];
   const roomCanSend = room?.status === 'active';
   const hasManualMention = Boolean(room && room.routingPolicy === 'manual_mentions' && room.participants.some((participant) => draft.includes(`@${participant.displayName}`)));
-  const canSend = Boolean(roomCanSend && draft.trim() && (room?.routingPolicy !== 'manual_mentions' || hasManualMention));
+  const hasInvite = Boolean(room && room.routingPolicy === 'invite_only' && room.participants.some((participant) => participant.id === invitedParticipantId));
+  const canSend = Boolean(
+    roomCanSend
+    && draft.trim()
+    && (room?.routingPolicy !== 'manual_mentions' || hasManualMention)
+    && (room?.routingPolicy !== 'invite_only' || hasInvite),
+  );
   async function send(): Promise<void> {
     const message = draft.trim();
     if (!room || room.status !== 'active' || !message) return;
     if (room.routingPolicy === 'manual_mentions' && !hasManualMention) {
       setError('请先选择一位参与角色。');
+      return;
+    }
+    if (room.routingPolicy === 'invite_only' && !hasInvite) {
+      setError('请先邀请一位角色发言。');
       return;
     }
     const clientMessageId = `room-web-${crypto.randomUUID()}`;
@@ -233,7 +290,18 @@ export function RoomsFeature() {
     });
     setDraft('');
     setError('');
-    try { await transport.request({ pathId: 'agent.room.message', params: { roomId: room.id }, body: { message, clientMessageId } }); }
+    try {
+      await transport.request({
+        pathId: 'agent.room.message',
+        params: { roomId: room.id },
+        body: {
+          message,
+          clientMessageId,
+          ...(room.routingPolicy === 'invite_only' ? { participantIds: [invitedParticipantId] } : {}),
+        },
+      });
+      setInvitedParticipantId('');
+    }
     catch (requestError) {
       setProjection((current) => {
         const next = removeOptimisticRoomMessage(current, clientMessageId);
@@ -260,7 +328,10 @@ export function RoomsFeature() {
   }
   function beginCreateRoom(): void {
     const eligiblePersonas = personas.filter((persona) => persona.selectableModes.includes('coordinator'));
-    if (eligiblePersonas.length < 2) {
+    if (
+      eligiblePersonas.length < 2
+      && personas.filter((persona) => persona.selectableModes.includes('assistant')).length < 2
+    ) {
       setError('真实角色目录至少需要两个角色才能创建 Room。');
       return;
     }
@@ -273,11 +344,31 @@ export function RoomsFeature() {
     setError('');
     setCreateError('');
     setCreateTitle('');
+    setCreateRoomKind('collaboration');
+    setCreateAvatar('briefcase');
+    setCreateDescription('');
+    setCreateScenarioPrompt('');
     setWorkspaceRoots(projectPaths.slice(0, 1));
     setSelectedRoleIds(defaults);
     setModeratorRoleId(defaults.includes('vcp-v1') ? 'vcp-v1' : defaults[0] ?? '');
     setRoutingPolicy('moderator');
     setCreateOpen(true);
+  }
+  function updateCreateRoomKind(kind: RoomKind): void {
+    const requiredMode = kind === 'collaboration' ? 'coordinator' : 'assistant';
+    const eligible = personas.filter((persona) => persona.selectableModes.includes(requiredMode));
+    const timelineDefaults = ['vcp-v1', 'zhiyou-v1', 'hermes-v1']
+      .map((roleId) => eligible.find((persona) => persona.roleId === roleId)?.roleId)
+      .filter((roleId): roleId is string => Boolean(roleId));
+    const defaults = timelineDefaults.length >= 2
+      ? timelineDefaults
+      : eligible.slice(0, Math.min(3, eligible.length)).map((persona) => persona.roleId);
+    setCreateRoomKind(kind);
+    setCreateAvatar(kind === 'roleplay' ? 'sparkles' : 'briefcase');
+    setSelectedRoleIds(defaults);
+    setModeratorRoleId(defaults.includes('vcp-v1') ? 'vcp-v1' : defaults[0] ?? '');
+    setRoutingPolicy(kind === 'roleplay' ? 'natural' : 'moderator');
+    setCreateError('');
   }
   async function pickWorkspaceRoot(): Promise<void> {
     if (workspacePicking || creating) return;
@@ -325,7 +416,7 @@ export function RoomsFeature() {
       setCreateError('请选择 2 至 4 个角色。');
       return;
     }
-    if (!workspaceRoots.length) {
+    if (createRoomKind === 'collaboration' && !workspaceRoots.length) {
       setCreateError('请先选择这个 Room 使用的项目路径。');
       return;
     }
@@ -342,9 +433,14 @@ export function RoomsFeature() {
         pathId: 'agent.rooms.create',
         body: {
           title,
+          roomKind: createRoomKind,
+          avatar: createAvatar,
+          description: createDescription.trim(),
+          scenarioPrompt: createScenarioPrompt.trim(),
           participants,
           routingPolicy,
-          workspaceRoots,
+          workspaceRoots: createRoomKind === 'collaboration' ? workspaceRoots : [],
+          routingConfig: { maxResponders: 1, naturalJitter: createRoomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
           ...(routingPolicy === 'moderator' ? { moderatorRoleId } : {}),
         },
       });
@@ -377,6 +473,137 @@ export function RoomsFeature() {
       setArchiveOpen(false);
     } catch (requestError) { setError(publicErrorText(requestError, 'Room 状态暂时无法更新，请稍后重试。')); }
     finally { setArchiving(false); }
+  }
+  function beginRoomSettings(): void {
+    if (!room) return;
+    setSettingsTitle(room.title);
+    setSettingsAvatar(room.avatar ?? (room.roomKind === 'roleplay' ? 'sparkles' : 'briefcase'));
+    setSettingsDescription(room.description ?? '');
+    setSettingsScenarioPrompt(room.scenarioPrompt ?? '');
+    setSettingsRoutingPolicy(room.routingPolicy);
+    setSettingsModeratorParticipantId(room.moderatorParticipantId);
+    setSettingsError('');
+    setSettingsOpen(true);
+  }
+  async function saveRoomSettings(): Promise<void> {
+    if (!room || settingsSaving || !settingsTitle.trim()) return;
+    if (settingsRoutingPolicy === 'moderator' && !settingsModeratorParticipantId) {
+      setSettingsError('请选择一位主持人。');
+      return;
+    }
+    setSettingsSaving(true);
+    setSettingsError('');
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.archive',
+        params: { roomId: room.id },
+        body: {
+          title: settingsTitle.trim(),
+          avatar: settingsAvatar,
+          description: settingsDescription.trim(),
+          scenarioPrompt: settingsScenarioPrompt.trim(),
+          routingPolicy: settingsRoutingPolicy,
+          routingConfig: room.routingConfig ?? { maxResponders: 1, naturalJitter: room.roomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
+          ...(settingsRoutingPolicy === 'moderator'
+            ? { moderatorParticipantId: settingsModeratorParticipantId }
+            : {}),
+        },
+      });
+      const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
+      if (!updated) throw new Error('服务端没有返回更新后的 Room。');
+      setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setSettingsOpen(false);
+      setInvitedParticipantId('');
+    } catch (requestError) {
+      setSettingsError(publicErrorText(requestError, 'Room 设置暂时无法保存，请稍后重试。'));
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+  async function createTopic(): Promise<void> {
+    if (!room || topicSaving || !topicTitle.trim()) return;
+    setTopicSaving(true);
+    setTopicError('');
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: topicEditingId ? 'agent.room.topic.update' : 'agent.room.topic.create',
+        params: { roomId: room.id },
+        body: {
+          ...(topicEditingId ? { topicId: topicEditingId } : {}),
+          title: topicTitle.trim(),
+          summary: topicSummary.trim(),
+        },
+      });
+      const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
+      if (!updated) throw new Error('服务端没有返回更新后的话题。');
+      setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setTopicTitle('');
+      setTopicSummary('');
+      setTopicEditingId('');
+    } catch (requestError) {
+      setTopicError(publicErrorText(requestError, '话题暂时无法创建，请稍后重试。'));
+    } finally {
+      setTopicSaving(false);
+    }
+  }
+  async function updateTopic(topicId: string, changes: Record<string, string | boolean>): Promise<void> {
+    if (!room || topicSaving) return;
+    setTopicSaving(true);
+    setTopicError('');
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.topic.update',
+        params: { roomId: room.id },
+        body: { topicId, ...changes },
+      });
+      const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
+      if (!updated) throw new Error('服务端没有返回更新后的话题。');
+      setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (requestError) {
+      setTopicError(publicErrorText(requestError, '话题状态暂时无法更新，请稍后重试。'));
+    } finally {
+      setTopicSaving(false);
+    }
+  }
+  async function addRoomArtifact(): Promise<void> {
+    if (!room || artifactPicking) return;
+    if (!room.workspaceRoots?.length) {
+      setError('角色扮演 Room 没有项目路径；先在协作 Room 中绑定工作区，才能共享文件。');
+      return;
+    }
+    if (!transport.pickFiles) {
+      setError('当前平台不能选择共享文件，请在桌面控制中心中操作。');
+      return;
+    }
+    setArtifactPicking(true);
+    setError('');
+    try {
+      const selected = await transport.pickFiles({
+        purpose: 'room-artifact',
+        selection: 'file',
+        multiple: false,
+        maxFiles: 1,
+      });
+      const file = selected[0];
+      if (!file?.path) return;
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.artifact.add',
+        params: { roomId: room.id },
+        body: {
+          path: file.path,
+          displayName: file.name,
+          mediaType: file.mimeType,
+          topicId: room.activeTopicId ?? '',
+        },
+      });
+      const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
+      if (!updated) throw new Error('服务端没有返回新增的共享文件。');
+      setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (requestError) {
+      setError(publicErrorText(requestError, '共享文件暂时无法加入 Room，请确认文件位于授权项目路径内。'));
+    } finally {
+      setArtifactPicking(false);
+    }
   }
   async function openParticipantPolicy(participant: RoomParticipant): Promise<void> {
     setPolicyParticipant(participant);
@@ -455,10 +682,21 @@ export function RoomsFeature() {
     <main className="rooms-feature" data-route-id="rooms" data-status-open={statusOpen}>
       <aside className="rooms-rail">
         <header><span><strong>Rooms</strong><small>多 Agent 协作</small></span><div className="rooms-rail-actions"><IconButton label={includeArchived ? '隐藏已归档 Room' : '显示已归档 Room'} icon={includeArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />} aria-pressed={includeArchived} onClick={() => setIncludeArchived((current) => !current)} tooltip /><IconButton disabled={catalogLoading || creating} label="新建 Room" icon={<MessageSquarePlus size={17} />} onClick={beginCreateRoom} tooltip /></div></header>
-        <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => setSelectedId(item.id)}><UsersRound size={16} /><span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
+        <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => { setSelectedId(item.id); setInvitedParticipantId(''); }}>{roomAvatarIcon(item)}<span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
       </aside>
       <section className="room-workspace">
-        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建协作空间' : room.status === 'archived' ? '已归档' : `${roomPathName(room)} · ${room.routingPolicy === 'moderator' ? '由主持人协调' : '通过 @ 指派'}`}</small></span><div className="room-header-actions"><div className="room-participants">{room?.participants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 状态栏' : '展开 Room 状态'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
+        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建群聊' : room.status === 'archived' ? '已归档' : `${room.roomKind === 'roleplay' ? '角色群聊' : roomPathName(room)} · ${routingPolicyLabel(room.routingPolicy)}`}</small></span><div className="room-header-actions"><div className="room-participants">{room?.participants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label="Room 设置" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 状态栏' : '展开 Room 状态'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
+        {room ? <div className="room-context-bar">
+          <div className="room-topic-tabs" aria-label="Room 话题">
+            <MessagesSquare size={14} />
+            {(room.topics ?? []).filter((topic) => topic.status === 'active').map((topic) => <button type="button" key={topic.id} aria-current={topic.id === room.activeTopicId} onClick={() => { if (topic.id !== room.activeTopicId) void updateTopic(topic.id, { activate: true }); }}>{topic.title}</button>)}
+            <IconButton label="管理 Room 话题" icon={<Plus size={14} />} disabled={topicSaving} onClick={() => { setTopicError(''); setTopicsOpen(true); }} tooltip />
+          </div>
+          <div className="room-context-actions">
+            <span>{room.description || (room.roomKind === 'roleplay' ? '自然多角色交流' : '共享工作区协作')}</span>
+            {room.roomKind !== 'roleplay' ? <IconButton label="添加共享文件" icon={artifactPicking ? <LoaderCircle className="ui-spin" size={15} /> : <FilePlus2 size={15} />} disabled={artifactPicking || room.status !== 'active'} onClick={() => void addRoomArtifact()} tooltip /> : null}
+          </div>
+        </div> : <div aria-hidden="true" className="room-context-bar room-context-bar--empty" />}
         <div className="room-error-slot" aria-live="polite">
           {error ? <p className="room-error" role="alert">{error}</p> : null}
           {!error && roomCatalogError ? <p className="room-error" role="alert">{roomCatalogError}</p> : null}
@@ -467,28 +705,68 @@ export function RoomsFeature() {
         <div className="room-timeline">
           {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} />} /> : <p className="room-empty">{snapshotLoading ? '正在读取 Room 对话…' : '还没有对话，发一条消息开始协作。'}</p> : <p className="room-empty">{catalogLoading ? '正在读取 Rooms…' : '选择一个 Room，或新建协作 Room。'}</p>}
         </div>
-        <div className="room-composer-shell">{roomCanSend && room?.routingPolicy === 'manual_mentions' ? <div className="room-mention-bar" aria-label="指派参与角色"><AtSign size={14} />{room.participants.map((participant) => <button type="button" key={participant.id} aria-pressed={draft.trimStart().startsWith(`@${participant.displayName}`)} onClick={() => addressParticipant(participant.displayName)}>{participant.displayName}</button>)}</div> : null}<div className="room-composer"><textarea rows={2} value={draft} disabled={!roomCanSend} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={!room ? '先选择或新建 Room' : room.status === 'archived' ? '恢复 Room 后继续协作' : room.routingPolicy === 'manual_mentions' ? '先选择一位角色，再输入消息…' : '向 Room 发消息…'} aria-label="Room 消息" /><IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!canSend} onClick={() => void send()} tooltip /></div></div>
+        <div className="room-composer-shell">{roomCanSend && ['manual_mentions', 'invite_only'].includes(room?.routingPolicy ?? '') ? <div className="room-mention-bar" aria-label={room?.routingPolicy === 'invite_only' ? '邀请发言角色' : '指派参与角色'}>{room?.routingPolicy === 'invite_only' ? <MessageSquarePlus size={14} /> : <AtSign size={14} />}{room?.participants.map((participant) => <button type="button" key={participant.id} aria-pressed={room.routingPolicy === 'invite_only' ? invitedParticipantId === participant.id : draft.trimStart().startsWith(`@${participant.displayName}`)} onClick={() => { if (room.routingPolicy === 'invite_only') { setInvitedParticipantId(participant.id); setError(''); } else addressParticipant(participant.displayName); }}>{participant.displayName}</button>)}</div> : null}<div className="room-composer"><textarea rows={2} value={draft} disabled={!roomCanSend} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={!room ? '先选择或新建 Room' : room.status === 'archived' ? '恢复 Room 后继续交流' : room.routingPolicy === 'manual_mentions' ? '先选择一位角色，再输入消息…' : room.routingPolicy === 'invite_only' ? '先邀请一位角色发言…' : room.roomKind === 'roleplay' ? '向群聊发送消息…' : '向 Room 发消息…'} aria-label="Room 消息" /><IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!canSend} onClick={() => void send()} tooltip /></div></div>
       </section>
       <button className="agent-status-backdrop room-status-backdrop" aria-label="关闭 Room 状态" disabled={!statusOpen} onClick={() => setStatusOpen(false)} type="button" />
       <RoomStatusPanel room={room} projection={projection} open={statusOpen} onClose={() => setStatusOpen(false)} />
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="room-create-dialog">
-        <DialogHeader><DialogTitle>新建协作 Room</DialogTitle><DialogDescription>先绑定项目路径，再分配调控、执行与只读调研角色。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>新建 Room</DialogTitle><DialogDescription>协作 Room 围绕项目执行；角色群聊围绕设定自然交流。两者使用同一条结构化事件链。</DialogDescription></DialogHeader>
         <form id="room-create-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void createRoom(); }}>
           {createError ? <p className="room-dialog-error" role="alert">{createError}</p> : null}
-          <section className="room-create-projects" aria-label="项目路径">
+          <fieldset><legend>用途</legend><div className="room-kind-options">
+            <label><input type="radio" name="room-kind" checked={createRoomKind === 'collaboration'} onChange={() => updateCreateRoomKind('collaboration')} /><span><BriefcaseBusiness size={17} /><strong>任务协作</strong><small>共享工作区、工具和产物</small></span></label>
+            <label><input type="radio" name="room-kind" checked={createRoomKind === 'roleplay'} onChange={() => updateCreateRoomKind('roleplay')} /><span><Sparkles size={17} /><strong>角色群聊</strong><small>自然发言与共同背景设定</small></span></label>
+          </div></fieldset>
+          {createRoomKind === 'collaboration' ? <section className="room-create-projects" aria-label="项目路径">
             <header><strong>项目路径</strong><small>必选</small></header>
             {projectPaths.length ? <RadioGroup.Root aria-label="最近项目" value={workspaceRoots[0] ?? ''} onValueChange={(value) => { setWorkspaceRoots([value]); setCreateError(''); }}>{projectPaths.map((path) => <RadioGroup.Item key={path} value={path} title={path}><FolderOpen size={16} /><span><strong>{pathName(path)}</strong><small>{path}</small></span></RadioGroup.Item>)}</RadioGroup.Root> : null}
             {workspaceRoots[0] && !projectPaths.includes(workspaceRoots[0]) ? <div className="room-create-project-picked" title={workspaceRoots.join('\n')}><FolderOpen size={16} /><span><strong>{pathName(workspaceRoots[0])}</strong><small>{workspaceRoots[0]}</small></span></div> : null}
             <Button type="button" variant="quiet" leadingIcon={workspacePicking ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />} disabled={workspacePicking || creating} onClick={() => void pickWorkspaceRoot()}>{workspaceRoots.length ? '选择其他目录' : '选择项目目录'}</Button>
-          </section>
-          <label className="room-create-field"><span>名称</span><input maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder="例如：发布前检查" aria-label="Room 名称" /></label>
-          <fieldset><legend>参与角色 <small>{selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes('coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{roomRoleLabel(persona.roleId, moderatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
-          <fieldset><legend>协调方式</legend><div className="room-routing-options"><label><input type="radio" name="room-routing" checked={routingPolicy === 'moderator'} onChange={() => { setRoutingPolicy('moderator'); setCreateError(''); }} />由一位角色协调</label><label><input type="radio" name="room-routing" checked={routingPolicy === 'manual_mentions'} onChange={() => { setRoutingPolicy('manual_mentions'); setCreateError(''); }} />通过 @ 指派</label></div></fieldset>
+          </section> : null}
+          <div className="room-create-pair">
+            <label className="room-create-field"><span>名称</span><input maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder={createRoomKind === 'roleplay' ? '例如：深夜茶话会' : '例如：发布前检查'} aria-label="Room 名称" /></label>
+            <label className="room-create-field"><span>头像</span><Select aria-label="Room 头像" onValueChange={setCreateAvatar} options={roomAvatarOptions()} value={createAvatar} /></label>
+          </div>
+          <label className="room-create-field"><span>简介</span><input maxLength={500} value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} placeholder="一句话说明这个 Room 的用途" aria-label="Room 简介" /></label>
+          <fieldset><legend>参与角色 <small>{selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{createRoomKind === 'roleplay' ? '群聊角色' : roomRoleLabel(persona.roleId, moderatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
+          <fieldset><legend>发言方式</legend><div className="room-routing-options">{routingPolicyOptions(createRoomKind).map((option) => <label key={option.value}><input type="radio" name="room-routing" checked={routingPolicy === option.value} onChange={() => { setRoutingPolicy(option.value); setCreateError(''); }} /><span><strong>{option.label}</strong><small>{option.detail}</small></span></label>)}</div></fieldset>
           {routingPolicy === 'moderator' ? <label className="room-create-field"><span>主持人</span><Select aria-label="Room 主持人" onValueChange={(value) => { setModeratorRoleId(value); setCreateError(''); }} options={selectedRoleIds.flatMap((roleId) => { const persona = personas.find((item) => item.roleId === roleId); return persona ? [{ value: roleId, label: persona.displayName }] : []; })} value={moderatorRoleId} /></label> : null}
+          <label className="room-create-field"><span>共同设定</span><textarea maxLength={8000} rows={3} value={createScenarioPrompt} onChange={(event) => setCreateScenarioPrompt(event.target.value)} placeholder={createRoomKind === 'roleplay' ? '共同背景、关系和交流边界。它不会覆盖安全策略。' : '团队共同遵守的项目背景与交付约束。'} aria-label="Room 共同设定" /></label>
         </form>
-        <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={!workspaceRoots.length || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>创建 Room</Button></DialogFooter>
+        <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={(createRoomKind === 'collaboration' && !workspaceRoots.length) || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>创建 Room</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={settingsOpen} onOpenChange={(open) => { if (!settingsSaving) { setSettingsOpen(open); if (!open) setSettingsError(''); } }}>
+      <DialogContent className="room-settings-dialog">
+        <DialogHeader><DialogTitle>Room 设置</DialogTitle><DialogDescription>共同设定、发言路由和角色权限彼此独立；修改后只影响后续回合。</DialogDescription></DialogHeader>
+        <form id="room-settings-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void saveRoomSettings(); }}>
+          {settingsError ? <p className="room-dialog-error" role="alert">{settingsError}</p> : null}
+          <div className="room-create-pair">
+            <label className="room-create-field"><span>名称</span><input maxLength={120} value={settingsTitle} onChange={(event) => setSettingsTitle(event.target.value)} aria-label="Room 设置名称" /></label>
+            <label className="room-create-field"><span>头像</span><Select aria-label="Room 设置头像" onValueChange={setSettingsAvatar} options={roomAvatarOptions()} value={settingsAvatar} /></label>
+          </div>
+          <label className="room-create-field"><span>简介</span><input maxLength={500} value={settingsDescription} onChange={(event) => setSettingsDescription(event.target.value)} aria-label="Room 设置简介" /></label>
+          <fieldset><legend>发言方式</legend><div className="room-routing-options">{routingPolicyOptions(room?.roomKind ?? 'collaboration').map((option) => <label key={option.value}><input type="radio" name="room-settings-routing" checked={settingsRoutingPolicy === option.value} onChange={() => setSettingsRoutingPolicy(option.value)} /><span><strong>{option.label}</strong><small>{option.detail}</small></span></label>)}</div></fieldset>
+          {settingsRoutingPolicy === 'moderator' ? <label className="room-create-field"><span>主持人</span><Select aria-label="Room 设置主持人" onValueChange={setSettingsModeratorParticipantId} options={(room?.participants ?? []).map((participant) => ({ value: participant.id, label: participant.displayName }))} value={settingsModeratorParticipantId} /></label> : null}
+          <label className="room-create-field"><span>共同设定</span><textarea maxLength={8000} rows={5} value={settingsScenarioPrompt} onChange={(event) => setSettingsScenarioPrompt(event.target.value)} aria-label="Room 设置共同设定" /></label>
+        </form>
+        <DialogFooter><Button variant="quiet" disabled={settingsSaving} onClick={() => setSettingsOpen(false)}>取消</Button><Button type="submit" form="room-settings-form" variant="primary" loading={settingsSaving} disabled={!settingsTitle.trim()}>保存设置</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={topicsOpen} onOpenChange={(open) => { if (!topicSaving) { setTopicsOpen(open); if (!open) { setTopicError(''); setTopicEditingId(''); setTopicTitle(''); setTopicSummary(''); } } }}>
+      <DialogContent className="room-topics-dialog">
+        <DialogHeader><DialogTitle>话题管理</DialogTitle><DialogDescription>话题只限定工作上下文，不复制成员、长期记忆或历史文件。</DialogDescription></DialogHeader>
+        {topicError ? <p className="room-dialog-error" role="alert">{topicError}</p> : null}
+        <div className="room-topic-manager">
+          {(room?.topics ?? []).map((topic) => <div key={topic.id} data-archived={topic.status === 'archived'} data-active={topic.id === room?.activeTopicId}><span><strong>{topic.title}</strong><small>{topic.summary || '暂无摘要'}</small></span><div><Button variant="quiet" disabled={topicSaving} onClick={() => { setTopicEditingId(topic.id); setTopicTitle(topic.title); setTopicSummary(topic.summary); }}>编辑</Button>{topic.status === 'active' && topic.id !== room?.activeTopicId ? <Button variant="quiet" disabled={topicSaving} onClick={() => void updateTopic(topic.id, { activate: true })}>切换</Button> : null}{topic.status === 'active' && topic.id !== room?.activeTopicId ? <IconButton label={`归档话题 ${topic.title}`} icon={<Archive size={15} />} disabled={topicSaving} onClick={() => void updateTopic(topic.id, { archived: true })} tooltip /> : null}</div></div>)}
+        </div>
+        <form id="room-topic-form" className="room-topic-form" onSubmit={(event) => { event.preventDefault(); void createTopic(); }}>
+          <label className="room-create-field"><span>{topicEditingId ? '编辑名称' : '新话题'}</span><input maxLength={120} value={topicTitle} onChange={(event) => setTopicTitle(event.target.value)} placeholder="例如：发布风险" aria-label="话题名称" /></label>
+          <label className="room-create-field"><span>摘要</span><textarea maxLength={2000} rows={2} value={topicSummary} onChange={(event) => setTopicSummary(event.target.value)} placeholder="记录这个话题正在解决什么" aria-label="话题摘要" /></label>
+        </form>
+        <DialogFooter>{topicEditingId ? <Button variant="quiet" disabled={topicSaving} onClick={() => { setTopicEditingId(''); setTopicTitle(''); setTopicSummary(''); }}>取消编辑</Button> : <Button variant="quiet" disabled={topicSaving} onClick={() => setTopicsOpen(false)}>关闭</Button>}<Button type="submit" form="room-topic-form" variant="primary" loading={topicSaving} disabled={!topicTitle.trim()}>{topicEditingId ? '保存话题' : '创建话题'}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
     <Dialog open={archiveOpen} onOpenChange={(open) => { if (!archiving) setArchiveOpen(open); }}>
@@ -572,9 +850,24 @@ function describeRoomActivity(activity: RoomActivityProjection, participantName 
   const status = textValue(payload.status);
   if (activity.kind === 'route_decision') {
     const target = textValue(payload.targetDisplayName) || participantName;
+    const reason = textValue(payload.reason);
+    const detailByReason: Record<string, string> = {
+      explicit_invite: '由用户直接邀请发言',
+      mention: '根据明确提及开始处理',
+      moderator: '由主持人负责这一轮',
+      sequential: '按成员顺序轮到该角色',
+      descriptor_match: '根据角色标签与消息内容匹配',
+      natural_fallback: '当前没有强匹配，由保底角色承接',
+      configured_fallback: '由群组配置的保底角色承接',
+    };
+    const policy = textValue(payload.routingPolicy) as RoomRoutingPolicy;
     return {
       title: `${target} 已接手`,
-      detail: textValue(payload.routingPolicy) === 'manual_mentions' ? '根据 @ 指派开始处理' : '由主持人安排处理这轮任务',
+      detail: detailByReason[reason] ?? (
+        policy === 'moderator'
+          ? '由主持人安排处理这轮任务'
+          : `${routingPolicyLabel(policy)}已确定负责角色`
+      ),
     };
   }
   if (activity.kind === 'participant_status') {
@@ -630,6 +923,50 @@ function roomRoleLabel(roleId: string, moderatorRoleId: string): string {
   if (roleId === 'hermes-v1') return '只读调研';
   if (roleId === 'zhiyou-v1') return '执行者';
   return '协作角色';
+}
+
+function roomAvatarOptions(): { value: string; label: string }[] {
+  return [
+    { value: 'briefcase', label: '任务协作' },
+    { value: 'members', label: '成员群聊' },
+    { value: 'sparkles', label: '角色互动' },
+    { value: 'messages', label: '讨论空间' },
+  ];
+}
+
+function roomAvatarIcon(room: RoomSummary) {
+  if (room.avatar === 'sparkles' || room.roomKind === 'roleplay') return <Sparkles size={16} />;
+  if (room.avatar === 'briefcase') return <BriefcaseBusiness size={16} />;
+  if (room.avatar === 'messages') return <MessagesSquare size={16} />;
+  return <UsersRound size={16} />;
+}
+
+function routingPolicyOptions(kind: RoomKind): { value: RoomRoutingPolicy; label: string; detail: string }[] {
+  const shared: { value: RoomRoutingPolicy; label: string; detail: string }[] = [
+    { value: 'sequential', label: '顺序轮流', detail: '每轮切换到下一位成员' },
+    { value: 'invite_only', label: '点名邀请', detail: '由你点击决定谁发言' },
+    { value: 'manual_mentions', label: '@ 指派', detail: '消息中明确提及一位成员' },
+  ];
+  return kind === 'roleplay'
+    ? [
+        { value: 'natural', label: '自然发言', detail: '依据角色标签与内容选择' },
+        ...shared,
+      ]
+    : [
+        { value: 'moderator', label: '主持协调', detail: '由主持人判断是否分工' },
+        { value: 'natural', label: '语义分派', detail: '依据职责与消息内容选择' },
+        ...shared,
+      ];
+}
+
+function routingPolicyLabel(policy: RoomRoutingPolicy): string {
+  return ({
+    moderator: '主持协调',
+    manual_mentions: '@ 指派',
+    sequential: '顺序轮流',
+    natural: '自然发言',
+    invite_only: '点名邀请',
+  } as const)[policy] ?? '结构化路由';
 }
 
 function isWideRoomStatusViewport(): boolean {

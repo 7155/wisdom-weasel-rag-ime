@@ -111,6 +111,16 @@ describe('RoomEventReducer', () => {
     });
   });
 
+  it('projects Room lifecycle events as completed instead of leaving a false running turn', () => {
+    const created = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_status', { status: 'room_created' }),
+    ).state;
+
+    expect(created.activitiesById['room-1:1:activity'].status).toBe('completed');
+    expect(created.turnsById['room-turn-1'].status).toBe('completed');
+  });
+
   it('strictly validates and replays a retained event snapshot without looping on old gap markers', () => {
     const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
       clientMessageId: 'room-client-1',

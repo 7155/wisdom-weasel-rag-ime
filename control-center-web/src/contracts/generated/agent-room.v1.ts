@@ -9,8 +9,20 @@ export interface AgentRoomV1 {
   id: string;
   title: string;
   status: 'active' | 'archived';
-  routingPolicy: 'manual_mentions' | 'moderator';
+  roomKind?: 'collaboration' | 'roleplay';
+  avatar?: string;
+  description?: string;
+  scenarioPrompt?: string;
+  routingPolicy: 'manual_mentions' | 'moderator' | 'sequential' | 'natural' | 'invite_only';
+  routingConfig?: {
+    maxResponders: 1;
+    naturalJitter: number;
+    fallbackParticipantId: string;
+  };
   moderatorParticipantId: string;
+  nextSpeakerOrdinal?: number;
+  activeTopicId?: string;
+  configRevision?: number;
   /**
    * @maxItems 4
    */
@@ -57,4 +69,16 @@ export interface AgentRoomV1 {
           [k: string]: unknown;
         },
       ];
+  /**
+   * @maxItems 200
+   */
+  topics?: {
+    [k: string]: unknown;
+  }[];
+  /**
+   * @maxItems 100
+   */
+  artifacts?: {
+    [k: string]: unknown;
+  }[];
 }

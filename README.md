@@ -159,6 +159,26 @@ ambiguous language only creates a confirmation suggestion. Open tasks, goals,
 and daily notes are eligible for the model context under the shared token
 budget.
 
+### Structured Agent Rooms
+
+**Status: implemented in the local Agent runtime and Web Control Center.**
+
+Rooms support two explicit kinds: project collaboration and roleplay chat.
+They share one event contract, but keep different authority boundaries:
+collaboration Rooms require an authorized workspace, while roleplay Rooms can
+run without filesystem access. Routing is stored as structured configuration
+(`manual_mentions`, `moderator`, `sequential`, `natural`, or `invite_only`);
+the selected participant is recorded by stable ID rather than by inserting a
+fake `[speaker]` prefix into message text.
+
+Each Room owns a versioned common scenario, independent topics, and
+workspace-scoped shared artifacts. Topic changes only alter subsequent working
+context: participant identity, private Agent memory, global user memory, Room
+history, and shared files remain separate objects. The first implementation
+selects one visible speaker per user turn, while the existing coordinator and
+intercom path can delegate parallel research without turning every delegated
+worker into another public conversation.
+
 ### Diagnostics And Repair
 
 **Status: implemented; doctor output is necessary but not sufficient evidence.**

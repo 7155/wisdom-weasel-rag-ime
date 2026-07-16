@@ -213,6 +213,81 @@ class AgentRoomTests(unittest.TestCase):
                 participants=[self._participant("vcp-v1", "VCP")],
             )
 
+    def test_sequential_and_natural_routing_are_structured_and_deterministic(self) -> None:
+        room = self.store.create(
+            title="轮流讨论",
+            room_kind="roleplay",
+            routing_policy="sequential",
+            participants=[
+                self._participant("zhiyou-v1", "此刻"),
+                self._participant("hermes-v1", "初识"),
+                self._participant("vcp-v1", "未来"),
+            ],
+        )
+        room_id = str(room["id"])
+        first = self.store.plan_route(room_id, "先说说看")
+        self.assertEqual(first["reason"], "sequential")
+        self.assertEqual(first["selectedParticipantIds"], [room["participants"][0]["id"]])
+        self.store.commit_route(room_id, first)
+        second = self.store.plan_route(room_id, "继续")
+        self.assertEqual(second["selectedParticipantIds"], [room["participants"][1]["id"]])
+
+        updated = self.store.update_config(
+            room_id,
+            {"routingPolicy": "natural", "routingConfig": {"naturalJitter": 0}},
+        )
+        profiles = {
+            str(updated["participants"][0]["id"]): {"traits": ["执行", "实现"]},
+            str(updated["participants"][1]["id"]): {"traits": ["调研", "证据"]},
+            str(updated["participants"][2]["id"]): {"traits": ["规划", "协调"]},
+        }
+        decision = self.store.plan_route(room_id, "请调研证据", profiles=profiles)
+        self.assertEqual(decision["reason"], "descriptor_match")
+        self.assertEqual(decision["targetDisplayName"], "初识")
+        self.assertEqual(decision["schemaVersion"], "rag-ime.room-route-decision.v1")
+        self.assertTrue(decision["candidates"][0]["signals"])
+        with self.assertRaisesRegex(ValueError, "cannot be changed"):
+            self.store.update_config(room_id, {"roomKind": "collaboration"})
+
+    def test_topics_and_artifacts_are_incremental_and_workspace_scoped(self) -> None:
+        room = self.store.create(
+            title="资料讨论",
+            routing_policy="moderator",
+            workspace_roots=[str(self.root)],
+            participants=[
+                self._participant("zhiyou-v1", "此刻"),
+                self._participant("vcp-v1", "未来"),
+            ],
+        )
+        room_id = str(room["id"])
+        original_topic = str(room["activeTopicId"])
+        topic = self.store.create_topic(room_id, title="发布风险", summary="核对上线边界")
+        activated = self.store.update_topic(room_id, str(topic["id"]), {"activate": True})
+        self.assertEqual(activated["title"], "发布风险")
+        self.assertEqual(self.store.get(room_id)["activeTopicId"], topic["id"])
+        archived = self.store.update_topic(room_id, original_topic, {"archived": True})
+        self.assertEqual(archived["status"], "archived")
+
+        artifact_path = self.root / "report.md"
+        artifact_path.write_text("# report\n", encoding="utf-8")
+        artifact = self.store.add_artifact(
+            room_id,
+            path=str(artifact_path),
+            topic_id=str(topic["id"]),
+            display_name="风险报告",
+            media_type="text/markdown",
+        )
+        self.assertEqual(artifact["path"], str(artifact_path.resolve()))
+        self.assertEqual(
+            self.store.list_artifacts(room_id, topic_id=str(topic["id"]))[0]["displayName"],
+            "风险报告",
+        )
+        outside = Path(tempfile.gettempdir()) / "rag-ime-outside-room-artifact.txt"
+        outside.write_text("outside", encoding="utf-8")
+        self.addCleanup(outside.unlink, missing_ok=True)
+        with self.assertRaisesRegex(ValueError, "authorized workspace"):
+            self.store.add_artifact(room_id, path=str(outside))
+
     def _participant(self, role_id: str, display_name: str) -> dict[str, str]:
         session = self.sessions.create(
             title=f"{display_name} room session",
@@ -543,6 +618,68 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(hidden_tool_message["eventType"], "participant_activity")
         self.assertIn("内部工具步骤", serialized)
         self.assertNotIn("tool-result-secret", serialized)
+
+    def test_roleplay_room_uses_invites_scenario_and_topic_scoped_recent_context(self) -> None:
+        created = self.service.create_room(
+            {
+                "title": "深夜茶话会",
+                "roomKind": "roleplay",
+                "description": "两个角色聊近况",
+                "scenarioPrompt": "场景在安静的茶室，交流要克制自然。",
+                "routingPolicy": "invite_only",
+                "workspaceRoots": [],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )
+        room = created["room"]
+        self.assertEqual(room["roomKind"], "roleplay")
+        self.assertEqual(room["workspaceRoots"], [])
+        self.assertTrue(all(
+            self.service.sessions.get(str(item["sessionId"]))["mode"] == "assistant"
+            for item in room["participants"]
+        ))
+        current, future = room["participants"]
+        with patch.object(self.service, "prompt", return_value={"turnId": "turn:first"}):
+            first = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "今天有点累",
+                    "participantIds": [str(current["id"])],
+                },
+            )
+        self.assertEqual(first["routeDecision"]["reason"], "explicit_invite")
+        self.service.rooms.append_event(
+            room_id=str(room["id"]),
+            event_type="participant_message",
+            payload={
+                "data": {
+                    "message": {
+                        "role": "assistant",
+                        "blocks": [{"type": "text", "text": "先坐一会儿，慢慢说。"}],
+                    }
+                }
+            },
+            participant_id=str(current["id"]),
+            topic_id=str(room["activeTopicId"]),
+        )
+        with patch.object(self.service, "prompt", return_value={"turnId": "turn:second"}) as prompt:
+            second = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "你怎么看？",
+                    "participantIds": [str(future["id"])],
+                },
+            )
+        self.assertEqual(second["participant"]["id"], future["id"])
+        materialized = prompt.call_args.args[1]["message"]
+        self.assertIn("安静的茶室", materialized)
+        self.assertIn("今天有点累", materialized)
+        self.assertIn("先坐一会儿，慢慢说", materialized)
+        self.assertIn("不要输出或模仿", materialized)
+        self.assertNotIn("[此刻的发言]", materialized)
 
 
 if __name__ == "__main__":

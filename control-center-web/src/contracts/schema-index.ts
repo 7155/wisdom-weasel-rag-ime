@@ -2120,6 +2120,9 @@ export const contractSchemas = {
           "participant_delta",
           "participant_activity",
           "participant_message",
+          "room_config_changed",
+          "topic_changed",
+          "artifact_changed",
           "turn_completed",
           "turn_failed",
           "snapshot_required"
@@ -2132,6 +2135,9 @@ export const contractSchemas = {
         ]
       },
       "sourceSessionId": {
+        "type": "string"
+      },
+      "topicId": {
         "type": "string"
       },
       "createdAtMs": {
@@ -2437,15 +2443,52 @@ export const contractSchemas = {
               "archived"
             ]
           },
+          "roomKind": {
+            "type": "string",
+            "enum": [
+              "collaboration",
+              "roleplay"
+            ]
+          },
+          "avatar": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "scenarioPrompt": {
+            "type": "string",
+            "maxLength": 8000
+          },
           "routingPolicy": {
             "type": "string",
             "enum": [
               "manual_mentions",
-              "moderator"
+              "moderator",
+              "sequential",
+              "natural",
+              "invite_only"
             ]
+          },
+          "routingConfig": {
+            "type": "object"
           },
           "moderatorParticipantId": {
             "type": "string"
+          },
+          "nextSpeakerOrdinal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "activeTopicId": {
+            "type": "string"
+          },
+          "configRevision": {
+            "type": "integer",
+            "minimum": 1
           },
           "workspaceRoots": {
             "type": "array",
@@ -2474,6 +2517,20 @@ export const contractSchemas = {
             "maxItems": 4,
             "items": {
               "$ref": "#/$defs/participant"
+            }
+          },
+          "topics": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object"
             }
           }
         }
@@ -2523,6 +2580,9 @@ export const contractSchemas = {
               "participant_delta",
               "participant_activity",
               "participant_message",
+              "room_config_changed",
+              "topic_changed",
+              "artifact_changed",
               "turn_completed",
               "turn_failed",
               "snapshot_required"
@@ -2535,6 +2595,9 @@ export const contractSchemas = {
             ]
           },
           "sourceSessionId": {
+            "type": "string"
+          },
+          "topicId": {
             "type": "string"
           },
           "createdAtMs": {
@@ -2591,15 +2654,72 @@ export const contractSchemas = {
           "archived"
         ]
       },
+      "roomKind": {
+        "type": "string",
+        "enum": [
+          "collaboration",
+          "roleplay"
+        ]
+      },
+      "avatar": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "scenarioPrompt": {
+        "type": "string",
+        "maxLength": 8000
+      },
       "routingPolicy": {
         "type": "string",
         "enum": [
           "manual_mentions",
-          "moderator"
+          "moderator",
+          "sequential",
+          "natural",
+          "invite_only"
         ]
+      },
+      "routingConfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "maxResponders",
+          "naturalJitter",
+          "fallbackParticipantId"
+        ],
+        "properties": {
+          "maxResponders": {
+            "type": "integer",
+            "const": 1
+          },
+          "naturalJitter": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 0.15
+          },
+          "fallbackParticipantId": {
+            "type": "string"
+          }
+        }
       },
       "moderatorParticipantId": {
         "type": "string"
+      },
+      "nextSpeakerOrdinal": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 3
+      },
+      "activeTopicId": {
+        "type": "string"
+      },
+      "configRevision": {
+        "type": "integer",
+        "minimum": 1
       },
       "workspaceRoots": {
         "type": "array",
@@ -2626,6 +2746,20 @@ export const contractSchemas = {
         "type": "array",
         "minItems": 2,
         "maxItems": 4,
+        "items": {
+          "type": "object"
+        }
+      },
+      "topics": {
+        "type": "array",
+        "maxItems": 200,
+        "items": {
+          "type": "object"
+        }
+      },
+      "artifacts": {
+        "type": "array",
+        "maxItems": 100,
         "items": {
           "type": "object"
         }

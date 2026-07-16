@@ -151,6 +151,18 @@ export function reduceRoomEvent(
       completeTurn(next, event.turnId, 'failed', event.createdAtMs, text(payload.error));
       upsertActivity(next, event, payload, 'failed');
       break;
+    case 'room_config_changed':
+    case 'topic_changed':
+    case 'artifact_changed':
+      appendDiagnostic(next, {
+        id: event.eventId,
+        streamKind: 'room',
+        eventType: event.eventType,
+        summary: 'Room metadata changed and is represented by the latest snapshot.',
+        sequence: event.sequence,
+        payload,
+      });
+      break;
     case 'snapshot_required':
       if (options.snapshotReplay) {
         appendDiagnostic(next, {
@@ -443,6 +455,12 @@ function upsertActivity(
   payload: Record<string, unknown>,
   forcedStatus?: RoomActivityProjection['status'],
 ): void {
+  const participantStatus = text(payload.status);
+  const isCompletedRoomLifecycle =
+    event.eventType === 'participant_status' &&
+    ['room_created', 'room_archived', 'room_restored', 'completed'].includes(
+      participantStatus,
+    );
   const id =
     text(payload.toolCallId ?? payload.approvalId ?? payload.requestId) ||
     `${event.eventId}:activity`;
@@ -450,7 +468,7 @@ function upsertActivity(
     forcedStatus ??
     (payload.isError === true || text(payload.status) === 'failed'
       ? 'failed'
-      : event.eventType === 'participant_status' && text(payload.status) !== 'completed'
+      : event.eventType === 'participant_status' && !isCompletedRoomLifecycle
         ? 'running'
         : 'completed');
   const activity: RoomActivityProjection = {
@@ -470,6 +488,9 @@ function upsertActivity(
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
   if (event.participantId && !turn.participantIds.includes(event.participantId)) {
     turn.participantIds.push(event.participantId);
+  }
+  if (isCompletedRoomLifecycle) {
+    completeTurn(state, event.turnId, 'completed', event.createdAtMs);
   }
 }
 

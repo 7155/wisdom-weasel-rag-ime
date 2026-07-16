@@ -31,6 +31,9 @@
         "participant_delta",
         "participant_activity",
         "participant_message",
+        "room_config_changed",
+        "topic_changed",
+        "artifact_changed",
         "turn_completed",
         "turn_failed",
         "snapshot_required"
@@ -38,6 +41,7 @@
     },
     "participantId": {"type": ["string", "null"]},
     "sourceSessionId": {"type": "string"},
+    "topicId": {"type": "string"},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "payload": {"type": "object"},
     "resumeToken": {"type": "string", "minLength": 1}

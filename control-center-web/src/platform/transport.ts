@@ -76,7 +76,8 @@ export interface FilePickOptions {
     | 'export-destination'
     | 'workspace-root'
     | 'knowledge-import'
-    | 'plugin-source';
+    | 'plugin-source'
+    | 'room-artifact';
   selection?: 'file' | 'directory';
   /** Required for attachment imports; the native host binds every receipt to this Agent session. */
   sessionId?: string;

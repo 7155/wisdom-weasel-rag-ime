@@ -343,7 +343,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 throw NativeMediaImportError.rejected("File picker payload contained an unsupported field")
             }
             let purpose = try requiredString("purpose", in: payload)
-            guard ["attachment", "configuration-import", "restore", "export-destination", "workspace-root", "knowledge-import", "plugin-source"].contains(purpose) else {
+            guard ["attachment", "configuration-import", "restore", "export-destination", "workspace-root", "knowledge-import", "plugin-source", "room-artifact"].contains(purpose) else {
                 throw NativeMediaImportError.rejected("File picker purpose is not allowlisted")
             }
             let selection = payload["selection"] as? String

@@ -22,8 +22,18 @@ export interface Room {
   id: string;
   title: string;
   status: 'active' | 'archived';
-  routingPolicy: 'manual_mentions' | 'moderator';
+  roomKind?: 'collaboration' | 'roleplay';
+  avatar?: string;
+  description?: string;
+  scenarioPrompt?: string;
+  routingPolicy: 'manual_mentions' | 'moderator' | 'sequential' | 'natural' | 'invite_only';
+  routingConfig?: {
+    [k: string]: unknown;
+  };
   moderatorParticipantId: string;
+  nextSpeakerOrdinal?: number;
+  activeTopicId?: string;
+  configRevision?: number;
   /**
    * @maxItems 4
    */
@@ -40,6 +50,18 @@ export interface Room {
     | [Participant, Participant]
     | [Participant, Participant, Participant]
     | [Participant, Participant, Participant, Participant];
+  /**
+   * @maxItems 200
+   */
+  topics?: {
+    [k: string]: unknown;
+  }[];
+  /**
+   * @maxItems 100
+   */
+  artifacts?: {
+    [k: string]: unknown;
+  }[];
 }
 export interface Participant {
   schemaVersion: 'rag-ime.agent-participant.v1';
@@ -68,11 +90,15 @@ export interface Event {
     | 'participant_delta'
     | 'participant_activity'
     | 'participant_message'
+    | 'room_config_changed'
+    | 'topic_changed'
+    | 'artifact_changed'
     | 'turn_completed'
     | 'turn_failed'
     | 'snapshot_required';
   participantId: string | null;
   sourceSessionId: string;
+  topicId?: string;
   createdAtMs: number;
   payload: {
     [k: string]: unknown;

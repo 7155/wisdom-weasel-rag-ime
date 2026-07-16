@@ -708,7 +708,7 @@ function assertFilePickOptions(options: FilePickOptions): void {
   for (const key of Object.keys(options)) {
     if (!allowedKeys.has(key)) throw new TypeError(`FilePickOptions field is not allowed: ${key}`);
   }
-  if (!['attachment', 'configuration-import', 'restore', 'export-destination', 'workspace-root', 'knowledge-import', 'plugin-source'].includes(options.purpose)) {
+  if (!['attachment', 'configuration-import', 'restore', 'export-destination', 'workspace-root', 'knowledge-import', 'plugin-source', 'room-artifact'].includes(options.purpose)) {
     throw new TypeError('FilePickOptions purpose is not allowlisted');
   }
   if (options.selection !== undefined && !['file', 'directory'].includes(options.selection)) {

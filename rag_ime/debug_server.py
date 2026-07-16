@@ -5488,6 +5488,28 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self.service.agent.room_snapshot(agent_room_id),
             )
             return
+        if agent_room_id and room_action == "topics":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_topics(
+                    agent_room_id,
+                    {"includeArchived": _query_first(query, "includeArchived")},
+                ),
+            )
+            return
+        if agent_room_id and room_action == "artifacts":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_artifacts(
+                    agent_room_id,
+                    {
+                        "includeArchived": _query_first(query, "includeArchived"),
+                        "topicId": _query_first(query, "topicId"),
+                        "limit": _query_first(query, "limit"),
+                    },
+                ),
+            )
+            return
         if agent_room_id and not room_action:
             self._write_json(HTTPStatus.OK, self.service.agent.room(agent_room_id))
             return
@@ -6280,6 +6302,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
                 )
+            elif agent_room_id and room_action == "topics":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.create_room_topic(agent_room_id, payload),
+                )
+            elif agent_room_id and room_action == "artifacts":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.add_room_artifact(agent_room_id, payload),
+                )
             elif agent_session_id and agent_action == "prompt":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
             elif agent_session_id and agent_action == "forks":
@@ -6596,6 +6628,18 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             room_id, room_action = agent_room_route(path)
             if room_id and not room_action:
                 self._write_json(HTTPStatus.OK, self.service.agent.update_room(room_id, self._read_json()))
+                return
+            if room_id and room_action == "topics":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.update_room_topic(room_id, self._read_json()),
+                )
+                return
+            if room_id and room_action == "artifacts":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.update_room_artifact(room_id, self._read_json()),
+                )
                 return
             if not session_id or action:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})

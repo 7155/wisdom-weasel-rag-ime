@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import queue
 import sqlite3
@@ -11,6 +12,12 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from .agent_room_routing import (
+    normalize_room_kind,
+    normalize_routing_config,
+    normalize_routing_policy,
+    plan_room_route,
+)
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 
@@ -23,6 +30,9 @@ ROOM_EVENT_TYPES = frozenset(
         "participant_delta",
         "participant_activity",
         "participant_message",
+        "room_config_changed",
+        "topic_changed",
+        "artifact_changed",
         "turn_completed",
         "turn_failed",
         "snapshot_required",
@@ -61,13 +71,22 @@ class AgentRoomStore:
         participants: Sequence[Mapping[str, object]],
         workspace_roots: Sequence[str] = (),
         moderator_ordinal: int = 0,
+        room_kind: str = "collaboration",
+        avatar: str = "members",
+        description: str = "",
+        scenario_prompt: str = "",
+        routing_config: Mapping[str, object] | None = None,
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         normalized_title = " ".join(str(title).split())[:120]
         if not normalized_title:
             raise ValueError("agent room title must not be empty")
-        if routing_policy not in {"manual_mentions", "moderator"}:
-            raise ValueError("agent room routing policy must be manual_mentions or moderator")
+        policy = normalize_routing_policy(routing_policy)
+        kind = normalize_room_kind(room_kind)
+        config = normalize_routing_config(routing_config)
+        normalized_avatar = " ".join(str(avatar or "members").split())[:80] or "members"
+        normalized_description = " ".join(str(description or "").split())[:500]
+        normalized_scenario = str(scenario_prompt or "").strip()[:8_000]
         values = [dict(item) for item in participants]
         if not 2 <= len(values) <= 4:
             raise ValueError("agent room requires between 2 and 4 participants")
@@ -79,24 +98,35 @@ class AgentRoomStore:
 
         timestamp = _timestamp(created_at_ms)
         room_id = f"room:{uuid.uuid4()}"
+        topic_id = f"topic:{uuid.uuid4()}"
         participant_ids = [f"participant:{uuid.uuid4()}" for _ in values]
-        moderator_id = participant_ids[moderator_ordinal] if routing_policy == "moderator" else ""
+        moderator_id = participant_ids[moderator_ordinal] if policy == "moderator" else ""
         room_file = self._room_file(room_id)
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO agent_rooms(
                     id, title, routing_policy, moderator_participant_id, status,
-                    room_file, workspace_roots_json, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                    room_file, workspace_roots_json, room_kind, avatar, description,
+                    scenario_prompt, routing_mode, routing_config_json,
+                    next_speaker_ordinal, active_topic_id, config_revision,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)
                 """,
                 (
                     room_id,
                     normalized_title,
-                    routing_policy,
+                    _legacy_policy(policy),
                     moderator_id,
                     str(room_file),
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
+                    kind,
+                    normalized_avatar,
+                    normalized_description,
+                    normalized_scenario,
+                    policy,
+                    json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    topic_id,
                     timestamp,
                     timestamp,
                 ),
@@ -128,6 +158,15 @@ class AgentRoomStore:
                         timestamp,
                     ),
                 )
+            conn.execute(
+                """
+                INSERT INTO agent_room_topics(
+                    id, room_id, title, summary, topic_status, ordinal,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, '主话题', '', 'active', 0, ?, ?)
+                """,
+                (topic_id, room_id, timestamp, timestamp),
+            )
         return self.get(room_id)
 
     def get(self, room_id: str) -> dict[str, object]:
@@ -142,7 +181,22 @@ class AgentRoomStore:
                 """,
                 (room_id,),
             ).fetchall()
-        return _room_payload(row, participants)
+            topics = conn.execute(
+                """
+                SELECT * FROM agent_room_topics
+                WHERE room_id = ? ORDER BY topic_status ASC, ordinal ASC, created_at_ms ASC
+                """,
+                (room_id,),
+            ).fetchall()
+            artifacts = conn.execute(
+                """
+                SELECT * FROM agent_room_artifacts
+                WHERE room_id = ? AND artifact_status = 'active'
+                ORDER BY updated_at_ms DESC LIMIT 100
+                """,
+                (room_id,),
+            ).fetchall()
+        return _room_payload(row, participants, topics, artifacts)
 
     def list(self, *, include_archived: bool = False, limit: int = 100) -> list[dict[str, object]]:
         bounded = max(1, min(int(limit), 200))
@@ -160,6 +214,93 @@ class AgentRoomStore:
             cursor = conn.execute(
                 "UPDATE agent_rooms SET status = ?, updated_at_ms = ? WHERE id = ?",
                 ("archived" if archived else "active", timestamp, room_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRoomNotFound(room_id)
+        return self.get(room_id)
+
+    def update_config(
+        self,
+        room_id: str,
+        values: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        allowed = {
+            "title",
+            "roomKind",
+            "avatar",
+            "description",
+            "scenarioPrompt",
+            "routingPolicy",
+            "routingConfig",
+            "moderatorParticipantId",
+            "activeTopicId",
+        }
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"unsupported agent room configuration fields: {', '.join(sorted(unknown))}")
+        current = self.get(room_id)
+        updates: dict[str, object] = {}
+        if "title" in values:
+            title = " ".join(str(values.get("title") or "").split())[:120]
+            if not title:
+                raise ValueError("agent room title must not be empty")
+            updates["title"] = title
+        if "roomKind" in values:
+            room_kind = normalize_room_kind(values.get("roomKind"))
+            if room_kind != str(current.get("roomKind") or "collaboration"):
+                raise ValueError("roomKind cannot be changed after room creation")
+        if "avatar" in values:
+            updates["avatar"] = " ".join(str(values.get("avatar") or "members").split())[:80] or "members"
+        if "description" in values:
+            updates["description"] = " ".join(str(values.get("description") or "").split())[:500]
+        if "scenarioPrompt" in values:
+            updates["scenario_prompt"] = str(values.get("scenarioPrompt") or "").strip()[:8_000]
+        if "routingPolicy" in values:
+            policy = normalize_routing_policy(values.get("routingPolicy"))
+            updates["routing_mode"] = policy
+            updates["routing_policy"] = _legacy_policy(policy)
+            if policy == "moderator" and not (
+                str(values.get("moderatorParticipantId") or "")
+                or str(current.get("moderatorParticipantId") or "")
+            ):
+                raise ValueError("moderated room requires a moderator participant")
+        if "routingConfig" in values:
+            updates["routing_config_json"] = json.dumps(
+                normalize_routing_config(values.get("routingConfig")),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        if "moderatorParticipantId" in values:
+            moderator_id = str(values.get("moderatorParticipantId") or "").strip()
+            if moderator_id and moderator_id not in {
+                str(item["id"]) for item in current["participants"] if isinstance(item, Mapping)
+            }:
+                raise ValueError("moderatorParticipantId must identify one room participant")
+            updates["moderator_participant_id"] = moderator_id
+        if "activeTopicId" in values:
+            topic_id = str(values.get("activeTopicId") or "").strip()
+            if topic_id not in {
+                str(item["id"])
+                for item in current.get("topics", [])
+                if isinstance(item, Mapping) and item.get("status") == "active"
+            }:
+                raise ValueError("activeTopicId must identify an active room topic")
+            updates["active_topic_id"] = topic_id
+        if not updates:
+            return current
+        timestamp = _timestamp(updated_at_ms)
+        assignments = ", ".join(f"{column} = ?" for column in updates)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE agent_rooms
+                SET {assignments}, config_revision = config_revision + 1, updated_at_ms = ?
+                WHERE id = ?
+                """,  # noqa: S608 - column names come from the fixed allowlist above
+                (*updates.values(), timestamp, room_id),
             )
             if cursor.rowcount != 1:
                 raise AgentRoomNotFound(room_id)
@@ -197,60 +338,394 @@ class AgentRoomStore:
             ).fetchone()
         return _participant_payload(row) if row is not None else None
 
-    def route_target(self, room_id: str, text: str) -> dict[str, object]:
+    def plan_route(
+        self,
+        room_id: str,
+        text: str,
+        *,
+        requested_participant_ids: Sequence[str] = (),
+        profiles: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> dict[str, object]:
         room = self.get(room_id)
         if room["status"] != "active":
             raise ValueError("agent room is archived")
-        participants = [
-            dict(item)
+        return plan_room_route(
+            room,
+            text,
+            requested_participant_ids=requested_participant_ids,
+            profiles=profiles,
+        )
+
+    def route_target(self, room_id: str, text: str) -> dict[str, object]:
+        decision = self.plan_route(room_id, text)
+        selected = str(decision["targetParticipantId"])
+        return self.participant(selected)
+
+    def commit_route(
+        self,
+        room_id: str,
+        decision: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        if str(decision.get("routingPolicy") or "") != "sequential":
+            return self.get(room_id)
+        target = self.participant(str(decision.get("targetParticipantId") or ""))
+        if str(target["roomId"]) != room_id:
+            raise ValueError("route decision target does not belong to this room")
+        room = self.get(room_id)
+        active_ordinals = [
+            int(item["ordinal"])
             for item in room["participants"]
             if isinstance(item, Mapping) and item.get("status") == "active"
         ]
-        lowered = str(text).casefold()
-        aliases: dict[str, list[dict[str, object]]] = {}
-        for participant in participants:
-            for alias in {
-                str(participant["displayName"]).casefold(),
-                str(participant["roleId"]).casefold(),
-            }:
-                aliases.setdefault(alias, []).append(participant)
+        if not active_ordinals:
+            return room
+        current = int(target["ordinal"])
+        later = sorted(value for value in active_ordinals if value > current)
+        next_ordinal = later[0] if later else min(active_ordinals)
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE agent_rooms
+                SET next_speaker_ordinal = ?, updated_at_ms = ? WHERE id = ?
+                """,
+                (next_ordinal, timestamp, room_id),
+            )
+        return self.get(room_id)
 
-        matched_by_id: dict[str, dict[str, object]] = {}
-        for offset, character in enumerate(lowered):
-            if character != "@":
-                continue
-            candidates = [
-                (alias, owners)
-                for alias, owners in aliases.items()
-                if lowered.startswith(alias, offset + 1)
-                and _mention_ends_at_boundary(lowered, offset + 1 + len(alias))
-            ]
-            if not candidates:
-                continue
-            longest = max(len(alias) for alias, _owners in candidates)
-            owners_by_id: dict[str, dict[str, object]] = {}
-            for alias, owners in candidates:
-                if len(alias) != longest:
-                    continue
-                for owner in owners:
-                    owners_by_id[str(owner["id"])] = owner
-            if len(owners_by_id) != 1:
-                raise ValueError("first room version supports exactly one addressed participant")
-            participant = next(iter(owners_by_id.values()))
-            matched_by_id[str(participant["id"])] = participant
+    def list_topics(self, room_id: str, *, include_archived: bool = False) -> list[dict[str, object]]:
+        self.get(room_id)
+        where = "" if include_archived else "AND topic_status = 'active'"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM agent_room_topics
+                WHERE room_id = ? {where}
+                ORDER BY ordinal ASC, created_at_ms ASC
+                """,  # noqa: S608 - where is a fixed internal clause
+                (room_id,),
+            ).fetchall()
+        return [_topic_payload(row) for row in rows]
 
-        matched = list(matched_by_id.values())
-        if len(matched) > 1:
-            raise ValueError("first room version supports exactly one addressed participant")
-        if matched:
-            return matched[0]
-        if room["routingPolicy"] == "moderator":
-            moderator_id = str(room["moderatorParticipantId"] or "")
-            for participant in participants:
-                if participant["id"] == moderator_id:
-                    return participant
-            raise ValueError("agent room moderator is unavailable")
-        raise ValueError("message must mention one room participant, for example @智鼬")
+    def create_topic(
+        self,
+        room_id: str,
+        *,
+        title: str,
+        summary: str = "",
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        self.get(room_id)
+        normalized_title = " ".join(str(title or "").split())[:120]
+        if not normalized_title:
+            raise ValueError("room topic title must not be empty")
+        normalized_summary = " ".join(str(summary or "").split())[:2_000]
+        timestamp = _timestamp(created_at_ms)
+        topic_id = f"topic:{uuid.uuid4()}"
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM agent_room_topics WHERE room_id = ?",
+                (room_id,),
+            ).fetchone()
+            ordinal = int(row[0]) if row is not None else 0
+            conn.execute(
+                """
+                INSERT INTO agent_room_topics(
+                    id, room_id, title, summary, topic_status, ordinal,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+                """,
+                (
+                    topic_id,
+                    room_id,
+                    normalized_title,
+                    normalized_summary,
+                    ordinal,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE agent_rooms
+                SET active_topic_id = ?, config_revision = config_revision + 1,
+                    updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (topic_id, timestamp, room_id),
+            )
+        return self.topic(topic_id)
+
+    def topic(self, topic_id: str) -> dict[str, object]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_room_topics WHERE id = ?",
+                (topic_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("room topic was not found")
+        return _topic_payload(row)
+
+    def update_topic(
+        self,
+        room_id: str,
+        topic_id: str,
+        values: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        allowed = {"title", "summary", "archived", "ordinal", "activate"}
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"unsupported room topic fields: {', '.join(sorted(unknown))}")
+        room = self.get(room_id)
+        topic = self.topic(topic_id)
+        if str(topic["roomId"]) != room_id:
+            raise ValueError("room topic does not belong to this room")
+        updates: dict[str, object] = {}
+        if "title" in values:
+            title = " ".join(str(values.get("title") or "").split())[:120]
+            if not title:
+                raise ValueError("room topic title must not be empty")
+            updates["title"] = title
+        if "summary" in values:
+            updates["summary"] = " ".join(str(values.get("summary") or "").split())[:2_000]
+        if "ordinal" in values:
+            updates["ordinal"] = max(0, min(int(values.get("ordinal") or 0), 999))
+        if "archived" in values:
+            archived = bool(values.get("archived"))
+            if archived and str(room.get("activeTopicId") or "") == topic_id:
+                alternatives = [
+                    item
+                    for item in room.get("topics", [])
+                    if isinstance(item, Mapping)
+                    and item.get("status") == "active"
+                    and item.get("id") != topic_id
+                ]
+                if not alternatives:
+                    raise ValueError("a room must keep at least one active topic")
+                updates["topic_status"] = "archived"
+                updates["activateFallback"] = str(alternatives[0]["id"])
+            else:
+                updates["topic_status"] = "archived" if archived else "active"
+        activate = bool(values.get("activate"))
+        timestamp = _timestamp(updated_at_ms)
+        fallback = str(updates.pop("activateFallback", ""))
+        with self._connect() as conn:
+            if updates:
+                assignments = ", ".join(f"{column} = ?" for column in updates)
+                conn.execute(
+                    f"""
+                    UPDATE agent_room_topics
+                    SET {assignments}, updated_at_ms = ?
+                    WHERE id = ? AND room_id = ?
+                    """,  # noqa: S608 - column names come from the fixed allowlist above
+                    (*updates.values(), timestamp, topic_id, room_id),
+                )
+            active_topic_id = topic_id if activate else fallback
+            if active_topic_id:
+                conn.execute(
+                    """
+                    UPDATE agent_rooms
+                    SET active_topic_id = ?, config_revision = config_revision + 1,
+                        updated_at_ms = ?
+                    WHERE id = ?
+                    """,
+                    (active_topic_id, timestamp, room_id),
+                )
+            elif updates:
+                conn.execute(
+                    """
+                    UPDATE agent_rooms
+                    SET config_revision = config_revision + 1, updated_at_ms = ?
+                    WHERE id = ?
+                    """,
+                    (timestamp, room_id),
+                )
+        return self.topic(topic_id)
+
+    def list_artifacts(
+        self,
+        room_id: str,
+        *,
+        include_archived: bool = False,
+        topic_id: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        self.get(room_id)
+        clauses = ["room_id = ?"]
+        params: list[object] = [room_id]
+        if not include_archived:
+            clauses.append("artifact_status = 'active'")
+        if topic_id:
+            clauses.append("topic_id = ?")
+            params.append(topic_id)
+        params.append(max(1, min(int(limit), 200)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM agent_room_artifacts
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at_ms DESC LIMIT ?
+                """,  # noqa: S608 - clauses are fixed internal strings
+                tuple(params),
+            ).fetchall()
+        return [_artifact_payload(row) for row in rows]
+
+    def add_artifact(
+        self,
+        room_id: str,
+        *,
+        path: str,
+        display_name: str = "",
+        topic_id: str = "",
+        media_type: str = "",
+        created_by_participant_id: str = "",
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        room = self.get(room_id)
+        resolved = _authorized_artifact_path(path, room.get("workspaceRoots", []))
+        if topic_id:
+            topic = self.topic(topic_id)
+            if str(topic["roomId"]) != room_id or topic["status"] != "active":
+                raise ValueError("artifact topic must be active and belong to this room")
+        else:
+            topic_id = str(room.get("activeTopicId") or "")
+        if created_by_participant_id:
+            participant = self.participant(created_by_participant_id)
+            if str(participant["roomId"]) != room_id:
+                raise ValueError("artifact author does not belong to this room")
+        timestamp = _timestamp(updated_at_ms)
+        name = " ".join(str(display_name or resolved.name).split())[:240] or resolved.name
+        mime = str(media_type or mimetypes.guess_type(resolved.name)[0] or "application/octet-stream")[:120]
+        byte_size = resolved.stat().st_size
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT * FROM agent_room_artifacts
+                WHERE room_id = ? AND path = ?
+                ORDER BY updated_at_ms DESC LIMIT 1
+                """,
+                (room_id, str(resolved)),
+            ).fetchone()
+            if existing is None:
+                artifact_id = f"room-artifact:{uuid.uuid4()}"
+                conn.execute(
+                    """
+                    INSERT INTO agent_room_artifacts(
+                        id, room_id, topic_id, path, display_name, media_type,
+                        byte_size, sha256, revision, artifact_status,
+                        created_by_participant_id, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1, 'active', ?, ?, ?)
+                    """,
+                    (
+                        artifact_id,
+                        room_id,
+                        topic_id,
+                        str(resolved),
+                        name,
+                        mime,
+                        byte_size,
+                        created_by_participant_id,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            else:
+                artifact_id = str(existing["id"])
+                conn.execute(
+                    """
+                    UPDATE agent_room_artifacts
+                    SET topic_id = ?, display_name = ?, media_type = ?,
+                        byte_size = ?, revision = revision + 1,
+                        artifact_status = 'active',
+                        created_by_participant_id = ?, updated_at_ms = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        topic_id,
+                        name,
+                        mime,
+                        byte_size,
+                        created_by_participant_id,
+                        timestamp,
+                        artifact_id,
+                    ),
+                )
+        return self.artifact(artifact_id)
+
+    def artifact(self, artifact_id: str) -> dict[str, object]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_room_artifacts WHERE id = ?",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("room artifact was not found")
+        return _artifact_payload(row)
+
+    def archive_artifact(
+        self,
+        room_id: str,
+        artifact_id: str,
+        *,
+        archived: bool,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        artifact = self.artifact(artifact_id)
+        if str(artifact["roomId"]) != room_id:
+            raise ValueError("room artifact does not belong to this room")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE agent_room_artifacts
+                SET artifact_status = ?, updated_at_ms = ?
+                WHERE id = ? AND room_id = ?
+                """,
+                (
+                    "archived" if archived else "active",
+                    _timestamp(updated_at_ms),
+                    artifact_id,
+                    room_id,
+                ),
+            )
+        return self.artifact(artifact_id)
+
+    def recent_public_messages(
+        self,
+        room_id: str,
+        *,
+        topic_id: str = "",
+        exclude_turn_id: str = "",
+        limit: int = 24,
+    ) -> list[dict[str, object]]:
+        self.get(room_id)
+        clauses = [
+            "room_id = ?",
+            "event_type IN ('user_message', 'participant_message')",
+        ]
+        params: list[object] = [room_id]
+        if topic_id:
+            clauses.append("topic_id = ?")
+            params.append(topic_id)
+        if exclude_turn_id:
+            clauses.append("turn_id != ?")
+            params.append(exclude_turn_id)
+        params.append(max(1, min(int(limit), 100)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM (
+                    SELECT * FROM agent_room_events
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY sequence DESC LIMIT ?
+                ) ORDER BY sequence ASC
+                """,  # noqa: S608 - clauses are fixed internal strings
+                tuple(params),
+            ).fetchall()
+        return [_room_event_payload(row) for row in rows]
 
     def append_event(
         self,
@@ -261,6 +736,7 @@ class AgentRoomStore:
         turn_id: str = "",
         participant_id: str | None = None,
         source_session_id: str = "",
+        topic_id: str = "",
         created_at_ms: int | None = None,
         retain_per_room: int = 2000,
     ) -> dict[str, object]:
@@ -291,6 +767,7 @@ class AgentRoomStore:
                 "eventType": event_type,
                 "participantId": participant_id,
                 "sourceSessionId": str(source_session_id or ""),
+                "topicId": str(topic_id or room["active_topic_id"] or ""),
                 "createdAtMs": timestamp,
                 "payload": safe_payload,
                 "resumeToken": event_id,
@@ -300,8 +777,8 @@ class AgentRoomStore:
                 """
                 INSERT INTO agent_room_events(
                     event_id, room_id, sequence, turn_id, event_type,
-                    participant_id, source_session_id, created_at_ms, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    participant_id, source_session_id, topic_id, created_at_ms, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event_id,
@@ -311,6 +788,7 @@ class AgentRoomStore:
                     event_type,
                     participant_id,
                     str(source_session_id or ""),
+                    str(topic_id or room["active_topic_id"] or ""),
                     timestamp,
                     payload_json,
                 ),
@@ -373,6 +851,21 @@ class AgentRoomStore:
                 """,
                 (room_id,),
             ).fetchall()
+            topic_rows = conn.execute(
+                """
+                SELECT * FROM agent_room_topics
+                WHERE room_id = ? ORDER BY topic_status ASC, ordinal ASC, created_at_ms ASC
+                """,
+                (room_id,),
+            ).fetchall()
+            artifact_rows = conn.execute(
+                """
+                SELECT * FROM agent_room_artifacts
+                WHERE room_id = ? AND artifact_status = 'active'
+                ORDER BY updated_at_ms DESC LIMIT 100
+                """,
+                (room_id,),
+            ).fetchall()
             bounds_row = conn.execute(
                 """
                 SELECT COUNT(*) AS event_count,
@@ -393,7 +886,7 @@ class AgentRoomStore:
                 (room_id, ROOM_SNAPSHOT_EVENT_LIMIT),
             ).fetchall()
 
-        room = _room_payload(room_row, participant_rows)
+        room = _room_payload(room_row, participant_rows, topic_rows, artifact_rows)
         events = [_room_event_payload(row) for row in event_rows]
         retained_count = int(bounds_row["event_count"]) if bounds_row is not None else 0
         retained_first = int(bounds_row["first_sequence"]) if bounds_row is not None else 0
@@ -540,14 +1033,30 @@ class AgentRoomEventHub:
                     self._subscribers.pop(room_id, None)
 
 
-def _room_payload(row: sqlite3.Row, participants: Sequence[sqlite3.Row]) -> dict[str, object]:
+def _room_payload(
+    row: sqlite3.Row,
+    participants: Sequence[sqlite3.Row],
+    topics: Sequence[sqlite3.Row],
+    artifacts: Sequence[sqlite3.Row],
+) -> dict[str, object]:
+    routing_policy = str(row["routing_mode"] or row["routing_policy"])
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-room.v1",
         "id": str(row["id"]),
         "title": str(row["title"]),
         "status": str(row["status"]),
-        "routingPolicy": str(row["routing_policy"]),
+        "roomKind": str(row["room_kind"] or "collaboration"),
+        "avatar": str(row["avatar"] or "members"),
+        "description": str(row["description"] or ""),
+        "scenarioPrompt": str(row["scenario_prompt"] or ""),
+        "routingPolicy": routing_policy,
+        "routingConfig": normalize_routing_config(
+            json.loads(str(row["routing_config_json"] or "{}"))
+        ),
         "moderatorParticipantId": str(row["moderator_participant_id"] or ""),
+        "nextSpeakerOrdinal": int(row["next_speaker_ordinal"] or 0),
+        "activeTopicId": str(row["active_topic_id"] or ""),
+        "configRevision": int(row["config_revision"] or 1),
         "workspaceRoots": [
             str(value)
             for value in json.loads(str(row["workspace_roots_json"] or "[]"))
@@ -557,6 +1066,8 @@ def _room_payload(row: sqlite3.Row, participants: Sequence[sqlite3.Row]) -> dict
         "updatedAtMs": int(row["updated_at_ms"]),
         "lastEventSequence": int(row["last_event_sequence"]),
         "participants": [_participant_payload(item) for item in participants],
+        "topics": [_topic_payload(item) for item in topics],
+        "artifacts": [_artifact_payload(item) for item in artifacts],
     }
     validate_contract(payload, "agent-room.v1.json")
     return payload
@@ -581,6 +1092,39 @@ def _participant_payload(row: sqlite3.Row) -> dict[str, object]:
     return payload
 
 
+def _topic_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.agent-room-topic.v1",
+        "id": str(row["id"]),
+        "roomId": str(row["room_id"]),
+        "title": str(row["title"]),
+        "summary": str(row["summary"] or ""),
+        "status": str(row["topic_status"]),
+        "ordinal": int(row["ordinal"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+    }
+
+
+def _artifact_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.agent-room-artifact.v1",
+        "id": str(row["id"]),
+        "roomId": str(row["room_id"]),
+        "topicId": str(row["topic_id"] or ""),
+        "path": str(row["path"]),
+        "displayName": str(row["display_name"]),
+        "mediaType": str(row["media_type"]),
+        "byteSize": int(row["byte_size"]),
+        "sha256": str(row["sha256"] or ""),
+        "revision": int(row["revision"]),
+        "status": str(row["artifact_status"]),
+        "createdByParticipantId": str(row["created_by_participant_id"] or ""),
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+    }
+
+
 def _workspace_roots(values: Sequence[str]) -> list[str]:
     roots: list[str] = []
     for value in values:
@@ -603,6 +1147,7 @@ def _room_event_payload(row: sqlite3.Row) -> dict[str, object]:
         "eventType": str(row["event_type"]),
         "participantId": str(row["participant_id"]) if row["participant_id"] is not None else None,
         "sourceSessionId": str(row["source_session_id"] or ""),
+        "topicId": str(row["topic_id"] or ""),
         "createdAtMs": int(row["created_at_ms"]),
         "payload": json.loads(str(row["payload_json"] or "{}")),
         "resumeToken": str(row["event_id"]),
@@ -632,11 +1177,30 @@ def _room_event_sequence(room_id: str, event_id: str) -> int | None:
         return None
 
 
-def _mention_ends_at_boundary(text: str, offset: int) -> bool:
-    if offset >= len(text):
-        return True
-    character = text[offset]
-    return character.isspace() or character in "@,!?;:，。！？；：、()[]{}<>（）《》\"'`"
+def _authorized_artifact_path(value: str, workspace_roots: object) -> Path:
+    path = Path(str(value or "")).expanduser().resolve(strict=True)
+    if not path.is_file():
+        raise ValueError("room artifact must reference a regular file")
+    roots = [
+        Path(str(root)).expanduser().resolve(strict=False)
+        for root in workspace_roots
+        if str(root or "").strip()
+    ] if isinstance(workspace_roots, Sequence) and not isinstance(workspace_roots, (str, bytes)) else []
+    if not any(_is_relative_to(path, root) for root in roots):
+        raise ValueError("room artifact must stay inside an authorized workspace")
+    return path
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _legacy_policy(policy: str) -> str:
+    return policy if policy in {"manual_mentions", "moderator"} else "manual_mentions"
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

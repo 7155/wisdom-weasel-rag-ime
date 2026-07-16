@@ -65,6 +65,12 @@ class ControlPathId(str, Enum):
     AGENT_ROOM_ARCHIVE = "agent.room.archive"
     AGENT_ROOM_MESSAGE = "agent.room.message"
     AGENT_ROOM_EVENTS = "agent.room.events"
+    AGENT_ROOM_TOPICS = "agent.room.topics"
+    AGENT_ROOM_TOPIC_CREATE = "agent.room.topic.create"
+    AGENT_ROOM_TOPIC_UPDATE = "agent.room.topic.update"
+    AGENT_ROOM_ARTIFACTS = "agent.room.artifacts"
+    AGENT_ROOM_ARTIFACT_ADD = "agent.room.artifact.add"
+    AGENT_ROOM_ARTIFACT_UPDATE = "agent.room.artifact.update"
     AGENT_ROLES_LIST = "agent.roles.list"
     AGENT_ROLES_CREATE = "agent.roles.create"
     AGENT_ROLE_MODELS = "agent.role.models"
@@ -519,12 +525,18 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_DEEP_SEARCH, ControlMethod.POST, "/api/agent/deep-search", "/control/v1/agent/deep-search", body={"query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"}, required_body={"query", "privacyDisposition"}),
 
         _route(ControlPathId.AGENT_ROOMS_LIST, ControlMethod.GET, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "limit"}),
-        _route(ControlPathId.AGENT_ROOMS_CREATE, ControlMethod.POST, "/api/agent/rooms", "/control/v1/agent/rooms", body={"title", "participants", "routingPolicy", "moderatorRoleId", "workspaceRoots"}, required_body={"participants", "workspaceRoots"}),
+        _route(ControlPathId.AGENT_ROOMS_CREATE, ControlMethod.POST, "/api/agent/rooms", "/control/v1/agent/rooms", body={"title", "roomKind", "avatar", "description", "scenarioPrompt", "participants", "routingPolicy", "routingConfig", "moderatorRoleId", "workspaceRoots"}, required_body={"participants"}),
         _route(ControlPathId.AGENT_ROOM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
-        _route(ControlPathId.AGENT_ROOM_ARCHIVE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"archived"}, required_body={"archived"}, remote_body={"archived"}),
-        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId"}, required_body={"message"}, remote_body={"message", "clientMessageId"}),
+        _route(ControlPathId.AGENT_ROOM_ARCHIVE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"archived", "title", "roomKind", "avatar", "description", "scenarioPrompt", "routingPolicy", "routingConfig", "moderatorParticipantId"}, remote_body={"archived", "title", "roomKind", "avatar", "description", "scenarioPrompt", "routingPolicy", "routingConfig", "moderatorParticipantId"}),
+        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds"}),
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
+        _route(ControlPathId.AGENT_ROOM_TOPICS, ControlMethod.GET, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"includeArchived"}),
+        _route(ControlPathId.AGENT_ROOM_TOPIC_CREATE, ControlMethod.POST, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"title", "summary"}, required_body={"title"}, remote_body={"title", "summary"}),
+        _route(ControlPathId.AGENT_ROOM_TOPIC_UPDATE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"topicId", "title", "summary", "activate", "archived"}, required_body={"topicId"}, remote_body={"topicId", "title", "summary", "activate", "archived"}),
+        _route(ControlPathId.AGENT_ROOM_ARTIFACTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/artifacts", "/control/v1/agent/rooms/{roomId}/artifacts", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"includeArchived", "topicId", "limit"}),
+        _route(ControlPathId.AGENT_ROOM_ARTIFACT_ADD, ControlMethod.POST, "/api/agent/rooms/{roomId}/artifacts", "/control/v1/agent/rooms/{roomId}/artifacts", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"path", "displayName", "topicId", "mediaType", "participantId"}, required_body={"path"}, remote_body={"path", "displayName", "topicId", "mediaType", "participantId"}),
+        _route(ControlPathId.AGENT_ROOM_ARTIFACT_UPDATE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}/artifacts", "/control/v1/agent/rooms/{roomId}/artifacts", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"artifactId", "archived"}, required_body={"artifactId", "archived"}, remote_body={"artifactId", "archived"}),
         _route(ControlPathId.AGENT_ROLES_LIST, ControlMethod.GET, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_ROLES_CREATE, ControlMethod.POST, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, required_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body_values={"timelineModel": {"luna", "terra", "sol"}}),
         _route(ControlPathId.AGENT_ROLE_MODELS, ControlMethod.GET, "/api/agent/roles/models", "/control/v1/agent/roles/models", scopes=[ControlScope.AGENT_READ], remote_safe=True),
