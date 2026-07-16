@@ -85,19 +85,21 @@ function createPreviewTransport(): MockControlTransport {
     ok: true,
     sessionId: stringValue(record(request.params).sessionId) || 'session-preview',
     items: [
-      { entryId: 'preview-entry-1', text: '先把真实权限边界和工具范围梳理清楚。', role: 'user', createdAtMs: 0 },
-      { entryId: 'preview-entry-2', text: '继续优化 Agent 的思考、工具和子智能体状态。', role: 'assistant', createdAtMs: 0 },
-      { entryId: 'preview-entry-3', text: '从这里重新讨论对话分支的交互。', role: 'user', createdAtMs: 0 },
+      { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。', role: 'user', createdAtMs: 0 },
+      { entryId: 'session-preview:assistant-architecture', text: '三条 Lane 已经收束到同一个可执行计划。', role: 'assistant', createdAtMs: 0 },
+      { entryId: 'session-preview:user-media', text: '把完成状态和附件也保留成结构化块。', role: 'user', createdAtMs: 0 },
+      { entryId: 'session-preview:assistant-media', text: '已完成。活动明细仍可追溯，附件也已经登记。', role: 'assistant', createdAtMs: 0 },
     ],
   });
   routes['agent.session.forks.create'] = (request: ControlRequest) => {
     const body = record(request.body);
     const sourceSessionId = stringValue(record(request.params).sessionId) || 'session-preview';
-    const entryId = stringValue(body.entryId) || 'preview-entry-3';
+    const entryId = stringValue(body.entryId) || 'session-preview:user-media';
     const selectedText = ({
-      'preview-entry-1': '先把真实权限边界和工具范围梳理清楚。',
-      'preview-entry-2': '继续优化 Agent 的思考、工具和子智能体状态。',
-      'preview-entry-3': '从这里重新讨论对话分支的交互。',
+      'session-preview:user-architecture': '把迁移进度按真实代码链整理一下，别把工具日志当回答。',
+      'session-preview:assistant-architecture': '',
+      'session-preview:user-media': '把完成状态和附件也保留成结构化块。',
+      'session-preview:assistant-media': '',
     } as Record<string, string>)[entryId] ?? '从这里创建分支。';
     const now = Date.now();
     const session = {
@@ -202,7 +204,7 @@ function previewResponse(pathId: ControlPathId): unknown {
         idleTimeoutSeconds: 900,
         activeSessionId: 'session-preview',
         lastError: '',
-        capabilities: {},
+        capabilities: { conversationFork: true },
       };
     case 'agent.session.models':
       return {
