@@ -356,21 +356,24 @@ details.agent-activity--inline[open] > summary > svg:last-child { transform: rot
 .agent-composer__attachments > span { display: inline-flex; height: 28px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 5px 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-round); background: var(--color-surface-subtle); font-size: 13px; animation: agent-attachment-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-composer__attachments button { display: grid; width: 18px; height: 18px; place-items: center; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
 .agent-composer__attachments button:active { transform: scale(var(--scale-press)); }
-.agent-command-palette { position: absolute; right: 24px; bottom: calc(100% - 8px); left: 24px; display: grid; max-height: min(440px, calc(100dvh - 150px)); padding: 5px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); box-shadow: var(--shadow-menu); overflow-y: auto; animation: agent-panel-enter var(--duration-panel) var(--ease-standard) both; transform-origin: 50% 100%; }
-.agent-command-palette > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 8px 9px; border-bottom: 1px solid var(--color-border); }
+.agent-command-palette { position: absolute; right: 24px; bottom: calc(100% - 8px); left: 24px; display: grid; gap: 1px; max-height: min(440px, calc(100dvh - 150px)); padding: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); box-shadow: var(--shadow-menu); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; animation: agent-panel-enter var(--duration-panel) var(--ease-standard) both; transform-origin: 50% 100%; }
+.agent-command-palette > header { position: sticky; z-index: 1; top: -6px; display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
 .agent-command-palette > header > span { display: grid; min-width: 0; gap: 1px; }
 .agent-command-palette > header strong { font-size: 13px; }
 .agent-command-palette > header small, .agent-command-palette > header p { color: var(--color-text-tertiary); font-size: 13px; }
 .agent-command-palette > header p { max-width: 390px; margin: 0; line-height: 1.4; text-align: right; }
-.agent-command-palette > button { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 8px; padding: 8px; border: 0; border-radius: var(--radius-1); background: transparent; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
-.agent-command-palette > button:disabled { cursor: default; opacity: .5; }
-.agent-command-palette > button:active { box-shadow: var(--shadow-control-press); transform: scale(var(--scale-press)); }
-.agent-command-palette > button:disabled:active { box-shadow: none; transform: none; }
-.agent-command-palette > button[aria-selected='true'] { background: var(--color-surface-hover); box-shadow: var(--shadow-control-hover); }
-.agent-command-palette kbd { color: var(--color-accent); font: 700 12px var(--font-mono); }
-.agent-command-palette span { display: grid; gap: 2px; }
-.agent-command-palette strong { font-size: 13px; }
-.agent-command-palette small { color: var(--color-text-tertiary); font-size: 13px; }
+.agent-command-palette > button { display: grid; width: 100%; min-width: 0; min-height: 54px; grid-template-columns: minmax(156px, 240px) minmax(0, 1fr); align-items: center; gap: 14px; padding: 8px 10px; border: 0; border-radius: var(--radius-1); background: transparent; color: var(--color-text-primary); text-align: left; cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+.agent-command-palette > button:disabled { cursor: default; color: var(--color-text-secondary); opacity: 1; }
+.agent-command-palette > button:active:not(:disabled) { background: var(--color-accent-soft); }
+.agent-command-palette > button[aria-selected='true'] { background: var(--color-surface-hover); box-shadow: inset 2px 0 var(--color-accent); }
+.agent-command-palette kbd { display: block; min-width: 0; max-width: 100%; padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-border)); border-radius: var(--radius-1); background: color-mix(in srgb, var(--color-accent-soft) 58%, var(--color-surface)); color: var(--color-accent); font: 700 12px/1.35 var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-command-palette > button[data-source='extension'] kbd { border-color: color-mix(in srgb, var(--color-info) 24%, var(--color-border)); background: var(--color-info-soft); color: var(--color-info); }
+.agent-command-palette > button[data-source='prompt'] kbd { border-color: color-mix(in srgb, var(--color-warning) 24%, var(--color-border)); background: var(--color-warning-soft); color: var(--color-warning); }
+.agent-command-palette > button[data-source='skill'] kbd { border-color: color-mix(in srgb, var(--color-success) 24%, var(--color-border)); background: var(--color-success-soft); color: var(--color-success); }
+.agent-command-palette > button:disabled kbd { border-color: var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-tertiary); }
+.agent-command-palette__copy { display: grid; min-width: 0; gap: 4px; }
+.agent-command-palette__copy strong { min-width: 0; overflow: hidden; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.agent-command-palette__copy small { min-width: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 
 .agent-picker-popover, .agent-model-tree, .agent-tool-picker { width: min(380px, calc(100vw - 24px)); max-height: min(560px, calc(100dvh - 96px)); padding: 6px; overflow-y: auto; }
 .agent-picker-popover > header { display: flex; align-items: center; gap: 8px; padding: 7px 8px 9px; border-bottom: 1px solid var(--color-border); }
@@ -612,6 +615,10 @@ details.agent-activity--inline[open] > summary > svg:last-child { transform: rot
   .agent-composer__controls { padding-bottom: 1px; }
   .agent-composer__picker { max-width: 164px; flex: 0 0 auto; }
   .agent-command-palette { right: 9px; left: 9px; }
+  .agent-command-palette > header { align-items: start; }
+  .agent-command-palette > header p { display: none; }
+  .agent-command-palette > button { min-height: 60px; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 5px; }
+  .agent-command-palette kbd { width: max-content; }
   .agent-media-block { max-width: 100%; }
   .ui-dialog.agent-activity-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .ui-dialog.agent-review-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }

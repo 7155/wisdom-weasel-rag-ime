@@ -27,13 +27,13 @@ describe('Roles experience', () => {
     expect(screen.queryByText('control-center-v1')).not.toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'Agent 模板' }));
     expect(screen.getAllByText('研究员')).toHaveLength(2);
-    expect(screen.getByText(/10 轮/)).toBeInTheDocument();
+    expect(screen.getByText('按任务持续执行 · 可随时停止')).toBeInTheDocument();
     expect(screen.getByText('只读资料与审阅工具')).toBeInTheDocument();
     expect(screen.getByText('独立上下文 · 继承当前上下文')).toBeInTheDocument();
     expect(screen.queryByText('subagent-readonly-v1')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /执行者/ }));
     expect(screen.getAllByText('执行者')).toHaveLength(2);
-    expect(screen.getByText(/18 轮/)).toBeInTheDocument();
+    expect(screen.getByText('按任务持续执行 · 可随时停止')).toBeInTheDocument();
     expect(screen.getByText('受控执行工具')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '开始对话' })).not.toBeInTheDocument();
     await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining(['agent.roles.list', 'agent.subagents.templates'])));
@@ -167,7 +167,7 @@ describe('Roles experience', () => {
     expect(screen.getByRole('button', { name: '开始对话' })).toBeDisabled();
     await user.click(screen.getByRole('radio', { name: 'Agent 模板' }));
     expect(screen.getAllByText('研究员')).toHaveLength(2);
-    expect(screen.getByText(/10 轮/)).toBeInTheDocument();
+    expect(screen.getByText('按任务持续执行 · 可随时停止')).toBeInTheDocument();
   });
 
   it('creates a user-defined role through the real role creation contract', async () => {

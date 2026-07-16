@@ -263,6 +263,72 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
 )
 _TOOL_SPEC_BY_ID = {str(item["id"]): item for item in _TOOL_SPECS}
 
+_RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
+    "ime_planning": {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {
+                    "op": {"const": "dashboard"},
+                    "date": {
+                        "type": "string",
+                        "maxLength": 24,
+                        "description": "可选计划日期；省略时读取本地今天。",
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "taskId", "date", "action"],
+                "properties": {
+                    "op": {"const": "task_action"},
+                    "taskId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 240,
+                        "description": "必须原样使用同一日期 dashboard 返回的 tasks[].id，不能根据标题猜测。",
+                    },
+                    "date": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 24,
+                        "description": "必须原样使用 dashboard 返回的 date。",
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["complete", "start", "reopen", "cancel"],
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "eventId"],
+                "properties": {
+                    "op": {"const": "undo_task_event"},
+                    "eventId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 240,
+                        "description": "必须使用已应用 task_action 回执中的 taskEventId。",
+                    },
+                },
+            },
+        ],
+    }
+}
+
+_RUNTIME_TOOL_USAGE: dict[str, str] = {
+    "ime_planning": (
+        "调用顺序：先用 dashboard 读取真实 taskId 和 date；再用 task_action 创建审批预览。"
+        "不要用任务标题代替 taskId，也不要在审批完成前声称任务已经执行。"
+    ),
+}
+
 _PLANNING_TARGET_STATUS = {
     "complete": "done",
     "start": "in_progress",
@@ -386,20 +452,16 @@ class ControlToolGateway:
             if manifest.get("enabled") is not True:
                 continue
             operations = list(manifest.get("effectiveOperations") or [])
+            parameter_schema = _runtime_tool_parameter_schema(
+                str(manifest["id"]),
+                operations,
+            )
+            usage = _RUNTIME_TOOL_USAGE.get(str(manifest["id"]), "")
             manifests.append(
                 {
                     "name": manifest["id"],
-                    "description": manifest["description"],
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "op": {"type": "string", "enum": operations},
-                        },
-                        "required": ["op"],
-                        # Operation-specific arguments stay backend-validated so the
-                        # runtime host never becomes a second product schema authority.
-                        "additionalProperties": True,
-                    },
+                    "description": f"{manifest['description']}。{usage}" if usage else manifest["description"],
+                    "parameters": parameter_schema,
                     "profile": session.get("toolProfileVersion") or "control-center-v1",
                     "risk": manifest.get("riskLevel") or "R0",
                 }
@@ -4017,6 +4079,42 @@ def _tool_profile_allows(
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())
+
+
+def _runtime_tool_parameter_schema(
+    tool_id: str,
+    operations: list[object],
+) -> dict[str, object]:
+    configured = _RUNTIME_TOOL_PARAMETER_SCHEMAS.get(tool_id)
+    if configured is not None:
+        allowed = {str(operation) for operation in operations}
+        branches = configured.get("oneOf")
+        if isinstance(branches, list):
+            filtered = [
+                branch
+                for branch in branches
+                if isinstance(branch, Mapping)
+                and str(
+                    (
+                        branch.get("properties", {}).get("op", {})
+                        if isinstance(branch.get("properties"), Mapping)
+                        else {}
+                    ).get("const")
+                    or ""
+                )
+                in allowed
+            ]
+            return {**configured, "oneOf": filtered}
+        return dict(configured)
+    return {
+        "type": "object",
+        "properties": {
+            "op": {"type": "string", "enum": [str(value) for value in operations]},
+        },
+        "required": ["op"],
+        # The product gateway remains the mutation and validation authority.
+        "additionalProperties": True,
+    }
 
 
 def _read_voice_agent_status() -> dict[str, object]:

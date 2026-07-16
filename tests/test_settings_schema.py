@@ -26,7 +26,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertTrue(defaults["interaction"]["composition"]["showOnlyRime"])
         self.assertEqual(defaults["models"]["hot"], "minimind_ime_v2")
         self.assertFalse(defaults["interaction"]["postCommit"]["showPendingStatus"])
-        self.assertEqual(defaults["interaction"]["postCommit"]["idleTriggerMs"], 420)
+        self.assertEqual(defaults["interaction"]["postCommit"]["idleTriggerMs"], 220)
         self.assertEqual(defaults["interaction"]["postCommit"]["minDeltaChars"], 2)
         self.assertEqual(defaults["interaction"]["postCommit"]["maxCallsPer10s"], 6)
         self.assertEqual(defaults["interaction"]["postCommit"]["cooldownMs"], 1500)

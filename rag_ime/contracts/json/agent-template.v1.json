@@ -24,7 +24,7 @@
       "required": ["maxDepth", "maxTurns", "maxToolCalls", "maxTotalTokens", "maxDurationMs", "maxOutputChars"],
       "properties": {
         "maxDepth": {"type": "integer", "minimum": 1, "maximum": 2},
-        "maxTurns": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maxTurns": {"type": "integer", "minimum": 0, "maximum": 32},
         "maxToolCalls": {"type": "integer", "minimum": 0, "maximum": 64},
         "maxTotalTokens": {"type": "integer", "minimum": 256, "maximum": 262144},
         "maxDurationMs": {"type": "integer", "minimum": 1000, "maximum": 900000},

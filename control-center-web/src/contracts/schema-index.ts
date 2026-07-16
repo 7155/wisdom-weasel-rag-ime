@@ -2952,7 +2952,7 @@ export const contractSchemas = {
         "properties": {
           "maxTurns": {
             "type": "integer",
-            "minimum": 1,
+            "minimum": 0,
             "maximum": 32
           },
           "maxToolCalls": {
@@ -3188,7 +3188,7 @@ export const contractSchemas = {
           },
           "maxTurns": {
             "type": "integer",
-            "minimum": 1,
+            "minimum": 0,
             "maximum": 32
           },
           "maxToolCalls": {

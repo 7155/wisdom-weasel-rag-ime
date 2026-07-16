@@ -368,12 +368,10 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("test-secret", models_text)
         self.assertEqual(models_path.stat().st_mode & 0o777, 0o600)
         provider = json.loads(models_text)["providers"]["deepseek"]
-        self.assertFalse(provider["compat"]["supportsReasoningEffort"])
-        self.assertFalse(provider["compat"]["supportsUsageInStreaming"])
-        self.assertEqual(provider["compat"]["thinkingFormat"], "openai")
-        self.assertFalse(
-            provider["modelOverrides"]["deepseek-v4-flash"]["reasoning"]
-        )
+        self.assertTrue(provider["compat"]["supportsReasoningEffort"])
+        self.assertTrue(provider["compat"]["supportsUsageInStreaming"])
+        self.assertEqual(provider["compat"]["thinkingFormat"], "deepseek")
+        self.assertNotIn("modelOverrides", provider)
 
     def test_native_deepseek_endpoint_keeps_native_thinking_contract(self) -> None:
         provider = _deepseek_pi_provider(
@@ -388,6 +386,22 @@ class PiRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(provider["compat"]["thinkingFormat"], "deepseek")
         self.assertNotIn("modelOverrides", provider)
+
+    def test_deepseek_reasoning_can_be_explicitly_disabled_without_hostname_inference(self) -> None:
+        provider = _deepseek_pi_provider(
+            "https://gateway.example/v1",
+            model="deepseek-v4-flash",
+            supports_reasoning=False,
+            supports_reasoning_effort=False,
+            supports_usage_in_streaming=False,
+            requires_reasoning_content=False,
+            thinking_format="openai",
+        )
+
+        self.assertFalse(provider["compat"]["supportsReasoningEffort"])
+        self.assertFalse(provider["compat"]["supportsUsageInStreaming"])
+        self.assertEqual(provider["compat"]["thinkingFormat"], "openai")
+        self.assertFalse(provider["modelOverrides"]["deepseek-v4-flash"]["reasoning"])
 
     def test_opencode_provider_file_is_translated_without_persisting_secrets(self) -> None:
         provider_path = self.root / "pikey.md"

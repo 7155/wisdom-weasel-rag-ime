@@ -83,8 +83,8 @@ export const previewTemplates: AgentTemplateV1[] = [
     toolProfileVersion: 'subagent-readonly-v1',
     budget: {
       maxDepth: 1,
-      maxTurns: 10,
-      maxToolCalls: 18,
+      maxTurns: 0,
+      maxToolCalls: 0,
       maxTotalTokens: 32_000,
       maxDurationMs: 300_000,
       maxOutputChars: 24_000,
@@ -101,8 +101,8 @@ export const previewTemplates: AgentTemplateV1[] = [
     toolProfileVersion: 'subagent-worker-v1',
     budget: {
       maxDepth: 2,
-      maxTurns: 18,
-      maxToolCalls: 36,
+      maxTurns: 0,
+      maxToolCalls: 0,
       maxTotalTokens: 64_000,
       maxDurationMs: 600_000,
       maxOutputChars: 36_000,
@@ -119,8 +119,8 @@ export const previewTemplates: AgentTemplateV1[] = [
     toolProfileVersion: 'subagent-readonly-v1',
     budget: {
       maxDepth: 1,
-      maxTurns: 8,
-      maxToolCalls: 14,
+      maxTurns: 0,
+      maxToolCalls: 0,
       maxTotalTokens: 24_000,
       maxDurationMs: 240_000,
       maxOutputChars: 18_000,
