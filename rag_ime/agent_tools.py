@@ -482,7 +482,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "instruction": {"type": "string", "minLength": 1, "maxLength": 8_000},
     "kind": {
         "type": "string",
-        "enum": ["books", "atoms", "tags", "phrases", "groups", "negative"],
+        "enum": ["books", "atoms", "tags", "phrases", "groups"],
     },
     "scheduleId": {
         "type": "string",
@@ -649,6 +649,11 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
     "ime_planning": (
         "调用顺序：先用 dashboard 读取真实 taskId 和 date；再用 task_action 创建审批预览。"
         "不要用任务标题代替 taskId，也不要在审批完成前声称任务已经执行。"
+    ),
+    "ime_memory": (
+        "当回答依赖跨会话偏好、决定、约束或持续计划时，先用 catalog 定位工具书，"
+        "再用 read 读取正文；recent 只返回当前角色可见且已治理的记忆证据。"
+        "不要把 pending、needs_review 或 not_for_memory 输入当作事实。"
     ),
 }
 
@@ -3721,11 +3726,11 @@ class ControlToolGateway:
         visible_owners, mutable_owner = self._memory_owner_context(session_id)
         visible_owner_payload = _owner_payloads(visible_owners)
         if operation == "catalog":
-            return self._catalog(args)
+            return self._catalog(args, visible_owners=visible_owners)
         if operation == "read":
-            return self._read(args)
+            return self._read(args, visible_owners=visible_owners)
         if operation == "recent":
-            return self._recent(args)
+            return self._recent(args, visible_owners=visible_owners)
         if operation == "trace":
             trace_id = _bounded_text(args.get("traceId"), maximum=240)
             if not trace_id:
@@ -3816,7 +3821,7 @@ class ControlToolGateway:
                 "run": _safe_payload(run),
             }
         kind = _bounded_text(args.get("kind"), maximum=40) or "atoms"
-        if kind not in {"books", "atoms", "tags", "phrases", "groups", "negative"}:
+        if kind not in {"books", "atoms", "tags", "phrases", "groups"}:
             raise ValueError("unsupported memory list kind")
         query = _bounded_text(args.get("query"), maximum=240)
         limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=20)
@@ -4071,12 +4076,14 @@ class ControlToolGateway:
             raise ValueError(f"control capability returned an invalid payload: {name}")
         return dict(result)
 
-    def _catalog(self, args: Mapping[str, object]) -> dict[str, object]:
+    def _catalog(
+        self,
+        args: Mapping[str, object],
+        *,
+        visible_owners: tuple[tuple[str, str], ...],
+    ) -> dict[str, object]:
         query = _bounded_text(args.get("query"), maximum=240)
         limit = _bounded_int(args.get("limit"), default=5, minimum=1, maximum=8)
-        visible_owners, _mutable_owner = self._memory_owner_context(
-            _bounded_text(args.get("_sessionId"), maximum=240)
-        )
         request = page_request(
             {
                 "query": query,
@@ -4105,13 +4112,15 @@ class ControlToolGateway:
             "items": items,
         }
 
-    def _read(self, args: Mapping[str, object]) -> dict[str, object]:
+    def _read(
+        self,
+        args: Mapping[str, object],
+        *,
+        visible_owners: tuple[tuple[str, str], ...],
+    ) -> dict[str, object]:
         book_id = _bounded_text(args.get("bookId"), maximum=240)
         if not book_id:
             raise ValueError("bookId is required for ime_memory.read")
-        visible_owners, _mutable_owner = self._memory_owner_context(
-            _bounded_text(args.get("_sessionId"), maximum=240)
-        )
         report = self.management.memory_page(
             "books",
             page_request(
@@ -4156,29 +4165,79 @@ class ControlToolGateway:
             "items": [{"title": title, "kind": "book"}],
         }
 
-    def _recent(self, args: Mapping[str, object]) -> dict[str, object]:
+    def _recent(
+        self,
+        args: Mapping[str, object],
+        *,
+        visible_owners: tuple[tuple[str, str], ...],
+    ) -> dict[str, object]:
         query = _bounded_text(args.get("query"), maximum=240)
         limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=12)
-        reader = getattr(self.core, "list_memory_events", None)
-        if not callable(reader):
-            raise ValueError("recent memory is unavailable for this core")
-        report = reader(project=self.project, query=query, limit=limit)
-        raw_items = report.get("items", []) if isinstance(report, Mapping) else []
-        items = [
-            {
-                "sourceId": f"event:{_safe_int(item.get('eventId'))}",
-                "createdAtMs": _safe_int(item.get("createdAtMs")),
-                "source": _bounded_text(item.get("source"), maximum=80),
-                "text": _bounded_text(item.get("text"), maximum=1200),
-                "app": _bounded_text(item.get("app"), maximum=160),
-                "project": _bounded_text(item.get("project"), maximum=160),
-                "tags": _string_list(item.get("tags"), limit=20),
-            }
-            for item in raw_items
-            if isinstance(item, Mapping) and _bounded_text(item.get("text"), maximum=1)
-        ][:limit]
+        raw_items: list[Mapping[str, object]] = []
+        for disposition in ("remember", "consolidated"):
+            report = self.management.memory_page(
+                "evidence",
+                page_request(
+                    {
+                        "query": query,
+                        "limit": limit,
+                        "status": disposition,
+                        "visibleOwners": _owner_payloads(visible_owners),
+                    }
+                ),
+            )
+            raw_items.extend(
+                item
+                for item in report.get("items", [])
+                if isinstance(item, Mapping)
+            )
+
+        seen: set[str] = set()
+        items: list[dict[str, object]] = []
+        for item in sorted(
+            raw_items,
+            key=lambda value: (
+                _safe_int(value.get("createdAtMs")),
+                _bounded_text(value.get("id") or value.get("itemId"), maximum=240),
+            ),
+            reverse=True,
+        ):
+            source_id = _bounded_text(
+                item.get("id") or item.get("itemId"),
+                maximum=240,
+            )
+            disposition = _bounded_text(
+                item.get("disposition") or item.get("status"),
+                maximum=40,
+            )
+            text = _bounded_text(item.get("text"), maximum=1200)
+            if (
+                not source_id
+                or source_id in seen
+                or disposition not in {"remember", "consolidated"}
+                or item.get("sensitive") is True
+                or not text
+            ):
+                continue
+            seen.add(source_id)
+            items.append(
+                {
+                    "sourceId": source_id,
+                    "createdAtMs": _safe_int(item.get("createdAtMs")),
+                    "source": _bounded_text(item.get("source"), maximum=80),
+                    "sourceKind": _bounded_text(item.get("type"), maximum=80),
+                    "text": text,
+                    "app": _bounded_text(item.get("app"), maximum=160),
+                    "project": _bounded_text(item.get("project"), maximum=160),
+                    "ownerKind": _bounded_text(item.get("ownerKind"), maximum=40),
+                    "ownerId": _bounded_text(item.get("ownerId"), maximum=160),
+                    "disposition": disposition,
+                }
+            )
+            if len(items) >= limit:
+                break
         return {
-            "summary": f"召回 {len(items)} 段近期最终输入",
+            "summary": f"召回 {len(items)} 段已治理记忆证据",
             "query": query,
             "count": len(items),
             "items": items,
@@ -4193,10 +4252,20 @@ class ControlToolGateway:
         session = self.sessions.get(session_id)
         role_id = _bounded_text(session.get("roleId"), maximum=160)
         mutable_owner = ("agent", role_id) if role_id else ("session", session_id)
+        room_ids: tuple[str, ...] = ()
+        rooms = getattr(self.collaboration, "rooms", None)
+        participant_for_session = getattr(rooms, "participant_for_session", None)
+        if callable(participant_for_session):
+            participant = participant_for_session(session_id)
+            if isinstance(participant, Mapping):
+                room_id = _bounded_text(participant.get("roomId"), maximum=240)
+                if room_id:
+                    room_ids = (room_id,)
         visible = agent_visible_memory_owners(
             project=self.project,
             role_id=role_id,
             session_id=session_id,
+            room_ids=room_ids,
         )
         return visible, mutable_owner
 

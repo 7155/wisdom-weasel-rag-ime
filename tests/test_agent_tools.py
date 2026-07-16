@@ -15,6 +15,7 @@ class _Management:
     def __init__(self):
         self.task_events = {}
         self.runtime_jobs = {}
+        self.memory_requests = []
         self.ai_paused = False
         self.runtime_revision = 1
         self.provider_configuration_revision = 1
@@ -215,6 +216,7 @@ class _Management:
         return {"ok": True, "auditId": 43, "task": dict(task)}
 
     def memory_page(self, kind, request):
+        self.memory_requests.append((kind, request))
         if kind == "books":
             return {
                 "items": [
@@ -254,6 +256,37 @@ class _Management:
                         "item_count": 3,
                         "updated_at_ms": 18,
                     }
+                ]
+            }
+        if kind == "evidence":
+            if request.status != "remember":
+                return {"items": []}
+            return {
+                "items": [
+                    {
+                        "id": "memory-source:7",
+                        "type": "user_final",
+                        "source": "rime",
+                        "text": "把普通生成和深度检索分开",
+                        "app": "Codex",
+                        "project": "wisdom-weasel-rag-ime",
+                        "ownerKind": "user",
+                        "ownerId": "default",
+                        "disposition": "remember",
+                        "createdAtMs": 30,
+                    },
+                    {
+                        "id": "memory-source:noise",
+                        "type": "voice_final",
+                        "source": "voice_streaming_asr",
+                        "text": "嗯嗯那个这个",
+                        "app": "Voice",
+                        "project": "wisdom-weasel-rag-ime",
+                        "ownerKind": "user",
+                        "ownerId": "default",
+                        "disposition": "not_for_memory",
+                        "createdAtMs": 31,
+                    },
                 ]
             }
         raise AssertionError(kind)
@@ -563,6 +596,60 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(read["book"]["memories"][0]["text"], "普通生成不经过 Pi")
         self.assertEqual(recent["count"], 1)
         self.assertEqual(recent["items"][0]["text"], "把普通生成和深度检索分开")
+        self.assertEqual(recent["items"][0]["disposition"], "remember")
+        self.assertNotIn("嗯嗯那个这个", str(recent))
+        evidence_requests = [
+            request
+            for kind, request in self.management.memory_requests
+            if kind == "evidence"
+        ]
+        self.assertEqual(
+            [request.status for request in evidence_requests],
+            ["remember", "consolidated"],
+        )
+        self.assertTrue(all(request.visible_owners for request in evidence_requests))
+
+    def test_memory_tools_include_the_active_room_owner_in_visibility(self) -> None:
+        participant_calls = []
+
+        class _Rooms:
+            def participant_for_session(self, session_id):
+                participant_calls.append(session_id)
+                return {"roomId": "room:architecture"}
+
+        class _Collaboration:
+            rooms = _Rooms()
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=_Collaboration(),
+        )
+
+        gateway.execute(self._call("recent", limit=3))
+
+        evidence_requests = [
+            request
+            for kind, request in self.management.memory_requests
+            if kind == "evidence"
+        ]
+        self.assertEqual(participant_calls, [self.session["id"]])
+        self.assertEqual(len(evidence_requests), 2)
+        self.assertTrue(
+            all(
+                ("room", "room:architecture") in request.visible_owners
+                for request in evidence_requests
+            )
+        )
+        self.assertTrue(
+            all(
+                ("session", self.session["id"]) in request.visible_owners
+                for request in evidence_requests
+            )
+        )
 
     def test_memory_maintenance_status_exposes_review_only_drafts(self) -> None:
         result = self.gateway.execute(self._call("maintenance_status", limit=8))["result"]
@@ -575,6 +662,8 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_unknown_operations_and_archived_sessions_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported"):
             self.gateway.execute(self._call("write"))
+        with self.assertRaisesRegex(ValueError, "unsupported memory list kind"):
+            self.gateway.execute(self._call("list", kind="negative"))
         self.store.archive(str(self.session["id"]))
         with self.assertRaisesRegex(ValueError, "archived"):
             self.gateway.execute(self._call("catalog"))

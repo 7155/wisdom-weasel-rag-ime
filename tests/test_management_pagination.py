@@ -177,6 +177,75 @@ class ManagementPaginationTests(unittest.TestCase):
                 str(first),
             )
 
+    def test_tags_filter_nested_memories_and_edges_by_visible_owner(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            role_a_tag = conn.execute(
+                """
+                INSERT INTO memory_tags(
+                    tag, normalized_tag, tag_type, quality_score,
+                    created_at_ms, updated_at_ms, source, status
+                ) VALUES ('甲角色标签', '甲角色标签', 'topic', 0.9, 1, 1, 'user', 'active')
+                """
+            ).lastrowid
+            role_b_tag = conn.execute(
+                """
+                INSERT INTO memory_tags(
+                    tag, normalized_tag, tag_type, quality_score,
+                    created_at_ms, updated_at_ms, source, status
+                ) VALUES ('乙角色标签', '乙角色标签', 'topic', 0.8, 1, 1, 'user', 'active')
+                """
+            ).lastrowid
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, source_event_ids_json, source_memory_ids_json,
+                    privacy_level, status, owner_kind, owner_id,
+                    created_at_ms, updated_at_ms
+                ) VALUES
+                    ('atom:role-a-tag', 'fact', '甲角色私有事实', '[]', '[]',
+                     'local', 'active', 'agent', 'role-a', 1, 1),
+                    ('atom:role-b-tag', 'fact', '乙角色私有事实', '[]', '[]',
+                     'local', 'active', 'agent', 'role-b', 1, 1)
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_atom_tags(memory_atom_id, tag_id, weight, source)
+                VALUES
+                    ('atom:role-a-tag', ?, 0.9, 'test'),
+                    ('atom:role-b-tag', ?, 0.9, 'test')
+                """,
+                (str(role_a_tag), str(role_b_tag)),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_tag_edges(
+                    src_tag_id, dst_tag_id, edge_type, weight,
+                    evidence_count, updated_at_ms
+                ) VALUES (?, ?, 'related', 0.8, 1, 1)
+                """,
+                (role_a_tag, role_b_tag),
+            )
+
+        page = self.service.management.memory_page(
+            "tags",
+            page_request(
+                {
+                    "limit": 20,
+                    "ownerKind": "agent",
+                    "ownerId": "role-a",
+                }
+            ),
+        )
+
+        self.assertEqual([item["tag"] for item in page["items"]], ["甲角色标签"])
+        self.assertEqual(
+            [item["text"] for item in page["items"][0]["memories"]],
+            ["甲角色私有事实"],
+        )
+        self.assertEqual(page["items"][0]["connections"], [])
+        self.assertEqual(page["items"][0]["edge_count"], 0)
+
     def test_user_can_edit_semantic_tag_description(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             tag_id = conn.execute(

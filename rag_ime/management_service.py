@@ -2499,17 +2499,133 @@ class ManagementService:
         like = f"%{request.query}%"
         memories_by_tag: dict[str, list[dict[str, object]]] = {}
         connections_by_tag: dict[str, list[dict[str, object]]] = {}
+        item_count_sql = (
+            "(SELECT COUNT(*) FROM memory_item_tags mit WHERE mit.tag_id = mt.id)"
+        )
+        atom_count_sql = (
+            "(SELECT COUNT(*) FROM memory_atom_tags mat "
+            "WHERE CAST(mat.tag_id AS TEXT) = CAST(mt.id AS TEXT))"
+        )
+        visibility_sql = ""
+        count_owner_params: tuple[str, ...] = ()
+        visibility_owner_params: tuple[str, ...] = ()
+        if request.visible_owners:
+            count_item_clause, count_item_params = sql_memory_owner_predicate(
+                request.visible_owners,
+                table_alias="count_item",
+            )
+            count_atom_clause, count_atom_params = sql_memory_owner_predicate(
+                request.visible_owners,
+                table_alias="count_atom",
+            )
+            visible_item_clause, visible_item_params = sql_memory_owner_predicate(
+                request.visible_owners,
+                table_alias="visible_item",
+            )
+            visible_atom_clause, visible_atom_params = sql_memory_owner_predicate(
+                request.visible_owners,
+                table_alias="visible_atom",
+            )
+            item_count_sql = f"""
+                (
+                    SELECT COUNT(*)
+                    FROM memory_item_tags mit
+                    JOIN memory_items count_item ON count_item.id = mit.memory_item_id
+                    WHERE mit.tag_id = mt.id
+                      AND count_item.status IN ('active', 'approved')
+                      AND count_item.privacy_class != 'sensitive'
+                      AND {count_item_clause}
+                )
+            """
+            atom_count_sql = f"""
+                (
+                    SELECT COUNT(*)
+                    FROM memory_atom_tags mat
+                    JOIN memory_atoms count_atom ON count_atom.id = mat.memory_atom_id
+                    WHERE CAST(mat.tag_id AS TEXT) = CAST(mt.id AS TEXT)
+                      AND count_atom.status IN ('active', 'approved')
+                      AND count_atom.privacy_level != 'sensitive'
+                      AND {count_atom_clause}
+                )
+            """
+            visibility_sql = f"""
+                AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM memory_item_tags visible_mit
+                        JOIN memory_items visible_item
+                          ON visible_item.id = visible_mit.memory_item_id
+                        WHERE visible_mit.tag_id = mt.id
+                          AND visible_item.status IN ('active', 'approved')
+                          AND visible_item.privacy_class != 'sensitive'
+                          AND {visible_item_clause}
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM memory_atom_tags visible_mat
+                        JOIN memory_atoms visible_atom
+                          ON visible_atom.id = visible_mat.memory_atom_id
+                        WHERE CAST(visible_mat.tag_id AS TEXT) = CAST(mt.id AS TEXT)
+                          AND visible_atom.status IN ('active', 'approved')
+                          AND visible_atom.privacy_level != 'sensitive'
+                          AND {visible_atom_clause}
+                    )
+                )
+            """
+            count_owner_params = (*count_item_params, *count_atom_params)
+            visibility_owner_params = (
+                *visible_item_params,
+                *visible_atom_params,
+            )
+        atom_owner_clause, atom_owner_params = _page_owner_filter(
+            request,
+            table_alias="ma",
+        )
+        connection_visibility_sql = ""
+        connection_owner_params: tuple[str, ...] = ()
+        if request.visible_owners:
+            edge_item_clause, edge_item_params = sql_memory_owner_predicate(
+                request.visible_owners,
+                table_alias="edge_item",
+            )
+            edge_atom_clause, edge_atom_params = sql_memory_owner_predicate(
+                request.visible_owners,
+                table_alias="edge_atom",
+            )
+            connection_visibility_sql = f"""
+                AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM memory_item_tags edge_mit
+                        JOIN memory_items edge_item
+                          ON edge_item.id = edge_mit.memory_item_id
+                        WHERE edge_mit.tag_id = other.id
+                          AND edge_item.status IN ('active', 'approved')
+                          AND edge_item.privacy_class != 'sensitive'
+                          AND {edge_item_clause}
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM memory_atom_tags edge_mat
+                        JOIN memory_atoms edge_atom
+                          ON edge_atom.id = edge_mat.memory_atom_id
+                        WHERE CAST(edge_mat.tag_id AS TEXT) = CAST(other.id AS TEXT)
+                          AND edge_atom.status IN ('active', 'approved')
+                          AND edge_atom.privacy_level != 'sensitive'
+                          AND {edge_atom_clause}
+                    )
+                )
+            """
+            connection_owner_params = (*edge_item_params, *edge_atom_params)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT mt.id AS row_cursor, CAST(mt.id AS TEXT) AS id, mt.tag,
                        mt.tag_type AS type, mt.description, mt.source, mt.status,
                        mt.quality_score, mt.updated_at_ms,
                        COALESCE(mtp.color_token, 'blue') AS color_token,
                        COALESCE(mtp.aliases_json, '[]') AS aliases_json,
-                       (SELECT COUNT(*) FROM memory_item_tags mit WHERE mit.tag_id = mt.id)
-                         + (SELECT COUNT(*) FROM memory_atom_tags mat WHERE CAST(mat.tag_id AS TEXT) = CAST(mt.id AS TEXT))
-                         AS item_count,
+                       {item_count_sql} + {atom_count_sql} AS item_count,
                        (SELECT COUNT(*) FROM memory_tag_edges e WHERE e.src_tag_id = mt.id OR e.dst_tag_id = mt.id) AS edge_count
                 FROM memory_tags mt
                 LEFT JOIN memory_tag_profiles mtp ON mtp.tag_id = mt.id
@@ -2517,38 +2633,56 @@ class ManagementService:
                   AND mt.status = 'active'
                   AND mt.source IN ('dsv4', 'user')
                   AND (? = '' OR mt.tag LIKE ? OR mt.tag_type LIKE ?)
+                  {visibility_sql}
                 ORDER BY mt.quality_score DESC, mt.id DESC LIMIT ?
                 """,
-                (cursor, cursor, request.query, like, like, limit + 1),
+                (
+                    *count_owner_params,
+                    cursor,
+                    cursor,
+                    request.query,
+                    like,
+                    like,
+                    *visibility_owner_params,
+                    limit + 1,
+                ),
             ).fetchall()
             for row in rows:
                 tag_id = str(row["id"])
                 atom_rows = conn.execute(
-                    """
+                    f"""
                     SELECT ma.id, ma.kind AS type,
                            COALESCE(NULLIF(ma.canonical_text, ''), ma.text) AS text,
+                           ma.owner_kind AS ownerKind, ma.owner_id AS ownerId,
                            ma.status, ma.confidence, ma.updated_at_ms AS updatedAtMs
                     FROM memory_atom_tags mat
                     JOIN memory_atoms ma ON ma.id = mat.memory_atom_id
-                    WHERE CAST(mat.tag_id AS TEXT) = ? AND ma.privacy_level != 'sensitive'
+                    WHERE CAST(mat.tag_id AS TEXT) = ?
+                      AND ma.privacy_level != 'sensitive'
+                      AND ma.status IN ('active', 'approved')
+                      AND {atom_owner_clause}
                     ORDER BY mat.weight DESC, ma.updated_at_ms DESC
                     LIMIT 30
                     """,
-                    (tag_id,),
+                    (tag_id, *atom_owner_params),
                 ).fetchall()
                 memories_by_tag[tag_id] = [dict(atom) for atom in atom_rows]
                 edge_rows = conn.execute(
-                    """
+                    f"""
                     SELECT CAST(other.id AS TEXT) AS id, other.tag,
                            e.edge_type AS type, e.weight, e.evidence_count AS evidenceCount
                     FROM memory_tag_edges e
                     JOIN memory_tags other
                       ON other.id = CASE WHEN CAST(e.src_tag_id AS TEXT) = ? THEN e.dst_tag_id ELSE e.src_tag_id END
-                    WHERE CAST(e.src_tag_id AS TEXT) = ? OR CAST(e.dst_tag_id AS TEXT) = ?
+                    WHERE (
+                        CAST(e.src_tag_id AS TEXT) = ?
+                        OR CAST(e.dst_tag_id AS TEXT) = ?
+                    )
+                    {connection_visibility_sql}
                     ORDER BY e.weight DESC, e.evidence_count DESC
                     LIMIT 20
                     """,
-                    (tag_id, tag_id, tag_id),
+                    (tag_id, tag_id, tag_id, *connection_owner_params),
                 ).fetchall()
                 connections_by_tag[tag_id] = [dict(edge) for edge in edge_rows]
         has_more = len(rows) > limit
@@ -2560,6 +2694,8 @@ class ManagementService:
             item["aliases"] = _json_list(item.pop("aliases_json", "[]"))
             item["memories"] = memories_by_tag.get(str(item["id"]), [])
             item["connections"] = connections_by_tag.get(str(item["id"]), [])
+            if request.visible_owners:
+                item["edge_count"] = len(item["connections"])
             items.append(item)
         next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
         return items, next_cursor
