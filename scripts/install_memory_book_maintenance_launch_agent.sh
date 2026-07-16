@@ -7,7 +7,7 @@ PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
-APP_CODE_DIR="$APP_SUPPORT_DIR/app"
+APP_CODE_DIR="$APP_SUPPORT_DIR/components/memory-book-maintenance"
 LAUNCH_WRAPPER="$APP_CODE_DIR/memory_book_maintenance_launch.py"
 INSTALLED_SCRIPT_DIR="$APP_CODE_DIR/scripts"
 INSTALLED_SCRIPT="$INSTALLED_SCRIPT_DIR/run_memory_book_maintenance_once.sh"
@@ -16,6 +16,10 @@ INTERVAL_SECONDS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_INTERVAL_SECONDS:-3600}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+SOURCE_DIRTY="false"
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+  SOURCE_DIRTY="true"
+fi
 
 if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   echo "python executable not found or not executable: $PYTHON_EXECUTABLE" >&2
@@ -45,7 +49,7 @@ if [[ -n "$MODEL_ENV_SOURCE" && -f "$MODEL_ENV_SOURCE" ]]; then
   export RAG_IME_DEEPSEEK_ENV="$INSTALLED_MODEL_ENV"
 fi
 
-"$PYTHON_EXECUTABLE" - "$PLIST_PATH" "$LABEL" "$ROOT" "$APP_CODE_DIR" "$LAUNCH_WRAPPER" "$LOG_DIR" "$INTERVAL_SECONDS" "$PYTHON_EXECUTABLE" "$SOURCE_COMMIT" "$INSTALL_MARKER" <<'PY'
+"$PYTHON_EXECUTABLE" - "$PLIST_PATH" "$LABEL" "$ROOT" "$APP_CODE_DIR" "$LAUNCH_WRAPPER" "$LOG_DIR" "$INTERVAL_SECONDS" "$PYTHON_EXECUTABLE" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$INSTALL_MARKER" <<'PY'
 import json
 import os
 import plistlib
@@ -62,15 +66,17 @@ log_dir = Path(sys.argv[6])
 interval = max(300, int(sys.argv[7]))
 python_executable = sys.argv[8]
 source_commit = sys.argv[9]
-install_marker = Path(sys.argv[10])
+source_dirty = sys.argv[10] == "true"
+install_marker = Path(sys.argv[11])
 
 install_marker.write_text(
     json.dumps(
         {
-            "schemaVersion": "rag-ime.app-install-marker.v1",
+            "schemaVersion": "rag-ime.component-install-marker.v1",
             "component": "memory-book-maintenance",
             "sourceRoot": root,
             "sourceCommit": source_commit,
+            "sourceDirty": source_dirty,
             "installedAt": datetime.now(timezone.utc).isoformat(),
             "pythonExecutable": python_executable,
         },

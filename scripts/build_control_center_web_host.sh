@@ -36,6 +36,10 @@ CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+SOURCE_DIRTY="false"
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]]; then
+  SOURCE_DIRTY="true"
+fi
 USE_VERIFIED_WEB_DIST="${RAG_IME_USE_VERIFIED_WEB_DIST:-0}"
 
 if [[ "$FRONTEND_CHANNEL" == "production" && "${RAG_IME_SKIP_WEB_BUILD:-0}" == "1" ]]; then
@@ -91,10 +95,11 @@ xcrun swiftc \
   "${swift_files[@]}" \
   -o "$MACOS/$EXECUTABLE"
 
-python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$ROOT" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" <<'PY'
+python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$ROOT" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" "$SOURCE_DIRTY" <<'PY'
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 target = Path(sys.argv[1])
@@ -102,12 +107,16 @@ root = Path(sys.argv[2])
 bundle_id = sys.argv[3]
 channel = sys.argv[4]
 frontend_channel = sys.argv[5]
+source_dirty = sys.argv[6] == "true"
 commit = subprocess.run(
     ["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True
 ).stdout.strip()
 target.write_text(json.dumps({
+    "schemaVersion": "rag-ime.control-build-marker.v1",
     "bundleId": bundle_id,
     "gitCommit": commit,
+    "gitDirty": source_dirty,
+    "builtAt": datetime.now(timezone.utc).isoformat(),
     "ui": "control-center-web",
     "channel": channel,
     "frontendTransport": "native",

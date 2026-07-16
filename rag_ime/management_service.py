@@ -74,6 +74,7 @@ class ManagementService:
         predictor_provider: Callable[[], Mapping[str, object]],
         runtime_config_provider: Callable[[], RuntimeConfigSnapshot],
         last_prediction_provider: Callable[[], Mapping[str, object]] | None = None,
+        deployment_provider: Callable[[], Mapping[str, object]] | None = None,
         cache_invalidator: Callable[[], object] | None = None,
         voice_support_directory: str | Path | None = None,
     ) -> None:
@@ -86,6 +87,7 @@ class ManagementService:
         self.predictor_provider = predictor_provider
         self.runtime_config_provider = runtime_config_provider
         self.last_prediction_provider = last_prediction_provider or (lambda: {})
+        self.deployment_provider = deployment_provider
         self.cache_invalidator = cache_invalidator
         self.voice_support_directory = (
             Path(voice_support_directory).expanduser()
@@ -2030,6 +2032,7 @@ class ManagementService:
         )
         foreground = _foreground_context_component(sidecar_ok=sidecar_ok, last_prediction=last_prediction)
         compiler = self._compiler_component()
+        deployment = _safe_mapping(self.deployment_provider) if self.deployment_provider else {}
         voice = read_voice_control_status(self.voice_support_directory)
         voice_agent = _mapping(voice.get("agent"))
         recognition = _mapping(voice.get("recognition"))
@@ -2038,11 +2041,21 @@ class ManagementService:
         voice_running = voice_agent.get("running") is True
         microphone_allowed = voice_agent.get("microphoneAuthorization") == "authorized"
         accessibility_allowed = voice_agent.get("accessibilityTrusted") is True
+        recognition_state = _string_value(deployed_recognition.get("state"))
         recognition_ready = bool(
-            deployed_recognition.get("secondPass") is True
+            recognition_state == "ready"
+            and deployed_recognition.get("secondPass") is True
             and deployed_recognition.get("semanticSmoothing") is True
             and deployed_recognition.get("fullResultReplacement") is True
         )
+        recognition_detail = {
+            "ready": "二次识别、语义顺滑与完整结果替换均由运行中的语音代理确认",
+            "restart_required": "语音代理安装已更新，需要重启后确认完整定稿能力",
+            "outdated": "语音代理安装版本过旧，缺少完整定稿能力",
+            "missing": "未找到语音代理安装包",
+            "unreadable": "语音代理安装包存在，但能力标记无法读取",
+            "unsupported": "运行中的语音代理未报告完整定稿能力",
+        }.get(recognition_state, "尚未取得语音代理的完整定稿能力状态")
         return {
             "inputMethod": _component(
                 "inputMethod",
@@ -2061,6 +2074,18 @@ class ManagementService:
             ),
             "memoryCompiler": compiler,
             "sqlite": _component("sqlite", self.db_path.exists(), "正常" if self.db_path.exists() else "缺失", {"path": str(self.db_path)}),
+            **(
+                {
+                    "deployment": _component(
+                        "deployment",
+                        deployment.get("ok") is True,
+                        _string_value(deployment.get("summary")) or "尚未完成安装一致性审计",
+                        deployment,
+                    )
+                }
+                if deployment
+                else {}
+            ),
             "voiceAgent": _component(
                 "voiceAgent",
                 voice_running,
@@ -2082,7 +2107,7 @@ class ManagementService:
             "voiceRecognition": _component(
                 "voiceRecognition",
                 recognition_ready,
-                "二次识别与语义顺滑已部署" if recognition_ready else "已安装语音代理尚未包含完整定稿能力",
+                recognition_detail,
                 {
                     "deployed": deployed_recognition,
                     "lastSession": last_voice_session,

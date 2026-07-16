@@ -11,6 +11,7 @@ PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 SIDE_PLIST="$PLIST_DIR/$SIDE_LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"
 WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
+INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
 HOST="${RAG_IME_AGENT_GATEWAY_HOST:-127.0.0.1}"
 PORT="${RAG_IME_AGENT_GATEWAY_PORT:-8768}"
@@ -20,6 +21,21 @@ MANAGED_RUNTIME_POINTER="$APP_SUPPORT_DIR/PiRuntime/current.json"
 
 if [[ ! -f "$WRAPPER" || ! -d "$APP_CODE_DIR/rag_ime" ]]; then
   echo "installed app code is missing; run scripts/install_sidecar_launch_agent.sh first" >&2
+  exit 1
+fi
+if ! python3 - "$INSTALL_MARKER" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        marker = json.load(source)
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if marker.get("component") == "sidecar-runtime" and marker.get("sourceCommit") else 1)
+PY
+then
+  echo "installed sidecar provenance is missing or was overwritten; reinstall the sidecar first" >&2
   exit 1
 fi
 if [[ ! -f "$MANAGED_RUNTIME_POINTER" && "${RAG_IME_ALLOW_UNMANAGED_PI:-0}" != "1" ]]; then

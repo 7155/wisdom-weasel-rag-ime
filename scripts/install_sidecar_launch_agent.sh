@@ -8,6 +8,7 @@ PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 APP_CODE_DIR="$APP_SUPPORT_DIR/app"
+INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
 LAUNCH_WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
 RESTORE_SUPERVISOR="$APP_CODE_DIR/portable_restore_supervisor.py"
 PI_INTEGRATION_SOURCE_DIR="$ROOT/integrations/pi"
@@ -26,6 +27,11 @@ NO_SEED="${RAG_IME_SIDECAR_NO_SEED:-0}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-foreground-rag-proof}"
 HEALTH_TIMEOUT_SECONDS="${RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS:-45}"
+SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+SOURCE_DIRTY="false"
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+  SOURCE_DIRTY="true"
+fi
 
 if [[ ! "$HEALTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( HEALTH_TIMEOUT_SECONDS < 1 )); then
   echo "RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS must be a positive integer" >&2
@@ -173,6 +179,32 @@ cp "$PI_EXTENSION_SOURCE" "$PI_EXTENSION_TARGET"
 cp "$PI_NATIVE_SESSION_SOURCE" "$PI_INTEGRATION_DIR/pi-native-session.ts"
 chmod 644 "$PI_EXTENSION_TARGET" "$PI_INTEGRATION_DIR/pi-native-session.ts"
 
+"$PYTHON_EXECUTABLE" - "$INSTALL_MARKER" "$ROOT" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$PYTHON_EXECUTABLE" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+target = Path(sys.argv[1])
+target.write_text(
+    json.dumps(
+        {
+            "schemaVersion": "rag-ime.component-install-marker.v1",
+            "component": "sidecar-runtime",
+            "sourceRoot": sys.argv[2],
+            "sourceCommit": sys.argv[3],
+            "sourceDirty": sys.argv[4] == "true",
+            "installedAt": datetime.now(timezone.utc).isoformat(),
+            "pythonExecutable": sys.argv[5],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+
 # Keep the explicit high-intelligence route usable after every reinstall. The
 # LaunchAgent cannot inherit an interactive shell's secrets, so install one
 # stable, permission-restricted env file and point the service at it.
@@ -277,6 +309,7 @@ env_vars = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONUNBUFFERED": "1",
     "RAG_IME_ROOT": app_code_dir,
+    "RAG_IME_INSTALL_MARKER": str(Path(app_code_dir) / "rag-ime-install-marker.json"),
     "RAG_IME_SOURCE_ROOT": root,
     "RAG_IME_APP_SUPPORT_DIR": app_support_dir,
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],

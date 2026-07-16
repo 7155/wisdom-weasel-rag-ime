@@ -283,6 +283,20 @@ scripts/build_control_center.sh
 scripts/build_control_center.sh install
 ```
 
+`build_control_center.sh install` updates only the Control Center app. For an
+existing full installation, use the generation-checked stack installer so the
+Sidecar, Agent gateway, MLX worker, voice agent, maintenance job, and visible
+app cannot silently remain on different commits:
+
+```bash
+scripts/build_control_center.sh install-stack --include-squirrel
+scripts/check_installed_product_components.py --require-current
+```
+
+The stack installer isolates each worker's copied Python package, records its
+source commit, refuses dirty tracked source by default, and audits the complete
+installed generation before returning success.
+
 Installing an input method changes user-level macOS state. Use an attended
 foreground session and verify the actual UI rather than trusting an HTTP
 response:
