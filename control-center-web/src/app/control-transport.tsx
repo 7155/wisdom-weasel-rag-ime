@@ -83,9 +83,9 @@ function createPreviewTransport(): MockControlTransport {
     ok: true,
     sessionId: stringValue(record(request.params).sessionId) || 'session-preview',
     items: [
-      { entryId: 'preview-entry-1', text: '先把真实权限边界和工具范围梳理清楚。' },
-      { entryId: 'preview-entry-2', text: '继续优化 Agent 的思考、工具和子智能体状态。' },
-      { entryId: 'preview-entry-3', text: '从这里重新讨论对话分支的交互。' },
+      { entryId: 'preview-entry-1', text: '先把真实权限边界和工具范围梳理清楚。', role: 'user', createdAtMs: 0 },
+      { entryId: 'preview-entry-2', text: '继续优化 Agent 的思考、工具和子智能体状态。', role: 'assistant', createdAtMs: 0 },
+      { entryId: 'preview-entry-3', text: '从这里重新讨论对话分支的交互。', role: 'user', createdAtMs: 0 },
     ],
   });
   routes['agent.session.forks.create'] = (request: ControlRequest) => {

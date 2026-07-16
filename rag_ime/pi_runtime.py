@@ -1163,11 +1163,18 @@ class PiRuntimeManager:
             if not isinstance(raw, Mapping):
                 continue
             entry_id = str(raw.get("entryId") or "").strip()[:240]
-            text = _public_fork_candidate_text(raw.get("text"))
+            text = _public_fork_candidate_text(raw.get("text"), role="user")
             if not entry_id or not text or entry_id in seen:
                 continue
             seen.add(entry_id)
-            candidates.append({"entryId": entry_id, "text": text})
+            candidates.append(
+                {
+                    "entryId": entry_id,
+                    "text": text,
+                    "role": "user",
+                    "createdAtMs": 0,
+                }
+            )
         return candidates
 
     def _persisted_messages(self, session_id: str) -> tuple[bool, list[dict[str, object]]]:
@@ -2058,11 +2065,15 @@ def _visible_message_text(role: str, text: str) -> str:
     return text
 
 
-def _public_fork_candidate_text(value: object) -> str:
-    """Return the public user question for a Pi branch anchor."""
+def _public_fork_candidate_text(value: object, *, role: str = "user") -> str:
+    """Return a public transcript preview without leaking injected context."""
 
     normalized = " ".join(str(value or "").split())[:8000]
-    visible = " ".join(_visible_message_text("user", normalized).split())[:8000]
+    visible = (
+        " ".join(_visible_message_text("user", normalized).split())[:8000]
+        if role == "user"
+        else normalized
+    )
     if any(
         marker in visible
         for marker in ("<rag-ime-deep-search-context", "<rag-ime-user-query>")

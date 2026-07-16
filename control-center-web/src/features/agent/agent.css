@@ -95,7 +95,7 @@
 .agent-fork-dialog__error { margin: 0; border-left: 3px solid var(--color-danger); padding: 9px 11px; background: var(--color-danger-soft); color: var(--color-danger); font-size: 13px; }
 .agent-fork-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
 .agent-fork-dialog footer svg { animation: none; }
-.agent-fork-dialog footer button:disabled svg { animation: agent-status-spin 1s linear infinite; }
+.agent-fork-dialog footer button[data-loading='true'] svg { animation: agent-status-spin 1s linear infinite; }
 .agent-new-task-dialog { width: min(600px, calc(100vw - 32px)); }
 .agent-new-task-dialog .ui-dialog__title { display: flex; align-items: center; gap: 8px; }
 .agent-new-task-dialog__projects { display: grid; gap: 8px; }
@@ -125,13 +125,17 @@
 .agent-user-message > small { display: block; margin-top: 6px; color: var(--color-text-tertiary); font-size: 13px; }
 .agent-message-actions { position: absolute; top: calc(100% + 3px); right: 0; display: flex; justify-content: flex-end; opacity: 0; transition: opacity var(--duration-enter) var(--ease-standard); }
 .agent-user-message-shell:hover .agent-message-actions,
-.agent-user-message-shell:focus-within .agent-message-actions { opacity: 1; }
+.agent-user-message-shell:focus-within .agent-message-actions,
+.agent-assistant-message-shell:hover .agent-message-actions,
+.agent-assistant-message-shell:focus-within .agent-message-actions { opacity: 1; }
 .agent-assistant-turn { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: start; gap: 11px; animation: agent-message-enter var(--duration-panel) var(--ease-standard) both; }
 .agent-assistant-turn__body { min-width: 0; }
 .agent-assistant-turn__body > header { display: flex; align-items: baseline; gap: 7px; min-height: 26px; }
 .agent-assistant-turn__body > header strong { font-size: 15px; }
 .agent-assistant-turn__body > header span { color: var(--color-text-tertiary); font-size: 13px; }
 .agent-turn-sequence { display: grid; min-width: 0; }
+.agent-assistant-message-shell { position: relative; min-width: 0; }
+.agent-assistant-message-shell[data-actions='true'] { margin-bottom: 20px; }
 .agent-assistant-message { min-width: 0; padding: 2px 0 12px; }
 .agent-user-message-shell[data-history-target='true'],
 .agent-assistant-message[data-history-target='true'] { outline: 2px solid var(--color-focus); outline-offset: 5px; }
@@ -687,7 +691,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
   .agent-status-empty[data-animated] > svg,
   .agent-fork-dialog__state svg,
-  .agent-fork-dialog footer button:disabled svg,
+  .agent-fork-dialog footer button[data-loading='true'] svg,
   .agent-composer[data-busy] .agent-composer__send > span {
     animation: none;
     opacity: 1;
@@ -713,7 +717,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-empty[data-animated] > svg,
 :root[data-reduce-motion='true'] .agent-fork-dialog__state svg,
-:root[data-reduce-motion='true'] .agent-fork-dialog footer button:disabled svg,
+:root[data-reduce-motion='true'] .agent-fork-dialog footer button[data-loading='true'] svg,
 :root[data-reduce-motion='true'] .agent-composer[data-busy] .agent-composer__send > span {
   animation: none;
   opacity: 1;

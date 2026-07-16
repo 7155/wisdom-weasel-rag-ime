@@ -671,7 +671,7 @@ class PiRuntimeHostManager:
                     "entryId": normalized_entry_id,
                     # The host response can contain the raw transport prompt.
                     # Restore only the public text confirmed by the catalog.
-                    "selectedText": str(selected["text"]),
+                    "selectedText": str(selected["text"]) if selected["role"] == "user" else "",
                     "state": snapshot,
                     "session": bound,
                 }
@@ -727,11 +727,25 @@ class PiRuntimeHostManager:
             if not isinstance(raw, Mapping):
                 continue
             entry_id = str(raw.get("entryId") or "").strip()[:240]
-            text = _public_fork_candidate_text(raw.get("text"))
-            if not entry_id or not text or entry_id in seen:
+            role = str(raw.get("role") or "").strip().lower()
+            created_at_ms = _integer(raw.get("createdAtMs"))
+            text = _public_fork_candidate_text(raw.get("text"), role=role)
+            if (
+                not entry_id
+                or role not in {"user", "assistant"}
+                or not text
+                or entry_id in seen
+            ):
                 continue
             seen.add(entry_id)
-            candidates.append({"entryId": entry_id, "text": text})
+            candidates.append(
+                {
+                    "entryId": entry_id,
+                    "text": text,
+                    "role": role,
+                    "createdAtMs": max(0, created_at_ms),
+                }
+            )
         return candidates
 
     def command_catalog(self, session_id: str) -> list[dict[str, object]]:

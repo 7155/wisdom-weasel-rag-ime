@@ -892,7 +892,14 @@ class PiRuntimeTests(unittest.TestCase):
         candidates = self.runtime.fork_candidates(source_id)
         self.assertEqual(
             candidates,
-            [{"entryId": "entry-user-1", "text": "从这里开始新方向"}],
+            [
+                {
+                    "entryId": "entry-user-1",
+                    "text": "从这里开始新方向",
+                    "role": "user",
+                    "createdAtMs": 0,
+                }
+            ],
         )
         target = self.store.create(title="新方向")
         result = self.runtime.fork_session(
@@ -929,7 +936,17 @@ class PiRuntimeTests(unittest.TestCase):
 
         candidates = self.runtime.fork_candidates(source_id)
 
-        self.assertEqual(candidates, [{"entryId": "entry-user-1", "text": "最近做了什么？"}])
+        self.assertEqual(
+            candidates,
+            [
+                {
+                    "entryId": "entry-user-1",
+                    "text": "最近做了什么？",
+                    "role": "user",
+                    "createdAtMs": 0,
+                }
+            ],
+        )
         self.assertNotIn("private evidence", json.dumps(candidates, ensure_ascii=False))
 
     def test_fork_rejects_unknown_anchor_without_binding_target(self) -> None:

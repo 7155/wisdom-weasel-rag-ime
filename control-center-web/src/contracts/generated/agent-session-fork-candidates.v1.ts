@@ -14,5 +14,7 @@ export interface AgentSessionForkCandidatesV1 {
   items: {
     entryId: string;
     text: string;
+    role: 'user' | 'assistant';
+    createdAtMs: number;
   }[];
 }

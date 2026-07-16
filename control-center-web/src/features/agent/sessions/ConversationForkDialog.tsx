@@ -16,6 +16,8 @@ import type { SessionSummary } from '../types';
 interface ForkCandidate {
   entryId: string;
   text: string;
+  role: 'user' | 'assistant';
+  createdAtMs: number;
 }
 
 interface PathNode extends ConversationNode {
@@ -112,7 +114,10 @@ export function ConversationForkDialog({
       });
       const session = record(response.session) as unknown as SessionSummary;
       if (!session.id) throw new Error('后端没有返回新分支会话。');
-      onCreated(session, text(response.selectedText) || selectedCandidate.text);
+      const selectedText = typeof response.selectedText === 'string'
+        ? response.selectedText
+        : selectedCandidate.role === 'user' ? selectedCandidate.text : '';
+      onCreated(session, selectedText);
       onOpenChange(false);
     } catch (requestError) {
       setError(publicAgentErrorText(requestError, '创建对话分支失败。'));
@@ -132,7 +137,7 @@ export function ConversationForkDialog({
       <DialogContent className="agent-fork-dialog">
         <DialogHeader>
           <DialogTitle><GitBranch size={18} />对话路径</DialogTitle>
-          <DialogDescription>所有消息都可回溯定位；用户消息是 Pi 的真实分支锚点，创建后原对话保持不变。</DialogDescription>
+          <DialogDescription>所有公开消息都可跳转和创建分支；用户输入会回到草稿，助手回答会作为新分支的已有上下文。</DialogDescription>
         </DialogHeader>
         {pathNodes.length ? (
           <RadioGroup.Root className="agent-fork-dialog__list" aria-label="对话分支点" value={selectedId} onValueChange={setSelectedId}>
@@ -149,7 +154,9 @@ export function ConversationForkDialog({
                   <small>{item.role === 'user' ? '你' : '智鼬'} · {formatNodeTime(item.createdAtMs)}</small>
                   <strong>{item.text}</strong>
                 </span>
-                <em data-branchable={branchable || undefined}>{branchable ? '可分支' : '可跳转'}</em>
+                <em data-branchable={branchable || undefined}>
+                  {branchable ? '可跳转 · 可分支' : loading ? '核对中' : '可跳转'}
+                </em>
               </RadioGroup.Item>
               );
             })}
@@ -164,7 +171,7 @@ export function ConversationForkDialog({
         <footer>
           <Button variant="quiet" onClick={() => onOpenChange(false)} disabled={creating}>取消</Button>
           <Button variant="quiet" leadingIcon={<CornerDownRight size={15} />} onClick={jumpToNode} disabled={!selectedNode?.jumpEntryId || creating}>跳到节点</Button>
-          <Button onClick={() => void createFork()} disabled={!selectedCandidate || loading || creating || branchBlocked}>
+          <Button data-loading={creating || undefined} onClick={() => void createFork()} disabled={!selectedCandidate || loading || creating || branchBlocked}>
             {creating ? <><LoaderCircle size={15} />正在创建</> : <><GitBranch size={15} />创建分支</>}
           </Button>
         </footer>
@@ -186,19 +193,33 @@ function mergePathNodes(nodes: ConversationNode[], candidates: ForkCandidate[]):
     };
   });
 
-  // Pi's branch entry id is not guaranteed to equal the projected message id.
-  // Match the remaining public user nodes by stable occurrence order, but only
-  // when the counts agree. A partial or ambiguous catalog fails closed rather
-  // than branching from the wrong repeated message.
+  // Pi entry ids and projected message ids can differ. Prefer the stable
+  // public role/timestamp pair, then fall back to role-scoped text occurrence.
+  // Ambiguous partial catalogs fail closed instead of branching from a hidden
+  // or repeated message with a different role.
+  for (const node of path) {
+    if (node.branchEntryId || node.createdAtMs <= 0) continue;
+    const matches = [...remaining.values()].filter((candidate) => (
+      candidate.role === node.role
+      && candidate.createdAtMs > 0
+      && candidate.createdAtMs === node.createdAtMs
+    ));
+    if (matches.length !== 1) continue;
+    const [candidate] = matches;
+    if (!candidate) continue;
+    node.branchEntryId = candidate.entryId;
+    remaining.delete(candidate.entryId);
+  }
+
   const nodesByText = new Map<string, PathNode[]>();
   for (const node of path) {
-    if (node.role !== 'user' || node.branchEntryId) continue;
-    const normalized = normalizeText(node.text);
+    if (node.branchEntryId) continue;
+    const normalized = `${node.role}\0${normalizeText(node.text)}`;
     nodesByText.set(normalized, [...(nodesByText.get(normalized) ?? []), node]);
   }
   const candidatesByText = new Map<string, ForkCandidate[]>();
   for (const candidate of remaining.values()) {
-    const normalized = normalizeText(candidate.text);
+    const normalized = `${candidate.role}\0${normalizeText(candidate.text)}`;
     candidatesByText.set(normalized, [...(candidatesByText.get(normalized) ?? []), candidate]);
   }
   for (const [normalized, publicNodes] of nodesByText) {
@@ -223,9 +244,15 @@ function forkCandidates(value: unknown): ForkCandidate[] {
   return items.map((item) => record(item)).filter((item) => (
     typeof item.entryId === 'string' && item.entryId.length > 0
       && typeof item.text === 'string' && item.text.trim().length > 0
+      && (item.role === 'user' || item.role === 'assistant')
       && !item.text.includes('<rag-ime-deep-search-context')
       && !item.text.includes('<rag-ime-user-query>')
-  )).map((item) => ({ entryId: text(item.entryId), text: text(item.text).trim() })).slice(0, 500);
+  )).map((item) => ({
+    entryId: text(item.entryId),
+    text: text(item.text).trim(),
+    role: item.role as ForkCandidate['role'],
+    createdAtMs: Math.max(0, Number(item.createdAtMs) || 0),
+  })).slice(0, 500);
 }
 
 function record(value: unknown): Record<string, unknown> {

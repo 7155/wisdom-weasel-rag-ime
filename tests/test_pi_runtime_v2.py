@@ -82,9 +82,11 @@ for line in sys.stdin:
         assistant = {"id": assistant_entry_id, "role": "assistant", "timestamp": 101,
                      "content": [{"type": "text", "text": "host reply for " + session_id}]}
         sessions[session_id]["messages"].extend([user_message, assistant])
-        sessions[session_id].setdefault("forkItems", []).append(
-            {"entryId": user_entry_id, "text": params["message"]}
-        )
+        sessions[session_id].setdefault("forkItems", []).extend([
+            {"entryId": user_entry_id, "text": params["message"], "role": "user", "createdAtMs": 100},
+            {"entryId": assistant_entry_id, "text": "host reply for " + session_id,
+             "role": "assistant", "createdAtMs": 101},
+        ])
         sessions[session_id]["leafId"] = assistant_entry_id
         transcript = pathlib.Path(sessions[session_id]["sessionFile"])
         transcript.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +119,8 @@ for line in sys.stdin:
         sessions[target_id] = target
         result(request, {
             "sourceSessionId": session_id, "targetSessionId": target_id,
-            "entryId": params["entryId"], "selectedText": selected["text"],
+            "entryId": params["entryId"],
+            "selectedText": selected["text"] if selected["role"] == "user" else "",
             "branchAnchor": params["entryId"], "snapshot": target, "evictedSessionId": None,
         })
     elif method == "session.close":
@@ -257,7 +260,20 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         self.assertEqual(
             self.runtime.fork_candidates(first_id),
-            [{"entryId": "entry-user-1", "text": "从这条消息建立分支"}],
+            [
+                {
+                    "entryId": "entry-user-1",
+                    "text": "从这条消息建立分支",
+                    "role": "user",
+                    "createdAtMs": 100,
+                },
+                {
+                    "entryId": "entry-assistant-1",
+                    "text": f"host reply for {first_id}",
+                    "role": "assistant",
+                    "createdAtMs": 101,
+                },
+            ],
         )
         forked = self.runtime.fork_session(first_id, second_id, entry_id="entry-user-1")
 
@@ -278,6 +294,24 @@ class PiRuntimeV2Tests(unittest.TestCase):
         _wait_until(lambda: self.store.get(second_id)["status"] == "idle")
         self.assertEqual(self.runtime.messages(second_id)[0]["blocks"][0]["data"]["text"], "只发送到新分支")
 
+    def test_v2_fork_after_assistant_keeps_answer_context_without_restoring_draft(self) -> None:
+        first_id = str(self.first["id"])
+        second_id = str(self.second["id"])
+        self.runtime.prompt(first_id, "先回答这个问题")
+        _wait_until(lambda: self.store.get(first_id)["status"] == "idle")
+
+        forked = self.runtime.fork_session(
+            first_id,
+            second_id,
+            entry_id="entry-assistant-1",
+        )
+
+        self.assertEqual(forked["selectedText"], "")
+        target_binding = self.store.runtime_binding(second_id)
+        self.assertIsNotNone(target_binding)
+        assert target_binding is not None
+        self.assertEqual(target_binding["branchAnchor"], "entry-assistant-1")
+
     def test_v2_fork_catalog_exposes_only_the_public_deep_search_question(self) -> None:
         first_id = str(self.first["id"])
         self.runtime.prompt(
@@ -290,7 +324,23 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         candidates = self.runtime.fork_candidates(first_id)
 
-        self.assertEqual(candidates, [{"entryId": "entry-user-1", "text": "最近做了什么？"}])
+        self.assertEqual(
+            candidates,
+            [
+                {
+                    "entryId": "entry-user-1",
+                    "text": "最近做了什么？",
+                    "role": "user",
+                    "createdAtMs": 100,
+                },
+                {
+                    "entryId": "entry-assistant-1",
+                    "text": f"host reply for {first_id}",
+                    "role": "assistant",
+                    "createdAtMs": 101,
+                },
+            ],
+        )
         self.assertNotIn("private evidence", json.dumps(candidates, ensure_ascii=False))
 
     def test_v2_fork_rejects_unknown_anchor_without_binding_target(self) -> None:

@@ -1469,7 +1469,14 @@ class DebugManagementApiTests(unittest.TestCase):
                 "schemaVersion": "rag-ime.agent-session-fork-candidates.v1",
                 "ok": True,
                 "sessionId": session_id,
-                "items": [{"entryId": "entry-user-1", "text": "从这里分支"}],
+                "items": [
+                    {
+                        "entryId": "entry-user-1",
+                        "text": "从这里分支",
+                        "role": "user",
+                        "createdAtMs": 0,
+                    }
+                ],
             }
             fork_create_payload = {
                 "schemaVersion": "rag-ime.agent-session-fork-create.v1",

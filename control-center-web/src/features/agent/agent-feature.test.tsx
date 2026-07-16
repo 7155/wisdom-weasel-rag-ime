@@ -50,7 +50,7 @@ describe('Agent experience', () => {
     await waitFor(() => expect(branchButton).toBeEnabled());
     await user.click(branchButton);
     const dialog = await screen.findByRole('dialog', { name: '对话路径' });
-    expect(within(dialog).getByText(/所有消息都可回溯定位/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/所有公开消息都可跳转和创建分支/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/private deep-search evidence/)).not.toBeInTheDocument();
     await user.click(await within(dialog).findByRole('radio', { name: /把完成状态和附件也保留成结构化块/ }));
     await user.click(within(dialog).getByRole('button', { name: '创建分支' }));
@@ -72,7 +72,12 @@ describe('Agent experience', () => {
     renderAgent(transport);
 
     const actions = await screen.findAllByRole('button', { name: '从这条消息创建分支' }, { timeout: 5_000 });
-    await user.click(actions.at(-1)!);
+    const action = actions.find((item) => (
+      item.closest('.agent-user-message-shell')?.getAttribute('data-agent-message-id')
+        === 'session-preview:user-media'
+    ));
+    expect(action).toBeDefined();
+    await user.click(action!);
     const dialog = await screen.findByRole('dialog', { name: '对话路径' });
     const create = within(dialog).getByRole('button', { name: '创建分支' });
     await waitFor(() => expect(create).toBeEnabled());
@@ -86,6 +91,52 @@ describe('Agent experience', () => {
       }),
     })));
     expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('把完成状态和附件也保留成结构化块。');
+  });
+
+  it('creates a branch after an assistant message and keeps the new composer empty', async () => {
+    const forkCreate = (request: { body?: unknown }) => {
+      const body = request.body as { entryId?: string };
+      return {
+        schemaVersion: 'rag-ime.agent-session-fork-create.v1',
+        ok: true,
+        sourceSessionId: 'session-preview',
+        entryId: body.entryId ?? '',
+        selectedText: '',
+        session: {
+          ...previewSessions[0],
+          schemaVersion: 'rag-ime.agent-session.v1',
+          id: 'session-forked-assistant',
+          title: '回答之后 · 分支',
+          createdAtMs: Date.now() - 1_000,
+          messageCount: 4,
+          updatedAtMs: Date.now(),
+        },
+      };
+    };
+    const transport = featureTransport(
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, forkCreate,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '查看对话路径与分支' }));
+    const dialog = await screen.findByRole('dialog', { name: '对话路径' });
+    const assistant = await within(dialog).findByRole('radio', { name: /已完成。活动明细仍可追溯/ });
+    await user.click(assistant);
+    expect(within(assistant).getByText('可跳转 · 可分支')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '跳到节点' })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: '创建分支' })).toBeEnabled();
+    await user.click(within(dialog).getByRole('button', { name: '创建分支' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.forks.create',
+        params: { sessionId: 'session-preview' },
+        body: expect.objectContaining({ entryId: 'session-preview:assistant-media' }),
+      }),
+    })));
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('');
   });
 
   it('lists every conversation node and jumps back to an assistant message', async () => {
@@ -1681,6 +1732,22 @@ function featureTransport(
     capabilities: { conversationFork: true },
   },
   snapshotRoute: unknown = previewAgentSnapshot('session-preview'),
+  forkCreateRoute: unknown = {
+    schemaVersion: 'rag-ime.agent-session-fork-create.v1',
+    ok: true,
+    sourceSessionId: 'session-preview',
+    entryId: 'session-preview:user-media',
+    selectedText: '把完成状态和附件也保留成结构化块。',
+    session: {
+      ...previewSessions[0],
+      schemaVersion: 'rag-ime.agent-session.v1',
+      id: 'session-forked',
+      title: '控制中心迁移 · 分支',
+      createdAtMs: Date.now() - 1_000,
+      messageCount: 2,
+      updatedAtMs: Date.now(),
+    },
+  },
 ): MockControlTransport {
   return new MockControlTransport({
     pickedFiles: [{
@@ -1713,27 +1780,14 @@ function featureTransport(
         ok: true,
         sessionId: 'session-preview',
         items: [
-          { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。' },
-          { entryId: 'session-preview:user-media', text: '把完成状态和附件也保留成结构化块。' },
-          { entryId: 'internal-context', text: '<rag-ime-deep-search-context>private deep-search evidence</rag-ime-deep-search-context>' },
+          { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。', role: 'user', createdAtMs: 0 },
+          { entryId: 'session-preview:assistant-architecture', text: '三条 Lane 已经收束到同一个可执行计划。', role: 'assistant', createdAtMs: 0 },
+          { entryId: 'session-preview:user-media', text: '把完成状态和附件也保留成结构化块。', role: 'user', createdAtMs: 0 },
+          { entryId: 'session-preview:assistant-media', text: '已完成。活动明细仍可追溯，附件也已经登记。', role: 'assistant', createdAtMs: 0 },
+          { entryId: 'internal-context', text: '<rag-ime-deep-search-context>private deep-search evidence</rag-ime-deep-search-context>', role: 'user', createdAtMs: 0 },
         ],
       },
-      'agent.session.forks.create': {
-        schemaVersion: 'rag-ime.agent-session-fork-create.v1',
-        ok: true,
-        sourceSessionId: 'session-preview',
-        entryId: 'session-preview:user-media',
-        selectedText: '把完成状态和附件也保留成结构化块。',
-        session: {
-          ...previewSessions[0],
-          schemaVersion: 'rag-ime.agent-session.v1',
-          id: 'session-forked',
-          title: '控制中心迁移 · 分支',
-          createdAtMs: Date.now() - 1_000,
-          messageCount: 2,
-          updatedAtMs: Date.now(),
-        },
-      },
+      'agent.session.forks.create': forkCreateRoute,
       'agent.sessions.create': { ok: true },
       'agent.session.rename': { ok: true },
       'agent.session.compact': { ok: true },

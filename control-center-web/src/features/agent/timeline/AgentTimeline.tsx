@@ -186,8 +186,10 @@ export function AgentTurn({
                   <MessageView
                     sessionId={sessionId}
                     messageId={entry.message.id}
+                    forkAvailable={forkAvailable}
                     historyTarget={activeTargetId === entry.message.id}
                     streaming={entry.message.id === streamingMessageId}
+                    onForkFromMessage={onForkFromMessage}
                   />
                 </div>
               ) : (
@@ -343,8 +345,14 @@ function MessageView({
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
   const visibleBlocks = user ? message.blocks : message.blocks.filter((block) => block.type !== 'error');
-  const messageText = visibleBlocks.map((block) => text(block.data.text)).filter(Boolean).join('\n').trim();
-  const canFork = user && forkAvailable && message.status === 'completed' && !messageId.startsWith('local:') && Boolean(messageText) && Boolean(onForkFromMessage);
+  const branchText = message.blocks.map((block) => (
+    text(block.data.text ?? block.data.markdown ?? block.data.message ?? block.data.summary)
+  )).filter(Boolean).join('\n').trim();
+  const canFork = forkAvailable
+    && (message.status === 'completed' || message.status === 'failed')
+    && !messageId.startsWith('local:')
+    && Boolean(branchText)
+    && Boolean(onForkFromMessage);
   const showStreaming = !user && (streaming ?? message.status === 'streaming');
   const visibleStatus = showStreaming ? 'streaming' : message.status === 'streaming' ? 'completed' : message.status;
   return user ? (
@@ -367,9 +375,23 @@ function MessageView({
       ) : null}
     </div>
   ) : (
-    <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
-      <AgentBlocks blocks={visibleBlocks} streaming={showStreaming} />
-      {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
+    <div className="agent-assistant-message-shell" data-actions={canFork || undefined}>
+      <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
+        <AgentBlocks blocks={visibleBlocks} streaming={showStreaming} />
+        {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
+      </div>
+      {canFork ? (
+        <div className="agent-message-actions">
+          <IconButton
+            label="从这条消息创建分支"
+            icon={<GitBranch size={14} />}
+            size="small"
+            onClick={() => onForkFromMessage?.(messageId)}
+            tooltip
+            tooltipSide="left"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

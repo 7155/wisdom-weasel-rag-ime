@@ -2483,7 +2483,9 @@ export const contractSchemas = {
           "additionalProperties": false,
           "required": [
             "entryId",
-            "text"
+            "text",
+            "role",
+            "createdAtMs"
           ],
           "properties": {
             "entryId": {
@@ -2495,6 +2497,17 @@ export const contractSchemas = {
               "type": "string",
               "minLength": 1,
               "maxLength": 8000
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "user",
+                "assistant"
+              ]
+            },
+            "createdAtMs": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }

@@ -79,7 +79,14 @@ class _ForkRuntime:
         self.target_session_id = ""
 
     def fork_candidates(self, session_id: str):
-        return [{"entryId": "entry-user-1", "text": "保留这个节点"}]
+        return [
+            {
+                "entryId": "entry-user-1",
+                "text": "保留这个节点",
+                "role": "user",
+                "createdAtMs": 0,
+            }
+        ]
 
     def fork_session(self, source_session_id: str, target_session_id: str, *, entry_id: str):
         self.target_session_id = target_session_id
