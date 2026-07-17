@@ -1191,6 +1191,105 @@ index 0000000000000000000000000000000000000000..320ae8fc03335a0aaf028233d2d0c3c7
 +    "password", "1password", "bitwarden", "lastpass", "dashlane", "keepass", "enpass",
 +    "bank", "banking", "privatebrowser", "torbrowser",
 +  ]
++  private static let chromiumBrowserBundleIds: Set<String> = [
++    "com.google.chrome",
++    "com.google.chrome.canary",
++    "com.microsoft.edgemac",
++    "com.brave.browser",
++    "company.thebrowser.browser",
++    "org.chromium.chromium",
++    "com.vivaldi.vivaldi",
++    "com.operasoftware.opera",
++    "com.operasoftware.operagx",
++  ]
++  private static let browserAccessibilityLock = NSLock()
++  private static var browserAccessibilityStartedAt: [pid_t: Date] = [:]
++  private static var chromiumBundleCache: [String: Bool] = [:]
++
++  func isChromiumWebContentHost(sourceAppBundleId: String) -> Bool {
++    let normalized = sourceAppBundleId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
++    if Self.chromiumBrowserBundleIds.contains(normalized)
++      || normalized.hasPrefix("com.google.chrome.")
++      || normalized.hasPrefix("com.microsoft.edgemac.")
++      || normalized.hasPrefix("com.brave.browser.") {
++      return true
++    }
++    guard !normalized.isEmpty,
++      let application = NSWorkspace.shared.frontmostApplication,
++      application.bundleIdentifier?.lowercased() == normalized,
++      let bundleURL = application.bundleURL else { return false }
++    Self.browserAccessibilityLock.lock()
++    if let cached = Self.chromiumBundleCache[normalized] {
++      Self.browserAccessibilityLock.unlock()
++      return cached
++    }
++    Self.browserAccessibilityLock.unlock()
++    let frameworksURL = bundleURL.appendingPathComponent("Contents/Frameworks", isDirectory: true)
++    let chromiumFrameworks = [
++      "Electron Framework.framework",
++      "Chromium Embedded Framework.framework",
++      "Google Chrome Framework.framework",
++      "Microsoft Edge Framework.framework",
++    ]
++    let detected = chromiumFrameworks.contains {
++      FileManager.default.fileExists(atPath: frameworksURL.appendingPathComponent($0).path)
++    }
++    Self.browserAccessibilityLock.lock()
++    Self.chromiumBundleCache[normalized] = detected
++    Self.browserAccessibilityLock.unlock()
++    return detected
++  }
++
++  @discardableResult
++  func prepareChromiumWebContentAccessibility(sourceAppBundleId: String) -> Int? {
++    guard isChromiumWebContentHost(sourceAppBundleId: sourceAppBundleId), AXIsProcessTrusted(),
++      let application = NSWorkspace.shared.frontmostApplication,
++      !application.isTerminated,
++      application.bundleIdentifier?.caseInsensitiveCompare(sourceAppBundleId) == .orderedSame else {
++      return nil
++    }
++    let pid = application.processIdentifier
++    let warmupMs: Int
++    if #available(macOS 14.0, *) {
++      // Chromium intentionally waits two seconds before enabling complete web
++      // accessibility after an assistive-technology request.
++      warmupMs = 2200
++    } else {
++      warmupMs = 160
++    }
++    Self.browserAccessibilityLock.lock()
++    if let startedAt = Self.browserAccessibilityStartedAt[pid] {
++      Self.browserAccessibilityLock.unlock()
++      let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
++      return max(0, warmupMs - elapsedMs)
++    }
++    Self.browserAccessibilityStartedAt[pid] = Date()
++    Self.browserAccessibilityLock.unlock()
++
++    let appElement = AXUIElementCreateApplication(pid)
++    _ = AXUIElementSetMessagingTimeout(appElement, 0.06)
++    // Reading AXRole activates Chromium's native AX mode. The enhanced request
++    // then enables the WebContents tree without launching a special browser or
++    // requiring screenshots.
++    var roleObject: AnyObject?
++    let roleResult = AXUIElementCopyAttributeValue(
++      appElement,
++      kAXRoleAttribute as CFString,
++      &roleObject
++    )
++    let enhancedResult = AXUIElementSetAttributeValue(
++      appElement,
++      "AXEnhancedUserInterface" as CFString,
++      kCFBooleanTrue
++    )
++    guard roleResult == .success || enhancedResult == .success else {
++      Self.browserAccessibilityLock.lock()
++      Self.browserAccessibilityStartedAt.removeValue(forKey: pid)
++      Self.browserAccessibilityLock.unlock()
++      return nil
++    }
++    return warmupMs
++  }
 +
 +  func fastSensitiveFieldStatus(sourceAppBundleId: String = "") -> RagImeSensitiveFieldStatus {
 +    if IsSecureEventInputEnabled() {
@@ -4975,6 +5074,23 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a438d33d21a11aeebe1c6a7b8f38acb9
 +        "appChanged": resolvedBundleId != previousApp,
 +      ])
 +    }
++    if (reason == "activate_server" || resolvedBundleId != previousApp), !resolvedBundleId.isEmpty {
++      let warmupBundleId = resolvedBundleId
++      ragImeForegroundContextQueue.async { [weak self] in
++        guard let self,
++          let remainingMs = self.ragImeSelectedTextProvider.prepareChromiumWebContentAccessibility(
++            sourceAppBundleId: warmupBundleId
++          ) else { return }
++        DispatchQueue.main.async { [weak self] in
++          guard let self, self.currentApp == warmupBundleId else { return }
++          self.traceRagImeFrontendEvent("chromium_accessibility_warmup", fields: [
++            "frontAppBundleId": warmupBundleId,
++            "remainingMs": remainingMs,
++            "reason": reason,
++          ])
++        }
++      }
++    }
 +    return resolvedBundleId
 +  }
 +
@@ -6631,6 +6747,54 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a438d33d21a11aeebe1c6a7b8f38acb9
 +    return String(normalized.suffix(120))
 +  }
 +
++  func ragImeActiveRagContextView(for request: RagImeActiveRagRequest) -> [String: RagImeJSONValue] {
++    var windowContext: [String: RagImeJSONValue] = [:]
++    if let snapshot = request.windowContext {
++      let nodes: [RagImeJSONValue] = snapshot.nodes.map { node in
++        .object([
++          "nodeRef": .string(node.nodeRef),
++          "parentRef": .string(node.parentRef),
++          "depth": .number(Double(node.depth)),
++          "role": .string(node.role),
++          "subrole": .string(node.subrole),
++          "label": .string(node.label),
++          "value": .string(node.secure ? "" : node.value),
++          "focused": .bool(node.focused),
++          "selected": .bool(node.selected),
++          "secure": .bool(node.secure),
++          "actions": .array(node.actions.map(RagImeJSONValue.string)),
++        ])
++      }
++      windowContext = [
++        "captureMode": .string(snapshot.captureMode),
++        "nodeCount": .number(Double(snapshot.nodeCount)),
++        "truncated": .bool(snapshot.truncated),
++        "focusedNodeRef": .string(snapshot.focusedNodeRef),
++        "application": .object([
++          "bundleId": .string(snapshot.application.bundleId),
++          "name": .string(snapshot.application.name),
++          "windowTitle": .string(snapshot.application.windowTitle),
++        ]),
++        "nodes": .array(nodes),
++        "semanticText": .string(snapshot.semanticText),
++      ]
++    }
++    return [
++      "schemaVersion": .string("rag-ime.active-rag-context-view.v1"),
++      "source": .string("frontend_request"),
++      "currentRequest": .string(request.selectedText),
++      "currentContext": .string(request.context),
++      "selectedText": .string(request.selectedText),
++      "taskMode": .string(request.intent),
++      "groundingMode": .string("pending"),
++      "windowContext": .object(windowContext),
++      "recentCompleteInputs": .array([]),
++      "planning": .object([:]),
++      "evidenceHints": .array([]),
++      "contextBudget": .object([:]),
++    ]
++  }
++
 +  func showRagImeActiveRagThinkingPlaceholder(request: RagImeActiveRagRequest) {
 +    let payload = RagImeAssistantOverlayPayload(
 +      schemaVersion: "rag-ime.assistant-overlay.v1",
@@ -6658,6 +6822,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a438d33d21a11aeebe1c6a7b8f38acb9
 +        "contextSource": .string(request.contextSource),
 +        "contextChars": .number(Double(request.contextChars)),
 +        "contextHash": .string(request.contextHash),
++        "contextView": .object(ragImeActiveRagContextView(for: request)),
++        "windowContextNodes": .number(Double(request.windowContext?.nodeCount ?? 0)),
++        "windowCaptureMode": .string(request.windowContext?.captureMode ?? "unavailable"),
++        "timelineRecentInputRecordCount": .number(0),
 +        "evidenceCount": .number(0),
 +        "retrievalAttempted": .bool(false),
 +        "diagnosticStatus": .string(request.contextChars > 0 ? "context_captured" : "context_missing"),
@@ -6805,6 +6973,12 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a438d33d21a11aeebe1c6a7b8f38acb9
 +      guard case .bool(let value)? = contextInjection["shortForegroundCapture"] else { return request.contextChars < 8 }
 +      return value
 +    }()
++    let contextView: [String: RagImeJSONValue] = {
++      guard case .object(let value)? = response.diagnostics?["contextView"], !value.isEmpty else {
++        return ragImeActiveRagContextView(for: request)
++      }
++      return value
++    }()
 +    let diagnosticStatus: String
 +    if effectiveContextChars <= 0 {
 +      diagnosticStatus = "context_missing"
@@ -6831,6 +7005,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a438d33d21a11aeebe1c6a7b8f38acb9
 +      "contextHash": .string(effectiveContextHash),
 +      "evidenceCount": .number(Double(response.evidenceCount)),
 +      "retrievalAttempted": .bool(retrievalAttempted),
++      "contextView": .object(contextView),
 +      "diagnosticStatus": .string(diagnosticStatus),
 +    ]
 +    if let remoteReady { activeDiagnostics["remoteModelReady"] = .bool(remoteReady) }
@@ -7599,6 +7774,32 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a438d33d21a11aeebe1c6a7b8f38acb9
 +      let privacyStatus = self.ragImeSelectedTextProvider.sensitiveFieldStatus(
 +        sourceAppBundleId: request.frontAppBundleId
 +      )
++      if captureAttempt == 0,
++        privacyStatus.reason == "privacy_unknown_focused_element_missing",
++        let remainingMs = self.ragImeSelectedTextProvider.prepareChromiumWebContentAccessibility(
++          sourceAppBundleId: request.frontAppBundleId
++        ) {
++        DispatchQueue.main.async { [weak self] in
++          guard let self, self.ragImeForegroundCaptureToken == captureToken else { return }
++          self.ragImeForegroundCaptureToken = nil
++          self.traceRagImeFrontendEvent("foreground_privacy_probe_deferred", fields: [
++            "requestSeq": request.requestSeq,
++            "captureEpoch": inputGeneration,
++            "reason": "chromium_web_accessibility_warmup",
++            "retryAfterMs": max(80, remainingMs),
++          ])
++          DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(max(80, remainingMs))) { [weak self] in
++            self?.resolveRagImeForegroundContextAndSend(
++              request,
++              preliminaryFingerprint: preliminaryFingerprint,
++              inputGeneration: inputGeneration,
++              sidecarClient: sidecarClient,
++              captureAttempt: 1
++            )
++          }
++        }
++        return
++      }
 +      let axResult: RagImeForegroundTextCaptureResult
 +      if privacyStatus.privacyDisposition == "allowed" {
 +        axResult = self.ragImeForegroundContextResolver.captureFromAccessibility(
@@ -7626,7 +7827,11 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..a438d33d21a11aeebe1c6a7b8f38acb9
 +        )
 +      }
 +    }
-+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ragImeForegroundCaptureTimeoutMs)) { [weak self] in
++    let captureTimeoutMs = captureAttempt == 0
++      && ragImeSelectedTextProvider.isChromiumWebContentHost(sourceAppBundleId: request.frontAppBundleId)
++      ? 2600
++      : ragImeForegroundCaptureTimeoutMs
++    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(captureTimeoutMs)) { [weak self] in
 +      guard let self, self.ragImeForegroundCaptureToken == captureToken else { return }
 +      self.ragImeForegroundCaptureToken = nil
 +      let anchorsAreLive = preliminaryFingerprint == self.ragImeLastRequestFingerprint

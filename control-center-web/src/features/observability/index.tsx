@@ -2,6 +2,7 @@ import {
   Activity,
   Bot,
   Brain,
+  Braces,
   CircleDotDashed,
   Database,
   FilterX,
@@ -282,13 +283,19 @@ export function ObservabilityFeature() {
                   ))}
                 </ol>
                 {selectedEvent?.sessionId ? (
-                  <details
-                    className="observation-debug-context"
-                    onToggle={(event) => setDebugOpen(event.currentTarget.open)}
-                  >
-                    <summary><Database size={15} /><span><strong>查看本轮真实请求与上下文</strong><small>{selectedEvent.turnId ? `回合 ${shortId(selectedEvent.turnId)}` : '读取当前会话最新临时快照'}</small></span></summary>
-                    {debugOpen ? <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded /> : null}
-                  </details>
+                  <div className="observation-debug-actions">
+                    <a href={`#/context-debug?sessionId=${encodeURIComponent(selectedEvent.sessionId)}${selectedEvent.turnId ? `&turnId=${encodeURIComponent(selectedEvent.turnId)}` : ''}`}>
+                      <Braces size={15} />
+                      <span><strong>打开独立上下文 Debug</strong><small>逐次查看增量、Provider 请求和工具串并行</small></span>
+                    </a>
+                    <details
+                      className="observation-debug-context"
+                      onToggle={(event) => setDebugOpen(event.currentTarget.open)}
+                    >
+                      <summary><Database size={15} /><span><strong>在这里快速查看</strong><small>{selectedEvent.turnId ? `回合 ${shortId(selectedEvent.turnId)}` : '读取当前会话最新临时快照'}</small></span></summary>
+                      {debugOpen ? <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded /> : null}
+                    </details>
+                  </div>
                 ) : null}
               </>
             ) : (

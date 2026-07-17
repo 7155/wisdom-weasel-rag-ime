@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .agent_events import AgentEventHub
+from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_driver import AgentRuntimeError, CompactionObserver
 from .agent_sessions import AgentSessionStore
 from .pi_runtime import (
@@ -554,6 +555,7 @@ class PiRuntimeHostManager:
         except AgentRuntimeError:
             return {"messages": [], "telemetry": None, "messageQueue": None}
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
+        tool_history_events = _pi_tool_history_events(raw_messages, session_id=session_id)
         result: list[dict[str, object]] = []
         current_turn_id = ""
         for raw in raw_messages:
@@ -582,6 +584,7 @@ class PiRuntimeHostManager:
         }
         return {
             "messages": result,
+            "toolHistoryEvents": tool_history_events,
             "telemetry": dict(telemetry) if isinstance(telemetry, Mapping) else None,
             "messageQueue": message_queue,
         }
@@ -1563,3 +1566,140 @@ class PiRuntimeHostManager:
         self._idle_timer = None
         if timer is not None:
             timer.cancel()
+
+
+def _pi_tool_history_events(
+    raw_messages: list[object],
+    *,
+    session_id: str,
+    maximum_tools: int = 256,
+) -> list[dict[str, object]]:
+    """Rebuild the public tool timeline from Pi's durable transcript.
+
+    The conversation transcript intentionally hides protocol messages, but the
+    tool activity strip still needs to survive a Gateway restart or replay
+    eviction. Only the same redacted projection used by live events is rebuilt
+    here; full arguments and results remain available solely through the
+    local-only transient Debug endpoint.
+    """
+
+    events: list[tuple[str, str, str, int, dict[str, object]]] = []
+    current_turn_id = ""
+    tool_order: list[str] = []
+    tool_names: dict[str, str] = {}
+    for raw_value in raw_messages:
+        if not isinstance(raw_value, Mapping):
+            continue
+        raw = raw_value
+        role = str(raw.get("role") or "assistant").strip().lower()
+        message_id = _pi_message_id(raw, "history")
+        if role == "user":
+            current_turn_id = f"history:{message_id}"
+            continue
+        turn_id = current_turn_id or f"history:{message_id}"
+        created_at_ms = _integer(raw.get("timestamp"))
+        if role == "assistant":
+            content = raw.get("content") if isinstance(raw.get("content"), list) else []
+            for item_index, item_value in enumerate(content):
+                item = _mapping(item_value)
+                if str(item.get("type") or "") not in {"toolCall", "tool_call"}:
+                    continue
+                tool_call_id = str(item.get("id") or item.get("toolCallId") or "").strip()
+                tool_name = str(item.get("name") or item.get("toolName") or "").strip()
+                if not tool_call_id or not tool_name:
+                    continue
+                raw_args = _pi_tool_arguments(item)
+                payload: dict[str, object] = {
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "args": _redact_mapping(raw_args),
+                    "isError": False,
+                }
+                public_result = _public_code_tool_activity(tool_name, raw_args)
+                if public_result:
+                    payload["publicResult"] = public_result
+                events.append(
+                    (
+                        tool_call_id,
+                        "tool_started",
+                        turn_id,
+                        created_at_ms + item_index,
+                        payload,
+                    )
+                )
+                if tool_call_id not in tool_names:
+                    tool_order.append(tool_call_id)
+                tool_names[tool_call_id] = tool_name
+            continue
+        if role not in {"toolresult", "tool_result"}:
+            continue
+        tool_call_id = str(raw.get("toolCallId") or raw.get("tool_call_id") or "").strip()
+        if not tool_call_id:
+            continue
+        tool_name = str(raw.get("toolName") or raw.get("tool_name") or tool_names.get(tool_call_id) or "tool").strip()
+        if tool_call_id not in tool_names:
+            tool_order.append(tool_call_id)
+        tool_names[tool_call_id] = tool_name
+        payload = {
+            "toolCallId": tool_call_id,
+            "toolName": tool_name,
+            "args": {},
+            "result": _pi_tool_result(raw),
+            "isError": bool(raw.get("isError") or raw.get("is_error")),
+        }
+        events.append((tool_call_id, "tool_finished", turn_id, created_at_ms, payload))
+
+    allowed_ids = set(tool_order[-max(1, maximum_tools) :])
+    selected = [event for event in events if event[0] in allowed_ids]
+    result: list[dict[str, object]] = []
+    for sequence, (tool_call_id, event_type, turn_id, created_at_ms, payload) in enumerate(selected, start=1):
+        event_id = (
+            f"{session_id}:history-tool:"
+            f"{uuid.uuid5(uuid.NAMESPACE_URL, f'{session_id}:{tool_call_id}:{event_type}').hex[:20]}"
+        )
+        result.append(
+            AgentEventEnvelope(
+                event_id=event_id,
+                session_id=session_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                created_at_ms=created_at_ms,
+                event_type=event_type,
+                payload=payload,
+                resume_token=event_id,
+            ).to_payload()
+        )
+    return result
+
+
+def _pi_tool_arguments(item: Mapping[str, object]) -> dict[str, object]:
+    raw = item.get("arguments") if item.get("arguments") is not None else item.get("args")
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"value": _redact_runtime_text(raw)}
+        if isinstance(decoded, Mapping):
+            return dict(decoded)
+    return {}
+
+
+def _pi_tool_result(raw: Mapping[str, object]) -> dict[str, object]:
+    for key in ("details", "result"):
+        value = raw.get(key)
+        if isinstance(value, Mapping):
+            return _redact_mapping(value)
+    content = raw.get("content")
+    values = content if isinstance(content, list) else [content]
+    fragments: list[str] = []
+    for value in values[:16]:
+        if isinstance(value, Mapping):
+            text = str(value.get("text") or value.get("content") or "").strip()
+        else:
+            text = str(value or "").strip()
+        if text:
+            fragments.append(text)
+    summary = _redact_runtime_text(" ".join(fragments))
+    return {"summary": summary} if summary else {}

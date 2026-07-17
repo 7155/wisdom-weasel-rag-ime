@@ -285,6 +285,9 @@ class ActiveRagService:
             "localCandidateCount": len(local_candidates),
             "displayedCandidateCount": len(candidates),
         }
+        # Preview is a management/debug response and remains text-redacted.
+        # The ephemeral native inspector is available only on a live session.
+        diagnostics.pop("contextView", None)
         trace_events.append(
             _trace_event(
                 "active_rag_candidates_displayed",
@@ -750,6 +753,9 @@ class ActiveRagService:
         messages = build_deepseek_completion_messages(completion_request)
         include_trace_text = self._trace_include_text_enabled()
         if diagnostics is not None:
+            # Keep the exact redacted, budgeted provider payload in memory for
+            # the foreground inspector. Persisted traces still omit raw text.
+            diagnostics["contextView"] = _active_rag_context_view_from_messages(messages)
             context_trace = build_context_injection_trace(
                 current_context=completion_request.current_context,
                 selected_text=completion_request.selected_text,
@@ -1634,6 +1640,7 @@ def _seed_active_rag_context_diagnostics(
         "remoteModelReady": remote_model_ready,
         "warnings": list(dict.fromkeys(warnings)),
     }
+    diagnostics["contextView"] = _active_rag_request_context_view(request)
 
 
 def _recent_input_history_evidence(
@@ -1825,6 +1832,66 @@ def _remote_active_rag_route(
     }
 
 
+def _active_rag_request_context_view(request: ActiveRagStartRequest) -> dict[str, object]:
+    """Build the truthful pre-provider fallback shown by the native surface."""
+
+    current_context = compact_whitespace(request.context or request.surrounding_before)
+    return {
+        "schemaVersion": "rag-ime.active-rag-context-view.v1",
+        "source": "frontend_request",
+        "currentRequest": _resolved_active_rag_request_text(request),
+        "currentContext": current_context,
+        "selectedText": compact_whitespace(request.selected_text),
+        "taskMode": compact_whitespace(request.intent),
+        "groundingMode": "pending",
+        "windowContext": dict(request.window_context) if isinstance(request.window_context, dict) else {},
+        "recentCompleteInputs": [],
+        "planning": {},
+        "evidenceHints": [],
+        "contextBudget": {},
+    }
+
+
+def _active_rag_context_view_from_messages(messages: list[dict[str, str]]) -> dict[str, object]:
+    """Project the actual provider user message into a foreground-safe viewer."""
+
+    user_message = next(
+        (item for item in reversed(messages) if str(item.get("role") or "") == "user"),
+        {},
+    )
+    try:
+        payload = json.loads(str(user_message.get("content") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    context_packet = payload.get("contextPacket") if isinstance(payload.get("contextPacket"), dict) else {}
+    return {
+        "schemaVersion": "rag-ime.active-rag-context-view.v1",
+        "source": "provider_request",
+        "currentRequest": str(payload.get("currentRequest") or ""),
+        "currentContext": str(payload.get("currentContext") or ""),
+        "selectedText": str(payload.get("selectedText") or ""),
+        "taskMode": str(payload.get("taskMode") or ""),
+        "groundingMode": str(payload.get("groundingMode") or ""),
+        "windowContext": dict(context_packet.get("windowContext") or {})
+        if isinstance(context_packet.get("windowContext"), dict)
+        else {},
+        "recentCompleteInputs": list(context_packet.get("recentCompleteInputs") or [])
+        if isinstance(context_packet.get("recentCompleteInputs"), list)
+        else [],
+        "planning": dict(context_packet.get("planning") or {})
+        if isinstance(context_packet.get("planning"), dict)
+        else {},
+        "evidenceHints": list(payload.get("evidenceHints") or [])
+        if isinstance(payload.get("evidenceHints"), list)
+        else [],
+        "contextBudget": dict(context_packet.get("contextBudget") or {})
+        if isinstance(context_packet.get("contextBudget"), dict)
+        else {},
+    }
+
+
 def _initial_session_diagnostics(
     request: ActiveRagStartRequest,
     *,
@@ -1838,6 +1905,7 @@ def _initial_session_diagnostics(
     return {
         "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
         "privacy": {"rawTextIncluded": False, "hashAlgorithm": "sha256-16"},
+        "contextView": _active_rag_request_context_view(request),
         "requestCapture": {
             "contextSource": _active_rag_context_source(request),
             "selectedText": text_fingerprint(request.selected_text),

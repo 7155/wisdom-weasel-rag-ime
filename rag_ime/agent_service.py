@@ -2154,12 +2154,18 @@ class AgentService:
             if isinstance(runtime_snapshot, Mapping) and isinstance(runtime_snapshot.get("messageQueue"), Mapping)
             else None
         )
+        tool_history_events = (
+            list(runtime_snapshot.get("toolHistoryEvents") or [])
+            if isinstance(runtime_snapshot, Mapping)
+            else []
+        )
         replayed, _gap = self.events.replay(session_id)
-        live_events = [
+        replay_events = [
             event.to_payload()
             for event in replayed
             if event.sequence <= last_sequence
         ]
+        live_events = _merge_snapshot_tool_events(tool_history_events, replay_events)
         visible_approval_ids = {
             str(event.get("payload", {}).get("approvalId") or "")
             for event in live_events
@@ -4070,6 +4076,60 @@ def _provider_display_name(provider: str) -> str:
         "xai": "xAI",
     }
     return known.get(provider.lower(), provider)
+
+
+def _merge_snapshot_tool_events(
+    tool_history_events: Sequence[object],
+    replay_events: Sequence[object],
+) -> list[dict[str, object]]:
+    """Merge transcript-backed tools with the bounded in-memory event replay."""
+
+    history = [dict(item) for item in tool_history_events if isinstance(item, Mapping)]
+    replay = [dict(item) for item in replay_events if isinstance(item, Mapping)]
+    history_types = _tool_event_types(history)
+    replay_types = _tool_event_types(replay)
+    stale_replay_ids = {
+        tool_call_id
+        for tool_call_id, event_types in history_types.items()
+        if "tool_finished" in event_types
+        and "tool_finished" not in replay_types.get(tool_call_id, set())
+    }
+
+    merged: list[dict[str, object]] = []
+    for event in history:
+        tool_call_id, event_type = _tool_event_identity(event)
+        if (
+            tool_call_id
+            and tool_call_id not in stale_replay_ids
+            and event_type in replay_types.get(tool_call_id, set())
+        ):
+            continue
+        merged.append(event)
+    for event in replay:
+        tool_call_id, _event_type = _tool_event_identity(event)
+        if tool_call_id and tool_call_id in stale_replay_ids:
+            continue
+        merged.append(event)
+    return merged
+
+
+def _tool_event_types(events: Sequence[Mapping[str, object]]) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for event in events:
+        tool_call_id, event_type = _tool_event_identity(event)
+        if tool_call_id and event_type:
+            result.setdefault(tool_call_id, set()).add(event_type)
+    return result
+
+
+def _tool_event_identity(event: Mapping[str, object]) -> tuple[str, str]:
+    event_type = str(event.get("eventType") or "")
+    if event_type not in {"tool_started", "tool_progress", "tool_finished"}:
+        return "", ""
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        return "", ""
+    return str(payload.get("toolCallId") or ""), event_type
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

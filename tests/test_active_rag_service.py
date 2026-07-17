@@ -109,6 +109,53 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["pollAfterMs"], 0)
 
+    def test_active_rag_context_view_uses_actual_provider_request(self) -> None:
+        gate = threading.Event()
+        provider = BlockingActiveRagProvider(gate)
+        service = ActiveRagService(completion_provider=provider)
+        selected = "检查真实模型输入"
+        request = ActiveRagStartRequest(
+            selected_text=selected,
+            selected_text_hash=stable_text_hash(selected),
+            frontend_revision=8,
+            selection_epoch=4,
+            context=selected,
+            intent="complete",
+            window_context={
+                "captureMode": "accessibility_semantics",
+                "nodeCount": 1,
+                "application": {"name": "Microsoft Edge", "windowTitle": "当前页面"},
+                "nodes": [
+                    {
+                        "nodeRef": "ax_editor",
+                        "role": "AXTextArea",
+                        "value": "这是 AX 树实际捕获的编辑区内容",
+                        "focused": True,
+                    }
+                ],
+            },
+            max_chars=120,
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            deadline = time.monotonic() + 1
+            while not provider.calls and time.monotonic() < deadline:
+                time.sleep(0.01)
+            pending = service.status(str(started["sessionId"]))
+            gate.set()
+            _wait_ready(service, str(started["sessionId"]))
+
+        context_view = pending["diagnostics"]["contextView"]
+        self.assertEqual(context_view["source"], "provider_request")
+        self.assertEqual(context_view["currentRequest"], selected)
+        self.assertEqual(context_view["currentContext"], selected)
+        self.assertEqual(
+            context_view["windowContext"]["nodes"][0]["value"],
+            "这是 AX 树实际捕获的编辑区内容",
+        )
+        self.assertNotIn("你是 macOS 输入法", str(context_view))
+
     def test_active_rag_trace_observer_runs_without_enabling_the_jsonl_journal(self) -> None:
         records: list[dict[str, object]] = []
         service = ActiveRagService(
@@ -686,6 +733,10 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(payload["groundingMode"], "foreground_with_history")
         self.assertTrue(payload["contextPacket"]["recentCompleteInputs"])
         self.assertIn("这是一次很长的语音输入", str(payload["contextPacket"]["recentCompleteInputs"]))
+        context_view = ready["diagnostics"]["contextView"]
+        self.assertEqual(context_view["source"], "provider_request")
+        self.assertEqual(context_view["currentContext"], foreground)
+        self.assertIn("这是一次很长的语音输入", str(context_view["recentCompleteInputs"]))
 
     def test_active_rag_short_unmatched_foreground_does_not_promote_recent_request(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-short-context-") as tmp:

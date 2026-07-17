@@ -3,6 +3,7 @@ import { PrimitivesShowcase } from '@/components/primitives';
 import { AgentFeature } from '@/features/agent';
 import { BrowserFeature } from '@/features/browser';
 import { ConfigurationFeature } from '@/features/configuration';
+import { ContextDebugFeature } from '@/features/context-debug';
 import { DiagnosticsFeature } from '@/features/diagnostics';
 import { HistoryFeature } from '@/features/history';
 import { InputMethodFeature } from '@/features/input-method';
@@ -31,6 +32,7 @@ export const router = createHashRouter([
   { path: '/knowledge', element: <KnowledgeFeature /> },
   { path: '/history', element: <HistoryFeature /> },
   { path: '/observability', element: <ObservabilityFeature /> },
+  { path: '/context-debug', element: <ContextDebugFeature /> },
   { path: '/diagnostics', element: <DiagnosticsFeature /> },
   { path: '/configuration', element: <ConfigurationFeature /> },
   { path: '/_primitives', element: <PrimitivesShowcase /> },

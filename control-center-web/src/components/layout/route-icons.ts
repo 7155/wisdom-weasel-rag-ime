@@ -2,6 +2,7 @@ import {
   Activity,
   BookOpen,
   Bot,
+  Braces,
   Brain,
   History,
   Keyboard,
@@ -32,6 +33,7 @@ export const routeIcons: Record<RouteId, LucideIcon> = {
   knowledge: BookOpen,
   history: History,
   observability: Radar,
+  'context-debug': Braces,
   diagnostics: Activity,
   configuration: Settings,
 };

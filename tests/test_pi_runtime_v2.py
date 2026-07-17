@@ -9,7 +9,7 @@ from pathlib import Path
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
-from rag_ime.pi_runtime_v2 import PiRuntimeHostManager
+from rag_ime.pi_runtime_v2 import PiRuntimeHostManager, _pi_tool_history_events
 
 
 FAKE_HOST = r'''#!/usr/bin/env python3
@@ -250,6 +250,49 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("sessionId", params)
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
+
+    def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
+        events = _pi_tool_history_events(
+            [
+                {
+                    "id": "user-1",
+                    "role": "user",
+                    "timestamp": 100,
+                    "content": [{"type": "text", "text": "检查项目"}],
+                },
+                {
+                    "id": "assistant-tool-1",
+                    "role": "assistant",
+                    "timestamp": 101,
+                    "content": [{
+                        "type": "toolCall",
+                        "id": "tool-1",
+                        "name": "workspace_read",
+                        "arguments": {
+                            "path": "/Users/private/project/README.md",
+                            "apiKey": "top-secret",
+                        },
+                    }],
+                },
+                {
+                    "role": "toolResult",
+                    "timestamp": 102,
+                    "toolCallId": "tool-1",
+                    "toolName": "workspace_read",
+                    "isError": False,
+                    "details": {"summary": "读取 /Users/private/project/README.md", "token": "secret"},
+                },
+            ],
+            session_id="session-1",
+        )
+
+        self.assertEqual([event["eventType"] for event in events], ["tool_started", "tool_finished"])
+        self.assertEqual([event["turnId"] for event in events], ["history:user-1", "history:user-1"])
+        self.assertEqual(events[0]["payload"]["publicResult"]["fileName"], "README.md")
+        serialized = json.dumps(events, ensure_ascii=False)
+        self.assertNotIn("top-secret", serialized)
+        self.assertNotIn("/Users/private", serialized)
+        self.assertIn("[REDACTED_SECRET]", serialized)
 
     def test_manual_and_automatic_compaction_notify_memory_checkpoint_observer(self) -> None:
         session_id = str(self.first["id"])

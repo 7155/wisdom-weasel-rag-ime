@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from rag_ime.agent_protocol import AgentEventEnvelope
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 
@@ -762,6 +763,58 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["resumeToken"], event.resume_token)
         self.assertEqual(response["status"], "idle")
         self.assertEqual(response["liveEvents"], [event.to_payload()])
+
+    def test_message_snapshot_keeps_completed_tools_after_replay_eviction(self) -> None:
+        session = self.service.create_session({"title": "工具历史恢复"})["session"]
+        session_id = str(session["id"])
+        self.service.events.publish(
+            session_id,
+            "tool_started",
+            {"toolCallId": "tool-1", "toolName": "workspace_read", "args": {}},
+            turn_id="history:user-1",
+        )
+        history = [
+            AgentEventEnvelope(
+                event_id=f"{session_id}:history:start",
+                session_id=session_id,
+                turn_id="history:user-1",
+                sequence=1,
+                created_at_ms=100,
+                event_type="tool_started",
+                payload={"toolCallId": "tool-1", "toolName": "workspace_read", "args": {"path": "README.md"}},
+                resume_token=f"{session_id}:history:start",
+            ).to_payload(),
+            AgentEventEnvelope(
+                event_id=f"{session_id}:history:finish",
+                session_id=session_id,
+                turn_id="history:user-1",
+                sequence=2,
+                created_at_ms=101,
+                event_type="tool_finished",
+                payload={"toolCallId": "tool-1", "toolName": "workspace_read", "args": {}, "result": {"summary": "读取完成"}},
+                resume_token=f"{session_id}:history:finish",
+            ).to_payload(),
+        ]
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": [],
+                "toolHistoryEvents": history,
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            response = self.service.messages(session_id)
+
+        tool_events = [
+            event for event in response["liveEvents"]
+            if event["eventType"] in {"tool_started", "tool_finished"}
+        ]
+        self.assertEqual([event["eventType"] for event in tool_events], ["tool_started", "tool_finished"])
+        self.assertEqual(tool_events[0]["payload"]["args"], {"path": "README.md"})
+        self.assertEqual(tool_events[1]["payload"]["result"], {"summary": "读取完成"})
 
     def test_message_snapshot_treats_open_transcript_as_idle_without_a_live_turn(self) -> None:
         session = self.service.create_session({"title": "旧会话恢复"})["session"]
