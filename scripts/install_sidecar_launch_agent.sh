@@ -33,6 +33,20 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)"
   SOURCE_DIRTY="true"
 fi
 
+EMBEDDING_PROVIDER_HINT="${RAG_IME_EMBEDDING_PROVIDER:-}"
+if [[ -z "$EMBEDDING_PROVIDER_HINT" && -f "$PLIST_PATH" ]]; then
+  EMBEDDING_PROVIDER_HINT="$(
+    /usr/libexec/PlistBuddy \
+      -c "Print :EnvironmentVariables:RAG_IME_EMBEDDING_PROVIDER" \
+      "$PLIST_PATH" 2>/dev/null || true
+  )"
+fi
+REQUIRE_MLX_EMBEDDING=0
+EMBEDDING_PROVIDER_HINT_LOWER="$(printf '%s' "$EMBEDDING_PROVIDER_HINT" | tr '[:upper:]' '[:lower:]')"
+case "$EMBEDDING_PROVIDER_HINT_LOWER" in
+  mlx-bert|local-bge-mlx|mlx-bge) REQUIRE_MLX_EMBEDDING=1 ;;
+esac
+
 if [[ ! "$HEALTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( HEALTH_TIMEOUT_SECONDS < 1 )); then
   echo "RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS must be a positive integer" >&2
   exit 1
@@ -41,22 +55,35 @@ fi
 detect_python() {
   local candidate
   local candidates=()
-  candidates+=("$ROOT/.venv/bin/python")
-  candidates+=("$ROOT/.venv-mlx313/bin/python")
-  candidates+=("$ROOT/.venv-mlx314sys/bin/python")
+  if [[ "$REQUIRE_MLX_EMBEDDING" == "1" ]]; then
+    candidates+=("$APP_SUPPORT_DIR/KnowledgeRuntime/.venv/bin/python")
+    candidates+=("$ROOT/.venv-mlx313/bin/python")
+    candidates+=("$ROOT/.venv-mlx314sys/bin/python")
+    candidates+=("$ROOT/.venv/bin/python")
+  else
+    candidates+=("$ROOT/.venv/bin/python")
+    candidates+=("$ROOT/.venv-mlx313/bin/python")
+    candidates+=("$ROOT/.venv-mlx314sys/bin/python")
+  fi
   candidates+=("/opt/homebrew/bin/python3")
   candidates+=("/opt/homebrew/opt/python@3.14/bin/python3.14")
   candidates+=("$(command -v python3 2>/dev/null || true)")
   candidates+=("/usr/local/bin/python3")
 
   for candidate in "${candidates[@]}"; do
-    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" - <<'PY' >/dev/null 2>&1; then
+    if [[ -n "$candidate" && -x "$candidate" ]] \
+      && RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING="$REQUIRE_MLX_EMBEDDING" \
+        "$candidate" - <<'PY' >/dev/null 2>&1; then
 import hashlib
+import os
 import sqlite3
 import ssl
 import sys
 
 hashlib.md5(b"rag-ime").hexdigest()
+if os.environ.get("RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING") == "1":
+    import mlx
+    import transformers
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
       printf '%s\n' "$candidate"
@@ -102,16 +129,26 @@ if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   exit 1
 fi
 
-if ! "$PYTHON_EXECUTABLE" - <<'PY' >/dev/null 2>&1; then
+if ! RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING="$REQUIRE_MLX_EMBEDDING" \
+  "$PYTHON_EXECUTABLE" - <<'PY' >/dev/null 2>&1; then
 import hashlib
+import os
 import sqlite3
 import ssl
 import sys
 
 hashlib.md5(b"rag-ime").hexdigest()
+if os.environ.get("RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING") == "1":
+    import mlx
+    import transformers
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
-  echo "python executable cannot import required stdlib modules (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
+  if [[ "$REQUIRE_MLX_EMBEDDING" == "1" ]]; then
+    echo "python executable cannot import required MLX embedding modules (mlx/transformers): $PYTHON_EXECUTABLE" >&2
+    echo "Run scripts/setup_knowledge_worker_env.sh or set RAG_IME_PYTHON to a compatible Python." >&2
+  else
+    echo "python executable cannot import required stdlib modules (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
+  fi
   echo "Set RAG_IME_PYTHON to a healthy Homebrew or project virtualenv Python." >&2
   exit 1
 fi

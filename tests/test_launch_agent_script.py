@@ -407,6 +407,56 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("sqlite3/hashlib/ssl", result.stderr)
 
+    def test_install_sidecar_launch_agent_uses_mlx_capable_knowledge_python(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-mlx-python-test-") as tmp:
+            home = Path(tmp) / "home"
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+            plist_path.parent.mkdir(parents=True)
+            with plist_path.open("wb") as target:
+                plistlib.dump(
+                    {"EnvironmentVariables": {"RAG_IME_EMBEDDING_PROVIDER": "local-bge-mlx"}},
+                    target,
+                )
+
+            knowledge_python = (
+                home
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "KnowledgeRuntime"
+                / ".venv"
+                / "bin"
+                / "python"
+            )
+            knowledge_python.parent.mkdir(parents=True)
+            knowledge_python.symlink_to(sys.executable)
+            stubs = Path(tmp) / "stubs"
+            for package in ("mlx", "transformers"):
+                package_dir = stubs / package
+                package_dir.mkdir(parents=True)
+                (package_dir / "__init__.py").write_text("", encoding="utf-8")
+
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "PYTHONPATH": str(stubs),
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+            }
+            env.pop("RAG_IME_PYTHON", None)
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            with plist_path.open("rb") as source:
+                payload = plistlib.load(source)
+
+        self.assertEqual(str(knowledge_python), payload["ProgramArguments"][0])
+
     def test_install_sidecar_launch_agent_rejects_relative_knowledge_python(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-knowledge-python-") as tmp:
