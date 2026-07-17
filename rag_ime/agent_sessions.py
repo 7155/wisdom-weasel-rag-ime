@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from .agent_tool_ids import SUPPORTED_AGENT_TOOL_PROFILES
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 
@@ -84,6 +85,8 @@ class AgentSessionStore:
             "max",
         }:
             raise ValueError("agent thinking level is not supported")
+        if str(tool_profile_version or "").strip() not in SUPPORTED_AGENT_TOOL_PROFILES:
+            raise ValueError("unsupported Agent tool profile")
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         session_id = f"agent:{uuid.uuid4()}"
         shell_policy = shell_policy_version or (
@@ -401,13 +404,7 @@ class AgentSessionStore:
         if normalized_mode not in {"assistant", "coordinator"}:
             raise ValueError("agent session mode must be assistant or coordinator")
         profile = str(tool_profile_version or "").strip()
-        if profile not in {
-            "control-center-v1",
-            "subagent-readonly-v1",
-            "subagent-worker-v1",
-            "ime-surface-v1",
-            "voice-refinement-v1",
-        }:
+        if profile not in SUPPORTED_AGENT_TOOL_PROFILES:
             raise ValueError("unsupported Agent tool profile")
         current = self.get(session_id)
         roots = _workspace_roots(

@@ -7,11 +7,13 @@ export interface PublicToolResultField {
 }
 
 export interface PublicToolResultView {
+  toolId: string;
   toolLabel: string;
+  operation: string;
   summary: string;
   fields: PublicToolResultField[];
   sources: string[];
-  structuredResult?: PublicStructuredResult;
+  preview?: PublicToolSemanticPreview;
   error?: string;
   recovery?: 'approval' | 'permission';
   destination?: {
@@ -20,12 +22,17 @@ export interface PublicToolResultView {
   };
 }
 
-export type PublicStructuredResult =
-  | string
-  | number
-  | boolean
-  | PublicStructuredResult[]
-  | { [key: string]: PublicStructuredResult };
+export interface PublicToolSemanticPreview {
+  kind: 'book' | 'collection';
+  title: string;
+  description?: string;
+  badges: string[];
+  items: Array<{
+    id: string;
+    label?: string;
+    text: string;
+  }>;
+}
 
 const toolLabels: Record<string, string> = {
   ime_overview: '控制中心概览',
@@ -275,24 +282,80 @@ export function publicToolResultView(activity: AgentActivityProjection): PublicT
   const sources = toolId === 'ime_knowledge'
     ? safeKnowledgeSourceLabels(items)
     : safeSourceLabels(payload.sources ?? payload.documents ?? payload.books);
-  const structuredResult = publicStructuredResult(
-    Object.keys(domain).length > 0 ? domain : envelope,
-  );
+  const preview = semanticToolPreview(toolId, operation, layers);
   const error = activity.status === 'failed' || payload.isError === true
     ? publicToolError(layers, carrier)
     : '';
   const recovery = error ? publicToolRecovery(error, payload) : undefined;
 
   return {
+    toolId,
     toolLabel,
+    operation,
     summary: summary || codeResult.summary || `${toolLabel}${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : '已完成'}`,
     fields,
     sources,
-    ...(structuredResult !== undefined ? { structuredResult } : {}),
+    ...(preview ? { preview } : {}),
     ...(error ? { error } : {}),
     ...(recovery ? { recovery } : {}),
     ...(toolDestinations[toolId] ? { destination: toolDestinations[toolId] } : {}),
   };
+}
+
+function semanticToolPreview(
+  toolId: string,
+  operation: string,
+  layers: Record<string, unknown>[],
+): PublicToolSemanticPreview | undefined {
+  if (toolId !== 'ime_memory') return undefined;
+
+  if (operation === 'read') {
+    const book = firstRecord(layers, ['book']);
+    if (Object.keys(book).length === 0) return undefined;
+    const title = publicDisplayText(book.title, '未命名工具书');
+    const description = publicLongText(book.summary);
+    const badges = firstStringArray([book], ['tags']).slice(0, 6);
+    const memories = firstArray([book], ['memories']);
+    const items = memories.slice(0, 8).flatMap((value, index) => {
+      const memory = record(value);
+      const itemText = publicLongText(memory.text);
+      if (!itemText) return [];
+      return [{
+        id: `memory:${index}`,
+        label: memoryTypeLabel(text(memory.type)),
+        text: itemText,
+      }];
+    });
+    return {
+      kind: 'book',
+      title: `《${title}》`,
+      ...(description ? { description } : {}),
+      badges,
+      items,
+    };
+  }
+
+  if (operation === 'catalog') {
+    const items = firstArray(layers, ['items']).slice(0, 8).flatMap((value, index) => {
+      const item = record(value);
+      const itemText = publicDisplayText(item.title ?? item.name ?? item.label, '');
+      if (!itemText) return [];
+      return [{
+        id: `catalog:${index}`,
+        label: memoryCatalogKindLabel(text(item.kind ?? item.type)),
+        text: itemText,
+      }];
+    });
+    if (items.length === 0) return undefined;
+    return {
+      kind: 'collection',
+      title: '记忆目录',
+      badges: [],
+      items,
+    };
+  }
+
+  return undefined;
 }
 
 interface PublicCodeToolResult {
@@ -388,44 +451,6 @@ function publicToolContentText(carrier: Record<string, unknown>): string {
     .join('\n');
 }
 
-const privateResultKey = /(?:^_|^id$|(?:approval|session|request|toolCall|event)Id$|token|secret|password|passphrase|api.?key|authorization|cookie|credential|reasoning|thinking|chain.?of.?thought|system.?prompt|prompt|headers?|environment|\benv\b|stack|traceback|raw|request.?body|response.?body|source.?path|file.?path|absolute.?path|^path$|stdout|stderr|^diff$|^patch$)/iu;
-
-function publicStructuredResult(value: unknown, depth = 0): PublicStructuredResult | undefined {
-  if (depth > 3 || value === null || value === undefined) return undefined;
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (typeof value === 'string') return publicStructuredText(value);
-  if (Array.isArray(value)) {
-    const items = value
-      .slice(0, 12)
-      .map((item) => publicStructuredResult(item, depth + 1))
-      .filter((item): item is PublicStructuredResult => item !== undefined);
-    return items.length > 0 ? items : undefined;
-  }
-  const source = record(value);
-  const entries: Array<[string, PublicStructuredResult]> = [];
-  for (const [rawKey, rawValue] of Object.entries(source).slice(0, 32)) {
-    const key = rawKey.trim().slice(0, 80);
-    if (!key || privateResultKey.test(key)) continue;
-    if (/^(?:content|text)$/iu.test(key)) {
-      if (typeof rawValue === 'string' || isToolContentBlocks(rawValue)) continue;
-    }
-    const safeValue = publicStructuredResult(rawValue, depth + 1);
-    if (safeValue === undefined) continue;
-    entries.push([key, safeValue]);
-  }
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-function isToolContentBlocks(value: unknown): boolean {
-  if (!Array.isArray(value) || value.length === 0) return false;
-  return value.every((item) => {
-    const block = record(item);
-    return ['text', 'image'].includes(text(block.type).toLowerCase())
-      && (Object.hasOwn(block, 'text') || Object.hasOwn(block, 'data'));
-  });
-}
-
 function publicStructuredText(value: string): string | undefined {
   let normalized = value.replace(/\s+/gu, ' ').trim();
   if (!normalized) return undefined;
@@ -436,6 +461,39 @@ function publicStructuredText(value: string): string | undefined {
     .replace(/\[REDACTED_SECRET\]/gu, '已隐藏敏感值')
     .replace(/\[REDACTED_PATH\]/gu, '已隐藏本机路径');
   return normalized.slice(0, 500);
+}
+
+function publicDisplayText(value: unknown, fallback: string): string {
+  return publicStructuredText(text(value))?.slice(0, 180) || fallback;
+}
+
+function publicLongText(value: unknown): string {
+  return publicStructuredText(text(value)) ?? '';
+}
+
+function firstStringArray(layers: Record<string, unknown>[], keys: string[]): string[] {
+  return firstArray(layers, keys)
+    .map((value) => publicDisplayText(value, ''))
+    .filter(Boolean);
+}
+
+function memoryTypeLabel(value: string): string {
+  return ({
+    principle: '原则',
+    fact: '事实',
+    preference: '偏好',
+    decision: '决定',
+    event: '事件',
+    note: '记录',
+  } as Record<string, string>)[value.toLowerCase()] ?? '记忆';
+}
+
+function memoryCatalogKindLabel(value: string): string {
+  return ({
+    book: '工具书',
+    group: '分组',
+    tag: '标签',
+  } as Record<string, string>)[value.toLowerCase()] ?? '条目';
 }
 
 function publicToolError(layers: Record<string, unknown>[], carrier: Record<string, unknown>): string {

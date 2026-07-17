@@ -165,7 +165,7 @@ export const CONTROL_ROUTES = {
     method: 'PATCH',
     path: '/api/agent/sessions/:sessionId',
     params: { sessionId: null },
-    body: ['mode', 'workspaceRoots', 'toolProfileVersion', 'toolAllowlistMode', 'allowedTools'],
+    body: ['mode', 'workspaceRoots', 'toolProfileVersion', 'toolAllowlistMode', 'allowedTools', 'dangerousModeConfirmation'],
     requiredBody: ['mode'],
   },
   'agent.session.delete': {

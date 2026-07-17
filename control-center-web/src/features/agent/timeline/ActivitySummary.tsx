@@ -63,7 +63,13 @@ export function ActivitySummary({
   const title = running ? '正在处理' : waiting ? '等待你的确认' : failed ? '活动中有失败项' : '活动已完成';
   const inlineTools = compactToolSummary(activities);
   const inlineTitle = inlineTools.count
-    ? `已调用 ${inlineTools.count} 个工具`
+    ? failed
+      ? `${inlineTools.count} 项操作中有失败项`
+      : waiting
+        ? `${inlineTools.count} 项操作等待确认`
+        : running
+          ? `正在处理 ${inlineTools.count} 项操作`
+          : `已完成 ${inlineTools.count} 项操作`
     : title;
   const inlineSummary = inlineTools.names || summary;
   const inlineStatus = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : '完成';
@@ -222,7 +228,7 @@ function ActivityRow({
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const duration = activityDuration(activity, nowMs);
   return (
-    <details className="agent-activity-row" open={activity.status === 'failed' || activity.status === 'waiting' || undefined}>
+    <details className="agent-activity-row" data-kind={presentation.kind} open={activity.status === 'failed' || activity.status === 'waiting' || undefined}>
       <summary>
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
@@ -234,9 +240,9 @@ function ActivityRow({
       <div className="agent-activity-row__details">
         {presentation.detail ? <p>{presentation.detail}</p> : null}
         <ToolProgressTimeline activity={activity} entries={progressHistory} />
+        {toolView?.preview ? <SemanticToolPreview preview={toolView.preview} /> : null}
         {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
         {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
-        {toolView?.structuredResult !== undefined ? <PublicStructuredResult value={toolView.structuredResult} /> : null}
         <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
         {toolView?.destination ? (
           <a className="agent-tool-destination" href={toolView.destination.href}>
@@ -286,8 +292,9 @@ function ToolProgressTimeline({
 }
 
 function PublicToolFields({ view }: { view: PublicToolResultView }) {
+  if (view.preview) return null;
   if (view.fields.length === 0) {
-    return view.structuredResult !== undefined || view.error
+    return view.error
       ? null
       : <p>工具没有返回可公开展示的结构化明细。</p>;
   }
@@ -300,20 +307,36 @@ function PublicToolFields({ view }: { view: PublicToolResultView }) {
   );
 }
 
+function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResultView['preview']> }) {
+  return (
+    <section className="agent-tool-preview" data-kind={preview.kind} aria-label={`${preview.title}内容`}>
+      <header>
+        <span><BookOpenText size={17} /></span>
+        <div>
+          <strong>{preview.title}</strong>
+          {preview.description ? <p>{preview.description}</p> : null}
+        </div>
+      </header>
+      {preview.badges.length ? <ul className="agent-tool-preview__badges">{preview.badges.map((badge) => <li key={badge}>{badge}</li>)}</ul> : null}
+      {preview.items.length ? (
+        <ol className="agent-tool-preview__items">
+          {preview.items.map((item) => (
+            <li key={item.id}>
+              {item.label ? <span>{item.label}</span> : null}
+              <p>{item.text}</p>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </section>
+  );
+}
+
 function PublicToolError({ reason }: { reason: string }) {
   return (
     <section className="agent-tool-result-panel" data-tone="error" aria-label="工具错误">
       <strong><TriangleAlert size={13} />失败原因</strong>
       <p>{reason}</p>
-    </section>
-  );
-}
-
-function PublicStructuredResult({ value }: { value: NonNullable<PublicToolResultView['structuredResult']> }) {
-  return (
-    <section className="agent-tool-result-panel" aria-label="工具公开结果">
-      <strong><TerminalSquare size={13} />公开的结构化结果</strong>
-      <pre>{JSON.stringify(value, null, 2)}</pre>
     </section>
   );
 }
@@ -334,6 +357,7 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   const payload = activity.payload;
   const toolId = text(payload.toolId ?? payload.toolName).toLowerCase();
   const toolView = activity.kind.startsWith('tool_') ? publicToolResultView(activity) : null;
+  const operation = toolView?.operation ?? text(payload.operation);
   if (activity.kind === 'reasoning_summary') {
     return { title: '处理说明', kind: 'thinking', icon: Brain };
   }
@@ -350,10 +374,26 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     };
   }
   if (activity.kind.includes('memory') || toolId.includes('memory')) {
-    return { title: '记忆', kind: 'memory', icon: BookOpenText };
+    const title = ({
+      catalog: '浏览记忆目录',
+      read: '读取工具书',
+      recent: '读取近期输入',
+      trace: '查看记忆追溯',
+      curation_prepare: '生成记忆整理草案',
+      maintenance_preview: '生成记忆整理草案',
+      maintenance_review: '查看记忆整理草案',
+      maintenance_apply: '应用记忆整理',
+      maintenance_rollback: '回滚记忆整理',
+      list: '浏览记忆',
+      search: '检索记忆',
+    } as Record<string, string>)[operation] ?? '记忆操作';
+    return { title, kind: 'memory', icon: BookOpenText };
   }
   if (toolId.includes('knowledge') || toolId.includes('rag') || text(payload.operation) === 'search') {
-    return { title: toolId === 'ime_knowledge' ? '文档知识库' : '知识检索', kind: 'rag', icon: Search };
+    const title = toolId === 'ime_knowledge'
+      ? ({ list_bases: '浏览知识库', search: '检索文档', find: '定位文档证据', open: '读取文档片段', status: '检查知识库' } as Record<string, string>)[operation] ?? '文档知识库'
+      : '知识检索';
+    return { title, kind: 'rag', icon: Search };
   }
   if (toolId.includes('subagent') || activity.kind.includes('subagent')) {
     return { title: '协作 Agent', kind: 'subagent', icon: GitBranch };

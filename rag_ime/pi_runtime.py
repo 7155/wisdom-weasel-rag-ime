@@ -16,7 +16,12 @@ from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
 from .agent_events import AgentEventHub
-from .agent_tool_ids import ASSISTANT_CONTROL_TOOL_IDS, CONTROL_TOOL_IDS, COORDINATOR_TOOL_IDS
+from .agent_tool_ids import (
+    ASSISTANT_CONTROL_TOOL_IDS,
+    CONTROL_TOOL_IDS,
+    COORDINATOR_TOOL_IDS,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+)
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 from .agent_runtime_driver import (
     AgentRuntimeError,
@@ -319,6 +324,24 @@ class PiRuntimeConfig:
                 f"{system_prompt.rstrip()}\n\n"
                 "你当前是一次有界任务委派中的临时执行单元，不是长期群聊成员。\n"
                 f"{template.prompt.strip()}\n"
+            )
+        if str(self.protocol_version or "") == "2":
+            system_prompt = (
+                f"{system_prompt.rstrip()}\n\n"
+                "运行时工具渐进披露规则：\n"
+                "- Provider 工具列表只表示本轮已经披露的参数 schema，不代表授权范围；"
+                "tool_load 也不授予权限。最终能否执行始终由当前 Session 策略和控制中心网关决定。\n"
+                "- 不熟悉目标工具的精确名称或参数时，先调用 tool_search，再对唯一需要的工具调用 tool_load。"
+                "不要为预热、激活或盘点而批量加载全部工具，这会浪费上下文。\n"
+                "- 若当前对话已经给出仍然准确的工具名与参数，可以直接调用；"
+                "运行时会在已授权目录中解析它。解析失败时再 search/load，不要反复尝试不存在的名称。\n"
+            )
+        if session.get("toolProfileVersion") == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
+            system_prompt = (
+                f"{system_prompt.rstrip()}\n\n"
+                "当前 Session 已由用户在原生界面明确启用“完全信任”。受控工具仍会生成结构化预览、"
+                "校验哈希、执行边界检查并留下回执，但符合策略的写操作将自动批准，不再逐项等待弹窗。"
+                "不要因此扩大任务范围，也不得绕过工作区、路径、备份、审计或回滚约束。\n"
             )
         return system_prompt
 

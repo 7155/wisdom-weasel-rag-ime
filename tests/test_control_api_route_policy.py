@@ -175,6 +175,13 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "allowedTools": ["workspace_search"],
                 "workspaceRoots": ["/tmp/project"],
             },
+            {
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "toolAllowlistMode": "profile",
+                "workspaceRoots": ["/tmp/project"],
+                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+            },
         ):
             with self.subTest(body=body):
                 self.policy.authorize(

@@ -496,6 +496,18 @@ struct NativeRoutePolicyTests {
                 body: ["title": "not allowed"]
             )
         }
+        _ = try policy.resolveRequest(
+            pathId: "agent.session.mode.update",
+            parameters: ["sessionId": "session-a"],
+            query: [:],
+            body: [
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "toolAllowlistMode": "profile",
+                "workspaceRoots": ["/tmp/project"],
+                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+            ]
+        )
         expectThrows("persona prompt remains server owned") {
             _ = try policy.resolveRequest(
                 pathId: "agent.roles.create",

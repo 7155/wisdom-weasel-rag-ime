@@ -27,7 +27,8 @@ export type SessionSummary = Pick<
 
 export interface AgentPermissionSelection {
   mode: 'assistant' | 'coordinator';
-  toolProfileVersion: 'control-center-v1' | 'subagent-readonly-v1';
+  toolProfileVersion: 'control-center-v1' | 'subagent-readonly-v1' | 'control-center-auto-approve-v1';
+  dangerousModeConfirmed?: boolean;
 }
 
 export interface AgentSessionListResponse {
@@ -93,6 +94,7 @@ export function sessionItems(value: unknown): SessionSummary[] {
 }
 
 export function sessionPermissionLabel(session: SessionSummary): string {
+  if (session.toolProfileVersion === 'control-center-auto-approve-v1') return '完全信任';
   if (session.toolProfileVersion === 'subagent-readonly-v1') {
     return session.mode === 'coordinator' ? '只读协调' : '只读观察';
   }

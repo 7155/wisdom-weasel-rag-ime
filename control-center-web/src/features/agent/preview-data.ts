@@ -282,11 +282,11 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
         }),
       ], previewNow - 180_000),
       message(sessionId, mediaTurn, 'user-media', 'user', [
-        block('media-user-text', 'text', { text: '把完成状态和附件也保留成结构化块。' }),
+        block('media-user-text', 'text', { text: '读取输入法工具书，并把结果作为可展开卡片保留。' }),
       ], previewNow - 80_000),
       message(sessionId, mediaTurn, 'assistant-media', 'assistant', [
         block('media-answer', 'text', {
-          text: '已完成。活动明细仍可追溯，但正文只保留能直接阅读的结论和产物。',
+          text: '已完成。正文展示工具书内容，精确接口与参数继续留在右侧运行状态中。',
         }),
         block('media-image', 'image', {
           receiptUrl: '/companions/RagImeCompanionDone.png',
@@ -303,7 +303,7 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
 }
 
 export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
-  const turnId = `${sessionId}:turn-architecture`;
+  const turnId = `${sessionId}:turn-media`;
   const entries: Array<[UiAgentEvent['eventType'], Record<string, unknown>]> = [
     ['reasoning_summary', { summary: '核对迁移计划与当前前端边界' }],
     [
@@ -314,6 +314,7 @@ export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
         operation: 'search',
         summary: '检索 8 条实现证据',
         query: 'ControlTransport reducer batcher',
+        args: { query: 'ControlTransport reducer batcher' },
       },
     ],
     [
@@ -323,17 +324,31 @@ export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
         toolId: 'ime_knowledge',
         operation: 'search',
         summary: '找到 8 条实现证据',
+        args: { query: 'ControlTransport reducer batcher' },
         resultCount: 8,
         sources: ['迁移计划', 'Agent reducer', 'Transport policy'],
       },
     ],
     [
-      'memory_checkpointed',
+      'tool_finished',
       {
-        requestId: 'memory-1',
-        summary: '读取 3 条近期记录',
-        books: 2,
-        recentItems: 3,
+        toolCallId: 'tool-memory-1',
+        toolId: 'ime_memory',
+        operation: 'read',
+        summary: '已读取输入法工具书',
+        args: { bookId: 'book:topic:input-method' },
+        result: {
+          book: {
+            title: '输入法与 Agent 上下文',
+            summary: '记录输入缓冲、闪电联想和长期记忆整理之间的边界。',
+            tags: ['输入法', '上下文', '记忆质量'],
+            memories: [
+              { type: 'principle', text: '单个词和未封口碎片不得进入长期 Agent 上下文。' },
+              { type: 'decision', text: '闪电联想可以读取当前连续输入缓冲，但不直接持久化。' },
+              { type: 'fact', text: '回车封口，同一应用内的输入按编辑事件重建，Backspace 会修正缓冲。' },
+            ],
+          },
+        },
       },
     ],
     [

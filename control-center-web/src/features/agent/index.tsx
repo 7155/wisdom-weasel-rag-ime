@@ -828,6 +828,9 @@ function AgentWorkspace() {
           workspaceRoots,
           toolProfileVersion: selection.toolProfileVersion,
           toolAllowlistMode: 'profile',
+          ...(selection.dangerousModeConfirmed
+            ? { dangerousModeConfirmation: 'AUTO_APPROVE_ALL' }
+            : {}),
         },
       });
       const updated = isRecord(response.session)

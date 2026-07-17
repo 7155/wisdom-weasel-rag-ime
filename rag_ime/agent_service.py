@@ -44,7 +44,13 @@ from .agent_runtime_driver import (
 from .agent_rooms import AgentRoomEventHub, AgentRoomStore
 from .agent_roles import PersonaManifest, agent_role_catalog
 from .agent_sessions import AgentSessionStore
-from .agent_tool_ids import CONTROL_TOOL_IDS
+from .agent_tool_ids import (
+    CONTROL_CENTER_TOOL_PROFILE,
+    CONTROL_TOOL_IDS,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    DANGEROUS_MODE_CONFIRMATION,
+    READONLY_TOOL_PROFILE,
+)
 from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .contracts.json_schema import validate_contract
 from .external_actions import (
@@ -429,6 +435,8 @@ class AgentService:
             or session_defaults["toolProfileVersion"]
             or role.defaults.tool_profile_version
         )
+        if requested_tool_profile not in {CONTROL_CENTER_TOOL_PROFILE, READONLY_TOOL_PROFILE}:
+            raise ValueError("new conversations must start in a controlled or read-only tool profile")
         if role.origin == "user":
             if (
                 payload.get("toolProfileVersion") is not None
@@ -1815,7 +1823,10 @@ class AgentService:
             if str(session.get("status") or "") == "busy":
                 raise ValueError("结束当前 Agent Loop 后才能调整运行权限")
             runtime = self.runtime_status()
-            if runtime.get("activeSessionId") == session_id:
+            if (
+                runtime.get("activeSessionId") == session_id
+                or session_id in {str(value) for value in runtime.get("openSessionIds") or []}
+            ):
                 self.runtime.stop()
             roots = payload.get("workspaceRoots")
             if roots is not None and not isinstance(roots, list):
@@ -1825,8 +1836,20 @@ class AgentService:
                 or session.get("toolProfileVersion")
                 or "control-center-v1"
             ).strip()
-            if requested_profile not in {"control-center-v1", "subagent-readonly-v1"}:
+            if requested_profile not in {
+                CONTROL_CENTER_TOOL_PROFILE,
+                READONLY_TOOL_PROFILE,
+                DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            }:
                 raise ValueError("unsupported Agent tool profile")
+            entering_dangerous = (
+                requested_profile == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+                and session.get("toolProfileVersion") != DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+            )
+            if requested_profile == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE and requested_mode != "coordinator":
+                raise ValueError("automatic approval requires coordinator mode")
+            if entering_dangerous and str(payload.get("dangerousModeConfirmation") or "") != DANGEROUS_MODE_CONFIRMATION:
+                raise ValueError("automatic approval mode requires an explicit native confirmation")
             requested_allowlist_mode = str(
                 payload.get("toolAllowlistMode")
                 or ("explicit" if "allowedTools" in payload else session.get("toolAllowlistMode"))
@@ -2771,84 +2794,11 @@ class AgentService:
                 terminal,
                 pending_in_pi=pending_in_pi,
             )
-        final = decided
-        if approved:
-            try:
-                assert self._approval_executor is not None
-                receipt = dict(self._approval_executor(decided))
-            except Exception as exc:
-                receipt = {
-                    "schemaVersion": "rag-ime.agent-operation-receipt.v1",
-                    "mutationApplied": False,
-                    "approvalId": approval_id,
-                    "toolId": str(decided.get("toolId") or ""),
-                    "operation": str(decided.get("operation") or ""),
-                    "summary": "操作未执行",
-                    "reason": "execution_failed",
-                    "error": _public_error(exc),
-                }
-            external_action_pending = receipt.get("externalActionPending") is True
-            if external_action_pending:
-                origin_process_id = int(self._process_id_provider())
-                receipt["originProcessId"] = origin_process_id
-                if str(receipt.get("externalAction") or "") == PORTABLE_RESTORE_ACTION:
-                    try:
-                        receipt = materialize_portable_restore_plan(
-                            approval=decided,
-                            session=self.sessions.get(session_id),
-                            pending_receipt=receipt,
-                            origin_process_id=origin_process_id,
-                        )
-                    except Exception as exc:
-                        receipt = {
-                            "schemaVersion": "rag-ime.agent-operation-receipt.v1",
-                            "mutationApplied": False,
-                            "externalActionPending": False,
-                            "approvalId": approval_id,
-                            "toolId": str(decided.get("toolId") or ""),
-                            "operation": str(decided.get("operation") or ""),
-                            "summary": "外部恢复计划未创建，数据库没有发生变化",
-                            "reason": "external_plan_failed",
-                            "error": _public_error(exc),
-                        }
-                        external_action_pending = False
-            mutation_applied = receipt.get("mutationApplied") is True
-            final = self.sessions.complete_approval(
-                approval_id,
-                state=(
-                    "external_pending"
-                    if external_action_pending
-                    else "applied"
-                    if mutation_applied
-                    else "failed"
-                ),
-                receipt=receipt,
-            )
+        final = self._execute_approved_operation(decided) if approved else decided
 
         runtime_notified = False
         runtime_warning = ""
-        memory_checkpoint: dict[str, object] = {}
-        if str(final.get("state") or "") == "applied":
-            try:
-                memory_checkpoint = self.memory_sources.checkpoint_tool_receipt(final)
-            except Exception as exc:
-                memory_checkpoint = {
-                    "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
-                    "ok": False,
-                    "stored": False,
-                    "status": "checkpoint_failed",
-                    "error": _public_error(exc),
-                }
-            if memory_checkpoint.get("stored") is True:
-                self.events.publish(
-                    session_id,
-                    "memory_checkpointed",
-                    {
-                        "sourceRole": "tool_receipt",
-                        "status": "checkpointed",
-                        "summary": "已应用工具回执已保存为记忆来源，等待异步整理",
-                    },
-                )
+        memory_checkpoint = self._checkpoint_applied_approval(final)
         if pending_in_pi:
             resolution_state = str(final.get("state") or "rejected")
             try:
@@ -2880,6 +2830,137 @@ class AgentService:
             "runtimeWarning": runtime_warning,
             "memoryCheckpoint": memory_checkpoint,
         }
+
+    def auto_approve_pending(self, approval: Mapping[str, object]) -> dict[str, object]:
+        """Apply a freshly prepared operation for a locally confirmed dangerous Session."""
+
+        approval_id = str(approval.get("approvalId") or "")
+        current = self.sessions.get_approval(approval_id)
+        session_id = str(current.get("sessionId") or "")
+        session = self.sessions.get(session_id)
+        if session.get("toolProfileVersion") != DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
+            raise ValueError("automatic approval is not enabled for this session")
+        if str(current.get("state") or "") != "pending":
+            raise ValueError("automatic approval is no longer pending")
+        if str(approval.get("payloadSha256") or "") != str(current.get("payloadSha256") or ""):
+            raise ValueError("automatic approval payload no longer matches its preview")
+        if self._approval_executor is None:
+            raise ValueError("approval executor is unavailable")
+
+        decided = self.sessions.decide_approval(
+            approval_id,
+            approved=True,
+            payload_sha256=str(current["payloadSha256"]),
+            decided_by="dangerous-auto-approve",
+        )
+        final = self._execute_approved_operation(decided)
+        memory_checkpoint = self._checkpoint_applied_approval(final)
+        self.events.publish(
+            session_id,
+            "approval_resolved",
+            {
+                "approvalId": approval_id,
+                "state": str(final.get("state") or "failed"),
+                "automatic": True,
+            },
+        )
+        receipt = final.get("receipt") if isinstance(final.get("receipt"), Mapping) else {}
+        summary = str(receipt.get("summary") or "自动批准的操作未返回摘要")
+        return {
+            "summary": summary,
+            "approvalRequired": False,
+            "autoApproved": True,
+            "approvalId": approval_id,
+            "approval": final,
+            "receipt": dict(receipt),
+            "memoryCheckpoint": memory_checkpoint,
+        }
+
+    def _execute_approved_operation(
+        self,
+        decided: Mapping[str, object],
+    ) -> dict[str, object]:
+        approval_id = str(decided.get("approvalId") or "")
+        session_id = str(decided.get("sessionId") or "")
+        try:
+            assert self._approval_executor is not None
+            receipt = dict(self._approval_executor(decided))
+        except Exception as exc:
+            receipt = {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": False,
+                "approvalId": approval_id,
+                "toolId": str(decided.get("toolId") or ""),
+                "operation": str(decided.get("operation") or ""),
+                "summary": "操作未执行",
+                "reason": "execution_failed",
+                "error": _public_error(exc),
+            }
+        external_action_pending = receipt.get("externalActionPending") is True
+        if external_action_pending:
+            origin_process_id = int(self._process_id_provider())
+            receipt["originProcessId"] = origin_process_id
+            if str(receipt.get("externalAction") or "") == PORTABLE_RESTORE_ACTION:
+                try:
+                    receipt = materialize_portable_restore_plan(
+                        approval=decided,
+                        session=self.sessions.get(session_id),
+                        pending_receipt=receipt,
+                        origin_process_id=origin_process_id,
+                    )
+                except Exception as exc:
+                    receipt = {
+                        "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                        "mutationApplied": False,
+                        "externalActionPending": False,
+                        "approvalId": approval_id,
+                        "toolId": str(decided.get("toolId") or ""),
+                        "operation": str(decided.get("operation") or ""),
+                        "summary": "外部恢复计划未创建，数据库没有发生变化",
+                        "reason": "external_plan_failed",
+                        "error": _public_error(exc),
+                    }
+                    external_action_pending = False
+        return self.sessions.complete_approval(
+            approval_id,
+            state=(
+                "external_pending"
+                if external_action_pending
+                else "applied"
+                if receipt.get("mutationApplied") is True
+                else "failed"
+            ),
+            receipt=receipt,
+        )
+
+    def _checkpoint_applied_approval(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        if str(approval.get("state") or "") != "applied":
+            return {}
+        session_id = str(approval.get("sessionId") or "")
+        try:
+            checkpoint = self.memory_sources.checkpoint_tool_receipt(approval)
+        except Exception as exc:
+            checkpoint = {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": False,
+                "stored": False,
+                "status": "checkpoint_failed",
+                "error": _public_error(exc),
+            }
+        if checkpoint.get("stored") is True:
+            self.events.publish(
+                session_id,
+                "memory_checkpointed",
+                {
+                    "sourceRole": "tool_receipt",
+                    "status": "checkpointed",
+                    "summary": "已应用工具回执已保存为记忆来源，等待异步整理",
+                },
+            )
+        return dict(checkpoint)
 
     def _finish_terminal_approval(
         self,

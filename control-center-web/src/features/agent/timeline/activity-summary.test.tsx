@@ -18,7 +18,7 @@ describe('Agent tool activity details', () => {
     expect(group).not.toBeNull();
     expect(group).not.toHaveAttribute('open');
     const summary = group!.querySelector('summary')!;
-    expect(within(summary).getByText('已调用 1 个工具')).toBeInTheDocument();
+    expect(within(summary).getByText('已完成 1 项操作')).toBeInTheDocument();
     expect(within(summary).getByText('控制中心概览')).toBeInTheDocument();
     expect(within(summary).getByText('完成')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
@@ -234,7 +234,7 @@ describe('Agent tool activity details', () => {
     const { container } = render(<ActivitySummary activities={[activity]} />);
     openActivity(container);
 
-    expect(screen.getByText('文档知识库')).toBeInTheDocument();
+    expect(screen.getByText('检索文档')).toBeInTheDocument();
     expect(screen.getByText('信息来源')).toBeInTheDocument();
     expect(screen.getByText('acceptance.md · 41-57 行')).toBeInTheDocument();
     expect(screen.getByText('design.pdf · 第 3 页')).toBeInTheDocument();
@@ -243,7 +243,7 @@ describe('Agent tool activity details', () => {
     expect(container).not.toHaveTextContent('/Users/private');
   });
 
-  it('shows a bounded public structured result while removing secrets, paths and private reasoning', () => {
+  it('does not dump a generic interface result into the conversation body', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-public-structure',
       toolName: 'workspace_list',
@@ -269,20 +269,50 @@ describe('Agent tool activity details', () => {
 
     const { container } = render(<ActivitySummary activities={[activity]} />);
     openActivity(container);
+    const dialog = screen.getByRole('dialog');
 
-    const result = screen.getByLabelText('工具公开结果');
-    expect(result).toHaveTextContent('公开的结构化结果');
-    expect(result).toHaveTextContent('entries');
-    expect(result).toHaveTextContent('README.md');
-    expect(result).toHaveTextContent('cursor-public-2');
-    expect(result).toHaveTextContent('healthy');
-    expect(result).toHaveTextContent('content');
-    expect(result).toHaveTextContent('resultCount');
-    expect(result).not.toHaveTextContent('/Users/private');
-    expect(result).not.toHaveTextContent('private file body');
-    expect(result).not.toHaveTextContent('sk-do-not-render');
-    expect(result).not.toHaveTextContent('private chain of thought');
-    expect(result).not.toHaveTextContent('authorization');
+    expect(screen.queryByLabelText('工具公开结果')).not.toBeInTheDocument();
+    expect(dialog).toHaveTextContent('已读取 2 个工作区条目');
+    expect(dialog).not.toHaveTextContent('entries');
+    expect(dialog).not.toHaveTextContent('README.md');
+    expect(dialog).not.toHaveTextContent('cursor-public-2');
+    expect(dialog).not.toHaveTextContent('/Users/private');
+    expect(dialog).not.toHaveTextContent('private file body');
+    expect(dialog).not.toHaveTextContent('sk-do-not-render');
+    expect(dialog).not.toHaveTextContent('private chain of thought');
+    expect(dialog).not.toHaveTextContent('authorization');
+  });
+
+  it('renders a memory book as a semantic expandable preview', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-memory-book',
+      toolName: 'ime_memory',
+      operation: 'read',
+      result: {
+        book: {
+          title: '输入法与 Agent 上下文',
+          summary: '输入缓冲与长期记忆之间的边界。',
+          tags: ['输入法', '上下文'],
+          memories: [
+            { type: 'principle', text: '单个词不得进入长期上下文。' },
+            { type: 'decision', text: '闪电联想只读取临时缓冲。' },
+          ],
+        },
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(within(row).getByLabelText('《输入法与 Agent 上下文》内容')).toHaveTextContent('输入缓冲与长期记忆之间的边界。');
+    expect(row).toHaveTextContent('原则');
+    expect(row).toHaveTextContent('单个词不得进入长期上下文。');
+    expect(row).not.toHaveTextContent('结果摘要');
+    expect(row).not.toHaveTextContent('读取内容');
+    expect(row).not.toHaveTextContent('"memories"');
   });
 
   it('summarizes a Pi write_file result as a safe file name and added line count', () => {

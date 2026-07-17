@@ -113,7 +113,7 @@ describe('Agent experience', () => {
     const dialog = await screen.findByRole('dialog', { name: '对话路径' });
     expect(within(dialog).getByText(/所有公开消息都可跳转和创建分支/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/private deep-search evidence/)).not.toBeInTheDocument();
-    await user.click(await within(dialog).findByRole('radio', { name: /把完成状态和附件也保留成结构化块/ }));
+    await user.click(await within(dialog).findByRole('radio', { name: /读取输入法工具书，并把结果作为可展开卡片保留/ }));
     await user.click(within(dialog).getByRole('button', { name: '创建分支' }));
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
@@ -123,7 +123,7 @@ describe('Agent experience', () => {
         body: expect.objectContaining({ entryId: 'session-preview:user-media' }),
       }),
     })));
-    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('把完成状态和附件也保留成结构化块。');
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('读取输入法工具书，并把结果作为可展开卡片保留。');
     expect(screen.getByRole('button', { name: /控制中心迁移 · 分支/ })).toHaveAttribute('aria-current', 'true');
   });
 
@@ -151,7 +151,7 @@ describe('Agent experience', () => {
         body: expect.objectContaining({ entryId: 'session-preview:user-media' }),
       }),
     })));
-    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('把完成状态和附件也保留成结构化块。');
+    expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('读取输入法工具书，并把结果作为可展开卡片保留。');
   });
 
   it('rewinds the same conversation when double Escape edits the previous user message', async () => {
@@ -164,7 +164,7 @@ describe('Agent experience', () => {
     composer.focus();
     await user.keyboard('{Escape}{Escape}');
     expect(await screen.findByText('正在修改这条消息')).toBeInTheDocument();
-    expect(composer).toHaveValue('把完成状态和附件也保留成结构化块。');
+    expect(composer).toHaveValue('读取输入法工具书，并把结果作为可展开卡片保留。');
     await user.clear(composer);
     await user.type(composer, '改成更准确的问题');
     await user.click(screen.getByRole('button', { name: '发送' }));
@@ -211,7 +211,7 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '查看对话路径与分支' }));
     const dialog = await screen.findByRole('dialog', { name: '对话路径' });
-    const assistant = await within(dialog).findByRole('radio', { name: /已完成。活动明细仍可追溯/ });
+    const assistant = await within(dialog).findByRole('radio', { name: /已完成。正文展示工具书内容/ });
     await user.click(assistant);
     expect(within(assistant).getByText('可跳转 · 可分支')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: '跳到节点' })).toBeEnabled();
@@ -234,7 +234,7 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '查看对话路径与分支' }));
     const dialog = await screen.findByRole('dialog', { name: '对话路径' });
-    await user.click(within(dialog).getByRole('radio', { name: /已完成。活动明细仍可追溯/ }));
+    await user.click(within(dialog).getByRole('radio', { name: /已完成。正文展示工具书内容/ }));
     await user.click(within(dialog).getByRole('button', { name: '跳到节点' }));
 
     await waitFor(() => expect(document.querySelector(
@@ -301,13 +301,13 @@ describe('Agent experience', () => {
     const events = previewAgentEvents(sessionId);
     events[1] = { ...events[1]!, payload: { ...events[1]!.payload, rawSecret: '{"token":"do-not-render"}' } };
     useAgentLiveStore.getState().applyEvents(sessionId, events);
-    const turnId = `${sessionId}:turn-architecture`;
+    const turnId = `${sessionId}:turn-media`;
     render(<TooltipProvider><AgentTurn sessionId={sessionId} turnId={turnId} persona={previewPersonas[0]} onApprovalDecision={() => {}} /></TooltipProvider>);
     expect(screen.getAllByAltText('智鼬·此刻头像')).toHaveLength(1);
     expect(document.querySelectorAll('.agent-activity')).toHaveLength(1);
     expect(document.querySelector('.agent-user-message')).toBeInTheDocument();
     expect(screen.queryByText(/do-not-render/)).not.toBeInTheDocument();
-    expect(document.querySelector('.agent-assistant-message')).toHaveTextContent('三条 Lane 已经收束到同一个');
+    expect(document.querySelector('.agent-assistant-message')).toHaveTextContent('正文展示工具书内容');
   });
 
   it('keeps live agent, knowledge-source, and ephemeral subagent status visible without adding child Sessions', async () => {
@@ -381,6 +381,9 @@ describe('Agent experience', () => {
     expect(statusPanel.querySelector('.agent-status-turn[data-state="running"] > svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-tool[data-state="running"] .agent-status-tool__icon svg')).toBeInTheDocument();
     await user.click(knowledgeStep);
+    expect(within(statusPanel).getByText('ime_knowledge')).toBeInTheDocument();
+    expect(within(statusPanel).getByText('find')).toBeInTheDocument();
+    expect(within(statusPanel).getByText('0 个字段')).toBeInTheDocument();
     expect(within(statusPanel).getByText('来源 2 · 进行中')).toBeInTheDocument();
     expect(within(statusPanel).getByText('信息来源')).toBeInTheDocument();
     expect(within(statusPanel).getByText('memory-design.md · 42-48 行')).toBeInTheDocument();
@@ -1149,6 +1152,7 @@ describe('Agent experience', () => {
     expect(permissionPicker).not.toBeNull();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /受控助手/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全信任/ })).toBeInTheDocument();
     const readonlyPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ });
     const coordinatorPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /运行协调/ });
     expect(coordinatorPermission).toHaveAttribute('aria-checked', 'true');
@@ -1246,6 +1250,62 @@ describe('Agent experience', () => {
       }),
     })));
     expect(await screen.findByRole('button', { name: '对话权限：运行协调' })).toBeInTheDocument();
+  });
+
+  it('requires an explicit native confirmation before enabling complete trust', async () => {
+    const assistantSession = {
+      ...previewSessions[0]!,
+      mode: 'assistant' as const,
+      workspaceRoots: [],
+      toolProfileVersion: 'control-center-v1',
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, items: [assistantSession] },
+    );
+    const pickFiles = vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-directory-danger',
+      name: 'learnA',
+      mimeType: 'application/octet-stream',
+      byteSize: 0,
+      path: '/Volumes/undo 4t/git/learnA',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '对话权限：受控助手' }));
+    const permissionPicker = document.querySelector('.agent-picker-popover');
+    expect(permissionPicker).not.toBeNull();
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全信任/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: '启用完全信任？' });
+    const confirm = within(dialog).getByRole('button', { name: '启用完全信任' });
+    expect(confirm).toBeDisabled();
+    await user.click(within(dialog).getByRole('checkbox', { name: '我确认让此对话自动批准全部受控写操作' }));
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+
+    await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
+      purpose: 'workspace-root',
+      selection: 'directory',
+      multiple: true,
+      maxFiles: 4,
+    }));
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: {
+          mode: 'coordinator',
+          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          toolProfileVersion: 'control-center-auto-approve-v1',
+          toolAllowlistMode: 'profile',
+          dangerousModeConfirmation: 'AUTO_APPROVE_ALL',
+        },
+      }),
+    })));
+    expect(await screen.findByRole('button', { name: '对话权限：完全信任' })).toBeInTheDocument();
   });
 
   it('sends an advertised Pi RPC command through the prompt route', async () => {
@@ -1841,7 +1901,7 @@ function featureTransport(
     ok: true,
     sourceSessionId: 'session-preview',
     entryId: 'session-preview:user-media',
-    selectedText: '把完成状态和附件也保留成结构化块。',
+    selectedText: '读取输入法工具书，并把结果作为可展开卡片保留。',
     session: {
       ...previewSessions[0],
       schemaVersion: 'rag-ime.agent-session.v1',
@@ -1887,8 +1947,8 @@ function featureTransport(
         items: [
           { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。', role: 'user', createdAtMs: 0 },
           { entryId: 'session-preview:assistant-architecture', text: '三条 Lane 已经收束到同一个可执行计划。', role: 'assistant', createdAtMs: 0 },
-          { entryId: 'session-preview:user-media', text: '把完成状态和附件也保留成结构化块。', role: 'user', createdAtMs: 0 },
-          { entryId: 'session-preview:assistant-media', text: '已完成。活动明细仍可追溯，附件也已经登记。', role: 'assistant', createdAtMs: 0 },
+          { entryId: 'session-preview:user-media', text: '读取输入法工具书，并把结果作为可展开卡片保留。', role: 'user', createdAtMs: 0 },
+          { entryId: 'session-preview:assistant-media', text: '已完成。正文展示工具书内容，精确接口与参数继续留在右侧运行状态中。', role: 'assistant', createdAtMs: 0 },
           { entryId: 'internal-context', text: '<rag-ime-deep-search-context>private deep-search evidence</rag-ime-deep-search-context>', role: 'user', createdAtMs: 0 },
         ],
       },

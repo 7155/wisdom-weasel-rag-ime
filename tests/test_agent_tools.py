@@ -992,6 +992,41 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(receipt["auditId"], approval["approvalId"])
         self.assertEqual(len(executed), 1)
 
+    def test_dangerous_profile_auto_approves_through_the_bound_service_bridge(self) -> None:
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-auto-approve-v1",
+            allowed_tools=None,
+            workspace_roots=[self.tmp.name],
+        )
+        received = []
+
+        def auto_approve(approval):
+            received.append(dict(approval))
+            return {
+                "summary": "已自动批准并完成任务",
+                "approvalRequired": False,
+                "autoApproved": True,
+                "approvalId": approval["approvalId"],
+            }
+
+        self.gateway.bind_auto_approval_executor(auto_approve)
+        response = self.gateway.execute(
+            self._tool_call(
+                "ime_planning",
+                "task_action",
+                taskId="task:1",
+                action="complete",
+                date="2026-07-13",
+            )
+        )
+
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["state"], "pending")
+        self.assertTrue(response["result"]["autoApproved"])
+        self.assertFalse(response["result"]["approvalRequired"])
+
     def test_coordinator_search_and_patch_require_native_hash_bound_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-patch"
         workspace.mkdir()

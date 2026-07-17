@@ -192,6 +192,33 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(restored_profile["toolProfileVersion"], "control-center-v1")
         self.assertEqual(restored_profile["toolAllowlistMode"], "profile")
         self.assertEqual(restored_profile["allowedTools"], [])
+        with self.assertRaisesRegex(ValueError, "explicit native confirmation"):
+            self.service.update_session(
+                session_id,
+                {
+                    "mode": "coordinator",
+                    "workspaceRoots": [self.root.as_posix()],
+                    "toolProfileVersion": "control-center-auto-approve-v1",
+                },
+            )
+        dangerous = self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+            },
+        )["session"]
+        self.assertEqual(dangerous["toolProfileVersion"], "control-center-auto-approve-v1")
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "control-center-v1",
+                "toolAllowlistMode": "profile",
+            },
+        )
         with self.assertRaisesRegex(ValueError, "unsupported Agent tool allowlist mode"):
             self.service.update_session(
                 session_id,
@@ -206,6 +233,46 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_dangerous_auto_approval_applies_and_audits_a_hash_bound_preview(self) -> None:
+        session = self.service.create_session({"title": "完全信任测试"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+            },
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_planning",
+            operation="task_action",
+            payload_sha256="a" * 64,
+            preview={"title": "测试预览", "summary": "自动批准测试"},
+            risk_level="R1",
+        )
+        self.service.bind_approval_executor(
+            lambda decided: {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "approvalId": decided["approvalId"],
+                "toolId": decided["toolId"],
+                "operation": decided["operation"],
+                "summary": "自动批准已应用",
+            }
+        )
+
+        result = self.service.auto_approve_pending(approval)
+
+        self.assertTrue(result["autoApproved"])
+        self.assertFalse(result["approvalRequired"])
+        self.assertEqual(result["approval"]["state"], "applied")
+        self.assertIsNotNone(
+            self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
+        )
 
     def test_conversation_fork_clones_identity_policy_and_returns_new_session(self) -> None:
         source = self.service.create_session(

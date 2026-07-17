@@ -275,6 +275,7 @@ function StatusSection({
 
 function ToolStep({ activity }: { activity: AgentActivityProjection }) {
   const view = publicToolResultView(activity);
+  const argumentFieldCount = Object.keys(record(activity.payload.args)).length;
   const knowledge = view.toolLabel === '文档知识库';
   const stateIcon = activity.status === 'running'
     ? <LoaderCircle size={14} />
@@ -294,6 +295,9 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
         <ChevronRight size={14} />
       </summary>
       <div>
+        <p className="agent-status-tool__interface"><span>接口</span><code>{view.toolId || 'unknown'}</code></p>
+        {view.operation ? <p><span>操作</span><code>{view.operation}</code></p> : null}
+        <p><span>参数</span><strong>{argumentFieldCount} 个字段</strong></p>
         {view.fields.slice(0, 5).map((field) => <p key={field.id}><span>{field.label}</span><strong>{field.value}</strong></p>)}
         {view.sources.length ? (
           <section className="agent-status-tool__sources">

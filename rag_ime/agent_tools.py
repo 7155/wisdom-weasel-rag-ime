@@ -5,11 +5,11 @@ import json
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .agent_tool_ids import CONTROL_TOOL_IDS
+from .agent_tool_ids import CONTROL_TOOL_IDS, DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
 from .browser_control import BrowserControlService
@@ -926,7 +926,9 @@ class ControlToolGateway:
 
     Pi never receives a database handle. Each operation is an explicit adapter
     over the same management/core services used by the native control center.
-    R1+ operations stop at a hash-bound preview until the native UI approves.
+    R1+ operations always create a hash-bound preview. They wait for native UI
+    approval by default; a natively confirmed dangerous Session may decide that
+    approval automatically while retaining validation, receipts, and rollback.
     """
 
     def __init__(
@@ -959,6 +961,15 @@ class ControlToolGateway:
         self.scheduling = scheduling
         self.browser_control = browser_control
         self.desktop_client = desktop_client or DesktopBridgeClient()
+        self._auto_approval_executor: (
+            Callable[[Mapping[str, object]], Mapping[str, object]] | None
+        ) = None
+
+    def bind_auto_approval_executor(
+        self,
+        executor: Callable[[Mapping[str, object]], Mapping[str, object]],
+    ) -> None:
+        self._auto_approval_executor = executor
 
     def manifests(self, *, session_id: str = "") -> dict[str, object]:
         session = self.sessions.get(session_id) if session_id else None
@@ -1045,7 +1056,11 @@ class ControlToolGateway:
                             spec=spec,
                         )
                     ]
-                    for profile in ("control-center-v1", "subagent-readonly-v1")
+                    for profile in (
+                        "control-center-v1",
+                        "subagent-readonly-v1",
+                        DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+                    )
                 }
                 effective_operations = [
                     operation
@@ -1130,6 +1145,11 @@ class ControlToolGateway:
                 args=args,
                 risk_level=risk_level,
             )
+            if session.get("toolProfileVersion") == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
+                approval = result.get("approval") if isinstance(result.get("approval"), Mapping) else None
+                if approval is None or self._auto_approval_executor is None:
+                    raise ValueError("automatic approval bridge is unavailable")
+                result = dict(self._auto_approval_executor(approval))
         response = {
             "schemaVersion": "rag-ime.agent-tool-result.v1",
             "ok": True,
