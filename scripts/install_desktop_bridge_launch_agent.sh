@@ -51,5 +51,9 @@ bootstrap_launch_agent() {
 }
 
 bootstrap_launch_agent
-launchctl kickstart -k "$DOMAIN/$LABEL"
+if ! launchctl kickstart "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+  # RunAtLoad may already be transitioning through xpcproxy. A loaded job is
+  # sufficient here; the stack audit verifies that it reaches running state.
+  launchctl print "$DOMAIN/$LABEL" >/dev/null
+fi
 launchctl print "$DOMAIN/$LABEL" | grep -E 'state =|pid =|last exit code' || true
