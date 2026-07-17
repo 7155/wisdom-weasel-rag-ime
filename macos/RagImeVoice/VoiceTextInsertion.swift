@@ -12,6 +12,8 @@ final class VoiceTextInsertionSession {
     private let originalSelectionLength: Int
     private let insertionMode: VoiceInsertionTargetMode
     private var insertedUTF16Length = 0
+    private var insertedText = ""
+    private var observedSelectionAfterWrite: VoiceInsertionSelection?
     private var hasAppliedRevision = false
 
     private init(
@@ -94,11 +96,17 @@ final class VoiceTextInsertionSession {
             guard let current = Self.selectedRange(element) else {
                 throw VoiceInsertionError.cursorMoved
             }
+            let ownedRange = CFRange(location: origin, length: insertedUTF16Length)
+            if let currentText = Self.text(in: ownedRange, element: element),
+               currentText != insertedText {
+                throw VoiceInsertionError.cursorMoved
+            }
             guard VoiceInsertionTargetPolicy.selectionMatchesOwnRevision(
                 origin: origin,
                 insertedUTF16Length: insertedUTF16Length,
                 currentLocation: current.location,
-                currentLength: current.length
+                currentLength: current.length,
+                observedAfterWrite: observedSelectionAfterWrite
             ) else {
                 throw VoiceInsertionError.cursorMoved
             }
@@ -111,6 +119,10 @@ final class VoiceTextInsertionSession {
             throw VoiceInsertionError.writeFailed
         }
         insertedUTF16Length = revision.text.utf16.count
+        insertedText = revision.text
+        observedSelectionAfterWrite = Self.selectedRange(element).map {
+            VoiceInsertionSelection(location: $0.location, length: $0.length)
+        }
         hasAppliedRevision = true
     }
 
@@ -151,6 +163,19 @@ final class VoiceTextInsertionSession {
         var range = CFRange(location: 0, length: 0)
         guard AXValueGetValue(axValue, .cfRange, &range), range.location != kCFNotFound else { return nil }
         return range
+    }
+
+    private static func text(in range: CFRange, element: AXUIElement) -> String? {
+        var range = range
+        guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: AnyObject?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &value
+        ) == .success else { return nil }
+        return value as? String
     }
 
     private static func stringAttribute(_ name: CFString, element: AXUIElement) -> String {

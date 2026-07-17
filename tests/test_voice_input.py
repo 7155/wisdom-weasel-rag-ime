@@ -531,6 +531,18 @@ enum Harness {
         )
         precondition(resolved == codex)
         precondition(VoiceInsertionTargetPolicy.mode(for: resolved, accessibilityWritable: true) == .finalPaste)
+        precondition(VoiceInsertionTargetPolicy.mode(
+            for: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.mitchellh.ghostty", name: "Ghostty"),
+            accessibilityWritable: true
+        ) == .finalPaste)
+        precondition(VoiceInsertionTargetPolicy.mode(
+            for: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.apple.Terminal", name: "Terminal"),
+            accessibilityWritable: true
+        ) == .finalPaste)
+        precondition(VoiceInsertionTargetPolicy.mode(
+            for: VoiceInsertionApplicationIdentity(bundleIdentifier: "dev.warp.Warp-Stable", name: "Warp"),
+            accessibilityWritable: true
+        ) == .finalPaste)
         precondition(VoiceInsertionTargetPolicy.isSameApplication(
             captured: codex,
             focused: codex,
@@ -562,6 +574,26 @@ enum Harness {
             insertedUTF16Length: 5,
             currentLocation: 8,
             currentLength: 0
+        ))
+        precondition(VoiceInsertionTargetPolicy.selectionMatchesOwnRevision(
+            origin: 4,
+            insertedUTF16Length: 5,
+            currentLocation: 4,
+            currentLength: 5
+        ))
+        precondition(VoiceInsertionTargetPolicy.selectionMatchesOwnRevision(
+            origin: 4,
+            insertedUTF16Length: 5,
+            currentLocation: 4,
+            currentLength: 0,
+            observedAfterWrite: VoiceInsertionSelection(location: 4, length: 0)
+        ))
+        precondition(!VoiceInsertionTargetPolicy.selectionMatchesOwnRevision(
+            origin: 4,
+            insertedUTF16Length: 5,
+            currentLocation: 10,
+            currentLength: 0,
+            observedAfterWrite: VoiceInsertionSelection(location: 4, length: 0)
         ))
 
         precondition(VoicePrivacyPolicy.denies(

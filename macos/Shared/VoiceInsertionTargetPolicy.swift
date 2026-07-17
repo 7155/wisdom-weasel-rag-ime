@@ -12,6 +12,11 @@ enum VoiceInsertionTargetMode: Equatable {
     case finalPaste
 }
 
+struct VoiceInsertionSelection: Equatable {
+    let location: Int
+    let length: Int
+}
+
 enum VoiceInsertionTargetPolicy {
     static func resolveApplication(
         focused: VoiceInsertionApplicationIdentity?,
@@ -61,14 +66,26 @@ enum VoiceInsertionTargetPolicy {
         origin: Int,
         insertedUTF16Length: Int,
         currentLocation: Int,
-        currentLength: Int
+        currentLength: Int,
+        observedAfterWrite: VoiceInsertionSelection? = nil
     ) -> Bool {
-        currentLocation == origin + insertedUTF16Length && currentLength == 0
+        let current = VoiceInsertionSelection(location: currentLocation, length: currentLength)
+        let caretAfterRevision = VoiceInsertionSelection(
+            location: origin + insertedUTF16Length,
+            length: 0
+        )
+        let selectedRevision = VoiceInsertionSelection(
+            location: origin,
+            length: insertedUTF16Length
+        )
+        return current == caretAfterRevision
+            || current == selectedRevision
+            || current == observedAfterWrite
     }
 
     private static func prefersFinalPaste(bundleIdentifier: String) -> Bool {
         let bundle = bundleIdentifier.lowercased()
-        let webEditorPrefixes = [
+        let finalPastePrefixes = [
             "com.openai.codex",
             "com.openai.chat",
             "com.google.chrome",
@@ -78,8 +95,19 @@ enum VoiceInsertionTargetPolicy {
             "com.vivaldi.vivaldi",
             "company.thebrowser.browser",
             "org.mozilla.firefox",
+            // Terminal accessibility trees expose scrollback selection, not a
+            // replaceable document caret. Streaming AX replacement is unsafe.
+            "com.apple.terminal",
+            "com.googlecode.iterm2",
+            "com.mitchellh.ghostty",
+            "com.github.wez.wezterm",
+            "net.kovidgoyal.kitty",
+            "org.alacritty",
+            "io.alacritty",
+            "dev.warp.warp",
+            "dev.warp.warp-stable",
         ]
-        return webEditorPrefixes.contains { bundle == $0 || bundle.hasPrefix($0 + ".") }
+        return finalPastePrefixes.contains { bundle == $0 || bundle.hasPrefix($0 + ".") }
     }
 
     private static func normalizedBundle(_ value: String) -> String {
