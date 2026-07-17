@@ -68,6 +68,13 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("wait_for_gateway_port_release", gateway_installer)
         self.assertIn("bootstrap_launch_agent", gateway_installer)
 
+        desktop_installer = (
+            ROOT / "scripts" / "install_desktop_bridge_launch_agent.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("bootstrap_launch_agent", desktop_installer)
+        self.assertIn("for attempt in 1 2 3 4 5", desktop_installer)
+        self.assertIn('launchctl print "$DOMAIN/$LABEL"', desktop_installer)
+
     def test_remote_gateway_uses_tailnet_only_serve_and_loopback_backend(self) -> None:
         script = (
             ROOT / "scripts" / "configure_agent_gateway_tailscale.sh"
