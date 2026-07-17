@@ -30,11 +30,7 @@ from .active_rag_service import (
     active_rag_sensitive_text_blocked,
 )
 from .agent_extensions import AgentExtensionService
-from .agent_surface_runtime import (
-    AgentSurfaceRuntime,
-    PiSurfaceCompletionProvider,
-    validate_visual_context,
-)
+from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvider
 from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
     agent_approval_route,
@@ -383,7 +379,10 @@ class DebugImeService:
             # database but must never race to claim the same wake schedule.
             wake_scheduler_enabled=config.server_name == "agent gateway",
         )
-        self.agent_surface = AgentSurfaceRuntime(self.agent)
+        self.agent_surface = AgentSurfaceRuntime(
+            self.agent,
+            settings_provider=lambda: self.settings_store.get_settings(include_sensitive=True),
+        )
         if config.server_name == "agent gateway":
             self.active_rag.completion_provider = PiSurfaceCompletionProvider(
                 local_runtime=self.agent_surface,
@@ -1757,7 +1756,8 @@ class DebugImeService:
             if isinstance(payload.get("evidencePack"), list)
             else ()
         )
-        visual_context = validate_visual_context(payload.get("visualContext"))
+        if payload.get("visualContext"):
+            raise ValueError("visualContext is disabled; provide AX windowContext instead")
         window_context = validate_window_context(payload.get("windowContext"))
         return ActiveRagStartRequest(
             selected_text=selected_text,
@@ -1823,7 +1823,6 @@ class DebugImeService:
             rag_enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
             rag_lane_weights=runtime_config.hybrid_rag.query_weights(),
             window_context=window_context,
-            visual_context=visual_context,
         )
 
     @staticmethod
@@ -7235,7 +7234,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             path = parsed.path
-            security_error = self._management_post_security_error(path)
+            security_error = self._management_post_security_error(path, require_json=False)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
@@ -7495,11 +7494,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if require_json and settings.get("postRequiresJson") is True:
             content_type = self.headers.get("Content-Type", "")
             if "application/json" not in content_type.lower():
-                return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "POST requires application/json"}
+                return {
+                    "schemaVersion": "rag-ime.management-security.v3",
+                    "ok": False,
+                    "error": f"{self.command} requires application/json",
+                }
         if settings.get("sameOriginOnly") is True:
             origin = self.headers.get("Origin", "")
             if origin and not _origin_matches_host(origin, self.headers.get("Host", "")):
-                return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "cross-origin POST rejected"}
+                return {
+                    "schemaVersion": "rag-ime.management-security.v3",
+                    "ok": False,
+                    "error": f"cross-origin {self.command} rejected",
+                }
         if settings.get("requireToken") is True:
             expected = os.environ.get("RAG_IME_MANAGEMENT_TOKEN", "") or _string(settings.get("token"))
             provided = self.headers.get("X-RAG-IME-Admin-Token", "")

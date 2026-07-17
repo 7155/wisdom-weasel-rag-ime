@@ -45,6 +45,8 @@ ACTIVE_RAG_LOCAL_EVIDENCE_MAX_CHARS = 120
 ACTIVE_RAG_CHAIN_TRACE_SCHEMA_VERSION = "rag-ime.active-rag-chain-trace.v1"
 ACTIVE_RAG_CHAIN_TRACE_MAX_BYTES = 8_000_000
 ACTIVE_RAG_CHAIN_TRACE_TEXT_LIMIT = 24_000
+ACTIVE_RAG_PROGRESS_MAX_ITEMS = 3
+ACTIVE_RAG_PROGRESS_PREVIEW_CHARS = 96
 SENSITIVE_FIELD_BLOCK_REASON = "sensitive_field_blocked"
 
 _TRACE_SECRET_FIELD_TOKENS = (
@@ -149,7 +151,6 @@ class ActiveRagStartRequest:
     rag_enabled_lanes: tuple[tuple[str, bool], ...] = ()
     rag_lane_weights: tuple[tuple[str, float], ...] = ()
     window_context: dict[str, object] = field(default_factory=dict)
-    visual_context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -746,12 +747,15 @@ class ActiveRagService:
             latency_budget_ms=_remote_completion_budget_ms(request),
             surface_request_id=request.panel_session_id,
             front_app_bundle_id=request.front_app_bundle_id,
-            visual_context=dict(request.visual_context),
         )
         resolved_model_request = resolved_active_rag_current_request(completion_request)
         messages = build_deepseek_completion_messages(completion_request)
         include_trace_text = self._trace_include_text_enabled()
         if diagnostics is not None:
+            # This is the redacted, budgeted user payload that is actually sent
+            # to the provider. Keep it in memory for the foreground context
+            # viewer; the persisted chain trace intentionally omits this field.
+            diagnostics["contextView"] = _active_rag_context_view_from_messages(messages)
             context_trace = build_context_injection_trace(
                 current_context=completion_request.current_context,
                 selected_text=completion_request.selected_text,
@@ -807,6 +811,7 @@ class ActiveRagService:
                 "scene": "active_rag",
                 "attempted": True,
                 "completed": False,
+                "startedAtMs": now_ms(),
                 "latencyBudgetMs": completion_request.latency_budget_ms,
                 "requestedCandidateCount": completion_request.max_candidates,
                 "stream": True,
@@ -892,6 +897,10 @@ class ActiveRagService:
                     raise
                 retry_attempted = True
                 retry_reason = _safe_failure_reason(exc)
+                _mark_active_rag_quality_retry(
+                    diagnostics,
+                    reason=retry_reason,
+                )
                 if trace_events is not None:
                     trace_events.append(_trace_event("deepseek_context_only_retry_started", reason=retry_reason))
                 raw_deltas = run_completion(recovery_request)
@@ -904,6 +913,10 @@ class ActiveRagService:
             if not candidates and not retry_attempted:
                 retry_attempted = True
                 retry_reason = "empty_or_governed_remote_candidates"
+                _mark_active_rag_quality_retry(
+                    diagnostics,
+                    reason=retry_reason,
+                )
                 if trace_events is not None:
                     trace_events.append(_trace_event("deepseek_context_only_retry_started", reason=retry_reason))
                 raw_deltas = run_completion(recovery_request)
@@ -995,6 +1008,12 @@ class ActiveRagService:
             session = self._sessions.get(session_id)
             if session is None or session.status != "pending":
                 return
+            model_request = dict(session.diagnostics.get("modelRequest") or {})
+            if int(model_request.get("firstTokenMs") or 0) <= 0:
+                started_at_ms = int(model_request.get("startedAtMs") or session.created_at_ms)
+                model_request["firstTokenMs"] = max(1, now_ms() - started_at_ms)
+                model_request["firstTokenAtMs"] = now_ms()
+            model_request["stream"] = True
             partial = compile_active_rag_candidates(
                 (
                     CompletionCandidateDelta(
@@ -1009,9 +1028,10 @@ class ActiveRagService:
                 max_chars=session.request.max_chars,
             )
             if not partial:
+                session.diagnostics["modelRequest"] = model_request
+                session.updated_at_ms = now_ms()
                 return
             session.candidates = partial
-            model_request = dict(session.diagnostics.get("modelRequest") or {})
             model_request.update(
                 {
                     "stream": True,
@@ -1636,6 +1656,7 @@ def _seed_active_rag_context_diagnostics(
         "remoteModelReady": remote_model_ready,
         "warnings": list(dict.fromkeys(warnings)),
     }
+    diagnostics["contextView"] = _active_rag_request_context_view(request)
 
 
 def _recent_input_history_evidence(
@@ -1725,6 +1746,8 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
     if session.status == "error" and not candidates:
         candidates = [_active_rag_error_candidate_payload(session)]
     grounding_evidence = _grounding_evidence(session.evidence)
+    diagnostics = dict(session.diagnostics)
+    diagnostics["progress"] = _active_rag_progress_payload(session)
     return {
         "schemaVersion": ACTIVE_RAG_SERVICE_SCHEMA_VERSION,
         "sessionId": session.session_id,
@@ -1743,7 +1766,7 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
         "candidateCount": len(session.candidates),
         "candidates": candidates,
         "evidence": [_redacted_evidence_payload(item) for item in grounding_evidence[:8]],
-        "diagnostics": dict(session.diagnostics),
+        "diagnostics": diagnostics,
         "traceEvents": list(session.trace_events),
         "error": session.error,
         "createdAtMs": session.created_at_ms,
@@ -1751,6 +1774,197 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
         "elapsedMs": elapsed_ms,
         "pollAfterMs": poll_after_ms,
     }
+
+
+def _active_rag_progress_payload(session: ActiveRagSession) -> dict[str, object]:
+    diagnostics = session.diagnostics
+    retrieval = diagnostics.get("retrieval") if isinstance(diagnostics.get("retrieval"), dict) else {}
+    context = (
+        diagnostics.get("contextInjection")
+        if isinstance(diagnostics.get("contextInjection"), dict)
+        else {}
+    )
+    model = diagnostics.get("modelRequest") if isinstance(diagnostics.get("modelRequest"), dict) else {}
+    retrying = bool(model.get("contentRetryAttempted")) and not bool(model.get("completed"))
+    if session.status == "ready":
+        stage = "ready"
+    elif session.status in {"error", "cancelled", "stale_dropped"}:
+        stage = session.status
+    elif retrying:
+        stage = "quality_retry"
+    elif bool(model.get("partialVisible")):
+        stage = "streaming"
+    elif bool(model.get("attempted")):
+        stage = "generating"
+    elif bool(retrieval.get("attempted")):
+        stage = "retrieval_complete"
+    else:
+        stage = "capturing_context"
+
+    window_context = session.request.window_context if isinstance(session.request.window_context, dict) else {}
+    grounding = _grounding_evidence(session.evidence)
+    return {
+        "stage": stage,
+        "elapsedMs": max(0, now_ms() - session.created_at_ms),
+        "context": {
+            "foregroundChars": max(
+                0,
+                int(
+                    context.get("foregroundContextChars")
+                    or session.request.frontend_context_chars
+                    or len(session.request.context)
+                ),
+            ),
+            "windowNodeCount": max(0, int(window_context.get("nodeCount") or 0)),
+            "windowCaptureMode": compact_whitespace(str(window_context.get("captureMode") or "")),
+            "recentInputCount": max(0, int(context.get("timelineRecentInputRecordCount") or 0)),
+            "recentInputChars": max(0, int(context.get("timelineRecentInputChars") or 0)),
+            "recentInputUsed": bool(context.get("timelineRecentInputUsedForGeneration")),
+        },
+        "retrieval": {
+            "attempted": bool(retrieval.get("attempted")),
+            "elapsedMs": max(0.0, float(retrieval.get("elapsedMs") or 0.0)),
+            "retrievedCount": max(0, int(retrieval.get("retrievedCount") or 0)),
+            "evidenceCount": len(grounding),
+            "contextEvidenceCount": max(0, int(retrieval.get("contextEvidenceCount") or 0)),
+            "items": [_active_rag_progress_evidence_item(item) for item in grounding[:ACTIVE_RAG_PROGRESS_MAX_ITEMS]],
+        },
+        "model": {
+            "attempted": bool(model.get("attempted")),
+            "partialVisible": bool(model.get("partialVisible")),
+            "partialChars": max(0, int(model.get("partialChars") or 0)),
+            "firstTokenMs": max(0, int(model.get("firstTokenMs") or 0)),
+            "providerFirstTokenMs": max(0, int(model.get("providerFirstTokenMs") or 0)),
+            "providerElapsedMs": max(0, int(model.get("providerElapsedMs") or 0)),
+            "qualityRetry": bool(model.get("contentRetryAttempted")),
+            "qualityRetryReason": compact_whitespace(str(model.get("contentRetryReason") or "")),
+        },
+    }
+
+
+def _active_rag_progress_evidence_item(evidence: ActiveRagEvidence) -> dict[str, object]:
+    payload = _evidence_payload(evidence)
+    title = compact_whitespace(str(payload.get("title") or ""))
+    preview = compact_whitespace(
+        str(payload.get("evidencePreview") or payload.get("text") or evidence.preview or evidence.text)
+    )
+    if not title:
+        surface_hints = payload.get("surfaceHints") if isinstance(payload.get("surfaceHints"), list) else []
+        title = next(
+            (compact_whitespace(str(item)) for item in surface_hints if compact_whitespace(str(item))),
+            "",
+        )
+    if not title:
+        generic_tags = {"rag", "memory", "记忆", "todo", "planning"}
+        tags = [
+            compact_whitespace(str(item))
+            for item in evidence.tags
+            if compact_whitespace(str(item))
+            and compact_whitespace(str(item)).lower() not in generic_tags
+        ]
+        title = " · ".join(tags[:2])
+    if not title:
+        title = _active_rag_progress_source_label(evidence.source_type, evidence.source_lane)
+    return {
+        "sourceType": evidence.source_type,
+        "sourceLane": evidence.source_lane,
+        "title": title[:64],
+        "preview": preview[:ACTIVE_RAG_PROGRESS_PREVIEW_CHARS],
+    }
+
+
+def _active_rag_progress_source_label(source_type: str, source_lane: str) -> str:
+    normalized = f"{source_type} {source_lane}".lower()
+    if "todo" in normalized or "planning" in normalized:
+        return "计划任务"
+    if "book" in normalized:
+        return "记忆工具书"
+    if "memory" in normalized or "atom" in normalized:
+        return "个人记忆"
+    return "检索依据"
+
+
+def _active_rag_request_context_view(request: ActiveRagStartRequest) -> dict[str, object]:
+    """Build the truthful pre-provider fallback shown by the native surface."""
+
+    current_context = compact_whitespace(request.context or request.surrounding_before)
+    return {
+        "schemaVersion": "rag-ime.active-rag-context-view.v1",
+        "source": "frontend_request",
+        "currentRequest": _resolved_active_rag_request_text(request),
+        "currentContext": current_context,
+        "selectedText": compact_whitespace(request.selected_text),
+        "taskMode": compact_whitespace(request.intent),
+        "groundingMode": "pending",
+        "windowContext": dict(request.window_context) if isinstance(request.window_context, dict) else {},
+        "recentCompleteInputs": [],
+        "planning": {},
+        "evidenceHints": [],
+        "contextBudget": {},
+    }
+
+
+def _active_rag_context_view_from_messages(messages: list[dict[str, str]]) -> dict[str, object]:
+    """Project the exact redacted user message into a foreground-safe viewer.
+
+    The full system prompt is deliberately excluded. The returned sections are
+    copied from the already-built provider request, so the UI never reconstructs
+    or guesses what Pi/model transport received.
+    """
+
+    user_message = next(
+        (item for item in reversed(messages) if str(item.get("role") or "") == "user"),
+        {},
+    )
+    try:
+        payload = json.loads(str(user_message.get("content") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    context_packet = payload.get("contextPacket") if isinstance(payload.get("contextPacket"), dict) else {}
+    return {
+        "schemaVersion": "rag-ime.active-rag-context-view.v1",
+        "source": "provider_request",
+        "currentRequest": str(payload.get("currentRequest") or ""),
+        "currentContext": str(payload.get("currentContext") or ""),
+        "selectedText": str(payload.get("selectedText") or ""),
+        "taskMode": str(payload.get("taskMode") or ""),
+        "groundingMode": str(payload.get("groundingMode") or ""),
+        "windowContext": dict(context_packet.get("windowContext") or {})
+        if isinstance(context_packet.get("windowContext"), dict)
+        else {},
+        "recentCompleteInputs": list(context_packet.get("recentCompleteInputs") or [])
+        if isinstance(context_packet.get("recentCompleteInputs"), list)
+        else [],
+        "planning": dict(context_packet.get("planning") or {})
+        if isinstance(context_packet.get("planning"), dict)
+        else {},
+        "evidenceHints": list(payload.get("evidenceHints") or [])
+        if isinstance(payload.get("evidenceHints"), list)
+        else [],
+        "contextBudget": dict(context_packet.get("contextBudget") or {})
+        if isinstance(context_packet.get("contextBudget"), dict)
+        else {},
+    }
+
+
+def _mark_active_rag_quality_retry(
+    diagnostics: dict[str, object] | None,
+    *,
+    reason: str,
+) -> None:
+    if diagnostics is None:
+        return
+    model_request = dict(diagnostics.get("modelRequest") or {})
+    model_request.update(
+        {
+            "contentRetryAttempted": True,
+            "contentRetryReason": compact_whitespace(reason),
+            "retryStartedAtMs": now_ms(),
+        }
+    )
+    diagnostics["modelRequest"] = model_request
 
 
 def _active_rag_poll_after_ms(*, status: str, elapsed_ms: int) -> int:
@@ -1840,6 +2054,7 @@ def _initial_session_diagnostics(
     return {
         "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
         "privacy": {"rawTextIncluded": False, "hashAlgorithm": "sha256-16"},
+        "contextView": _active_rag_request_context_view(request),
         "requestCapture": {
             "contextSource": _active_rag_context_source(request),
             "selectedText": text_fingerprint(request.selected_text),
@@ -1850,11 +2065,10 @@ def _initial_session_diagnostics(
             "frontendContextChars": request.frontend_context_chars,
             "frontendContextHash": request.frontend_context_hash,
             "captureWarnings": capture_warnings,
-            "visualContext": {
-                "present": bool(request.visual_context),
-                "mimeType": str(request.visual_context.get("mimeType") or ""),
-                "pixelWidth": int(request.visual_context.get("pixelWidth") or 0),
-                "pixelHeight": int(request.visual_context.get("pixelHeight") or 0),
+            "windowContext": {
+                "present": bool(request.window_context),
+                "captureMode": str(request.window_context.get("captureMode") or ""),
+                "nodeCount": int(request.window_context.get("nodeCount") or 0),
             },
         },
         "route": route,
@@ -2193,6 +2407,20 @@ def _completion_delta_diagnostics(
     )
     if transport_modes:
         summary["transportModes"] = transport_modes
+    first_token_values = [
+        int(item.get("firstTokenMs") or 0)
+        for item in metadata
+        if int(item.get("firstTokenMs") or 0) > 0
+    ]
+    elapsed_values = [
+        int(item.get("elapsedMs") or 0)
+        for item in metadata
+        if int(item.get("elapsedMs") or 0) > 0
+    ]
+    if first_token_values:
+        summary["providerFirstTokenMs"] = min(first_token_values)
+    if elapsed_values:
+        summary["providerElapsedMs"] = max(elapsed_values)
     proxy_values = [bool(item.get("proxyBypassed")) for item in metadata if "proxyBypassed" in item]
     if proxy_values:
         summary["proxyBypassed"] = all(proxy_values)

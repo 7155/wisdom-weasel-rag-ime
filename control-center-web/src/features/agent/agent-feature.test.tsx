@@ -74,10 +74,39 @@ describe('Agent experience', () => {
     const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
     await user.click(within(dialog).getByRole('button', { name: '删除' }));
     expect(onDelete).toHaveBeenCalledWith('session-memory');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /删除“记忆整理”/ })).not.toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: '任务列表选项' }));
     await user.click(await screen.findByRole('menuitemcheckbox', { name: '显示已归档任务' }));
     expect(onShowArchivedChange).toHaveBeenCalledWith(true);
+  });
+
+  it('keeps the delete confirmation open and shows the backend error when deletion fails', async () => {
+    const onDelete = vi.fn().mockRejectedValue(new Error('DELETE requires application/json'));
+    const user = userEvent.setup();
+    const { container } = render(
+      <TooltipProvider>
+        <SessionRail
+          sessions={previewSessions}
+          selectedId="session-preview"
+          loading={false}
+          onSelect={() => {}}
+          onCreate={() => {}}
+          onDelete={onDelete}
+        />
+      </TooltipProvider>,
+    );
+    const targetRow = [...container.querySelectorAll('.agent-session-row-shell')]
+      .find((row) => row.textContent?.includes('记忆整理'));
+
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多任务操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除任务' }));
+    const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('DELETE requires application/json');
+    expect(dialog).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '删除' })).not.toBeDisabled());
   });
 
   it('resolves projected message ids to real Pi transcript entry ids', () => {

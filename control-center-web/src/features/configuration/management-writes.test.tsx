@@ -124,6 +124,26 @@ describe('Configuration settings WorkContract UI', () => {
       changes: { 'context.tokenBudget': 4096 },
     });
   });
+
+  it('reads the stateless lightning model and bounded thinking choices from the live Pi catalog', async () => {
+    const user = userEvent.setup();
+    const transport = renderConfiguration(true, true);
+    await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
+    await waitFor(() => expect(findRequest(transport, 'agent.role.models')).toBeDefined());
+
+    await user.click(screen.getByRole('combobox', { name: '设置分组' }));
+    await user.click(await screen.findByRole('option', { name: '深度生成' }));
+
+    expect(await screen.findByRole('combobox', { name: '闪电生成模型' })).toHaveTextContent('DeepSeek V4 Flash');
+    expect(screen.getByRole('combobox', { name: '闪电生成思考' })).toHaveTextContent('关闭');
+
+    await user.click(screen.getByRole('combobox', { name: '闪电生成思考' }));
+    expect(await screen.findByRole('option', { name: '关闭' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '低' })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('combobox', { name: '看图模型' })).not.toBeInTheDocument();
+  });
 });
 
 class ConfigurationTransport implements ControlTransport {
@@ -131,12 +151,16 @@ class ConfigurationTransport implements ControlTransport {
   readonly requests: ControlRequest[] = [];
   settingsReads = 0;
 
-  constructor(private readonly writesAvailable: boolean) {}
+  constructor(
+    private readonly writesAvailable: boolean,
+    private readonly modelCatalogAvailable = false,
+  ) {}
 
   async capabilities(): Promise<FrontendCapabilities> {
     const routeIds: ControlPathId[] = [
       'configuration.settings',
       'configuration.schema',
+      ...(this.modelCatalogAvailable ? ['agent.role.models'] as ControlPathId[] : []),
       ...(this.writesAvailable ? [
         'configuration.settings.preview',
         'configuration.settings.apply',
@@ -169,6 +193,7 @@ class ConfigurationTransport implements ControlTransport {
       return settingsPayload() as Response;
     }
     if (request.pathId === 'configuration.schema') return schemaPayload() as Response;
+    if (request.pathId === 'agent.role.models') return modelCatalogPayload() as Response;
     if (request.pathId === 'configuration.settings.preview') return {
       schemaVersion: 'rag-ime.management-work-preview.v1',
       ok: true,
@@ -207,8 +232,11 @@ class ConfigurationTransport implements ControlTransport {
   }
 }
 
-function renderConfiguration(writesAvailable: boolean): ConfigurationTransport {
-  const transport = new ConfigurationTransport(writesAvailable);
+function renderConfiguration(
+  writesAvailable: boolean,
+  modelCatalogAvailable = false,
+): ConfigurationTransport {
+  const transport = new ConfigurationTransport(writesAvailable, modelCatalogAvailable);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -237,7 +265,13 @@ function settingsPayload() {
   return {
     ok: true,
     settingsHash: 'sha256:settings',
-    settings: { display: { maxWidth: 560 } },
+    settings: {
+      display: { maxWidth: 560 },
+      activeRag: {
+        quickModel: 'deepseek/deepseek-v4-flash',
+        quickThinkingLevel: 'off',
+      },
+    },
     runtimeConfig: { runtimeRevision: 12, settingsRevision: 'sha256:settings' },
   };
 }
@@ -266,6 +300,46 @@ function schemaPayload() {
         description: '只允许通过安全存储修改',
         applyMode: 'restart_sidecar',
         restartComponent: 'sidecar',
+      }],
+    }, {
+      id: 'activeRag',
+      label: 'Active RAG',
+      fields: [{
+        key: 'activeRag.quickModel',
+        type: 'pi-model',
+        label: '闪电生成模型',
+        description: '来自 Pi 实时模型目录',
+      }, {
+        key: 'activeRag.quickThinkingLevel',
+        type: 'pi-thinking',
+        label: '闪电生成思考',
+        description: '只允许关闭或低',
+        modelKey: 'activeRag.quickModel',
+      }],
+    }],
+  };
+}
+
+function modelCatalogPayload() {
+  return {
+    ok: true,
+    providers: [{
+      id: 'deepseek',
+      models: [{
+        provider: 'deepseek',
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        thinkingLevels: ['off', 'high', 'max'],
+        supportsImages: false,
+      }],
+    }, {
+      id: 'gpt',
+      models: [{
+        provider: 'gpt',
+        id: 'gpt-5.6-luna',
+        name: 'GPT-5.6 Luna',
+        thinkingLevels: ['off', 'minimal', 'low', 'high'],
+        supportsImages: true,
       }],
     }],
   };

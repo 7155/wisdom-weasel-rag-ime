@@ -33,7 +33,6 @@ class DeepSeekCompletionRequest:
     recovery_mode: bool = False
     surface_request_id: str = ""
     front_app_bundle_id: str = ""
-    visual_context: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -588,7 +587,8 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                 "如果 placement 是 replace_selection，才输出对 selectedText 的改写。"
                 "selectedText 在 insert_after_selection/append_at_cursor 场景只是光标前文本锚点，不是示例，不要引用它来讲解。"
                 "第一句必须以“候选=”开头，等号后直接写候选内容。"
-                "不要解释，不要总结，不要 Markdown，不要输出任务标题，不要举例。"
+                "不要解释，不要总结，不要输出任务标题，不要举例。"
+                "正文可按内容需要使用简洁 Markdown，包括标题、列表、加粗、链接、行内代码和代码块；不要为了装饰强行套格式。"
                 "候选必须是完整正文，具体、可直接插入，可以包含多个自然段；不要复述 selectedText/currentContext/Notebook 原句。"
                 "禁止写元话语：不要说你将如何回答、补全、整理或围绕什么生成。"
                 "禁止出现“我会”“我将”“围绕”“继续补全当前表达”“把上下文”“真实意图”“整理成”“放到光标后”等措辞。"

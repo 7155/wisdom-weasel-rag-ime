@@ -32,6 +32,226 @@ enum RagImeAssistantTypography {
   }
 }
 
+enum RagImeAssistantMarkdownRenderer {
+  private static let presentationIntentKey = NSAttributedString.Key("NSPresentationIntent")
+  private static let inlinePresentationIntentKey = NSAttributedString.Key("NSInlinePresentationIntent")
+  private struct BlockDescriptor {
+    let identity: Int
+    let headingLevel: Int?
+    let isCodeBlock: Bool
+    let isBlockQuote: Bool
+    let isThematicBreak: Bool
+    let listOrdinal: Int?
+    let isUnorderedList: Bool
+    let listDepth: Int
+    let tableRowIdentity: Int?
+    let isTableHeader: Bool
+
+    init(intent: PresentationIntent?, fallbackIdentity: Int) {
+      identity = intent?.components.first?.identity ?? fallbackIdentity
+      var headingLevel: Int?
+      var isCodeBlock = false
+      var isBlockQuote = false
+      var isThematicBreak = false
+      var listOrdinal: Int?
+      var isUnorderedList = false
+      var listDepth = 0
+      var tableRowIdentity: Int?
+      var isTableHeader = false
+      for component in intent?.components ?? [] {
+        switch component.kind {
+        case .header(let level): headingLevel = level
+        case .codeBlock: isCodeBlock = true
+        case .blockQuote: isBlockQuote = true
+        case .thematicBreak: isThematicBreak = true
+        case .listItem(let ordinal): listOrdinal = ordinal
+        case .unorderedList:
+          isUnorderedList = true
+          listDepth += 1
+        case .orderedList: listDepth += 1
+        case .tableHeaderRow:
+          tableRowIdentity = component.identity
+          isTableHeader = true
+        case .tableRow: tableRowIdentity = component.identity
+        default: break
+        }
+      }
+      self.headingLevel = headingLevel
+      self.isCodeBlock = isCodeBlock
+      self.isBlockQuote = isBlockQuote
+      self.isThematicBreak = isThematicBreak
+      self.listOrdinal = listOrdinal
+      self.isUnorderedList = isUnorderedList
+      self.listDepth = listDepth
+      self.tableRowIdentity = tableRowIdentity
+      self.isTableHeader = isTableHeader
+    }
+
+    var prefix: String {
+      var value = isBlockQuote ? "▎ " : ""
+      guard let listOrdinal else { return value }
+      value += String(repeating: "  ", count: max(0, listDepth - 1))
+      value += isUnorderedList ? "• " : "\(listOrdinal). "
+      return value
+    }
+  }
+
+  static func render(_ markdown: String) -> NSAttributedString {
+    guard !markdown.isEmpty else { return NSAttributedString(string: "") }
+    let parsed: AttributedString
+    do {
+      parsed = try AttributedString(
+        markdown: markdown,
+        options: .init(
+          interpretedSyntax: .full,
+          failurePolicy: .returnPartiallyParsedIfPossible
+        )
+      )
+    } catch {
+      return NSAttributedString(string: markdown, attributes: RagImeAssistantTypography.resultAttributes())
+    }
+    let semantic = NSAttributedString(parsed)
+    guard semantic.length > 0 else {
+      return NSAttributedString(string: markdown, attributes: RagImeAssistantTypography.resultAttributes())
+    }
+
+    let result = NSMutableAttributedString(string: "")
+    var previousBlockIdentity: Int?
+    var previousTableRowIdentity: Int?
+    semantic.enumerateAttributes(
+      in: NSRange(location: 0, length: semantic.length),
+      options: []
+    ) { rawAttributes, range, _ in
+      let intent = rawAttributes[presentationIntentKey] as? PresentationIntent
+      let block = BlockDescriptor(intent: intent, fallbackIdentity: range.location)
+      if previousBlockIdentity != block.identity {
+        appendBoundary(
+          to: result,
+          previousTableRowIdentity: previousTableRowIdentity,
+          block: block
+        )
+        if !block.prefix.isEmpty {
+          result.append(
+            NSAttributedString(
+              string: block.prefix,
+              attributes: displayAttributes(rawAttributes: [:], block: block, prefix: true)
+            )
+          )
+        }
+        previousBlockIdentity = block.identity
+        previousTableRowIdentity = block.tableRowIdentity
+      }
+      let fragment = semantic.attributedSubstring(from: range).string
+      result.append(
+        NSAttributedString(
+          string: fragment,
+          attributes: displayAttributes(rawAttributes: rawAttributes, block: block, prefix: false)
+        )
+      )
+    }
+    return result
+  }
+
+  private static func appendBoundary(
+    to result: NSMutableAttributedString,
+    previousTableRowIdentity: Int?,
+    block: BlockDescriptor
+  ) {
+    guard result.length > 0 else { return }
+    let sameTableRow = block.tableRowIdentity != nil
+      && block.tableRowIdentity == previousTableRowIdentity
+    let separator = sameTableRow ? "  |  " : (result.string.hasSuffix("\n") ? "" : "\n")
+    guard !separator.isEmpty else { return }
+    result.append(
+      NSAttributedString(
+        string: separator,
+        attributes: RagImeAssistantTypography.resultAttributes()
+      )
+    )
+  }
+
+  private static func displayAttributes(
+    rawAttributes: [NSAttributedString.Key: Any],
+    block: BlockDescriptor,
+    prefix: Bool
+  ) -> [NSAttributedString.Key: Any] {
+    let inlineRaw = (rawAttributes[inlinePresentationIntentKey] as? NSNumber)?.intValue ?? 0
+    let inlineIntent = InlinePresentationIntent(rawValue: UInt(max(0, inlineRaw)))
+    var attributes = RagImeAssistantTypography.resultAttributes()
+    attributes[.font] = font(block: block, inlineIntent: inlineIntent)
+    attributes[.paragraphStyle] = paragraphStyle(block: block)
+    if block.isBlockQuote || prefix {
+      attributes[.foregroundColor] = NSColor.secondaryLabelColor
+    }
+    if block.isThematicBreak {
+      attributes[.foregroundColor] = NSColor.tertiaryLabelColor
+    }
+    if block.isCodeBlock || inlineIntent.contains(.code) {
+      attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(
+        block.isCodeBlock ? 0.34 : 0.24
+      )
+    }
+    if inlineIntent.contains(.strikethrough) {
+      attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+    }
+    if let link = rawAttributes[.link] {
+      attributes[.link] = link
+      attributes[.foregroundColor] = NSColor.linkColor
+      attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+    }
+    return attributes
+  }
+
+  private static func font(
+    block: BlockDescriptor,
+    inlineIntent: InlinePresentationIntent
+  ) -> NSFont {
+    let isCode = block.isCodeBlock || inlineIntent.contains(.code)
+    let isStrong = inlineIntent.contains(.stronglyEmphasized) || block.isTableHeader
+    let base: NSFont
+    if isCode {
+      base = NSFont.monospacedSystemFont(ofSize: 12.5, weight: isStrong ? .semibold : .regular)
+    } else if let level = block.headingLevel {
+      let size: CGFloat = level == 1 ? 18 : (level == 2 ? 16 : 14.5)
+      base = NSFont.systemFont(ofSize: size, weight: .semibold)
+    } else {
+      base = NSFont.systemFont(ofSize: 14, weight: isStrong ? .semibold : .regular)
+    }
+    guard inlineIntent.contains(.emphasized) else { return base }
+    return NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
+  }
+
+  private static func paragraphStyle(block: BlockDescriptor) -> NSParagraphStyle {
+    let style = RagImeAssistantTypography.resultParagraphStyle().mutableCopy() as! NSMutableParagraphStyle
+    style.paragraphSpacing = 6
+    if block.headingLevel != nil {
+      style.paragraphSpacingBefore = 5
+      style.paragraphSpacing = 4
+    }
+    if block.listOrdinal != nil {
+      let indent = CGFloat(max(1, block.listDepth)) * 16
+      style.firstLineHeadIndent = CGFloat(max(0, block.listDepth - 1)) * 16
+      style.headIndent = indent
+    }
+    if block.isBlockQuote {
+      style.firstLineHeadIndent += 10
+      style.headIndent += 10
+    }
+    if block.isCodeBlock {
+      style.firstLineHeadIndent = 8
+      style.headIndent = 8
+      style.tailIndent = -8
+      style.lineSpacing = 2
+      style.paragraphSpacing = 8
+    }
+    if block.isThematicBreak {
+      style.alignment = .center
+      style.paragraphSpacing = 8
+    }
+    return style
+  }
+}
+
 enum RagImeAssistantAction {
   case stop
   case close
@@ -51,7 +271,8 @@ enum RagImeAssistantCommitMode: Equatable {
 final class RagImeSuggestionCardView: NSVisualEffectView {
   static let compactHeight: CGFloat = 38
   static let pendingHeight: CGFloat = 44
-  static let thinkingHeight: CGFloat = 64
+  static let thinkingHeight: CGFloat = 164
+  static let thinkingWidth: CGFloat = 440
   static let errorHeight: CGFloat = 82
   static let rowHeight: CGFloat = 40
   static let actionHeight: CGFloat = 40
@@ -74,14 +295,16 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private let actionSeparator = NSView()
   private let actionContainer = NSView()
   private let actionDividerLeading = NSView()
-  private let actionDividerTrailing = NSView()
   private let quickGenerateButton = NSButton(title: "生成", target: nil, action: nil)
-  private let visualGenerateButton = NSButton(title: "看图", target: nil, action: nil)
   private let deepSearchButton = NSButton(title: "深度", target: nil, action: nil)
   private let statusHalo = NSView()
   private let statusIcon = NSImageView()
   private let statusLabel = NSTextField(labelWithString: "正在生成...")
   private let diagnosticLabel = NSTextField(labelWithString: "")
+  private let progressTitleLabel = NSTextField(labelWithString: "正在准备回答")
+  private let progressContainer = NSView()
+  private let progressRows = (0..<4).map { _ in RagImeGenerationProgressRowView(frame: .zero) }
+  private let progressHandoffLabel = NSTextField(labelWithString: "")
   private let stopButton = NSButton(title: "", target: nil, action: nil)
   private let closeButton = NSButton(title: "", target: nil, action: nil)
   private let resultHeader = NSTextField(labelWithString: "已生成")
@@ -99,12 +322,16 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private var candidateIndexes: [Int] = []
   private var quickActionCandidate: RagImeDisplayCandidate?
   private var quickActionCandidateIndex: Int?
-  private var visualActionCandidate: RagImeDisplayCandidate?
-  private var visualActionCandidateIndex: Int?
   private var deepActionCandidate: RagImeDisplayCandidate?
   private var deepActionCandidateIndex: Int?
   private var canReplaceSelection = false
   private var isStreamingResult = false
+  private var isProgressHandoffVisible = false
+  private var progressSummaryText = ""
+  private var pendingResultText = ""
+  private var visibleResultMarkdown = ""
+  private var resultRevealTimer: Timer?
+  private var progressHandoffWorkItem: DispatchWorkItem?
   private var contentSignature = ""
   private var candidateFontSize = RagImeAssistantTypography.defaultCandidateSize
   var onSelect: ((RagImeDisplayCandidate, Int, RagImeAssistantCommitMode) -> Void)?
@@ -143,7 +370,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     actionContainer.layer?.cornerRadius = 6
     actionContainer.layer?.masksToBounds = true
     actionDividerLeading.wantsLayer = true
-    actionDividerTrailing.wantsLayer = true
     quickGenerateButton.isBordered = false
     quickGenerateButton.focusRingType = .none
     quickGenerateButton.font = RagImeAssistantTypography.action
@@ -155,21 +381,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     quickGenerateButton.layer?.cornerRadius = 0
     quickGenerateButton.target = self
     quickGenerateButton.action = #selector(startActiveRag)
-    quickGenerateButton.toolTip = "文字生成：使用连续的 Pi 联想会话"
+    quickGenerateButton.toolTip = "快速生成：使用 AX 上下文和 DS Flash 一次回复"
     quickGenerateButton.setAccessibilityLabel("文字生成")
-    visualGenerateButton.isBordered = false
-    visualGenerateButton.focusRingType = .none
-    visualGenerateButton.font = RagImeAssistantTypography.action
-    visualGenerateButton.alignment = .center
-    visualGenerateButton.image = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "看图生成")
-    visualGenerateButton.imagePosition = .imageLeading
-    visualGenerateButton.contentTintColor = .systemIndigo
-    visualGenerateButton.wantsLayer = true
-    visualGenerateButton.layer?.cornerRadius = 0
-    visualGenerateButton.target = self
-    visualGenerateButton.action = #selector(startVisualActiveRag)
-    visualGenerateButton.toolTip = "看图生成：附带当前应用窗口截图"
-    visualGenerateButton.setAccessibilityLabel("看图生成")
     deepSearchButton.isBordered = false
     deepSearchButton.focusRingType = .none
     deepSearchButton.font = RagImeAssistantTypography.action
@@ -186,8 +399,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     updateActionGroupChrome()
     actionContainer.addSubview(quickGenerateButton)
     actionContainer.addSubview(actionDividerLeading)
-    actionContainer.addSubview(visualGenerateButton)
-    actionContainer.addSubview(actionDividerTrailing)
     actionContainer.addSubview(deepSearchButton)
     [actionSeparator, actionContainer].forEach(addSubview)
     statusHalo.wantsLayer = true
@@ -198,6 +409,15 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     diagnosticLabel.font = RagImeAssistantTypography.diagnostic
     diagnosticLabel.textColor = .secondaryLabelColor
     diagnosticLabel.lineBreakMode = .byTruncatingTail
+    progressTitleLabel.font = RagImeAssistantTypography.resultHeader
+    progressTitleLabel.textColor = .labelColor
+    progressContainer.wantsLayer = true
+    progressContainer.layer?.cornerRadius = 6
+    progressContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.26).cgColor
+    progressRows.forEach(progressContainer.addSubview)
+    progressHandoffLabel.font = RagImeAssistantTypography.diagnostic
+    progressHandoffLabel.textColor = .secondaryLabelColor
+    progressHandoffLabel.lineBreakMode = .byTruncatingTail
     resultHeader.font = RagImeAssistantTypography.resultHeader
     resultHeader.textColor = .secondaryLabelColor
     resultShortcutLabel.font = RagImeAssistantTypography.shortcut
@@ -223,6 +443,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     resultText.textContainer?.widthTracksTextView = true
     resultText.textContainer?.heightTracksTextView = false
     resultText.defaultParagraphStyle = RagImeAssistantTypography.resultParagraphStyle()
+    resultText.isRichText = true
+    resultText.linkTextAttributes = [
+      .foregroundColor: NSColor.linkColor,
+      .underlineStyle: NSUnderlineStyle.single.rawValue,
+    ]
+    resultText.textContainer?.lineFragmentPadding = 0
     resultScroll.drawsBackground = false
     resultScroll.hasVerticalScroller = true
     resultScroll.autohidesScrollers = true
@@ -237,7 +463,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     confirmationLabel.font = RagImeAssistantTypography.confirmation
     confirmationLabel.textColor = .secondaryLabelColor
     confirmationLabel.alignment = .center
-    [statusHalo, statusIcon, statusLabel, diagnosticLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach(addSubview)
+    [statusHalo, statusIcon, statusLabel, diagnosticLabel, progressTitleLabel, progressContainer, progressHandoffLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach(addSubview)
     hideAll()
   }
 
@@ -264,7 +490,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       statusIcon.frame = statusHalo.frame
       statusLabel.frame = NSRect(x: 160, y: 10, width: max(80, bounds.width - 170), height: 24)
     case .compactPrediction, .expandedPredictions:
-      let hasAction = quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil
+      let hasAction = quickActionCandidate != nil || deepActionCandidate != nil
       let actionOffset = hasAction ? Self.actionHeight : 0
       let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
       for (index, row) in rows.enumerated() {
@@ -280,9 +506,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         layoutActionBar(frame: NSRect(x: 12, y: 5, width: max(0, bounds.width - 24), height: 30), compact: false)
       }
     case .explicitGenerating:
-      statusHalo.frame = NSRect(x: 4, y: 7, width: 46, height: 50)
-      statusIcon.frame = statusHalo.frame
-      stopButton.frame = NSRect(x: 48, y: 17, width: 26, height: 30)
+      progressTitleLabel.frame = NSRect(x: 16, y: bounds.height - 35, width: max(120, bounds.width - 66), height: 20)
+      stopButton.frame = NSRect(x: bounds.width - 42, y: bounds.height - 41, width: 30, height: 30)
+      progressContainer.frame = NSRect(x: 12, y: 10, width: max(0, bounds.width - 24), height: bounds.height - 52)
+      layoutProgressRows()
     case .explicitNoSuggestion, .explicitError:
       statusHalo.frame = NSRect(x: 7, y: 34, width: 44, height: 42)
       statusIcon.frame = statusHalo.frame
@@ -302,11 +529,18 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         width: bounds.width - 28,
         height: 18
       )
-      resultScroll.frame = NSRect(
+      progressHandoffLabel.frame = NSRect(
         x: 14,
         y: Self.explicitResultBodyBottom,
         width: bounds.width - 28,
-        height: max(48, bounds.height - Self.explicitResultChromeHeight)
+        height: 18
+      )
+      let handoffInset: CGFloat = isProgressHandoffVisible ? 24 : 0
+      resultScroll.frame = NSRect(
+        x: 14,
+        y: Self.explicitResultBodyBottom + handoffInset,
+        width: bounds.width - 28,
+        height: max(48, bounds.height - Self.explicitResultChromeHeight - handoffInset)
       )
       layoutResultText()
       if isStreamingResult {
@@ -329,6 +563,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     canReplaceSelection: Bool = false,
     animationsEnabled: Bool = true
   ) -> Bool {
+    let previousState = surfaceState
     surfaceState = state
     updateThemeChrome(for: state)
     self.canReplaceSelection = canReplaceSelection
@@ -343,18 +578,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     }
     quickActionCandidateIndex = quickAction?.offset
     quickActionCandidate = quickAction?.element
-    let visualAction = indexedCandidates.first {
-      $0.element.selectionAction == "start_visual_rag_from_context"
-    }
-    visualActionCandidateIndex = visualAction?.offset
-    visualActionCandidate = visualAction?.element
     let deepAction = indexedCandidates.first {
       $0.element.selectionAction == "start_agent_deep_search_from_context"
     }
     deepActionCandidateIndex = deepAction?.offset
     deepActionCandidate = deepAction?.element
     quickGenerateButton.isEnabled = quickActionCandidate != nil
-    visualGenerateButton.isEnabled = visualActionCandidate != nil
     deepSearchButton.isEnabled = deepActionCandidate != nil
     let nextSignature = ([state.rawValue, payload.snapshotId] + candidates.map {
       $0.candidateStableId ?? "\($0.sourceType):\($0.insertText)"
@@ -362,6 +591,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     let contentChanged = nextSignature != contentSignature
     contentSignature = nextSignature
     let reduceMotion = !animationsEnabled || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    if state != .explicitResult {
+      stopResultReveal(reset: true)
+      progressHandoffWorkItem?.cancel()
+      progressHandoffWorkItem = nil
+      isProgressHandoffVisible = false
+    }
     isStreamingResult = false
     diagnosticLabel.stringValue = diagnosticText(for: payload)
     hideAll()
@@ -371,12 +606,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       statusLabel.stringValue = payload.statusText.isEmpty ? "正在联想" : providerNeutralStatus(payload.statusText)
       [statusHalo, statusIcon, statusLabel].forEach { $0.isHidden = false }
       quickGenerateButton.imagePosition = .imageOnly
-      visualGenerateButton.imagePosition = .imageOnly
       deepSearchButton.imagePosition = .imageOnly
-      actionContainer.isHidden = quickActionCandidate == nil && visualActionCandidate == nil && deepActionCandidate == nil
+      actionContainer.isHidden = quickActionCandidate == nil && deepActionCandidate == nil
     case .compactPrediction, .expandedPredictions:
       quickGenerateButton.imagePosition = .imageLeading
-      visualGenerateButton.imagePosition = .imageLeading
       deepSearchButton.imagePosition = .imageLeading
       let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
       for index in rows.indices where index < visibleCount {
@@ -391,15 +624,14 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
           )
         }
       }
-      if quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil {
+      if quickActionCandidate != nil || deepActionCandidate != nil {
         [actionSeparator, actionContainer].forEach { $0.isHidden = false }
       }
     case .explicitGenerating:
-      statusIcon.image = companionImage(named: "RagImeCompanionThinking")
-      statusLabel.stringValue = payload.statusText.isEmpty ? "正在生成..." : providerNeutralStatus(payload.statusText)
-      [statusHalo, statusIcon, stopButton].forEach { $0.isHidden = false }
-      toolTip = "\(statusLabel.stringValue)；点击停止"
-      setAccessibilityLabel(statusLabel.stringValue)
+      applyGenerationProgress(payload)
+      [progressTitleLabel, progressContainer, stopButton].forEach { $0.isHidden = false }
+      toolTip = "\(progressTitleLabel.stringValue)；点击停止"
+      setAccessibilityLabel(progressSummaryText)
     case .explicitNoSuggestion:
       statusIcon.image = companionImage(named: "RagImeCompanionIdle")
       statusLabel.stringValue = payload.statusText.isEmpty ? "这次没有合适建议" : providerNeutralStatus(payload.statusText)
@@ -415,6 +647,11 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       } ?? false
       isStreamingResult = streaming
       [resultHeader, diagnosticLabel, resultScroll].forEach { $0.isHidden = false }
+      isProgressHandoffVisible = previousState == .explicitGenerating && !reduceMotion
+      if isProgressHandoffVisible {
+        progressHandoffLabel.stringValue = progressSummaryText
+        progressHandoffLabel.isHidden = false
+      }
       if streaming {
         stopButton.isHidden = false
       } else {
@@ -424,10 +661,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       }
       resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"
       let result = candidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
-      resultText.textStorage?.setAttributedString(
-        NSAttributedString(string: result, attributes: RagImeAssistantTypography.resultAttributes())
-      )
+      applyResultText(result, reduceMotion: reduceMotion, startFresh: previousState == .explicitGenerating)
       if contentChanged { animateExplicitResultIn(reduceMotion: reduceMotion) }
+      if isProgressHandoffVisible { scheduleProgressHandoff() }
     case .transientConfirmation: confirmationLabel.isHidden = false
     case .hidden: break
     }
@@ -475,7 +711,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   static func isActionCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
     candidate.sourceType == "action"
       || candidate.selectionAction == "start_active_rag_from_context"
-      || candidate.selectionAction == "start_visual_rag_from_context"
       || candidate.selectionAction == "start_agent_deep_search_from_context"
   }
 
@@ -485,10 +720,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   }
 
   static func explicitResultHeight(text: String, width: CGFloat) -> CGFloat {
-    let measured = (text as NSString).boundingRect(
+    let measured = RagImeAssistantMarkdownRenderer.render(text).boundingRect(
       with: NSSize(width: max(240, width - 28), height: CGFloat.greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading],
-      attributes: RagImeAssistantTypography.resultAttributes()
+      context: nil
     )
     return min(
       maximumExplicitResultHeight,
@@ -502,7 +737,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       $0.showsSeparator = false
     }
     [actionSeparator, actionContainer].forEach { $0.isHidden = true }
-    [statusHalo, statusIcon, statusLabel, diagnosticLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
+    [statusHalo, statusIcon, statusLabel, diagnosticLabel, progressTitleLabel, progressContainer, progressHandoffLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
   }
 
   private func updateThemeChrome(for state: RagImeAssistantSurfaceState) {
@@ -577,6 +812,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     } else {
       parts.append("知识生成")
     }
+    if let firstTokenMs = intValue(in: [transaction, metadata], keys: ["firstTokenMs"]), firstTokenMs > 0 {
+      parts.append(String(format: "首字 %.1f 秒", Double(firstTokenMs) / 1000))
+    }
+    if boolValue(in: [transaction, metadata], keys: ["contentRetryAttempted", "qualityRetry"]) == true {
+      parts.append("质量校正 1 次")
+    }
     diagnosticLabel.toolTip = stringValue(in: [transaction, metadata], keys: ["contextSource"])
     return parts.joined(separator: " · ")
   }
@@ -617,6 +858,223 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     return nil
   }
 
+  private func applyGenerationProgress(_ payload: RagImeAssistantOverlayPayload) {
+    let transaction = payload.frontendTransaction ?? [:]
+    let stage = stringValue(in: [transaction], keys: ["progressStage"])
+    let foregroundChars = intValue(in: [transaction], keys: ["foregroundContextChars", "effectiveContextChars", "contextChars"]) ?? 0
+    let windowNodes = intValue(in: [transaction], keys: ["windowContextNodes"]) ?? 0
+    let recentCount = intValue(in: [transaction], keys: ["timelineRecentInputRecordCount"]) ?? 0
+    let recentChars = intValue(in: [transaction], keys: ["timelineRecentInputChars"]) ?? 0
+    let recentUsed = boolValue(in: [transaction], keys: ["timelineRecentInputUsedForGeneration"]) == true
+    let evidenceCount = intValue(in: [transaction], keys: ["evidenceCount"]) ?? payload.sourceCards.count
+    let retrievalAttempted = boolValue(in: [transaction], keys: ["retrievalAttempted"]) == true
+    let firstTokenMs = intValue(in: [transaction], keys: ["firstTokenMs"]) ?? 0
+    let qualityRetry = boolValue(in: [transaction], keys: ["contentRetryAttempted", "qualityRetry"]) == true
+
+    switch stage {
+    case "quality_retry": progressTitleLabel.stringValue = "正在校正首轮结果"
+    case "streaming": progressTitleLabel.stringValue = "结果正在到达"
+    case "generating": progressTitleLabel.stringValue = "DS Flash 正在生成"
+    default: progressTitleLabel.stringValue = "正在准备回答"
+    }
+
+    let contextDetail: String
+    if windowNodes > 0 {
+      contextDetail = "AX \(windowNodes) 个节点 · 当前输入 \(foregroundChars) 字"
+    } else if foregroundChars > 0 {
+      contextDetail = "当前输入 \(foregroundChars) 字"
+    } else {
+      contextDetail = "等待可访问性上下文"
+    }
+
+    let historyDetail: String
+    if recentCount > 0 {
+      historyDetail = recentUsed
+        ? "已选 \(recentCount) 条 · \(recentChars) 字"
+        : "找到 \(recentCount) 条，本次未注入"
+    } else if recentChars > 0 {
+      historyDetail = recentUsed ? "补充 \(recentChars) 字" : "本次未注入历史"
+    } else {
+      historyDetail = retrievalAttempted ? "本次没有可用历史" : "正在选择最近输入"
+    }
+
+    let recalledTitles = payload.sourceCards.prefix(2).map(\.title).filter { !$0.isEmpty }
+    let retrievalDetail: String
+    if !recalledTitles.isEmpty {
+      retrievalDetail = recalledTitles.map { "「\($0)」" }.joined(separator: " · ")
+    } else if evidenceCount > 0 {
+      retrievalDetail = "已召回 \(evidenceCount) 条可用依据"
+    } else if retrievalAttempted {
+      retrievalDetail = "没有额外依据，继续使用当前上下文"
+    } else {
+      retrievalDetail = "个人记忆、计划与工具书"
+    }
+
+    let modelDetail: String
+    if qualityRetry || stage == "quality_retry" {
+      modelDetail = "首轮内容与输入过近，正在重新生成"
+    } else if firstTokenMs > 0 {
+      modelDetail = String(format: "首字 %.1f 秒 · 正在接收正文", Double(firstTokenMs) / 1000)
+    } else {
+      modelDetail = "低思考 · 无工具 · 不保存会话"
+    }
+
+    let modelActive = ["generating", "quality_retry", "streaming"].contains(stage)
+    let retrievalActive = stage == "retrieving" || stage == "retrieval_complete"
+    progressRows[0].apply(
+      title: "读取当前界面",
+      detail: contextDetail,
+      completed: foregroundChars > 0 || windowNodes > 0,
+      active: stage == "capturing_context"
+    )
+    progressRows[1].apply(
+      title: "整理近期输入",
+      detail: historyDetail,
+      completed: retrievalAttempted || recentCount > 0 || recentChars > 0,
+      active: stage == "retrieving" && recentCount == 0
+    )
+    progressRows[2].apply(
+      title: "召回相关内容",
+      detail: retrievalDetail,
+      completed: retrievalAttempted,
+      active: retrievalActive
+    )
+    progressRows[3].apply(
+      title: qualityRetry ? "质量检查后再生成" : "生成一次回复",
+      detail: modelDetail,
+      completed: stage == "ready",
+      active: modelActive || (!retrievalActive && retrievalAttempted)
+    )
+
+    var summary: [String] = []
+    if windowNodes > 0 { summary.append("AX \(windowNodes) 节点") }
+    if recentCount > 0 { summary.append("历史 \(recentCount) 条") }
+    if !recalledTitles.isEmpty {
+      summary.append("召回 " + recalledTitles.prefix(2).joined(separator: "、"))
+    } else if evidenceCount > 0 {
+      summary.append("召回 \(evidenceCount) 条")
+    }
+    progressSummaryText = summary.isEmpty ? "上下文与召回已准备" : summary.joined(separator: " · ")
+  }
+
+  private func layoutProgressRows() {
+    let rowHeight = max(22, floor(progressContainer.bounds.height / CGFloat(progressRows.count)))
+    for (index, row) in progressRows.enumerated() {
+      row.frame = NSRect(
+        x: 0,
+        y: progressContainer.bounds.height - CGFloat(index + 1) * rowHeight,
+        width: progressContainer.bounds.width,
+        height: rowHeight
+      )
+    }
+  }
+
+  private func applyResultText(_ text: String, reduceMotion: Bool, startFresh: Bool) {
+    pendingResultText = text
+    if reduceMotion || text.count <= 24 {
+      stopResultReveal(reset: false)
+      setVisibleResultText(text)
+      return
+    }
+    let visible = visibleResultMarkdown
+    if startFresh || visible.isEmpty || !text.hasPrefix(visible) {
+      let initialCount = min(18, text.count)
+      setVisibleResultText(String(text.prefix(initialCount)))
+    }
+    guard visibleResultMarkdown != pendingResultText else {
+      stopResultReveal(reset: false)
+      return
+    }
+    startResultRevealTimer()
+  }
+
+  private func startResultRevealTimer() {
+    guard resultRevealTimer == nil else { return }
+    let timer = Timer(timeInterval: 0.025, repeats: true) { [weak self] timer in
+      guard let self else {
+        timer.invalidate()
+        return
+      }
+      let visible = self.visibleResultMarkdown
+      let target = self.pendingResultText
+      guard visible != target else {
+        timer.invalidate()
+        self.resultRevealTimer = nil
+        return
+      }
+      guard target.hasPrefix(visible) else {
+        self.setVisibleResultText(target)
+        timer.invalidate()
+        self.resultRevealTimer = nil
+        return
+      }
+      let remaining = target.count - visible.count
+      let chunk = max(1, min(16, Int(ceil(Double(remaining) / 8))))
+      self.setVisibleResultText(String(target.prefix(min(target.count, visible.count + chunk))))
+    }
+    resultRevealTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  private func stopResultReveal(reset: Bool) {
+    resultRevealTimer?.invalidate()
+    resultRevealTimer = nil
+    if reset {
+      pendingResultText = ""
+      setVisibleResultText("")
+    }
+  }
+
+  private func setVisibleResultText(_ text: String) {
+    visibleResultMarkdown = text
+    resultText.textStorage?.setAttributedString(RagImeAssistantMarkdownRenderer.render(text))
+    layoutResultText()
+  }
+
+  private func scheduleProgressHandoff() {
+    progressHandoffWorkItem?.cancel()
+    progressHandoffLabel.wantsLayer = true
+    progressHandoffLabel.layer?.removeAllAnimations()
+    resultScroll.wantsLayer = true
+    let handoffOpacity = CABasicAnimation(keyPath: "opacity")
+    handoffOpacity.fromValue = 1
+    handoffOpacity.toValue = 0
+    let handoffMove = CABasicAnimation(keyPath: "transform.translation.y")
+    handoffMove.fromValue = 0
+    handoffMove.toValue = -RagImeAssistantMotion.Distance.progressHandoff
+    let handoffGroup = CAAnimationGroup()
+    handoffGroup.animations = [handoffOpacity, handoffMove]
+    handoffGroup.duration = RagImeAssistantMotion.Duration.progressHandoff
+    handoffGroup.timingFunction = RagImeAssistantMotion.timingFunction(.easeInEaseOut)
+    progressHandoffLabel.layer?.add(handoffGroup, forKey: "rag-ime-progress-handoff-out")
+
+    let resultOpacity = CABasicAnimation(keyPath: "opacity")
+    resultOpacity.fromValue = 0.35
+    resultOpacity.toValue = 1
+    let resultMove = CABasicAnimation(keyPath: "transform.translation.y")
+    resultMove.fromValue = -RagImeAssistantMotion.Distance.small
+    resultMove.toValue = 0
+    let resultGroup = CAAnimationGroup()
+    resultGroup.animations = [resultOpacity, resultMove]
+    resultGroup.duration = RagImeAssistantMotion.Duration.progressHandoff
+    resultGroup.timingFunction = RagImeAssistantMotion.timingFunction()
+    resultScroll.layer?.add(resultGroup, forKey: "rag-ime-result-pushes-progress")
+
+    let work = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.isProgressHandoffVisible = false
+      self.progressHandoffLabel.isHidden = true
+      self.progressHandoffWorkItem = nil
+      self.needsLayout = true
+      self.layoutSubtreeIfNeeded()
+    }
+    progressHandoffWorkItem = work
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + RagImeAssistantMotion.Duration.progressHandoff,
+      execute: work
+    )
+  }
+
   private func animateExplicitResultIn(reduceMotion: Bool) {
     resultScroll.wantsLayer = true
     resultScroll.layer?.removeAnimation(forKey: "rag-ime-explicit-result-in")
@@ -637,19 +1095,23 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private func layoutResultText() {
     let viewport = resultScroll.contentSize
     let width = max(40, viewport.width)
-    let measured = (resultText.string as NSString).boundingRect(
-      with: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude),
-      options: [.usesLineFragmentOrigin, .usesFontLeading],
-      attributes: RagImeAssistantTypography.resultAttributes()
+    guard let textContainer = resultText.textContainer,
+          let layoutManager = resultText.layoutManager else { return }
+    textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+    layoutManager.ensureLayout(for: textContainer)
+    let measuredHeight = layoutManager.usedRect(for: textContainer).height
+    resultText.frame = NSRect(
+      x: 0,
+      y: 0,
+      width: width,
+      height: max(viewport.height, ceil(measuredHeight) + 4)
     )
-    resultText.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-    resultText.frame = NSRect(x: 0, y: 0, width: width, height: max(viewport.height, ceil(measured.height) + 4))
   }
 
   private func layoutActionBar(frame: NSRect, compact: Bool) {
     actionContainer.frame = frame
     let dividerWidth: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
-    let segment = max(0, floor((frame.width - dividerWidth * 2) / 3))
+    let segment = max(0, floor((frame.width - dividerWidth) / 2))
     let dividerInset: CGFloat = compact ? 5 : 4
     quickGenerateButton.frame = NSRect(x: 0, y: 0, width: segment, height: frame.height)
     actionDividerLeading.frame = NSRect(
@@ -658,26 +1120,13 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       width: dividerWidth,
       height: max(0, frame.height - dividerInset * 2)
     )
-    visualGenerateButton.frame = NSRect(
+    deepSearchButton.frame = NSRect(
       x: segment + dividerWidth,
       y: 0,
-      width: segment,
-      height: frame.height
-    )
-    actionDividerTrailing.frame = NSRect(
-      x: segment * 2 + dividerWidth,
-      y: dividerInset,
-      width: dividerWidth,
-      height: max(0, frame.height - dividerInset * 2)
-    )
-    deepSearchButton.frame = NSRect(
-      x: segment * 2 + dividerWidth * 2,
-      y: 0,
-      width: max(0, frame.width - segment * 2 - dividerWidth * 2),
+      width: max(0, frame.width - segment - dividerWidth),
       height: frame.height
     )
     quickGenerateButton.alignment = .center
-    visualGenerateButton.alignment = .center
     deepSearchButton.alignment = .center
   }
 
@@ -694,9 +1143,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       .withAlphaComponent(increaseContrast ? 0.88 : 0.48)
       .cgColor
     actionDividerLeading.layer?.backgroundColor = dividerColor
-    actionDividerTrailing.layer?.backgroundColor = dividerColor
     quickGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
-    visualGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
     deepSearchButton.layer?.backgroundColor = NSColor.clear.cgColor
   }
 
@@ -724,13 +1171,94 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     onSelect?(quickActionCandidate, quickActionCandidateIndex, .insert)
   }
 
-  @objc private func startVisualActiveRag() {
-    guard let visualActionCandidate, let visualActionCandidateIndex else { return }
-    onSelect?(visualActionCandidate, visualActionCandidateIndex, .insert)
-  }
-
   @objc private func startAgentDeepSearch() {
     guard let deepActionCandidate, let deepActionCandidateIndex else { return }
     onSelect?(deepActionCandidate, deepActionCandidateIndex, .insert)
+  }
+}
+
+private final class RagImeGenerationProgressRowView: NSView {
+  private let iconView = NSImageView()
+  private let titleLabel = NSTextField(labelWithString: "")
+  private let detailLabel = NSTextField(labelWithString: "")
+  private let shimmerLayer = CAGradientLayer()
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    wantsLayer = true
+    layer?.cornerRadius = 4
+    layer?.masksToBounds = true
+    shimmerLayer.startPoint = CGPoint(x: 0, y: 0.5)
+    shimmerLayer.endPoint = CGPoint(x: 1, y: 0.5)
+    shimmerLayer.colors = [
+      NSColor.clear.cgColor,
+      NSColor.secondaryLabelColor.withAlphaComponent(0.13).cgColor,
+      NSColor.clear.cgColor,
+    ]
+    shimmerLayer.locations = [-0.8, -0.4, 0]
+    shimmerLayer.isHidden = true
+    layer?.addSublayer(shimmerLayer)
+    iconView.imageScaling = .scaleProportionallyDown
+    titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    titleLabel.textColor = .labelColor
+    titleLabel.lineBreakMode = .byTruncatingTail
+    detailLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
+    detailLabel.textColor = .secondaryLabelColor
+    detailLabel.lineBreakMode = .byTruncatingTail
+    [iconView, titleLabel, detailLabel].forEach(addSubview)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layout() {
+    super.layout()
+    shimmerLayer.frame = bounds
+    iconView.frame = NSRect(x: 8, y: max(0, (bounds.height - 16) / 2), width: 16, height: 16)
+    let titleWidth = min(126, max(92, bounds.width * 0.31))
+    titleLabel.frame = NSRect(x: 31, y: max(0, (bounds.height - 18) / 2), width: titleWidth, height: 18)
+    detailLabel.frame = NSRect(
+      x: 37 + titleWidth,
+      y: max(0, (bounds.height - 18) / 2),
+      width: max(32, bounds.width - titleWidth - 45),
+      height: 18
+    )
+  }
+
+  func apply(title: String, detail: String, completed: Bool, active: Bool) {
+    titleLabel.stringValue = title
+    detailLabel.stringValue = detail
+    let symbol: String
+    let color: NSColor
+    if completed {
+      symbol = "checkmark.circle.fill"
+      color = .systemGreen
+    } else if active {
+      symbol = "sparkles"
+      color = .systemIndigo
+    } else {
+      symbol = "circle"
+      color = .tertiaryLabelColor
+    }
+    iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+    iconView.contentTintColor = color
+    layer?.backgroundColor = active
+      ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.055).cgColor
+      : NSColor.clear.cgColor
+    updateShimmer(active: active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    setAccessibilityLabel("\(title)：\(detail)")
+  }
+
+  private func updateShimmer(active: Bool) {
+    shimmerLayer.removeAnimation(forKey: "rag-ime-progress-shimmer")
+    shimmerLayer.isHidden = !active
+    guard active else { return }
+    let animation = CABasicAnimation(keyPath: "locations")
+    animation.fromValue = [-0.8, -0.4, 0]
+    animation.toValue = [1, 1.4, 1.8]
+    animation.duration = 1.15
+    animation.repeatCount = .infinity
+    animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    shimmerLayer.add(animation, forKey: "rag-ime-progress-shimmer")
   }
 }

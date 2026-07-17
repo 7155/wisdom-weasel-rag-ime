@@ -129,49 +129,6 @@ export const contractSchemas = {
           }
         },
         "additionalProperties": false
-      },
-      "visualContext": {
-        "type": "object",
-        "required": [
-          "schemaVersion",
-          "mimeType",
-          "dataBase64",
-          "pixelWidth",
-          "pixelHeight",
-          "source"
-        ],
-        "properties": {
-          "schemaVersion": {
-            "const": "rag-ime.visual-context.v1"
-          },
-          "mimeType": {
-            "type": "string",
-            "enum": [
-              "image/jpeg",
-              "image/png"
-            ]
-          },
-          "dataBase64": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 6991000
-          },
-          "pixelWidth": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10000
-          },
-          "pixelHeight": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10000
-          },
-          "source": {
-            "type": "string",
-            "maxLength": 80
-          }
-        },
-        "additionalProperties": false
       }
     },
     "additionalProperties": true
@@ -320,6 +277,130 @@ export const contractSchemas = {
               "elapsedMs": {
                 "type": "number",
                 "minimum": 0
+              }
+            }
+          },
+          "progress": {
+            "type": "object",
+            "required": [
+              "stage",
+              "elapsedMs",
+              "context",
+              "retrieval",
+              "model"
+            ],
+            "properties": {
+              "stage": {
+                "type": "string"
+              },
+              "elapsedMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "context": {
+                "type": "object",
+                "properties": {
+                  "foregroundChars": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "windowNodeCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "windowCaptureMode": {
+                    "type": "string"
+                  },
+                  "recentInputCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "recentInputChars": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "recentInputUsed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "retrieval": {
+                "type": "object",
+                "properties": {
+                  "attempted": {
+                    "type": "boolean"
+                  },
+                  "elapsedMs": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "retrievedCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "evidenceCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "contextEvidenceCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "items": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "sourceType": {
+                          "type": "string"
+                        },
+                        "sourceLane": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "preview": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "attempted": {
+                    "type": "boolean"
+                  },
+                  "partialVisible": {
+                    "type": "boolean"
+                  },
+                  "partialChars": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "firstTokenMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "providerFirstTokenMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "providerElapsedMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "qualityRetry": {
+                    "type": "boolean"
+                  },
+                  "qualityRetryReason": {
+                    "type": "string"
+                  }
+                }
               }
             }
           }
@@ -3812,6 +3893,7 @@ export const contractSchemas = {
       "roleVersion",
       "modelProfile",
       "toolProfileVersion",
+      "projectContextEnabled",
       "createdAtMs",
       "updatedAtMs",
       "messageCount",
@@ -3949,6 +4031,9 @@ export const contractSchemas = {
           "minLength": 1
         },
         "uniqueItems": true
+      },
+      "projectContextEnabled": {
+        "type": "boolean"
       },
       "createdAtMs": {
         "type": "integer",

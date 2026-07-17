@@ -23,6 +23,7 @@ export type SessionSummary = Pick<
     | 'toolProfileVersion'
     | 'toolAllowlistMode'
     | 'allowedTools'
+    | 'projectContextEnabled'
   >>;
 
 export interface AgentPermissionSelection {

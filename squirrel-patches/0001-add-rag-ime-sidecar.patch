@@ -1,5 +1,5 @@
 diff --git a/Squirrel.xcodeproj/project.pbxproj b/Squirrel.xcodeproj/project.pbxproj
-index 813deaeb0b6fe9bb147f6e7c9327271ab40a5a3a..bd1032bb06d9b794374421d3c5759bd60c36d8e9 100644
+index 813deae..bd1032b 100644
 --- a/Squirrel.xcodeproj/project.pbxproj
 +++ b/Squirrel.xcodeproj/project.pbxproj
 @@ -86,6 +86,14 @@
@@ -64,7 +64,7 @@ index 813deaeb0b6fe9bb147f6e7c9327271ab40a5a3a..bd1032bb06d9b794374421d3c5759bd6
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..b430070c6a888a88f8a25edb8f9e165f1158d6db
+index 0000000..7a5399c
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,15 @@
@@ -73,7 +73,7 @@ index 0000000000000000000000000000000000000000..b430070c6a888a88f8a25edb8f9e165f
 +  enabled: true
 +  sidecar_url: http://127.0.0.1:8766/api
 +  python: /opt/homebrew/bin/python3
-+  repo_root: /Volumes/undo 4t/git/learnA/rag-ime-release-main
++  repo_root: /Volumes/undo 4t/git/learnA/rag-ime-surface-final
 +  db_path: /Users/undo/Library/Application Support/RagIme/rag-ime.sqlite
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
@@ -84,7 +84,7 @@ index 0000000000000000000000000000000000000000..b430070c6a888a88f8a25edb8f9e165f
 +  timeout_ms: 1200
 +  frontend_trace: false
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
-index 89c1214de346037260da112802e22bc1af71e94f..a240173ab54846e5e35bb3198d77f057a45f6b56 100644
+index 89c1214..a240173 100644
 --- a/sources/InputSource.swift
 +++ b/sources/InputSource.swift
 @@ -9,10 +9,45 @@ import Foundation
@@ -137,7 +137,7 @@ index 89c1214de346037260da112802e22bc1af71e94f..a240173ab54846e5e35bb3198d77f057
    private lazy var inputSources: [String: TISInputSource] = {
      var inputSources = [String: TISInputSource]()
 diff --git a/sources/Main.swift b/sources/Main.swift
-index f998248d94a4ce09ada9850edbff104a9ef9611f..a56500e18f044ce567db38c66da0cd7f539a5aeb 100644
+index f998248..a56500e 100644
 --- a/sources/Main.swift
 +++ b/sources/Main.swift
 @@ -15,11 +15,42 @@ struct SquirrelApp {
@@ -212,10 +212,10 @@ index f998248d94a4ce09ada9850edbff104a9ef9611f..a56500e18f044ce567db38c66da0cd7f
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45ee4285a8
+index 0000000..4a71c5f
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,730 @@
+@@ -0,0 +1,1028 @@
 +import AppKit
 +import QuartzCore
 +
@@ -248,6 +248,8 @@ index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45
 +  private var onAction: ((RagImeAssistantAction) -> Void)?
 +  private var onDismiss: ((String) -> Void)?
 +  private var onTrace: TraceHandler?
++  private weak var contextMenuAnchor: NSView?
++  private var contextPopover: NSPopover?
 +
 +  init() {
 +    panel = RagImeNonActivatingPanel(
@@ -287,6 +289,7 @@ index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45
 +    pendingUpdate?.cancel()
 +    ttlDismissWorkItem?.cancel()
 +    generatingTimer?.invalidate()
++    contextPopover?.close()
 +    panel.orderOut(nil)
 +    if Self.activeOwner === self { Self.activeOwner = nil }
 +  }
@@ -368,6 +371,9 @@ index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45
 +    let duration = visibleSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
 +    currentPayload = nil
 +    currentRestore = nil
++    contextPopover?.close()
++    contextPopover = nil
++    contextMenuAnchor = nil
 +    currentState = .hidden
 +    renderedSnapshotId = ""
 +    renderedStableIds = []
@@ -653,7 +659,11 @@ index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45
 +        width: predictionWidth,
 +        height: RagImeSuggestionCardView.predictionHeight(candidateCount: realCandidates.count, hasAction: hasAction)
 +      )
-+    case .explicitGenerating: return NSSize(width: 78, height: RagImeSuggestionCardView.thinkingHeight)
++    case .explicitGenerating:
++      return NSSize(
++        width: min(configuredMaximumWidth, RagImeSuggestionCardView.thinkingWidth),
++        height: RagImeSuggestionCardView.thinkingHeight
++      )
 +    case .explicitNoSuggestion, .explicitError:
 +      return NSSize(width: max(320, predictionWidth), height: RagImeSuggestionCardView.errorHeight)
 +    case .explicitResult:
@@ -746,13 +756,14 @@ index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45
 +  }
 +
 +  private func showMoreMenu(relativeTo sourceView: NSView) {
++    contextMenuAnchor = sourceView
 +    let menu = NSMenu()
 +    let copy = NSMenuItem(title: "复制", action: #selector(copyResult), keyEquivalent: "")
 +    copy.target = self
 +    menu.addItem(copy)
-+    let evidence = NSMenuItem(title: "查看依据", action: #selector(copyEvidence), keyEquivalent: "")
-+    evidence.target = self
-+    menu.addItem(evidence)
++    let context = NSMenuItem(title: "查看输入与依据", action: #selector(showContextInspector), keyEquivalent: "")
++    context.target = self
++    menu.addItem(context)
 +    menu.addItem(.separator())
 +    let remember = NSMenuItem(title: "记住", action: #selector(rememberResult), keyEquivalent: "")
 +    remember.target = self
@@ -769,11 +780,28 @@ index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45
 +    NSPasteboard.general.setString(candidate.text.isEmpty ? candidate.insertText : candidate.text, forType: .string)
 +  }
 +
-+  @objc private func copyEvidence() {
-+    guard let evidence = currentPayload?.candidates.first(where: RagImeSuggestionCardView.isRealCandidate)?.evidencePreview,
-+      !evidence.isEmpty else { return }
-+    NSPasteboard.general.clearContents()
-+    NSPasteboard.general.setString(evidence, forType: .string)
++  @objc private func showContextInspector() {
++    guard let payload = currentPayload else { return }
++    let document = RagImeAssistantContextInspectorDocument.make(payload: payload)
++    let viewController = RagImeAssistantContextInspectorViewController(document: document)
++    let popover = NSPopover()
++    popover.behavior = .transient
++    popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
++    popover.contentSize = RagImeAssistantContextInspectorViewController.preferredSize
++    popover.contentViewController = viewController
++    contextPopover?.close()
++    contextPopover = popover
++    let anchor = contextMenuAnchor ?? cardView
++    DispatchQueue.main.async { [weak self] in
++      guard let self, anchor.window != nil, self.contextPopover === popover else { return }
++      popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minX)
++      self.trace("assistant_context_inspector_opened", [
++        "snapshotId": payload.snapshotId,
++        "contextSource": document.source,
++        "sectionCount": document.sectionCount,
++        "traceIncludesText": false,
++      ])
++    }
 +  }
 +
 +  @objc private func rememberResult() { onAction?(.remember) }
@@ -946,12 +974,282 @@ index 0000000000000000000000000000000000000000..d9320676a3193a8e7994a9441b9e7b45
 +
 +  private func trace(_ event: String, _ fields: [String: Any]) { onTrace?(event, fields) }
 +}
++
++private struct RagImeAssistantContextInspectorDocument {
++  let attributedText: NSAttributedString
++  let plainText: String
++  let source: String
++  let sectionCount: Int
++
++  static func make(payload: RagImeAssistantOverlayPayload) -> RagImeAssistantContextInspectorDocument {
++    let transaction = payload.frontendTransaction ?? [:]
++    let contextView = object(transaction["contextView"])
++    let source = string(contextView["source"])
++    let attributed = NSMutableAttributedString(string: "")
++    var plainSections: [String] = []
++    var sectionCount = 0
++
++    func appendSection(_ title: String, _ body: String) {
++      let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
++      guard !trimmed.isEmpty else { return }
++      let headingStyle = NSMutableParagraphStyle()
++      headingStyle.paragraphSpacingBefore = sectionCount == 0 ? 0 : 14
++      headingStyle.paragraphSpacing = 6
++      attributed.append(NSAttributedString(
++        string: "\(title)\n",
++        attributes: [
++          .font: NSFont.systemFont(ofSize: 12.5, weight: .semibold),
++          .foregroundColor: NSColor.secondaryLabelColor,
++          .paragraphStyle: headingStyle,
++        ]
++      ))
++      let bodyStyle = NSMutableParagraphStyle()
++      bodyStyle.lineSpacing = 3
++      bodyStyle.paragraphSpacing = 0
++      attributed.append(NSAttributedString(
++        string: trimmed + "\n",
++        attributes: [
++          .font: NSFont.systemFont(ofSize: 13.5, weight: .regular),
++          .foregroundColor: NSColor.labelColor,
++          .paragraphStyle: bodyStyle,
++        ]
++      ))
++      plainSections.append("\(title)\n\(trimmed)")
++      sectionCount += 1
++    }
++
++    let currentRequest = string(contextView["currentRequest"])
++    let currentContext = string(contextView["currentContext"])
++    appendSection("本轮请求", currentRequest.isEmpty ? "本轮请求文本未返回" : currentRequest)
++    appendSection("前台文本", currentContext.isEmpty ? "前台文本未返回" : currentContext)
++
++    let windowContext = object(contextView["windowContext"])
++    let windowNodes = array(windowContext["nodes"])
++    let windowApplication = object(windowContext["application"])
++    var windowLines: [String] = []
++    let appName = string(windowApplication["name"])
++    let windowTitle = string(windowApplication["windowTitle"])
++    if !appName.isEmpty || !windowTitle.isEmpty {
++      windowLines.append([appName, windowTitle].filter { !$0.isEmpty }.joined(separator: " · "))
++    }
++    for (index, value) in windowNodes.enumerated() {
++      let node = object(value)
++      let role = string(node["role"])
++      let label = string(node["label"])
++      let nodeValue = string(node["value"])
++      let focused = bool(node["focused"])
++      let secure = bool(node["secure"])
++      let nodeRef = string(node["nodeRef"])
++      var heading = "\(index + 1). \(role.isEmpty ? "AX 节点" : role)"
++      if focused { heading += " · 焦点" }
++      if !nodeRef.isEmpty { heading += " · \(nodeRef)" }
++      windowLines.append(heading)
++      if !label.isEmpty { windowLines.append("   标签：\(label)") }
++      if secure {
++        windowLines.append("   内容：安全字段，未读取")
++      } else if !nodeValue.isEmpty {
++        windowLines.append("   内容：\(nodeValue)")
++      }
++      let actions = array(node["actions"]).map { string($0) }.filter { !$0.isEmpty }
++      if !actions.isEmpty { windowLines.append("   动作：\(actions.joined(separator: ", "))") }
++    }
++    if windowNodes.isEmpty {
++      let semanticText = string(windowContext["semanticText"])
++      if !semanticText.isEmpty { windowLines.append(semanticText) }
++    }
++    if windowLines.isEmpty {
++      let captureMode = string(windowContext["captureMode"])
++      let nodeCount = integer(windowContext["nodeCount"])
++      let detail = captureMode.isEmpty ? "AX 未返回可读节点" : "AX 未返回可读节点（\(captureMode)，\(nodeCount) 个节点）"
++      windowLines.append(detail)
++    }
++    appendSection("AX 窗口上下文", windowLines.joined(separator: "\n"))
++
++    let recentInputs = array(contextView["recentCompleteInputs"])
++    var recentLines: [String] = []
++    for (index, value) in recentInputs.enumerated() {
++      let item = object(value)
++      let text = firstNonEmptyString(item, keys: ["textPreview", "text", "summary", "title"])
++      if !text.isEmpty { recentLines.append("\(index + 1). \(text)") }
++    }
++    if recentLines.isEmpty {
++      let reportedCount = integer(transaction["timelineRecentInputRecordCount"])
++      recentLines.append(reportedCount > 0
++        ? "Pi 报告使用了 \(reportedCount) 条历史补充，但本轮未返回可显示文本"
++        : "本轮没有追加历史输入")
++    }
++    appendSection("历史补充", recentLines.joined(separator: "\n"))
++
++    let planning = object(contextView["planning"])
++    let planningItems = array(planning["items"])
++    var planningLines: [String] = []
++    for (index, value) in planningItems.enumerated() {
++      let item = object(value)
++      let title = firstNonEmptyString(item, keys: ["title", "detail", "notes"])
++      if !title.isEmpty { planningLines.append("\(index + 1). \(title)") }
++    }
++    if !planningLines.isEmpty { appendSection("计划与任务", planningLines.joined(separator: "\n")) }
++
++    var evidenceLines: [String] = []
++    var seenEvidence = Set<String>()
++    for value in array(contextView["evidenceHints"]) {
++      let item = object(value)
++      let text = item.isEmpty ? string(value) : firstNonEmptyString(item, keys: ["text", "preview", "title"])
++      let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
++      if !normalized.isEmpty, seenEvidence.insert(normalized).inserted {
++        evidenceLines.append("\(evidenceLines.count + 1). \(normalized)")
++      }
++    }
++    if evidenceLines.isEmpty {
++      for card in payload.sourceCards {
++        let text = [card.title, card.evidencePreview].filter { !$0.isEmpty }.joined(separator: "：")
++        if !text.isEmpty, seenEvidence.insert(text).inserted {
++          evidenceLines.append("\(evidenceLines.count + 1). \(text)")
++        }
++      }
++    }
++    if evidenceLines.isEmpty {
++      let evidenceCount = integer(transaction["evidenceCount"])
++      evidenceLines.append(evidenceCount > 0
++        ? "已召回 \(evidenceCount) 条依据，但本轮未返回可显示片段"
++        : "本轮没有注入 RAG 依据")
++    }
++    appendSection("RAG 依据", evidenceLines.joined(separator: "\n"))
++
++    if sectionCount == 0 { appendSection("上下文", "本轮上下文不可用") }
++    return RagImeAssistantContextInspectorDocument(
++      attributedText: attributed,
++      plainText: plainSections.joined(separator: "\n\n"),
++      source: source.isEmpty ? "unknown" : source,
++      sectionCount: sectionCount
++    )
++  }
++
++  private static func string(_ value: RagImeJSONValue?) -> String {
++    guard case .string(let text)? = value else { return "" }
++    return text
++  }
++
++  private static func object(_ value: RagImeJSONValue?) -> [String: RagImeJSONValue] {
++    guard case .object(let object)? = value else { return [:] }
++    return object
++  }
++
++  private static func array(_ value: RagImeJSONValue?) -> [RagImeJSONValue] {
++    guard case .array(let values)? = value else { return [] }
++    return values
++  }
++
++  private static func bool(_ value: RagImeJSONValue?) -> Bool {
++    guard case .bool(let result)? = value else { return false }
++    return result
++  }
++
++  private static func integer(_ value: RagImeJSONValue?) -> Int {
++    guard case .number(let result)? = value else { return 0 }
++    return Int(result)
++  }
++
++  private static func firstNonEmptyString(
++    _ object: [String: RagImeJSONValue],
++    keys: [String]
++  ) -> String {
++    for key in keys {
++      let value = string(object[key]).trimmingCharacters(in: .whitespacesAndNewlines)
++      if !value.isEmpty { return value }
++    }
++    return ""
++  }
++}
++
++private final class RagImeAssistantContextInspectorViewController: NSViewController {
++  static let preferredSize = NSSize(width: 560, height: 520)
++  private let document: RagImeAssistantContextInspectorDocument
++  private let titleLabel = NSTextField(labelWithString: "本轮输入与依据")
++  private let subtitleLabel = NSTextField(labelWithString: "")
++  private let copyButton = NSButton()
++  private let scrollView = NSScrollView()
++  private let textView = NSTextView(frame: .zero)
++
++  init(document: RagImeAssistantContextInspectorDocument) {
++    self.document = document
++    super.init(nibName: nil, bundle: nil)
++  }
++
++  @available(*, unavailable)
++  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
++
++  override func loadView() {
++    let root = NSView(frame: NSRect(origin: .zero, size: Self.preferredSize))
++    root.wantsLayer = true
++    view = root
++
++    titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
++    titleLabel.textColor = .labelColor
++    subtitleLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
++    subtitleLabel.textColor = .secondaryLabelColor
++    subtitleLabel.stringValue = document.source == "provider_request"
++      ? "本轮实际模型请求 · 仅保留于当前结果"
++      : "前台请求快照 · 模型上下文尚未返回"
++
++    copyButton.isBordered = false
++    copyButton.bezelStyle = .inline
++    copyButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制全部上下文")
++    copyButton.toolTip = "复制全部上下文"
++    copyButton.target = self
++    copyButton.action = #selector(copyAllContext)
++
++    scrollView.drawsBackground = false
++    scrollView.borderType = .noBorder
++    scrollView.hasVerticalScroller = true
++    scrollView.autohidesScrollers = true
++    textView.isEditable = false
++    textView.isSelectable = true
++    textView.drawsBackground = false
++    textView.textContainerInset = NSSize(width: 8, height: 8)
++    textView.isHorizontallyResizable = false
++    textView.isVerticallyResizable = true
++    textView.autoresizingMask = [.width]
++    textView.textContainer?.widthTracksTextView = true
++    textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
++    textView.textStorage?.setAttributedString(document.attributedText)
++    scrollView.documentView = textView
++
++    [titleLabel, subtitleLabel, copyButton, scrollView].forEach { root.addSubview($0) }
++  }
++
++  override func viewDidLayout() {
++    super.viewDidLayout()
++    let bounds = view.bounds
++    titleLabel.frame = NSRect(x: 16, y: bounds.height - 32, width: bounds.width - 72, height: 18)
++    subtitleLabel.frame = NSRect(x: 16, y: bounds.height - 52, width: bounds.width - 72, height: 16)
++    copyButton.frame = NSRect(x: bounds.width - 44, y: bounds.height - 45, width: 28, height: 28)
++    scrollView.frame = NSRect(x: 8, y: 8, width: bounds.width - 16, height: bounds.height - 68)
++    let contentWidth = max(0, scrollView.contentSize.width)
++    if let textContainer = textView.textContainer, let layoutManager = textView.layoutManager {
++      textContainer.containerSize = NSSize(width: max(0, contentWidth - 16), height: CGFloat.greatestFiniteMagnitude)
++      layoutManager.ensureLayout(for: textContainer)
++      let contentHeight = ceil(layoutManager.usedRect(for: textContainer).height) + 16
++      textView.frame = NSRect(
++        x: 0,
++        y: 0,
++        width: contentWidth,
++        height: max(scrollView.contentSize.height, contentHeight)
++      )
++    }
++  }
++
++  @objc private func copyAllContext() {
++    NSPasteboard.general.clearContents()
++    NSPasteboard.general.setString(document.plainText, forType: .string)
++  }
++}
 diff --git a/sources/RagImeAssistantSurfaceState.swift b/sources/RagImeAssistantSurfaceState.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..f22911a39e68ddcbbd94c044b0848fe41a87cab1
+index 0000000..2133b47
 --- /dev/null
 +++ b/sources/RagImeAssistantSurfaceState.swift
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,47 @@
 +import AppKit
 +import QuartzCore
 +
@@ -962,12 +1260,14 @@ index 0000000000000000000000000000000000000000..f22911a39e68ddcbbd94c044b0848fe4
 +    static let micro: TimeInterval = 0.10
 +    static let entrance: TimeInterval = 0.14
 +    static let transition: TimeInterval = 0.18
++    static let progressHandoff: TimeInterval = 0.36
 +    static let ambientPulse: TimeInterval = 0.72
 +  }
 +
 +  enum Distance {
 +    static let tiny: CGFloat = 3
 +    static let small: CGFloat = 5
++    static let progressHandoff: CGFloat = 14
 +  }
 +
 +  static let stagger: TimeInterval = 0.04
@@ -999,7 +1299,7 @@ index 0000000000000000000000000000000000000000..f22911a39e68ddcbbd94c044b0848fe4
 +}
 diff --git a/sources/RagImeNonActivatingPanel.swift b/sources/RagImeNonActivatingPanel.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..1d811116c4275314dd07a1a1e0576b49e55ffbb1
+index 0000000..1d81111
 --- /dev/null
 +++ b/sources/RagImeNonActivatingPanel.swift
 @@ -0,0 +1,6 @@
@@ -1011,7 +1311,7 @@ index 0000000000000000000000000000000000000000..1d811116c4275314dd07a1a1e0576b49
 +}
 diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c205e9e799
+index 0000000..ac51054
 --- /dev/null
 +++ b/sources/RagImeSelectedTextProvider.swift
 @@ -0,0 +1,892 @@
@@ -1909,10 +2209,10 @@ index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c2
 +}
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..aec4fe5622dc1ae734b8c77abcd283c191928bb3
+index 0000000..d769b14
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,658 @@
+@@ -0,0 +1,688 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -2603,7 +2903,7 @@ index 0000000000000000000000000000000000000000..aec4fe5622dc1ae734b8c77abcd283c1
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..44575b28c5cc52e62faa7b1ada3ad2082b312cd5
+index 0000000..dcf3ace
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
 @@ -0,0 +1,773 @@
@@ -3382,10 +3682,10 @@ index 0000000000000000000000000000000000000000..44575b28c5cc52e62faa7b1ada3ad208
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247cbb62e713
+index 0000000..c044279
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
-@@ -0,0 +1,736 @@
+@@ -0,0 +1,1264 @@
 +import AppKit
 +import QuartzCore
 +
@@ -3420,6 +3720,226 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +  }
 +}
 +
++enum RagImeAssistantMarkdownRenderer {
++  private static let presentationIntentKey = NSAttributedString.Key("NSPresentationIntent")
++  private static let inlinePresentationIntentKey = NSAttributedString.Key("NSInlinePresentationIntent")
++  private struct BlockDescriptor {
++    let identity: Int
++    let headingLevel: Int?
++    let isCodeBlock: Bool
++    let isBlockQuote: Bool
++    let isThematicBreak: Bool
++    let listOrdinal: Int?
++    let isUnorderedList: Bool
++    let listDepth: Int
++    let tableRowIdentity: Int?
++    let isTableHeader: Bool
++
++    init(intent: PresentationIntent?, fallbackIdentity: Int) {
++      identity = intent?.components.first?.identity ?? fallbackIdentity
++      var headingLevel: Int?
++      var isCodeBlock = false
++      var isBlockQuote = false
++      var isThematicBreak = false
++      var listOrdinal: Int?
++      var isUnorderedList = false
++      var listDepth = 0
++      var tableRowIdentity: Int?
++      var isTableHeader = false
++      for component in intent?.components ?? [] {
++        switch component.kind {
++        case .header(let level): headingLevel = level
++        case .codeBlock: isCodeBlock = true
++        case .blockQuote: isBlockQuote = true
++        case .thematicBreak: isThematicBreak = true
++        case .listItem(let ordinal): listOrdinal = ordinal
++        case .unorderedList:
++          isUnorderedList = true
++          listDepth += 1
++        case .orderedList: listDepth += 1
++        case .tableHeaderRow:
++          tableRowIdentity = component.identity
++          isTableHeader = true
++        case .tableRow: tableRowIdentity = component.identity
++        default: break
++        }
++      }
++      self.headingLevel = headingLevel
++      self.isCodeBlock = isCodeBlock
++      self.isBlockQuote = isBlockQuote
++      self.isThematicBreak = isThematicBreak
++      self.listOrdinal = listOrdinal
++      self.isUnorderedList = isUnorderedList
++      self.listDepth = listDepth
++      self.tableRowIdentity = tableRowIdentity
++      self.isTableHeader = isTableHeader
++    }
++
++    var prefix: String {
++      var value = isBlockQuote ? "▎ " : ""
++      guard let listOrdinal else { return value }
++      value += String(repeating: "  ", count: max(0, listDepth - 1))
++      value += isUnorderedList ? "• " : "\(listOrdinal). "
++      return value
++    }
++  }
++
++  static func render(_ markdown: String) -> NSAttributedString {
++    guard !markdown.isEmpty else { return NSAttributedString(string: "") }
++    let parsed: AttributedString
++    do {
++      parsed = try AttributedString(
++        markdown: markdown,
++        options: .init(
++          interpretedSyntax: .full,
++          failurePolicy: .returnPartiallyParsedIfPossible
++        )
++      )
++    } catch {
++      return NSAttributedString(string: markdown, attributes: RagImeAssistantTypography.resultAttributes())
++    }
++    let semantic = NSAttributedString(parsed)
++    guard semantic.length > 0 else {
++      return NSAttributedString(string: markdown, attributes: RagImeAssistantTypography.resultAttributes())
++    }
++
++    let result = NSMutableAttributedString(string: "")
++    var previousBlockIdentity: Int?
++    var previousTableRowIdentity: Int?
++    semantic.enumerateAttributes(
++      in: NSRange(location: 0, length: semantic.length),
++      options: []
++    ) { rawAttributes, range, _ in
++      let intent = rawAttributes[presentationIntentKey] as? PresentationIntent
++      let block = BlockDescriptor(intent: intent, fallbackIdentity: range.location)
++      if previousBlockIdentity != block.identity {
++        appendBoundary(
++          to: result,
++          previousTableRowIdentity: previousTableRowIdentity,
++          block: block
++        )
++        if !block.prefix.isEmpty {
++          result.append(
++            NSAttributedString(
++              string: block.prefix,
++              attributes: displayAttributes(rawAttributes: [:], block: block, prefix: true)
++            )
++          )
++        }
++        previousBlockIdentity = block.identity
++        previousTableRowIdentity = block.tableRowIdentity
++      }
++      let fragment = semantic.attributedSubstring(from: range).string
++      result.append(
++        NSAttributedString(
++          string: fragment,
++          attributes: displayAttributes(rawAttributes: rawAttributes, block: block, prefix: false)
++        )
++      )
++    }
++    return result
++  }
++
++  private static func appendBoundary(
++    to result: NSMutableAttributedString,
++    previousTableRowIdentity: Int?,
++    block: BlockDescriptor
++  ) {
++    guard result.length > 0 else { return }
++    let sameTableRow = block.tableRowIdentity != nil
++      && block.tableRowIdentity == previousTableRowIdentity
++    let separator = sameTableRow ? "  |  " : (result.string.hasSuffix("\n") ? "" : "\n")
++    guard !separator.isEmpty else { return }
++    result.append(
++      NSAttributedString(
++        string: separator,
++        attributes: RagImeAssistantTypography.resultAttributes()
++      )
++    )
++  }
++
++  private static func displayAttributes(
++    rawAttributes: [NSAttributedString.Key: Any],
++    block: BlockDescriptor,
++    prefix: Bool
++  ) -> [NSAttributedString.Key: Any] {
++    let inlineRaw = (rawAttributes[inlinePresentationIntentKey] as? NSNumber)?.intValue ?? 0
++    let inlineIntent = InlinePresentationIntent(rawValue: UInt(max(0, inlineRaw)))
++    var attributes = RagImeAssistantTypography.resultAttributes()
++    attributes[.font] = font(block: block, inlineIntent: inlineIntent)
++    attributes[.paragraphStyle] = paragraphStyle(block: block)
++    if block.isBlockQuote || prefix {
++      attributes[.foregroundColor] = NSColor.secondaryLabelColor
++    }
++    if block.isThematicBreak {
++      attributes[.foregroundColor] = NSColor.tertiaryLabelColor
++    }
++    if block.isCodeBlock || inlineIntent.contains(.code) {
++      attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(
++        block.isCodeBlock ? 0.34 : 0.24
++      )
++    }
++    if inlineIntent.contains(.strikethrough) {
++      attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
++    }
++    if let link = rawAttributes[.link] {
++      attributes[.link] = link
++      attributes[.foregroundColor] = NSColor.linkColor
++      attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
++    }
++    return attributes
++  }
++
++  private static func font(
++    block: BlockDescriptor,
++    inlineIntent: InlinePresentationIntent
++  ) -> NSFont {
++    let isCode = block.isCodeBlock || inlineIntent.contains(.code)
++    let isStrong = inlineIntent.contains(.stronglyEmphasized) || block.isTableHeader
++    let base: NSFont
++    if isCode {
++      base = NSFont.monospacedSystemFont(ofSize: 12.5, weight: isStrong ? .semibold : .regular)
++    } else if let level = block.headingLevel {
++      let size: CGFloat = level == 1 ? 18 : (level == 2 ? 16 : 14.5)
++      base = NSFont.systemFont(ofSize: size, weight: .semibold)
++    } else {
++      base = NSFont.systemFont(ofSize: 14, weight: isStrong ? .semibold : .regular)
++    }
++    guard inlineIntent.contains(.emphasized) else { return base }
++    return NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
++  }
++
++  private static func paragraphStyle(block: BlockDescriptor) -> NSParagraphStyle {
++    let style = RagImeAssistantTypography.resultParagraphStyle().mutableCopy() as! NSMutableParagraphStyle
++    style.paragraphSpacing = 6
++    if block.headingLevel != nil {
++      style.paragraphSpacingBefore = 5
++      style.paragraphSpacing = 4
++    }
++    if block.listOrdinal != nil {
++      let indent = CGFloat(max(1, block.listDepth)) * 16
++      style.firstLineHeadIndent = CGFloat(max(0, block.listDepth - 1)) * 16
++      style.headIndent = indent
++    }
++    if block.isBlockQuote {
++      style.firstLineHeadIndent += 10
++      style.headIndent += 10
++    }
++    if block.isCodeBlock {
++      style.firstLineHeadIndent = 8
++      style.headIndent = 8
++      style.tailIndent = -8
++      style.lineSpacing = 2
++      style.paragraphSpacing = 8
++    }
++    if block.isThematicBreak {
++      style.alignment = .center
++      style.paragraphSpacing = 8
++    }
++    return style
++  }
++}
++
 +enum RagImeAssistantAction {
 +  case stop
 +  case close
@@ -3439,7 +3959,8 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +final class RagImeSuggestionCardView: NSVisualEffectView {
 +  static let compactHeight: CGFloat = 38
 +  static let pendingHeight: CGFloat = 44
-+  static let thinkingHeight: CGFloat = 64
++  static let thinkingHeight: CGFloat = 164
++  static let thinkingWidth: CGFloat = 440
 +  static let errorHeight: CGFloat = 82
 +  static let rowHeight: CGFloat = 40
 +  static let actionHeight: CGFloat = 40
@@ -3462,14 +3983,16 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +  private let actionSeparator = NSView()
 +  private let actionContainer = NSView()
 +  private let actionDividerLeading = NSView()
-+  private let actionDividerTrailing = NSView()
 +  private let quickGenerateButton = NSButton(title: "生成", target: nil, action: nil)
-+  private let visualGenerateButton = NSButton(title: "看图", target: nil, action: nil)
 +  private let deepSearchButton = NSButton(title: "深度", target: nil, action: nil)
 +  private let statusHalo = NSView()
 +  private let statusIcon = NSImageView()
 +  private let statusLabel = NSTextField(labelWithString: "正在生成...")
 +  private let diagnosticLabel = NSTextField(labelWithString: "")
++  private let progressTitleLabel = NSTextField(labelWithString: "正在准备回答")
++  private let progressContainer = NSView()
++  private let progressRows = (0..<4).map { _ in RagImeGenerationProgressRowView(frame: .zero) }
++  private let progressHandoffLabel = NSTextField(labelWithString: "")
 +  private let stopButton = NSButton(title: "", target: nil, action: nil)
 +  private let closeButton = NSButton(title: "", target: nil, action: nil)
 +  private let resultHeader = NSTextField(labelWithString: "已生成")
@@ -3487,12 +4010,16 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +  private var candidateIndexes: [Int] = []
 +  private var quickActionCandidate: RagImeDisplayCandidate?
 +  private var quickActionCandidateIndex: Int?
-+  private var visualActionCandidate: RagImeDisplayCandidate?
-+  private var visualActionCandidateIndex: Int?
 +  private var deepActionCandidate: RagImeDisplayCandidate?
 +  private var deepActionCandidateIndex: Int?
 +  private var canReplaceSelection = false
 +  private var isStreamingResult = false
++  private var isProgressHandoffVisible = false
++  private var progressSummaryText = ""
++  private var pendingResultText = ""
++  private var visibleResultMarkdown = ""
++  private var resultRevealTimer: Timer?
++  private var progressHandoffWorkItem: DispatchWorkItem?
 +  private var contentSignature = ""
 +  private var candidateFontSize = RagImeAssistantTypography.defaultCandidateSize
 +  var onSelect: ((RagImeDisplayCandidate, Int, RagImeAssistantCommitMode) -> Void)?
@@ -3531,7 +4058,6 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    actionContainer.layer?.cornerRadius = 6
 +    actionContainer.layer?.masksToBounds = true
 +    actionDividerLeading.wantsLayer = true
-+    actionDividerTrailing.wantsLayer = true
 +    quickGenerateButton.isBordered = false
 +    quickGenerateButton.focusRingType = .none
 +    quickGenerateButton.font = RagImeAssistantTypography.action
@@ -3543,21 +4069,8 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    quickGenerateButton.layer?.cornerRadius = 0
 +    quickGenerateButton.target = self
 +    quickGenerateButton.action = #selector(startActiveRag)
-+    quickGenerateButton.toolTip = "文字生成：使用连续的 Pi 联想会话"
++    quickGenerateButton.toolTip = "快速生成：使用 AX 上下文和 DS Flash 一次回复"
 +    quickGenerateButton.setAccessibilityLabel("文字生成")
-+    visualGenerateButton.isBordered = false
-+    visualGenerateButton.focusRingType = .none
-+    visualGenerateButton.font = RagImeAssistantTypography.action
-+    visualGenerateButton.alignment = .center
-+    visualGenerateButton.image = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "看图生成")
-+    visualGenerateButton.imagePosition = .imageLeading
-+    visualGenerateButton.contentTintColor = .systemIndigo
-+    visualGenerateButton.wantsLayer = true
-+    visualGenerateButton.layer?.cornerRadius = 0
-+    visualGenerateButton.target = self
-+    visualGenerateButton.action = #selector(startVisualActiveRag)
-+    visualGenerateButton.toolTip = "看图生成：附带当前应用窗口截图"
-+    visualGenerateButton.setAccessibilityLabel("看图生成")
 +    deepSearchButton.isBordered = false
 +    deepSearchButton.focusRingType = .none
 +    deepSearchButton.font = RagImeAssistantTypography.action
@@ -3574,8 +4087,6 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    updateActionGroupChrome()
 +    actionContainer.addSubview(quickGenerateButton)
 +    actionContainer.addSubview(actionDividerLeading)
-+    actionContainer.addSubview(visualGenerateButton)
-+    actionContainer.addSubview(actionDividerTrailing)
 +    actionContainer.addSubview(deepSearchButton)
 +    [actionSeparator, actionContainer].forEach(addSubview)
 +    statusHalo.wantsLayer = true
@@ -3586,6 +4097,15 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    diagnosticLabel.font = RagImeAssistantTypography.diagnostic
 +    diagnosticLabel.textColor = .secondaryLabelColor
 +    diagnosticLabel.lineBreakMode = .byTruncatingTail
++    progressTitleLabel.font = RagImeAssistantTypography.resultHeader
++    progressTitleLabel.textColor = .labelColor
++    progressContainer.wantsLayer = true
++    progressContainer.layer?.cornerRadius = 6
++    progressContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.26).cgColor
++    progressRows.forEach(progressContainer.addSubview)
++    progressHandoffLabel.font = RagImeAssistantTypography.diagnostic
++    progressHandoffLabel.textColor = .secondaryLabelColor
++    progressHandoffLabel.lineBreakMode = .byTruncatingTail
 +    resultHeader.font = RagImeAssistantTypography.resultHeader
 +    resultHeader.textColor = .secondaryLabelColor
 +    resultShortcutLabel.font = RagImeAssistantTypography.shortcut
@@ -3611,6 +4131,12 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    resultText.textContainer?.widthTracksTextView = true
 +    resultText.textContainer?.heightTracksTextView = false
 +    resultText.defaultParagraphStyle = RagImeAssistantTypography.resultParagraphStyle()
++    resultText.isRichText = true
++    resultText.linkTextAttributes = [
++      .foregroundColor: NSColor.linkColor,
++      .underlineStyle: NSUnderlineStyle.single.rawValue,
++    ]
++    resultText.textContainer?.lineFragmentPadding = 0
 +    resultScroll.drawsBackground = false
 +    resultScroll.hasVerticalScroller = true
 +    resultScroll.autohidesScrollers = true
@@ -3625,7 +4151,7 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    confirmationLabel.font = RagImeAssistantTypography.confirmation
 +    confirmationLabel.textColor = .secondaryLabelColor
 +    confirmationLabel.alignment = .center
-+    [statusHalo, statusIcon, statusLabel, diagnosticLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach(addSubview)
++    [statusHalo, statusIcon, statusLabel, diagnosticLabel, progressTitleLabel, progressContainer, progressHandoffLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach(addSubview)
 +    hideAll()
 +  }
 +
@@ -3652,7 +4178,7 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +      statusIcon.frame = statusHalo.frame
 +      statusLabel.frame = NSRect(x: 160, y: 10, width: max(80, bounds.width - 170), height: 24)
 +    case .compactPrediction, .expandedPredictions:
-+      let hasAction = quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil
++      let hasAction = quickActionCandidate != nil || deepActionCandidate != nil
 +      let actionOffset = hasAction ? Self.actionHeight : 0
 +      let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
 +      for (index, row) in rows.enumerated() {
@@ -3668,9 +4194,10 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +        layoutActionBar(frame: NSRect(x: 12, y: 5, width: max(0, bounds.width - 24), height: 30), compact: false)
 +      }
 +    case .explicitGenerating:
-+      statusHalo.frame = NSRect(x: 4, y: 7, width: 46, height: 50)
-+      statusIcon.frame = statusHalo.frame
-+      stopButton.frame = NSRect(x: 48, y: 17, width: 26, height: 30)
++      progressTitleLabel.frame = NSRect(x: 16, y: bounds.height - 35, width: max(120, bounds.width - 66), height: 20)
++      stopButton.frame = NSRect(x: bounds.width - 42, y: bounds.height - 41, width: 30, height: 30)
++      progressContainer.frame = NSRect(x: 12, y: 10, width: max(0, bounds.width - 24), height: bounds.height - 52)
++      layoutProgressRows()
 +    case .explicitNoSuggestion, .explicitError:
 +      statusHalo.frame = NSRect(x: 7, y: 34, width: 44, height: 42)
 +      statusIcon.frame = statusHalo.frame
@@ -3690,11 +4217,18 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +        width: bounds.width - 28,
 +        height: 18
 +      )
-+      resultScroll.frame = NSRect(
++      progressHandoffLabel.frame = NSRect(
 +        x: 14,
 +        y: Self.explicitResultBodyBottom,
 +        width: bounds.width - 28,
-+        height: max(48, bounds.height - Self.explicitResultChromeHeight)
++        height: 18
++      )
++      let handoffInset: CGFloat = isProgressHandoffVisible ? 24 : 0
++      resultScroll.frame = NSRect(
++        x: 14,
++        y: Self.explicitResultBodyBottom + handoffInset,
++        width: bounds.width - 28,
++        height: max(48, bounds.height - Self.explicitResultChromeHeight - handoffInset)
 +      )
 +      layoutResultText()
 +      if isStreamingResult {
@@ -3717,6 +4251,7 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    canReplaceSelection: Bool = false,
 +    animationsEnabled: Bool = true
 +  ) -> Bool {
++    let previousState = surfaceState
 +    surfaceState = state
 +    updateThemeChrome(for: state)
 +    self.canReplaceSelection = canReplaceSelection
@@ -3731,18 +4266,12 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    }
 +    quickActionCandidateIndex = quickAction?.offset
 +    quickActionCandidate = quickAction?.element
-+    let visualAction = indexedCandidates.first {
-+      $0.element.selectionAction == "start_visual_rag_from_context"
-+    }
-+    visualActionCandidateIndex = visualAction?.offset
-+    visualActionCandidate = visualAction?.element
 +    let deepAction = indexedCandidates.first {
 +      $0.element.selectionAction == "start_agent_deep_search_from_context"
 +    }
 +    deepActionCandidateIndex = deepAction?.offset
 +    deepActionCandidate = deepAction?.element
 +    quickGenerateButton.isEnabled = quickActionCandidate != nil
-+    visualGenerateButton.isEnabled = visualActionCandidate != nil
 +    deepSearchButton.isEnabled = deepActionCandidate != nil
 +    let nextSignature = ([state.rawValue, payload.snapshotId] + candidates.map {
 +      $0.candidateStableId ?? "\($0.sourceType):\($0.insertText)"
@@ -3750,6 +4279,12 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    let contentChanged = nextSignature != contentSignature
 +    contentSignature = nextSignature
 +    let reduceMotion = !animationsEnabled || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
++    if state != .explicitResult {
++      stopResultReveal(reset: true)
++      progressHandoffWorkItem?.cancel()
++      progressHandoffWorkItem = nil
++      isProgressHandoffVisible = false
++    }
 +    isStreamingResult = false
 +    diagnosticLabel.stringValue = diagnosticText(for: payload)
 +    hideAll()
@@ -3759,12 +4294,10 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +      statusLabel.stringValue = payload.statusText.isEmpty ? "正在联想" : providerNeutralStatus(payload.statusText)
 +      [statusHalo, statusIcon, statusLabel].forEach { $0.isHidden = false }
 +      quickGenerateButton.imagePosition = .imageOnly
-+      visualGenerateButton.imagePosition = .imageOnly
 +      deepSearchButton.imagePosition = .imageOnly
-+      actionContainer.isHidden = quickActionCandidate == nil && visualActionCandidate == nil && deepActionCandidate == nil
++      actionContainer.isHidden = quickActionCandidate == nil && deepActionCandidate == nil
 +    case .compactPrediction, .expandedPredictions:
 +      quickGenerateButton.imagePosition = .imageLeading
-+      visualGenerateButton.imagePosition = .imageLeading
 +      deepSearchButton.imagePosition = .imageLeading
 +      let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
 +      for index in rows.indices where index < visibleCount {
@@ -3779,15 +4312,14 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +          )
 +        }
 +      }
-+      if quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil {
++      if quickActionCandidate != nil || deepActionCandidate != nil {
 +        [actionSeparator, actionContainer].forEach { $0.isHidden = false }
 +      }
 +    case .explicitGenerating:
-+      statusIcon.image = companionImage(named: "RagImeCompanionThinking")
-+      statusLabel.stringValue = payload.statusText.isEmpty ? "正在生成..." : providerNeutralStatus(payload.statusText)
-+      [statusHalo, statusIcon, stopButton].forEach { $0.isHidden = false }
-+      toolTip = "\(statusLabel.stringValue)；点击停止"
-+      setAccessibilityLabel(statusLabel.stringValue)
++      applyGenerationProgress(payload)
++      [progressTitleLabel, progressContainer, stopButton].forEach { $0.isHidden = false }
++      toolTip = "\(progressTitleLabel.stringValue)；点击停止"
++      setAccessibilityLabel(progressSummaryText)
 +    case .explicitNoSuggestion:
 +      statusIcon.image = companionImage(named: "RagImeCompanionIdle")
 +      statusLabel.stringValue = payload.statusText.isEmpty ? "这次没有合适建议" : providerNeutralStatus(payload.statusText)
@@ -3803,6 +4335,11 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +      } ?? false
 +      isStreamingResult = streaming
 +      [resultHeader, diagnosticLabel, resultScroll].forEach { $0.isHidden = false }
++      isProgressHandoffVisible = previousState == .explicitGenerating && !reduceMotion
++      if isProgressHandoffVisible {
++        progressHandoffLabel.stringValue = progressSummaryText
++        progressHandoffLabel.isHidden = false
++      }
 +      if streaming {
 +        stopButton.isHidden = false
 +      } else {
@@ -3812,10 +4349,9 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +      }
 +      resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"
 +      let result = candidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
-+      resultText.textStorage?.setAttributedString(
-+        NSAttributedString(string: result, attributes: RagImeAssistantTypography.resultAttributes())
-+      )
++      applyResultText(result, reduceMotion: reduceMotion, startFresh: previousState == .explicitGenerating)
 +      if contentChanged { animateExplicitResultIn(reduceMotion: reduceMotion) }
++      if isProgressHandoffVisible { scheduleProgressHandoff() }
 +    case .transientConfirmation: confirmationLabel.isHidden = false
 +    case .hidden: break
 +    }
@@ -3863,7 +4399,6 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +  static func isActionCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
 +    candidate.sourceType == "action"
 +      || candidate.selectionAction == "start_active_rag_from_context"
-+      || candidate.selectionAction == "start_visual_rag_from_context"
 +      || candidate.selectionAction == "start_agent_deep_search_from_context"
 +  }
 +
@@ -3873,10 +4408,10 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +  }
 +
 +  static func explicitResultHeight(text: String, width: CGFloat) -> CGFloat {
-+    let measured = (text as NSString).boundingRect(
++    let measured = RagImeAssistantMarkdownRenderer.render(text).boundingRect(
 +      with: NSSize(width: max(240, width - 28), height: CGFloat.greatestFiniteMagnitude),
 +      options: [.usesLineFragmentOrigin, .usesFontLeading],
-+      attributes: RagImeAssistantTypography.resultAttributes()
++      context: nil
 +    )
 +    return min(
 +      maximumExplicitResultHeight,
@@ -3890,7 +4425,7 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +      $0.showsSeparator = false
 +    }
 +    [actionSeparator, actionContainer].forEach { $0.isHidden = true }
-+    [statusHalo, statusIcon, statusLabel, diagnosticLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
++    [statusHalo, statusIcon, statusLabel, diagnosticLabel, progressTitleLabel, progressContainer, progressHandoffLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
 +  }
 +
 +  private func updateThemeChrome(for state: RagImeAssistantSurfaceState) {
@@ -3965,6 +4500,12 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    } else {
 +      parts.append("知识生成")
 +    }
++    if let firstTokenMs = intValue(in: [transaction, metadata], keys: ["firstTokenMs"]), firstTokenMs > 0 {
++      parts.append(String(format: "首字 %.1f 秒", Double(firstTokenMs) / 1000))
++    }
++    if boolValue(in: [transaction, metadata], keys: ["contentRetryAttempted", "qualityRetry"]) == true {
++      parts.append("质量校正 1 次")
++    }
 +    diagnosticLabel.toolTip = stringValue(in: [transaction, metadata], keys: ["contextSource"])
 +    return parts.joined(separator: " · ")
 +  }
@@ -4005,6 +4546,223 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    return nil
 +  }
 +
++  private func applyGenerationProgress(_ payload: RagImeAssistantOverlayPayload) {
++    let transaction = payload.frontendTransaction ?? [:]
++    let stage = stringValue(in: [transaction], keys: ["progressStage"])
++    let foregroundChars = intValue(in: [transaction], keys: ["foregroundContextChars", "effectiveContextChars", "contextChars"]) ?? 0
++    let windowNodes = intValue(in: [transaction], keys: ["windowContextNodes"]) ?? 0
++    let recentCount = intValue(in: [transaction], keys: ["timelineRecentInputRecordCount"]) ?? 0
++    let recentChars = intValue(in: [transaction], keys: ["timelineRecentInputChars"]) ?? 0
++    let recentUsed = boolValue(in: [transaction], keys: ["timelineRecentInputUsedForGeneration"]) == true
++    let evidenceCount = intValue(in: [transaction], keys: ["evidenceCount"]) ?? payload.sourceCards.count
++    let retrievalAttempted = boolValue(in: [transaction], keys: ["retrievalAttempted"]) == true
++    let firstTokenMs = intValue(in: [transaction], keys: ["firstTokenMs"]) ?? 0
++    let qualityRetry = boolValue(in: [transaction], keys: ["contentRetryAttempted", "qualityRetry"]) == true
++
++    switch stage {
++    case "quality_retry": progressTitleLabel.stringValue = "正在校正首轮结果"
++    case "streaming": progressTitleLabel.stringValue = "结果正在到达"
++    case "generating": progressTitleLabel.stringValue = "DS Flash 正在生成"
++    default: progressTitleLabel.stringValue = "正在准备回答"
++    }
++
++    let contextDetail: String
++    if windowNodes > 0 {
++      contextDetail = "AX \(windowNodes) 个节点 · 当前输入 \(foregroundChars) 字"
++    } else if foregroundChars > 0 {
++      contextDetail = "当前输入 \(foregroundChars) 字"
++    } else {
++      contextDetail = "等待可访问性上下文"
++    }
++
++    let historyDetail: String
++    if recentCount > 0 {
++      historyDetail = recentUsed
++        ? "已选 \(recentCount) 条 · \(recentChars) 字"
++        : "找到 \(recentCount) 条，本次未注入"
++    } else if recentChars > 0 {
++      historyDetail = recentUsed ? "补充 \(recentChars) 字" : "本次未注入历史"
++    } else {
++      historyDetail = retrievalAttempted ? "本次没有可用历史" : "正在选择最近输入"
++    }
++
++    let recalledTitles = payload.sourceCards.prefix(2).map(\.title).filter { !$0.isEmpty }
++    let retrievalDetail: String
++    if !recalledTitles.isEmpty {
++      retrievalDetail = recalledTitles.map { "「\($0)」" }.joined(separator: " · ")
++    } else if evidenceCount > 0 {
++      retrievalDetail = "已召回 \(evidenceCount) 条可用依据"
++    } else if retrievalAttempted {
++      retrievalDetail = "没有额外依据，继续使用当前上下文"
++    } else {
++      retrievalDetail = "个人记忆、计划与工具书"
++    }
++
++    let modelDetail: String
++    if qualityRetry || stage == "quality_retry" {
++      modelDetail = "首轮内容与输入过近，正在重新生成"
++    } else if firstTokenMs > 0 {
++      modelDetail = String(format: "首字 %.1f 秒 · 正在接收正文", Double(firstTokenMs) / 1000)
++    } else {
++      modelDetail = "低思考 · 无工具 · 不保存会话"
++    }
++
++    let modelActive = ["generating", "quality_retry", "streaming"].contains(stage)
++    let retrievalActive = stage == "retrieving" || stage == "retrieval_complete"
++    progressRows[0].apply(
++      title: "读取当前界面",
++      detail: contextDetail,
++      completed: foregroundChars > 0 || windowNodes > 0,
++      active: stage == "capturing_context"
++    )
++    progressRows[1].apply(
++      title: "整理近期输入",
++      detail: historyDetail,
++      completed: retrievalAttempted || recentCount > 0 || recentChars > 0,
++      active: stage == "retrieving" && recentCount == 0
++    )
++    progressRows[2].apply(
++      title: "召回相关内容",
++      detail: retrievalDetail,
++      completed: retrievalAttempted,
++      active: retrievalActive
++    )
++    progressRows[3].apply(
++      title: qualityRetry ? "质量检查后再生成" : "生成一次回复",
++      detail: modelDetail,
++      completed: stage == "ready",
++      active: modelActive || (!retrievalActive && retrievalAttempted)
++    )
++
++    var summary: [String] = []
++    if windowNodes > 0 { summary.append("AX \(windowNodes) 节点") }
++    if recentCount > 0 { summary.append("历史 \(recentCount) 条") }
++    if !recalledTitles.isEmpty {
++      summary.append("召回 " + recalledTitles.prefix(2).joined(separator: "、"))
++    } else if evidenceCount > 0 {
++      summary.append("召回 \(evidenceCount) 条")
++    }
++    progressSummaryText = summary.isEmpty ? "上下文与召回已准备" : summary.joined(separator: " · ")
++  }
++
++  private func layoutProgressRows() {
++    let rowHeight = max(22, floor(progressContainer.bounds.height / CGFloat(progressRows.count)))
++    for (index, row) in progressRows.enumerated() {
++      row.frame = NSRect(
++        x: 0,
++        y: progressContainer.bounds.height - CGFloat(index + 1) * rowHeight,
++        width: progressContainer.bounds.width,
++        height: rowHeight
++      )
++    }
++  }
++
++  private func applyResultText(_ text: String, reduceMotion: Bool, startFresh: Bool) {
++    pendingResultText = text
++    if reduceMotion || text.count <= 24 {
++      stopResultReveal(reset: false)
++      setVisibleResultText(text)
++      return
++    }
++    let visible = visibleResultMarkdown
++    if startFresh || visible.isEmpty || !text.hasPrefix(visible) {
++      let initialCount = min(18, text.count)
++      setVisibleResultText(String(text.prefix(initialCount)))
++    }
++    guard visibleResultMarkdown != pendingResultText else {
++      stopResultReveal(reset: false)
++      return
++    }
++    startResultRevealTimer()
++  }
++
++  private func startResultRevealTimer() {
++    guard resultRevealTimer == nil else { return }
++    let timer = Timer(timeInterval: 0.025, repeats: true) { [weak self] timer in
++      guard let self else {
++        timer.invalidate()
++        return
++      }
++      let visible = self.visibleResultMarkdown
++      let target = self.pendingResultText
++      guard visible != target else {
++        timer.invalidate()
++        self.resultRevealTimer = nil
++        return
++      }
++      guard target.hasPrefix(visible) else {
++        self.setVisibleResultText(target)
++        timer.invalidate()
++        self.resultRevealTimer = nil
++        return
++      }
++      let remaining = target.count - visible.count
++      let chunk = max(1, min(16, Int(ceil(Double(remaining) / 8))))
++      self.setVisibleResultText(String(target.prefix(min(target.count, visible.count + chunk))))
++    }
++    resultRevealTimer = timer
++    RunLoop.main.add(timer, forMode: .common)
++  }
++
++  private func stopResultReveal(reset: Bool) {
++    resultRevealTimer?.invalidate()
++    resultRevealTimer = nil
++    if reset {
++      pendingResultText = ""
++      setVisibleResultText("")
++    }
++  }
++
++  private func setVisibleResultText(_ text: String) {
++    visibleResultMarkdown = text
++    resultText.textStorage?.setAttributedString(RagImeAssistantMarkdownRenderer.render(text))
++    layoutResultText()
++  }
++
++  private func scheduleProgressHandoff() {
++    progressHandoffWorkItem?.cancel()
++    progressHandoffLabel.wantsLayer = true
++    progressHandoffLabel.layer?.removeAllAnimations()
++    resultScroll.wantsLayer = true
++    let handoffOpacity = CABasicAnimation(keyPath: "opacity")
++    handoffOpacity.fromValue = 1
++    handoffOpacity.toValue = 0
++    let handoffMove = CABasicAnimation(keyPath: "transform.translation.y")
++    handoffMove.fromValue = 0
++    handoffMove.toValue = -RagImeAssistantMotion.Distance.progressHandoff
++    let handoffGroup = CAAnimationGroup()
++    handoffGroup.animations = [handoffOpacity, handoffMove]
++    handoffGroup.duration = RagImeAssistantMotion.Duration.progressHandoff
++    handoffGroup.timingFunction = RagImeAssistantMotion.timingFunction(.easeInEaseOut)
++    progressHandoffLabel.layer?.add(handoffGroup, forKey: "rag-ime-progress-handoff-out")
++
++    let resultOpacity = CABasicAnimation(keyPath: "opacity")
++    resultOpacity.fromValue = 0.35
++    resultOpacity.toValue = 1
++    let resultMove = CABasicAnimation(keyPath: "transform.translation.y")
++    resultMove.fromValue = -RagImeAssistantMotion.Distance.small
++    resultMove.toValue = 0
++    let resultGroup = CAAnimationGroup()
++    resultGroup.animations = [resultOpacity, resultMove]
++    resultGroup.duration = RagImeAssistantMotion.Duration.progressHandoff
++    resultGroup.timingFunction = RagImeAssistantMotion.timingFunction()
++    resultScroll.layer?.add(resultGroup, forKey: "rag-ime-result-pushes-progress")
++
++    let work = DispatchWorkItem { [weak self] in
++      guard let self else { return }
++      self.isProgressHandoffVisible = false
++      self.progressHandoffLabel.isHidden = true
++      self.progressHandoffWorkItem = nil
++      self.needsLayout = true
++      self.layoutSubtreeIfNeeded()
++    }
++    progressHandoffWorkItem = work
++    DispatchQueue.main.asyncAfter(
++      deadline: .now() + RagImeAssistantMotion.Duration.progressHandoff,
++      execute: work
++    )
++  }
++
 +  private func animateExplicitResultIn(reduceMotion: Bool) {
 +    resultScroll.wantsLayer = true
 +    resultScroll.layer?.removeAnimation(forKey: "rag-ime-explicit-result-in")
@@ -4025,19 +4783,23 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +  private func layoutResultText() {
 +    let viewport = resultScroll.contentSize
 +    let width = max(40, viewport.width)
-+    let measured = (resultText.string as NSString).boundingRect(
-+      with: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude),
-+      options: [.usesLineFragmentOrigin, .usesFontLeading],
-+      attributes: RagImeAssistantTypography.resultAttributes()
++    guard let textContainer = resultText.textContainer,
++          let layoutManager = resultText.layoutManager else { return }
++    textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
++    layoutManager.ensureLayout(for: textContainer)
++    let measuredHeight = layoutManager.usedRect(for: textContainer).height
++    resultText.frame = NSRect(
++      x: 0,
++      y: 0,
++      width: width,
++      height: max(viewport.height, ceil(measuredHeight) + 4)
 +    )
-+    resultText.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-+    resultText.frame = NSRect(x: 0, y: 0, width: width, height: max(viewport.height, ceil(measured.height) + 4))
 +  }
 +
 +  private func layoutActionBar(frame: NSRect, compact: Bool) {
 +    actionContainer.frame = frame
 +    let dividerWidth: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
-+    let segment = max(0, floor((frame.width - dividerWidth * 2) / 3))
++    let segment = max(0, floor((frame.width - dividerWidth) / 2))
 +    let dividerInset: CGFloat = compact ? 5 : 4
 +    quickGenerateButton.frame = NSRect(x: 0, y: 0, width: segment, height: frame.height)
 +    actionDividerLeading.frame = NSRect(
@@ -4046,26 +4808,13 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +      width: dividerWidth,
 +      height: max(0, frame.height - dividerInset * 2)
 +    )
-+    visualGenerateButton.frame = NSRect(
++    deepSearchButton.frame = NSRect(
 +      x: segment + dividerWidth,
 +      y: 0,
-+      width: segment,
-+      height: frame.height
-+    )
-+    actionDividerTrailing.frame = NSRect(
-+      x: segment * 2 + dividerWidth,
-+      y: dividerInset,
-+      width: dividerWidth,
-+      height: max(0, frame.height - dividerInset * 2)
-+    )
-+    deepSearchButton.frame = NSRect(
-+      x: segment * 2 + dividerWidth * 2,
-+      y: 0,
-+      width: max(0, frame.width - segment * 2 - dividerWidth * 2),
++      width: max(0, frame.width - segment - dividerWidth),
 +      height: frame.height
 +    )
 +    quickGenerateButton.alignment = .center
-+    visualGenerateButton.alignment = .center
 +    deepSearchButton.alignment = .center
 +  }
 +
@@ -4082,9 +4831,7 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +      .withAlphaComponent(increaseContrast ? 0.88 : 0.48)
 +      .cgColor
 +    actionDividerLeading.layer?.backgroundColor = dividerColor
-+    actionDividerTrailing.layer?.backgroundColor = dividerColor
 +    quickGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
-+    visualGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
 +    deepSearchButton.layer?.backgroundColor = NSColor.clear.cgColor
 +  }
 +
@@ -4112,19 +4859,100 @@ index 0000000000000000000000000000000000000000..5f23fd7c14c8d061d7689b83211c247c
 +    onSelect?(quickActionCandidate, quickActionCandidateIndex, .insert)
 +  }
 +
-+  @objc private func startVisualActiveRag() {
-+    guard let visualActionCandidate, let visualActionCandidateIndex else { return }
-+    onSelect?(visualActionCandidate, visualActionCandidateIndex, .insert)
-+  }
-+
 +  @objc private func startAgentDeepSearch() {
 +    guard let deepActionCandidate, let deepActionCandidateIndex else { return }
 +    onSelect?(deepActionCandidate, deepActionCandidateIndex, .insert)
 +  }
 +}
++
++private final class RagImeGenerationProgressRowView: NSView {
++  private let iconView = NSImageView()
++  private let titleLabel = NSTextField(labelWithString: "")
++  private let detailLabel = NSTextField(labelWithString: "")
++  private let shimmerLayer = CAGradientLayer()
++
++  override init(frame frameRect: NSRect) {
++    super.init(frame: frameRect)
++    wantsLayer = true
++    layer?.cornerRadius = 4
++    layer?.masksToBounds = true
++    shimmerLayer.startPoint = CGPoint(x: 0, y: 0.5)
++    shimmerLayer.endPoint = CGPoint(x: 1, y: 0.5)
++    shimmerLayer.colors = [
++      NSColor.clear.cgColor,
++      NSColor.secondaryLabelColor.withAlphaComponent(0.13).cgColor,
++      NSColor.clear.cgColor,
++    ]
++    shimmerLayer.locations = [-0.8, -0.4, 0]
++    shimmerLayer.isHidden = true
++    layer?.addSublayer(shimmerLayer)
++    iconView.imageScaling = .scaleProportionallyDown
++    titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
++    titleLabel.textColor = .labelColor
++    titleLabel.lineBreakMode = .byTruncatingTail
++    detailLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
++    detailLabel.textColor = .secondaryLabelColor
++    detailLabel.lineBreakMode = .byTruncatingTail
++    [iconView, titleLabel, detailLabel].forEach(addSubview)
++  }
++
++  @available(*, unavailable)
++  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
++
++  override func layout() {
++    super.layout()
++    shimmerLayer.frame = bounds
++    iconView.frame = NSRect(x: 8, y: max(0, (bounds.height - 16) / 2), width: 16, height: 16)
++    let titleWidth = min(126, max(92, bounds.width * 0.31))
++    titleLabel.frame = NSRect(x: 31, y: max(0, (bounds.height - 18) / 2), width: titleWidth, height: 18)
++    detailLabel.frame = NSRect(
++      x: 37 + titleWidth,
++      y: max(0, (bounds.height - 18) / 2),
++      width: max(32, bounds.width - titleWidth - 45),
++      height: 18
++    )
++  }
++
++  func apply(title: String, detail: String, completed: Bool, active: Bool) {
++    titleLabel.stringValue = title
++    detailLabel.stringValue = detail
++    let symbol: String
++    let color: NSColor
++    if completed {
++      symbol = "checkmark.circle.fill"
++      color = .systemGreen
++    } else if active {
++      symbol = "sparkles"
++      color = .systemIndigo
++    } else {
++      symbol = "circle"
++      color = .tertiaryLabelColor
++    }
++    iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
++    iconView.contentTintColor = color
++    layer?.backgroundColor = active
++      ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.055).cgColor
++      : NSColor.clear.cgColor
++    updateShimmer(active: active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
++    setAccessibilityLabel("\(title)：\(detail)")
++  }
++
++  private func updateShimmer(active: Bool) {
++    shimmerLayer.removeAnimation(forKey: "rag-ime-progress-shimmer")
++    shimmerLayer.isHidden = !active
++    guard active else { return }
++    let animation = CABasicAnimation(keyPath: "locations")
++    animation.fromValue = [-0.8, -0.4, 0]
++    animation.toValue = [1, 1.4, 1.8]
++    animation.duration = 1.15
++    animation.repeatCount = .infinity
++    animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
++    shimmerLayer.add(animation, forKey: "rag-ime-progress-shimmer")
++  }
++}
 diff --git a/sources/RagImeSuggestionRowView.swift b/sources/RagImeSuggestionRowView.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..8d958e988d31f254664e122da3643ed5e1708b2c
+index 0000000..8d958e9
 --- /dev/null
 +++ b/sources/RagImeSuggestionRowView.swift
 @@ -0,0 +1,227 @@
@@ -4356,7 +5184,7 @@ index 0000000000000000000000000000000000000000..8d958e988d31f254664e122da3643ed5
 +  }
 +}
 diff --git a/sources/SquirrelApplicationDelegate.swift b/sources/SquirrelApplicationDelegate.swift
-index 124ef7b2ec9a7c2e7bb898295704682f5131b314..52c6983d9ff6adeba2589879c679ae1366e02882 100644
+index 124ef7b..52c6983 100644
 --- a/sources/SquirrelApplicationDelegate.swift
 +++ b/sources/SquirrelApplicationDelegate.swift
 @@ -364,7 +364,7 @@ private extension SquirrelApplicationDelegate {
@@ -4378,7 +5206,7 @@ index 124ef7b2ec9a7c2e7bb898295704682f5131b314..52c6983d9ff6adeba2589879c679ae13
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc485af69411 100644
+index c2adf74..2995b7e 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
 @@ -6,6 +6,7 @@
@@ -4389,7 +5217,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
  
  final class SquirrelInputController: IMKInputController {
    private static let keyRollOver = 50
-@@ -27,6 +28,95 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +28,98 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
@@ -4488,7 +5316,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -44,11 +134,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -44,11 +137,9 @@ final class SquirrelInputController: IMKInputController {
        }
      }
  
@@ -4503,12 +5331,17 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
  
      switch event.type {
      case .flagsChanged:
-@@ -89,217 +177,5310 @@ final class SquirrelInputController: IMKInputController {
-         _ = processKey(keycode, modifiers: modifier)
+@@ -85,221 +176,5568 @@ final class SquirrelInputController: IMKInputController {
+           buffer.insert((keycode: rimeKeycode, modifier: rimeModifiers | kReleaseMask.rawValue), at: 0)
+         }
        }
- 
--      lastModifiers = modifiers
--      rimeUpdate()
+-      for (keycode, modifier) in buffer {
+-        _ = processKey(keycode, modifiers: modifier)
+-      }
++      for (keycode, modifier) in buffer {
++        _ = processKey(keycode, modifiers: modifier)
++      }
++
 +      lastModifiers = modifiers
 +      rimeUpdate()
 +
@@ -6815,6 +7648,54 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    return String(normalized.suffix(120))
 +  }
 +
++  func ragImeActiveRagContextView(for request: RagImeActiveRagRequest) -> [String: RagImeJSONValue] {
++    var windowContext: [String: RagImeJSONValue] = [:]
++    if let snapshot = request.windowContext {
++      let nodes: [RagImeJSONValue] = snapshot.nodes.map { node in
++        .object([
++          "nodeRef": .string(node.nodeRef),
++          "parentRef": .string(node.parentRef),
++          "depth": .number(Double(node.depth)),
++          "role": .string(node.role),
++          "subrole": .string(node.subrole),
++          "label": .string(node.label),
++          "value": .string(node.value),
++          "focused": .bool(node.focused),
++          "selected": .bool(node.selected),
++          "secure": .bool(node.secure),
++          "actions": .array(node.actions.map(RagImeJSONValue.string)),
++        ])
++      }
++      windowContext = [
++        "captureMode": .string(snapshot.captureMode),
++        "nodeCount": .number(Double(snapshot.nodeCount)),
++        "truncated": .bool(snapshot.truncated),
++        "focusedNodeRef": .string(snapshot.focusedNodeRef),
++        "application": .object([
++          "bundleId": .string(snapshot.application.bundleId),
++          "name": .string(snapshot.application.name),
++          "windowTitle": .string(snapshot.application.windowTitle),
++        ]),
++        "nodes": .array(nodes),
++        "semanticText": .string(snapshot.semanticText),
++      ]
++    }
++    return [
++      "schemaVersion": .string("rag-ime.active-rag-context-view.v1"),
++      "source": .string("frontend_request"),
++      "currentRequest": .string(request.selectedText),
++      "currentContext": .string(request.context),
++      "selectedText": .string(request.selectedText),
++      "taskMode": .string(request.intent),
++      "groundingMode": .string("pending"),
++      "windowContext": .object(windowContext),
++      "recentCompleteInputs": .array([]),
++      "planning": .object([:]),
++      "evidenceHints": .array([]),
++      "contextBudget": .object([:]),
++    ]
++  }
++
 +  func showRagImeActiveRagThinkingPlaceholder(request: RagImeActiveRagRequest) {
 +    let payload = RagImeAssistantOverlayPayload(
 +      schemaVersion: "rag-ime.assistant-overlay.v1",
@@ -6822,7 +7703,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      uiMode: "active_rag_thinking",
 +      phase: "active_rag",
 +      inputMode: "active_rag_assist",
-+      statusText: "正在生成...",
++      statusText: "正在整理上下文",
 +      animation: RagImeAssistantOverlayAnimation(kind: "thinking_dots", frame: 0),
 +      candidates: [],
 +      sourceCards: [],
@@ -6842,8 +7723,13 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +        "contextSource": .string(request.contextSource),
 +        "contextChars": .number(Double(request.contextChars)),
 +        "contextHash": .string(request.contextHash),
++        "contextView": .object(ragImeActiveRagContextView(for: request)),
++        "windowContextNodes": .number(Double(request.windowContext?.nodeCount ?? 0)),
++        "windowCaptureMode": .string(request.windowContext?.captureMode ?? "unavailable"),
++        "timelineRecentInputRecordCount": .number(0),
 +        "evidenceCount": .number(0),
 +        "retrievalAttempted": .bool(false),
++        "progressStage": .string("retrieving"),
 +        "diagnosticStatus": .string(request.contextChars > 0 ? "context_captured" : "context_missing"),
 +      ],
 +      dismissReason: ""
@@ -6960,6 +7846,26 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      guard case .object(let injection)? = response.diagnostics?["contextInjection"] else { return [:] }
 +      return injection
 +    }()
++    let progressDiagnostics: [String: RagImeJSONValue] = {
++      guard case .object(let progress)? = response.diagnostics?["progress"] else { return [:] }
++      return progress
++    }()
++    let progressContext: [String: RagImeJSONValue] = {
++      guard case .object(let context)? = progressDiagnostics["context"] else { return [:] }
++      return context
++    }()
++    let progressRetrieval: [String: RagImeJSONValue] = {
++      guard case .object(let retrieval)? = progressDiagnostics["retrieval"] else { return [:] }
++      return retrieval
++    }()
++    let progressModel: [String: RagImeJSONValue] = {
++      guard case .object(let model)? = progressDiagnostics["model"] else { return [:] }
++      return model
++    }()
++    let progressStage: String = {
++      guard case .string(let value)? = progressDiagnostics["stage"] else { return response.thinkingRow ? "generating" : "ready" }
++      return value
++    }()
 +    let effectiveContextChars: Int = {
 +      if case .number(let value)? = contextInjection["effectiveContextChars"] { return Int(value) }
 +      if case .number(let value)? = contextInjection["contextChars"] { return Int(value) }
@@ -6977,6 +7883,11 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      guard case .number(let value)? = contextInjection["timelineRecentInputChars"] else { return 0 }
 +      return Int(value)
 +    }()
++    let timelineRecentInputRecordCount: Int = {
++      if case .number(let value)? = contextInjection["timelineRecentInputRecordCount"] { return Int(value) }
++      if case .number(let value)? = progressContext["recentInputCount"] { return Int(value) }
++      return 0
++    }()
 +    let foregroundContextChars: Int = {
 +      guard case .number(let value)? = contextInjection["foregroundContextChars"] else { return request.contextChars }
 +      return Int(value)
@@ -6985,8 +7896,30 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      guard case .bool(let value)? = contextInjection["timelineRecentInputUsedForGeneration"] else { return false }
 +      return value
 +    }()
++    let windowContextNodes: Int = {
++      if case .number(let value)? = progressContext["windowNodeCount"] { return Int(value) }
++      return request.windowContext?.nodeCount ?? 0
++    }()
++    let firstTokenMs: Int = {
++      guard case .number(let value)? = progressModel["firstTokenMs"] else { return 0 }
++      return Int(value)
++    }()
++    let contentRetryAttempted: Bool = {
++      guard case .bool(let value)? = progressModel["qualityRetry"] else { return false }
++      return value
++    }()
++    let retrievedCount: Int = {
++      guard case .number(let value)? = progressRetrieval["retrievedCount"] else { return response.evidenceCount }
++      return Int(value)
++    }()
 +    let shortForegroundCapture: Bool = {
 +      guard case .bool(let value)? = contextInjection["shortForegroundCapture"] else { return request.contextChars < 8 }
++      return value
++    }()
++    let contextView: [String: RagImeJSONValue] = {
++      guard case .object(let value)? = response.diagnostics?["contextView"], !value.isEmpty else {
++        return ragImeActiveRagContextView(for: request)
++      }
 +      return value
 +    }()
 +    let diagnosticStatus: String
@@ -7010,33 +7943,81 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      "foregroundContextChars": .number(Double(foregroundContextChars)),
 +      "effectiveContextChars": .number(Double(effectiveContextChars)),
 +      "timelineRecentInputChars": .number(Double(timelineRecentInputChars)),
++      "timelineRecentInputRecordCount": .number(Double(timelineRecentInputRecordCount)),
 +      "timelineRecentInputUsedForGeneration": .bool(timelineRecentInputUsedForGeneration),
++      "windowContextNodes": .number(Double(windowContextNodes)),
 +      "shortForegroundCapture": .bool(shortForegroundCapture),
 +      "contextHash": .string(effectiveContextHash),
 +      "evidenceCount": .number(Double(response.evidenceCount)),
++      "retrievedCount": .number(Double(retrievedCount)),
 +      "retrievalAttempted": .bool(retrievalAttempted),
++      "progressStage": .string(progressStage),
++      "firstTokenMs": .number(Double(firstTokenMs)),
++      "contentRetryAttempted": .bool(contentRetryAttempted),
++      "contextView": .object(contextView),
 +      "diagnosticStatus": .string(diagnosticStatus),
 +    ]
 +    if let remoteReady { activeDiagnostics["remoteModelReady"] = .bool(remoteReady) }
 +    if !remoteModelReason.isEmpty { activeDiagnostics["remoteModelReason"] = .string(remoteModelReason) }
-+    let activeSourceCards = response.evidenceCount > 0 ? [
-+      RagImeAssistantSourceCard(
-+        sourceType: "rag",
-+        sourceBadge: "RAG",
-+        title: "已检索 \(response.evidenceCount) 条证据",
-+        evidencePreview: "",
++    let progressItems: [[String: RagImeJSONValue]] = {
++      guard case .array(let values)? = progressRetrieval["items"] else { return [] }
++      return values.compactMap { value in
++        guard case .object(let item) = value else { return nil }
++        return item
++      }
++    }()
++    var activeSourceCards = progressItems.prefix(3).enumerated().map { index, item in
++      let sourceType: String = {
++        guard case .string(let value)? = item["sourceType"], !value.isEmpty else { return "rag" }
++        return value
++      }()
++      let title: String = {
++        guard case .string(let value)? = item["title"], !value.isEmpty else { return "检索依据 \(index + 1)" }
++        return value
++      }()
++      let preview: String = {
++        guard case .string(let value)? = item["preview"] else { return "" }
++        return value
++      }()
++      return RagImeAssistantSourceCard(
++        sourceType: sourceType,
++        sourceBadge: sourceType == "todo" ? "计划" : "RAG",
++        title: title,
++        evidencePreview: preview,
 +        confidence: nil,
-+        suggestionId: "active-rag-evidence:\(response.sessionId)",
++        suggestionId: "active-rag-progress:\(response.sessionId):\(index)",
 +        memoryId: ""
-+      ),
-+    ] : []
++      )
++    }
++    if activeSourceCards.isEmpty && response.evidenceCount > 0 {
++      activeSourceCards = [
++        RagImeAssistantSourceCard(
++          sourceType: "rag",
++          sourceBadge: "RAG",
++          title: "已召回 \(response.evidenceCount) 条可用依据",
++          evidencePreview: "",
++          confidence: nil,
++          suggestionId: "active-rag-evidence:\(response.sessionId)",
++          memoryId: ""
++        ),
++      ]
++    }
++    let activeProgressStatusText: String = {
++      switch progressStage {
++      case "quality_retry": return "正在校正首轮结果"
++      case "streaming": return "结果正在到达"
++      case "generating": return "DS Flash 正在生成"
++      case "retrieval_complete": return "召回完成，正在组织上下文"
++      default: return "正在整理上下文"
++      }
++    }()
 +    let activeOverlayPayload = RagImeAssistantOverlayPayload(
 +      schemaVersion: "rag-ime.assistant-overlay.v1",
 +      visible: response.thinkingRow || response.status == "error" || activeStatusText != nil || !activeOverlayCandidates.isEmpty,
 +      uiMode: response.uiMode,
 +      phase: "active_rag",
 +      inputMode: "active_rag_assist",
-+      statusText: activeStatusText ?? (response.thinkingRow ? "正在生成..." : (response.status == "error" ? "暂未完成，可以重试" : "")),
++      statusText: activeStatusText ?? (response.thinkingRow ? activeProgressStatusText : (response.status == "error" ? "暂未完成，可以重试" : "")),
 +      animation: RagImeAssistantOverlayAnimation(kind: response.thinkingRow ? "thinking_dots" : "none", frame: max(0, response.elapsedMs ?? 0) / 250 % 3),
 +      candidates: activeOverlayCandidates,
 +      sourceCards: activeSourceCards,
@@ -7056,7 +8037,11 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    let overlaySignature = [
 +      response.status,
 +      response.thinkingRow ? "thinking" : "ready",
++      progressStage,
 +      String(response.evidenceCount),
++      String(firstTokenMs),
++      contentRetryAttempted ? "quality-retry" : "single-pass",
++      activeSourceCards.map(\.title).joined(separator: ","),
 +      activeOverlayCandidates.map { $0.candidateStableId ?? $0.suggestionId }.joined(separator: ","),
 +      response.error ?? "",
 +    ].joined(separator: "|")
@@ -7088,6 +8073,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      "frontAppBundleId": response.frontAppBundleId,
 +      "candidateCount": response.candidateCount,
 +      "evidenceCount": response.evidenceCount,
++      "retrievedCount": retrievedCount,
++      "progressStage": progressStage,
++      "firstTokenMs": firstTokenMs,
++      "contentRetryAttempted": contentRetryAttempted,
 +      "diagnosticStatus": diagnosticStatus,
 +      "uiMode": response.uiMode,
 +      "overlay": true,
@@ -9248,11 +10237,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    }
 +    return fields
 +  }
- 
--    case .keyDown:
--      // Let client apps handle Command shortcuts.
--      if modifiers.contains(.command) {
--        break
++
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {
 +    let visibleCandidates = ragImeDisplayCandidates.filter { !ragImeDisplayCandidateIsShortcutOnlyAction($0) }
 +    let candidates = visibleCandidates.map { ragImeDisplayText(for: $0) }
@@ -9260,27 +10245,12 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    let labels = visibleCandidates.enumerated().map { index, candidate in
 +      if candidate.sourceType == "status" || candidate.isStatus == true || candidate.selectionAction == "none" {
 +        return ""
-       }
++      }
 +      return candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
 +    }
 +    return (candidates, comments, labels)
 +  }
- 
--      let keyCode = event.keyCode
--      var keyChars = event.charactersIgnoringModifiers
--      let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
--      if let code = keyChars?.first,
--         (capitalModifiers && !code.isLetter) || (!capitalModifiers && !code.isASCII) {
--        keyChars = event.characters
--      }
--      if let char = keyChars?.first {
--        let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
--                                                           shift: modifiers.contains(.shift),
--                                                           caps: modifiers.contains(.capsLock))
--        if rimeKeycode != 0 {
--          let rimeModifiers = SquirrelKeycode.osxModifiersToRime(modifiers: modifiers)
--          handled = processKey(rimeKeycode, modifiers: rimeModifiers)
--          rimeUpdate()
++
 +  func ragImeDisplayCandidateIsShortcutOnlyAction(_ candidate: RagImeDisplayCandidate) -> Bool {
 +    return candidate.selectionAction == "start_active_rag_from_context" || candidate.sourceType == "action"
 +  }
@@ -9306,51 +10276,60 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +        if !stripped.isEmpty {
 +          value = stripped
 +          break
-         }
-       }
++        }
++      }
 +    }
 +    return value
 +  }
  
--    default:
--      break
+-      lastModifiers = modifiers
+-      rimeUpdate()
 +  func ragImeBoolEnvEnabled(_ key: String, default defaultValue: Bool) -> Bool {
 +    let rawValue = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 +    guard let rawValue, !rawValue.isEmpty else {
 +      return defaultValue
-     }
++    }
 +    return !["0", "false", "no", "off"].contains(rawValue)
 +  }
  
--    return handled
+-    case .keyDown:
+-      // Let client apps handle Command shortcuts.
+-      if modifiers.contains(.command) {
+-        break
+-      }
 +  func ragImePostCommitPendingOverlayEnabled() -> Bool {
 +    ragImeBoolEnvEnabled("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", default: true)
-   }
++  }
  
--  func selectCandidate(_ index: Int) -> Bool {
--    let success = rimeAPI.select_candidate_on_current_page(session, index)
--    if success {
--      rimeUpdate()
+-      let keyCode = event.keyCode
+-      var keyChars = event.charactersIgnoringModifiers
+-      let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
+-      if let code = keyChars?.first,
+-         (capitalModifiers && !code.isLetter) || (!capitalModifiers && !code.isASCII) {
+-        keyChars = event.characters
+-      }
+-      if let char = keyChars?.first {
+-        let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
+-                                                           shift: modifiers.contains(.shift),
+-                                                           caps: modifiers.contains(.capsLock))
+-        if rimeKeycode != 0 {
+-          let rimeModifiers = SquirrelKeycode.osxModifiersToRime(modifiers: modifiers)
+-          handled = processKey(rimeKeycode, modifiers: rimeModifiers)
+-          rimeUpdate()
+-        }
+-      }
 +  func ragImeAssistantOverlayContainsResult(_ payload: RagImeAssistantOverlayPayload) -> Bool {
 +    payload.candidates.contains { candidate in
 +      ["model", "rag", "memory"].contains(candidate.sourceType)
 +        && !ragImeCompactWhitespace(candidate.insertText.isEmpty ? candidate.text : candidate.insertText).isEmpty
-     }
--    return success
-   }
- 
--  // swiftlint:disable:next identifier_name
--  func page(up: Bool) -> Bool {
--    var handled = false
--    handled = rimeAPI.change_page(session, up)
--    if handled {
--      rimeUpdate()
++    }
++  }
++
 +  func currentRagImeInputAnchor() -> NSPoint? {
 +    guard let client else { return nil }
 +    if ragImeUsesChromiumCaretCompatibility(), let anchor = ragImeChromiumAssistantAnchor {
 +      return anchor
-     }
--    return handled
++    }
 +    var inputPos = NSRect()
 +    client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputPos)
 +    guard inputPos.width.isFinite, inputPos.height.isFinite, inputPos.origin.x.isFinite, inputPos.origin.y.isFinite else {
@@ -9364,22 +10343,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      ragImeChromiumAssistantAnchor = anchor
 +    }
 +    return anchor
-   }
- 
--  func moveCaret(forward: Bool) -> Bool {
--    let currentCaretPos = rimeAPI.get_caret_pos(session)
--    guard let input = rimeAPI.get_input(session) else { return false }
--    if forward {
--      if currentCaretPos <= 0 {
--        return false
--      }
--      rimeAPI.set_caret_pos(session, currentCaretPos - 1)
--    } else {
--      let inputStr = String(cString: input)
--      if currentCaretPos >= inputStr.utf8.count {
--        return false
--      }
--      rimeAPI.set_caret_pos(session, currentCaretPos + 1)
++  }
++
 +  func ragImeUsesChromiumCaretCompatibility() -> Bool {
 +    currentApp == "com.google.Chrome"
 +      || currentApp == "com.microsoft.edgemac"
@@ -9397,7 +10362,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +  func ragImeCandidateDiagnosticsEnabled() -> Bool {
 +    ragImeBoolEnvEnabled("RAG_IME_CANDIDATE_DIAGNOSTICS", default: false)
 +  }
-+
+ 
 +  func ragImeDisplayBadge(for candidate: RagImeDisplayCandidate) -> String {
 +    guard ragImeCandidateSourceBadgesEnabled() else {
 +      return ""
@@ -9418,8 +10383,73 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      return "input"
 +    case "action":
 +      return "生成"
-+    default:
+     default:
+-      break
 +      return candidate.sourceType
+     }
++  }
+ 
+-    return handled
++  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
++    return ""
+   }
+ 
+-  func selectCandidate(_ index: Int) -> Bool {
+-    let success = rimeAPI.select_candidate_on_current_page(session, index)
+-    if success {
+-      rimeUpdate()
++  func ragImeDisplayIsPostCommitPrediction() -> Bool {
++    return ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty && !ragImeDisplayCandidates.isEmpty
++  }
++
++  func ragImeSelectionKey(for candidate: RagImeDisplayCandidate) -> String {
++    if let key = candidate.selectionKey, !key.isEmpty {
++      return key
+     }
+-    return success
++    return candidate.label
+   }
+ 
+-  // swiftlint:disable:next identifier_name
+-  func page(up: Bool) -> Bool {
+-    var handled = false
+-    handled = rimeAPI.change_page(session, up)
+-    if handled {
+-      rimeUpdate()
++  func ragImeFallbackLabel(index: Int, fallbackLabels: [String]) -> String {
++    if index < fallbackLabels.count && !fallbackLabels[index].isEmpty {
++      return fallbackLabels[index]
+     }
+-    return handled
++    if index == 9 {
++      return "0"
++    }
++    return "\(index + 1)"
+   }
+ 
+-  func moveCaret(forward: Bool) -> Bool {
+-    let currentCaretPos = rimeAPI.get_caret_pos(session)
+-    guard let input = rimeAPI.get_input(session) else { return false }
+-    if forward {
+-      if currentCaretPos <= 0 {
+-        return false
+-      }
+-      rimeAPI.set_caret_pos(session, currentCaretPos - 1)
+-    } else {
+-      let inputStr = String(cString: input)
+-      if currentCaretPos >= inputStr.utf8.count {
+-        return false
+-      }
+-      rimeAPI.set_caret_pos(session, currentCaretPos + 1)
++  func ragImeJSONValueString(_ value: RagImeJSONValue?) -> String? {
++    guard let value else { return nil }
++    switch value {
++    case .string(let text):
++      return text
++    case .number(let number):
++      return String(Int(number))
++    default:
++      return nil
      }
 -    rimeUpdate()
 -    return true
@@ -9427,8 +10457,11 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
  
 -  override func recognizedEvents(_ sender: Any!) -> Int {
 -    return Int(NSEvent.EventTypeMask.Element(arrayLiteral: .keyDown, .flagsChanged).rawValue)
-+  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
-+    return ""
++  func traceRagImePredictionEvents(_ events: [RagImePredictionTraceEvent]?) {
++    guard let events else { return }
++    for item in events {
++      traceRagImeFrontendEvent(item.event, fields: ragImeJSONValueDictionary(item.fields))
++    }
    }
  
 -  override func activateServer(_ sender: Any!) {
@@ -9440,81 +10473,16 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 -      keyboardLayout = "com.apple.keylayout.ABC"
 -    } else if !keyboardLayout.hasPrefix("com.apple.keylayout.") {
 -      keyboardLayout = "com.apple.keylayout.\(keyboardLayout)"
-+  func ragImeDisplayIsPostCommitPrediction() -> Bool {
-+    return ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty && !ragImeDisplayCandidates.isEmpty
-+  }
-+
-+  func ragImeSelectionKey(for candidate: RagImeDisplayCandidate) -> String {
-+    if let key = candidate.selectionKey, !key.isEmpty {
-+      return key
-     }
--    if keyboardLayout != "" {
--      client?.overrideKeyboard(withKeyboardNamed: keyboardLayout)
-+    return candidate.label
-+  }
-+
-+  func ragImeFallbackLabel(index: Int, fallbackLabels: [String]) -> String {
-+    if index < fallbackLabels.count && !fallbackLabels[index].isEmpty {
-+      return fallbackLabels[index]
-     }
--    preedit = ""
--    if session != 0 {
--      let state = rimeAPI.get_option(session, "ascii_mode")
--      let label = rimeAPI.get_state_label_abbreviated(session, "ascii_mode", state, true).asString
--      NSApp.squirrelAppDelegate.updateStatusIcon(asciiMode: state, schemaLabel: label)
-+    if index == 9 {
-+      return "0"
-     }
-+    return "\(index + 1)"
-   }
- 
--  override init!(server: IMKServer!, delegate: Any!, client: Any!) {
--    self.client = client as? IMKTextInput
--    super.init(server: server, delegate: delegate, client: client)
--    createSession()
-+  func ragImeJSONValueString(_ value: RagImeJSONValue?) -> String? {
-+    guard let value else { return nil }
-+    switch value {
-+    case .string(let text):
-+      return text
-+    case .number(let number):
-+      return String(Int(number))
-+    default:
-+      return nil
-+    }
-+  }
- 
--    NotificationCenter.default.addObserver(
--      forName: .init("SquirrelSetASCIIModeNotification"),
--      object: nil,
--      queue: nil
--    ) { [weak self] notification in
--      self?.handleASCIIModeToggle(notification)
-+  func traceRagImePredictionEvents(_ events: [RagImePredictionTraceEvent]?) {
-+    guard let events else { return }
-+    for item in events {
-+      traceRagImeFrontendEvent(item.event, fields: ragImeJSONValueDictionary(item.fields))
-     }
-+  }
- 
--    NotificationCenter.default.addObserver(
--      forName: .init("SquirrelReportASCIIModeNotification"),
--      object: nil,
--      queue: nil
--    ) { [weak self] notification in
--      self?.reportASCIIMode(notification)
 +  func ragImeJSONValueDictionary(_ dictionary: [String: RagImeJSONValue]) -> [String: Any] {
 +    var result: [String: Any] = [:]
 +    for (key, value) in dictionary {
 +      result[key] = ragImeJSONValueToAny(value)
      }
+-    if keyboardLayout != "" {
+-      client?.overrideKeyboard(withKeyboardNamed: keyboardLayout)
 +    return result
-   }
- 
--  override func deactivateServer(_ sender: Any!) {
--    hidePalettes()
--    commitComposition(sender)
--    client = nil
++  }
++
 +  func ragImeJSONValueToAny(_ value: RagImeJSONValue) -> Any {
 +    switch value {
 +    case .string(let text):
@@ -9529,12 +10497,14 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      return ragImeJSONValueDictionary(object)
 +    case .null:
 +      return NSNull()
-+    }
-   }
- 
--  override func hidePalettes() {
--    NSApp.squirrelAppDelegate.panel?.hide()
--    super.hidePalettes()
+     }
+-    preedit = ""
+-    if session != 0 {
+-      let state = rimeAPI.get_option(session, "ascii_mode")
+-      let label = rimeAPI.get_state_label_abbreviated(session, "ascii_mode", state, true).asString
+-      NSApp.squirrelAppDelegate.updateStatusIcon(asciiMode: state, schemaLabel: label)
++  }
++
 +  func traceRagImeFrontendEvent(_ event: String, fields: [String: Any]) {
 +    guard ragImeSidecarClient?.frontendTrace == true else { return }
 +    let sensitiveSafeEvents: Set<String> = [
@@ -9577,15 +10547,13 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      handle.write(data)
 +    } catch {
 +      print("RAG IME frontend trace failed: \(error)")
-+    }
+     }
    }
  
--  override func commitComposition(_ sender: Any!) {
--    self.client ?= sender as? IMKTextInput
--    if session != 0 {
--      if let input = rimeAPI.get_input(session) {
--        commit(string: String(cString: input))
--        rimeAPI.clear_composition(session)
+-  override init!(server: IMKServer!, delegate: Any!, client: Any!) {
+-    self.client = client as? IMKTextInput
+-    super.init(server: server, delegate: delegate, client: client)
+-    createSession()
 +  func ragImePrepareFrontendTraceLog(_ logFile: URL, maxBytes: UInt64) throws {
 +    let manager = FileManager.default
 +    if manager.fileExists(atPath: logFile.path) {
@@ -9603,44 +10571,35 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    if !manager.fileExists(atPath: logFile.path) {
 +      guard manager.createFile(atPath: logFile.path, contents: nil) else {
 +        throw NSError(domain: "RagImeFrontendTrace", code: 1)
-       }
-     }
++      }
++    }
 +    try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logFile.path)
-   }
++  }
  
--  override func menu() -> NSMenu! {
--    let deploy = NSMenuItem(title: NSLocalizedString("Deploy", comment: "Menu item"), action: #selector(deploy), keyEquivalent: "`")
--    deploy.target = self
--    deploy.keyEquivalentModifierMask = [.control, .option]
--    let sync = NSMenuItem(title: NSLocalizedString("Sync user data", comment: "Menu item"), action: #selector(syncUserData), keyEquivalent: "")
--    sync.target = self
--    let logDir = NSMenuItem(title: NSLocalizedString("Logs...", comment: "Menu item"), action: #selector(openLogFolder), keyEquivalent: "")
--    logDir.target = self
--    let setting = NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu item"), action: #selector(openRimeFolder), keyEquivalent: "")
--    setting.target = self
--    let wiki = NSMenuItem(title: NSLocalizedString("Rime Wiki...", comment: "Menu item"), action: #selector(openWiki), keyEquivalent: "")
--    wiki.target = self
--    let update = NSMenuItem(title: NSLocalizedString("Check for updates...", comment: "Menu item"), action: #selector(checkForUpdates), keyEquivalent: "")
--    update.target = self
+-    NotificationCenter.default.addObserver(
+-      forName: .init("SquirrelSetASCIIModeNotification"),
+-      object: nil,
+-      queue: nil
+-    ) { [weak self] notification in
+-      self?.handleASCIIModeToggle(notification)
 +  func ragImeSanitizedTraceFields(_ fields: [String: Any], includeText: Bool) -> [String: Any] {
 +    var sanitized: [String: Any] = [:]
 +    for (key, value) in fields {
 +      sanitized[key] = ragImeSanitizedTraceValue(value, key: key, includeText: includeText)
-+    }
+     }
 +    return sanitized
 +  }
  
--    let menu = NSMenu()
--    menu.addItem(deploy)
--    menu.addItem(sync)
--    menu.addItem(logDir)
--    menu.addItem(setting)
--    menu.addItem(wiki)
--    menu.addItem(update)
+-    NotificationCenter.default.addObserver(
+-      forName: .init("SquirrelReportASCIIModeNotification"),
+-      object: nil,
+-      queue: nil
+-    ) { [weak self] notification in
+-      self?.reportASCIIMode(notification)
 +  func ragImeSanitizedTraceValue(_ value: Any, key: String, includeText: Bool) -> Any {
 +    if includeText {
 +      return value
-+    }
+     }
 +    if let text = value as? String {
 +      guard ragImeTraceKeyCarriesUserText(key), !text.isEmpty else { return text }
 +      if ragImeTraceKeyIsOpaqueTextIdentity(key), text.hasPrefix("sha256:") {
@@ -9662,9 +10621,12 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      return array.map { item in ragImeSanitizedTraceValue(item, key: key, includeText: includeText) }
 +    }
 +    return value
-+  }
+   }
  
--    return menu
+-  override func deactivateServer(_ sender: Any!) {
+-    hidePalettes()
+-    commitComposition(sender)
+-    client = nil
 +  func ragImeTraceKeyCarriesUserText(_ key: String) -> Bool {
 +    return [
 +      "rawInput",
@@ -9688,14 +10650,20 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    ].contains(key)
    }
  
--  @objc func deploy() {
--    NSApp.squirrelAppDelegate.deploy()
+-  override func hidePalettes() {
+-    NSApp.squirrelAppDelegate.panel?.hide()
+-    super.hidePalettes()
 +  func ragImeTraceKeyIsOpaqueTextIdentity(_ key: String) -> Bool {
 +    return ["hardContextAnchor", "queryAnchor", "displayAnchor"].contains(key)
    }
  
--  @objc func syncUserData() {
--    NSApp.squirrelAppDelegate.syncUserData()
+-  override func commitComposition(_ sender: Any!) {
+-    self.client ?= sender as? IMKTextInput
+-    if session != 0 {
+-      if let input = rimeAPI.get_input(session) {
+-        commit(string: String(cString: input))
+-        rimeAPI.clear_composition(session)
+-      }
 +  func ragImeTraceCandidateCounts() -> [String: Any] {
 +    let modelInlineCount = ragImeDisplayCandidates.filter {
 +      $0.sourceType == "model" && ($0.displayLayout ?? "") == "inline" && ($0.displayLane ?? "") == "model"
@@ -9710,10 +10678,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      "ragBlock": ragBlockCount,
 +      "rime": rimeCount,
 +    ]
-   }
- 
--  @objc func openLogFolder() {
--    NSApp.squirrelAppDelegate.openLogFolder()
++  }
++
 +  func ragImeTraceProgressive(_ progressive: RagImeProgressivePayload?) -> [String: Any] {
 +    guard let progressive else {
 +      return [
@@ -9722,7 +10688,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +        "shouldFollowUp": false,
 +        "pendingLanes": [],
 +      ]
-+    }
+     }
 +    return [
 +      "enabled": progressive.enabled,
 +      "partial": progressive.partial,
@@ -9733,16 +10699,33 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    ]
    }
  
--  @objc func openRimeFolder() {
--    NSApp.squirrelAppDelegate.openRimeFolder()
+-  override func menu() -> NSMenu! {
+-    let deploy = NSMenuItem(title: NSLocalizedString("Deploy", comment: "Menu item"), action: #selector(deploy), keyEquivalent: "`")
+-    deploy.target = self
+-    deploy.keyEquivalentModifierMask = [.control, .option]
+-    let sync = NSMenuItem(title: NSLocalizedString("Sync user data", comment: "Menu item"), action: #selector(syncUserData), keyEquivalent: "")
+-    sync.target = self
+-    let logDir = NSMenuItem(title: NSLocalizedString("Logs...", comment: "Menu item"), action: #selector(openLogFolder), keyEquivalent: "")
+-    logDir.target = self
+-    let setting = NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu item"), action: #selector(openRimeFolder), keyEquivalent: "")
+-    setting.target = self
+-    let wiki = NSMenuItem(title: NSLocalizedString("Rime Wiki...", comment: "Menu item"), action: #selector(openWiki), keyEquivalent: "")
+-    wiki.target = self
+-    let update = NSMenuItem(title: NSLocalizedString("Check for updates...", comment: "Menu item"), action: #selector(checkForUpdates), keyEquivalent: "")
+-    update.target = self
 +  func ragImeTraceCandidateSummaries() -> [[String: Any]] {
 +    ragImeDisplayCandidates.enumerated().map { index, candidate in
 +      ragImeTraceCandidateSummary(candidate, index: index)
 +    }
-   }
++  }
  
--  @objc func checkForUpdates() {
--    NSApp.squirrelAppDelegate.checkForUpdates()
+-    let menu = NSMenu()
+-    menu.addItem(deploy)
+-    menu.addItem(sync)
+-    menu.addItem(logDir)
+-    menu.addItem(setting)
+-    menu.addItem(wiki)
+-    menu.addItem(update)
 +  func ragImeTraceCandidateSummary(_ candidate: RagImeDisplayCandidate, index: Int) -> [String: Any] {
 +    [
 +      "index": index,
@@ -9773,10 +10756,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      "compositionHash": ragImeDisplayCandidateStringMetadata(candidate, "compositionHash"),
 +      "committedContextHash": ragImeDisplayCandidateStringMetadata(candidate, "committedContextHash"),
 +    ]
-   }
++  }
  
--  @objc func openWiki() {
--    NSApp.squirrelAppDelegate.openWiki()
+-    return menu
 +  func ragImeOverlayTraceCandidateSummary(_ candidate: RagImeDisplayCandidate, index: Int) -> [String: Any] {
 +    let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
 +    return [
@@ -9794,7 +10776,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    ]
    }
  
--  private(set) var specialCommentIndices: [ReservedPropertyKey: Set<Int>] = [:]
+-  @objc func deploy() {
+-    NSApp.squirrelAppDelegate.deploy()
 +  func clearRagImeDisplayCandidates() {
 +    dismissRagImeAssistantOverlay(reason: "clear_display_candidates")
 +    ragImeForegroundCaptureToken = nil
@@ -9823,19 +10806,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    ragImeDisplayExpiryWorkItem?.cancel()
 +    ragImeDisplayExpiryWorkItem = nil
 +    resetRagImePendingContinuationState()
-+  }
+   }
  
--  func handleReservedProperty(key rawKey: String, value rawValue: String, for sessionId: RimeSessionId) throws(ReservedPropertyError) {
--    guard session == sessionId, session != 0, rimeAPI.find_session(session) else { return }
--    guard let key = ReservedPropertyKey(rawValue: rawKey) else { throw .unknownInput(rawKey) }
--    let parsed = try ReservedPropertyValue.parse(rawValue)
--    switch key {
--    case .commentHighlight:
--      specialCommentIndices[.commentHighlight] = try parsed.indices()
--    case .commentWarning:
--      specialCommentIndices[.commentWarning] = try parsed.indices()
--    case .refreshUI:
--      rimeUpdate(clearReservedComments: false)
+-  @objc func syncUserData() {
+-    NSApp.squirrelAppDelegate.syncUserData()
 +  func recordRagImeSideCandidateCommit(
 +    _ candidate: RagImeDisplayCandidate,
 +    shownCandidates: [RagImeDisplayCandidate],
@@ -9888,11 +10862,11 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +          completion(false)
 +        }
 +      }
-     }
++    }
    }
  
--  deinit {
--    destroySession()
+-  @objc func openLogFolder() {
+-    NSApp.squirrelAppDelegate.openLogFolder()
 +  func rememberRagImeCommittedContext(_ text: String) {
 +    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
 +    guard !normalized.isEmpty else { return }
@@ -9900,8 +10874,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    let combined = [ragImeCommittedContext, normalized].filter { !$0.isEmpty }.joined(separator: " ")
 +    ragImeCommittedContext = boundedRagImeCommittedContext(combined)
 +    ragImeCommittedContextUpdatedAt = Date()
-+  }
-+
+   }
+ 
+-  @objc func openRimeFolder() {
+-    NSApp.squirrelAppDelegate.openRimeFolder()
 +  func rememberRagImeActiveInputFragment(_ text: String) {
 +    guard !text.isEmpty else { return }
 +    let combined = ragImeActiveInputBuffer + text
@@ -9910,16 +10886,20 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      ? String(normalized.suffix(ragImeActiveInputBufferLimit))
 +      : normalized
 +    ragImeActiveInputBufferUpdatedAt = Date()
-+  }
-+
+   }
+ 
+-  @objc func checkForUpdates() {
+-    NSApp.squirrelAppDelegate.checkForUpdates()
 +  func removeLastRagImeActiveInputCharacter() {
 +    var value = ragImeActiveInputBuffer
 +    guard !value.isEmpty else { return }
 +    value.removeLast()
 +    ragImeActiveInputBuffer = value
 +    ragImeActiveInputBufferUpdatedAt = value.isEmpty ? .distantPast : Date()
-+  }
-+
+   }
+ 
+-  @objc func openWiki() {
+-    NSApp.squirrelAppDelegate.openWiki()
 +  func finalizeRagImeActiveInputBuffer(reason: String, app: String) {
 +    let text = ragImeCompactWhitespace(ragImeActiveInputBuffer)
 +    ragImeActiveInputBuffer = ""
@@ -9973,36 +10953,50 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      }
 +    }
    }
--}
  
--private extension SquirrelInputController {
+-  private(set) var specialCommentIndices: [ReservedPropertyKey: Set<Int>] = [:]
 +  func removeLastRagImeCommittedContextCharacterIfNoComposition() {
 +    let currentRawInput = session != 0 ? (rimeAPI.get_input(session).map { String(cString: $0) } ?? "") : ""
 +    guard currentRawInput.isEmpty else { return }
 +    removeLastRagImeActiveInputCharacter()
 +    removeLastRagImeCommittedContextCharacter()
 +  }
-+
+ 
+-  func handleReservedProperty(key rawKey: String, value rawValue: String, for sessionId: RimeSessionId) throws(ReservedPropertyError) {
+-    guard session == sessionId, session != 0, rimeAPI.find_session(session) else { return }
+-    guard let key = ReservedPropertyKey(rawValue: rawKey) else { throw .unknownInput(rawKey) }
+-    let parsed = try ReservedPropertyValue.parse(rawValue)
+-    switch key {
+-    case .commentHighlight:
+-      specialCommentIndices[.commentHighlight] = try parsed.indices()
+-    case .commentWarning:
+-      specialCommentIndices[.commentWarning] = try parsed.indices()
+-    case .refreshUI:
+-      rimeUpdate(clearReservedComments: false)
 +  func removeLastRagImeCommittedContextCharacter() {
 +    var context = ragImeCommittedContext.trimmingCharacters(in: .whitespacesAndNewlines)
 +    guard !context.isEmpty else {
 +      ragImeCommittedContext = ""
 +      ragImeCommittedContextUpdatedAt = .distantPast
 +      return
-+    }
+     }
 +    context.removeLast()
 +    ragImeCommittedContext = boundedRagImeCommittedContext(context)
 +    ragImeCommittedContextUpdatedAt = Date()
-+  }
-+
+   }
+ 
+-  deinit {
+-    destroySession()
 +  func boundedRagImeCommittedContext(_ text: String) -> String {
 +    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
 +    if normalized.count > ragImeCommittedContextLimit {
 +      return String(normalized.suffix(ragImeCommittedContextLimit))
 +    }
 +    return normalized
-+  }
-+
+   }
+-}
+ 
+-private extension SquirrelInputController {
 +  @discardableResult
 +  func syncRagImeCommittedContextFromClient(excludingMarkedText markedText: String = "") -> String {
 +    let actualContext = actualRagImeCommittedContextFromClient(fallback: ragImeCommittedContext, excludingMarkedText: markedText)
@@ -10061,7 +11055,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
  
    func onChordTimer(_: Timer) {
      var processedKeys = false
-@@ -359,7 +5540,12 @@ private extension SquirrelInputController {
+@@ -359,7 +5797,12 @@ private extension SquirrelInputController {
      schemaId = ""
  
      if session != 0 {
@@ -10074,7 +11068,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
      }
    }
  
-@@ -426,15 +5612,39 @@ private extension SquirrelInputController {
+@@ -426,15 +5869,39 @@ private extension SquirrelInputController {
    func rimeConsumeCommittedText() {
      var commitText = RimeCommit.rimeStructInit()
      if rimeAPI.get_commit(session, &commitText) {
@@ -10116,7 +11110,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +5656,7 @@ private extension SquirrelInputController {
+@@ -446,6 +5913,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -10124,7 +11118,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +5669,14 @@ private extension SquirrelInputController {
+@@ -458,13 +5926,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -10140,7 +11134,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -525,11 +5737,11 @@ private extension SquirrelInputController {
+@@ -525,11 +5994,11 @@ private extension SquirrelInputController {
          comments.append(candidate.comment.map { String(cString: $0) } ?? "")
        }
        var labels = [String]()
@@ -10153,7 +11147,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
          for i in 0..<pageSize {
            labels.append(select_labels[i].map { String(cString: $0) } ?? "")
          }
-@@ -537,22 +5749,78 @@ private extension SquirrelInputController {
+@@ -537,22 +6006,79 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -10238,7 +11232,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
    }
  
    func show(preedit: String, selRange: NSRange, caretPos: Int) {
-@@ -578,15 +5846,35 @@ private extension SquirrelInputController {
+@@ -578,15 +6104,35 @@ private extension SquirrelInputController {
    }
  
    // swiftlint:disable:next function_parameter_count
@@ -10284,7 +11278,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
    }
  
 diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
-index a9e2dae29a1029bb1659f89ba97b888fc34f7183..5c3a32c6fc0307b7346b9a7718bc0a2eb9fb3779 100644
+index a9e2dae..5c3a32c 100644
 --- a/sources/SquirrelPanel.swift
 +++ b/sources/SquirrelPanel.swift
 @@ -57,6 +57,21 @@ final class SquirrelPanel: NSPanel {

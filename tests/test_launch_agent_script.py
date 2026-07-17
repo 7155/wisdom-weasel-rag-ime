@@ -320,6 +320,11 @@ class LaunchAgentScriptTests(unittest.TestCase):
         launch_env = payload["EnvironmentVariables"]
         self.assertEqual(launch_env["RAG_IME_PI_ENABLED"], "1")
         self.assertEqual(launch_env["RAG_IME_PI_VERSION"], "0.80.7")
+        self.assertEqual(
+            launch_env["RAG_IME_PI_DEBUG_CONTEXT_DIR"],
+            "/Volumes/undo 4t/Archives/RagIme/debug-context",
+        )
+        self.assertEqual(launch_env["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "1073741824")
         self.assertEqual(launch_env["RAG_IME_AGENT_TOOL_URL"], "http://127.0.0.1:8768/api/agent/tool/execute")
         self.assertEqual(launch_env["RAG_IME_REMOTE_ALLOWED_LOGINS"], "owner@example.com")
         self.assertIn("--web-dist", payload["ProgramArguments"])

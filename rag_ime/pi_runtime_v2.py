@@ -277,6 +277,8 @@ class PiRuntimeHostManager:
         self._client: PiRuntimeHostClient | None = None
         self._states: dict[str, _HostedSessionState] = {}
         self._open_sessions: set[str] = set()
+        self._active_completion_ids: set[str] = set()
+        self._completion_sinks: dict[str, Callable[[str], None]] = {}
         self._status = "stopped" if config.enabled else "disabled"
         self._last_error = ""
         self._host_capabilities: dict[str, object] = {}
@@ -307,7 +309,8 @@ class PiRuntimeHostManager:
         with self._lock:
             busy = sorted(session_id for session_id, state in self._states.items() if state.turn_id)
             open_sessions = sorted(self._open_sessions)
-            status = "busy" if busy else self._status
+            active_completions = sorted(self._active_completion_ids)
+            status = "busy" if busy or active_completions else self._status
             last_error = self._last_error
             capabilities = dict(self._host_capabilities)
             host_negotiated = self._client is not None and self._client.running
@@ -330,6 +333,7 @@ class PiRuntimeHostManager:
             "idleTimeoutSeconds": self.config.idle_timeout_seconds,
             "activeSessionId": busy[0] if busy else (open_sessions[0] if len(open_sessions) == 1 else None),
             "activeSessionIds": busy,
+            "activeCompletionIds": active_completions,
             "openSessionIds": open_sessions,
             "lastError": last_error,
             "capabilities": {
@@ -352,7 +356,13 @@ class PiRuntimeHostManager:
                 "managedPlugins": bool(capabilities.get("managedPlugins", True)),
                 "sessionSnapshot": True,
                 "settledEvents": True,
+                "statelessCompletion": (
+                    bool(capabilities.get("statelessCompletion"))
+                    if host_negotiated
+                    else installed and str(self.config.protocol_version or "") == _PROTOCOL_VERSION
+                ),
                 "transientContext": bool(capabilities.get("transientContext")),
+                "persistentDebugContext": bool(capabilities.get("persistentDebugContext")),
                 "imageAttachments": True,
                 "coordinator": True,
                 "modelConfigured": self.config.model_configured,
@@ -418,8 +428,11 @@ class PiRuntimeHostManager:
                 "cwd": cwd,
                 "systemPrompt": self.config.system_prompt_for_session(session),
                 "toolManifest": self.tool_catalog(session_id),
-                "noContextFiles": str(session.get("toolProfileVersion") or "")
-                in {"ime-surface-v1", "voice-refinement-v1"},
+                "noContextFiles": (
+                    str(session.get("toolProfileVersion") or "")
+                    in {"ime-surface-v1", "voice-refinement-v1"}
+                    or not bool(session.get("projectContextEnabled", True))
+                ),
             }
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
@@ -908,6 +921,82 @@ class PiRuntimeHostManager:
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
         return models
 
+    def complete_once(
+        self,
+        *,
+        request_id: str,
+        provider: str,
+        model_id: str,
+        thinking_level: str,
+        message: str,
+        on_text_delta: Callable[[str], None] | None = None,
+        timeout_seconds: float = 120.0,
+    ) -> dict[str, object]:
+        normalized_request_id = _model_reference_part(
+            request_id,
+            field="requestId",
+            maximum=200,
+        )
+        normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
+        normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)
+        normalized_thinking = str(thinking_level or "").strip().lower()
+        if normalized_thinking not in {"off", "low"}:
+            raise ValueError("stateless Pi completion only supports off or low thinking")
+        normalized_message = str(message or "").strip()
+        if not normalized_message:
+            raise ValueError("stateless Pi completion message is required")
+        bounded_timeout = max(1.0, min(300.0, float(timeout_seconds)))
+        params: dict[str, object] = {
+            "requestId": normalized_request_id,
+            "provider": normalized_provider,
+            "modelId": normalized_model,
+            "thinkingLevel": normalized_thinking,
+            "message": normalized_message[:64_000],
+            "timeoutMs": int(bounded_timeout * 1000),
+        }
+        with self._lifecycle_lock:
+            client = self._host()
+            with self._lock:
+                if normalized_request_id in self._active_completion_ids:
+                    raise PiRuntimeError("Pi stateless completion request is already active")
+                self._cancel_idle_locked()
+                self._active_completion_ids.add(normalized_request_id)
+                if on_text_delta is not None:
+                    self._completion_sinks[normalized_request_id] = on_text_delta
+                self._status = "busy"
+        try:
+            result = client.send(
+                "completion.once",
+                params,
+                timeout=bounded_timeout + 5.0,
+            )
+            return result
+        finally:
+            with self._lock:
+                self._active_completion_ids.discard(normalized_request_id)
+                self._completion_sinks.pop(normalized_request_id, None)
+                if not any(state.turn_id for state in self._states.values()):
+                    self._status = "ready"
+                self._schedule_idle_locked()
+
+    def cancel_completion(self, request_id: str) -> bool:
+        try:
+            normalized = _model_reference_part(request_id, field="requestId", maximum=200)
+        except ValueError:
+            return False
+        with self._lock:
+            if normalized not in self._active_completion_ids:
+                return False
+            client = self._client
+        if client is None or not client.running:
+            return False
+        result = client.send(
+            "completion.cancel",
+            {"requestId": normalized},
+            timeout=min(5.0, max(1.0, self.config.command_timeout_seconds)),
+        )
+        return result.get("cancelled") is True
+
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
         normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
         normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)
@@ -1097,6 +1186,8 @@ class PiRuntimeHostManager:
                     if state.abort_timer is not None:
                         state.abort_timer.cancel()
                 self._open_sessions.clear()
+                self._active_completion_ids.clear()
+                self._completion_sinks.clear()
                 self._states.clear()
                 self._status = "stopped" if self.config.enabled else "disabled"
             if client is not None:
@@ -1120,10 +1211,21 @@ class PiRuntimeHostManager:
             "runtime.notice",
         }:
             return
+        raw = dict(_mapping(envelope.get("payload")))
+        if envelope.get("event") == "runtime.notice" and str(raw.get("type") or "") == "completion_text_delta":
+            request_id = str(raw.get("requestId") or "")
+            delta = str(raw.get("delta") or "")
+            with self._lock:
+                sink = self._completion_sinks.get(request_id)
+            if sink is not None and delta:
+                try:
+                    sink(delta)
+                except Exception:
+                    pass
+            return
         session_id = str(envelope.get("sessionId") or "")
         if not session_id:
             return
-        raw = dict(_mapping(envelope.get("payload")))
         turn_id = str(envelope.get("turnId") or "")
         client_message_id = str(envelope.get("clientMessageId") or "")
         event_type = str(raw.get("type") or "")
@@ -1467,7 +1569,11 @@ class PiRuntimeHostManager:
 
     def _schedule_idle_locked(self) -> None:
         self._cancel_idle_locked()
-        if self.config.idle_timeout_seconds <= 0 or any(state.turn_id for state in self._states.values()):
+        if (
+            self.config.idle_timeout_seconds <= 0
+            or self._active_completion_ids
+            or any(state.turn_id for state in self._states.values())
+        ):
             return
         timer = threading.Timer(self.config.idle_timeout_seconds, self.stop)
         timer.daemon = True

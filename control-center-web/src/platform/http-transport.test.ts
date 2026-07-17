@@ -37,6 +37,30 @@ describe('HttpControlTransport', () => {
     });
   });
 
+  it('marks bodyless delete requests as JSON management writes', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8768',
+      fetch: fetchMock,
+    });
+
+    await transport.request({
+      pathId: 'agent.session.delete',
+      params: { sessionId: 'agent:test-delete' },
+    });
+
+    expect(calls[0]?.url).toBe('http://127.0.0.1:8768/api/agent/sessions/agent%3Atest-delete');
+    expect(calls[0]?.init?.method).toBe('DELETE');
+    expect(calls[0]?.init?.body).toBeUndefined();
+    expect(new Headers(calls[0]?.init?.headers).get('Content-Type')).toBe('application/json');
+  });
+
   it('validates requested response contracts at the HTTP boundary', async () => {
     const transport = new HttpControlTransport({
       baseUrl: 'http://127.0.0.1:8766',

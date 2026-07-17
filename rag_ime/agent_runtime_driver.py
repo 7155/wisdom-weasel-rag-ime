@@ -100,6 +100,20 @@ class AgentRuntimeDriver(Protocol):
 
     def available_models(self) -> list[dict[str, object]]: ...
 
+    def complete_once(
+        self,
+        *,
+        request_id: str,
+        provider: str,
+        model_id: str,
+        thinking_level: str,
+        message: str,
+        on_text_delta: Callable[[str], None] | None = None,
+        timeout_seconds: float = 120.0,
+    ) -> dict[str, object]: ...
+
+    def cancel_completion(self, request_id: str) -> bool: ...
+
     def set_model(
         self,
         session_id: str,

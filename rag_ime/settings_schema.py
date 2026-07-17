@@ -143,6 +143,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     },
     "activeRag": {
         "enabled": True,
+        "quickModel": "deepseek/deepseek-v4-flash",
+        "quickThinkingLevel": "off",
         "shortcut": "ctrl+.",
         "capture": {
             "accessibility": True,
@@ -271,6 +273,20 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "label": "Active RAG",
             "fields": [
                 {"key": "activeRag.enabled", "type": "boolean", "label": "启用 Active RAG", "default": True},
+                {
+                    "key": "activeRag.quickModel",
+                    "type": "pi-model",
+                    "label": "闪电生成模型",
+                    "default": "deepseek/deepseek-v4-flash",
+                },
+                {
+                    "key": "activeRag.quickThinkingLevel",
+                    "type": "pi-thinking",
+                    "label": "闪电生成思考",
+                    "default": "off",
+                    "modelKey": "activeRag.quickModel",
+                    "options": ["off", "low"],
+                },
                 {"key": "activeRag.shortcut", "type": "shortcut", "label": "快捷键", "default": "ctrl+."},
                 {"key": "activeRag.capture.accessibility", "type": "boolean", "label": "优先读取系统选区", "default": True},
                 {"key": "activeRag.capture.clipboardFallback", "type": "boolean", "label": "显式触发允许剪贴板 fallback", "default": True},
@@ -435,6 +451,8 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "display.badges.status": {"expert": True},
     "display.badges.action": {"expert": True},
     "activeRag.shortcut": {"description": "显式生成快捷键", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "activeRag.quickModel": {"description": "闪电按钮每次从 Pi 实时目录校验并调用的单次回复模型"},
+    "activeRag.quickThinkingLevel": {"description": "闪电按钮只允许关闭或低思考；不创建会话、不加载工具"},
     "activeRag.latencyBudgetMs": {"description": "显式多段生成的最长等待时间", "min": 1000, "max": 300000, "step": 1000, "unit": "ms"},
     "activeRag.allowRemoteModel": {"description": "只允许显式 Active RAG 使用远程模型", "risk": "sensitive", "validation": {"confirmText": "ALLOW REMOTE MODEL"}},
     "knowledgeLibrary.parser.mineru.enabled": {

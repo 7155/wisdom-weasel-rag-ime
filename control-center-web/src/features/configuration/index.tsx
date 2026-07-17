@@ -33,6 +33,14 @@ import './configuration.css';
 
 type DraftValue = string | number | boolean;
 
+type PiModelOption = {
+  id: string;
+  name: string;
+  provider: string;
+  reference: string;
+  thinkingLevels: string[];
+};
+
 export function ConfigurationFeature() {
   const queries = useConfigurationQueries();
   const mutationBoundary = useConfigurationMutationBoundary();
@@ -47,6 +55,10 @@ export function ConfigurationFeature() {
     : null;
   const schemaEnvelope = asRecord(queries.schema.data);
   const sections = arrayRecords(schemaEnvelope.sections);
+  const piModels = useMemo(
+    () => parsePiModelOptions(queries.modelCatalog.data),
+    [queries.modelCatalog.data],
+  );
   const [activeSection, setActiveSection] = useState('');
   const [expertMode, setExpertMode] = useState(false);
   const [changes, setChanges] = useState<Record<string, DraftValue>>({});
@@ -79,16 +91,43 @@ export function ConfigurationFeature() {
     isSecretConfigurationField(findField(sections, key), key)
     && !Object.is(valueAt(settings, key), next)
   ));
-  const rawError = queries.settings.error ?? queries.schema.error ?? queries.capabilities.error;
+  const rawError = queries.settings.error
+    ?? queries.schema.error
+    ?? queries.capabilities.error;
   const error = rawError ? new Error(publicErrorText(rawError, '无法读取本机设置，请刷新后重试。')) : null;
-  const pending = queries.settings.isPending || queries.schema.isPending || queries.capabilities.isPending;
+  const pending = queries.settings.isPending
+    || queries.schema.isPending
+    || queries.capabilities.isPending
+    || (queries.modelCatalogSupported && queries.modelCatalog.isPending);
   const refresh = () => {
     const refreshes = [
       queries.settings.refetch(),
       queries.schema.refetch(),
       queries.capabilities.refetch(),
     ];
+    if (queries.modelCatalogSupported) refreshes.push(queries.modelCatalog.refetch());
     void Promise.all(refreshes);
+  };
+
+  const updateField = (field: Record<string, unknown>, value: DraftValue) => {
+    const key = stringValue(field.key);
+    setChanges((current) => {
+      const next = { ...current, [key]: value };
+      const type = stringValue(field.type);
+      if (type !== 'pi-model') return next;
+      const thinkingField = sections
+        .flatMap((item) => arrayRecords(item.fields))
+        .find((item) => stringValue(item.modelKey) === key);
+      const thinkingKey = stringValue(thinkingField?.key);
+      if (!thinkingKey) return next;
+      const selected = piModels.find((model) => model.reference === String(value));
+      const supported = oneShotThinkingLevels(selected);
+      const currentThinking = String(current[thinkingKey] ?? valueAt(settings, thinkingKey) ?? '');
+      if (!supported.includes(currentThinking) && supported.length) {
+        next[thinkingKey] = supported.includes('off') ? 'off' : supported[0];
+      }
+      return next;
+    });
   };
 
   return (
@@ -134,9 +173,13 @@ export function ConfigurationFeature() {
                 <div className="mgmt-list">
                   {fields.map((field) => (
                     <SettingField
+                      changes={changes}
                       field={field}
                       key={stringValue(field.key)}
-                      onChange={(value) => setChanges((current) => ({ ...current, [stringValue(field.key)]: value }))}
+                      modelCatalogSupported={queries.modelCatalogSupported}
+                      models={piModels}
+                      onChange={(value) => updateField(field, value)}
+                      settings={settings}
                       value={changes[stringValue(field.key)] ?? valueAt(settings, stringValue(field.key))}
                     />
                   ))}
@@ -245,13 +288,76 @@ export function ConfigurationFeature() {
   );
 }
 
-function SettingField({ field, onChange, value }: { field: Record<string, unknown>; onChange: (value: DraftValue) => void; value: unknown }) {
+function SettingField({
+  changes,
+  field,
+  modelCatalogSupported,
+  models,
+  onChange,
+  settings,
+  value,
+}: {
+  changes: Record<string, DraftValue>;
+  field: Record<string, unknown>;
+  modelCatalogSupported: boolean;
+  models: PiModelOption[];
+  onChange: (value: DraftValue) => void;
+  settings: Record<string, unknown>;
+  value: unknown;
+}) {
   const key = stringValue(field.key);
   const label = publicFieldLabel(key, stringValue(field.label));
   const description = publicDescription(stringValue(field.description));
   const type = stringValue(field.type, 'string');
   const secret = isSecretConfigurationField(field, key);
   const id = `configuration-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+
+  if (type === 'pi-model' && !secret) {
+    const available = models;
+    if (!modelCatalogSupported) {
+      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="Pi 实时模型目录不可用" tone="warning" /></div>;
+    }
+    if (!available.length) {
+      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="Pi 当前没有可用模型" tone="warning" /></div>;
+    }
+    return (
+      <div className="mgmt-list__row">
+        <Field description={description} htmlFor={id} label={label}>
+          <Select
+            id={id}
+            onValueChange={onChange}
+            options={available.map((model) => ({
+              value: model.reference,
+              label: `${model.name} (${model.reference})`,
+            }))}
+            value={stringValue(value)}
+          />
+        </Field>
+      </div>
+    );
+  }
+
+  if (type === 'pi-thinking' && !secret) {
+    const modelKey = stringValue(field.modelKey);
+    const modelReference = String(changes[modelKey] ?? valueAt(settings, modelKey) ?? '');
+    const selected = models.find((model) => model.reference === modelReference);
+    const levels = oneShotThinkingLevels(selected);
+    if (!modelCatalogSupported || !selected || !levels.length) {
+      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="请先选择 Pi 可用模型" tone="warning" /></div>;
+    }
+    return (
+      <div className="mgmt-list__row">
+        <Field description={description} htmlFor={id} label={label}>
+          <Select
+            id={id}
+            onValueChange={onChange}
+            options={levels.map((level) => ({ value: level, label: optionLabel(key, level) }))}
+            value={stringValue(value)}
+          />
+        </Field>
+      </div>
+    );
+  }
 
   if (type === 'boolean' && !secret) {
     return <div className="mgmt-list__row"><Switch checked={value === true} description={description} label={label} onCheckedChange={onChange} /></div>;
@@ -329,9 +435,33 @@ function previewDiffItems(rows: readonly { key: string; before: string; after: s
 }
 
 const sectionLabels: Record<string, string> = { interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '规划', agent: 'Agent', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
-const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'models.activeRag': '深度生成模型', 'models.offlineCleanup': '离线整理模型', 'agent.ui.showReasoningSummary': '显示处理进度', 'managementSecurity.requireToken': '限制本机管理请求' };
+const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'models.activeRag': '深度生成模型', 'models.offlineCleanup': '离线整理模型', 'activeRag.quickModel': '闪电生成模型', 'activeRag.quickThinkingLevel': '闪电生成思考', 'agent.ui.showReasoningSummary': '显示处理进度', 'managementSecurity.requireToken': '限制本机管理请求' };
 
 function publicSectionLabel(id: string, label: string): string { return sectionLabels[id] ?? (/[\u3400-\u9fff]/.test(label) ? label : '其他设置'); }
 function publicFieldLabel(key: string, label: string): string { return fieldLabels[key] ?? (label && !/pathId|schema|revision|hash|receipt|provider/i.test(label) ? publicDescription(label) : '设置项'); }
 function publicDescription(value: string): string { return value.replace(/Sidecar/gi, '后台服务').replace(/SQLite FTS5/gi, '本机索引').replace(/BM25/gi, '关键词检索').replace(/Hybrid RAG/gi, '多路知识检索').replace(/Active RAG/gi, '深度生成').replace(/RAG/gi, '知识检索').replace(/fallback/gi, '备用方式').replace(/TTL/gi, '保留时间').replace(/token/gi, '容量').replace(/POST/gi, '管理请求').replace(/patch/gi, '配置'); }
-function optionLabel(key: string, value: string, _field: Record<string, unknown> = {}): string { return ({ pass_through: '按原数字键处理', select_prediction: '选择对应候选', accept_top_prediction: '接受首个预测', rime_default: '保持输入法默认', disabled: '不使用', compact: '紧凑', expanded: '展开', replace_selection: '替换选中内容', insert_after_selection: '插入到选中内容后', show_only: '只显示不插入', lazy: '使用时启动', 'sichuan-mild': '四川轻度模糊音', none: '关闭' } as Record<string, string>)[value] ?? value; }
+function optionLabel(key: string, value: string, _field: Record<string, unknown> = {}): string { return ({ pass_through: '按原数字键处理', select_prediction: '选择对应候选', accept_top_prediction: '接受首个预测', rime_default: '保持输入法默认', disabled: '不使用', compact: '紧凑', expanded: '展开', replace_selection: '替换选中内容', insert_after_selection: '插入到选中内容后', show_only: '只显示不插入', lazy: '使用时启动', 'sichuan-mild': '四川轻度模糊音', none: '关闭', off: '关闭', low: '低' } as Record<string, string>)[value] ?? value; }
+
+function parsePiModelOptions(value: unknown): PiModelOption[] {
+  const envelope = asRecord(value);
+  return arrayRecords(envelope.providers).flatMap((provider) => (
+    arrayRecords(provider.models).map((model) => {
+      const providerId = stringValue(model.provider, stringValue(provider.id));
+      const id = stringValue(model.id);
+      return {
+        id,
+        name: stringValue(model.name, id),
+        provider: providerId,
+        reference: providerId && id ? `${providerId}/${id}` : '',
+        thinkingLevels: Array.isArray(model.thinkingLevels)
+          ? model.thinkingLevels.map(String)
+          : [],
+      };
+    })
+  )).filter((model) => model.reference);
+}
+
+function oneShotThinkingLevels(model: PiModelOption | undefined): string[] {
+  if (!model) return [];
+  return ['off', 'low'].filter((level) => model.thinkingLevels.includes(level));
+}

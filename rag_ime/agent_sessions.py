@@ -57,6 +57,7 @@ class AgentSessionStore:
         model_profile: str = "deepseek-v4",
         thinking_level: str = "",
         tool_profile_version: str = "control-center-v1",
+        project_context_enabled: bool = True,
         workspace_roots: Iterable[str] = (),
         shell_policy_version: str | None = None,
         session_kind: str = "conversation",
@@ -97,9 +98,10 @@ class AgentSessionStore:
                 """
                 INSERT INTO agent_sessions(
                     id, title, session_mode, role_id, role_version, model_profile, thinking_level,
-                    tool_profile_version, workspace_roots_json, shell_policy_version,
-                    session_kind, created_at_ms, updated_at_ms, last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                    tool_profile_version, project_context_enabled, workspace_roots_json,
+                    shell_policy_version, session_kind, created_at_ms, updated_at_ms,
+                    last_opened_at_ms, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -110,6 +112,7 @@ class AgentSessionStore:
                     model_profile,
                     normalized_thinking,
                     tool_profile_version,
+                    1 if project_context_enabled else 0,
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     shell_policy,
                     normalized_kind,
@@ -397,6 +400,7 @@ class AgentSessionStore:
         mode: str,
         tool_profile_version: str,
         allowed_tools: Iterable[str] | None,
+        project_context_enabled: bool | None = None,
         workspace_roots: Iterable[str] | None = None,
         updated_at_ms: int | None = None,
     ) -> dict[str, object]:
@@ -413,6 +417,11 @@ class AgentSessionStore:
         if normalized_mode == "assistant":
             roots = []
         normalized_tools = _allowed_tools(allowed_tools)
+        context_enabled = (
+            bool(current.get("projectContextEnabled", True))
+            if project_context_enabled is None
+            else bool(project_context_enabled)
+        )
         shell_policy = (
             "coordinator-per-command-v1"
             if normalized_mode == "coordinator"
@@ -424,7 +433,7 @@ class AgentSessionStore:
                 """
                 UPDATE agent_sessions
                 SET session_mode = ?, tool_profile_version = ?, workspace_roots_json = ?,
-                    shell_policy_version = ?, updated_at_ms = ?
+                    shell_policy_version = ?, project_context_enabled = ?, updated_at_ms = ?
                 WHERE id = ?
                 """,
                 (
@@ -432,6 +441,7 @@ class AgentSessionStore:
                     profile,
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     shell_policy,
+                    1 if context_enabled else 0,
                     timestamp,
                     session_id,
                 ),
@@ -1079,6 +1089,7 @@ def _session_payload(
         "toolProfileVersion": str(row["tool_profile_version"]),
         "toolAllowlistMode": "explicit" if allowed_tools is not None else "profile",
         "allowedTools": allowed_tools or [],
+        "projectContextEnabled": bool(row["project_context_enabled"]),
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
         "lastOpenedAtMs": int(row["last_opened_at_ms"]),

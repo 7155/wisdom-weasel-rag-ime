@@ -30,7 +30,7 @@ export const SessionRail = forwardRef<HTMLElement, {
   onCreate: () => void;
   onShowArchivedChange?: (value: boolean) => void;
   onArchive?: (sessionId: string, archived: boolean) => void;
-  onDelete?: (sessionId: string) => void;
+  onDelete?: (sessionId: string) => void | Promise<void>;
   onClose?: () => void;
 }>(function SessionRail({
   sessions,
@@ -49,6 +49,8 @@ export const SessionRail = forwardRef<HTMLElement, {
 }, ref) {
   const [query, setQuery] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary>();
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const groups = useMemo(() => projectGroups(sessions, query), [query, sessions]);
   const projectCount = new Set(sessions.map((session) => primaryRoot(session)).filter(Boolean)).size;
   return (
@@ -116,7 +118,10 @@ export const SessionRail = forwardRef<HTMLElement, {
                       {session.status === 'archived' ? '恢复任务' : '归档任务'}
                     </MenuItem>
                     <MenuSeparator />
-                    <MenuItem className="agent-session-row__delete" onSelect={() => setDeleteTarget(session)}>
+                    <MenuItem className="agent-session-row__delete" onSelect={() => {
+                      setDeleteError('');
+                      setDeleteTarget(session);
+                    }}>
                       <Trash2 size={15} />
                       删除任务
                     </MenuItem>
@@ -127,17 +132,37 @@ export const SessionRail = forwardRef<HTMLElement, {
           </section>
         ))}
       </div>
-      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(undefined); }}>
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => {
+        if (!open && !deleting) {
+          setDeleteError('');
+          setDeleteTarget(undefined);
+        }
+      }}>
         <DialogContent className="agent-session-delete-dialog">
           <DialogHeader>
             <DialogTitle>删除“{deleteTarget?.title ?? '任务'}”</DialogTitle>
             <DialogDescription>将删除这条对话及其本地附件。需要暂时隐藏时，请改用归档。</DialogDescription>
           </DialogHeader>
+          {deleteError ? <p className="agent-session-delete-dialog__error" role="alert">{deleteError}</p> : null}
           <DialogFooter>
-            <Button variant="quiet" onClick={() => setDeleteTarget(undefined)}>取消</Button>
-            <Button variant="danger" leadingIcon={<Trash2 size={15} />} onClick={() => {
-              if (deleteTarget) onDelete?.(deleteTarget.id);
+            <Button variant="quiet" disabled={deleting} onClick={() => {
+              setDeleteError('');
               setDeleteTarget(undefined);
+            }}>取消</Button>
+            <Button variant="danger" loading={deleting} leadingIcon={<Trash2 size={15} />} onClick={async () => {
+              if (!deleteTarget) return;
+              setDeleting(true);
+              setDeleteError('');
+              try {
+                await onDelete?.(deleteTarget.id);
+                setDeleteTarget(undefined);
+              } catch (error) {
+                setDeleteError(error instanceof Error && error.message.trim()
+                  ? error.message
+                  : '删除未完成，请检查连接后重试。任务仍保留在列表中。');
+              } finally {
+                setDeleting(false);
+              }
             }}>删除</Button>
           </DialogFooter>
         </DialogContent>

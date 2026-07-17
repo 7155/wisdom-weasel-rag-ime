@@ -109,6 +109,69 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["pollAfterMs"], 0)
 
+    def test_active_rag_pending_status_exposes_truthful_context_and_retrieval_progress(self) -> None:
+        gate = threading.Event()
+        provider = BlockingActiveRagProvider(gate)
+        service = ActiveRagService(completion_provider=provider)
+        selected = "测试中间进度"
+        request = ActiveRagStartRequest(
+            selected_text=selected,
+            selected_text_hash=stable_text_hash(selected),
+            frontend_revision=8,
+            selection_epoch=4,
+            context=selected,
+            frontend_context_chars=len(selected),
+            evidence_pack=(
+                {
+                    "text": "检查并完善记忆检索的时间衰减设计",
+                    "summary": "补齐时间衰减权重和回归测试",
+                    "tags": ["时间衰减", "记忆检索"],
+                    "sourceType": "todo",
+                    "sourceLane": "planning_open_task",
+                },
+            ),
+            window_context={
+                "captureMode": "accessibility_semantics",
+                "nodeCount": 16,
+                "application": {"name": "Codex", "windowTitle": "当前任务"},
+                "nodes": [
+                    {
+                        "nodeRef": "ax_editor",
+                        "role": "AXTextArea",
+                        "value": "这是 AX 树实际捕获的编辑区内容",
+                        "focused": True,
+                    }
+                ],
+            },
+            max_chars=120,
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            deadline = time.monotonic() + 1
+            while not provider.calls and time.monotonic() < deadline:
+                time.sleep(0.01)
+            pending = service.status(str(started["sessionId"]))
+            gate.set()
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        progress = pending["diagnostics"]["progress"]
+        self.assertEqual(progress["stage"], "generating")
+        self.assertEqual(progress["context"]["foregroundChars"], len(selected))
+        self.assertEqual(progress["context"]["windowNodeCount"], 16)
+        self.assertEqual(progress["retrieval"]["evidenceCount"], 1)
+        self.assertEqual(progress["retrieval"]["items"][0]["title"], "时间衰减 · 记忆检索")
+        self.assertIn("时间衰减", progress["retrieval"]["items"][0]["preview"])
+        context_view = pending["diagnostics"]["contextView"]
+        self.assertEqual(context_view["source"], "provider_request")
+        self.assertEqual(context_view["currentRequest"], selected)
+        self.assertEqual(
+            context_view["windowContext"]["nodes"][0]["value"],
+            "这是 AX 树实际捕获的编辑区内容",
+        )
+        self.assertNotIn("你是 macOS 输入法", str(context_view))
+        self.assertEqual(ready["diagnostics"]["progress"]["stage"], "ready")
+
     def test_active_rag_trace_observer_runs_without_enabling_the_jsonl_journal(self) -> None:
         records: list[dict[str, object]] = []
         service = ActiveRagService(
@@ -263,6 +326,8 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertIsNone(pending["candidates"][0]["selectionKey"])
         self.assertTrue(pending["candidates"][0]["metadata"]["streamingPartial"])
         self.assertTrue(pending["diagnostics"]["modelRequest"]["partialVisible"])
+        self.assertGreater(pending["diagnostics"]["progress"]["model"]["firstTokenMs"], 0)
+        self.assertEqual(pending["diagnostics"]["progress"]["stage"], "streaming")
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["candidates"][0]["text"], "第一段已经完整返回")
         self.assertEqual(
@@ -521,6 +586,27 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(provider.calls[1].selected_text, request.selected_text)
         self.assertTrue(ready["diagnostics"]["modelRequest"]["contentRetryCompleted"])
 
+    def test_active_rag_reports_quality_retry_while_recovery_request_is_running(self) -> None:
+        provider = BlockingRecoveryActiveRagProvider()
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="检查质量重试进度", max_chars=120)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            self.assertTrue(provider.recovery_started.wait(timeout=1))
+            pending = service.status(str(started["sessionId"]))
+            provider.release.set()
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        progress = pending["diagnostics"]["progress"]
+        self.assertEqual(progress["stage"], "quality_retry")
+        self.assertTrue(progress["model"]["qualityRetry"])
+        self.assertEqual(
+            progress["model"]["qualityRetryReason"],
+            "empty_or_governed_remote_candidates",
+        )
+        self.assertEqual(ready["status"], "ready")
+
     def test_active_rag_governed_recovery_finishes_as_no_suggestion_with_diagnostics(self) -> None:
         provider = FailingActiveRagProvider()
         service = ActiveRagService(completion_provider=provider)
@@ -686,6 +772,10 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(payload["groundingMode"], "foreground_with_history")
         self.assertTrue(payload["contextPacket"]["recentCompleteInputs"])
         self.assertIn("这是一次很长的语音输入", str(payload["contextPacket"]["recentCompleteInputs"]))
+        context_view = ready["diagnostics"]["contextView"]
+        self.assertEqual(context_view["source"], "provider_request")
+        self.assertEqual(context_view["currentContext"], foreground)
+        self.assertIn("这是一次很长的语音输入", str(context_view["recentCompleteInputs"]))
 
     def test_active_rag_short_unmatched_foreground_does_not_promote_recent_request(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-short-context-") as tmp:
@@ -1131,6 +1221,24 @@ class BlockingActiveRagProvider:
         self.gate.wait(timeout=2)
         self.released.set()
         yield CompletionCandidateDelta(text="第二个主动候选", insert_text="第二个主动候选")
+
+
+class BlockingRecoveryActiveRagProvider:
+    def __init__(self):
+        self.calls: list[object] = []
+        self.recovery_started = threading.Event()
+        self.release = threading.Event()
+
+    def stream_candidates(self, request):
+        self.calls.append(request)
+        if len(self.calls) == 1:
+            return
+        self.recovery_started.set()
+        self.release.wait(timeout=2)
+        yield CompletionCandidateDelta(
+            text="质量检查后返回可插入正文",
+            insert_text="质量检查后返回可插入正文",
+        )
 
 
 class StreamingActiveRagProvider:

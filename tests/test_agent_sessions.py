@@ -25,8 +25,19 @@ class AgentSessionStoreTests(unittest.TestCase):
 
         self.assertEqual(session["title"], "输入助手 今天")
         self.assertEqual(session["mode"], "assistant")
+        self.assertTrue(session["projectContextEnabled"])
         self.assertEqual(session["workspaceRoots"], [])
         self.assertEqual(self.store.list()[0]["id"], session_id)
+
+        without_project_context = self.store.set_runtime_policy(
+            session_id,
+            mode="assistant",
+            tool_profile_version="control-center-v1",
+            allowed_tools=None,
+            project_context_enabled=False,
+            updated_at_ms=150,
+        )
+        self.assertFalse(without_project_context["projectContextEnabled"])
 
         bound = self.store.bind_pi_session(
             session_id,
