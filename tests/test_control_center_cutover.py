@@ -77,6 +77,7 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("bootstrap_launch_agent", desktop_installer)
         self.assertIn("for attempt in 1 2 3 4 5", desktop_installer)
         self.assertIn('launchctl print "$DOMAIN/$LABEL"', desktop_installer)
+        self.assertNotIn('if launchctl print "$DOMAIN/$LABEL"', desktop_installer)
         self.assertIn('launchctl kickstart "$DOMAIN/$LABEL"', desktop_installer)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', desktop_installer)
 

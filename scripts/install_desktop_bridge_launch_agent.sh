@@ -39,9 +39,6 @@ bootstrap_launch_agent() {
     if launchctl bootstrap "$DOMAIN" "$PLIST" 2>"$error_log"; then
       return 0
     fi
-    if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
-      return 0
-    fi
     [[ "$attempt" == "5" ]] || sleep "$(awk "BEGIN { printf \"%.1f\", $attempt * 0.4 }")"
   done
 
