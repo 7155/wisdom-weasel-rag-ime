@@ -5,7 +5,7 @@ import math
 import re
 import time
 
-from .hybrid_rag_models import HybridRagCandidate, HybridRagHit
+from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, MemoryHit
 from .text_utils import compact_whitespace, truncate_text
 
 
@@ -34,16 +34,38 @@ def rank_hybrid_hits(
     current_ms: int | None = None,
     decay_settings: dict[str, object] | None = None,
 ) -> list[HybridRagCandidate]:
+    from .memory_projectors import ImeMemoryProjector
+
+    memory_hits = rank_hybrid_hits_to_memory_hits(
+        hits,
+        query_text=query_text,
+        lane_weights=lane_weights,
+        current_ms=current_ms,
+        decay_settings=decay_settings,
+    )
+    return ImeMemoryProjector().project(
+        memory_hits,
+        query_text=query_text,
+        committed_tail=committed_tail,
+        top_k=top_k,
+    )
+
+
+def rank_hybrid_hits_to_memory_hits(
+    hits: list[HybridRagHit],
+    *,
+    query_text: str = "",
+    lane_weights: dict[str, float] | None = None,
+    current_ms: int | None = None,
+    decay_settings: dict[str, object] | None = None,
+) -> list[MemoryHit]:
     effective_lane_weights = {**LANE_WEIGHTS, **(lane_weights or {})}
     grouped: dict[str, list[HybridRagHit]] = defaultdict(list)
     for hit in hits:
         grouped[hit.doc_id].append(hit)
-    candidates: list[HybridRagCandidate] = []
+    memory_hits: list[MemoryHit] = []
     for doc_id, doc_hits in grouped.items():
         best_hit = _best_hit(doc_hits, lane_weights=effective_lane_weights)
-        text = _candidate_text(best_hit)
-        if not text or _raw_echo_penalty(text=text, query_text=query_text, committed_tail=committed_tail) >= 1.0:
-            continue
         features = _score_features(doc_hits, lane_weights=effective_lane_weights)
         base_score = sum(features.values())
         decay_factor = _time_decay_factor(
@@ -58,11 +80,14 @@ def rank_hybrid_hits(
         score = sum(features.values())
         source_ids = tuple(sorted({hit.source_id for hit in doc_hits if hit.source_id}))
         doc_type = best_hit.doc_type
-        candidates.append(
-            HybridRagCandidate(
-                candidate_id=f"hybrid:{doc_id}",
-                text=text,
-                insert_text=text,
+        memory_hits.append(
+            MemoryHit(
+                hit_id=f"hybrid:{doc_id}",
+                doc_id=doc_id,
+                doc_type=doc_type,
+                source_id=best_hit.source_id,
+                text=compact_whitespace(best_hit.text),
+                surface_hints=tuple(_unique(item for hit in doc_hits for item in hit.surface_hints)),
                 source_type=_source_type_for_doc(doc_type),
                 source_lane=best_hit.source_lane,
                 score=score,
@@ -75,6 +100,7 @@ def rank_hybrid_hits(
                 evidence_preview=truncate_text(best_hit.text, 120),
                 debug_features=features,
                 metadata={
+                    **dict(best_hit.metadata),
                     "docId": doc_id,
                     "docType": doc_type,
                     "lanes": sorted({hit.source_lane for hit in doc_hits}),
@@ -88,8 +114,8 @@ def rank_hybrid_hits(
                 },
             )
         )
-    candidates.sort(key=lambda item: (item.score, item.confidence, item.text), reverse=True)
-    return candidates[: max(1, int(top_k))]
+    memory_hits.sort(key=lambda item: (item.score, item.confidence, item.text), reverse=True)
+    return memory_hits
 
 
 def _best_hit(hits: list[HybridRagHit], *, lane_weights: dict[str, float]) -> HybridRagHit:
@@ -115,22 +141,6 @@ def _score_features(hits: list[HybridRagHit], *, lane_weights: dict[str, float])
     return features
 
 
-def _candidate_text(hit: HybridRagHit) -> str:
-    surface = next((compact_whitespace(item) for item in hit.surface_hints if compact_whitespace(item)), "")
-    if surface:
-        return surface
-    if hit.doc_type in {"book", "atom"}:
-        return ""
-    if hit.doc_type == "phrase":
-        return compact_whitespace(hit.text)
-    if hit.doc_type == "item":
-        if str(hit.metadata.get("kind") or "") == "raw_event":
-            return ""
-        text = compact_whitespace(hit.text)
-        return text if len(text) <= 24 else ""
-    return ""
-
-
 def _source_type_for_doc(doc_type: str) -> str:
     if doc_type == "book":
         return "memory"
@@ -139,21 +149,6 @@ def _source_type_for_doc(doc_type: str) -> str:
     if doc_type == "phrase":
         return "phrase"
     return "rag"
-
-
-def _raw_echo_penalty(*, text: str, query_text: str, committed_tail: str) -> float:
-    candidate = compact_whitespace(text)
-    if not candidate:
-        return 1.0
-    if len(candidate) > 32:
-        return 1.0
-    query = compact_whitespace(query_text)
-    tail = compact_whitespace(committed_tail)
-    if query and candidate == query and len(candidate) > 8:
-        return 1.0
-    if tail and candidate and candidate in tail[-80:]:
-        return 1.0
-    return 0.0
 
 
 _EXPLICIT_TIME_RE = re.compile(

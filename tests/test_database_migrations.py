@@ -26,11 +26,13 @@ class DatabaseMigrationTests(unittest.TestCase):
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                    31, 32, 33, 34, 35, 36, 37, 40, 41,
+                    31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                    41, 42, 43, 44, 45, 46, 47,
+                    51, 52, 53, 54, 55, 56, 57,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 41)
+            self.assertEqual(status["currentVersion"], 57)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -80,6 +82,21 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_context_items", tables)
             self.assertIn("agent_wake_schedules", tables)
             self.assertIn("agent_wake_runs", tables)
+            self.assertIn("agent_observation_events", tables)
+            self.assertIn("agent_room_work_items", tables)
+            self.assertIn("agent_room_work_events", tables)
+            self.assertIn("agent_room_delivery_cursors", tables)
+            self.assertIn("agent_command_receipts", tables)
+            self.assertIn("agent_role_books", tables)
+            self.assertIn("daily_activity_timelines", tables)
+            self.assertIn("personal_context_draft_decisions", tables)
+            self.assertIn("agent_role_book_revisions", tables)
+            self.assertIn("agent_role_book_activation_events", tables)
+            self.assertIn("agent_memory_evidence", tables)
+            self.assertIn("personal_context_consolidation_runs", tables)
+            self.assertIn("personal_context_consolidation_cursors", tables)
+            self.assertIn("memory_governance_proposals", tables)
+            self.assertIn("memory_atom_evidence_links", tables)
             room_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_rooms)")
             }
@@ -95,6 +112,39 @@ class DatabaseMigrationTests(unittest.TestCase):
                 row[1] for row in conn.execute("PRAGMA table_info(agent_sessions)")
             }
             self.assertIn("session_kind", session_columns)
+            self.assertIn("project_context_enabled", session_columns)
+            self.assertIn("role_book_revision_id", session_columns)
+            source_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(agent_memory_sources)")
+            }
+            self.assertTrue(
+                {
+                    "owner_kind",
+                    "owner_id",
+                    "role_id",
+                    "role_version",
+                    "source_kind",
+                    "trust_class",
+                    "disposition",
+                }.issubset(source_columns)
+            )
+            for table, primary_key in (
+                ("memory_items", "memory_id"),
+                ("memory_atoms", "id"),
+                ("memory_books", "book_id"),
+                ("memory_retrieval_docs", "doc_id"),
+            ):
+                with self.subTest(table=table, primary_key=primary_key):
+                    columns = {
+                        row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+                    }
+                    self.assertIn(primary_key, columns)
+                    self.assertIn("owner_kind", columns)
+                    self.assertIn("owner_id", columns)
+            command_receipt_sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_command_receipts'"
+            ).fetchone()[0]
+            self.assertIn("'session_rewrite'", command_receipt_sql)
             run_foreign_keys = {
                 str(row[3]): (str(row[2]), str(row[6]))
                 for row in conn.execute("PRAGMA foreign_key_list(agent_subagent_runs)")

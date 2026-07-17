@@ -100,6 +100,10 @@ env_keys = [
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_DIR",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT",
+    "RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED",
+    "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK",
+    "RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS",
+    "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT",
     "RAG_IME_PYTHON",
     "SSL_CERT_FILE",
 ]
@@ -115,6 +119,20 @@ environment = {
     # The scheduled job may prepare a review draft, but it never applies
     # memory changes. Apply/rollback stays behind the native approval path.
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "0",
+    "RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED": os.environ.get(
+        "RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED", "1"
+    ),
+    # Personal Context also defaults to drafts. Only this explicit switch may
+    # cross the narrowly scoped, idempotent recentWork apply gate.
+    "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK": os.environ.get(
+        "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK", "0"
+    ),
+    "RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS": os.environ.get(
+        "RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS", "86400"
+    ),
+    "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT": os.environ.get(
+        "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT", "500"
+    ),
 }
 environment["RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER"] = "scheduled"
 for key in env_keys:

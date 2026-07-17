@@ -133,6 +133,7 @@
     "curated-rag-memory-candidates": "backend_only",
     "rime-native-rank-feedback": "backend_only",
     "native-control-center": "backend_only",
+    "session-scoped-agent-context": "backend_only",
     "streaming-voice-input": "backend_only",
     "active-rag-selected-text-bridge": "backend_only",
     "dsv4-cleanup-to-curated-memory": "offline_tool",

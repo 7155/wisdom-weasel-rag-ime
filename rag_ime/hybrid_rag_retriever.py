@@ -11,10 +11,10 @@ from typing import Iterable
 
 from .context_group import ContextGroup, context_group_compatibility
 from .embeddings import EmbeddingProvider, cosine_similarity, embed_query
-from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery
-from .hybrid_rag_ranker import rank_hybrid_hits
-from .memory_book_lifecycle import set_memory_book_archive_status
+from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery, MemoryHit
+from .hybrid_rag_ranker import rank_hybrid_hits_to_memory_hits
 from .memory_ingest import normalize_text
+from .memory_projectors import ImeMemoryProjector
 from .query_expansion import build_query_expansion
 from .retrieval_vector_index import load_retrieval_doc_vectors
 from .text_utils import compact_whitespace, token_terms
@@ -137,23 +137,25 @@ def retrieve_hybrid_rag_candidates(
         "tagmemo": tagmemo_hits,
     })
     hits = [hit for lane in lane_hits.values() for hit in lane]
-    candidates = rank_hybrid_hits(
+    memory_hits = rank_hybrid_hits_to_memory_hits(
         hits,
         query_text=query.query_text,
-        committed_tail=query.committed_tail,
-        top_k=query.top_k,
         lane_weights=lane_weights,
         decay_settings=_memory_decay_settings(conn),
     )
-    reactivated_book_ids = _reactivate_archived_books_for_explicit_history(
-        conn,
+    historical_book_ids = _historical_books_for_explicit_history(
         hits=hits,
-        candidates=candidates,
         query_text=" ".join(
             item
             for item in (query.query_text, query.raw_input, query.committed_tail)
             if compact_whitespace(item)
         ),
+    )
+    candidates = ImeMemoryProjector().project(
+        memory_hits,
+        query_text=query.query_text,
+        committed_tail=query.committed_tail,
+        top_k=query.top_k,
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
@@ -201,8 +203,12 @@ def retrieve_hybrid_rag_candidates(
         "vectorIndexDocuments": len(vectors),
         "overBudget": elapsed_ms > max(1, int(query.latency_budget_ms)),
         "hits": [hit.__dict__ for hit in hits],
+        "memoryHits": [hit.__dict__ for hit in memory_hits],
         "candidates": [candidate.__dict__ for candidate in candidates],
-        "reactivatedBookIds": reactivated_book_ids,
+        # Compatibility field retained while lifecycle mutation moves to an
+        # explicit command. A query is now strictly read-only.
+        "reactivatedBookIds": [],
+        "historicalBookIds": historical_book_ids,
     }
 
 
@@ -230,24 +236,15 @@ def _resolved_lane_weights(values: tuple[tuple[str, float], ...]) -> dict[str, f
     return {lane: configured.get(lane, default) for lane, default in _DEFAULT_LANE_WEIGHTS.items()}
 
 
-def _reactivate_archived_books_for_explicit_history(
-    conn: sqlite3.Connection,
+def _historical_books_for_explicit_history(
     *,
     hits: list[HybridRagHit],
-    candidates: list[HybridRagCandidate],
     query_text: str,
 ) -> list[str]:
-    """Restore only archived topic books reached by an explicit history query.
-
-    Ordinary background completion keeps archived books down-weighted and read-only.
-    A deliberate request such as "最初需求" or "旧项目" is a user action, so a
-    strongly retrieved book may become active again. Related new input also
-    reactivates a reused book in the offline Memory Book compiler.
-    """
+    """Report relevant archived Books without changing their lifecycle."""
 
     if _EXPLICIT_HISTORY_RE.search(compact_whitespace(query_text)) is None:
         return []
-    restored: list[str] = []
     eligible_book_ids: list[str] = []
     for hit in hits:
         if hit.doc_type != "book" or not bool(hit.metadata.get("archived")):
@@ -258,68 +255,9 @@ def _reactivate_archived_books_for_explicit_history(
         if hit.source_lane == "time" or hit.source_id in eligible_book_ids:
             continue
         eligible_book_ids.append(hit.source_id)
-    for book_id in eligible_book_ids:
-        row = conn.execute(
-            "SELECT status, book_type FROM memory_books WHERE book_id = ?",
-            (book_id,),
-        ).fetchone()
-        if (
-            row is None
-            or str(row["status"] or "") != "archived"
-            or str(row["book_type"] or "") != "topic"
-        ):
-            continue
-        result = set_memory_book_archive_status(
-            conn,
-            book_id=book_id,
-            archived=False,
-            reason="explicit_historical_retrieval",
-            actor="hybrid_rag_retriever",
-        )
-        updated = result.get("book") if isinstance(result.get("book"), dict) else {}
-        _refresh_retrieval_book_lifecycle_metadata(
-            conn,
-            book_id=book_id,
-            updated_at_ms=int(updated.get("updatedAtMs") or 0),
-            last_active_at_ms=int(updated.get("lastActiveAtMs") or 0),
-        )
-        for candidate in candidates:
-            if book_id in candidate.book_ids:
-                candidate.metadata["archived"] = False
-                candidate.metadata["reactivated"] = True
-        restored.append(book_id)
-        if len(restored) >= 2:
-            return restored
-    return restored
-
-
-def _refresh_retrieval_book_lifecycle_metadata(
-    conn: sqlite3.Connection,
-    *,
-    book_id: str,
-    updated_at_ms: int,
-    last_active_at_ms: int,
-) -> None:
-    rows = conn.execute(
-        "SELECT doc_id, metadata_json FROM memory_retrieval_docs WHERE doc_type = 'book' AND source_id = ?",
-        (book_id,),
-    ).fetchall()
-    for row in rows:
-        metadata = _metadata(row["metadata_json"])
-        metadata.update(
-            {
-                "bookStatus": "active",
-                "archived": False,
-                "archivedAtMs": 0,
-                "archiveReason": "",
-                "lastActiveAtMs": last_active_at_ms,
-                "sourceUpdatedAtMs": updated_at_ms,
-            }
-        )
-        conn.execute(
-            "UPDATE memory_retrieval_docs SET metadata_json = ?, updated_at_ms = ? WHERE doc_id = ?",
-            (json.dumps(metadata, ensure_ascii=False, sort_keys=True), updated_at_ms, str(row["doc_id"])),
-        )
+        if len(eligible_book_ids) >= 2:
+            break
+    return eligible_book_ids
 
 
 def _lane_implementation(
@@ -370,6 +308,49 @@ def retrieve_hybrid_rag_candidate_objects(
                 )
             )
     return candidates
+
+
+def retrieve_hybrid_rag_memory_hit_objects(
+    conn: sqlite3.Connection,
+    query: HybridRagQuery,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> list[MemoryHit]:
+    payload = retrieve_hybrid_rag_candidates(conn, query, embedding_provider)
+    hits: list[MemoryHit] = []
+    for item in payload.get("memoryHits", []):
+        if isinstance(item, MemoryHit):
+            hits.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        hits.append(
+            MemoryHit(
+                hit_id=str(item["hit_id"]),
+                doc_id=str(item["doc_id"]),
+                doc_type=str(item["doc_type"]),
+                source_id=str(item["source_id"]),
+                text=str(item["text"]),
+                surface_hints=tuple(item.get("surface_hints") or ()),
+                source_type=str(item["source_type"]),
+                source_lane=str(item["source_lane"]),
+                score=float(item["score"]),
+                confidence=float(item["confidence"]),
+                tags=tuple(item.get("tags") or ()),
+                memory_ids=tuple(item.get("memory_ids") or ()),
+                atom_ids=tuple(item.get("atom_ids") or ()),
+                book_ids=tuple(item.get("book_ids") or ()),
+                evidence_event_ids=tuple(
+                    int(value) for value in item.get("evidence_event_ids") or ()
+                ),
+                evidence_preview=str(item.get("evidence_preview") or ""),
+                debug_features={
+                    str(key): float(value)
+                    for key, value in dict(item.get("debug_features") or {}).items()
+                },
+                metadata=dict(item.get("metadata") or {}),
+            )
+        )
+    return hits[: max(1, int(query.top_k))]
 
 
 def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dict[str, object]]:

@@ -37,6 +37,35 @@ class HybridRagHit:
 
 
 @dataclass(frozen=True)
+class MemoryHit:
+    """Ranked memory evidence before a product surface projects it.
+
+    Retrieval owns relevance, ranking, provenance, and lifecycle metadata.
+    IME and Agent own different presentation contracts, so neither surface
+    should discard evidence on behalf of the other.
+    """
+
+    hit_id: str
+    doc_id: str
+    doc_type: str
+    source_id: str
+    text: str
+    surface_hints: tuple[str, ...]
+    source_type: str
+    source_lane: str
+    score: float
+    confidence: float
+    tags: tuple[str, ...]
+    memory_ids: tuple[str, ...]
+    atom_ids: tuple[str, ...]
+    book_ids: tuple[str, ...]
+    evidence_event_ids: tuple[int, ...]
+    evidence_preview: str
+    debug_features: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class HybridRagCandidate:
     candidate_id: str
     text: str

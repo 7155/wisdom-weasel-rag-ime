@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-role-book-tool-result.v1",
+  "title": "Agent Role Book Tool Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "operation",
+    "roleId",
+    "roleVersion",
+    "summary",
+    "activeRevisionChanged",
+    "result"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.agent-role-book-tool-result.v1"
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["get", "history", "propose_revision", "review"]
+    },
+    "roleId": {"type": "string", "minLength": 1, "maxLength": 120},
+    "roleVersion": {"type": "string", "minLength": 1, "maxLength": 80},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 400},
+    "activeRevisionChanged": {"type": "boolean", "const": false},
+    "result": {"type": "object"}
+  }
+}

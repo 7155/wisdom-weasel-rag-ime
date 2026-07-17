@@ -66,10 +66,20 @@ const canonicalPathIds = [
   'agent.room.artifacts',
   'agent.room.artifact.add',
   'agent.room.artifact.update',
+  'agent.room.workItems.list',
+  'agent.room.workItem.create',
+  'agent.room.workItem.get',
+  'agent.room.workItem.reassign',
   'agent.roles.list',
   'agent.roles.create',
   'agent.role.models',
   'agent.role.runtimeDefaults.update',
+  'agent.roleBook.get',
+  'agent.roleBook.activation.preview',
+  'agent.roleBook.activation.apply',
+  'agent.roleBook.activation.rollback',
+  'agent.roleBook.draft.decision',
+  'agent.personalContext.observability',
   'agent.tools.list',
   'agent.extensions.list',
   'agent.extensions.create',
@@ -106,6 +116,10 @@ const canonicalPathIds = [
   'memory.book.archive.preview',
   'memory.book.archive.apply',
   'memory.book.archive.rollback',
+  'memory.activityTimeline.get',
+  'memory.activityTimeline.build',
+  'memory.activityTimeline.approve',
+  'memory.activityTimeline.reject',
   'history.page',
   'history.detail',
   'history.tombstone.preview',
@@ -402,6 +416,20 @@ describe('control route policy', () => {
     expect(Object.hasOwn(CONTROL_ROUTES, 'agent.media.import')).toBe(false);
     expect(Object.hasOwn(CONTROL_ROUTES, 'agent.tool.execute')).toBe(false);
     expect(Object.hasOwn(CONTROL_ROUTES, 'agent.session.get')).toBe(false);
+  });
+
+  it('allows a Room message to bind to an existing WorkItem', () => {
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.room.message',
+        params: { roomId: 'room-1' },
+        body: {
+          message: '继续处理',
+          clientMessageId: 'message-1',
+          workItemId: 'room-work:1',
+        },
+      }),
+    ).not.toThrow();
   });
 
   it('rejects arbitrary URL/host fields and fields outside each route contract', () => {

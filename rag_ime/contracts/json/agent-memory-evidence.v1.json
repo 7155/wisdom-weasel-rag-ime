@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-memory-evidence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "evidenceId", "project", "roleId", "sessionId",
+    "sourceKind", "sourceId", "idempotencyKey", "text", "textSha256",
+    "classification", "maySupportLongTermFact", "provenance", "metadata",
+    "privacyClass", "status", "occurredAtMs", "recordedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-memory-evidence.v1"},
+    "evidenceId": {"type": "string", "minLength": 1},
+    "project": {"type": "string"},
+    "roleId": {"type": "string"},
+    "sessionId": {"type": "string"},
+    "sourceKind": {
+      "type": "string",
+      "enum": [
+        "user_message", "assistant_message", "tool_receipt",
+        "session_digest", "room_event", "work_receipt"
+      ]
+    },
+    "sourceId": {"type": "string", "minLength": 1},
+    "idempotencyKey": {"type": "string", "minLength": 1},
+    "text": {"type": "string", "minLength": 1},
+    "textSha256": {"type": "string", "minLength": 64},
+    "classification": {"type": "string", "const": "raw_evidence"},
+    "maySupportLongTermFact": {"type": "boolean", "const": false},
+    "provenance": {"type": "object"},
+    "metadata": {"type": "object"},
+    "privacyClass": {"type": "string", "enum": ["local", "private"]},
+    "status": {"type": "string", "enum": ["active", "tombstoned"]},
+    "occurredAtMs": {"type": "integer", "minimum": 0},
+    "recordedAtMs": {"type": "integer", "minimum": 0}
+  }
+}

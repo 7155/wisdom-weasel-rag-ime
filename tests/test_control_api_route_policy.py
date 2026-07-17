@@ -42,6 +42,10 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "memory.book.archive.preview",
                 "memory.book.archive.apply",
                 "memory.book.archive.rollback",
+                "memory.activityTimeline.get",
+                "memory.activityTimeline.build",
+                "memory.activityTimeline.approve",
+                "memory.activityTimeline.reject",
                 "history.page",
                 "history.detail",
                 "history.tombstone.preview",
@@ -628,6 +632,73 @@ class ControlRoutePolicyTests(unittest.TestCase):
             scopes={ControlScope.AGENT_READ.value},
         )
         self.policy.authorize(request, authorized)
+
+    def test_room_message_accepts_optional_work_item_authority_id(self) -> None:
+        request = ControlRequest(
+            request_id="request-room-work-item",
+            path_id=ControlPathId.AGENT_ROOM_MESSAGE.value,
+            params={"roomId": "room-1"},
+            body={
+                "message": "继续处理",
+                "clientMessageId": "message-1",
+                "workItemId": "room-work:1",
+            },
+        )
+
+        self.policy.authorize(request, ControlAccessContext.native())
+        self.policy.authorize(
+            request,
+            ControlAccessContext.remote(
+                device_id="phone-1",
+                scopes={ControlScope.AGENT_WRITE.value},
+            ),
+        )
+
+    def test_room_work_item_actor_mutations_remain_local_only(self) -> None:
+        requests = (
+            ControlRequest(
+                request_id="request-room-work-create",
+                path_id=ControlPathId.AGENT_ROOM_WORK_ITEM_CREATE.value,
+                params={"roomId": "room-1"},
+                body={
+                    "objective": "完成任务",
+                    "expectedOutput": "一份结果",
+                    "currentOwnerParticipantId": "participant-1",
+                    "createdByParticipantId": "participant-1",
+                    "clientMessageId": "create-1",
+                },
+            ),
+            ControlRequest(
+                request_id="request-room-work-reassign",
+                path_id=ControlPathId.AGENT_ROOM_WORK_ITEM_REASSIGN.value,
+                params={
+                    "roomId": "room-1",
+                    "workItemId": "room-work:1",
+                },
+                body={
+                    "actorParticipantId": "participant-1",
+                    "targetParticipantId": "participant-2",
+                },
+            ),
+        )
+        for request in requests:
+            with self.subTest(path_id=request.path_id):
+                self.policy.authorize(
+                    request,
+                    ControlAccessContext.native(),
+                )
+                with self.assertRaises(ControlApiError) as raised:
+                    self.policy.authorize(
+                        request,
+                        ControlAccessContext.remote(
+                            device_id="phone-1",
+                            scopes={"*"},
+                        ),
+                    )
+                self.assertEqual(
+                    raised.exception.code,
+                    ControlErrorCode.ROUTE_NOT_ALLOWED,
+                )
 
     def test_history_detail_requires_event_id_and_history_read_scope(self) -> None:
         request = ControlRequest(

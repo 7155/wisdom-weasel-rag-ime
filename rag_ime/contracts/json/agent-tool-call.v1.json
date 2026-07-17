@@ -8,7 +8,7 @@
     "sessionId": {"type": "string", "minLength": 1},
     "tool": {
       "type": "string",
-      "enum": ["ime_overview", "ime_input", "ime_voice", "ime_planning", "agent_schedule", "ime_memory", "ime_knowledge", "ime_models", "ime_runtime", "ime_configuration", "ime_agents", "agent_plan", "ime_plugins", "workspace_list", "workspace_read", "workspace_search", "workspace_patch", "workspace_shell"]
+      "enum": ["ime_overview", "ime_input", "ime_voice", "ime_planning", "agent_schedule", "ime_memory", "agent_role_book", "ime_knowledge", "ime_models", "ime_runtime", "ime_configuration", "ime_agents", "agent_plan", "ime_plugins", "workspace_list", "workspace_read", "workspace_search", "workspace_patch", "workspace_shell"]
     },
     "toolCallId": {"type": "string", "minLength": 1},
     "args": {"type": "object"},

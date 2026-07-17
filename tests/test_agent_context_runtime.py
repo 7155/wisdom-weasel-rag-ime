@@ -87,6 +87,48 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertEqual(acknowledged["status"], "acknowledged")
         self.assertEqual(self.runtime.materialize(self.session_id)["itemIds"], [])
 
+    def test_once_delivery_is_reserved_before_runtime_acceptance(self) -> None:
+        item = self.runtime.enqueue(
+            session_id=self.session_id,
+            source_kind="memory_bootstrap",
+            lane="fact",
+            lifecycle="once",
+            dedupe_key=f"memory-bootstrap:{self.session_id}:v1",
+            title="启动上下文",
+            payload={"queryFree": True},
+        )
+
+        reserved = self.runtime.materialize_for_delivery(
+            self.session_id,
+            delivery_id="dispatch:client:one",
+        )
+        self.assertEqual(reserved["itemIds"], [item["itemId"]])
+        self.assertEqual(self.runtime.materialize(self.session_id)["itemIds"], [])
+        consumed = self.runtime.list_items(self.session_id, status="consumed")
+        self.assertEqual(consumed[0]["deliveredTurnId"], "dispatch:client:one")
+
+        self.runtime.mark_delivered(
+            reserved["itemIds"],
+            turn_id="turn:accepted",
+            expected_delivery_id="dispatch:client:one",
+        )
+        confirmed = self.runtime.list_items(self.session_id, status="consumed")
+        self.assertEqual(confirmed[0]["deliveredTurnId"], "turn:accepted")
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE agent_context_items SET updated_at_ms = 0 WHERE item_id = ?",
+                (item["itemId"],),
+            )
+        restarted = AgentContextRuntime(self.db_path)
+        restarted.initialize()
+        self.assertIsNotNone(
+            restarted.item_by_dedupe_key(
+                self.session_id,
+                f"memory-bootstrap:{self.session_id}:v1",
+            )
+        )
+
     def test_trace_is_a_public_dag_without_raw_prompt_or_paths(self) -> None:
         trace_id = self.runtime.begin_trace(self.session_id, source_kind="user")
         input_node = self.runtime.add_trace_node(

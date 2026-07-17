@@ -28,7 +28,9 @@ from .active_rag_service import (
     ActiveRagStartRequest,
     active_rag_sensitive_text_blocked,
 )
+from .activity_timeline import DailyActivityTimelineStore
 from .agent_extensions import AgentExtensionService
+from .agent_role_book_control import AgentRoleBookControlService
 from .agent_surface_runtime import (
     AgentSurfaceRuntime,
     PiSurfaceCompletionProvider,
@@ -42,6 +44,7 @@ from .agent_routes import (
     agent_context_trace_route,
     agent_media_route,
     agent_room_route,
+    agent_room_work_route,
     agent_session_route,
     agent_subagent_route,
     agent_wake_schedule_route,
@@ -100,11 +103,13 @@ from .memory_generator import (
     generated_memory_context,
     generated_memory_dedupe_tag,
 )
+from .memory_projection import MemoryProjectionWorker
 from .models import MemoryAction
 from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
 from .payloads import action_response_payload, suggestions_response_payload
 from .pi_provider_auth import PiProviderAuthError, PiProviderAuthService
 from .pi_runtime import PiRuntimeConfig
+from .personal_context_observability import PersonalContextObservability
 from .prediction_anchors import build_prediction_anchors_from_snapshot
 from .predictor import (
     PredictionBenchmarkCase,
@@ -295,6 +300,8 @@ class DebugServerConfig:
     pi_provider_auth_service: PiProviderAuthService | None = None
     knowledge_client: object | None = None
     knowledge_control: object | None = None
+    memory_projection_worker_enabled: bool | None = None
+    memory_projection_poll_interval_s: float | None = None
 
 
 @dataclass
@@ -323,6 +330,9 @@ class DebugImeService:
 
     def __init__(self, config: DebugServerConfig):
         self.config = config
+        self._lifecycle_lock = RLock()
+        self._closed = False
+        self._memory_projection_start_error = ""
         self.settings_store = ManagementSettingsStore(config.db_path)
         self.settings_store.initialize()
         self.voice_support_directory = resolve_voice_support_directory(config.db_path)
@@ -366,6 +376,16 @@ class DebugImeService:
             # The 8766 Sidecar and local preview servers share the same SQLite
             # database but must never race to claim the same wake schedule.
             wake_scheduler_enabled=config.server_name == "agent gateway",
+        )
+        self.personal_context_observability = PersonalContextObservability(
+            config.db_path,
+            project=config.project,
+        )
+        self.personal_context_observability.initialize()
+        self.activity_timelines = DailyActivityTimelineStore(
+            config.db_path,
+            project=config.project,
+            observability=self.personal_context_observability,
         )
         self.agent_surface = AgentSurfaceRuntime(self.agent)
         if config.server_name == "agent gateway":
@@ -422,6 +442,13 @@ class DebugImeService:
             cache_invalidator=self._clear_rime_cache,
             voice_support_directory=self.voice_support_directory,
         )
+        self.agent_role_book_control = AgentRoleBookControlService(
+            config.db_path,
+            project=config.project,
+            work_contract=self.management.work_contract,
+            role_books=self.agent.role_books,
+            observability=self.personal_context_observability,
+        )
         self.knowledge_control = config.knowledge_control
         if self.knowledge_control is None and isinstance(self.knowledge_worker, KnowledgeWorkerSupervisor):
             self.knowledge_control = KnowledgeControlFacade(
@@ -477,6 +504,56 @@ class DebugImeService:
         if config.seed_if_empty and self._event_count() == 0:
             seed_demo_memories(self.adapter, default_fixture_memories())
         self._vector_auto_rebuild_report = self._maybe_auto_rebuild_vector_index()
+        self.memory_projection_worker = self._create_memory_projection_worker()
+
+    def start_background_services(self) -> None:
+        """Start non-critical workers after the HTTP listener owns the process."""
+
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            worker = self.memory_projection_worker
+        if worker is None:
+            return
+        try:
+            self._memory_projection_start_error = ""
+            worker.start()
+        except Exception as exc:  # pragma: no cover - thread start failure is platform-specific
+            # Projection lag is observable but must not take down IME/management
+            # request handling.
+            self._memory_projection_start_error = _safe_debug_error(exc)
+
+    def close(self) -> None:
+        """Stop process-owned workers and release service resources once."""
+
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            worker = self.memory_projection_worker
+        if worker is not None:
+            try:
+                worker.stop()
+            except Exception:
+                # Shutdown continues so one background failure cannot leak the
+                # remaining executors and provider clients.
+                pass
+        resources = (
+            self.knowledge_worker,
+            self.management,
+            self.pi_provider_auth,
+            self.agent,
+        )
+        for resource in resources:
+            closer = getattr(resource, "close", None)
+            if not callable(closer):
+                continue
+            try:
+                closer()
+            except Exception:
+                # Best-effort process teardown must continue through all owned
+                # resources even if one background component is already bad.
+                pass
 
     def health(self) -> dict[str, object]:
         settings = self.settings_store.get_settings()
@@ -511,6 +588,132 @@ class DebugImeService:
             "vectorStats": self._vector_index_stats(),
             "embeddingWarmup": self._embedding_warmup_report,
             "vectorAutoRebuild": self._vector_auto_rebuild_status(),
+            "memoryProjection": self.memory_projection_status(),
+        }
+
+    def memory_projection_status(self) -> dict[str, object]:
+        worker = self.memory_projection_worker
+        if worker is None:
+            return {
+                "schemaVersion": "rag-ime.memory-projection-runtime.v1",
+                "ok": True,
+                "configured": False,
+                "owner": self.config.server_name,
+                "running": False,
+                "lastRunAtMs": 0,
+                "lastError": "",
+                "freshness": {},
+                "disabledReason": (
+                    "local_sqlite_core_required"
+                    if not isinstance(self.core, LocalSqliteCoreClient)
+                    else "not_projection_owner"
+                ),
+            }
+        try:
+            runtime = worker.status()
+        except Exception as exc:  # pragma: no cover - defensive adapter guard
+            runtime = {
+                "running": False,
+                "lastRunAtMs": 0,
+                "lastError": _safe_debug_error(exc),
+                "lastReport": {},
+                "projectionKinds": [],
+            }
+        try:
+            freshness = self.core.memory_projection_freshness()
+        except Exception as exc:
+            freshness = {
+                "available": False,
+                "fresh": False,
+                "error": _safe_debug_error(exc),
+            }
+        last_error = (
+            self._memory_projection_start_error
+            or compact_whitespace(str(runtime.get("lastError") or ""))
+            or compact_whitespace(str(freshness.get("error") or ""))
+        )
+        running = bool(runtime.get("running"))
+        return {
+            "schemaVersion": "rag-ime.memory-projection-runtime.v1",
+            # Runtime degradation is reported here while /api/health remains
+            # available to the foreground IME and Control Center.
+            "ok": running and not last_error and bool(freshness.get("fresh")),
+            "configured": True,
+            "owner": self.config.server_name,
+            "running": running,
+            "projectionKinds": list(runtime.get("projectionKinds") or []),
+            "lastRunAtMs": int(runtime.get("lastRunAtMs") or 0),
+            "lastError": last_error,
+            "lastReport": dict(runtime.get("lastReport") or {}),
+            "freshness": freshness,
+            "disabledReason": "",
+        }
+
+    def activity_timeline_review(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        timeline_id = _string(payload.get("timelineId"))
+        if timeline_id:
+            timeline = self.activity_timelines.review(timeline_id)
+        else:
+            timeline_date = _string(payload.get("date"))
+            if not timeline_date:
+                raise ValueError("timelineId or date is required")
+            timeline = self.activity_timelines.latest(
+                timeline_date,
+                status=_string(payload.get("status")),
+            )
+        return {
+            "schemaVersion": "rag-ime.daily-activity-timeline-review.v1",
+            "ok": True,
+            "project": self.config.project,
+            "timeline": timeline or {},
+        }
+
+    def activity_timeline_build(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.activity_timelines.build_draft(
+            _string(payload.get("date")),
+        )
+
+    def activity_timeline_approve(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        timeline = self.activity_timelines.approve(
+            _string(payload.get("timelineId")),
+            expected_source_event_hash=_string(
+                payload.get("expectedSourceEventHash")
+            ),
+            approved_by="control-center-user",
+            confirm_text=_string(payload.get("confirmText")),
+        )
+        return {
+            "schemaVersion": "rag-ime.daily-activity-timeline-decision.v1",
+            "ok": True,
+            "decision": "accepted",
+            "timeline": timeline,
+        }
+
+    def activity_timeline_reject(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        if _string(payload.get("confirmText")).lower() != "reject":
+            raise ValueError("confirmText must be reject")
+        timeline = self.activity_timelines.reject(
+            _string(payload.get("timelineId")),
+            reason=_string(payload.get("reason")),
+            rejected_by="control-center-user",
+        )
+        return {
+            "schemaVersion": "rag-ime.daily-activity-timeline-decision.v1",
+            "ok": True,
+            "decision": "rejected",
+            "timeline": timeline,
         }
 
     def _warm_embedding_provider(self) -> dict[str, object]:
@@ -2874,6 +3077,7 @@ class DebugImeService:
                 "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
                 "ok": False,
                 "error": "local SQLite core required",
+                "projection": self.memory_projection_status(),
             }
         project = _string(payload.get("project")) or self.config.project
         limit = _bounded_int(payload.get("limit"), default=8, minimum=1, maximum=30)
@@ -2952,6 +3156,7 @@ class DebugImeService:
             "compileState": compile_state,
             "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
             "runs": runs,
+            "projection": self.memory_projection_status(),
         }
         validate_contract(response, "agent-memory-maintenance-status.v1.json")
         return response
@@ -4875,6 +5080,53 @@ class DebugImeService:
         stats = getattr(self.core, "vector_index_stats", None)
         return stats() if callable(stats) else None
 
+    def _vector_index_cache_signature(self) -> dict[str, object] | None:
+        """Return only content revisions, never wall-clock freshness ages."""
+
+        stats = self._vector_index_stats()
+        if not isinstance(stats, dict):
+            return stats
+        signature = dict(stats)
+        projection = signature.get("memoryProjection")
+        if isinstance(projection, dict):
+            signature["memoryProjection"] = {
+                key: projection.get(key)
+                for key in (
+                    "states",
+                    "sourceDocuments",
+                    "sourceUpdatedAtMs",
+                    "retrievalDocsUpdatedAtMs",
+                    "retrievalDocuments",
+                    "providerFingerprint",
+                    "vectorDocuments",
+                    "missingVectors",
+                    "staleVectors",
+                    "checkpoints",
+                    "latestOutboxIds",
+                )
+            }
+        return signature
+
+    def _create_memory_projection_worker(self) -> MemoryProjectionWorker | None:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return None
+        if not _memory_projection_worker_enabled(self.config):
+            return None
+        configured_interval = self.config.memory_projection_poll_interval_s
+        poll_interval_s = (
+            _positive_float(configured_interval, default=1.0)
+            if configured_interval is not None
+            else _positive_float(
+                os.environ.get("RAG_IME_MEMORY_PROJECTION_POLL_INTERVAL_S"),
+                default=1.0,
+            )
+        )
+        return MemoryProjectionWorker(
+            self.core._connect,  # type: ignore[arg-type]
+            embedding_provider=self.core.embedding_provider,
+            poll_interval_s=poll_interval_s,
+        )
+
     def _maybe_auto_rebuild_vector_index(self) -> dict[str, object] | None:
         if not isinstance(self.core, LocalSqliteCoreClient):
             return None
@@ -4978,7 +5230,7 @@ class DebugImeService:
             "runtimeRevision": runtime_config.runtime_revision,
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
-            "vectorStats": self._vector_index_stats(),
+            "vectorStats": self._vector_index_cache_signature(),
             "predictor": self._predictor_fingerprint(),
         }
         raw = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
@@ -5273,6 +5525,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         )
         context_trace_session_id, context_trace_id = agent_context_trace_route(parsed.path)
         agent_room_id, room_action = agent_room_route(parsed.path)
+        (
+            room_work_room_id,
+            room_work_item_id,
+            room_work_action,
+        ) = agent_room_work_route(parsed.path)
         wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(parsed.path)
         subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
         artifact_id = agent_artifact_route(parsed.path)
@@ -5510,6 +5767,35 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if room_work_room_id and room_work_action == "collection":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_work_items(
+                    room_work_room_id,
+                    {
+                        "state": _query_first(query, "state"),
+                        "ownerParticipantId": _query_first(
+                            query,
+                            "ownerParticipantId",
+                        ),
+                        "limit": _query_first(query, "limit"),
+                    },
+                ),
+            )
+            return
+        if (
+            room_work_room_id
+            and room_work_item_id
+            and room_work_action == "get"
+        ):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_work_item(
+                    room_work_room_id,
+                    room_work_item_id,
+                ),
+            )
+            return
         if agent_room_id and not room_action:
             self._write_json(HTTPStatus.OK, self.service.agent.room(agent_room_id))
             return
@@ -5532,6 +5818,36 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/agent/roles/models":
             self._write_json(HTTPStatus.OK, self.service.agent.role_model_catalog())
+            return
+        if parsed.path == "/api/agent/role-book":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent_role_book_control.catalog(
+                    role_id=_query_first(query, "roleId"),
+                    role_version=_query_first(query, "roleVersion"),
+                    limit=_bounded_int(
+                        _query_first(query, "limit"),
+                        default=30,
+                        minimum=1,
+                        maximum=100,
+                    ),
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/personal-context/observability":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.personal_context_observability.snapshot(
+                    session_id=_query_first(query, "sessionId"),
+                    role_id=_query_first(query, "roleId"),
+                    limit=_bounded_int(
+                        _query_first(query, "limit"),
+                        default=20,
+                        minimum=1,
+                        maximum=100,
+                    ),
+                ),
+            )
             return
         if parsed.path == "/api/agent/subagents/templates":
             self._write_json(HTTPStatus.OK, self.service.agent.list_agent_templates())
@@ -5729,6 +6045,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/memory/summary":
             self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
+            return
+        if parsed.path == "/api/memory/activity-timeline":
+            try:
+                response = self.service.activity_timeline_review(
+                    {
+                        "timelineId": _query_first(query, "timelineId"),
+                        "date": _query_first(query, "date"),
+                        "status": _query_first(query, "status"),
+                    }
+                )
+            except ValueError as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    _memory_read_error(str(exc)),
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
             return
         if parsed.path == "/api/planning/dashboard":
             self._write_json(
@@ -6222,6 +6555,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             agent_session_id, agent_action = agent_session_route(path)
             context_session_id, context_item_id, context_item_action = agent_context_item_route(path)
             agent_room_id, room_action = agent_room_route(path)
+            (
+                room_work_room_id,
+                room_work_item_id,
+                room_work_action,
+            ) = agent_room_work_route(path)
             subagent_run_id, subagent_action = agent_subagent_route(path)
             wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(path)
             approval_id, approval_action = agent_approval_route(path)
@@ -6280,6 +6618,62 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.OK,
                     self.service.agent.update_role_runtime_defaults(payload),
+                )
+            elif path == "/api/agent/role-book/activation/preview":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent_role_book_control.activation_preview(payload),
+                )
+            elif path == "/api/agent/role-book/activation/apply":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent_role_book_control.activation_apply(payload),
+                )
+            elif path == "/api/agent/role-book/activation/rollback":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent_role_book_control.activation_rollback(payload),
+                )
+            elif path == "/api/agent/role-book/drafts/decision":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent_role_book_control.decide_daily_draft(payload),
+                )
+            elif path == "/api/memory/activity-timeline/build":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.activity_timeline_build(payload),
+                )
+            elif path == "/api/memory/activity-timeline/approve":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.activity_timeline_approve(payload),
+                )
+            elif path == "/api/memory/activity-timeline/reject":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.activity_timeline_reject(payload),
+                )
+            elif room_work_room_id and room_work_action == "collection":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.create_room_work_item(
+                        room_work_room_id,
+                        payload,
+                    ),
+                )
+            elif (
+                room_work_room_id
+                and room_work_item_id
+                and room_work_action == "reassign"
+            ):
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.reassign_room_work_item(
+                        room_work_room_id,
+                        room_work_item_id,
+                        payload,
+                    ),
                 )
             elif path == "/api/agent/rooms":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_room(payload))
@@ -6857,7 +7251,11 @@ def run_debug_server(config: DebugServerConfig) -> None:
         pass
 
     Handler.service = service
-    server = QuietThreadingHTTPServer((config.host, config.port), Handler)
+    try:
+        server = QuietThreadingHTTPServer((config.host, config.port), Handler)
+    except BaseException:
+        service.close()
+        raise
     url = f"http://{config.host}:{config.port}/api/health"
     print(f"RAG IME {config.server_name} API: {url}")
     print(f"DB: {config.db_path}")
@@ -6869,6 +7267,7 @@ def run_debug_server(config: DebugServerConfig) -> None:
     if previous_sigterm is not None:
         signal.signal(signal.SIGTERM, stop_server)
     try:
+        service.start_background_services()
         try:
             server.serve_forever()
         except KeyboardInterrupt:
@@ -6877,10 +7276,42 @@ def run_debug_server(config: DebugServerConfig) -> None:
         if previous_sigterm is not None:
             signal.signal(signal.SIGTERM, previous_sigterm)
         server.server_close()
-        if service.knowledge_worker is not None:
-            service.knowledge_worker.close()
-        service.pi_provider_auth.close()
-        service.agent.close()
+        service.close()
+
+
+def _memory_projection_worker_enabled(config: DebugServerConfig) -> bool:
+    if config.memory_projection_worker_enabled is not None:
+        return bool(config.memory_projection_worker_enabled)
+    server_name = compact_whitespace(config.server_name).lower()
+    if server_name == "sidecar server":
+        configured = compact_whitespace(
+            os.environ.get("RAG_IME_MEMORY_PROJECTION_WORKER")
+        ).lower()
+        return (
+            configured not in {"0", "false", "no", "off"}
+            if configured
+            else True
+        )
+    if server_name == "debug server":
+        # A debug/management process often shares the production database with
+        # Sidecar. It must use a debug-specific opt-in so a global Sidecar flag
+        # cannot accidentally create a second projection owner.
+        configured = compact_whitespace(
+            os.environ.get("RAG_IME_DEBUG_MEMORY_PROJECTION_WORKER")
+        ).lower()
+        return bool(configured) and configured not in {"0", "false", "no", "off"}
+    # Agent Gateway and every unknown process name are consumers, not default
+    # projection owners. Tests or one-off deployments can still use the
+    # explicit config override above.
+    return False
+
+
+def _positive_float(value: object, *, default: float) -> float:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _stable_debug_hash(text: str) -> str:

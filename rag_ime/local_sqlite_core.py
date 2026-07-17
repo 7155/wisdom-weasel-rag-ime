@@ -29,9 +29,18 @@ from .memory_cleanup import (
     rollback_cleanup_run,
 )
 from .memory_dedup import select_diverse
+from .hybrid_rag_models import HybridRagQuery
+from .hybrid_rag_retriever import retrieve_hybrid_rag_memory_hit_objects
 from .memory_ingest import sync_event_to_memory_v2
 from .memory_models import CandidateFeedbackV2, CleanupRunPlan, ImeQueryContext, MemoryCandidateV2
 from .memory_optimizer_models import ContextFrame, OptimizerResult, RawRetrievalHit
+from .memory_projection import (
+    RETRIEVAL_DOCS_PROJECTION,
+    enqueue_memory_projection,
+    memory_projection_freshness,
+    process_memory_projection_outbox,
+)
+from .memory_projectors import AgentMemoryProjector
 from .memory_schema_v2 import ensure_memory_v2_schema, memory_v2_table_names
 from .memory_tag_graph import propagate_tag_energy, recompute_tag_graph, score_memory_items_from_tag_energy
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
@@ -203,6 +212,9 @@ class LocalSqliteCoreClient:
             dict.fromkeys(
                 (
                     *memory_v2_table_names(),
+                    "memory_graph_projection_map",
+                    "memory_projection_checkpoints",
+                    "memory_projection_outbox",
                     "memory_vectors",
                     "memory_actions",
                     "memory_state",
@@ -336,6 +348,16 @@ class LocalSqliteCoreClient:
                     context_group_level=event.context_group_level,
                     embedding_provider=self.embedding_provider,
                 )
+                if _event_has_curated_import_signal(event.tags):
+                    enqueue_memory_projection(
+                        conn,
+                        projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                        aggregate_type="input_event",
+                        aggregate_id=str(event_id),
+                        operation="curated_import",
+                        project=event.project,
+                        revision=max(1, created_at),
+                    )
             # Explicit phrases such as "完成了模型优化" may close an
             # unambiguous open task. The detector returns before touching SQL
             # for ordinary input, so it does not add work to the hot path.
@@ -679,6 +701,19 @@ class LocalSqliteCoreClient:
                     ),
                 )
                 self._sync_memory_item_status_for_action(conn, action=action, event_id=event_id)
+                enqueue_memory_projection(
+                    conn,
+                    projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                    aggregate_type="memory_item",
+                    aggregate_id=action.memory_id,
+                    operation=action.action_type,
+                    project=(
+                        compact_whitespace(str(action.metadata.get("project") or ""))
+                        if isinstance(action.metadata, dict)
+                        else ""
+                    ),
+                    revision=max(1, created_at),
+                )
             action_id = int(cur.lastrowid)
         self._clear_suggestion_cache()
         return MemoryAction(
@@ -693,24 +728,27 @@ class LocalSqliteCoreClient:
         )
 
     def build_agent_context(self, *, project: str, query: str, top_k: int = 5) -> AgentContextInjection:
-        memories = self.retrieve_memories(current_input=query, project=project, top_k=top_k)
-        lines = [
-            "PROJECT_MEMORY_BLOCK",
-            f"- 当前项目: {project or 'wisdom-weasel-rag-ime'}",
-            "- 来源: local SQLite/FTS5 personal memory",
-            "- 隐私边界: 默认本地检索和排序, 不上传个人输入历史。",
-        ]
-        for index, memory in enumerate(memories, start=1):
-            lines.append(f"  {index}. [{memory.memory_id}] {truncate_text(memory.text, 90)}")
-            lines.append(f"     preview: {truncate_text(memory.evidence_preview, 160)}")
-        if not memories:
-            lines.append("  (no local memories matched)")
-        return AgentContextInjection(
+        rag_query = HybridRagQuery(
+            query_text=compact_whitespace(query),
             project=project,
-            generated_at_ms=now_ms(),
-            block="\n".join(lines),
-            source_event_ids=tuple(self._memory_id_to_event_id(memory.memory_id) for memory in memories),
+            input_mode="agent_context",
+            top_k=max(1, int(top_k)),
+            latency_budget_ms=2500,
+        )
+        with self._connect() as conn:
+            # Schema/application writes belong to startup and outbox workers.
+            # An Agent memory tool call must remain a read-only retrieval path.
+            conn.execute("PRAGMA query_only = ON")
+            hits = retrieve_hybrid_rag_memory_hit_objects(
+                conn,
+                rag_query,
+                self.embedding_provider,
+            )
+        return AgentMemoryProjector().project(
+            hits,
+            project=project,
             query=query,
+            top_k=top_k,
         )
 
     def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
@@ -1492,6 +1530,10 @@ class LocalSqliteCoreClient:
                     (fingerprint,),
                 ).fetchone()["count"]
             )
+            projection = memory_projection_freshness(
+                conn,
+                provider_fingerprint=fingerprint,
+            )
         return {
             "enabled": self._embedding_enabled(),
             "providerFingerprint": fingerprint,
@@ -1501,7 +1543,31 @@ class LocalSqliteCoreClient:
             "activeProviderRetrievalDocVectors": retrieval_active,
             "candidateLimit": self.vector_candidate_limit,
             "weight": self.vector_weight,
+            "memoryProjection": projection,
         }
+
+    def process_memory_projection_outbox(
+        self,
+        *,
+        max_events: int = 32,
+        max_attempts: int = 5,
+    ) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            return process_memory_projection_outbox(
+                conn,
+                embedding_provider=self.embedding_provider,
+                max_events=max_events,
+                max_attempts=max_attempts,
+            )
+
+    def memory_projection_freshness(self) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            return memory_projection_freshness(
+                conn,
+                provider_fingerprint=self.embedding_provider.fingerprint,
+            )
 
     def warm_retrieval_vector_cache(self, *, project: str = "") -> dict[str, object]:
         self.initialize()

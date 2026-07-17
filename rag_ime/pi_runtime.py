@@ -72,6 +72,10 @@ _VOICE_REFINEMENT_SYSTEM_PROMPT = """你是语音转写的第三遍文字校对�
 """
 
 
+def _empty_role_book_prompt(_session: Mapping[str, object]) -> str:
+    return ""
+
+
 def _tools_for_session(
     available: tuple[str, ...],
     session: Mapping[str, object],
@@ -119,6 +123,11 @@ class PiRuntimeConfig:
     max_sessions: int = 8
     role_resolver: Callable[[object, object], PersonaManifest] = field(
         default=agent_role,
+        repr=False,
+        compare=False,
+    )
+    role_book_resolver: Callable[[Mapping[str, object]], str] = field(
+        default=_empty_role_book_prompt,
         repr=False,
         compare=False,
     )
@@ -318,6 +327,14 @@ class PiRuntimeConfig:
                 f"{system_prompt.rstrip()}\n\n"
                 "你当前是一次有界任务委派中的临时执行单元，不是长期群聊成员。\n"
                 f"{template.prompt.strip()}\n"
+            )
+        role_book_prompt = str(self.role_book_resolver(session) or "").strip()
+        if role_book_prompt:
+            system_prompt = (
+                f"{system_prompt.rstrip()}\n\n"
+                "<agent-role-book>\n"
+                f"{role_book_prompt}\n"
+                "</agent-role-book>\n"
             )
         return system_prompt
 

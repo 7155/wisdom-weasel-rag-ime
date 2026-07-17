@@ -7,6 +7,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "ime_voice",
     "ime_planning",
     "ime_memory",
+    "agent_role_book",
     "ime_knowledge",
     "ime_models",
     "ime_runtime",

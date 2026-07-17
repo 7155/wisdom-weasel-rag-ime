@@ -12,6 +12,7 @@ from typing import Any
 from .db import apply_database_migrations
 from .deepseek_memory_organizer import MEMORY_BOOK_COMPILE_SCHEMA_VERSION
 from .memory_ingest import normalize_text, upsert_memory_item
+from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms, truncate_text
 
 
@@ -148,6 +149,7 @@ def build_memory_book_source_bundle(
     _merge_counts(redaction_stats, feedback_redactions)
     _merge_counts(redaction_stats, rime_feedback_redactions)
     existing_books = _existing_book_summaries(conn, project=project)
+    existing_atoms = _existing_memory_atom_summaries(conn, project=project)
     existing_groups = _existing_semantic_groups(conn, project=project)
     existing_tags = _existing_semantic_tags(conn)
     existing_tag_edges = _existing_semantic_tag_edges(conn)
@@ -171,6 +173,7 @@ def build_memory_book_source_bundle(
         "feedback": feedback,
         "rimeRankFeedback": rime_rank_feedback,
         "existingMemoryBooks": existing_books,
+        "existingMemoryAtoms": existing_atoms,
         "existingSemanticGroups": existing_groups,
         "existingSemanticTags": existing_tags,
         "existingTagEdges": existing_tag_edges,
@@ -594,9 +597,32 @@ def memory_book_plan_from_compile_output(
             ],
             source_bundle=source_bundle,
         )
+        atom_kind = compact_whitespace(str(item.get("kind") or "project_fact"))
+        atom_project = compact_whitespace(str(item.get("project") or project))
+        atom_app = compact_whitespace(str(item.get("app") or ""))
+        claim_key = _normalized_claim_key(
+            item.get("claimKey") or item.get("claim") or atom_id
+        )
+        if not claim_key:
+            # Older organizer/eval payloads predate claim lineage. Keep them
+            # isolated under a deterministic atom-scoped claim rather than
+            # rejecting the whole governed plan or guessing that two
+            # differently worded facts are the same claim.
+            claim_key = (
+                "atom:"
+                + stable_text_hash(canonical).removeprefix("sha256:")[:24]
+            )
+        lineage_id = compact_whitespace(str(item.get("lineageId") or ""))[:200]
+        if claim_key and not lineage_id:
+            lineage_id = (
+                "lineage:"
+                + stable_text_hash(
+                    f"{atom_kind}\n{atom_project}\n{atom_app}\n{claim_key}"
+                ).removeprefix("sha256:")[:24]
+            )
         payload = {
             "atomId": atom_id,
-            "kind": compact_whitespace(str(item.get("kind") or "project_fact")),
+            "kind": atom_kind,
             "canonicalText": canonical,
             "summary": compact_whitespace(str(item.get("summary") or "")),
             "tags": _canonical_tag_names(_strings(item.get("tags")), tag_name_map),
@@ -611,8 +637,21 @@ def memory_book_plan_from_compile_output(
                 group_source_ids=group_source_ids,
             ),
             "directCandidateAllowed": bool(item.get("directCandidateAllowed", False)),
-            "project": compact_whitespace(str(item.get("project") or project)),
-            "app": compact_whitespace(str(item.get("app") or "")),
+            "project": atom_project,
+            "app": atom_app,
+            "claimKey": claim_key,
+            "lineageId": lineage_id,
+            "claimState": compact_whitespace(
+                str(item.get("claimState") or "current")
+            ).lower(),
+            "validFromMs": (
+                _optional_int(item.get("validFromMs"))
+                or _latest_source_event_ms(source_ids, source_bundle=source_bundle)
+            ),
+            "validToMs": _optional_int(item.get("validToMs")) or None,
+            "supersedesId": compact_whitespace(
+                str(item.get("supersedesId") or "")
+            )[:240],
             "confidence": _bounded_float(item.get("confidence"), default=0.5),
             "qualityScore": _bounded_float(item.get("qualityScore"), default=0.5),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
@@ -894,6 +933,7 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             counts["memoryAtoms"] += 1
             _validate_required_text(errors, index, op, payload, "atomId")
             _validate_required_text(errors, index, op, payload, "canonicalText")
+            _validate_required_text(errors, index, op, payload, "claimKey")
             _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
             _validate_short_terms(errors, index, op, "surfaceHints", payload.get("surfaceHints"), max_len=16)
             _validate_secret_free(
@@ -901,8 +941,20 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
                 index,
                 op,
                 payload,
-                ("canonicalText", "summary", "tags", "aliases", "surfaceHints", "queryExpansions"),
+                (
+                    "canonicalText",
+                    "summary",
+                    "tags",
+                    "aliases",
+                    "surfaceHints",
+                    "queryExpansions",
+                    "claimKey",
+                ),
             )
+            if payload.get("claimState") not in {"current", "superseded", "retracted"}:
+                errors.append(
+                    _issue(index, op, "claimState", "unsupported_claim_state")
+                )
             if bool(payload.get("directCandidateAllowed")):
                 errors.append(_issue(index, op, "directCandidateAllowed", "canonical_text_must_not_be_direct_candidate"))
         elif op == "upsert_tag_edge":
@@ -1013,6 +1065,17 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
         _sync_run_status(conn, run_id)
         if rows:
             _advance_compile_state(conn, plan=plan)
+            enqueue_memory_projection(
+                conn,
+                projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                aggregate_type="memory_book_run",
+                aggregate_id=run_id,
+                operation="apply",
+                project=compact_whitespace(
+                    str(dict(plan.get("metadata") or {}).get("project") or "")
+                ),
+                payload={"runId": run_id, "diffCount": len(rows)},
+            )
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1272,6 +1335,17 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
         _sync_run_status(conn, run_id)
         if rows:
             _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
+            enqueue_memory_projection(
+                conn,
+                projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                aggregate_type="memory_book_run",
+                aggregate_id=run_id,
+                operation="apply",
+                project=compact_whitespace(
+                    str(dict(current.get("metadata") or {}).get("project") or "")
+                ),
+                payload={"runId": run_id, "diffCount": len(rows)},
+            )
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1288,19 +1362,35 @@ def rollback_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[s
             "memory book run is not rollbackable after a newer applied run: "
             f"{run_id} -> {newer_run['runId']}"
         )
-    rows = conn.execute(
-        """
-        SELECT id, op, rollback_json, status
-        FROM memory_cleanup_diffs
-        WHERE run_id = ? AND status = 'applied'
-        ORDER BY id DESC
-        """,
-        (run_id,),
-    ).fetchall()
-    for row in rows:
-        _rollback_memory_book_diff(conn, row=row)
-        conn.execute("UPDATE memory_cleanup_diffs SET status = 'rolled_back' WHERE id = ?", (int(row["id"]),))
-    _sync_run_status(conn, run_id)
+    with conn:
+        rows = conn.execute(
+            """
+            SELECT id, op, rollback_json, status
+            FROM memory_cleanup_diffs
+            WHERE run_id = ? AND status = 'applied'
+            ORDER BY id DESC
+            """,
+            (run_id,),
+        ).fetchall()
+        for row in rows:
+            _rollback_memory_book_diff(conn, row=row)
+            conn.execute(
+                "UPDATE memory_cleanup_diffs SET status = 'rolled_back' WHERE id = ?",
+                (int(row["id"]),),
+            )
+        _sync_run_status(conn, run_id)
+        if rows:
+            enqueue_memory_projection(
+                conn,
+                projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                aggregate_type="memory_book_run",
+                aggregate_id=run_id,
+                operation="rollback",
+                project=compact_whitespace(
+                    str(dict(current.get("metadata") or {}).get("project") or "")
+                ),
+                payload={"runId": run_id, "diffCount": len(rows)},
+            )
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1469,6 +1559,17 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         _restore_semantic_group_members(conn, rollback)
     elif op == "upsert_memory_atom":
         _restore_or_delete_row(conn, table="memory_atoms", pk="id", rollback=rollback)
+        for old_row in rollback.get("autoSuperseded", []) or []:
+            if isinstance(old_row, dict):
+                _insert_or_replace_dict(conn, "memory_atoms", old_row)
+        for relation in rollback.get("supersessionRollbacks", []) or []:
+            if isinstance(relation, dict):
+                _restore_or_delete_row(
+                    conn,
+                    table="memory_supersessions",
+                    pk="supersession_id",
+                    rollback=relation,
+                )
         _restore_semantic_group_members(conn, rollback)
         for alias_id in rollback.get("createdAliasIds", []) or []:
             conn.execute("DELETE FROM memory_aliases WHERE id = ?", (str(alias_id),))
@@ -1721,30 +1822,139 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
     previous = _row_dict(conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (atom_id,)).fetchone())
     timestamp = now_ms()
     canonical = str(payload.get("canonicalText") or "")
+    kind = str(payload.get("kind") or "project_fact")
+    app = str(payload.get("app") or "")
+    project = str(payload.get("project") or "")
+    claim_key = _normalized_claim_key(payload.get("claimKey"))
+    if not claim_key:
+        raise ValueError("memory atom claimKey is required")
+    lineage_id = compact_whitespace(str(payload.get("lineageId") or ""))
+    if not lineage_id:
+        lineage_id = (
+            "lineage:"
+            + stable_text_hash(
+                f"{kind}\n{project}\n{app}\n{claim_key}"
+            ).removeprefix("sha256:")[:24]
+        )
+    claim_state = compact_whitespace(str(payload.get("claimState") or "current")).lower()
+    if claim_state not in {"current", "superseded", "retracted"}:
+        raise ValueError(f"unsupported memory atom claimState: {claim_state}")
+    valid_from_ms = _optional_int(payload.get("validFromMs")) or timestamp
+    valid_to_ms = _optional_int(payload.get("validToMs")) or None
+    requested_status = str(payload.get("status") or "active")
+    stored_status = requested_status
+    auto_superseded: list[dict[str, object]] = []
+    supersession_rollbacks: list[dict[str, object]] = []
+    supersedes_id = compact_whitespace(str(payload.get("supersedesId") or ""))
+
+    current_rows = conn.execute(
+        """
+        SELECT *
+        FROM memory_atoms
+        WHERE claim_key = ?
+          AND COALESCE(scope_project, '') = ?
+          AND COALESCE(scope_app, '') = ?
+          AND kind = ?
+          AND id <> ?
+          AND claim_state = 'current'
+          AND status IN ('active', 'approved')
+        ORDER BY valid_from_ms DESC, updated_at_ms DESC
+        """,
+        (claim_key, project, app, kind, atom_id),
+    ).fetchall()
+    if claim_state == "current" and requested_status in {"active", "approved"}:
+        newer_current = next(
+            (
+                row
+                for row in current_rows
+                if int(row["valid_from_ms"] or 0) > valid_from_ms
+            ),
+            None,
+        )
+        if newer_current is not None:
+            # Replayed or delayed evidence is history, not the current truth.
+            claim_state = "superseded"
+            stored_status = "superseded"
+            valid_to_ms = int(newer_current["valid_from_ms"] or timestamp)
+            supersedes_id = ""
+        else:
+            for row in current_rows:
+                old = _row_dict(row)
+                auto_superseded.append(old)
+                old_id = str(row["id"])
+                conn.execute(
+                    """
+                    UPDATE memory_atoms
+                    SET status = 'superseded',
+                        claim_state = 'superseded',
+                        valid_to_ms = ?,
+                        updated_at_ms = ?
+                    WHERE id = ?
+                    """,
+                    (max(valid_from_ms, 1), timestamp, old_id),
+                )
+                supersedes_id = supersedes_id or old_id
+                supersession_rollbacks.append(
+                    _record_memory_supersession(
+                        conn,
+                        old_id=old_id,
+                        new_id=atom_id,
+                        source_event_ids=_positive_ints(payload.get("sourceEventIds")),
+                        reason="same_claim_key_newer_value",
+                    )
+                )
+    elif claim_state != "current" and stored_status in {"active", "approved"}:
+        stored_status = "superseded"
+        valid_to_ms = valid_to_ms or timestamp
+
     conn.execute(
         """
-        INSERT OR REPLACE INTO memory_atoms(
+        INSERT INTO memory_atoms(
             id, kind, text, canonical_text, source_event_ids_json, source_memory_ids_json,
             scope_app, scope_project, language, confidence, quality_score, echo_risk,
-            privacy_level, status, created_at_ms, updated_at_ms, last_used_at_ms
+            privacy_level, status, created_at_ms, updated_at_ms, last_used_at_ms,
+            claim_key, lineage_id, claim_state, valid_from_ms, valid_to_ms, supersedes_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'zh', ?, ?, 0.0, 'local', ?, COALESCE((SELECT created_at_ms FROM memory_atoms WHERE id = ?), ?), ?, NULL)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'zh', ?, ?, 0.0, 'local', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            kind = excluded.kind,
+            text = excluded.text,
+            canonical_text = excluded.canonical_text,
+            source_event_ids_json = excluded.source_event_ids_json,
+            source_memory_ids_json = excluded.source_memory_ids_json,
+            scope_app = excluded.scope_app,
+            scope_project = excluded.scope_project,
+            confidence = excluded.confidence,
+            quality_score = excluded.quality_score,
+            status = excluded.status,
+            updated_at_ms = excluded.updated_at_ms,
+            claim_key = excluded.claim_key,
+            lineage_id = excluded.lineage_id,
+            claim_state = excluded.claim_state,
+            valid_from_ms = excluded.valid_from_ms,
+            valid_to_ms = excluded.valid_to_ms,
+            supersedes_id = excluded.supersedes_id
         """,
         (
             atom_id,
-            str(payload.get("kind") or "project_fact"),
+            kind,
             canonical,
             canonical,
             json.dumps(_positive_ints(payload.get("sourceEventIds")), ensure_ascii=False),
             json.dumps(_strings(payload.get("sourceMemoryIds")), ensure_ascii=False),
-            str(payload.get("app") or ""),
-            str(payload.get("project") or ""),
+            app,
+            project,
             _bounded_float(payload.get("confidence"), default=0.5),
             _bounded_float(payload.get("qualityScore"), default=0.5),
-            str(payload.get("status") or "active"),
-            atom_id,
+            stored_status,
             timestamp,
             timestamp,
+            claim_key,
+            lineage_id,
+            claim_state,
+            valid_from_ms,
+            valid_to_ms,
+            supersedes_id or None,
         ),
     )
     created_alias_ids: list[str] = []
@@ -1787,6 +1997,8 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         "pkValue": atom_id,
         "previous": previous,
         "createdAliasIds": created_alias_ids,
+        "autoSuperseded": auto_superseded,
+        "supersessionRollbacks": supersession_rollbacks,
         **memberships,
     }
 
@@ -2149,9 +2361,14 @@ def _apply_negative_phrase(conn: sqlite3.Connection, payload: dict[str, object])
     }
 
 
-def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
-    old_id = str(payload["oldId"])
-    new_id = str(payload["newId"])
+def _record_memory_supersession(
+    conn: sqlite3.Connection,
+    *,
+    old_id: str,
+    new_id: str,
+    source_event_ids: list[int],
+    reason: str,
+) -> dict[str, object]:
     supersession_id = f"supersession:{stable_text_hash(f'{old_id}->{new_id}').removeprefix('sha256:')[:24]}"
     previous_relation = _row_dict(
         conn.execute(
@@ -2171,22 +2388,46 @@ def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]
             supersession_id,
             old_id,
             new_id,
-            compact_whitespace(str(payload.get("reason") or "newer_explicit_information")),
-            json.dumps(_positive_ints(payload.get("sourceEventIds")), ensure_ascii=False),
+            compact_whitespace(reason) or "newer_explicit_information",
+            json.dumps(source_event_ids, ensure_ascii=False),
             now_ms(),
             json.dumps({"source": "memory_book_compile"}, ensure_ascii=False, sort_keys=True),
         ),
     )
-    relation_rollback = {
+    return {
         "table": "memory_supersessions",
         "pk": "supersession_id",
         "pkValue": supersession_id,
         "previous": previous_relation,
     }
+
+
+def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    old_id = str(payload["oldId"])
+    new_id = str(payload["newId"])
+    relation_rollback = _record_memory_supersession(
+        conn,
+        old_id=old_id,
+        new_id=new_id,
+        source_event_ids=_positive_ints(payload.get("sourceEventIds")),
+        reason=compact_whitespace(
+            str(payload.get("reason") or "newer_explicit_information")
+        ),
+    )
     atom = conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (old_id,)).fetchone()
     if atom is not None:
         previous = _row_dict(atom)
-        conn.execute("UPDATE memory_atoms SET status = 'superseded', updated_at_ms = ? WHERE id = ?", (now_ms(), old_id))
+        conn.execute(
+            """
+            UPDATE memory_atoms
+            SET status = 'superseded',
+                claim_state = 'superseded',
+                valid_to_ms = COALESCE(valid_to_ms, ?),
+                updated_at_ms = ?
+            WHERE id = ?
+            """,
+            (now_ms(), now_ms(), old_id),
+        )
         return {
             "table": "memory_atoms",
             "pk": "id",
@@ -2205,7 +2446,10 @@ def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]
             "previous": previous,
             "supersession": relation_rollback,
         }
-    conn.execute("DELETE FROM memory_supersessions WHERE supersession_id = ?", (supersession_id,))
+    conn.execute(
+        "DELETE FROM memory_supersessions WHERE supersession_id = ?",
+        (str(relation_rollback["pkValue"]),),
+    )
     raise ValueError(f"superseded memory does not exist: {old_id}")
 
 
@@ -2979,6 +3223,49 @@ def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[
     ]
 
 
+def _existing_memory_atom_summaries(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT id, kind, canonical_text, scope_project, scope_app, claim_key,
+               lineage_id, claim_state, valid_from_ms, valid_to_ms,
+               source_event_ids_json, status, updated_at_ms
+        FROM memory_atoms
+        WHERE status IN ('active', 'approved')
+          AND claim_state = 'current'
+          AND privacy_level != 'sensitive'
+          AND (? = '' OR scope_project = ? OR scope_project = '')
+        ORDER BY updated_at_ms DESC
+        LIMIT 96
+        """,
+        (project, project),
+    ).fetchall()
+    return [
+        {
+            "atomId": str(row["id"] or ""),
+            "kind": str(row["kind"] or ""),
+            "canonicalText": _sanitize_text(
+                str(row["canonical_text"] or ""),
+                max_chars=220,
+            )[0],
+            "project": str(row["scope_project"] or ""),
+            "app": str(row["scope_app"] or ""),
+            "claimKey": str(row["claim_key"] or ""),
+            "lineageId": str(row["lineage_id"] or ""),
+            "claimState": str(row["claim_state"] or "current"),
+            "validFromMs": int(row["valid_from_ms"] or 0),
+            "validToMs": int(row["valid_to_ms"]) if row["valid_to_ms"] is not None else None,
+            "sourceEventIds": _json_list(row["source_event_ids_json"]),
+            "status": str(row["status"] or "active"),
+            "updatedAtMs": int(row["updated_at_ms"] or 0),
+        }
+        for row in rows
+    ]
+
+
 def _match_existing_topic_book(
     item: dict[str, object],
     *,
@@ -3183,7 +3470,12 @@ def _legal_source_event_ids(source_bundle: dict[str, object] | None) -> list[int
         for event_id in _positive_ints(event.get("sourceEventIds") or [event.get("eventId")]):
             if event_id not in result:
                 result.append(event_id)
-    for collection_name in ("existingMemoryBooks", "existingSemanticGroups", "existingSemanticTags"):
+    for collection_name in (
+        "existingMemoryBooks",
+        "existingMemoryAtoms",
+        "existingSemanticGroups",
+        "existingSemanticTags",
+    ):
         for item in _list_of_dicts(source_bundle.get(collection_name)):
             for event_id in _positive_ints(item.get("sourceEventIds")):
                 if event_id not in result:
@@ -3197,6 +3489,36 @@ def _semantic_group_id(value: object, *, title: str) -> str:
         return raw
     digest = stable_text_hash(normalize_text(title)).removeprefix("sha256:")[:16]
     return f"group:topic-{digest}"
+
+
+def _normalized_claim_key(value: object) -> str:
+    raw = compact_whitespace(str(value or "")).lower()
+    if not raw:
+        return ""
+    raw = re.sub(r"\s+", "-", raw)
+    if len(raw) > 160:
+        return ""
+    if not re.fullmatch(r"[a-z0-9\u4e00-\u9fff][a-z0-9\u4e00-\u9fff._:/-]*", raw):
+        return ""
+    return raw
+
+
+def _latest_source_event_ms(
+    source_ids: list[int],
+    *,
+    source_bundle: dict[str, object] | None,
+) -> int:
+    if not source_bundle:
+        return 0
+    wanted = set(source_ids)
+    values = [
+        _optional_int(event.get("createdAtMs"))
+        for event in _list_of_dicts(source_bundle.get("recentEvents"))
+        if wanted.intersection(
+            _positive_ints(event.get("sourceEventIds") or [event.get("eventId")])
+        )
+    ]
+    return max(values, default=0)
 
 
 def _semantic_group_ids(item: dict[str, object]) -> list[str]:

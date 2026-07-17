@@ -25,6 +25,7 @@ export interface AgentSessionV1 {
   sessionKind?: 'conversation' | 'subagent_runtime';
   roleId: string;
   roleVersion: string;
+  roleBookRevisionId: string;
   modelProfile: string;
   thinkingLevel?: '' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   toolProfileVersion: string;

@@ -180,6 +180,7 @@ def qwen_compile_output(event_id: int) -> dict[str, object]:
             {
                 "atomId": "atom:qwen3-local-model",
                 "kind": "project_fact",
+                "claimKey": "project:rag-ime.local-model",
                 "canonicalText": "Qwen3 是输入法本地模型候选实验的一部分。",
                 "summary": "用户会把千问三、千文三都指向 Qwen3 本地模型。",
                 "tags": ["大模型", "本地模型", "LLM", "Qwen", "输入法"],
@@ -209,6 +210,7 @@ def governed_compile_output(event_id: int, text: str, tags: tuple[str, ...]) -> 
             {
                 "atomId": f"atom:governed:{event_id}",
                 "kind": "project_fact",
+                "claimKey": f"fixture:governed.{event_id}",
                 "canonicalText": text,
                 "summary": text,
                 "tags": list(tags),

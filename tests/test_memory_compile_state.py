@@ -15,6 +15,7 @@ from rag_ime.memory_book_compiler import (
     memory_compile_due,
     memory_compile_state,
     inspect_memory_book_plan,
+    rollback_memory_book_run,
 )
 from rag_ime.models import InputEvent
 from rag_ime.text_utils import now_ms
@@ -96,12 +97,14 @@ class MemoryCompileStateTest(unittest.TestCase):
                     "memoryAtoms": [
                         {
                             "atomId": "atom:old",
+                            "claimKey": "fixture:fact.current",
                             "canonicalText": "旧事实",
                             "sourceEventIds": [event_id],
                             "groupId": "doc:a",
                         },
                         {
                             "atomId": "atom:new",
+                            "claimKey": "fixture:fact.next",
                             "canonicalText": "新事实",
                             "sourceEventIds": [event_id],
                             "groupId": "doc:a",
@@ -125,6 +128,80 @@ class MemoryCompileStateTest(unittest.TestCase):
             self.assertEqual(
                 conn.execute("SELECT match_value FROM memory_candidate_suppressions WHERE match_value = '根据上述'").fetchone()[0],
                 "根据上述",
+            )
+
+    def test_same_claim_key_closes_old_fact_even_when_model_omits_supersedes(self) -> None:
+        event_id = int(
+            self.core.record_event(
+                self._event("输入法已经从 0.8B 模型切换到 100M 自训练模型", "doc:model")
+            ).split(":", 1)[1]
+        )
+
+        def plan_for(atom_id: str, text: str, valid_from_ms: int) -> dict[str, object]:
+            return memory_book_plan_from_compile_output(
+                {
+                    "schemaVersion": "rag-ime.memory-book-compile.v1",
+                    "memoryAtoms": [
+                        {
+                            "atomId": atom_id,
+                            "kind": "project_fact",
+                            "claimKey": "project:rag-ime.runtime-model",
+                            "canonicalText": text,
+                            "sourceEventIds": [event_id],
+                            "validFromMs": valid_from_ms,
+                        }
+                    ],
+                    # This is the bug boundary: the organizer forgot to emit
+                    # an explicit oldId -> newId edge.
+                    "supersedes": [],
+                },
+                project="ime",
+                provider="deepseek",
+                model="v4-flash",
+            )
+
+        old_plan = plan_for("atom:model-0.8b", "输入法当前使用 Qwen 0.8B 模型。", 100)
+        new_plan = plan_for("atom:model-100m", "输入法当前使用 100M 自训练模型。", 200)
+        with self._connect() as conn:
+            apply_memory_book_plan(conn, old_plan)
+            apply_memory_book_plan(conn, new_plan)
+
+            rows = conn.execute(
+                """
+                SELECT id, status, claim_state, valid_from_ms, valid_to_ms, supersedes_id
+                FROM memory_atoms
+                WHERE claim_key = 'project:rag-ime.runtime-model'
+                ORDER BY valid_from_ms
+                """
+            ).fetchall()
+            self.assertEqual(
+                [(row["id"], row["status"], row["claim_state"]) for row in rows],
+                [
+                    ("atom:model-0.8b", "superseded", "superseded"),
+                    ("atom:model-100m", "active", "current"),
+                ],
+            )
+            self.assertEqual(rows[0]["valid_to_ms"], 200)
+            self.assertEqual(rows[1]["supersedes_id"], "atom:model-0.8b")
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_supersessions "
+                    "WHERE old_memory_id = 'atom:model-0.8b' "
+                    "AND new_memory_id = 'atom:model-100m' AND status = 'active'"
+                ).fetchone()[0],
+                1,
+            )
+
+            rollback_memory_book_run(conn, run_id=str(new_plan["runId"]))
+            restored = conn.execute(
+                "SELECT status, claim_state, valid_to_ms FROM memory_atoms "
+                "WHERE id = 'atom:model-0.8b'"
+            ).fetchone()
+            self.assertEqual(tuple(restored), ("active", "current", None))
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT id FROM memory_atoms WHERE id = 'atom:model-100m'"
+                ).fetchone()
             )
 
     def test_validator_rejects_unplanned_semantic_group(self) -> None:
@@ -236,6 +313,7 @@ class MemoryCompileStateTest(unittest.TestCase):
                 {
                     "memoryAtoms": [
                         {
+                            "claimKey": "project:ime.bm25-status",
                             "canonicalText": "BM25 已在输入法项目中真实实现。",
                             "sourceEventIds": [ids[0], ids[-1]],
                         }

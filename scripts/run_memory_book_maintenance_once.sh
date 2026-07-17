@@ -66,14 +66,54 @@ PLAN_PATH="$OUT_DIR/memory-book-$STAMP.json"
 PREVIEW_LOG="$OUT_DIR/memory-book-$STAMP.preview.json"
 VALIDATE_LOG="$OUT_DIR/memory-book-$STAMP.validate.json"
 APPLY_LOG="$OUT_DIR/memory-book-$STAMP.apply.json"
+PERSONAL_CONTEXT_LOG="$OUT_DIR/personal-context-$STAMP.json"
 
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export RAG_IME_DEEPSEEK_REASONING_EFFORT="${RAG_IME_DEEPSEEK_REASONING_EFFORT:-low}"
 export RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"
 
+# This local, deterministic pass is independent from the model-backed Memory
+# Book preview. Per-target failures remain observable without blocking the
+# other roles, the Memory Book job, or the Agent runtime.
+set +e
+"$PYTHON_EXECUTABLE" -m rag_ime.cli \
+  --core-mode local \
+  --db-path "$DB_PATH" \
+  personal-context-maintenance-run \
+  --project "$PROJECT" \
+  --report-path "$PERSONAL_CONTEXT_LOG" >/dev/null
+PERSONAL_CONTEXT_STATUS=$?
+set -e
+if [[ ! -s "$PERSONAL_CONTEXT_LOG" ]]; then
+  "$PYTHON_EXECUTABLE" - "$PERSONAL_CONTEXT_LOG" "$PERSONAL_CONTEXT_STATUS" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path, exit_code = sys.argv[1:3]
+Path(path).write_text(
+    json.dumps(
+        {
+            "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+            "ok": False,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "error": "personal_context_maintenance_process_failed",
+            "exitCode": int(exit_code),
+            "targets": [],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+fi
+
 if [[ "$TRIGGER" != "manual" ]]; then
   set +e
-  DUE_JSON="$($PYTHON_EXECUTABLE - "$DB_PATH" "$PROJECT" <<'PY'
+  DUE_JSON="$("$PYTHON_EXECUTABLE" - "$DB_PATH" "$PROJECT" <<'PY'
 import json
 import sqlite3
 import sys
@@ -106,12 +146,22 @@ PY
   DUE_STATUS=$?
   set -e
   if [[ "$DUE_STATUS" == "3" ]]; then
-    "$PYTHON_EXECUTABLE" - "$DUE_JSON" <<'PY'
+    "$PYTHON_EXECUTABLE" - "$DUE_JSON" "$PERSONAL_CONTEXT_LOG" "$PERSONAL_CONTEXT_STATUS" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 due = json.loads(sys.argv[1])
+try:
+    personal_context = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+except Exception as exc:
+    personal_context = {
+        "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+        "ok": False,
+        "error": str(exc),
+        "targets": [],
+    }
 print(json.dumps({
     "schemaVersion": "rag-ime.memory-book-maintenance.v1",
     "ok": True,
@@ -120,6 +170,8 @@ print(json.dumps({
     "skipped": True,
     "skipReason": due["reason"],
     "compileState": due["state"],
+    "personalContextMaintenance": personal_context,
+    "personalContextMaintenanceExitCode": int(sys.argv[3]),
 }, ensure_ascii=False, indent=2))
 PY
     exit 0
@@ -159,13 +211,13 @@ if [[ "$APPLY" == "1" || "$APPLY" == "true" || "$APPLY" == "TRUE" || "$APPLY" ==
   applied=true
 fi
 
-"$PYTHON_EXECUTABLE" - "$PLAN_PATH" "$PREVIEW_LOG" "$VALIDATE_LOG" "$APPLY_LOG" "$applied" <<'PY'
+"$PYTHON_EXECUTABLE" - "$PLAN_PATH" "$PREVIEW_LOG" "$VALIDATE_LOG" "$APPLY_LOG" "$applied" "$PERSONAL_CONTEXT_LOG" "$PERSONAL_CONTEXT_STATUS" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-plan_path, preview_path, validate_path, apply_path, applied = sys.argv[1:6]
+plan_path, preview_path, validate_path, apply_path, applied, personal_context_path, personal_context_status = sys.argv[1:8]
 payload = {
     "schemaVersion": "rag-ime.memory-book-maintenance.v1",
     "ok": True,
@@ -176,7 +228,19 @@ payload = {
     "previewLog": preview_path,
     "validateLog": validate_path,
     "applyLog": apply_path if applied == "true" else "",
+    "personalContextMaintenanceExitCode": int(personal_context_status),
 }
+try:
+    payload["personalContextMaintenance"] = json.loads(
+        Path(personal_context_path).read_text(encoding="utf-8")
+    )
+except Exception as exc:
+    payload["personalContextMaintenance"] = {
+        "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+        "ok": False,
+        "error": str(exc),
+        "targets": [],
+    }
 try:
     preview = json.loads(Path(preview_path).read_text(encoding="utf-8"))
     run = preview.get("run") if isinstance(preview.get("run"), dict) else {}

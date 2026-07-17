@@ -1245,6 +1245,114 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-memory-evidence.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-memory-evidence.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "evidenceId",
+      "project",
+      "roleId",
+      "sessionId",
+      "sourceKind",
+      "sourceId",
+      "idempotencyKey",
+      "text",
+      "textSha256",
+      "classification",
+      "maySupportLongTermFact",
+      "provenance",
+      "metadata",
+      "privacyClass",
+      "status",
+      "occurredAtMs",
+      "recordedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-memory-evidence.v1"
+      },
+      "evidenceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "project": {
+        "type": "string"
+      },
+      "roleId": {
+        "type": "string"
+      },
+      "sessionId": {
+        "type": "string"
+      },
+      "sourceKind": {
+        "type": "string",
+        "enum": [
+          "user_message",
+          "assistant_message",
+          "tool_receipt",
+          "session_digest",
+          "room_event",
+          "work_receipt"
+        ]
+      },
+      "sourceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "idempotencyKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1
+      },
+      "textSha256": {
+        "type": "string",
+        "minLength": 64
+      },
+      "classification": {
+        "type": "string",
+        "const": "raw_evidence"
+      },
+      "maySupportLongTermFact": {
+        "type": "boolean",
+        "const": false
+      },
+      "provenance": {
+        "type": "object"
+      },
+      "metadata": {
+        "type": "object"
+      },
+      "privacyClass": {
+        "type": "string",
+        "enum": [
+          "local",
+          "private"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "tombstoned"
+        ]
+      },
+      "occurredAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "recordedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "agent-memory-maintenance-status.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-memory-maintenance-status.v1",
@@ -1332,6 +1440,51 @@ export const contractSchemas = {
       "pendingDraftCount": {
         "type": "integer",
         "minimum": 0
+      },
+      "projection": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "ok",
+          "configured",
+          "owner",
+          "running",
+          "lastRunAtMs",
+          "lastError",
+          "freshness",
+          "disabledReason"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.memory-projection-runtime.v1"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "lastRunAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "freshness": {
+            "type": "object"
+          },
+          "disabledReason": {
+            "type": "string"
+          }
+        }
       },
       "runs": {
         "type": "array",
@@ -2069,6 +2222,419 @@ export const contractSchemas = {
             "assistant",
             "coordinator"
           ]
+        }
+      }
+    }
+  },
+  "agent-role-book-tool-result.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-role-book-tool-result.v1",
+    "title": "Agent Role Book Tool Result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "operation",
+      "roleId",
+      "roleVersion",
+      "summary",
+      "activeRevisionChanged",
+      "result"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-role-book-tool-result.v1"
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "get",
+          "history",
+          "propose_revision",
+          "review"
+        ]
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "roleVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 400
+      },
+      "activeRevisionChanged": {
+        "type": "boolean",
+        "const": false
+      },
+      "result": {
+        "type": "object"
+      }
+    }
+  },
+  "agent-role-book.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-role-book.v1",
+    "title": "Agent Role Book Revision",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "revisionId",
+      "roleId",
+      "roleVersion",
+      "revisionNumber",
+      "status",
+      "displayName",
+      "mission",
+      "basePersonaVersion",
+      "sections",
+      "sourceRevisionId",
+      "changeSummary",
+      "proposedBy",
+      "createdAtMs",
+      "activatedAtMs",
+      "supersededAtMs",
+      "rolledBackAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-role-book.v1"
+      },
+      "revisionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "roleVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "revisionNumber": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "active",
+          "superseded",
+          "rolled_back"
+        ]
+      },
+      "displayName": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "mission": {
+        "type": "string",
+        "maxLength": 400
+      },
+      "basePersonaVersion": {
+        "type": "string",
+        "maxLength": 120
+      },
+      "sections": {
+        "$ref": "#/$defs/sections"
+      },
+      "sourceRevisionId": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "changeSummary": {
+        "type": "string",
+        "maxLength": 400
+      },
+      "proposedBy": {
+        "type": "string",
+        "maxLength": 120
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "activatedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "supersededAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "rolledBackAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "provenance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceType",
+          "sourceId"
+        ],
+        "properties": {
+          "sourceType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "observedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "item": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "itemId",
+          "text",
+          "provenance",
+          "evidenceIds"
+        ],
+        "properties": {
+          "itemId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 280
+          },
+          "provenance": {
+            "$ref": "#/$defs/provenance"
+          },
+          "expiresAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        }
+      },
+      "sections": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "personality",
+          "capabilities",
+          "recentWork",
+          "lessonsAndLimits",
+          "activeCommitments"
+        ],
+        "properties": {
+          "personality": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "$ref": "#/$defs/item"
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "$ref": "#/$defs/item"
+            }
+          },
+          "recentWork": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/item"
+            }
+          },
+          "lessonsAndLimits": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/item"
+            }
+          },
+          "activeCommitments": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/item"
+            }
+          }
+        }
+      }
+    }
+  },
+  "agent-role-routing-profile.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-role-routing-profile.v1",
+    "title": "Agent Role Routing Profile",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "roleId",
+      "roleVersion",
+      "revisionId",
+      "revisionNumber",
+      "advisoryOnly",
+      "personality",
+      "capabilities",
+      "recentWork",
+      "activeCommitments",
+      "lessonsAndLimits"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-role-routing-profile.v1"
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roleVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "revisionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "revisionNumber": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "advisoryOnly": {
+        "type": "boolean"
+      },
+      "personality": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/routingItem"
+        }
+      },
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/routingItem"
+        }
+      },
+      "recentWork": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/routingItem"
+        }
+      },
+      "activeCommitments": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/routingItem"
+        }
+      },
+      "lessonsAndLimits": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/routingItem"
+        }
+      }
+    },
+    "$defs": {
+      "routingItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "itemId",
+          "text",
+          "provenance",
+          "evidenceIds"
+        ],
+        "properties": {
+          "itemId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expiresAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provenance": {
+            "type": "object",
+            "required": [
+              "sourceType",
+              "sourceId"
+            ],
+            "properties": {
+              "sourceType": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "observedAtMs": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              }
+            }
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     }
@@ -3013,6 +3579,7 @@ export const contractSchemas = {
           "status",
           "roleId",
           "roleVersion",
+          "roleBookRevisionId",
           "modelProfile",
           "toolProfileVersion",
           "createdAtMs",
@@ -3058,6 +3625,10 @@ export const contractSchemas = {
             "type": "string",
             "minLength": 1
           },
+          "roleBookRevisionId": {
+            "type": "string",
+            "maxLength": 240
+          },
           "modelProfile": {
             "type": "string",
             "minLength": 1
@@ -3100,6 +3671,7 @@ export const contractSchemas = {
       "status",
       "roleId",
       "roleVersion",
+      "roleBookRevisionId",
       "modelProfile",
       "toolProfileVersion",
       "createdAtMs",
@@ -3203,6 +3775,10 @@ export const contractSchemas = {
       "roleVersion": {
         "type": "string",
         "minLength": 1
+      },
+      "roleBookRevisionId": {
+        "type": "string",
+        "maxLength": 240
       },
       "modelProfile": {
         "type": "string",
@@ -3811,6 +4387,7 @@ export const contractSchemas = {
           "ime_planning",
           "agent_schedule",
           "ime_memory",
+          "agent_role_book",
           "ime_knowledge",
           "ime_models",
           "ime_runtime",
@@ -3920,6 +4497,7 @@ export const contractSchemas = {
           "ime_planning",
           "agent_schedule",
           "ime_memory",
+          "agent_role_book",
           "ime_knowledge",
           "ime_models",
           "ime_runtime",
@@ -3972,6 +4550,18 @@ export const contractSchemas = {
           "maintenance_review",
           "maintenance_apply",
           "maintenance_rollback",
+          "remember_preview",
+          "correct_preview",
+          "forget_preview",
+          "remember_apply",
+          "correct_apply",
+          "forget_apply",
+          "governance_rollback",
+          "get",
+          "explain",
+          "history",
+          "propose_revision",
+          "review",
           "list",
           "update",
           "create_draft",
@@ -3998,7 +4588,6 @@ export const contractSchemas = {
           "restart_sidecar",
           "restart_predictor",
           "redeploy_rime",
-          "history",
           "audit",
           "export_preview",
           "export",
@@ -4341,6 +4930,344 @@ export const contractSchemas = {
       "version": {
         "type": "string",
         "minLength": 1
+      }
+    }
+  },
+  "daily-activity-timeline.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.daily-activity-timeline.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "timelineId",
+      "project",
+      "date",
+      "timezone",
+      "status",
+      "sourceEventIds",
+      "sourceEventHash",
+      "segments",
+      "summary",
+      "eventCount",
+      "segmentCount",
+      "approvedBookId",
+      "approvedBy",
+      "approvedAtMs",
+      "createdAtMs",
+      "updatedAtMs",
+      "policy"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.daily-activity-timeline.v1"
+      },
+      "timelineId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "project": {
+        "type": "string"
+      },
+      "date": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      },
+      "timezone": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "approved",
+          "rejected",
+          "superseded"
+        ]
+      },
+      "sourceEventIds": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "uniqueItems": true
+      },
+      "sourceEventHash": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "segments": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/segment"
+        }
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1
+      },
+      "eventCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "segmentCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "approvedBookId": {
+        "type": "string"
+      },
+      "approvedBy": {
+        "type": "string"
+      },
+      "approvedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "derivedFromInputEvents",
+          "longTermFact",
+          "automaticPromotion",
+          "explicitApprovalRequired"
+        ],
+        "properties": {
+          "derivedFromInputEvents": {
+            "type": "boolean",
+            "const": true
+          },
+          "longTermFact": {
+            "type": "boolean",
+            "const": false
+          },
+          "automaticPromotion": {
+            "type": "boolean",
+            "const": false
+          },
+          "explicitApprovalRequired": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      }
+    },
+    "$defs": {
+      "segment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "segmentId",
+          "position",
+          "app",
+          "sourceKinds",
+          "contextGroupIds",
+          "startMs",
+          "endMs",
+          "eventCount",
+          "sourceEventIds",
+          "sourceEventHash",
+          "summary",
+          "redactedEventCount"
+        ],
+        "properties": {
+          "segmentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "app": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceKinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "contextGroupIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "startMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "eventCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceEventIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "uniqueItems": true
+          },
+          "sourceEventHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "redactedEventCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "daily-conversation-digest.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.daily-conversation-digest.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "digestId",
+      "project",
+      "roleId",
+      "window",
+      "sourceEvidenceIds",
+      "activityTimelineId",
+      "sourceCounts",
+      "summary",
+      "highlights",
+      "recentWork",
+      "caveats",
+      "generatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.daily-conversation-digest.v1"
+      },
+      "digestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "project": {
+        "type": "string"
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "window": {
+        "type": "object",
+        "required": [
+          "startMs",
+          "endMs"
+        ],
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "sourceEvidenceIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "activityTimelineId": {
+        "type": "string"
+      },
+      "sourceCounts": {
+        "type": "object"
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1
+      },
+      "highlights": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/digestItem"
+        }
+      },
+      "recentWork": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/digestItem"
+        }
+      },
+      "caveats": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "generatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "digestItem": {
+        "type": "object",
+        "required": [
+          "evidenceId",
+          "sourceKind",
+          "text",
+          "occurredAtMs"
+        ],
+        "properties": {
+          "evidenceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "occurredAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     }
   },
@@ -6134,6 +7061,202 @@ export const contractSchemas = {
       }
     }
   },
+  "memory-bootstrap.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.memory-bootstrap.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "bootstrapId",
+      "sessionId",
+      "project",
+      "roleId",
+      "generatedAtMs",
+      "queryFree",
+      "sections",
+      "sourceIds",
+      "budget",
+      "policy"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.memory-bootstrap.v1"
+      },
+      "bootstrapId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "project": {
+        "type": "string"
+      },
+      "roleId": {
+        "type": "string"
+      },
+      "generatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "queryFree": {
+        "type": "boolean",
+        "const": true
+      },
+      "sections": {
+        "type": "object",
+        "required": [
+          "stablePreferences",
+          "projectState",
+          "topicBooks",
+          "recentTimeline",
+          "activeAtoms",
+          "oneRing"
+        ],
+        "properties": {
+          "stablePreferences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/contextSource"
+            }
+          },
+          "projectState": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/contextSource"
+            }
+          },
+          "topicBooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/contextSource"
+            }
+          },
+          "recentTimeline": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/contextSource"
+            }
+          },
+          "activeAtoms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/contextSource"
+            }
+          },
+          "oneRing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/contextSource"
+            }
+          }
+        }
+      },
+      "sourceIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "budget": {
+        "type": "object",
+        "required": [
+          "maxChars",
+          "usedChars",
+          "omittedCounts"
+        ],
+        "properties": {
+          "maxChars": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "usedChars": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "omittedCounts": {
+            "type": "object"
+          }
+        }
+      },
+      "policy": {
+        "type": "object",
+        "required": [
+          "automaticRecall",
+          "lifecycle",
+          "oneRingMaySupportFacts",
+          "rawDialogueIsLongTermFact"
+        ],
+        "properties": {
+          "automaticRecall": {
+            "type": "string",
+            "const": "session_start_only"
+          },
+          "lifecycle": {
+            "type": "string",
+            "const": "once"
+          },
+          "oneRingMaySupportFacts": {
+            "type": "boolean",
+            "const": false
+          },
+          "rawDialogueIsLongTermFact": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      }
+    },
+    "$defs": {
+      "contextSource": {
+        "type": "object",
+        "required": [
+          "sourceType",
+          "sourceId",
+          "text",
+          "occurredAtMs",
+          "maySupportFacts",
+          "provenance"
+        ],
+        "properties": {
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "memory_atom",
+              "memory_book",
+              "memory_evidence",
+              "planning_item"
+            ]
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string"
+          },
+          "occurredAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maySupportFacts": {
+            "type": "boolean"
+          },
+          "provenance": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
   "memory-catalog.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.memory-catalog.v1",
@@ -6565,6 +7688,203 @@ export const contractSchemas = {
             "type": "boolean"
           }
         }
+      }
+    }
+  },
+  "memory-governance-preview.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.memory-governance-preview.v1",
+    "title": "Memory Governance Preview",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "previewId",
+      "proposalId",
+      "operation",
+      "applyOperation",
+      "sessionId",
+      "project",
+      "targetId",
+      "memoryKind",
+      "proposedText",
+      "reason",
+      "evidenceIds",
+      "summary",
+      "status",
+      "reviewRequired",
+      "applyOperationAvailable",
+      "mutationApplied",
+      "writes",
+      "audit",
+      "createdAtMs",
+      "expiresAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.memory-governance-preview.v1"
+      },
+      "previewId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "proposalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "remember_preview",
+          "correct_preview",
+          "forget_preview"
+        ]
+      },
+      "applyOperation": {
+        "type": "string",
+        "enum": [
+          "remember_apply",
+          "correct_apply",
+          "forget_apply"
+        ]
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "project": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "targetId": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "memoryKind": {
+        "type": "string",
+        "enum": [
+          "",
+          "fact",
+          "preference",
+          "decision",
+          "commitment",
+          "project_state"
+        ]
+      },
+      "proposedText": {
+        "type": "string",
+        "maxLength": 1200
+      },
+      "reason": {
+        "type": "string",
+        "maxLength": 400
+      },
+      "evidenceIds": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 400
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "applied",
+          "rolled_back",
+          "expired",
+          "failed"
+        ]
+      },
+      "reviewRequired": {
+        "type": "boolean",
+        "const": true
+      },
+      "applyOperationAvailable": {
+        "type": "boolean"
+      },
+      "mutationApplied": {
+        "type": "boolean",
+        "const": false
+      },
+      "writes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "proposalStored",
+          "memoryAtoms",
+          "memoryBooks",
+          "retrievalVectors"
+        ],
+        "properties": {
+          "proposalStored": {
+            "type": "boolean",
+            "const": true
+          },
+          "memoryAtoms": {
+            "type": "boolean",
+            "const": false
+          },
+          "memoryBooks": {
+            "type": "boolean",
+            "const": false
+          },
+          "retrievalVectors": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "audit": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "payloadSha256",
+          "recordKind",
+          "sessionId",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "payloadSha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "recordKind": {
+            "type": "string",
+            "const": "memory_governance_proposal"
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "expiresAtMs": {
+        "type": "integer",
+        "minimum": 0
       }
     }
   },
@@ -7504,6 +8824,203 @@ export const contractSchemas = {
       },
       "storageReceipt": {
         "type": "object"
+      }
+    }
+  },
+  "role-book-revision-draft.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.role-book-revision-draft.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "draftId",
+      "status",
+      "project",
+      "roleId",
+      "baseRoleVersion",
+      "sourceDigestId",
+      "sourceEvidenceIds",
+      "patch",
+      "policy",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.role-book-revision-draft.v1"
+      },
+      "draftId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string",
+        "const": "draft"
+      },
+      "project": {
+        "type": "string"
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "baseRoleVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceDigestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceEvidenceIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "patch": {
+        "type": "object",
+        "required": [
+          "recentWork",
+          "traitProposals",
+          "capabilityProposals"
+        ],
+        "properties": {
+          "recentWork": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "traitProposals": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "capabilityProposals": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "policy": {
+        "type": "object",
+        "required": [
+          "defaultApply",
+          "safeAutoApplyFields",
+          "reviewRequiredFields"
+        ],
+        "properties": {
+          "defaultApply": {
+            "type": "boolean",
+            "const": false
+          },
+          "safeAutoApplyFields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "recentWork"
+              ]
+            }
+          },
+          "reviewRequiredFields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "traits",
+                "capabilities"
+              ]
+            }
+          }
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "user-memory-draft.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.user-memory-draft.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "draftId",
+      "status",
+      "project",
+      "roleId",
+      "sourceDigestId",
+      "sourceEvidenceIds",
+      "candidates",
+      "policy",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.user-memory-draft.v1"
+      },
+      "draftId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string",
+        "const": "review_required"
+      },
+      "project": {
+        "type": "string"
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceDigestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceEvidenceIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "candidates": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "policy": {
+        "type": "object",
+        "required": [
+          "rawDialoguePromotion",
+          "defaultApply"
+        ],
+        "properties": {
+          "rawDialoguePromotion": {
+            "type": "string",
+            "const": "forbidden"
+          },
+          "defaultApply": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
       }
     }
   },

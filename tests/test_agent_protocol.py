@@ -35,6 +35,8 @@ class AgentProtocolTests(unittest.TestCase):
             "agent-media.v1.json",
             "agent-memory-source.v1.json",
             "agent-memory-maintenance-status.v1.json",
+            "memory-governance-preview.v1.json",
+            "agent-role-book-tool-result.v1.json",
             "memory-catalog.v1.json",
             "control-tool-manifest.v1.json",
             "agent-approval.v1.json",

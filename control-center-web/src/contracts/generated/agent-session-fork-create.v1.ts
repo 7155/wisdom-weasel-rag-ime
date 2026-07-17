@@ -20,6 +20,7 @@ export interface Session {
   status: 'idle' | 'active' | 'busy' | 'faulted' | 'archived';
   roleId: string;
   roleVersion: string;
+  roleBookRevisionId: string;
   modelProfile: string;
   toolProfileVersion: string;
   createdAtMs: number;

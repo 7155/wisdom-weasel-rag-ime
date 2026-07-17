@@ -16,6 +16,7 @@ import type { AgentControlBootstrapV1 } from './generated/agent-control-bootstra
 import type { AgentControlEventV1 } from './generated/agent-control-event.v1';
 import type { AgentEventV1 } from './generated/agent-event.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
+import type { AgentMemoryEvidenceV1 } from './generated/agent-memory-evidence.v1';
 import type { AgentMemoryMaintenanceStatusV1 } from './generated/agent-memory-maintenance-status.v1';
 import type { AgentMemorySourceV1 } from './generated/agent-memory-source.v1';
 import type { AgentMessageV1 } from './generated/agent-message.v1';
@@ -23,6 +24,9 @@ import type { AgentModelCatalogV1 } from './generated/agent-model-catalog.v1';
 import type { AgentModelSelectionV1 } from './generated/agent-model-selection.v1';
 import type { AgentParticipantV1 } from './generated/agent-participant.v1';
 import type { AgentPersonaV1 } from './generated/agent-persona.v1';
+import type { AgentRoleBookToolResultV1 } from './generated/agent-role-book-tool-result.v1';
+import type { AgentRoleBookV1 } from './generated/agent-role-book.v1';
+import type { AgentRoleRoutingProfileV1 } from './generated/agent-role-routing-profile.v1';
 import type { AgentRoomEventV1 } from './generated/agent-room-event.v1';
 import type { AgentRoomIntercomV1 } from './generated/agent-room-intercom.v1';
 import type { AgentRoomSnapshotV1 } from './generated/agent-room-snapshot.v1';
@@ -41,6 +45,8 @@ import type { AgentToolResultV1 } from './generated/agent-tool-result.v1';
 import type { AssistantCandidateActionV1 } from './generated/assistant-candidate-action.v1';
 import type { AssistantOverlayV1 } from './generated/assistant-overlay.v1';
 import type { ControlToolManifestV1 } from './generated/control-tool-manifest.v1';
+import type { DailyActivityTimelineV1 } from './generated/daily-activity-timeline.v1';
+import type { DailyConversationDigestV1 } from './generated/daily-conversation-digest.v1';
 import type { ForegroundCommitV1 } from './generated/foreground-commit.v1';
 import type { ForegroundContextV2 } from './generated/foreground-context.v2';
 import type { FrontendCapabilitiesV1 } from './generated/frontend-capabilities.v1';
@@ -55,8 +61,10 @@ import type { KnowledgeLibraryV1 } from './generated/knowledge-library.v1';
 import type { ManagementWorkErrorV1 } from './generated/management-work-error.v1';
 import type { ManagementWorkPreviewV1 } from './generated/management-work-preview.v1';
 import type { ManagementWorkReceiptV1 } from './generated/management-work-receipt.v1';
+import type { MemoryBootstrapV1 } from './generated/memory-bootstrap.v1';
 import type { MemoryCatalogV1 } from './generated/memory-catalog.v1';
 import type { MemoryEntityV1 } from './generated/memory-entity.v1';
+import type { MemoryGovernancePreviewV1 } from './generated/memory-governance-preview.v1';
 import type { MemoryGraphV1 } from './generated/memory-graph.v1';
 import type { MemoryReadErrorV1 } from './generated/memory-read-error.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
@@ -65,6 +73,8 @@ import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
 import type { RimeSelectV1 } from './generated/rime-select.v1';
 import type { RimeSuggestRequestV1 } from './generated/rime-suggest-request.v1';
 import type { RimeSuggestResponseV1 } from './generated/rime-suggest-response.v1';
+import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-draft.v1';
+import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
 export type {
   ActiveRagStartV1,
@@ -79,6 +89,7 @@ export type {
   AgentControlEventV1,
   AgentEventV1,
   AgentMediaV1,
+  AgentMemoryEvidenceV1,
   AgentMemoryMaintenanceStatusV1,
   AgentMemorySourceV1,
   AgentMessageV1,
@@ -86,6 +97,9 @@ export type {
   AgentModelSelectionV1,
   AgentParticipantV1,
   AgentPersonaV1,
+  AgentRoleBookToolResultV1,
+  AgentRoleBookV1,
+  AgentRoleRoutingProfileV1,
   AgentRoomEventV1,
   AgentRoomIntercomV1,
   AgentRoomSnapshotV1,
@@ -104,6 +118,8 @@ export type {
   AssistantCandidateActionV1,
   AssistantOverlayV1,
   ControlToolManifestV1,
+  DailyActivityTimelineV1,
+  DailyConversationDigestV1,
   ForegroundCommitV1,
   ForegroundContextV2,
   FrontendCapabilitiesV1,
@@ -118,8 +134,10 @@ export type {
   ManagementWorkErrorV1,
   ManagementWorkPreviewV1,
   ManagementWorkReceiptV1,
+  MemoryBootstrapV1,
   MemoryCatalogV1,
   MemoryEntityV1,
+  MemoryGovernancePreviewV1,
   MemoryGraphV1,
   MemoryReadErrorV1,
   OverlayConfigV1,
@@ -128,6 +146,8 @@ export type {
   RimeSelectV1,
   RimeSuggestRequestV1,
   RimeSuggestResponseV1,
+  RoleBookRevisionDraftV1,
+  UserMemoryDraftV1,
 };
 
 export interface ContractTypeMap {
@@ -143,6 +163,7 @@ export interface ContractTypeMap {
   'agent-control-event.v1': AgentControlEventV1;
   'agent-event.v1': AgentEventV1;
   'agent-media.v1': AgentMediaV1;
+  'agent-memory-evidence.v1': AgentMemoryEvidenceV1;
   'agent-memory-maintenance-status.v1': AgentMemoryMaintenanceStatusV1;
   'agent-memory-source.v1': AgentMemorySourceV1;
   'agent-message.v1': AgentMessageV1;
@@ -150,6 +171,9 @@ export interface ContractTypeMap {
   'agent-model-selection.v1': AgentModelSelectionV1;
   'agent-participant.v1': AgentParticipantV1;
   'agent-persona.v1': AgentPersonaV1;
+  'agent-role-book-tool-result.v1': AgentRoleBookToolResultV1;
+  'agent-role-book.v1': AgentRoleBookV1;
+  'agent-role-routing-profile.v1': AgentRoleRoutingProfileV1;
   'agent-room-event.v1': AgentRoomEventV1;
   'agent-room-intercom.v1': AgentRoomIntercomV1;
   'agent-room-snapshot.v1': AgentRoomSnapshotV1;
@@ -168,6 +192,8 @@ export interface ContractTypeMap {
   'assistant-candidate-action.v1': AssistantCandidateActionV1;
   'assistant-overlay.v1': AssistantOverlayV1;
   'control-tool-manifest.v1': ControlToolManifestV1;
+  'daily-activity-timeline.v1': DailyActivityTimelineV1;
+  'daily-conversation-digest.v1': DailyConversationDigestV1;
   'foreground-commit.v1': ForegroundCommitV1;
   'foreground-context.v2': ForegroundContextV2;
   'frontend-capabilities.v1': FrontendCapabilitiesV1;
@@ -182,8 +208,10 @@ export interface ContractTypeMap {
   'management-work-error.v1': ManagementWorkErrorV1;
   'management-work-preview.v1': ManagementWorkPreviewV1;
   'management-work-receipt.v1': ManagementWorkReceiptV1;
+  'memory-bootstrap.v1': MemoryBootstrapV1;
   'memory-catalog.v1': MemoryCatalogV1;
   'memory-entity.v1': MemoryEntityV1;
+  'memory-governance-preview.v1': MemoryGovernancePreviewV1;
   'memory-graph.v1': MemoryGraphV1;
   'memory-read-error.v1': MemoryReadErrorV1;
   'overlay-config.v1': OverlayConfigV1;
@@ -192,6 +220,8 @@ export interface ContractTypeMap {
   'rime-select.v1': RimeSelectV1;
   'rime-suggest-request.v1': RimeSuggestRequestV1;
   'rime-suggest-response.v1': RimeSuggestResponseV1;
+  'role-book-revision-draft.v1': RoleBookRevisionDraftV1;
+  'user-memory-draft.v1': UserMemoryDraftV1;
 }
 
 export type GeneratedContractName = keyof ContractTypeMap;

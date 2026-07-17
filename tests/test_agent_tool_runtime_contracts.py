@@ -86,7 +86,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             if item["enabled"] is True
         }
 
-        self.assertEqual(len(manifests), 18)
+        self.assertEqual(len(manifests), 19)
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
                 schema = manifest["parameters"]
@@ -138,6 +138,47 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(
             self._branch(tools["ime_memory"], "read")["required"],
             ["op", "bookId"],
+        )
+        self.assertEqual(
+            self._branch(tools["ime_memory"], "remember_preview")["required"],
+            ["op", "text"],
+        )
+        self.assertEqual(
+            self._branch(tools["ime_memory"], "correct_preview")["required"],
+            ["op", "targetId", "text"],
+        )
+        self.assertEqual(
+            self._branch(tools["ime_memory"], "forget_preview")["required"],
+            ["op", "targetId", "reason"],
+        )
+        self.assertIn(
+            "当前 Session",
+            tools["ime_memory"]["description"],
+        )
+        self.assertEqual(
+            self._branch(tools["agent_role_book"], "propose_revision")["required"],
+            ["op", "updates"],
+        )
+        role_review = self._branch(tools["agent_role_book"], "review")
+        self.assertEqual(role_review["required"], ["op"])
+        self.assertEqual(
+            role_review["anyOf"],
+            [{"required": ["revisionId"]}, {"required": ["draftId"]}],
+        )
+        role_updates = self._branch(
+            tools["agent_role_book"],
+            "propose_revision",
+        )["properties"]["updates"]
+        self.assertFalse(role_updates["additionalProperties"])
+        self.assertEqual(
+            set(role_updates["properties"]),
+            {
+                "personality",
+                "capabilities",
+                "recentWork",
+                "lessonsAndLimits",
+                "activeCommitments",
+            },
         )
         self.assertEqual(
             self._branch(tools["ime_knowledge"], "search")["required"],

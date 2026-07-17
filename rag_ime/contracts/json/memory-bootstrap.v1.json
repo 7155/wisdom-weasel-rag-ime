@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.memory-bootstrap.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "bootstrapId", "sessionId", "project", "roleId",
+    "generatedAtMs", "queryFree", "sections", "sourceIds", "budget", "policy"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.memory-bootstrap.v1"},
+    "bootstrapId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "project": {"type": "string"},
+    "roleId": {"type": "string"},
+    "generatedAtMs": {"type": "integer", "minimum": 0},
+    "queryFree": {"type": "boolean", "const": true},
+    "sections": {
+      "type": "object",
+      "required": [
+        "stablePreferences", "projectState", "topicBooks",
+        "recentTimeline", "activeAtoms", "oneRing"
+      ],
+      "properties": {
+        "stablePreferences": {"type": "array", "items": {"$ref": "#/$defs/contextSource"}},
+        "projectState": {"type": "array", "items": {"$ref": "#/$defs/contextSource"}},
+        "topicBooks": {"type": "array", "items": {"$ref": "#/$defs/contextSource"}},
+        "recentTimeline": {"type": "array", "items": {"$ref": "#/$defs/contextSource"}},
+        "activeAtoms": {"type": "array", "items": {"$ref": "#/$defs/contextSource"}},
+        "oneRing": {"type": "array", "items": {"$ref": "#/$defs/contextSource"}}
+      }
+    },
+    "sourceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "budget": {
+      "type": "object",
+      "required": ["maxChars", "usedChars", "omittedCounts"],
+      "properties": {
+        "maxChars": {"type": "integer", "minimum": 1},
+        "usedChars": {"type": "integer", "minimum": 0},
+        "omittedCounts": {"type": "object"}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "automaticRecall", "lifecycle", "oneRingMaySupportFacts",
+        "rawDialogueIsLongTermFact"
+      ],
+      "properties": {
+        "automaticRecall": {"type": "string", "const": "session_start_only"},
+        "lifecycle": {"type": "string", "const": "once"},
+        "oneRingMaySupportFacts": {"type": "boolean", "const": false},
+        "rawDialogueIsLongTermFact": {"type": "boolean", "const": false}
+      }
+    }
+  },
+  "$defs": {
+    "contextSource": {
+      "type": "object",
+      "required": [
+        "sourceType", "sourceId", "text", "occurredAtMs",
+        "maySupportFacts", "provenance"
+      ],
+      "properties": {
+        "sourceType": {
+          "type": "string",
+          "enum": ["memory_atom", "memory_book", "memory_evidence", "planning_item"]
+        },
+        "sourceId": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "kind": {"type": "string"},
+        "occurredAtMs": {"type": "integer", "minimum": 0},
+        "maySupportFacts": {"type": "boolean"},
+        "provenance": {"type": "object"}
+      }
+    }
+  }
+}

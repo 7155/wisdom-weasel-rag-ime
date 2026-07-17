@@ -54,6 +54,7 @@ def plan_room_route(
     *,
     requested_participant_ids: Sequence[str] = (),
     profiles: Mapping[str, Mapping[str, object]] | None = None,
+    authoritative_participant_id: str = "",
 ) -> dict[str, object]:
     participants = [
         dict(item)
@@ -70,17 +71,57 @@ def plan_room_route(
     requested = [value for value in requested if value]
     if len(requested) > 1:
         raise ValueError("room routing requires exactly one explicitly invited participant")
+    authority_id = str(authoritative_participant_id or "").strip()
+    authority = by_id.get(authority_id) if authority_id else None
+    if authority_id and authority is None:
+        raise ValueError("authoritative room participant is unavailable")
     if requested:
         target = by_id.get(requested[0])
         if target is None:
             raise ValueError("invited room participant is unavailable")
+        if authority is not None and target["id"] != authority["id"]:
+            raise ValueError(
+                "explicit room participant conflicts with the WorkItem current owner"
+            )
+        if authority is not None:
+            return _decision(
+                room,
+                policy,
+                authority,
+                "work_item_owner",
+                participants,
+                (),
+            )
         return _decision(room, policy, target, "explicit_invite", participants, ())
 
     mentioned = _mentioned_participants(text, participants)
     if len(mentioned) > 1:
         raise ValueError("room routing requires exactly one addressed participant")
     if mentioned:
+        if authority is not None and mentioned[0]["id"] != authority["id"]:
+            raise ValueError(
+                "addressed room participant conflicts with the WorkItem current owner"
+            )
+        if authority is not None:
+            return _decision(
+                room,
+                policy,
+                authority,
+                "work_item_owner",
+                participants,
+                (),
+            )
         return _decision(room, policy, mentioned[0], "mention", participants, ())
+
+    if authority is not None:
+        return _decision(
+            room,
+            policy,
+            authority,
+            "work_item_owner",
+            participants,
+            (),
+        )
 
     if policy in {"manual_mentions", "invite_only"}:
         hint = "select one room participant" if policy == "invite_only" else "mention one room participant"

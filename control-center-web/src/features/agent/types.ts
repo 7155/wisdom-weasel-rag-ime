@@ -12,6 +12,7 @@ export type SessionSummary = Pick<
   | 'status'
   | 'roleId'
   | 'roleVersion'
+  | 'roleBookRevisionId'
   | 'updatedAtMs'
   | 'workspaceRoots'
 > &

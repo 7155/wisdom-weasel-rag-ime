@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import subprocess
@@ -7,6 +8,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from rag_ime.agent_role_book import AgentRoleBookStore
+from rag_ime.personal_context import AgentMemoryEvidenceStore
 
 
 @unittest.skipUnless(sys.platform == "darwin", "requires macOS LaunchAgent tools")
@@ -27,6 +31,9 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
                     "RAG_IME_DEEPSEEK_ENV": str(model_env),
                     "RAG_IME_MEMORY_BOOK_MAINTENANCE_INTERVAL_SECONDS": "900",
                     "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "1",
+                    "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK": "1",
+                    "RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS": "900",
+                    "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT": "25",
                 },
                 check=True,
                 text=True,
@@ -69,6 +76,13 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"], "2048")
         self.assertTrue(env_vars["RAG_IME_DEEPSEEK_ENV"].endswith("Application Support/RagIme/deepseek.env"))
         self.assertEqual(env_vars["RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY"], "0")
+        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED"], "1")
+        self.assertEqual(
+            env_vars["RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK"],
+            "1",
+        )
+        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS"], "900")
+        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT"], "25")
 
     def test_install_discovers_existing_app_support_model_env(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -98,6 +112,12 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
             payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_ENV"],
             str(app_support / "deepseek.env"),
         )
+        self.assertEqual(
+            payload["EnvironmentVariables"][
+                "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK"
+            ],
+            "0",
+        )
 
     def test_memory_book_runner_uses_non_overlapping_lock_and_standalone_apply_is_explicit(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -111,6 +131,75 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertIn("--save-draft", source)
         self.assertIn('"reviewRequired": applied != "true"', source)
         self.assertIn('if [[ "$APPLY" == "1"', source)
+        self.assertIn("personal-context-maintenance-run", source)
+        self.assertIn("--report-path \"$PERSONAL_CONTEXT_LOG\"", source)
+        self.assertIn("PERSONAL_CONTEXT_STATUS=$?", source)
+        self.assertIn('"personalContextMaintenance": personal_context', source)
+
+    def test_scheduled_runner_executes_personal_context_even_when_memory_book_is_not_due(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-maintenance-runner-") as tmp:
+            base = Path(tmp)
+            app_support = base / "app-support"
+            runs_dir = base / "runs"
+            db_path = app_support / "rag-ime.sqlite"
+            role_books = AgentRoleBookStore(db_path)
+            role_books.initialize()
+            role_books.ensure_seeded(
+                "architect",
+                "role-v1",
+                display_name="架构角色",
+                mission="维护个人上下文",
+                created_at_ms=10,
+            )
+            evidence = AgentMemoryEvidenceStore(db_path, project="project-a")
+            evidence.initialize()
+            evidence.record_work_receipt(
+                work_item_id="work:scheduled",
+                receipt_id="receipt:scheduled",
+                role_id="architect",
+                text="定时入口生成个人上下文草案",
+                occurred_at_ms=100,
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "run_memory_book_maintenance_once.sh"),
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_APP_SUPPORT_DIR": str(app_support),
+                    "RAG_IME_DB_PATH": str(db_path),
+                    "RAG_IME_MEMORY_BOOK_MAINTENANCE_DIR": str(runs_dir),
+                    "RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER": "scheduled",
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_PROJECT": "project-a",
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            report_files = list(runs_dir.glob("personal-context-*.json"))
+
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["skipped"])
+        self.assertEqual(payload["personalContextMaintenanceExitCode"], 0)
+        self.assertTrue(payload["personalContextMaintenance"]["ok"])
+        self.assertTrue(payload["personalContextMaintenance"]["draftOnly"])
+        self.assertEqual(
+            payload["personalContextMaintenance"]["summary"]["targetCount"],
+            1,
+        )
+        target = payload["personalContextMaintenance"]["targets"][0]
+        self.assertEqual(target["runStatus"], "succeeded")
+        self.assertTrue(target["artifacts"]["digestId"])
+        self.assertTrue(target["artifacts"]["userMemoryDraftId"])
+        self.assertTrue(target["artifacts"]["roleBookDraftId"])
+        self.assertEqual(target["artifacts"]["appliedRoleBookRevisionId"], "")
+        self.assertEqual(len(report_files), 1)
 
 
 if __name__ == "__main__":

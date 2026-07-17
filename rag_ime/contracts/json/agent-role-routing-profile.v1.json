@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-role-routing-profile.v1",
+  "title": "Agent Role Routing Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "roleId",
+    "roleVersion",
+    "revisionId",
+    "revisionNumber",
+    "advisoryOnly",
+    "personality",
+    "capabilities",
+    "recentWork",
+    "activeCommitments",
+    "lessonsAndLimits"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.agent-role-routing-profile.v1"
+    },
+    "roleId": {"type": "string", "minLength": 1},
+    "roleVersion": {"type": "string", "minLength": 1},
+    "revisionId": {"type": "string", "minLength": 1},
+    "revisionNumber": {"type": "integer", "minimum": 1},
+    "advisoryOnly": {"type": "boolean"},
+    "personality": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/routingItem"}
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/routingItem"}
+    },
+    "recentWork": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/routingItem"}
+    },
+    "activeCommitments": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/routingItem"}
+    },
+    "lessonsAndLimits": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/routingItem"}
+    }
+  },
+  "$defs": {
+    "routingItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["itemId", "text", "provenance", "evidenceIds"],
+      "properties": {
+        "itemId": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "expiresAtMs": {"type": "integer", "minimum": 0},
+        "provenance": {
+          "type": "object",
+          "required": ["sourceType", "sourceId"],
+          "properties": {
+            "sourceType": {"type": "string", "minLength": 1},
+            "sourceId": {"type": "string", "minLength": 1},
+            "observedAtMs": {"type": ["integer", "null"], "minimum": 0}
+          }
+        },
+        "evidenceIds": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

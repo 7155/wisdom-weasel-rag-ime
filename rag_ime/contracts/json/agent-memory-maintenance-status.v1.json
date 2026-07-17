@@ -36,6 +36,24 @@
       }
     },
     "pendingDraftCount": {"type": "integer", "minimum": 0},
+    "projection": {
+      "type": "object",
+      "required": [
+        "schemaVersion", "ok", "configured", "owner", "running",
+        "lastRunAtMs", "lastError", "freshness", "disabledReason"
+      ],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.memory-projection-runtime.v1"},
+        "ok": {"type": "boolean"},
+        "configured": {"type": "boolean"},
+        "owner": {"type": "string"},
+        "running": {"type": "boolean"},
+        "lastRunAtMs": {"type": "integer", "minimum": 0},
+        "lastError": {"type": "string"},
+        "freshness": {"type": "object"},
+        "disabledReason": {"type": "string"}
+      }
+    },
     "runs": {
       "type": "array",
       "items": {

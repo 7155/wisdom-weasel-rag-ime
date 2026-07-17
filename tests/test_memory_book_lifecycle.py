@@ -52,7 +52,7 @@ class MemoryBookLifecycleTests(unittest.TestCase):
         self.assertEqual(restored["book"]["archivedAtMs"], 0)
         self.assertGreater(restored["book"]["lastActiveAtMs"], old_ms)
 
-    def test_explicit_old_project_search_reactivates_a_retrieved_archived_topic(self) -> None:
+    def test_explicit_old_project_search_is_read_only_for_archived_topic(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-book-reactivation-") as temporary:
             core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")
             core.initialize()
@@ -85,10 +85,11 @@ class MemoryBookLifecycleTests(unittest.TestCase):
                     ).fetchone()[0]
                 )
 
-        self.assertEqual(payload["reactivatedBookIds"], ["book:topic:legacy-ime"])
-        self.assertEqual(status["status"], "active")
-        self.assertEqual(status["archive_reason"], "")
-        self.assertFalse(retrieval_metadata["archived"])
+        self.assertEqual(payload["reactivatedBookIds"], [])
+        self.assertEqual(payload["historicalBookIds"], ["book:topic:legacy-ime"])
+        self.assertEqual(status["status"], "archived")
+        self.assertNotEqual(status["archive_reason"], "")
+        self.assertTrue(retrieval_metadata["archived"])
         self.assertTrue(any(item["source_id"] == "book:topic:legacy-ime" for item in payload["hits"]))
 
 

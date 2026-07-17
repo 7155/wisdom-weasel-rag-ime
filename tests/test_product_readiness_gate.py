@@ -158,8 +158,17 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
             check=True,
         )
 
-        self.assertIn("python3 -W error::ResourceWarning -m unittest discover -s tests", result.stdout)
-        self.assertIn("python3 scripts/acceptance.py", result.stdout)
+        self.assertIn(
+            "-W error::ResourceWarning -m unittest discover -s tests",
+            result.stdout,
+        )
+        self.assertTrue(
+            any(
+                line.startswith("+ ") and line.endswith(" scripts/acceptance.py")
+                for line in result.stdout.splitlines()
+            ),
+            result.stdout,
+        )
         self.assertIn("db_path=/tmp/rag-ime-product-gate.sqlite", result.stdout)
         self.assertIn("frontend_db_path=", result.stdout)
         self.assertIn("sidecar_latency_budget_ms=300", result.stdout)
