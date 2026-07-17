@@ -308,6 +308,45 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = service.suggest({"currentInput": "火星任务", "topK": 1})
         self.assertEqual(payload["suggestions"][0]["surfaceText"], "赤色星球探索计划")
 
+    def test_startup_backfills_missing_retrieval_vectors_even_with_event_vectors(self) -> None:
+        db_path = Path(self.tmp.name) / "startup-retrieval-vector.sqlite"
+        plain_core = LocalSqliteCoreClient(db_path)
+        InputMethodAdapter(plain_core).commit_text(
+            "赤色星球探索计划",
+            recent_context="航天项目背景",
+            tags=("curated",),
+            privacy_disposition="allowed",
+        )
+        vector_core = LocalSqliteCoreClient(
+            db_path,
+            embedding_provider=MarsEmbeddingProvider(),
+            vector_weight=2.0,
+        )
+        vector_core.rebuild_vector_index(limit=10)
+        with vector_core._connect() as conn:
+            conn.execute("DELETE FROM memory_retrieval_doc_vectors")
+        before = vector_core.vector_index_stats()
+        self.assertEqual(before["activeProviderVectors"], 1)
+        self.assertEqual(before["activeProviderRetrievalDocVectors"], 0)
+
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=db_path,
+                core=vector_core,
+                seed_if_empty=False,
+                vector_auto_rebuild_limit=10,
+            )
+        )
+        try:
+            health = service.health()
+            self.assertEqual(health["vectorAutoRebuild"]["lastRun"]["indexed"], 1)
+            self.assertGreater(
+                health["vectorStats"]["activeProviderRetrievalDocVectors"],
+                0,
+            )
+        finally:
+            service.management.close()
+
     def test_rebuild_vector_index_endpoint_backfills_existing_events(self) -> None:
         db_path = Path(self.tmp.name) / "manual-vector.sqlite"
         plain_core = LocalSqliteCoreClient(db_path)

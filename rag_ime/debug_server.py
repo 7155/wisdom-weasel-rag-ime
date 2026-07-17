@@ -5207,6 +5207,7 @@ class DebugImeService:
             }
         event_count = self._event_count()
         active_vectors = int(stats.get("activeProviderVectors") or 0)
+        active_retrieval_vectors = int(stats.get("activeProviderRetrievalDocVectors") or 0)
         if event_count is None or event_count <= 0:
             return {
                 "trigger": "startup",
@@ -5214,10 +5215,10 @@ class DebugImeService:
                 "limit": limit,
                 **stats,
             }
-        if active_vectors > 0:
+        if active_vectors > 0 and active_retrieval_vectors > 0:
             return {
                 "trigger": "startup",
-                "skippedReason": "active provider vectors already present",
+                "skippedReason": "active provider event and retrieval vectors already present",
                 "limit": limit,
                 **stats,
             }
