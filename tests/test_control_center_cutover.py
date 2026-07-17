@@ -67,6 +67,9 @@ class ControlCenterCutoverTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("wait_for_gateway_port_release", gateway_installer)
         self.assertIn("bootstrap_launch_agent", gateway_installer)
+        self.assertIn("restore_web_source_dist", gateway_installer)
+        self.assertIn("trap restore_web_source_dist EXIT", gateway_installer)
+        self.assertIn('ditto "$WEB_SOURCE_DIR" "$WEB_INSTALL_DIR"', gateway_installer)
 
         desktop_installer = (
             ROOT / "scripts" / "install_desktop_bridge_launch_agent.sh"

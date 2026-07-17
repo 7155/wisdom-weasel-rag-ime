@@ -21,6 +21,18 @@ MANAGED_RUNTIME_POINTER="$APP_SUPPORT_DIR/PiRuntime/current.json"
 WEB_SOURCE_DIR="$ROOT/control-center-web/dist"
 WEB_INSTALL_DIR="$APP_CODE_DIR/control-center-web/dist"
 ALLOWED_LOGINS="${RAG_IME_REMOTE_ALLOWED_LOGINS:-}"
+WEB_SOURCE_BACKUP=""
+WEB_SOURCE_PRESENT=0
+
+restore_web_source_dist() {
+  [[ -n "$WEB_SOURCE_BACKUP" ]] || return 0
+  rm -rf "$WEB_SOURCE_DIR"
+  if [[ "$WEB_SOURCE_PRESENT" == "1" ]]; then
+    ditto "$WEB_SOURCE_BACKUP/dist" "$WEB_SOURCE_DIR"
+  fi
+  rm -rf "$WEB_SOURCE_BACKUP"
+  WEB_SOURCE_BACKUP=""
+}
 
 if [[ ! -f "$WRAPPER" || ! -d "$APP_CODE_DIR/rag_ime" ]]; then
   echo "installed app code is missing; run scripts/install_sidecar_launch_agent.sh first" >&2
@@ -81,6 +93,13 @@ if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
 fi
 
 if [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
+  WEB_SOURCE_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-agent-gateway-web.XXXXXX")"
+  if [[ -d "$WEB_SOURCE_DIR" ]]; then
+    WEB_SOURCE_PRESENT=1
+    ditto "$WEB_SOURCE_DIR" "$WEB_SOURCE_BACKUP/dist"
+  fi
+  trap restore_web_source_dist EXIT
+
   RAG_IME_CONTROL_TRANSPORT=http \
   RAG_IME_CONTROL_BUILD_CHANNEL=production \
     "$ROOT/scripts/build_control_center_web.sh" >/dev/null
@@ -89,6 +108,8 @@ if [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
   rm -rf "$WEB_INSTALL_DIR"
   mkdir -p "$(dirname "$WEB_INSTALL_DIR")"
   ditto "$WEB_SOURCE_DIR" "$WEB_INSTALL_DIR"
+  restore_web_source_dist
+  trap - EXIT
 fi
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR"
