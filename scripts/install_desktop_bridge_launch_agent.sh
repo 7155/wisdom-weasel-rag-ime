@@ -21,7 +21,20 @@ mkdir -p "$HOME/Library/LaunchAgents"
 /usr/libexec/PlistBuddy -c "Add :KeepAlive:SuccessfulExit bool false" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :ProcessType string Interactive" "$PLIST"
 
+wait_for_previous_job_release() {
+  local attempt
+  for attempt in {1..60}; do
+    if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "previous launchd job did not release in time: $DOMAIN/$LABEL" >&2
+  return 1
+}
+
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+wait_for_previous_job_release
 launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 if ! "$EXECUTABLE" --request-accessibility-only >/dev/null 2>&1; then
   echo "Accessibility approval was requested for RagImeDesktopBridge; semantic reads stay fail-closed until it is granted." >&2
@@ -35,11 +48,11 @@ bootstrap_launch_agent() {
 
   # launchd can retain the old app job briefly after bootout while TCC checks
   # the rebuilt bundle. Retry long enough for that job teardown to complete.
-  for attempt in 1 2 3 4 5; do
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
     if launchctl bootstrap "$DOMAIN" "$PLIST" 2>"$error_log"; then
       return 0
     fi
-    [[ "$attempt" == "5" ]] || sleep "$(awk "BEGIN { printf \"%.1f\", $attempt * 0.4 }")"
+    [[ "$attempt" == "10" ]] || sleep "$(awk "BEGIN { printf \"%.1f\", $attempt * 0.4 }")"
   done
 
   echo "launchctl bootstrap failed for $DOMAIN/$LABEL" >&2
