@@ -537,6 +537,7 @@ describe('Agent experience', () => {
     const prompt = transport.requests.find((call) => call.request.pathId === 'agent.session.prompt');
     expect(prompt?.request.params).toEqual({ sessionId: 'session-preview' });
     expect(prompt?.request.body).toMatchObject({ message: '检查 reducer 边界' });
+    expect(prompt?.request.body).not.toHaveProperty('delivery');
   });
 
   it('queues native steer and follow-up messages on the active turn', async () => {
@@ -629,6 +630,26 @@ describe('Agent experience', () => {
     expect(failedTurn?.failure).toBe('当前模型不可用，请切换模型后重试。');
     expect(document.querySelector('.agent-conversation__header [role="alert"]')).not.toBeInTheDocument();
     expect(screen.queryByText(/not supported by any configured account/i)).not.toBeInTheDocument();
+  });
+
+  it('reports a native route version mismatch instead of blaming the model', async () => {
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => { throw new Error('Unexpected request body field: delivery'); },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+
+    await user.type(composer, '检查原生路由版本');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const failedTurn = Object.values(projection.turnsById).find((turn) => turn.failure);
+    expect(failedTurn?.failure).toBe('控制中心组件版本不一致，请更新并重新打开控制中心。');
   });
 
   it('retries a failed turn through the real prompt route with the original input', async () => {

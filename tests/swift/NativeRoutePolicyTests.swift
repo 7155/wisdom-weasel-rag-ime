@@ -37,7 +37,7 @@ struct NativeRoutePolicyTests {
             pathId: "agent.session.prompt",
             parameters: ["sessionId": "session:alpha"],
             query: [:],
-            body: ["message": "hello"]
+            body: ["message": "hello", "delivery": "prompt"]
         )
         expect(session.request.url?.absoluteString.contains("session:alpha/prompt") == true, "session path encoding")
         expect(session.request.httpMethod == "POST", "prompt method")

@@ -473,12 +473,15 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("gpt-test-secret", models_text)
         self.assertNotIn("deepseek-test-secret", models_text)
         managed_models = json.loads(models_text)
-        imported_model = managed_models["providers"]["gpt"]["models"][0]
-        self.assertEqual(
-            imported_model["thinkingLevelMap"],
-            {"xhigh": "xhigh", "max": "max"},
-        )
-        self.assertEqual(imported_model["input"], ["text", "image"])
+        imported_provider = managed_models["providers"]["gpt"]
+        self.assertEqual(imported_provider["modelCatalogProvider"], "openai")
+        self.assertEqual(imported_provider["models"], [{"id": "gpt-5.6-luna"}])
+        self.assertNotIn("api", imported_provider)
+        self.assertNotIn("compat", imported_provider)
+        self.assertNotIn("contextWindow", imported_provider["models"][0])
+        self.assertNotIn("maxTokens", imported_provider["models"][0])
+        self.assertNotIn("reasoning", imported_provider["models"][0])
+        self.assertNotIn("input", imported_provider["models"][0])
         command = config.launch_command(session=self.session)
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
         self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
@@ -513,9 +516,14 @@ class PiRuntimeTests(unittest.TestCase):
             ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
         )
         self.assertEqual(
-            [model["name"] for model in models],
-            ["GPT-5.6 Luna", "GPT-5.6 Terra", "GPT-5.6 Sol"],
+            models,
+            [
+                {"id": "gpt-5.6-luna"},
+                {"id": "gpt-5.6-terra"},
+                {"id": "gpt-5.6-sol"},
+            ],
         )
+        self.assertEqual(bundle.providers["gpt"]["modelCatalogProvider"], "openai")
 
         with mock.patch.dict(
             os.environ,
@@ -540,7 +548,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
         self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
 
-    def test_imported_provider_input_capability_honors_explicit_model_metadata(self) -> None:
+    def test_imported_provider_does_not_copy_model_capabilities_from_frontend_config(self) -> None:
         provider_path = self.root / "provider-input-capabilities.json"
         provider_path.write_text(
             json.dumps(
@@ -552,13 +560,11 @@ class PiRuntimeTests(unittest.TestCase):
                                 "apiKey": "gpt-test-secret",
                             },
                             "models": {
-                                "gpt-text-only": {
+                                "gpt-5.6-luna": {
                                     "name": "GPT Text Only",
                                     "input": ["text"],
-                                },
-                                "custom-vision": {
-                                    "name": "Custom Vision",
-                                    "modalities": {"image": True},
+                                    "reasoning": False,
+                                    "limit": {"context": 1_050_000, "output": 999_999},
                                 },
                             },
                         }
@@ -570,60 +576,7 @@ class PiRuntimeTests(unittest.TestCase):
 
         bundle = load_pi_provider_config(provider_path)
 
-        models = bundle.providers["gpt"]["models"]
-        self.assertEqual(models[0]["input"], ["text"])
-        self.assertEqual(models[1]["input"], ["text", "image"])
-
-    def test_imported_provider_reasoning_capability_comes_from_source_metadata(self) -> None:
-        provider_path = self.root / "provider-reasoning-capabilities.json"
-        provider_path.write_text(
-            json.dumps(
-                {
-                    "provider": {
-                        "openai": {
-                            "options": {
-                                "baseURL": "https://gpt.example/v1",
-                                "apiKey": "gpt-test-secret",
-                            },
-                            "models": {
-                                "gpt-5.6-no-capability": {"name": "No declared capability"},
-                                "timeline-max": {
-                                    "name": "Timeline Max",
-                                    "variants": {
-                                        "low": {},
-                                        "medium": {},
-                                        "high": {},
-                                        "max": {},
-                                    },
-                                },
-                                "explicit-no-max": {
-                                    "name": "Explicit no max",
-                                    "reasoning": True,
-                                    "thinkingLevelMap": {"xhigh": None},
-                                },
-                            },
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        bundle = load_pi_provider_config(provider_path)
-        models = {str(item["id"]): item for item in bundle.providers["gpt"]["models"]}
-
-        self.assertFalse(models["gpt-5.6-no-capability"]["reasoning"])
-        self.assertNotIn("thinkingLevelMap", models["gpt-5.6-no-capability"])
-        self.assertTrue(models["timeline-max"]["reasoning"])
-        self.assertEqual(
-            models["timeline-max"]["thinkingLevelMap"],
-            {"max": "max"},
-        )
-        self.assertTrue(models["explicit-no-max"]["reasoning"])
-        self.assertEqual(
-            models["explicit-no-max"]["thinkingLevelMap"],
-            {"xhigh": None},
-        )
+        self.assertEqual(bundle.providers["gpt"]["models"], [{"id": "gpt-5.6-luna"}])
 
     def test_pi_max_mapping_exposes_the_distinct_max_reasoning_level(self) -> None:
         model = _public_pi_model(

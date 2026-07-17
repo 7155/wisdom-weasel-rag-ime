@@ -9,7 +9,7 @@ from rag_ime.pi_provider_config import load_pi_provider_config
 
 
 class PiProviderConfigTest(unittest.TestCase):
-    def test_imported_openai_gateway_declares_cache_key_and_affinity_capabilities(self) -> None:
+    def test_imported_openai_gateway_defers_transport_and_capabilities_to_pi(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "providers.json"
             path.write_text(
@@ -31,10 +31,11 @@ class PiProviderConfigTest(unittest.TestCase):
 
             bundle = load_pi_provider_config(path)
 
-        compat = bundle.providers["gpt"]["compat"]
-        self.assertTrue(compat["supportsPromptCacheKey"])
-        self.assertTrue(compat["sendSessionAffinityHeaders"])
-        self.assertEqual(compat["sessionAffinityFormat"], "openai-nosession")
+        provider = bundle.providers["gpt"]
+        self.assertEqual(provider["modelCatalogProvider"], "openai")
+        self.assertEqual(provider["models"], [{"id": "gpt-test"}])
+        self.assertNotIn("api", provider)
+        self.assertNotIn("compat", provider)
 
 
 if __name__ == "__main__":

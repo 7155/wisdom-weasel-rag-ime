@@ -57,6 +57,7 @@ def load_pi_provider_config(path: str | Path) -> PiProviderBundle:
         if not isinstance(raw_provider, dict):
             continue
         provider_id = _pi_provider_id(str(source_id))
+        model_catalog_provider = "openai" if provider_id == "gpt" else provider_id
         options = raw_provider.get("options")
         if not isinstance(options, dict):
             options = {}
@@ -69,24 +70,11 @@ def load_pi_provider_config(path: str | Path) -> PiProviderBundle:
         environment_name = f"RAG_IME_PI_{provider_id.upper().replace('-', '_')}_API_KEY"
         environment[environment_name] = api_key
         providers[provider_id] = {
+            # Only provide the connection and model selection. Pi owns the
+            # referenced model's API transport, compatibility and capabilities.
+            "modelCatalogProvider": model_catalog_provider,
             "baseUrl": base_url,
-            "api": "openai-completions",
             "apiKey": f"${environment_name}",
-            "compat": {
-                "supportsStore": True,
-                "supportsDeveloperRole": True,
-                "supportsReasoningEffort": True,
-                "supportsUsageInStreaming": True,
-                "maxTokensField": "max_completion_tokens",
-                "thinkingFormat": "openai",
-                # A custom OpenAI-compatible gateway is still allowed to use
-                # the official prompt-cache request field.  Keep the stable
-                # Pi session id in the body and in affinity headers so one
-                # conversation does not bounce between cache buckets.
-                "supportsPromptCacheKey": True,
-                "sendSessionAffinityHeaders": True,
-                "sessionAffinityFormat": "openai-nosession",
-            },
             "models": models,
         }
         if not first_provider:
@@ -131,117 +119,9 @@ def _models(value: object) -> list[dict[str, object]]:
     if not isinstance(value, dict):
         return []
     models: list[dict[str, object]] = []
-    for raw_id, raw_model in value.items():
+    for raw_id in value:
         model_id = str(raw_id).strip()
         if not _MODEL_ID_PATTERN.fullmatch(model_id):
             continue
-        definition = raw_model if isinstance(raw_model, dict) else {}
-        limit = definition.get("limit") if isinstance(definition.get("limit"), dict) else {}
-        context_window = _positive_int(limit.get("context"), default=128_000)
-        max_tokens = _positive_int(limit.get("output"), default=32_000)
-        reasoning, thinking_level_map = _reasoning_capabilities(definition)
-        input_modalities = _input_modalities(model_id, definition)
-        model_name = str(definition.get("name") or model_id).strip()[:160] or model_id
-        model: dict[str, object] = {
-            "id": model_id,
-            "name": model_name,
-            "reasoning": reasoning,
-            # Pi is the capability authority consumed by the Web composer.
-            "input": input_modalities,
-            "contextWindow": context_window,
-            "maxTokens": max_tokens,
-        }
-        if thinking_level_map:
-            model["thinkingLevelMap"] = thinking_level_map
-        models.append(model)
+        models.append({"id": model_id})
     return models
-
-
-def _reasoning_capabilities(
-    definition: Mapping[str, object],
-) -> tuple[bool, dict[str, str | None]]:
-    explicit_reasoning = definition.get("reasoning")
-    explicit_map = definition.get("thinkingLevelMap")
-    if isinstance(explicit_map, Mapping):
-        level_map = _sanitize_thinking_level_map(explicit_map)
-        reasoning = (
-            explicit_reasoning
-            if isinstance(explicit_reasoning, bool)
-            else any(value is not None for key, value in level_map.items() if key != "off")
-        )
-        return bool(reasoning), level_map if reasoning else {}
-
-    declared_levels = _declared_thinking_levels(definition)
-    reasoning = (
-        explicit_reasoning
-        if isinstance(explicit_reasoning, bool)
-        else any(level != "off" for level in declared_levels)
-    )
-    if not reasoning or not declared_levels:
-        return bool(reasoning), {}
-
-    # Match Pi's model semantics: ordinary levels stay available unless the
-    # provider explicitly disables them in thinkingLevelMap. OpenCode
-    # `variants` only tells us about named overrides, so absence there must not
-    # be translated into a Pi `null` capability.
-    level_map: dict[str, str | None] = {}
-    if "xhigh" in declared_levels:
-        level_map["xhigh"] = "xhigh"
-    if "max" in declared_levels:
-        level_map["max"] = "max"
-    return True, level_map
-
-
-def _declared_thinking_levels(definition: Mapping[str, object]) -> set[str]:
-    declared: set[str] = set()
-    raw_levels = definition.get("thinkingLevels")
-    if isinstance(raw_levels, list):
-        declared.update(str(item).strip().lower() for item in raw_levels)
-    variants = definition.get("variants")
-    if isinstance(variants, Mapping):
-        declared.update(str(item).strip().lower() for item in variants)
-    return declared.intersection({"off", "minimal", "low", "medium", "high", "xhigh", "max"})
-
-
-def _sanitize_thinking_level_map(value: Mapping[object, object]) -> dict[str, str | None]:
-    result: dict[str, str | None] = {}
-    for raw_level, raw_mapping in value.items():
-        level = str(raw_level).strip().lower()
-        if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
-            continue
-        if raw_mapping is None:
-            result[level] = None
-            continue
-        mapped = str(raw_mapping).strip().lower()
-        if mapped:
-            result[level] = mapped[:32]
-    return result
-
-
-def _input_modalities(model_id: str, definition: Mapping[str, object]) -> list[str]:
-    raw_input = definition.get("input")
-    if isinstance(raw_input, list):
-        declared = [
-            str(item).strip().lower()
-            for item in raw_input
-            if str(item).strip().lower() in {"text", "image"}
-        ]
-        if declared:
-            return list(dict.fromkeys(["text", *declared]))
-
-    raw_modalities = definition.get("modalities")
-    if isinstance(raw_modalities, Mapping):
-        image_declared = raw_modalities.get("image")
-        if isinstance(image_declared, bool):
-            return ["text", "image"] if image_declared else ["text"]
-
-    normalized = model_id.strip().lower()
-    return ["text", "image"] if normalized.startswith(("gpt-", "chatgpt-")) else ["text"]
-
-
-def _positive_int(value: object, *, default: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return default
-    return number if number > 0 else default

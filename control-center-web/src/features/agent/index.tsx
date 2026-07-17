@@ -532,7 +532,14 @@ function AgentWorkspace() {
       await transport.request({
         pathId: 'agent.session.prompt',
         params: { sessionId },
-        body: { message, attachments: attachmentIds, clientMessageId, delivery },
+        // Keep ordinary prompts compatible with an older native route policy.
+        // Queue delivery is sent only when it changes the backend operation.
+        body: {
+          message,
+          attachments: attachmentIds,
+          clientMessageId,
+          ...(delivery === 'prompt' ? {} : { delivery }),
+        },
       });
     } catch (requestError) {
       const failure = publicAgentErrorText(requestError);
