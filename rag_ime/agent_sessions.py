@@ -67,6 +67,9 @@ class AgentSessionStore:
         normalized_title = " ".join(str(title).split())[:120]
         if not normalized_title:
             raise ValueError("agent session title must not be empty")
+        normalized_model_profile = str(model_profile or "").strip()
+        if not normalized_model_profile:
+            raise ValueError("agent session model profile must not be empty")
         roots = _workspace_roots(workspace_roots)
         if mode == "assistant" and roots:
             raise ValueError("assistant sessions cannot carry workspace roots")
@@ -107,7 +110,7 @@ class AgentSessionStore:
                     mode,
                     role_id,
                     role_version,
-                    model_profile,
+                    normalized_model_profile,
                     normalized_thinking,
                     tool_profile_version,
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
@@ -1063,6 +1066,7 @@ def _session_payload(
 ) -> dict[str, object]:
     roots = json.loads(str(row["workspace_roots_json"] or "[]"))
     allowed_tools = _stored_allowed_tools(row["allowed_tools_json"])
+    model_profile = str(row["model_profile"] or "").strip() or "pi/default"
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-session.v1",
         "id": str(row["id"]),
@@ -1074,7 +1078,7 @@ def _session_payload(
         "sessionKind": str(row["session_kind"]),
         "roleId": str(row["role_id"]),
         "roleVersion": str(row["role_version"]),
-        "modelProfile": str(row["model_profile"]),
+        "modelProfile": model_profile,
         "thinkingLevel": str(row["thinking_level"] or ""),
         "toolProfileVersion": str(row["tool_profile_version"]),
         "toolAllowlistMode": "explicit" if allowed_tools is not None else "profile",

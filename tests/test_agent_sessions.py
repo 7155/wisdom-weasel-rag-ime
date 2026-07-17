@@ -19,6 +19,28 @@ class AgentSessionStoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_create_rejects_empty_model_profile_before_insert(self) -> None:
+        with self.assertRaisesRegex(ValueError, "model profile must not be empty"):
+            self.store.create(title="bad", model_profile="  ")
+
+        self.assertEqual(self.store.list(), [])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM agent_sessions").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_list_recovers_legacy_empty_model_profile(self) -> None:
+        session = self.store.create(title="legacy", model_profile="pi/default")
+        session_id = str(session["id"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "UPDATE agent_sessions SET model_profile = '' WHERE id = ?",
+                (session_id,),
+            )
+            conn.commit()
+
+        self.assertEqual(self.store.get(session_id)["modelProfile"], "pi/default")
+        self.assertEqual(self.store.list()[0]["modelProfile"], "pi/default")
+
     def test_create_list_bind_archive_restore_and_delete(self) -> None:
         session = self.store.create(title=" 输入助手   今天 ", created_at_ms=100)
         session_id = str(session["id"])
