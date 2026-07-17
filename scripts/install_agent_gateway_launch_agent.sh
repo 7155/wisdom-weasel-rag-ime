@@ -18,6 +18,9 @@ PORT="${RAG_IME_AGENT_GATEWAY_PORT:-8768}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 MANAGED_RUNTIME_POINTER="$APP_SUPPORT_DIR/PiRuntime/current.json"
+WEB_SOURCE_DIR="$ROOT/control-center-web/dist"
+WEB_INSTALL_DIR="$APP_CODE_DIR/control-center-web/dist"
+ALLOWED_LOGINS="${RAG_IME_REMOTE_ALLOWED_LOGINS:-}"
 
 if [[ ! -f "$WRAPPER" || ! -d "$APP_CODE_DIR/rag_ime" ]]; then
   echo "installed app code is missing; run scripts/install_sidecar_launch_agent.sh first" >&2
@@ -43,6 +46,18 @@ if [[ ! -f "$MANAGED_RUNTIME_POINTER" && "${RAG_IME_ALLOW_UNMANAGED_PI:-0}" != "
   exit 1
 fi
 
+if [[ -z "$ALLOWED_LOGINS" && -f "$PLIST_PATH" ]]; then
+  ALLOWED_LOGINS="$(python3 - "$PLIST_PATH" <<'PY' 2>/dev/null || true
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    payload = plistlib.load(source)
+print(str((payload.get("EnvironmentVariables") or {}).get("RAG_IME_REMOTE_ALLOWED_LOGINS") or ""))
+PY
+)"
+fi
+
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-}"
 if [[ -z "$PYTHON_EXECUTABLE" && -f "$SIDE_PLIST" ]]; then
   PYTHON_EXECUTABLE="$(python3 - "$SIDE_PLIST" <<'PY'
@@ -65,11 +80,23 @@ if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   exit 1
 fi
 
+if [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
+  RAG_IME_CONTROL_TRANSPORT=http \
+  RAG_IME_CONTROL_BUILD_CHANNEL=production \
+    "$ROOT/scripts/build_control_center_web.sh" >/dev/null
+  "$ROOT/scripts/check_control_center_web_dist.sh" \
+    "$WEB_SOURCE_DIR" http production >/dev/null
+  rm -rf "$WEB_INSTALL_DIR"
+  mkdir -p "$(dirname "$WEB_INSTALL_DIR")"
+  ditto "$WEB_SOURCE_DIR" "$WEB_INSTALL_DIR"
+fi
+
 mkdir -p "$PLIST_DIR" "$LOG_DIR"
 SIDE_PLIST="$SIDE_PLIST" PLIST_PATH="$PLIST_PATH" LABEL="$LABEL" LOG_DIR="$LOG_DIR" \
 APP_SUPPORT_DIR="$APP_SUPPORT_DIR" APP_CODE_DIR="$APP_CODE_DIR" WRAPPER="$WRAPPER" \
 PYTHON_EXECUTABLE="$PYTHON_EXECUTABLE" DB_PATH="$DB_PATH" HOST="$HOST" PORT="$PORT" \
-PROJECT="$PROJECT" "$PYTHON_EXECUTABLE" - <<'PY'
+PROJECT="$PROJECT" WEB_INSTALL_DIR="$WEB_INSTALL_DIR" ALLOWED_LOGINS="$ALLOWED_LOGINS" \
+"$PYTHON_EXECUTABLE" - <<'PY'
 import os
 import plistlib
 from pathlib import Path
@@ -101,8 +128,13 @@ environment.update({
     "RAG_IME_PI_ENABLED": "1",
     "RAG_IME_PI_VERSION": "0.80.7",
     "RAG_IME_AGENT_GATEWAY_ENABLED": "1",
+    "RAG_IME_AGENT_GATEWAY_WEB_DIST": os.environ["WEB_INSTALL_DIR"],
     "RAG_IME_AGENT_TOOL_URL": f"http://127.0.0.1:{os.environ['PORT']}/api/agent/tool/execute",
 })
+if os.environ["ALLOWED_LOGINS"]:
+    environment["RAG_IME_REMOTE_ALLOWED_LOGINS"] = os.environ["ALLOWED_LOGINS"]
+else:
+    environment.pop("RAG_IME_REMOTE_ALLOWED_LOGINS", None)
 
 arguments = [
     os.environ["PYTHON_EXECUTABLE"],
@@ -113,6 +145,7 @@ arguments = [
     "--host", os.environ["HOST"],
     "--port", os.environ["PORT"],
     "--project", os.environ["PROJECT"],
+    "--web-dist", os.environ["WEB_INSTALL_DIR"],
     "--no-seed",
 ]
 payload = {

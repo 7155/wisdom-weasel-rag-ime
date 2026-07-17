@@ -300,6 +300,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_APP_SUPPORT_DIR": str(app_support),
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                "RAG_IME_REMOTE_ALLOWED_LOGINS": "owner@example.com",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_agent_gateway_launch_agent.sh")],
@@ -320,6 +321,12 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(launch_env["RAG_IME_PI_ENABLED"], "1")
         self.assertEqual(launch_env["RAG_IME_PI_VERSION"], "0.80.7")
         self.assertEqual(launch_env["RAG_IME_AGENT_TOOL_URL"], "http://127.0.0.1:8768/api/agent/tool/execute")
+        self.assertEqual(launch_env["RAG_IME_REMOTE_ALLOWED_LOGINS"], "owner@example.com")
+        self.assertIn("--web-dist", payload["ProgramArguments"])
+        self.assertEqual(
+            launch_env["RAG_IME_AGENT_GATEWAY_WEB_DIST"],
+            str(app_support / "app" / "control-center-web" / "dist"),
+        )
         self.assertEqual(launch_env["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
         self.assertNotIn("RAG_IME_PI_EXECUTABLE", launch_env)
         self.assertNotIn("RAG_IME_PI_NODE", launch_env)

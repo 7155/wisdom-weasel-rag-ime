@@ -13,6 +13,15 @@ private final class RagImeCompanionArtworkStore {
         return cache
     }()
 
+    func bundledImage(named name: String) -> NSImage? {
+        let key = "\(name)@bundled" as NSString
+        if let cached = images.object(forKey: key) { return cached }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        images.setObject(image, forKey: key, cost: 512 * 512 * 4)
+        return image
+    }
+
     func image(named name: String, maximumPixelSize: Int) async -> NSImage? {
         let bucket = maximumPixelSize <= 192 ? 160 : 512
         let key = "\(name)@\(bucket)" as NSString
@@ -188,18 +197,24 @@ struct RagImeAnimeCompanion: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var floating = false
     @State private var artwork: NSImage?
+    @State private var artworkName: String?
 
     var body: some View {
+        let requestedArtworkName = state.animeAssetName
+        let visibleArtwork = artworkName == requestedArtworkName
+            ? artwork
+            : RagImeCompanionArtworkStore.shared.bundledImage(named: requestedArtworkName)
+
         ZStack {
-            if let artwork {
-                Image(nsImage: artwork)
+            if let visibleArtwork {
+                Image(nsImage: visibleArtwork)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
                     .frame(width: size, height: size)
                     .offset(y: shouldFloat ? (floating ? -1.4 : 1.2) : 0)
                     .scaleEffect(listeningScale)
-                    .id(state.animeAssetName)
+                    .id(requestedArtworkName)
                     .transition(.opacity.combined(with: .scale(scale: 0.94)))
             } else {
                 RagImeCompanionMark(
@@ -216,13 +231,15 @@ struct RagImeAnimeCompanion: View {
         .animation(RagImeMotion.transition(reduceMotion: reduceMotion), value: state)
         .task(id: state.animeAssetName) {
             let name = state.animeAssetName
-            artwork = nil
             let loaded = await RagImeCompanionArtworkStore.shared.image(
                 named: name,
                 maximumPixelSize: 160
             )
-            guard !Task.isCancelled, state.animeAssetName == name else { return }
+            guard !Task.isCancelled,
+                  state.animeAssetName == name,
+                  let loaded else { return }
             artwork = loaded
+            artworkName = name
         }
         .onAppear { updateFloatingAnimation() }
         .onChange(of: state) { _ in updateFloatingAnimation() }

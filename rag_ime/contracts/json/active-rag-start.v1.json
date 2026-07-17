@@ -14,6 +14,34 @@
     "credentialField": {"type": "boolean"},
     "app": {"type": "string"},
     "frontAppBundleId": {"type": "string"},
+    "windowContext": {
+      "type": "object",
+      "required": ["schemaVersion", "captureMode", "snapshotId", "revision", "application", "nodes"],
+      "properties": {
+        "schemaVersion": {"const": "rag-ime.window-context.v1"},
+        "captureMode": {"const": "accessibility_semantics"},
+        "snapshotId": {"type": "string", "maxLength": 200},
+        "revision": {"type": "integer", "minimum": 1},
+        "capturedAtMs": {"type": "integer", "minimum": 0},
+        "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+        "application": {
+          "type": "object",
+          "properties": {
+            "pid": {"type": "integer", "minimum": 0},
+            "bundleId": {"type": "string", "maxLength": 300},
+            "name": {"type": "string", "maxLength": 160},
+            "windowTitle": {"type": "string", "maxLength": 240}
+          },
+          "additionalProperties": false
+        },
+        "focusedNodeRef": {"type": "string", "maxLength": 200},
+        "nodes": {"type": "array", "maxItems": 160},
+        "nodeCount": {"type": "integer", "minimum": 0, "maximum": 160},
+        "truncated": {"type": "boolean"},
+        "semanticText": {"type": "string", "maxLength": 12000}
+      },
+      "additionalProperties": false
+    },
     "visualContext": {
       "type": "object",
       "required": ["schemaVersion", "mimeType", "dataBase64", "pixelWidth", "pixelHeight", "source"],

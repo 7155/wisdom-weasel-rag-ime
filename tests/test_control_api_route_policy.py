@@ -651,6 +651,55 @@ class ControlRoutePolicyTests(unittest.TestCase):
         )
         self.policy.authorize(fresh, ControlAccessContext.native())
 
+    def test_remote_http_routes_reverse_match_and_require_idempotency_keys(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        route = self.policy.authorize_http(
+            method="POST",
+            path="/api/agent/sessions/agent%3Aone/prompt",
+            query={},
+            body={"message": "hello", "clientMessageId": "phone-message-1"},
+            context=context,
+        )
+        self.assertEqual(route.path_id, ControlPathId.AGENT_SESSION_PROMPT)
+
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize_http(
+                method="POST",
+                path="/api/agent/sessions/agent%3Aone/prompt",
+                query={},
+                body={"message": "hello"},
+                context=context,
+            )
+        self.assertEqual(raised.exception.code, ControlErrorCode.INVALID_REQUEST)
+
+    def test_remote_http_matcher_rejects_local_only_and_unknown_routes(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={scope.value for scope in ControlScope},
+        )
+        with self.assertRaises(ControlApiError) as local_only:
+            self.policy.authorize_http(
+                method="GET",
+                path="/api/agent/providers",
+                query={},
+                body={},
+                context=context,
+            )
+        self.assertEqual(local_only.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+        with self.assertRaises(ControlApiError) as unknown:
+            self.policy.authorize_http(
+                method="GET",
+                path="/api/private/debug",
+                query={},
+                body={},
+                context=context,
+            )
+        self.assertEqual(unknown.exception.code, ControlErrorCode.ROUTE_NOT_FOUND)
+
     def test_remote_clients_need_a_paired_device_and_each_required_scope(self) -> None:
         request = ControlRequest(
             request_id="request-1",

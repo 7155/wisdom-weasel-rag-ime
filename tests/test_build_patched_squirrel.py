@@ -849,6 +849,22 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         )
         probe_after_full_status = probe[probe.index("ragImeSelectedTextProvider.sensitiveFieldStatus(") :]
         self.assertIn("DispatchQueue.main.async", probe_after_full_status)
+        active_context = section(
+            "func startRagImeActiveRagAssistFromContext(",
+            "func finishRagImeActiveRagAssistFromContext(",
+        )
+        self.assertIn("ragImeForegroundContextQueue.async", active_context)
+        self.assertIn("ragImeForegroundContextResolver.captureFromAccessibility(", active_context)
+        self.assertIn("ragImeForegroundContextResolver.captureWindowContext(", active_context)
+        self.assertIn("DispatchQueue.main.async", active_context)
+        self.assertLess(
+            active_context.index("ragImeForegroundContextQueue.async"),
+            active_context.index("ragImeForegroundContextResolver.captureWindowContext("),
+        )
+        self.assertLess(
+            active_context.index("ragImeForegroundContextResolver.captureWindowContext("),
+            active_context.index("DispatchQueue.main.async"),
+        )
 
         controller_start = patch_text.index("diff --git a/sources/SquirrelInputController.swift")
         controller_text = patch_text[controller_start:]
@@ -870,10 +886,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                 line for line in controller_text.splitlines() if full_ax_entrypoint in line
             ]
             probe_calls = [line for line in probe.splitlines() if full_ax_entrypoint in line]
-            self.assertEqual(
+            active_context_calls = [
+                line for line in active_context.splitlines() if full_ax_entrypoint in line
+            ]
+            self.assertCountEqual(
                 controller_calls,
-                probe_calls,
-                f"{full_ax_entrypoint} must only be invoked by the dedicated background probe",
+                [*probe_calls, *active_context_calls],
+                f"{full_ax_entrypoint} must only be invoked by a dedicated background AX queue",
             )
 
         apply_probe_start = patch_text.index("func applyRagImeForegroundPrivacyProbe")
@@ -1194,8 +1213,19 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('candidateOrdinal: 0', patch_text)
         self.assertIn('"active_rag_shortcut_action_button_route"', patch_text)
         self.assertIn("active_rag_context_button_triggered", patch_text)
-        self.assertIn("let accessibilityForeground: RagImeForegroundTextSnapshot? = nil", patch_text)
         self.assertIn("let imkForeground = ragImeForegroundContextResolver.captureFromTextInputClient", patch_text)
+        self.assertIn("struct RagImeWindowContextSnapshot: Codable", patch_text)
+        self.assertIn("func captureWindowContext(", patch_text)
+        self.assertIn("AXUIElementCopyMultipleAttributeValues(", patch_text)
+        self.assertIn('captureMode: "accessibility_semantics"', patch_text)
+        self.assertIn('reason: "private_browsing_window"', patch_text)
+        self.assertIn(
+            "NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId",
+            patch_text,
+        )
+        self.assertIn("windowContext: RagImeWindowContextSnapshot?", patch_text)
+        self.assertIn("windowContext: windowContext", patch_text)
+        self.assertIn('"usesScreenCapture": false', patch_text)
         self.assertIn("let useClientContext = clientContext.count > capturedBefore.count", patch_text)
         self.assertIn("context.isEmpty ? semanticQuery : context", patch_text)
         self.assertIn("postActiveRagStatus", patch_text)
@@ -1235,6 +1265,17 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("active_rag_ready_displayed", patch_text)
         self.assertIn("active_rag_response_dropped_stale", patch_text)
         self.assertIn("active_rag_candidate_committed", patch_text)
+
+        quick_start = patch_text.index("func startRagImeActiveRagAssistFromContext(")
+        quick_end = patch_text.index("func startRagImeVisualAssistFromContext(", quick_start)
+        quick_path = patch_text[quick_start:quick_end]
+        self.assertIn("ragImeForegroundContextQueue.async", quick_path)
+        self.assertIn("captureWindowContext(", quick_path)
+        self.assertIn("let accessibilityForeground = imkForeground == nil", quick_path)
+        self.assertIn('"usesScreenCapture": visualContext != nil', quick_path)
+        self.assertNotIn("captureRagImeCurrentAppVisualContext(", quick_path)
+        self.assertNotIn("CGWindowListCreateImage(", quick_path)
+        self.assertNotIn("CGRequestScreenCaptureAccess(", quick_path)
 
     def test_build_script_dry_run_reports_resolved_commands(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1491,6 +1532,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     subprocess.run(["git", "init"], cwd=workdir, check=True, capture_output=True, text=True)
     (workdir / "sources").mkdir()
     (workdir / "sources" / "RagImeSidecarModels.swift").write_text(
+        "struct RagImeWindowContextSnapshot {}\n"
         "struct Request { let privacyDisposition: String }\n",
         encoding="utf-8",
     )
@@ -1504,6 +1546,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             "import ApplicationServices\n"
             "final class RagImeForegroundContextResolver {}\n"
             "final class RagImeSelectedTextProvider { "
+            "func captureWindowContext() { _ = AXUIElementCopyMultipleAttributeValues }; "
             "func captureForegroundTextForSidecar() { "
             "_ = kAXSelectedTextRangeAttribute; "
             "_ = kAXStringForRangeParameterizedAttribute; "
@@ -1538,6 +1581,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func queuedForegroundSnapshot() { _ = "ragImeForegroundContextResolver.captureFromAccessibility(" }; '
             'func probeRagImeForegroundPrivacyAndContext() { _ = "privacy_probe_timeout" }; '
+            '// active_rag_window_context_capture_scheduled "usesScreenCapture": false; '
             'func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }; '
             'func foregroundCaptureFailed() { _ = "foreground_context_capture_failed" }; '
             'func sideCandidateFeedbackRecorded() { _ = "side_candidate_feedback_recorded" }; '

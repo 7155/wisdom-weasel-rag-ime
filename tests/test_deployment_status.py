@@ -73,6 +73,36 @@ class InstalledProductAuditTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["components"]["sidecar"]["code"], "invalid_marker")
 
+    def test_desktop_bridge_requires_semantics_without_screen_capture(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-product-audit-desktop-") as tmp:
+            root, home, support = self._layout(Path(tmp))
+            commit = "e" * 40
+            self._write_control(home, commit)
+            self._write_component(support / "app", "sidecar-runtime", commit)
+            self._write_desktop_bridge(home, commit, screen_capture=False)
+            self._write_squirrel(root, home)
+
+            report = audit_installed_product(
+                repo_root=root,
+                home=home,
+                app_support=support,
+                required_components=("control", "sidecar", "squirrel", "desktopBridge"),
+                verify_pi_files=False,
+            )
+            self.assertTrue(report["components"]["desktopBridge"]["ok"])
+
+            self._write_desktop_bridge(home, commit, screen_capture=True)
+            report = audit_installed_product(
+                repo_root=root,
+                home=home,
+                app_support=support,
+                required_components=("control", "sidecar", "squirrel", "desktopBridge"),
+                verify_pi_files=False,
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["components"]["desktopBridge"]["code"], "incomplete_capabilities")
+
     def _layout(self, base: Path) -> tuple[Path, Path, Path]:
         root = base / "repo"
         home = base / "home"
@@ -118,6 +148,32 @@ class InstalledProductAuditTests(unittest.TestCase):
                 "component": component,
                 "sourceCommit": commit,
                 "sourceDirty": False,
+            },
+        )
+
+    def _write_desktop_bridge(self, home: Path, commit: str, *, screen_capture: bool) -> None:
+        marker = (
+            home
+            / "Applications"
+            / "RagImeDesktopBridge.app"
+            / "Contents"
+            / "Resources"
+            / "rag-ime-desktop-bridge-build-marker.json"
+        )
+        self._write_json(
+            marker,
+            {
+                "schemaVersion": "rag-ime.desktop-bridge-build-marker.v1",
+                "gitCommit": commit,
+                "gitDirty": False,
+                "capabilities": {
+                    "accessibilitySemantics": True,
+                    "treeDiff": True,
+                    "semanticActions": True,
+                    "liveStateRevalidation": True,
+                    "modelSuppliedCoordinates": False,
+                    "screenCapture": screen_capture,
+                },
             },
         )
 

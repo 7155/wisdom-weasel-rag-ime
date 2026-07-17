@@ -12,7 +12,9 @@ from urllib.parse import urlsplit
 from .agent_tool_ids import CONTROL_TOOL_IDS
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
+from .browser_control import BrowserControlService
 from .contracts.json_schema import validate_contract
+from .desktop_bridge import DesktopBridgeClient
 from .management_service import ManagementService, page_request
 from .memory_ownership import agent_visible_memory_owners
 from .settings_schema import default_settings, flatten_settings, settings_schema
@@ -195,7 +197,42 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "room_ask",
             "room_reply",
             "room_mailbox",
+            "room_assign",
+            "room_submit",
+            "room_accept",
+            "room_return",
+            "room_block",
+            "room_escalate",
+            "room_work",
         ),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "ime_browser",
+        "domain": "browser",
+        "displayName": "浏览器共驾",
+        "description": "按需读取已配对浏览器的页面快照，并在用户批准后执行可追踪的网页操作",
+        "operations": (
+            "status",
+            "tabs",
+            "snapshot",
+            "screenshot",
+            "trace",
+            "navigate",
+            "click",
+            "type",
+            "scroll",
+            "wait",
+            "stop",
+        ),
+        "operationRisks": {
+            "navigate": "R1",
+            "click": "R1",
+            "type": "R1",
+            "scroll": "R1",
+            "wait": "R1",
+            "stop": "R1",
+        },
         "resultPresentation": "tool_result",
     },
     {
@@ -212,6 +249,15 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "插件制作与安装",
         "description": "制作、校验并提交插件安装提议；最终应用必须由用户在控制中心批准",
         "operations": ("list", "create_draft", "validate", "propose_install"),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "desktop_semantic",
+        "domain": "desktop",
+        "displayName": "桌面语义操作",
+        "description": "通过 macOS Accessibility 读取目标窗口语义树和差分，并在原生批准后按语义节点操作；不截屏、不做 OCR",
+        "operations": ("status", "list", "inspect", "act"),
+        "operationRisks": {"act": "R2"},
         "resultPresentation": "tool_result",
     },
     {
@@ -427,6 +473,84 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             },
         ],
     },
+    "desktop_semantic": {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {"op": {"const": "status"}},
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {
+                    "op": {"const": "list"},
+                    "includeBackground": {"type": "boolean"},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {
+                    "op": {"const": "inspect"},
+                    "bundleId": {"type": "string", "maxLength": 300},
+                    "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                    "query": {"type": "string", "maxLength": 300},
+                    "maxNodes": {"type": "integer", "minimum": 1, "maximum": 400},
+                    "maxDepth": {"type": "integer", "minimum": 1, "maximum": 12},
+                    "sinceSnapshotId": {"type": "string", "maxLength": 200},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "snapshotId", "revision", "nodeRef", "action"],
+                "properties": {
+                    "op": {"const": "act"},
+                    "snapshotId": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "revision": {"type": "integer", "minimum": 1},
+                    "nodeRef": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "press", "click", "double_click", "right_click", "long_press",
+                            "focus", "set_text", "type_text", "key", "increment", "decrement",
+                            "show_menu", "scroll"
+                        ],
+                    },
+                    "text": {"type": "string", "maxLength": 8000},
+                    "key": {
+                        "type": "string",
+                        "enum": [
+                            "return", "enter", "tab", "escape", "space", "delete",
+                            "forward_delete", "left", "right", "up", "down", "home",
+                            "end", "page_up", "page_down"
+                        ],
+                    },
+                    "modifiers": {
+                        "type": "array",
+                        "maxItems": 5,
+                        "uniqueItems": True,
+                        "items": {
+                            "type": "string",
+                            "enum": ["command", "option", "control", "shift", "fn"],
+                        },
+                    },
+                    "durationMs": {"type": "integer", "minimum": 100, "maximum": 3000},
+                    "scrollDelta": {
+                        "type": "integer",
+                        "minimum": -20,
+                        "maximum": 20,
+                        "not": {"const": 0},
+                    },
+                },
+            },
+        ],
+    },
 }
 
 _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
@@ -536,6 +660,42 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "clientMessageId": {"type": "string", "minLength": 1, "maxLength": 200},
     "replyTo": {"type": "string", "minLength": 1, "maxLength": 240},
     "content": {"type": "string", "minLength": 1, "maxLength": 4_000},
+    "workId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "parentWorkId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "objective": {"type": "string", "minLength": 1, "maxLength": 4_000},
+    "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 2_000},
+    "acceptanceCriteria": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "items": {"type": "string", "minLength": 1, "maxLength": 500},
+    },
+    "resultSummary": {"type": "string", "minLength": 1, "maxLength": 4_000},
+    "artifactRefs": {
+        "type": "array",
+        "maxItems": 16,
+        "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
+    },
+    "evidenceRefs": {
+        "type": "array",
+        "maxItems": 24,
+        "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
+    },
+    "reason": {"type": "string", "minLength": 1, "maxLength": 2_000},
+    "nextStep": {"type": "string", "minLength": 1, "maxLength": 2_000},
+    "wakeCondition": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "kind": {
+                "type": "string",
+                "enum": ["manual", "message", "artifact", "time", "external"],
+            },
+            "sourceId": {"type": "string", "maxLength": 240},
+            "description": {"type": "string", "maxLength": 500},
+        },
+    },
+    "deadlineAtMs": {"type": "integer", "minimum": 1},
     "draftId": {"type": "string", "minLength": 1, "maxLength": 160},
     "manifest": {"type": "object"},
     "files": {"type": "object"},
@@ -555,6 +715,16 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "allowNetwork": {"type": "boolean"},
     "action": {"type": "string", "minLength": 1, "maxLength": 120},
     "caseSensitive": {"type": "boolean"},
+    "deviceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "tabId": {"type": "integer", "minimum": 1},
+    "refId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "url": {"type": "string", "minLength": 1, "maxLength": 4_000},
+    "text": {"type": "string", "maxLength": 8_000},
+    "clear": {"type": "boolean"},
+    "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+    "amount": {"type": "integer", "minimum": 80, "maximum": 2_400},
+    "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 20_000},
+    "maxChars": {"type": "integer", "minimum": 1_000, "maximum": 80_000},
 }
 
 _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]] = {
@@ -587,9 +757,15 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "ime_agents": (
         "agent", "version", "task", "tasks", "contextMode", "wait", "runId", "batchId",
         "artifactId", "targetParticipantId", "clientMessageId", "replyTo", "content",
-        "status", "limit",
+        "workId", "parentWorkId", "objective", "expectedOutput",
+        "acceptanceCriteria", "resultSummary", "artifactRefs", "evidenceRefs",
+        "reason", "nextStep", "wakeCondition", "deadlineAtMs", "status", "limit",
     ),
     "ime_plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
+    "ime_browser": (
+        "deviceId", "tabId", "refId", "url", "text", "clear", "direction",
+        "amount", "timeoutMs", "maxChars", "limit",
+    ),
     "workspace_list": ("path", "depth", "limit"),
     "workspace_read": ("path", "offset", "limit"),
     "workspace_search": ("query", "path", "mode", "caseSensitive", "limit"),
@@ -627,9 +803,24 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("ime_agents", "room_send"): ("targetParticipantId", "clientMessageId", "content"),
     ("ime_agents", "room_ask"): ("targetParticipantId", "clientMessageId", "content"),
     ("ime_agents", "room_reply"): ("replyTo", "clientMessageId", "content"),
+    ("ime_agents", "room_assign"): (
+        "targetParticipantId",
+        "clientMessageId",
+        "objective",
+        "expectedOutput",
+        "acceptanceCriteria",
+    ),
+    ("ime_agents", "room_submit"): ("workId", "resultSummary"),
+    ("ime_agents", "room_accept"): ("workId",),
+    ("ime_agents", "room_return"): ("workId", "reason"),
+    ("ime_agents", "room_block"): ("workId", "reason", "nextStep"),
+    ("ime_agents", "room_escalate"): ("workId", "reason", "nextStep"),
     ("ime_plugins", "create_draft"): ("draftId", "manifest", "files"),
     ("ime_plugins", "validate"): ("sourcePath",),
     ("ime_plugins", "propose_install"): ("validationToken",),
+    ("ime_browser", "navigate"): ("url",),
+    ("ime_browser", "click"): ("refId",),
+    ("ime_browser", "type"): ("refId", "text"),
     ("workspace_read", "read"): ("path",),
     ("workspace_search", "search"): ("query",),
     ("workspace_patch", "apply"): ("path", "oldText", "newText"),
@@ -643,6 +834,7 @@ _RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
     ("ime_models", "profile_apply"): (("provider",), ("endpoint",), ("model",)),
     ("ime_agents", "delegate"): (("tasks",), ("agent", "task")),
     ("ime_agents", "abort"): (("runId",), ("batchId",)),
+    ("ime_agents", "room_submit"): (("artifactRefs",), ("evidenceRefs",)),
 }
 
 _RUNTIME_TOOL_USAGE: dict[str, str] = {
@@ -654,6 +846,10 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
         "当回答依赖跨会话偏好、决定、约束或持续计划时，先用 catalog 定位工具书，"
         "再用 read 读取正文；recent 只返回当前角色可见且已治理的记忆证据。"
         "不要把 pending、needs_review 或 not_for_memory 输入当作事实。"
+    ),
+    "ime_browser": (
+        "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
+        "页面变化后旧 refId 会失效；执行 navigate、click、type、scroll、wait 或 stop 前需要用户批准。"
     ),
 }
 
@@ -743,6 +939,8 @@ class ControlToolGateway:
         collaboration: object | None = None,
         extensions: object | None = None,
         scheduling: object | None = None,
+        browser_control: BrowserControlService | None = None,
+        desktop_client: object | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -755,6 +953,8 @@ class ControlToolGateway:
         self.collaboration = collaboration
         self.extensions = extensions
         self.scheduling = scheduling
+        self.browser_control = browser_control
+        self.desktop_client = desktop_client or DesktopBridgeClient()
 
     def manifests(self, *, session_id: str = "") -> dict[str, object]:
         session = self.sessions.get(session_id) if session_id else None
@@ -895,6 +1095,7 @@ class ControlToolGateway:
             "ime_runtime": self._runtime,
             "ime_configuration": self._configuration,
             "ime_agents": self._agents,
+            "ime_browser": self._browser,
             "agent_plan": self._agent_plan,
             "ime_plugins": self._plugins,
         }
@@ -913,7 +1114,10 @@ class ControlToolGateway:
                     runtime_context = request.get("runtimeContext")
                     if isinstance(runtime_context, Mapping):
                         handler_args["_runtimeContext"] = dict(runtime_context)
-                result = handlers[tool](operation, handler_args)
+                if tool == "desktop_semantic":
+                    result = self._desktop(operation, handler_args)
+                else:
+                    result = handlers[tool](operation, handler_args)
         else:
             result = self._prepare_approval(
                 session_id=session_id,
@@ -952,6 +1156,69 @@ class ControlToolGateway:
                 )
             )
         raise ValueError("unsupported ime_plugins operation")
+
+    def _browser(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        service = self.browser_control
+        if service is None:
+            raise ValueError("browser co-pilot is unavailable")
+        if operation == "status":
+            return service.status(agent_safe=True)
+        if operation == "tabs":
+            return service.tabs()
+        if operation == "snapshot":
+            result = service.latest_snapshot(
+                device_id=_bounded_text(args.get("deviceId"), maximum=160),
+                tab_id=(
+                    _bounded_int(args.get("tabId"), default=0, minimum=0, maximum=2_147_483_647)
+                    or None
+                ),
+                include_markdown=True,
+            )
+            maximum = _bounded_int(
+                args.get("maxChars"),
+                default=24_000,
+                minimum=1_000,
+                maximum=80_000,
+            )
+            markdown = str(result.get("markdown") or "")
+            result["markdown"] = markdown[:maximum]
+            result["truncated"] = len(markdown) > maximum
+            result["untrustedData"] = True
+            return result
+        if operation == "trace":
+            return service.traces(
+                limit=_bounded_int(args.get("limit"), default=20, minimum=1, maximum=100)
+            )
+        if operation == "screenshot":
+            return service.submit_command(
+                "screenshot",
+                args,
+                session_id=_bounded_text(args.get("_sessionId"), maximum=240),
+                timeout_seconds=20.0,
+            )
+        raise ValueError(f"unsupported ime_browser operation: {operation}")
+
+    def _desktop(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation == "status":
+            return dict(self.desktop_client.status())  # type: ignore[attr-defined]
+        if operation == "list":
+            return dict(
+                self.desktop_client.list_applications(  # type: ignore[attr-defined]
+                    include_background=args.get("includeBackground") is True,
+                )
+            )
+        if operation == "inspect":
+            return dict(
+                self.desktop_client.inspect(  # type: ignore[attr-defined]
+                    bundle_id=_bounded_text(args.get("bundleId"), maximum=300),
+                    pid=_bounded_int(args.get("pid"), default=0, minimum=0, maximum=2_147_483_647),
+                    query=_bounded_text(args.get("query"), maximum=300),
+                    max_nodes=_bounded_int(args.get("maxNodes"), default=160, minimum=1, maximum=400),
+                    max_depth=_bounded_int(args.get("maxDepth"), default=8, minimum=1, maximum=12),
+                    since_snapshot_id=_bounded_text(args.get("sinceSnapshotId"), maximum=200),
+                )
+            )
+        raise ValueError("unsupported desktop_semantic operation")
 
     def _agents(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation in {"catalog", "delegate", "status", "artifact", "abort"} and self.delegation is None:
@@ -999,6 +1266,103 @@ class ControlToolGateway:
                 raise ValueError("managed room collaboration is unavailable")
             return dict(
                 self.collaboration.list_room_intercom(  # type: ignore[attr-defined]
+                    session_id,
+                    {
+                        "status": args.get("status"),
+                        "limit": args.get("limit"),
+                    },
+                )
+            )
+        room_work_fields: dict[str, tuple[str, ...]] = {
+            "room_assign": (
+                "targetParticipantId",
+                "clientMessageId",
+                "parentWorkId",
+                "objective",
+                "expectedOutput",
+                "acceptanceCriteria",
+            ),
+            "room_submit": (
+                "workId",
+                "resultSummary",
+                "artifactRefs",
+                "evidenceRefs",
+            ),
+            "room_accept": ("workId",),
+            "room_return": ("workId", "reason"),
+            "room_block": (
+                "workId",
+                "reason",
+                "nextStep",
+                "wakeCondition",
+                "deadlineAtMs",
+            ),
+            "room_escalate": ("workId", "reason", "nextStep"),
+        }
+        room_work_args = {
+            key: args[key]
+            for key in room_work_fields.get(operation, ())
+            if key in args
+        }
+        if operation == "room_assign":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.assign_room_work(  # type: ignore[attr-defined]
+                    session_id,
+                    room_work_args,
+                )
+            )
+        if operation == "room_submit":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.submit_room_work(  # type: ignore[attr-defined]
+                    session_id,
+                    room_work_args,
+                )
+            )
+        if operation == "room_accept":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.accept_room_work(  # type: ignore[attr-defined]
+                    session_id,
+                    room_work_args,
+                )
+            )
+        if operation == "room_return":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.return_room_work(  # type: ignore[attr-defined]
+                    session_id,
+                    room_work_args,
+                )
+            )
+        if operation == "room_block":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.block_room_work(  # type: ignore[attr-defined]
+                    session_id,
+                    room_work_args,
+                )
+            )
+        if operation == "room_escalate":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.escalate_room_work(  # type: ignore[attr-defined]
+                    session_id,
+                    room_work_args,
+                )
+            )
+        if operation == "room_work":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.list_room_work(  # type: ignore[attr-defined]
                     session_id,
                     {
                         "status": args.get("status"),
@@ -1057,6 +1421,8 @@ class ControlToolGateway:
             return self._apply_workspace_command(approval)
         if (tool, operation) == ("workspace_patch", "apply"):
             return self._apply_workspace_patch(approval)
+        if (tool, operation) == ("desktop_semantic", "act"):
+            return self._apply_desktop_action(approval)
         if (tool, operation) == ("ime_planning", "undo_task_event"):
             return self._apply_planning_undo(approval)
         if tool == "agent_schedule":
@@ -1083,6 +1449,8 @@ class ControlToolGateway:
             return self._apply_configuration_export(approval)
         if (tool, operation) == ("ime_configuration", "restore_apply"):
             return self._apply_configuration_restore(approval)
+        if tool == "ime_browser":
+            return self._apply_browser_action(approval)
         if (tool, operation) != ("ime_planning", "task_action"):
             raise ValueError("approved operation is not enabled")
         preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
@@ -1139,6 +1507,166 @@ class ControlToolGateway:
             audit_persisted=True,
         )
 
+    def _prepare_browser_action(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        service = self.browser_control
+        if service is None:
+            raise ValueError("browser co-pilot is unavailable")
+        allowed_fields = {
+            "deviceId",
+            "tabId",
+            "refId",
+            "url",
+            "text",
+            "clear",
+            "direction",
+            "amount",
+            "timeoutMs",
+        }
+        action_payload = {
+            str(key): value
+            for key, value in args.items()
+            if str(key) in allowed_fields and value is not None
+        }
+        base_state = {
+            "mode": service.mode(),
+        }
+        if operation in {"click", "type"}:
+            snapshot = service.latest_snapshot(
+                device_id=_bounded_text(action_payload.get("deviceId"), maximum=160),
+                tab_id=(
+                    _bounded_int(
+                        action_payload.get("tabId"),
+                        default=0,
+                        minimum=0,
+                        maximum=2_147_483_647,
+                    )
+                    or None
+                ),
+                include_markdown=False,
+            )
+            base_state["snapshotId"] = str(snapshot.get("snapshotId") or "")
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_browser",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        labels = {
+            "navigate": "打开网页",
+            "click": "点击页面元素",
+            "type": "向页面输入文本",
+            "scroll": "滚动页面",
+            "wait": "等待页面内容",
+            "stop": "停止浏览器任务",
+        }
+        operation_label = labels.get(operation, operation)
+        preview = {
+            "title": f"确认{operation_label}",
+            "summary": f"浏览器共驾将{operation_label}，操作结果会写入执行轨迹",
+            "operationLabel": operation_label,
+            "changes": [
+                {
+                    "label": "目标",
+                    "path": operation,
+                    "before": "当前页面",
+                    "after": (
+                        _bounded_text(action_payload.get("url"), maximum=320)
+                        or _bounded_text(action_payload.get("refId"), maximum=160)
+                        or operation_label
+                    ),
+                }
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        if operation == "type":
+            preview["changes"].append(
+                {
+                    "label": "输入内容",
+                    "path": "text",
+                    "before": "",
+                    "after": _bounded_text(action_payload.get("text"), maximum=320),
+                }
+            )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_browser",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_browser_action(self, approval: Mapping[str, object]) -> dict[str, object]:
+        service = self.browser_control
+        if service is None:
+            raise ValueError("browser co-pilot is unavailable")
+        operation = str(approval.get("operation") or "")
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_browser",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        if service.mode() != str(base_state.get("mode") or ""):
+            raise ValueError("browser mode changed after the approval preview was created")
+        snapshot_id = str(base_state.get("snapshotId") or "")
+        if snapshot_id:
+            current = service.latest_snapshot(
+                device_id=_bounded_text(action_payload.get("deviceId"), maximum=160),
+                tab_id=(
+                    _bounded_int(
+                        action_payload.get("tabId"),
+                        default=0,
+                        minimum=0,
+                        maximum=2_147_483_647,
+                    )
+                    or None
+                ),
+                include_markdown=False,
+            )
+            if str(current.get("snapshotId") or "") != snapshot_id:
+                raise ValueError("browser page changed after the approval preview was created")
+        if operation == "stop":
+            result = service.stop()
+        else:
+            result = service.submit_command(
+                operation,
+                action_payload,
+                session_id=str(approval.get("sessionId") or ""),
+                timeout_seconds=25.0 if operation in {"navigate", "wait"} else 15.0,
+            )
+        return {
+            **result,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "ime_browser",
+            "operation": operation,
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+
     def _prepare_approval(
         self,
         *,
@@ -1156,6 +1684,12 @@ class ControlToolGateway:
             )
         if (tool, operation) == ("workspace_patch", "apply"):
             return self._prepare_workspace_patch(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("desktop_semantic", "act"):
+            return self._prepare_desktop_action(
                 session_id=session_id,
                 args=args,
                 risk_level=risk_level,
@@ -1231,6 +1765,13 @@ class ControlToolGateway:
                 args=args,
                 risk_level=risk_level,
             )
+        if tool == "ime_browser":
+            return self._prepare_browser_action(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
         if (tool, operation) != ("ime_planning", "task_action"):
             raise ValueError("write operation is not enabled")
         task_id = _bounded_text(args.get("taskId"), maximum=240)
@@ -1292,6 +1833,143 @@ class ControlToolGateway:
             "approvalRequired": True,
             "approvalId": approval["approvalId"],
             "approval": approval,
+        }
+
+    def _prepare_desktop_action(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        prepared = self.desktop_client.prepare_action(  # type: ignore[attr-defined]
+            snapshot_id=_bounded_text(args.get("snapshotId"), maximum=200),
+            revision=_bounded_int(args.get("revision"), default=0, minimum=0, maximum=2_147_483_647),
+            node_ref=_bounded_text(args.get("nodeRef"), maximum=200),
+            action=_bounded_text(args.get("action"), maximum=80),
+            text=str(args.get("text"))[:8_000] if isinstance(args.get("text"), str) else None,
+            key=_bounded_text(args.get("key"), maximum=40),
+            modifiers=tuple(
+                str(value)
+                for value in args.get("modifiers", [])
+                if isinstance(value, str)
+            )
+            if isinstance(args.get("modifiers"), list)
+            else (),
+            duration_ms=(
+                _bounded_int(args.get("durationMs"), default=650, minimum=100, maximum=3_000)
+                if args.get("durationMs") is not None
+                else None
+            ),
+            scroll_delta=(
+                _bounded_int(args.get("scrollDelta"), default=3, minimum=-20, maximum=20)
+                if args.get("scrollDelta") is not None
+                else None
+            ),
+        )
+        if not isinstance(prepared, Mapping):
+            raise ValueError("desktop action preview is invalid")
+        action_payload = (
+            dict(prepared.get("actionPayload"))
+            if isinstance(prepared.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            dict(prepared.get("baseState"))
+            if isinstance(prepared.get("baseState"), Mapping)
+            else {}
+        )
+        if not action_payload or not base_state:
+            raise ValueError("desktop action preview is incomplete")
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="desktop_semantic",
+            operation="act",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        summary = _bounded_text(prepared.get("summary"), maximum=240) or "执行桌面语义动作"
+        action = _bounded_text(action_payload.get("action"), maximum=80)
+        text_chars = _safe_int(action_payload.get("textChars"))
+        changes = [
+            {
+                "label": "桌面动作",
+                "before": "未执行",
+                "after": action,
+            },
+            {
+                "label": "目标快照",
+                "before": _bounded_text(action_payload.get("snapshotId"), maximum=80),
+                "after": f"revision {_safe_int(action_payload.get('revision'))}",
+            },
+        ]
+        if text_chars > 0:
+            changes.append(
+                {
+                    "label": "输入文本",
+                    "before": "未输入",
+                    "after": f"{text_chars} 个字符（内容不在审批摘要显示）",
+                }
+            )
+        preview = {
+            "title": "确认桌面操作",
+            "summary": summary,
+            "operationLabel": "执行 Accessibility 语义动作",
+            "changes": changes,
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="desktop_semantic",
+            operation="act",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=30_000,
+        )
+        return {
+            "summary": f"等待确认：{summary}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_desktop_action(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload")
+            if isinstance(preview.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            preview.get("baseState")
+            if isinstance(preview.get("baseState"), Mapping)
+            else {}
+        )
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="desktop_semantic",
+            operation="act",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("desktop approval no longer matches its preview")
+        receipt = self.desktop_client.act(  # type: ignore[attr-defined]
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if not isinstance(receipt, Mapping):
+            raise ValueError("desktop action receipt is invalid")
+        return {
+            "summary": (
+                f"桌面动作 {_bounded_text(action_payload.get('action'), maximum=80)} 已执行，"
+                "并已重新读取窗口语义状态"
+            ),
+            "presentationKind": "desktop_snapshot",
+            "approvalId": str(approval.get("approvalId") or ""),
+            "receipt": dict(receipt),
         }
 
     def _prepare_memory_mutation(
@@ -4587,6 +5265,7 @@ def _tool_profile_allows(
         "ime_knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),
+        "ime_browser": frozenset({"status", "tabs", "snapshot", "screenshot", "trace"}),
         "ime_agents": frozenset(
             {
                 "catalog",
@@ -4598,6 +5277,13 @@ def _tool_profile_allows(
                 "room_ask",
                 "room_reply",
                 "room_mailbox",
+                "room_assign",
+                "room_submit",
+                "room_accept",
+                "room_return",
+                "room_block",
+                "room_escalate",
+                "room_work",
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
@@ -4605,6 +5291,7 @@ def _tool_profile_allows(
         "workspace_list": frozenset({"list"}),
         "workspace_read": frozenset({"read"}),
         "workspace_search": frozenset({"search"}),
+        "desktop_semantic": frozenset({"status", "list", "inspect"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())

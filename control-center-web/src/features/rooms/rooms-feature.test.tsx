@@ -9,6 +9,7 @@ import { createRoomProjection } from '@/contracts/room-reducer';
 import { previewPersonas } from '@/features/agent/preview-data';
 import type { ControlRequest } from '@/platform/transport';
 import { RoomTurn, RoomsFeature, type RoomSummary } from './index';
+import { RoomStatusPanel } from './RoomStatusPanel';
 
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
@@ -748,6 +749,45 @@ describe('Rooms experience', () => {
     expect(container).not.toHaveTextContent('秘密思考摘要');
     expect(container).not.toHaveTextContent('participant_activity');
     expect(container).not.toHaveTextContent('route_decision');
+  });
+
+  it('shows WorkItem responsibility, owner, and review state in the Room status panel', () => {
+    const room = roomSummary('room-a', '责任 Room');
+    room.workItems = [{
+      id: 'room-work:1',
+      roomId: room.id,
+      topicId: '',
+      rootTurnId: 'turn-a',
+      rootWorkId: 'room-work:1',
+      parentWorkId: '',
+      objective: '核对多端网关回放边界',
+      expectedOutput: '测试与风险说明',
+      acceptanceCriteria: ['回放不重复'],
+      accountableParticipantId: 'room-a:p1',
+      currentOwnerParticipantId: 'room-a:p2',
+      offeredToParticipantId: '',
+      createdByParticipantId: 'room-a:p1',
+      clientMessageId: 'test-work-1',
+      state: 'review',
+      depth: 1,
+      revision: 1,
+      resultSummary: '已完成',
+      artifactRefs: [],
+      evidenceRefs: ['test:room-replay'],
+      blocker: {},
+      acceptedTurnId: 'turn-worker',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      completedAtMs: null,
+    }];
+
+    render(<TooltipProvider><RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} /></TooltipProvider>);
+
+    expect(screen.getByText('责任账本')).toBeInTheDocument();
+    expect(screen.getByText('核对多端网关回放边界')).toBeInTheDocument();
+    expect(screen.getByText(/待验收 · 智鼬·初识 · 第 1 次修订/)).toBeInTheDocument();
+    expect(screen.getByText('调研者 · 已加入')).toBeInTheDocument();
+    expect(screen.queryByText(/只读调研/)).not.toBeInTheDocument();
   });
 });
 

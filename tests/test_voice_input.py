@@ -248,6 +248,13 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("RagImeAnimeCompanion", overlay)
         self.assertIn("An original book-shaped companion", companion)
         self.assertIn("Original anime companion artwork", companion)
+        anime_companion = companion.split("struct RagImeAnimeCompanion", 1)[1].split(
+            "struct RagImeFullBodyCompanion",
+            1,
+        )[0]
+        self.assertIn("bundledImage(named: requestedArtworkName)", anime_companion)
+        self.assertIn("artworkName == requestedArtworkName", anime_companion)
+        self.assertNotIn("artwork = nil", anime_companion)
         for state in ("Idle", "Listening", "Thinking", "Done", "Warning"):
             self.assertIn(f"RagImeCompanion{state}", companion)
             asset = state_assets / f"RagImeCompanion{state}.png"

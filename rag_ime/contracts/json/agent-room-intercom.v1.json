@@ -16,6 +16,8 @@
     "targetGeneration",
     "clientMessageId",
     "replyTo",
+    "workItemId",
+    "workAction",
     "status",
     "content",
     "acceptedTurnId",
@@ -38,6 +40,11 @@
     "targetGeneration": {"type": "integer", "minimum": 0},
     "clientMessageId": {"type": "string", "minLength": 1},
     "replyTo": {"type": "string"},
+    "workItemId": {"type": "string"},
+    "workAction": {
+      "type": "string",
+      "enum": ["", "assignment", "submission", "accepted", "revision", "blocked", "escalated"]
+    },
     "status": {
       "type": "string",
       "enum": ["queued", "delivering", "delivered", "replied", "failed", "stale", "cancelled"]

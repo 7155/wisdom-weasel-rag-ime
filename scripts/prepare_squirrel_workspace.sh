@@ -488,6 +488,7 @@ require_patch_text "sources/RagImeSidecarClient.swift" 'request.privacyDispositi
 require_patch_text "sources/SquirrelInputController.swift" 'ragImePrivacyDisposition == "allowed"' "foreground privacy assessment propagation"
 require_patch_text "sources/SquirrelInputController.swift" "privacyDisposition: ragImePrivacyDisposition" "foreground request privacy disposition"
 require_patch_text "sources/RagImeSidecarModels.swift" "displayLayout" "per-candidate display layout metadata"
+require_patch_text "sources/RagImeSidecarModels.swift" "RagImeWindowContextSnapshot" "Accessibility-only window context contract"
 require_patch_text "sources/SquirrelInputController.swift" "selectRagImeSideCandidate" "number-key side-candidate routing"
 require_patch_text "sources/SquirrelInputController.swift" "ragImeRequestFingerprint" "stale response fingerprint guard"
 require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCandidates" "Rime and side candidate display merge"
@@ -519,6 +520,8 @@ require_patch_text "sources/SquirrelInputController.swift" "ragImeForegroundCont
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXSelectedTextRangeAttribute" "focused text selected range accessibility capture"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXStringForRangeParameterizedAttribute" "focused text surrounding range accessibility capture"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "RagImeForegroundContextResolver" "delayed IMK to Accessibility foreground context resolver"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "captureWindowContext" "bounded Accessibility window semantic capture"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "AXUIElementCopyMultipleAttributeValues" "batched Accessibility attribute reads"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_app_bundle_missing" "missing app identity privacy fail-closed guard"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "isSensitive: false, reason: \"privacy_unknown_ax_not_trusted\"" "optional accessibility metadata fallback"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_focused_element_missing" "missing focused element privacy fail-closed guard"
@@ -534,6 +537,8 @@ require_patch_text "sources/SquirrelInputController.swift" "ragImeNativeSelectio
 require_patch_text "sources/SquirrelInputController.swift" "native_rime_rank_feedback_recorded" "native Rime selection feedback trace"
 require_patch_text "sources/SquirrelInputController.swift" "guard !enforceRagImeFastPrivacyGuard()" "native Rime feedback non-blocking privacy guard"
 require_patch_text "sources/SquirrelInputController.swift" "probeRagImeForegroundPrivacyAndContext" "background Accessibility privacy probe"
+require_patch_text "sources/SquirrelInputController.swift" "active_rag_window_context_capture_scheduled" "quick-generate asynchronous window context capture"
+require_patch_text "sources/SquirrelInputController.swift" '"usesScreenCapture": false' "quick-generate semantic-only capture marker"
 require_patch_text "sources/SquirrelInputController.swift" "privacy_probe_timeout" "background privacy timeout fail-closed path"
 require_patch_text "sources/SquirrelInputController.swift" "discardRagImeSensitiveNativeLearningTransaction" "sensitive native Rime learning rollback"
 require_patch_text "sources/SquirrelInputController.swift" "guard rimeAPI.get_status(session, &status) else { return false }" "native learning rollback composition-state check"
@@ -608,6 +613,10 @@ if command -v swiftc >/dev/null 2>&1; then
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" \
     "$stubfile"
+  swiftc -typecheck \
+    -module-cache-path "$module_cache" \
+    "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
+    "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift"
   if grep -Fq "struct RagImeAssistantOverlayPayload" "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift"; then
     swiftc -typecheck \
       -module-cache-path "$module_cache" \

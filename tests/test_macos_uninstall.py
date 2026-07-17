@@ -157,7 +157,7 @@ class MacOSUninstallTests(unittest.TestCase):
                 self.assertNotIn("RAG-IME", text)
                 self.assertTrue(target.with_name(target.name + ".rag-ime-uninstall.bak").is_file())
 
-        self.assertEqual(len([call for call in calls if call[0] == "launchctl"]), 5)
+            self.assertEqual(len([call for call in calls if call[0] == "launchctl"]), 6)
         self.assertFalse(any(call[0] == "security" for call in calls))
 
     def test_explicit_purge_removes_local_data_logs_and_keychain_items(self) -> None:
@@ -461,6 +461,7 @@ class MacOSUninstallTests(unittest.TestCase):
         launch_agents.mkdir(parents=True, exist_ok=True)
         for label in (
             "com.rag-ime.frontend",
+            "com.rag-ime.desktop-bridge",
             "com.rag-ime.memory-book-maintenance",
             "com.rag-ime.mlx-predictor",
             "com.rag-ime.sidecar",
@@ -468,6 +469,10 @@ class MacOSUninstallTests(unittest.TestCase):
         ):
             (launch_agents / f"{label}.plist").write_bytes(plistlib.dumps({"Label": label}))
         self._write_app(home / "Applications" / "RagImeControl.app", "com.rag-ime.control")
+        self._write_app(
+            home / "Applications" / "RagImeDesktopBridge.app",
+            "com.rag-ime.desktop-bridge",
+        )
         self._write_app(home / "Applications" / "RagImeVoice.app", "com.rag-ime.voice")
         squirrel = home / "Library" / "Input Methods" / "Squirrel.app"
         self._write_app(squirrel, "im.rime.inputmethod.Squirrel")

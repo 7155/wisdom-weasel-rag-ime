@@ -238,6 +238,24 @@ class DebugManagementApiTests(unittest.TestCase):
                     }
                 )
 
+    def test_provider_configuration_rejects_endpoint_without_hostname_before_write(self) -> None:
+        support = Path(self.tmp.name) / "ProviderValidationSupport"
+        support.mkdir()
+        with patch.dict(os.environ, {"RAG_IME_APP_SUPPORT_DIR": str(support)}):
+            before = self.service.management.provider_configuration()
+            with self.assertRaisesRegex(ValueError, "complete http or https URL"):
+                self.service.management.provider_configuration_apply(
+                    {
+                        "slot": "instant",
+                        "provider": "openai-compatible",
+                        "endpoint": "https://",
+                        "model": "local-model",
+                        "expectedConfigurationHash": before["configurationHash"],
+                    }
+                )
+
+        self.assertFalse((support / "predictor.env").exists())
+
     def test_local_mlx_embedding_is_warmed_before_health_becomes_ready(self) -> None:
         provider = _WarmupEmbeddingProvider()
         with tempfile.TemporaryDirectory(prefix="rag-ime-embedding-warmup-") as tmp:

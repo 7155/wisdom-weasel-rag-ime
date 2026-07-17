@@ -48,6 +48,88 @@ export const contractSchemas = {
       "frontAppBundleId": {
         "type": "string"
       },
+      "windowContext": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "captureMode",
+          "snapshotId",
+          "revision",
+          "application",
+          "nodes"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.window-context.v1"
+          },
+          "captureMode": {
+            "const": "accessibility_semantics"
+          },
+          "snapshotId": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "capturedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "privacyDisposition": {
+            "type": "string",
+            "enum": [
+              "allowed",
+              "sensitive",
+              "unknown"
+            ]
+          },
+          "application": {
+            "type": "object",
+            "properties": {
+              "pid": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "bundleId": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "windowTitle": {
+                "type": "string",
+                "maxLength": 240
+              }
+            },
+            "additionalProperties": false
+          },
+          "focusedNodeRef": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "nodes": {
+            "type": "array",
+            "maxItems": 160
+          },
+          "nodeCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 160
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "semanticText": {
+            "type": "string",
+            "maxLength": 12000
+          }
+        },
+        "additionalProperties": false
+      },
       "visualContext": {
         "type": "object",
         "required": [
@@ -2343,6 +2425,8 @@ export const contractSchemas = {
       "targetGeneration",
       "clientMessageId",
       "replyTo",
+      "workItemId",
+      "workAction",
       "status",
       "content",
       "acceptedTurnId",
@@ -2403,6 +2487,21 @@ export const contractSchemas = {
       },
       "replyTo": {
         "type": "string"
+      },
+      "workItemId": {
+        "type": "string"
+      },
+      "workAction": {
+        "type": "string",
+        "enum": [
+          "",
+          "assignment",
+          "submission",
+          "accepted",
+          "revision",
+          "blocked",
+          "escalated"
+        ]
       },
       "status": {
         "type": "string",
@@ -2704,6 +2803,13 @@ export const contractSchemas = {
             "items": {
               "type": "object"
             }
+          },
+          "workItems": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object"
+            }
           }
         }
       },
@@ -2784,6 +2890,171 @@ export const contractSchemas = {
             "minLength": 1
           }
         }
+      }
+    }
+  },
+  "agent-room-work-item.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-room-work-item.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "id",
+      "roomId",
+      "topicId",
+      "rootTurnId",
+      "rootWorkId",
+      "parentWorkId",
+      "objective",
+      "expectedOutput",
+      "acceptanceCriteria",
+      "accountableParticipantId",
+      "currentOwnerParticipantId",
+      "offeredToParticipantId",
+      "createdByParticipantId",
+      "clientMessageId",
+      "state",
+      "depth",
+      "revision",
+      "resultSummary",
+      "artifactRefs",
+      "evidenceRefs",
+      "blocker",
+      "acceptedTurnId",
+      "createdAtMs",
+      "updatedAtMs",
+      "completedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-room-work-item.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "topicId": {
+        "type": "string"
+      },
+      "rootTurnId": {
+        "type": "string"
+      },
+      "rootWorkId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentWorkId": {
+        "type": "string"
+      },
+      "objective": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000
+      },
+      "expectedOutput": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "acceptanceCriteria": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "accountableParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "currentOwnerParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "offeredToParticipantId": {
+        "type": "string"
+      },
+      "createdByParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "clientMessageId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "active",
+          "review",
+          "blocked",
+          "done",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "depth": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2
+      },
+      "resultSummary": {
+        "type": "string",
+        "maxLength": 4000
+      },
+      "artifactRefs": {
+        "type": "array",
+        "maxItems": 16,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "evidenceRefs": {
+        "type": "array",
+        "maxItems": 24,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "blocker": {
+        "type": "object"
+      },
+      "acceptedTurnId": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "completedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
       }
     }
   },
@@ -2930,6 +3201,13 @@ export const contractSchemas = {
         }
       },
       "artifacts": {
+        "type": "array",
+        "maxItems": 100,
+        "items": {
+          "type": "object"
+        }
+      },
+      "workItems": {
         "type": "array",
         "maxItems": 100,
         "items": {
@@ -3988,7 +4266,9 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "ime_browser",
           "agent_plan",
+          "desktop_semantic",
           "ime_plugins",
           "workspace_list",
           "workspace_read",
@@ -4097,7 +4377,9 @@ export const contractSchemas = {
           "ime_runtime",
           "ime_configuration",
           "ime_agents",
+          "ime_browser",
           "agent_plan",
+          "desktop_semantic",
           "ime_plugins",
           "workspace_list",
           "workspace_read",
@@ -4145,6 +4427,8 @@ export const contractSchemas = {
           "maintenance_apply",
           "maintenance_rollback",
           "list",
+          "inspect",
+          "act",
           "update",
           "create_draft",
           "validate",
@@ -4183,6 +4467,22 @@ export const contractSchemas = {
           "room_ask",
           "room_reply",
           "room_mailbox",
+          "room_assign",
+          "room_submit",
+          "room_accept",
+          "room_return",
+          "room_block",
+          "room_escalate",
+          "room_work",
+          "tabs",
+          "snapshot",
+          "screenshot",
+          "navigate",
+          "click",
+          "type",
+          "scroll",
+          "wait",
+          "stop",
           "run",
           "apply"
         ]
@@ -4448,6 +4748,8 @@ export const contractSchemas = {
           "runtime",
           "configuration",
           "agents",
+          "browser",
+          "desktop",
           "workspace"
         ]
       },

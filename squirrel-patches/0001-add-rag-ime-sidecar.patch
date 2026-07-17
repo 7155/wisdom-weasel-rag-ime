@@ -1014,7 +1014,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c205e9e799
 --- /dev/null
 +++ b/sources/RagImeSelectedTextProvider.swift
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,892 @@
 +//
 +//  RagImeSelectedTextProvider.swift
 +//  Squirrel
@@ -1179,6 +1179,20 @@ index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c2
 +      privacyPrevalidated: privacyPrevalidated
 +    )
 +  }
++
++  func captureWindowContext(
++    captureEpoch: Int,
++    sourceAppBundleId: String,
++    maxNodes: Int = 96,
++    maxDepth: Int = 8
++  ) -> RagImeWindowContextSnapshot? {
++    accessibilityProvider.captureWindowContext(
++      captureEpoch: captureEpoch,
++      sourceAppBundleId: sourceAppBundleId,
++      maxNodes: maxNodes,
++      maxDepth: maxDepth
++    )
++  }
 +}
 +
 +final class RagImeSelectedTextProvider {
@@ -1256,9 +1270,12 @@ index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c2
 +    }
 +    let metadataValues = metadataReads.compactMap { $0.value } + [windowTitleRead.value ?? ""]
 +    let metadata = metadataValues.joined(separator: " ").lowercased()
-+    // Field-level blocking is deliberately narrow: explicit password fields only.
-+    // Password managers, banking apps, and private browsers are handled by the
-+    // application denylist above, so ordinary login/email/OTP fields keep AI enabled.
++    let privateBrowsingTokens = [
++      "private browsing", "private window", "incognito", "inprivate", "隐私浏览", "私密浏览", "无痕",
++    ]
++    if privateBrowsingTokens.contains(where: metadata.contains) {
++      return RagImeSensitiveFieldStatus(isSensitive: true, reason: "private_browsing_window")
++    }
 +    let sensitiveTokens = [
 +      "password", "passcode", "密码", "口令",
 +    ]
@@ -1554,6 +1571,180 @@ index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c2
 +      contextGroupLevel: group.level,
 +      contextGroupConfidence: group.confidence,
 +      commitTextMatched: false
++    )
++  }
++
++  func captureWindowContext(
++    captureEpoch: Int,
++    sourceAppBundleId: String,
++    maxNodes: Int,
++    maxDepth: Int
++  ) -> RagImeWindowContextSnapshot? {
++    guard AXIsProcessTrusted(), NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId,
++      sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId).privacyDisposition == "allowed",
++      let application = NSRunningApplication.runningApplications(
++        withBundleIdentifier: sourceAppBundleId
++      ).first(where: { !$0.isTerminated }) else { return nil }
++    let appElement = AXUIElementCreateApplication(application.processIdentifier)
++    _ = AXUIElementSetMessagingTimeout(appElement, 0.05)
++    func elementAttribute(_ element: AXUIElement, _ attribute: CFString) -> AXUIElement? {
++      var value: AnyObject?
++      guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
++        let value else { return nil }
++      guard CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
++      return unsafeBitCast(value, to: AXUIElement.self)
++    }
++    let focused = elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString)
++    let window = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
++      ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)
++    guard focused != nil || window != nil else { return nil }
++    let windowTitle = window.flatMap {
++      accessibilityStringAttribute(kAXTitleAttribute as CFString, element: $0)
++    }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++    let deadline = Date().addingTimeInterval(0.14)
++    let nodeLimit = min(max(1, maxNodes), 160)
++    let depthLimit = min(max(1, maxDepth), 10)
++    let attributeNames: [CFString] = [
++      kAXRoleAttribute as CFString,
++      kAXSubroleAttribute as CFString,
++      kAXTitleAttribute as CFString,
++      kAXDescriptionAttribute as CFString,
++      kAXPlaceholderValueAttribute as CFString,
++      kAXIdentifierAttribute as CFString,
++      kAXValueAttribute as CFString,
++      kAXEnabledAttribute as CFString,
++      kAXFocusedAttribute as CFString,
++      kAXSelectedAttribute as CFString,
++      kAXChildrenAttribute as CFString,
++    ]
++    func attributes(_ element: AXUIElement) -> [String: Any] {
++      var copied: CFArray?
++      guard AXUIElementCopyMultipleAttributeValues(
++        element,
++        attributeNames as CFArray,
++        [],
++        &copied
++      ) == .success,
++        let values = copied as? [Any],
++        values.count == attributeNames.count else { return [:] }
++      return Dictionary(uniqueKeysWithValues: zip(attributeNames, values).map {
++        ($0.0 as String, $0.1)
++      })
++    }
++    func stringValue(_ value: Any?) -> String {
++      if let text = value as? String {
++        return text.trimmingCharacters(in: .whitespacesAndNewlines)
++      }
++      if let number = value as? NSNumber { return number.stringValue }
++      return ""
++    }
++    func boolValue(_ value: Any?, fallback: Bool) -> Bool {
++      (value as? NSNumber)?.boolValue ?? fallback
++    }
++    func actionNames(_ element: AXUIElement) -> [String] {
++      var copied: CFArray?
++      guard AXUIElementCopyActionNames(element, &copied) == .success,
++        let values = copied as? [String] else { return [] }
++      return Array(values.prefix(12)).map { action in
++        switch action {
++        case kAXPressAction: return "press"
++        case kAXShowMenuAction: return "show_menu"
++        case kAXIncrementAction: return "increment"
++        case kAXDecrementAction: return "decrement"
++        default: return action
++        }
++      }
++    }
++    var queue: [(AXUIElement, String, Int, Int)] = []
++    if let focused { queue.append((focused, "", 0, 0)) }
++    if let window, focused.map({ CFHash($0) != CFHash(window) }) ?? true {
++      queue.append((window, "", 0, queue.count))
++    }
++    var visited = Set<CFHashCode>()
++    var nodes: [RagImeWindowContextNode] = []
++    var semanticLines: [String] = []
++    var focusedNodeRef = ""
++    while !queue.isEmpty, nodes.count < nodeLimit, Date() < deadline {
++      let (element, parentRef, depth, siblingIndex) = queue.removeFirst()
++      let identity = CFHash(element)
++      guard !visited.contains(identity) else { continue }
++      visited.insert(identity)
++      _ = AXUIElementSetMessagingTimeout(element, 0.04)
++      let values = attributes(element)
++      let role = stringValue(values[kAXRoleAttribute as String])
++      guard !role.isEmpty else { continue }
++      let subrole = stringValue(values[kAXSubroleAttribute as String])
++      let title = stringValue(values[kAXTitleAttribute as String])
++      let description = stringValue(values[kAXDescriptionAttribute as String])
++      let placeholder = stringValue(values[kAXPlaceholderValueAttribute as String])
++      let identifier = stringValue(values[kAXIdentifierAttribute as String])
++      let label = [title, description, placeholder].first(where: { !$0.isEmpty }) ?? ""
++      let metadata = "\(role) \(subrole) \(title) \(description) \(placeholder)".lowercased()
++      let secure = metadata.contains("securetextfield")
++        || metadata.contains("password")
++        || metadata.contains("passcode")
++        || metadata.contains("密码")
++        || metadata.contains("口令")
++      let rawValue = secure ? "" : stringValue(values[kAXValueAttribute as String])
++      let value = String(rawValue.prefix(800))
++      let basis = !identifier.isEmpty
++        ? "id:\(parentRef)|\(identifier)|\(role)|\(siblingIndex)"
++        : "\(parentRef)|\(role)|\(subrole)|\(label)|\(siblingIndex)"
++      let digest = ragImeStableTextHash(basis).replacingOccurrences(of: "sha256:", with: "")
++      let nodeRef = "ax_\(digest.prefix(20))"
++      let isFocused = boolValue(values[kAXFocusedAttribute as String], fallback: false)
++      let actions = actionNames(element)
++      let node = RagImeWindowContextNode(
++        nodeRef: nodeRef,
++        parentRef: parentRef,
++        depth: depth,
++        role: role,
++        subrole: subrole,
++        label: String(label.prefix(240)),
++        value: value,
++        enabled: boolValue(values[kAXEnabledAttribute as String], fallback: true),
++        focused: isFocused,
++        selected: boolValue(values[kAXSelectedAttribute as String], fallback: false),
++        secure: secure,
++        actions: actions
++      )
++      nodes.append(node)
++      if isFocused { focusedNodeRef = nodeRef }
++      if !label.isEmpty || !value.isEmpty || isFocused {
++        var parts = ["[\(nodeRef)]", role]
++        if !label.isEmpty { parts.append("label=\(String(label.prefix(240)))") }
++        if !value.isEmpty { parts.append("value=\(value)") }
++        if isFocused { parts.append("focused") }
++        if !actions.isEmpty { parts.append("actions=\(actions.joined(separator: ","))") }
++        semanticLines.append(String(parts.joined(separator: " ").prefix(1000)))
++      }
++      if !secure, depth < depthLimit,
++        let children = values[kAXChildrenAttribute as String] as? [AXUIElement] {
++        for (index, child) in children.enumerated() {
++          queue.append((child, nodeRef, depth + 1, index))
++        }
++      }
++    }
++    guard !nodes.isEmpty,
++      NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId else { return nil }
++    return RagImeWindowContextSnapshot(
++      schemaVersion: "rag-ime.window-context.v1",
++      captureMode: "accessibility_semantics",
++      snapshotId: "axsnap_\(UUID().uuidString)",
++      revision: max(1, captureEpoch),
++      capturedAtMs: Int(Date().timeIntervalSince1970 * 1000),
++      privacyDisposition: "allowed",
++      application: RagImeWindowContextApplication(
++        pid: Int(application.processIdentifier),
++        bundleId: sourceAppBundleId,
++        name: application.localizedName ?? "",
++        windowTitle: String(windowTitle.prefix(240))
++      ),
++      focusedNodeRef: focusedNodeRef,
++      nodes: nodes,
++      nodeCount: nodes.count,
++      truncated: nodes.count >= nodeLimit || !queue.isEmpty,
++      semanticText: String(semanticLines.joined(separator: "\n").prefix(12000))
 +    )
 +  }
 +
@@ -2385,7 +2576,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..44575b28c5cc52e62faa7b1ada3ad2082b312cd5
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,773 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -2564,6 +2755,43 @@ index 0000000000000000000000000000000000000000..44575b28c5cc52e62faa7b1ada3ad208
 +  }
 +}
 +
++struct RagImeWindowContextApplication: Codable {
++  let pid: Int
++  let bundleId: String
++  let name: String
++  let windowTitle: String
++}
++
++struct RagImeWindowContextNode: Codable {
++  let nodeRef: String
++  let parentRef: String
++  let depth: Int
++  let role: String
++  let subrole: String
++  let label: String
++  let value: String
++  let enabled: Bool
++  let focused: Bool
++  let selected: Bool
++  let secure: Bool
++  let actions: [String]
++}
++
++struct RagImeWindowContextSnapshot: Codable {
++  let schemaVersion: String
++  let captureMode: String
++  let snapshotId: String
++  let revision: Int
++  let capturedAtMs: Int
++  let privacyDisposition: String
++  let application: RagImeWindowContextApplication
++  let focusedNodeRef: String
++  let nodes: [RagImeWindowContextNode]
++  let nodeCount: Int
++  let truncated: Bool
++  let semanticText: String
++}
++
 +struct RagImeVisualContext: Codable {
 +  let schemaVersion: String
 +  let mimeType: String
@@ -2598,6 +2826,7 @@ index 0000000000000000000000000000000000000000..44575b28c5cc52e62faa7b1ada3ad208
 +  let project: String
 +  let maxCandidates: Int
 +  let latencyBudgetMs: Int
++  let windowContext: RagImeWindowContextSnapshot?
 +  let visualContext: RagImeVisualContext?
 +}
 +
@@ -4241,7 +4470,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
  
      switch event.type {
      case .flagsChanged:
-@@ -89,217 +177,5233 @@ final class SquirrelInputController: IMKInputController {
+@@ -89,217 +177,5310 @@ final class SquirrelInputController: IMKInputController {
          _ = processKey(keycode, modifiers: modifier)
        }
  
@@ -6149,6 +6378,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
 +      latencyBudgetMs: 120000,
++      windowContext: nil,
 +      visualContext: nil
 +    )
 +    traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: [
@@ -6185,7 +6415,6 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    let selectionEpoch = ragImeSelectionEpoch
 +    let panelSessionId = UUID().uuidString
 +    let inputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
-+    let accessibilityForeground: RagImeForegroundTextSnapshot? = nil
 +    let imkForeground = ragImeForegroundContextResolver.captureFromTextInputClient(
 +      client,
 +      captureEpoch: selectionEpoch,
@@ -6194,31 +6423,103 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      beforeLimit: 1200,
 +      afterLimit: 120
 +    ).snapshot
++    let clientContext = ragImeCompactWhitespace(
++      syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
++    )
++    let semanticQuery = ragImeCompactWhitespace(ragImeDisplaySemanticQuery)
++    let expectedApp = currentApp
++    traceRagImeFrontendEvent("active_rag_window_context_capture_scheduled", fields: [
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
++      "panelSessionId": panelSessionId,
++      "frontAppBundleId": expectedApp,
++      "captureMode": "accessibility_semantics",
++      "usesScreenCapture": false,
++      "traceIncludesText": false,
++    ])
++    ragImeForegroundContextQueue.async { [weak self] in
++      guard let self else { return }
++      let accessibilityForeground = imkForeground == nil ? self.ragImeForegroundContextResolver.captureFromAccessibility(
++        captureEpoch: selectionEpoch,
++        sourceAppBundleId: expectedApp,
++        inputSourceId: inputSourceId,
++        beforeLimit: 1200,
++        afterLimit: 120
++      ).snapshot : nil
++      let windowContext = self.ragImeForegroundContextResolver.captureWindowContext(
++        captureEpoch: selectionEpoch,
++        sourceAppBundleId: expectedApp,
++        maxNodes: 96,
++        maxDepth: 8
++      )
++      DispatchQueue.main.async { [weak self] in
++        self?.finishRagImeActiveRagAssistFromContext(
++          actionCandidate: actionCandidate,
++          visualContext: visualContext,
++          windowContext: windowContext,
++          accessibilityForeground: accessibilityForeground,
++          imkForeground: imkForeground,
++          clientContext: clientContext,
++          semanticQuery: semanticQuery,
++          expectedApp: expectedApp,
++          inputSourceId: inputSourceId,
++          frontendRevision: frontendRevision,
++          selectionEpoch: selectionEpoch,
++          panelSessionId: panelSessionId,
++          sidecarClient: sidecarClient
++        )
++      }
++    }
++    return true
++  }
++
++  func finishRagImeActiveRagAssistFromContext(
++    actionCandidate: RagImeDisplayCandidate?,
++    visualContext: RagImeVisualContext?,
++    windowContext: RagImeWindowContextSnapshot?,
++    accessibilityForeground: RagImeForegroundTextSnapshot?,
++    imkForeground: RagImeForegroundTextSnapshot?,
++    clientContext: String,
++    semanticQuery: String,
++    expectedApp: String,
++    inputSourceId: String,
++    frontendRevision: Int,
++    selectionEpoch: Int,
++    panelSessionId: String,
++    sidecarClient: RagImeSidecarClient
++  ) {
++    guard frontendRevision == ragImeFrontendRevision,
++      selectionEpoch == ragImeSelectionEpoch,
++      expectedApp == currentApp,
++      inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? ""),
++      !enforceRagImeFastPrivacyGuard(),
++      ragImePrivacyDisposition == "allowed" else {
++      traceRagImeFrontendEvent("active_rag_window_context_capture_dropped", fields: [
++        "reason": "foreground_transaction_changed",
++        "frontendRevision": frontendRevision,
++        "selectionEpoch": selectionEpoch,
++        "panelSessionId": panelSessionId,
++        "traceIncludesText": false,
++      ])
++      return
++    }
 +    let freshForeground: RagImeForegroundTextSnapshot? = {
 +      switch (accessibilityForeground, imkForeground) {
 +      case let (accessibility?, imk?):
 +        let accessibilityChars = ragImeCompactWhitespace(accessibility.surroundingBefore).count
 +        let imkChars = ragImeCompactWhitespace(imk.surroundingBefore).count
 +        return imkChars > accessibilityChars ? imk : accessibility
-+      case let (accessibility?, nil):
-+        return accessibility
-+      case let (nil, imk?):
-+        return imk
-+      default:
-+        return nil
++      case let (accessibility?, nil): return accessibility
++      case let (nil, imk?): return imk
++      default: return nil
 +      }
 +    }()
-+    let clientContext = ragImeCompactWhitespace(
-+      syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
-+    )
 +    let capturedBefore = ragImeCompactWhitespace(freshForeground?.surroundingBefore ?? "")
 +    let useClientContext = clientContext.count > capturedBefore.count
 +    let surroundingBefore = useClientContext ? clientContext : capturedBefore
 +    let surroundingAfter = ragImeCompactWhitespace(freshForeground?.surroundingAfter ?? "")
-+    let semanticQuery = ragImeCompactWhitespace(ragImeDisplaySemanticQuery)
-+    // Insert-at-caret generation is grounded in text before the caret. Text
-+    // after the caret remains provenance, but must not replace the current
-+    // request with a later paragraph from the same editor.
++    // Insert-at-caret generation is grounded in text before the caret. Window
++    // semantics are a separate, lower-priority context source.
 +    let context = surroundingBefore
 +    let anchorText = ragImeActiveRagContextAnchor(context.isEmpty ? semanticQuery : context)
 +    guard !anchorText.isEmpty else {
@@ -6228,8 +6529,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +        "selectionEpoch": selectionEpoch,
 +        "panelSessionId": panelSessionId,
 +      ])
-+      return false
++      return
 +    }
++    let requestContext = context.isEmpty ? anchorText : context
 +    let request = RagImeActiveRagRequest(
 +      schemaVersion: "rag-ime.active-rag-request.v1",
 +      sessionId: String(session),
@@ -6240,7 +6542,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      frontendRevision: frontendRevision,
 +      selectionEpoch: selectionEpoch,
 +      panelSessionId: panelSessionId,
-+      frontAppBundleId: currentApp,
++      frontAppBundleId: expectedApp,
 +      privacyDisposition: ragImePrivacyDisposition,
 +      surroundingBefore: surroundingBefore,
 +      surroundingAfter: surroundingAfter,
@@ -6248,15 +6550,16 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      captureEpoch: selectionEpoch,
 +      placement: "insert_after_selection",
 +      intent: "complete",
-+      context: context.isEmpty ? anchorText : context,
++      context: requestContext,
 +      contextSource: useClientContext
 +        ? "text_input_client"
 +        : (freshForeground?.source ?? (clientContext.isEmpty ? "missing" : "text_input_client")),
-+      contextChars: (context.isEmpty ? anchorText : context).count,
-+      contextHash: ragImeStableTextHash(context.isEmpty ? anchorText : context),
++      contextChars: requestContext.count,
++      contextHash: ragImeStableTextHash(requestContext),
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
 +      latencyBudgetMs: 120000,
++      windowContext: windowContext,
 +      visualContext: visualContext
 +    )
 +    traceRagImeFrontendEvent("active_rag_context_button_triggered", fields: [
@@ -6265,7 +6568,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      "frontendRevision": frontendRevision,
 +      "selectionEpoch": selectionEpoch,
 +      "panelSessionId": panelSessionId,
-+      "frontAppBundleId": currentApp,
++      "frontAppBundleId": expectedApp,
 +      "sourceCandidate": actionCandidate.map { ragImeTraceCandidateSummary($0, index: 0) } ?? [:],
 +      "foregroundSource": request.contextSource,
 +      "accessibilityContextChars": accessibilityForeground.map {
@@ -6274,13 +6577,16 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      "imkContextChars": imkForeground.map { ragImeCompactWhitespace($0.surroundingBefore).count } ?? 0,
 +      "clientContextChars": clientContext.count,
 +      "contextChars": request.context.count,
++      "windowContextNodes": windowContext?.nodeCount ?? 0,
++      "windowContextHash": windowContext.map { ragImeStableTextHash($0.semanticText) } ?? "",
++      "windowCaptureMode": windowContext?.captureMode ?? "unavailable",
++      "usesScreenCapture": visualContext != nil,
 +      "maxCandidates": request.maxCandidates,
 +      "traceIncludesText": false,
 +    ])
 +    let activeGeneration = beginRagImeActiveRagSession(request)
 +    showRagImeActiveRagThinkingPlaceholder(request: request)
 +    sendRagImeActiveRagStartRequest(request, sidecarClient: sidecarClient, generation: activeGeneration)
-+    return true
 +  }
 +
 +  func startRagImeVisualAssistFromContext(
@@ -9624,7 +9930,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
  
    func onChordTimer(_: Timer) {
      var processedKeys = false
-@@ -359,7 +5463,12 @@ private extension SquirrelInputController {
+@@ -359,7 +5540,12 @@ private extension SquirrelInputController {
      schemaId = ""
  
      if session != 0 {
@@ -9637,7 +9943,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
      }
    }
  
-@@ -426,15 +5535,39 @@ private extension SquirrelInputController {
+@@ -426,15 +5612,39 @@ private extension SquirrelInputController {
    func rimeConsumeCommittedText() {
      var commitText = RimeCommit.rimeStructInit()
      if rimeAPI.get_commit(session, &commitText) {
@@ -9679,7 +9985,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +5579,7 @@ private extension SquirrelInputController {
+@@ -446,6 +5656,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -9687,7 +9993,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +5592,14 @@ private extension SquirrelInputController {
+@@ -458,13 +5669,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -9703,7 +10009,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -525,11 +5660,11 @@ private extension SquirrelInputController {
+@@ -525,11 +5737,11 @@ private extension SquirrelInputController {
          comments.append(candidate.comment.map { String(cString: $0) } ?? "")
        }
        var labels = [String]()
@@ -9716,7 +10022,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
          for i in 0..<pageSize {
            labels.append(select_labels[i].map { String(cString: $0) } ?? "")
          }
-@@ -537,22 +5672,78 @@ private extension SquirrelInputController {
+@@ -537,22 +5749,78 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -9800,7 +10106,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
    }
  
    func show(preedit: String, selRange: NSRange, caretPos: Int) {
-@@ -578,15 +5769,35 @@ private extension SquirrelInputController {
+@@ -578,15 +5846,35 @@ private extension SquirrelInputController {
    }
  
    // swiftlint:disable:next function_parameter_count

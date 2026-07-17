@@ -39,7 +39,7 @@ class ControlTargetAdapterTests(unittest.TestCase):
             request_id="request-1",
             path_id=ControlPathId.AGENT_SESSION_PROMPT.value,
             params={"sessionId": "session-1"},
-            body={"message": "hello"},
+            body={"message": "hello", "clientMessageId": "phone-1:message-1"},
         )
         context = ControlAccessContext.remote(device_id="phone-1", scopes={"agent.write"})
         route = self.policy.authorize(request, context)
@@ -53,7 +53,10 @@ class ControlTargetAdapterTests(unittest.TestCase):
             prepared.url,
             "http://127.0.0.1:8768/control/v1/agent/sessions/session-1/prompt",
         )
-        self.assertEqual(prepared.body, {"message": "hello"})
+        self.assertEqual(
+            prepared.body,
+            {"message": "hello", "clientMessageId": "phone-1:message-1"},
+        )
 
     def test_remote_client_cannot_be_sent_to_local_8766(self) -> None:
         request = ControlRequest(

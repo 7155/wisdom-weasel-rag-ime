@@ -102,6 +102,117 @@ def _bounded_strings(values: object, *, limit: int, max_chars: int) -> list[str]
     return result
 
 
+def _take_budgeted_window_context(
+    context: Mapping[str, object],
+    *,
+    remaining_tokens: int,
+    maximum_tokens: int,
+) -> tuple[dict[str, object], int]:
+    if not context or remaining_tokens <= 0:
+        return {}, max(0, remaining_tokens)
+    budget = max(0, min(int(remaining_tokens), int(maximum_tokens)))
+    application = context.get("application") if isinstance(context.get("application"), Mapping) else {}
+    compact: dict[str, object] = {
+        "schemaVersion": str(context.get("schemaVersion") or ""),
+        "captureMode": "accessibility_semantics",
+        "snapshotId": truncate_text(compact_whitespace(str(context.get("snapshotId") or "")), 200),
+        "revision": max(1, int(context.get("revision") or 1)),
+        "application": {
+            "bundleId": truncate_text(compact_whitespace(str(application.get("bundleId") or "")), 300),
+            "name": truncate_text(compact_whitespace(str(application.get("name") or "")), 160),
+            "windowTitle": truncate_text(
+                compact_whitespace(str(application.get("windowTitle") or "")),
+                240,
+            ),
+        },
+        "focusedNodeRef": truncate_text(
+            compact_whitespace(str(context.get("focusedNodeRef") or "")),
+            200,
+        ),
+        "nodes": [],
+        "truncated": bool(context.get("truncated")),
+        "semanticText": "",
+        "trust": {
+            "maySupportIntent": True,
+            "maySupportFacts": False,
+            "mustNotOverrideCurrentInput": True,
+        },
+    }
+    header_tokens = _window_context_estimated_tokens(compact)
+    if header_tokens >= budget:
+        compact["application"] = {
+            "bundleId": compact["application"].get("bundleId", ""),  # type: ignore[union-attr]
+            "windowTitle": compact["application"].get("windowTitle", ""),  # type: ignore[union-attr]
+        }
+        header_tokens = min(budget, _window_context_estimated_tokens(compact))
+    consumed = header_tokens
+    raw_nodes = context.get("nodes") if isinstance(context.get("nodes"), list) else []
+    selected_nodes: list[dict[str, object]] = []
+    for raw in raw_nodes[:160]:
+        if not isinstance(raw, Mapping):
+            continue
+        node: dict[str, object] = {
+            key: raw[key]
+            for key in (
+                "nodeRef",
+                "parentRef",
+                "depth",
+                "role",
+                "subrole",
+                "label",
+                "value",
+                "enabled",
+                "focused",
+                "selected",
+                "actions",
+            )
+            if key in raw and raw[key] not in ("", None, [], False)
+        }
+        node_tokens = max(
+            1,
+            estimate_tokens(
+                " ".join(
+                    str(node.get(key) or "")
+                    for key in ("role", "subrole", "label", "value", "actions")
+                )
+            ),
+        )
+        if consumed + node_tokens > budget:
+            compact["truncated"] = True
+            continue
+        selected_nodes.append(node)
+        consumed += node_tokens
+    compact["nodes"] = selected_nodes
+    if not selected_nodes:
+        semantic_text = compact_whitespace(str(context.get("semanticText") or ""))
+        remaining_for_text = max(0, budget - consumed)
+        if semantic_text and remaining_for_text > 0:
+            compact["semanticText"] = tail_for_token_budget(semantic_text, remaining_for_text)
+            consumed += estimate_tokens(str(compact["semanticText"]))
+    return compact, max(0, remaining_tokens - consumed)
+
+
+def _window_context_estimated_tokens(context: Mapping[str, object]) -> int:
+    if not context:
+        return 0
+    application = context.get("application") if isinstance(context.get("application"), Mapping) else {}
+    text_parts = [
+        str(application.get("bundleId") or ""),
+        str(application.get("name") or ""),
+        str(application.get("windowTitle") or ""),
+        str(context.get("semanticText") or ""),
+    ]
+    nodes = context.get("nodes") if isinstance(context.get("nodes"), list) else []
+    for node in nodes[:160]:
+        if not isinstance(node, Mapping):
+            continue
+        text_parts.extend(
+            str(node.get(key) or "")
+            for key in ("role", "subrole", "label", "value", "actions")
+        )
+    return estimate_tokens(" ".join(text_parts))
+
+
 def build_active_rag_context_packet(
     *,
     scene: str,
@@ -125,13 +236,17 @@ def build_active_rag_context_packet(
     reserved_output_tokens: int = 1024,
     recent_input_baseline: int = 20,
     recent_input_maximum: int = 80,
+    window_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     raw_context = compact_whitespace(current_context)
     selected = compact_whitespace(selected_text)
     token_budget = max(2048, int(context_token_budget))
     reserved_tokens = max(256, min(token_budget - 256, int(reserved_output_tokens)))
     available_tokens = max(256, token_budget - reserved_tokens)
-    context = tail_for_token_budget(raw_context or selected, available_tokens)
+    raw_window_context = dict(window_context) if isinstance(window_context, Mapping) else {}
+    desired_window_tokens = min(900, _window_context_estimated_tokens(raw_window_context))
+    current_input_budget = max(256, available_tokens - desired_window_tokens)
+    context = tail_for_token_budget(raw_context or selected, current_input_budget)
     evidence_items = tuple(evidence)
     history_items = tuple(recent_input_history)
     raw_planning_items = [_planning_item(item) for item in evidence_items if _is_planning_evidence(item)]
@@ -147,6 +262,12 @@ def build_active_rag_context_packet(
         selected_text=selected,
     )
     remaining_tokens = max(0, available_tokens - estimate_tokens(context))
+    compact_window_context, remaining_tokens = _take_budgeted_window_context(
+        raw_window_context,
+        remaining_tokens=remaining_tokens,
+        maximum_tokens=900,
+    )
+    window_context_tokens = _window_context_estimated_tokens(compact_window_context)
     planning_items, remaining_tokens = _take_budgeted_items(
         raw_planning_items,
         remaining_tokens=remaining_tokens,
@@ -170,6 +291,7 @@ def build_active_rag_context_packet(
     rag_tokens = sum(estimate_tokens(str(item.get("text") or "")) for item in rag_hints)
     source_tokens = {
         "currentInput": estimate_tokens(context or selected),
+        "windowContext": window_context_tokens,
         "recentCompleteInputs": sum(
             estimate_tokens(str(item.get("textPreview") or "")) for item in recent_items
         ),
@@ -201,7 +323,14 @@ def build_active_rag_context_packet(
         "schemaVersion": SMART_RAG_CONTEXT_PACKET_SCHEMA_VERSION,
         "packetId": packet_id,
         "scene": scene,
-        "priority": ["currentInput", "planning", "recentCompleteInputs", "timeline", "notebook"],
+        "priority": [
+            "currentInput",
+            "windowContext",
+            "planning",
+            "recentCompleteInputs",
+            "timeline",
+            "notebook",
+        ],
         "currentInput": {
             "mode": scene,
             "committedTail": context,
@@ -218,6 +347,7 @@ def build_active_rag_context_packet(
             "panelSessionId": compact_whitespace(panel_session_id),
             "deleteState": {"recentDeletedTextHashes": []},
         },
+        "windowContext": compact_window_context,
         "oneRing": {
             "role": "continuity_context",
             "maySupportIntent": True,
@@ -279,12 +409,21 @@ def build_active_rag_context_packet(
             "availableContextTokens": available_tokens,
             "estimatedContextTokens": sum(
                 source_tokens[key]
-                for key in ("currentInput", "recentCompleteInputs", "plansAndTodos", "ragEvidence")
+                for key in (
+                    "currentInput",
+                    "windowContext",
+                    "recentCompleteInputs",
+                    "plansAndTodos",
+                    "ragEvidence",
+                )
             ),
             "remainingContextTokens": remaining_tokens,
             "withinSoftBudget": remaining_tokens >= 0,
             "contextSourceCounts": {
                 "recentInputs": len(recent_items),
+                "windowNodes": len(compact_window_context.get("nodes", []))
+                if isinstance(compact_window_context.get("nodes"), list)
+                else 0,
                 "plansAndTodos": len(planning_items),
                 "timeline": len(timeline_items),
                 "notebook": len(notebook_items),
@@ -293,6 +432,14 @@ def build_active_rag_context_packet(
             "contextSourceTokens": source_tokens,
             "trimmedSourceCounts": {
                 "recentInputs": max(0, len(raw_recent_items) - len(recent_items)),
+                "windowNodes": max(
+                    0,
+                    len(raw_window_context.get("nodes", []))
+                    - len(compact_window_context.get("nodes", [])),
+                )
+                if isinstance(raw_window_context.get("nodes"), list)
+                and isinstance(compact_window_context.get("nodes"), list)
+                else 0,
                 "plansAndTodos": max(0, len(raw_planning_items) - len(planning_items)),
                 "ragEvidence": max(0, len(_rag_evidence_hints(evidence_items)) - len(rag_hints)),
             },

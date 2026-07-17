@@ -10,6 +10,18 @@ import { NativeControlTransport } from './native-transport';
 import { agentEventFixture } from '@/test/fixtures/events';
 
 describe('NativeControlTransport', () => {
+  it('uses the allowlisted loopback image route without loading the HTTP transport', () => {
+    const transport = new NativeControlTransport({
+      bridgeWindow: fakeBridgeWindow(() => {}),
+    });
+
+    expect(transport.browserSnapshotImageUrl('snap_native-1')).toBe(
+      'http://127.0.0.1:8766/api/browser/snapshots/snap_native-1/image',
+    );
+    expect(() => transport.browserSnapshotImageUrl('../private')).toThrow(/bounded snapshotId/);
+    transport.dispose();
+  });
+
   it('matches the fixed WKWebView bridge envelope and validates results', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     let nextId = 1;

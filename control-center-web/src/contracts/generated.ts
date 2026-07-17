@@ -26,6 +26,7 @@ import type { AgentPersonaV1 } from './generated/agent-persona.v1';
 import type { AgentRoomEventV1 } from './generated/agent-room-event.v1';
 import type { AgentRoomIntercomV1 } from './generated/agent-room-intercom.v1';
 import type { AgentRoomSnapshotV1 } from './generated/agent-room-snapshot.v1';
+import type { AgentRoomWorkItemV1 } from './generated/agent-room-work-item.v1';
 import type { AgentRoomV1 } from './generated/agent-room.v1';
 import type { AgentRuntimeBindingV1 } from './generated/agent-runtime-binding.v1';
 import type { AgentRuntimeV1 } from './generated/agent-runtime.v1';
@@ -89,6 +90,7 @@ export type {
   AgentRoomEventV1,
   AgentRoomIntercomV1,
   AgentRoomSnapshotV1,
+  AgentRoomWorkItemV1,
   AgentRoomV1,
   AgentRuntimeBindingV1,
   AgentRuntimeV1,
@@ -153,6 +155,7 @@ export interface ContractTypeMap {
   'agent-room-event.v1': AgentRoomEventV1;
   'agent-room-intercom.v1': AgentRoomIntercomV1;
   'agent-room-snapshot.v1': AgentRoomSnapshotV1;
+  'agent-room-work-item.v1': AgentRoomWorkItemV1;
   'agent-room.v1': AgentRoomV1;
   'agent-runtime-binding.v1': AgentRuntimeBindingV1;
   'agent-runtime.v1': AgentRuntimeV1;

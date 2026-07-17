@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 
 
 CONTROL_MARKER_SCHEMA = "rag-ime.control-build-marker.v1"
+DESKTOP_BRIDGE_MARKER_SCHEMA = "rag-ime.desktop-bridge-build-marker.v1"
 VOICE_MARKER_SCHEMA = "rag-ime.voice-build-marker.v1"
 COMPONENT_MARKER_SCHEMA = "rag-ime.component-install-marker.v1"
 SQUIRREL_MARKER_SCHEMA = "rag-ime.squirrel-build-marker.v2"
@@ -79,6 +80,12 @@ def audit_installed_product(
         / "Contents"
         / "Resources"
         / "rag-ime-control-web-build-marker.json",
+        "desktopBridge": home
+        / "Applications"
+        / "RagImeDesktopBridge.app"
+        / "Contents"
+        / "Resources"
+        / "rag-ime-desktop-bridge-build-marker.json",
         "voice": home
         / "Applications"
         / "RagImeVoice.app"
@@ -111,6 +118,23 @@ def audit_installed_product(
         commit_key="gitCommit",
         expected_commit=expected,
         required="control" in required,
+    )
+    components["desktopBridge"] = _commit_component(
+        component_id="desktopBridge",
+        marker_path=marker_paths["desktopBridge"],
+        marker=markers["desktopBridge"],
+        schema=DESKTOP_BRIDGE_MARKER_SCHEMA,
+        commit_key="gitCommit",
+        expected_commit=expected,
+        required="desktopBridge" in required,
+        capability_values={
+            "accessibilitySemantics": True,
+            "treeDiff": True,
+            "semanticActions": True,
+            "liveStateRevalidation": True,
+            "modelSuppliedCoordinates": False,
+            "screenCapture": False,
+        },
     )
     components["voice"] = _commit_component(
         component_id="voice",
@@ -194,6 +218,7 @@ def _commit_component(
     required: bool,
     expected_marker_component: str = "",
     capability_keys: tuple[str, ...] = (),
+    capability_values: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     marker = _mapping(marker)
     installed = bool(marker)
@@ -202,7 +227,12 @@ def _commit_component(
     component_valid = not expected_marker_component or marker.get("component") == expected_marker_component
     clean = not _truthy(marker.get("gitDirty")) and not _truthy(marker.get("sourceDirty"))
     capabilities = _mapping(marker.get("capabilities"))
-    capabilities_valid = all(capabilities.get(key) is True for key in capability_keys)
+    expected_capabilities = {key: True for key in capability_keys}
+    expected_capabilities.update(capability_values or {})
+    capabilities_valid = all(
+        capabilities.get(key) == value
+        for key, value in expected_capabilities.items()
+    )
     current = bool(expected_commit and installed_commit == expected_commit)
 
     if not installed:
@@ -217,7 +247,7 @@ def _commit_component(
         ok = False
         code = "dirty_build"
         detail = f"{component_id} was installed from an uncommitted source tree."
-    elif capability_keys and not capabilities_valid:
+    elif expected_capabilities and not capabilities_valid:
         ok = False
         code = "incomplete_capabilities"
         detail = f"{component_id} does not declare the complete runtime capability contract."

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import mimetypes
 import os
 import re
 import signal
@@ -49,11 +50,19 @@ from .agent_routes import (
 from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
+from .browser_control import BrowserControlError, BrowserControlService
 from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
 from .contracts.json_schema import validate_contract
-from .control_api import AgentKernelControlFacade
+from .control_api import (
+    AgentKernelControlFacade,
+    ControlAccessContext,
+    ControlApiError,
+    ControlErrorCode,
+    default_route_policy,
+)
+from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
@@ -79,6 +88,7 @@ from .management_work_contract import (
     StoredReceipt,
     WorkExecution,
 )
+from .window_context import validate_window_context
 from .memory_book_compiler import (
     apply_stored_memory_book_run,
     build_memory_book_source_bundle,
@@ -441,6 +451,10 @@ class DebugImeService:
                 / "inbox"
             ),
         )
+        self.browser_control = BrowserControlService(
+            config.db_path,
+            extension_root=os.environ.get("RAG_IME_BROWSER_EXTENSION_DIR") or None,
+        )
         self.agent_tools = ControlToolGateway(
             sessions=self.agent.sessions,
             management=self.management,
@@ -452,6 +466,7 @@ class DebugImeService:
             collaboration=self.agent,
             extensions=self.agent_extensions,
             scheduling=self.agent,
+            browser_control=self.browser_control,
         )
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
         self.control_api = AgentKernelControlFacade(
@@ -570,15 +585,38 @@ class DebugImeService:
     def frontend_capabilities(self) -> dict[str, object]:
         return self.frontend_gateway.capabilities()
 
-    def control_capabilities(self) -> dict[str, object]:
+    def control_capabilities(
+        self,
+        access_context: ControlAccessContext | None = None,
+    ) -> dict[str, object]:
         bootstrap = self.control_api.bootstrap()
+        routes = (
+            default_route_policy().manifest(
+                context=access_context,
+                include_targets=False,
+            )
+            if access_context is not None
+            else bootstrap["routes"]
+        )
         return {
             "schemaVersion": "rag-ime.control-capabilities.v1",
             "apiVersion": bootstrap["apiVersion"],
             "features": {},
             "platform": bootstrap["platform"],
-            "routes": bootstrap["routes"],
+            "routes": routes,
         }
+
+    def control_bootstrap(
+        self,
+        access_context: ControlAccessContext | None = None,
+    ) -> dict[str, object]:
+        payload = self.control_api.bootstrap()
+        if access_context is not None:
+            payload["routes"] = default_route_policy().manifest(
+                context=access_context,
+                include_targets=False,
+            )
+        return payload
 
     def frontend_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
         return self.frontend_gateway.suggest(payload)
@@ -1712,6 +1750,7 @@ class DebugImeService:
             else ()
         )
         visual_context = validate_visual_context(payload.get("visualContext"))
+        window_context = validate_window_context(payload.get("windowContext"))
         return ActiveRagStartRequest(
             selected_text=selected_text,
             selected_text_hash=(
@@ -1775,6 +1814,7 @@ class DebugImeService:
             ),
             rag_enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
             rag_lane_weights=runtime_config.hybrid_rag.query_weights(),
+            window_context=window_context,
             visual_context=visual_context,
         )
 
@@ -5382,6 +5422,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)
+        if not self._authorize_gateway_request("GET", parsed):
+            return
+        if self._serve_gateway_static(parsed.path):
+            return
         if parsed.path == "/api/events/stream":
             self._stream_management_events()
             return
@@ -5435,15 +5479,119 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, response)
             return
         if parsed.path in ("/api/control/v1/bootstrap", "/api/agent/control/bootstrap"):
-            self._write_json(HTTPStatus.OK, self.service.control_api.bootstrap())
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.control_bootstrap(self._request_access_context()),
+            )
             return
         if parsed.path == "/api/agent/control/capabilities":
-            self._write_json(HTTPStatus.OK, self.service.control_capabilities())
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.control_capabilities(self._request_access_context()),
+            )
             return
         if parsed.path in ("/api/input-source", "/input-source"):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        if parsed.path == "/api/browser/extension/next":
+            if not self._browser_extension_authenticated():
+                return
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.browser_control.next_command(
+                    device_id=_query_first(query, "deviceId"),
+                    client_id=_query_first(query, "clientId") or _query_first(query, "deviceId"),
+                    timeout_seconds=float(_query_first(query, "timeoutSeconds") or 20.0),
+                ),
+            )
+            return
+        if parsed.path == "/api/browser/status":
+            self._write_json(HTTPStatus.OK, self.service.browser_control.status())
+            return
+        if parsed.path == "/api/browser/managed/bootstrap":
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "schemaVersion": "rag-ime.browser-control.v1",
+                    "ok": True,
+                    "summary": "托管浏览器正在完成隔离连接",
+                },
+            )
+            return
+        if parsed.path == "/api/browser/pairing":
+            self._write_json(HTTPStatus.OK, self.service.browser_control.pairing())
+            return
+        if parsed.path == "/api/browser/tabs":
+            self._write_json(HTTPStatus.OK, self.service.browser_control.tabs())
+            return
+        if parsed.path == "/api/browser/snapshots/latest":
+            tab_value = _query_first(query, "tabId")
+            try:
+                response = self.service.browser_control.latest_snapshot(
+                    device_id=_query_first(query, "deviceId"),
+                    tab_id=int(tab_value) if tab_value else None,
+                    include_markdown=_query_first(query, "includeMarkdown") != "false",
+                )
+            except (BrowserControlError, ValueError) as exc:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": str(exc), "code": "browser_snapshot_unavailable"},
+                )
+                return
+            self._write_json(
+                HTTPStatus.OK,
+                response,
+            )
+            return
+        if parsed.path.startswith("/api/browser/snapshots/") and parsed.path.endswith("/image"):
+            snapshot_id = parsed.path.removeprefix("/api/browser/snapshots/").removesuffix("/image").strip("/")
+            try:
+                mime_type, data = self.service.browser_control.snapshot_image(snapshot_id)
+            except BrowserControlError as exc:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": str(exc), "code": "browser_snapshot_image_unavailable"},
+                )
+                return
+            self._write_binary(
+                HTTPStatus.OK,
+                data,
+                mime_type=mime_type,
+                etag=hashlib.sha256(data).hexdigest(),
+            )
+            return
+        if parsed.path == "/api/browser/traces":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.browser_control.traces(
+                    limit=int(_query_first(query, "limit") or 50),
+                ),
+            )
+            return
+        if parsed.path == "/api/browser/permissions":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.browser_control.permissions(
+                    limit=int(_query_first(query, "limit") or 100),
+                ),
+            )
+            return
+        if parsed.path.startswith("/api/browser/permissions/"):
+            prompt_id = parsed.path.removeprefix("/api/browser/permissions/").strip("/")
+            try:
+                response = self.service.browser_control.permission_status(prompt_id)
+            except BrowserControlError as exc:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": str(exc), "code": "browser_permission_not_found"},
+                )
+                return
+            self._write_json(
+                HTTPStatus.OK,
+                response,
+            )
+            return
         knowledge_parts = _knowledge_route_parts(parsed.path)
         if knowledge_parts is not None:
             try:
@@ -6210,7 +6358,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 {
                     "schemaVersion": "rag-ime.local-api-root.v1",
                     "ok": True,
-                    "service": self.service.config.server_name,
+                    "service": self._server_name(),
                     "controlCenter": "RagImeControl.app",
                     "browserUI": False,
                 },
@@ -6222,8 +6370,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        parsed = urlparse(self.path)
+        if not self._authorize_gateway_request("POST", parsed):
+            return
         try:
-            parsed = urlparse(self.path)
             path = parsed.path
             knowledge_parts = _knowledge_route_parts(path)
             if (
@@ -6319,6 +6469,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(HTTPStatus.OK, self.service.agent.approval_result(self._read_json()))
                 return
+            if path.startswith("/api/browser/extension/"):
+                if not self._browser_extension_authenticated():
+                    return
+                payload = self._read_json()
+                if path == "/api/browser/extension/hello":
+                    response = self.service.browser_control.hello(payload)
+                elif path == "/api/browser/extension/snapshot":
+                    response = self.service.browser_control.push_snapshot(payload)
+                elif path == "/api/browser/extension/result":
+                    response = self.service.browser_control.complete_command(payload)
+                elif path == "/api/browser/extension/permission":
+                    response = self.service.browser_control.request_permission(payload)
+                else:
+                    self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                    return
+                self._write_json(HTTPStatus.OK, response)
+                return
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
@@ -6360,6 +6527,44 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
                     return
                 self._write_json(status, response)
+                return
+            if path == "/api/browser/mode":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.set_mode(payload.get("mode")))
+                return
+            if path == "/api/browser/pairing/rotate":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.rotate_pairing())
+                return
+            if path == "/api/browser/stop":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.stop())
+                return
+            if path == "/api/browser/managed/start":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.start_managed())
+                return
+            if path == "/api/browser/managed/stop":
+                self._write_json(HTTPStatus.OK, self.service.browser_control.stop_managed())
+                return
+            if path == "/api/browser/command":
+                action = str(payload.pop("action", ""))
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.browser_control.submit_command(
+                        action,
+                        payload,
+                        session_id="control-center",
+                        timeout_seconds=float(payload.pop("timeoutSeconds", 20.0)),
+                    ),
+                )
+                return
+            if path.startswith("/api/browser/permissions/") and path.endswith("/decision"):
+                prompt_id = (
+                    path.removeprefix("/api/browser/permissions/")
+                    .removesuffix("/decision")
+                    .strip("/")
+                )
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.browser_control.decide_permission(prompt_id, payload.get("decision")),
+                )
                 return
             agent_session_id, agent_action = agent_session_route(path)
             context_session_id, context_item_id, context_item_action = agent_context_item_route(path)
@@ -6752,11 +6957,15 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:  # pragma: no cover - exercised through browser/manual debugging
-            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            status = getattr(exc, "http_status", HTTPStatus.BAD_REQUEST)
+            self._write_json(HTTPStatus(int(status)), {"ok": False, "error": str(exc)})
 
     def do_PATCH(self) -> None:  # noqa: N802 - stdlib API
+        parsed = urlparse(self.path)
+        if not self._authorize_gateway_request("PATCH", parsed):
+            return
         try:
-            path = urlparse(self.path).path
+            path = parsed.path
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
@@ -6796,8 +7005,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib API
+        parsed = urlparse(self.path)
+        if not self._authorize_gateway_request("DELETE", parsed):
+            return
         try:
-            path = urlparse(self.path).path
+            path = parsed.path
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
@@ -6820,10 +7032,143 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
 
+    def do_HEAD(self) -> None:  # noqa: N802 - stdlib API
+        parsed = urlparse(self.path)
+        if not self._authorize_gateway_request("GET", parsed):
+            return
+        if self._serve_gateway_static(parsed.path, include_body=False):
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
     def log_message(self, fmt: str, *args: object) -> None:
         if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session", "/api/knowledge/status", "/api/knowledge/session")):
             return
         print(f"[rag-ime-debug] {self.address_string()} - {fmt % args}")
+
+    def _authorize_gateway_request(self, method: str, parsed: Any) -> bool:
+        try:
+            decision = resolve_gateway_access(
+                server_name=self._server_name(),
+                host_header=self.headers.get("Host", ""),
+                headers=self.headers,
+                allowed_logins=os.environ.get("RAG_IME_REMOTE_ALLOWED_LOGINS", ""),
+            )
+            self._gateway_access = decision
+            if not decision.is_remote:
+                return True
+            if not parsed.path.startswith("/api/"):
+                if method == "GET" and self._gateway_static_file(parsed.path) is not None:
+                    return True
+                raise ControlApiError(
+                    code=ControlErrorCode.ROUTE_NOT_FOUND,
+                    message="remote Agent Gateway path is not allowlisted",
+                    status=404,
+                )
+
+            body: Mapping[str, object] = {}
+            if method in {"POST", "PATCH"}:
+                content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                if content_type != "application/json":
+                    raise ControlApiError(
+                        code=ControlErrorCode.INVALID_REQUEST,
+                        message="remote control writes require application/json",
+                    )
+                body = self._read_json()
+            default_route_policy().authorize_http(
+                method=method,
+                path=parsed.path,
+                query=self._control_query(parsed.query),
+                body=body,
+                context=decision.context,
+                request_id=self.headers.get("X-Request-ID", "http-request")[:128],
+            )
+            return True
+        except ControlApiError as exc:
+            self._write_json(
+                HTTPStatus(exc.status),
+                {
+                    "schemaVersion": "rag-ime.gateway-access.v1",
+                    "ok": False,
+                    "error": exc.message,
+                    "errorCode": exc.code.value,
+                    "retryable": exc.retryable,
+                },
+            )
+            return False
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "schemaVersion": "rag-ime.gateway-access.v1",
+                    "ok": False,
+                    "error": str(exc),
+                    "errorCode": "invalid_request",
+                    "retryable": False,
+                },
+            )
+            return False
+
+    def _request_access_context(self) -> ControlAccessContext:
+        decision = getattr(self, "_gateway_access", None)
+        if isinstance(decision, GatewayAccessDecision):
+            return decision.context
+        return ControlAccessContext.loopback_web()
+
+    def _server_name(self) -> str:
+        config = getattr(self.service, "config", None)
+        return str(getattr(config, "server_name", "debug server"))
+
+    @staticmethod
+    def _control_query(raw_query: str) -> dict[str, object]:
+        parsed = parse_qs(raw_query or "", keep_blank_values=True)
+        duplicates = sorted(key for key, values in parsed.items() if len(values) != 1)
+        if duplicates:
+            raise ValueError(f"control query fields must not repeat: {', '.join(duplicates)}")
+        return {key: values[0] for key, values in parsed.items()}
+
+    def _gateway_static_file(self, request_path: str) -> Path | None:
+        if self._server_name() != "agent gateway":
+            return None
+        root = getattr(self, "static_dir", Path(".")).expanduser().resolve(strict=False)
+        relative = "index.html" if request_path in {"", "/"} else unquote(request_path).lstrip("/")
+        if not relative or "\x00" in relative or "\\" in relative:
+            return None
+        candidate = (root / relative).resolve(strict=False)
+        if not candidate.is_relative_to(root) or not candidate.is_file():
+            return None
+        return candidate
+
+    def _serve_gateway_static(self, request_path: str, *, include_body: bool = True) -> bool:
+        candidate = self._gateway_static_file(request_path)
+        if candidate is None:
+            return False
+        body = candidate.read_bytes()
+        mime_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        cache_control = (
+            "public, max-age=31536000, immutable"
+            if candidate.parent.name == "assets"
+            else "no-store"
+            if candidate.name == "index.html"
+            else "public, max-age=3600"
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"{mime_type}; charset=utf-8" if mime_type.startswith("text/") else mime_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", cache_control)
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; "
+            "worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
+            "frame-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        )
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        if include_body:
+            self.wfile.write(body)
+        return True
 
     def _stream_management_events(self) -> None:
         self.send_response(HTTPStatus.OK)
@@ -6913,6 +7258,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "management token required"}
         return None
 
+    def _browser_extension_authenticated(self) -> bool:
+        provided = self.headers.get("X-RAG-IME-Browser-Token", "")
+        if provided and self.service.browser_control.authenticate(provided):
+            return True
+        self._write_json(
+            HTTPStatus.FORBIDDEN,
+            {
+                "schemaVersion": "rag-ime.browser-control.v1",
+                "ok": False,
+                "error": "browser pairing token required",
+            },
+        )
+        return False
+
     def _knowledge_control(self) -> Any:
         control = self.service.knowledge_control
         if control is None:
@@ -6930,8 +7289,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         }
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or "0")
-        raw = self.rfile.read(length) if length else b"{}"
+        raw = getattr(self, "_request_body_bytes", None)
+        if raw is None:
+            length = int(self.headers.get("Content-Length") or "0")
+            if length < 0 or length > 2_000_000:
+                raise ValueError("JSON payload exceeds the 2,000,000 byte limit")
+            raw = self.rfile.read(length) if length else b"{}"
+            self._request_body_bytes = raw
         if not raw:
             return {}
         data = json.loads(raw.decode("utf-8"))
@@ -6998,15 +7362,29 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 
 
 def run_debug_server(config: DebugServerConfig) -> None:
+    if config.server_name == "agent gateway" and not _host_is_loopback(config.host):
+        raise ValueError(
+            "Agent Gateway must bind to loopback; use authenticated Tailscale Serve for remote access"
+        )
+    if (
+        config.server_name == "agent gateway"
+        and not (config.static_dir / "index.html").is_file()
+    ):
+        raise FileNotFoundError(
+            f"Agent Gateway web build is missing: {config.static_dir / 'index.html'}"
+        )
     service = DebugImeService(config)
 
     class Handler(DebugRequestHandler):
         pass
 
     Handler.service = service
+    Handler.static_dir = config.static_dir
     server = QuietThreadingHTTPServer((config.host, config.port), Handler)
     url = f"http://{config.host}:{config.port}/api/health"
     print(f"RAG IME {config.server_name} API: {url}")
+    if config.server_name == "agent gateway":
+        print(f"RAG IME Agent Gateway UI: http://{config.host}:{config.port}/")
     print(f"DB: {config.db_path}")
     previous_sigterm = signal.getsignal(signal.SIGTERM) if current_thread() is main_thread() else None
 

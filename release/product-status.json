@@ -1,13 +1,13 @@
 {
   "schemaVersion": "rag-ime.product-status.v1",
-  "sourceCommit": "fb4ef14",
+  "sourceCommit": "c02560d",
   "verificationScope": {
     "kind": "working_tree",
-    "baseCommit": "fb4ef14",
+    "baseCommit": "c02560d",
     "includesUncommittedChanges": true,
-    "automatedEvidenceThrough": "2026-07-11",
+    "automatedEvidenceThrough": "2026-07-16",
     "foregroundPermissionActionsRun": false,
-    "note": "Status includes the current uncommitted working tree. Automated tests/builds do not replace a user-authorized foreground IME or microphone acceptance run."
+    "note": "Status includes the current uncommitted working tree. The 1,820-test suite, native desktop-bridge build, and patched-Squirrel typechecks pass; automated evidence does not replace a user-authorized foreground IME, Accessibility, or microphone acceptance run."
   },
   "productStatus": "backend_only",
   "releaseStatus": "blocked",
@@ -31,7 +31,7 @@
     "note": "Release flags are declarations only. scripts/check_public_release.py recalculates artifact/evidence hashes and blocks while the real manifest or any listed file is absent or mismatched."
   },
   "runtimeProfile": "v1-proof",
-  "lastVerifiedDate": "2026-07-11",
+  "lastVerifiedDate": "2026-07-16",
   "resolvedBlockers": [
     {
       "id": "duplicate_system_squirrel_bundle",
@@ -97,7 +97,11 @@
     },
     {
       "id": "native_control_center_user_acceptance_pending",
-      "detail": "RagImeControl builds and is the only settings/status UI, RagImeVoice is headless, and the legacy browser console has been removed; a fresh user-facing release acceptance run is still pending."
+      "detail": "The shared React Control Center now builds for both the native host and the authenticated same-origin Agent Gateway, RagImeVoice remains headless, and the legacy debug console remains removed; fresh native and tailnet user-facing release acceptance runs are still pending."
+    },
+    {
+      "id": "desktop_accessibility_foreground_acceptance_pending",
+      "detail": "The Accessibility-only desktop bridge and quick-generate window-context route build and pass automated contracts, but TCC grant, live target-app inspection, approved action execution, and foreground quick-generation context still need one user-authorized macOS run."
     },
     {
       "id": "working_tree_dirty",
@@ -113,7 +117,7 @@
     },
     {
       "id": "public_release_package_not_assembled",
-      "detail": "A deterministic unsigned engineering staging archive now combines patched Squirrel, the one RagImeControl control center, headless RagImeVoice, and corresponding source. It is deliberately releaseEligible=false and is not a public package: hash-bound license/notices/source evidence, clean commit, foreground evidence, Developer ID signing, notarization, stapling, installation/rollback acceptance, and output/release/release-manifest.json remain missing."
+      "detail": "A deterministic unsigned engineering staging archive now combines patched Squirrel, the one RagImeControl control center, the Accessibility-only RagImeDesktopBridge, headless RagImeVoice, and corresponding source. It is deliberately releaseEligible=false and is not a public package: hash-bound license/notices/source evidence, clean commit, foreground evidence, Developer ID signing, notarization, stapling, installation/rollback acceptance, and output/release/release-manifest.json remain missing."
     }
   ],
   "runtime": {
@@ -140,7 +144,8 @@
     "mlx-provider-health": "backend_only",
     "generic-frontend-gateway": "backend_only",
     "ime-first-demo-pack": "offline_tool",
-    "minimind-retraining-quality-gate": "offline_tool"
+    "minimind-retraining-quality-gate": "offline_tool",
+    "accessibility-window-context-and-control": "backend_only"
   },
   "foregroundEvidence": {
     "strictSoakPassed": false,
@@ -158,6 +163,9 @@
     "nativeRimeRankFeedbackForegroundObserved": false,
     "nativeControlCenterBuildPassed": true,
     "nativeControlCenterUserAccepted": false,
+    "desktopBridgeBuildPassed": true,
+    "desktopAccessibilityUserAccepted": false,
+    "quickGenerateWindowContextForegroundObserved": false,
     "voiceProviderProbePassed": true,
     "voiceForegroundAccepted": false,
     "minimindBackendLatencyGatePassed": true,

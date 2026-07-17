@@ -92,8 +92,9 @@ class AgentRoomIntercomStore:
                     id, room_id, kind, source_participant_id, target_participant_id,
                     source_session_id, target_session_id, source_generation,
                     target_generation, client_message_id, reply_to_message_id,
-                    status, content, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+                    status, content, work_item_id, work_action,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
@@ -108,6 +109,8 @@ class AgentRoomIntercomStore:
                     route["clientMessageId"],
                     route["replyTo"] or None,
                     route["content"],
+                    route["workItemId"] or None,
+                    route["workAction"],
                     timestamp,
                     timestamp,
                 ),
@@ -169,15 +172,21 @@ class AgentRoomIntercomStore:
         return [_intercom_payload(row) for row in rows]
 
     def next_queued(self) -> dict[str, object] | None:
+        candidates = self.queued_candidates(limit=1)
+        return candidates[0] if candidates else None
+
+    def queued_candidates(self, *, limit: int = 500) -> list[dict[str, object]]:
+        bounded = max(1, min(int(limit), 500))
         with self._connect() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT * FROM agent_room_intercom_messages
                 WHERE status = 'queued'
-                ORDER BY created_at_ms ASC, id ASC LIMIT 1
-                """
-            ).fetchone()
-        return _intercom_payload(row) if row is not None else None
+                ORDER BY created_at_ms ASC, id ASC LIMIT ?
+                """,
+                (bounded,),
+            ).fetchall()
+        return [_intercom_payload(row) for row in rows]
 
     def claim(self, message_id: str) -> dict[str, object] | None:
         now = _now_ms()
@@ -322,11 +331,26 @@ class AgentRoomIntercomStore:
             (room_id, str(source["id"]), client_message_id),
         ).fetchone()
         requested_target = str(payload.get("targetParticipantId") or "").strip()
+        work_item_id = str(payload.get("workItemId") or "").strip()
+        work_action = str(payload.get("workAction") or "").strip()
+        if work_action and work_action not in {
+            "assignment",
+            "submission",
+            "accepted",
+            "revision",
+            "blocked",
+            "escalated",
+        }:
+            raise ValueError("unsupported Room work action")
+        if work_action and not work_item_id:
+            raise ValueError("workAction requires workItemId")
         if existing is not None:
             if (
                 str(existing["kind"]) != kind
                 or str(existing["content"]) != content
                 or str(existing["reply_to_message_id"] or "") != reply_to
+                or str(existing["work_item_id"] or "") != work_item_id
+                or str(existing["work_action"] or "") != work_action
                 or requested_target
                 and str(existing["target_participant_id"]) != requested_target
             ):
@@ -341,6 +365,8 @@ class AgentRoomIntercomStore:
                 "content": content,
                 "clientMessageId": client_message_id,
                 "replyTo": reply_to,
+                "workItemId": work_item_id,
+                "workAction": work_action,
                 "source": _participant_identity(source),
                 "target": _participant_identity(target),
                 "existing": _intercom_payload(existing),
@@ -389,12 +415,24 @@ class AgentRoomIntercomStore:
             raise ValueError("target is not an active participant in the same room")
         if str(target["id"]) == str(source["id"]):
             raise ValueError("room participants cannot send intercom messages to themselves")
+        if work_item_id:
+            work = conn.execute(
+                """
+                SELECT id FROM agent_room_work_items
+                WHERE id = ? AND room_id = ?
+                """,
+                (work_item_id, room_id),
+            ).fetchone()
+            if work is None:
+                raise ValueError("workItemId does not identify work in this Room")
         return {
             "roomId": room_id,
             "kind": kind,
             "content": content,
             "clientMessageId": client_message_id,
             "replyTo": reply_to,
+            "workItemId": work_item_id,
+            "workAction": work_action,
             "source": _participant_identity(source),
             "target": _participant_identity(target),
         }
@@ -494,22 +532,26 @@ class AgentRoomIntercomRouter:
 
     def _run(self) -> None:
         while not self._closed.is_set():
-            item = self.store.next_queued()
-            if item is None:
+            candidates = self.store.queued_candidates()
+            if not candidates:
                 self._wake.wait(timeout=1.0)
                 self._wake.clear()
                 continue
-            if not self._generation_matches(item):
-                stale = self.store.mark_failed(
-                    str(item["id"]),
-                    error="participant runtime generation changed before delivery",
-                    stale=True,
-                    expected="queued",
-                )
-                self._audit(stale, "stale")
-                continue
-            target_session_id = str(item["targetSessionId"])
-            if not self.idle_probe(target_session_id):
+            item: Mapping[str, object] | None = None
+            for candidate in candidates:
+                if not self._generation_matches(candidate):
+                    stale = self.store.mark_failed(
+                        str(candidate["id"]),
+                        error="participant runtime generation changed before delivery",
+                        stale=True,
+                        expected="queued",
+                    )
+                    self._audit(stale, "stale")
+                    continue
+                if self.idle_probe(str(candidate["targetSessionId"])):
+                    item = candidate
+                    break
+            if item is None:
                 self._wake.wait(timeout=0.25)
                 self._wake.clear()
                 continue
@@ -581,6 +623,8 @@ def _intercom_payload(row: sqlite3.Row) -> dict[str, object]:
         "targetGeneration": int(row["target_generation"]),
         "clientMessageId": str(row["client_message_id"]),
         "replyTo": str(row["reply_to_message_id"] or ""),
+        "workItemId": str(row["work_item_id"] or ""),
+        "workAction": str(row["work_action"] or ""),
         "status": str(row["status"]),
         "content": str(row["content"]),
         "acceptedTurnId": str(row["accepted_turn_id"] or ""),

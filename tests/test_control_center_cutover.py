@@ -51,6 +51,8 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("install-stack", entry)
         self.assertIn("refusing to install a mixed product stack from dirty tracked source", installer)
         self.assertIn("install_sidecar_launch_agent.sh", installer)
+        self.assertIn("install_desktop_bridge_launch_agent.sh", installer)
+        self.assertIn("--require desktopBridge", installer)
         self.assertIn("install_agent_gateway_launch_agent.sh", installer)
         self.assertIn(
             'RAG_IME_INSTALL_AGENT_GATEWAY=0 "$ROOT/scripts/install_sidecar_launch_agent.sh"',
@@ -65,6 +67,16 @@ class ControlCenterCutoverTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("wait_for_gateway_port_release", gateway_installer)
         self.assertIn("bootstrap_launch_agent", gateway_installer)
+
+    def test_remote_gateway_uses_tailnet_only_serve_and_loopback_backend(self) -> None:
+        script = (
+            ROOT / "scripts" / "configure_agent_gateway_tailscale.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("tailscale serve", script.lower())
+        self.assertIn("http://127.0.0.1:8768", script)
+        self.assertIn("RAG_IME_REMOTE_ALLOWED_LOGINS", script)
+        self.assertNotIn('"$TAILSCALE" funnel', script)
 
     def test_web_host_owns_the_release_bundle_and_agent_deep_link(self) -> None:
         host = ROOT / "macos" / "RagImeControlWebHost"

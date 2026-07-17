@@ -239,6 +239,7 @@ export interface ControlTransport {
   readonly kind: ControlTransportKind;
   capabilities(): Promise<FrontendCapabilities>;
   request<Response = unknown>(request: ControlRequest): Promise<Response>;
+  browserSnapshotImageUrl?(snapshotId: string): string;
   subscribe<Event = UiControlEvent | unknown>(
     request: ControlSubscription,
     observer: ControlEventObserver<Event>,
@@ -258,6 +259,15 @@ export interface ControlTransport {
   saveVoiceCredentials?(request: VoiceCredentialSaveRequest): Promise<VoiceCredentialStatus>;
   runVoiceAction?(action: VoiceNativeActionId): Promise<VoiceNativeActionReceipt>;
   dispose?(): void;
+}
+
+export function assertBrowserSnapshotId(snapshotId: unknown): asserts snapshotId is string {
+  if (
+    typeof snapshotId !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(snapshotId)
+  ) {
+    throw new TypeError('Browser snapshot image requires a bounded snapshotId');
+  }
 }
 
 const allowedRequestKeys = new Set([

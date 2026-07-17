@@ -10,6 +10,8 @@ const controlTransport = process.env.VITE_CONTROL_TRANSPORT ?? 'auto';
 const buildChannel = process.env.VITE_BUILD_CHANNEL ?? 'preview';
 const controlProxyTarget = normalizeControlProxyTarget(process.env.VITE_CONTROL_PROXY_TARGET);
 const nativeOnlyBuild = controlTransport === 'native';
+const httpOnlyBuild = controlTransport === 'http';
+const isolatedTransportBuild = nativeOnlyBuild || httpOnlyBuild;
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
   cwd: path.resolve(rootDirectory, '..'),
   encoding: 'utf8',
@@ -21,13 +23,17 @@ if (!new Set(['auto', 'mock', 'http', 'native']).has(controlTransport)) {
 if (!new Set(['preview', 'production']).has(buildChannel)) {
   throw new Error(`Unsupported VITE_BUILD_CHANNEL: ${buildChannel}`);
 }
-if (buildChannel === 'production' && !nativeOnlyBuild) {
-  throw new Error('Production control-center builds require VITE_CONTROL_TRANSPORT=native');
+if (buildChannel === 'production' && !isolatedTransportBuild) {
+  throw new Error('Production control-center builds require native or http transport');
 }
 
 const nativeTransportEntry = path.resolve(
   rootDirectory,
   'src/app/control-transport.native.tsx',
+);
+const httpTransportEntry = path.resolve(
+  rootDirectory,
+  'src/app/control-transport.http.tsx',
 );
 const productionDataEntry = path.resolve(
   rootDirectory,
@@ -35,7 +41,15 @@ const productionDataEntry = path.resolve(
 );
 const forbiddenNativeBundleModules = [
   '/src/app/control-transport.tsx',
+  '/src/app/control-transport.http.tsx',
   '/src/platform/http-transport.ts',
+  '/src/test/mock-transport.ts',
+  '/src/features/agent/preview-data.ts',
+];
+const forbiddenHttpBundleModules = [
+  '/src/app/control-transport.tsx',
+  '/src/app/control-transport.native.tsx',
+  '/src/platform/native-transport.ts',
   '/src/test/mock-transport.ts',
   '/src/features/agent/preview-data.ts',
 ];
@@ -44,11 +58,17 @@ function controlTransportBoundary(): Plugin {
   return {
     name: 'rag-ime-control-transport-boundary',
     transformIndexHtml(html) {
-      if (!nativeOnlyBuild) return html;
-      return html.replace(
+      if (!isolatedTransportBuild) return html;
+      const isolated = html.replace(
         "connect-src 'self' http://127.0.0.1:8766 http://127.0.0.1:8768 ws://127.0.0.1:*;",
         "connect-src 'self';",
       );
+      return httpOnlyBuild
+        ? isolated.replace(
+            "img-src 'self' data: blob: http://127.0.0.1:8766;",
+            "img-src 'self' data: blob:;",
+          )
+        : isolated;
     },
     generateBundle(_options, bundle) {
       const bundledModules = Object.values(bundle)
@@ -58,10 +78,13 @@ function controlTransportBoundary(): Plugin {
       const forbiddenModules = nativeOnlyBuild
         ? bundledModules.filter((moduleId) =>
             forbiddenNativeBundleModules.some((suffix) => moduleId.includes(suffix)))
+        : httpOnlyBuild
+          ? bundledModules.filter((moduleId) =>
+              forbiddenHttpBundleModules.some((suffix) => moduleId.includes(suffix)))
         : [];
       if (forbiddenModules.length > 0) {
         this.error(
-          `Native control-center bundle includes forbidden transport modules: ${forbiddenModules.join(', ')}`,
+          `Isolated control-center bundle includes forbidden transport modules: ${forbiddenModules.join(', ')}`,
         );
       }
       this.emitFile({
@@ -72,8 +95,9 @@ function controlTransportBoundary(): Plugin {
           buildChannel,
           transport: controlTransport,
           nativeOnly: nativeOnlyBuild,
-          forbiddenTransportModulesExcluded: nativeOnlyBuild && forbiddenModules.length === 0,
-          previewFixturesExcluded: nativeOnlyBuild && buildChannel === 'production' && forbiddenModules.length === 0,
+          httpOnly: httpOnlyBuild,
+          forbiddenTransportModulesExcluded: isolatedTransportBuild && forbiddenModules.length === 0,
+          previewFixturesExcluded: buildChannel === 'production' && forbiddenModules.length === 0,
           sourceCommit,
         }, null, 2)}\n`,
       });
@@ -123,8 +147,10 @@ export default defineConfig({
     alias: [
       ...(nativeOnlyBuild
         ? [{ find: /^@\/app\/control-transport$/, replacement: nativeTransportEntry }]
+        : httpOnlyBuild
+          ? [{ find: /^@\/app\/control-transport$/, replacement: httpTransportEntry }]
         : []),
-      ...(nativeOnlyBuild
+      ...(buildChannel === 'production'
         ? [{ find: /^@\/features\/agent\/preview-data$/, replacement: productionDataEntry }]
         : []),
       { find: '@', replacement: path.resolve(rootDirectory, 'src') },

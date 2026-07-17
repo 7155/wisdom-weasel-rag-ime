@@ -50,6 +50,13 @@ if expected_transport == "native":
         raise SystemExit("native control-center build did not exclude mock/http modules")
     if expected_channel == "production" and marker.get("previewFixturesExcluded") is not True:
         raise SystemExit("production control-center build did not exclude preview fixtures")
+elif expected_transport == "http":
+    if marker.get("httpOnly") is not True:
+        raise SystemExit("http control-center build is not marked http-only")
+    if marker.get("forbiddenTransportModulesExcluded") is not True:
+        raise SystemExit("http control-center build did not exclude native/mock modules")
+    if expected_channel == "production" and marker.get("previewFixturesExcluded") is not True:
+        raise SystemExit("production http control-center build did not exclude preview fixtures")
 if expected_commit and marker.get("sourceCommit") != expected_commit:
     raise SystemExit(
         f"control-center source commit is {marker.get('sourceCommit')!r}, expected {expected_commit!r}"
@@ -59,7 +66,7 @@ PY
 if [[ "$EXPECTED_TRANSPORT" == "native" ]]; then
   if grep -R -E -q \
     --include='*.html' --include='*.js' \
-    'ControlTransportHttpError|No mock response registered for|mock-subscription-|http://127\.0\.0\.1:8766' \
+    'ControlTransportHttpError|No mock response registered for|mock-subscription-' \
     "$DIST"; then
     echo "native control-center dist contains a mock/http transport sentinel" >&2
     exit 1
@@ -73,6 +80,25 @@ if [[ "$EXPECTED_TRANSPORT" == "native" ]]; then
   fi
   grep -q "connect-src 'self';" "$DIST/index.html" || {
     echo "native control-center CSP still permits a browser transport" >&2
+    exit 1
+  }
+elif [[ "$EXPECTED_TRANSPORT" == "http" ]]; then
+  if grep -R -E -q \
+    --include='*.html' --include='*.js' \
+    'NativeBridgeUnavailableError|No mock response registered for|mock-subscription-|http://127\.0\.0\.1:8766' \
+    "$DIST"; then
+    echo "http control-center dist contains a native/mock/loopback sentinel" >&2
+    exit 1
+  fi
+  if [[ "$EXPECTED_CHANNEL" == "production" ]] && grep -R -E -q \
+    --include='*.html' --include='*.js' \
+    'session-preview|room-preview|迁移作战室|control-center-fixture\.json' \
+    "$DIST"; then
+    echo "production http control-center dist contains a preview fixture sentinel" >&2
+    exit 1
+  fi
+  grep -q "connect-src 'self';" "$DIST/index.html" || {
+    echo "http control-center CSP permits a cross-origin control transport" >&2
     exit 1
   }
 fi

@@ -17,6 +17,8 @@ export interface AgentRoomIntercomV1 {
   targetGeneration: number;
   clientMessageId: string;
   replyTo: string;
+  workItemId: string;
+  workAction: '' | 'assignment' | 'submission' | 'accepted' | 'revision' | 'blocked' | 'escalated';
   status: 'queued' | 'delivering' | 'delivered' | 'replied' | 'failed' | 'stale' | 'cancelled';
   content: string;
   acceptedTurnId: string;

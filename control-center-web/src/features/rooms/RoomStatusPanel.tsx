@@ -15,7 +15,7 @@ import {
 import type { ReactNode } from 'react';
 import { IconButton } from '@/components/primitives';
 import type { RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
-import type { RoomSummary } from '.';
+import type { RoomSummary, RoomWorkItem } from '.';
 import '../agent/agent.css';
 
 export function RoomStatusPanel({
@@ -37,6 +37,7 @@ export function RoomStatusPanel({
   const deliveredArtifacts = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'diff' || (block.type === 'file' && Boolean(block.data.artifactId ?? block.data.receiptId)));
   const sharedArtifacts = (room?.artifacts ?? []).filter((artifact) => artifact.status === 'active');
   const activeTopics = (room?.topics ?? []).filter((topic) => topic.status === 'active');
+  const workItems = room?.workItems ?? [];
 
   return (
     <aside aria-hidden={!open} aria-label="Room 状态" className="agent-status-panel room-status-panel" data-open={open} inert={open ? undefined : true}>
@@ -52,6 +53,10 @@ export function RoomStatusPanel({
               <span><strong>{roomTurnStatusLabel(turn.status)}</strong><small>{messages.length} 条消息 · {activities.length} 条协作进展</small></span>
             </div>
           ) : <RoomStatusEmpty>还没有可展示的回合状态</RoomStatusEmpty>}
+        </RoomStatusSection>
+
+        <RoomStatusSection count={workItems.filter((work) => !['done', 'failed', 'cancelled'].includes(work.state)).length} icon={ListChecks} title="责任账本">
+          {workItems.length ? <div className="room-status-work">{workItems.slice(0, 8).map((work) => <RoomWorkRow key={work.id} room={room} work={work} />)}</div> : <RoomStatusEmpty>当前 Room 还没有责任交接</RoomStatusEmpty>}
         </RoomStatusSection>
 
         <RoomStatusSection count={activities.length} icon={GitBranch} title="关键步骤">
@@ -93,6 +98,13 @@ function RoomStatusRow({ icon: Icon, title, detail }: { icon: LucideIcon; title:
   return <div className="agent-status-row"><Icon size={14} /><span><strong>{title}</strong><small>{detail}</small></span></div>;
 }
 
+function RoomWorkRow({ room, work }: { room?: RoomSummary; work: RoomWorkItem }) {
+  const ownerId = work.offeredToParticipantId || work.currentOwnerParticipantId;
+  const owner = room?.participants.find((participant) => participant.id === ownerId)?.displayName ?? '待接收';
+  const blocker = text(work.blocker.reason);
+  return <div className="room-status-work__item" data-state={work.state}><RoomWorkIcon work={work} /><span><strong>{work.objective}</strong><small>{roomWorkStateLabel(work.state)} · {owner}{work.revision ? ` · 第 ${work.revision} 次修订` : ''}{blocker ? ` · ${blocker}` : ''}</small></span></div>;
+}
+
 function RoomStatusEmpty({ children }: { children: ReactNode }) {
   return <p className="agent-status-empty">{children}</p>;
 }
@@ -111,6 +123,13 @@ function RoomTurnIcon({ status }: { status: RoomTurnProjection['status'] }) {
 function RoomActivityIcon({ status }: { status: 'running' | 'completed' | 'failed' }) {
   if (status === 'running') return <LoaderCircle size={14} />;
   if (status === 'failed') return <TriangleAlert size={14} />;
+  return <Check size={14} />;
+}
+
+function RoomWorkIcon({ work }: { work: RoomWorkItem }) {
+  if (work.state === 'queued' || work.state === 'active' || work.state === 'review') return <LoaderCircle size={14} />;
+  if (work.state === 'blocked' || work.state === 'failed') return <TriangleAlert size={14} />;
+  if (work.state === 'cancelled') return <CircleDashed size={14} />;
   return <Check size={14} />;
 }
 
@@ -134,6 +153,18 @@ function text(value: unknown): string { return typeof value === 'string' ? value
 function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }
 function collaborationRoleLabel(role: string | undefined): string {
   if (role === 'coordinator') return '调控者';
-  if (role === 'researcher') return '只读调研';
+  if (role === 'researcher') return '调研者';
   return '执行者';
+}
+
+function roomWorkStateLabel(state: RoomWorkItem['state']): string {
+  return {
+    queued: '待接收',
+    active: '执行中',
+    review: '待验收',
+    blocked: '已阻塞',
+    done: '已完成',
+    failed: '未完成',
+    cancelled: '已取消',
+  }[state];
 }

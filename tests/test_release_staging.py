@@ -37,9 +37,14 @@ class ReleaseStagingTests(unittest.TestCase):
         self.apps = {
             "squirrel": self._app("Squirrel.app", "im.rime.inputmethod.Squirrel"),
             "control": self._app("RagImeControl.app", "com.rag-ime.control"),
+            "desktopBridge": self._app(
+                "RagImeDesktopBridge.app",
+                "com.rag-ime.desktop-bridge",
+            ),
             "voice": self._app("RagImeVoice.app", "com.rag-ime.voice"),
         }
         self._mark_web_control(self.apps["control"])
+        self._mark_desktop_bridge(self.apps["desktopBridge"])
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -132,6 +137,25 @@ class ReleaseStagingTests(unittest.TestCase):
                 project_files=("README.md",),
             )
 
+    def test_rejects_desktop_bridge_that_declares_screen_capture(self) -> None:
+        marker = (
+            self.apps["desktopBridge"]
+            / "Contents/Resources/rag-ime-desktop-bridge-build-marker.json"
+        )
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        payload["capabilities"]["screenCapture"] = True
+        marker.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "Accessibility-only"):
+            prepare_release_candidate(
+                self.root,
+                release_id="visual-desktop-bridge",
+                output_root=self.root / "out-visual-desktop-bridge",
+                squirrel_source=self.squirrel,
+                apps=self.apps,
+                project_files=("README.md",),
+            )
+
     def _app(self, name: str, bundle_id: str) -> Path:
         app = self.root / "apps" / name
         contents = app / "Contents"
@@ -165,6 +189,31 @@ class ReleaseStagingTests(unittest.TestCase):
                 "nativeOnly": True,
                 "previewFixturesExcluded": True,
             }),
+            encoding="utf-8",
+        )
+
+    def _mark_desktop_bridge(self, app: Path) -> None:
+        marker = (
+            app
+            / "Contents/Resources/rag-ime-desktop-bridge-build-marker.json"
+        )
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.desktop-bridge-build-marker.v1",
+                    "gitCommit": "a" * 40,
+                    "gitDirty": False,
+                    "capabilities": {
+                        "accessibilitySemantics": True,
+                        "treeDiff": True,
+                        "semanticActions": True,
+                        "liveStateRevalidation": True,
+                        "modelSuppliedCoordinates": False,
+                        "screenCapture": False,
+                    },
+                }
+            ),
             encoding="utf-8",
         )
 

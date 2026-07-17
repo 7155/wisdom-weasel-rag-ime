@@ -124,23 +124,23 @@
   },
   {
     "featureId": "native-control-center",
-    "userValue": "Provide one supported native place for runtime status, settings, voice-agent state, memory review, knowledge work, and scoped repair actions.",
-    "currentStatus": "RagImeControl.app builds and its management contracts are tested; the legacy browser console has been removed, while release signing/notarization and a fresh user-facing acceptance run remain pending.",
-    "realImeTrigger": "user explicitly opens RagImeControl.app directly or from the patched Squirrel menu; it is never on the keystroke path",
-    "sidecarEndpoint": "local /api management and lifecycle endpoints; voice status is read from the mode-0600 agent status file",
+    "userValue": "Provide one supported React Control Center for runtime status, settings, Agent sessions, Rooms, memory review, knowledge work, and scoped repair actions across the native Mac host and authenticated tailnet devices.",
+    "currentStatus": "The production native build and isolated same-origin HTTP build pass. Agent Gateway 8768 serves the HTTP build, accepts only allowlisted Tailscale identities, filters every remote request through the canonical remote-safe route policy, and durably deduplicates Prompt and Room retries; public release signing/notarization and a fresh tailnet user-acceptance run remain pending.",
+    "realImeTrigger": "the user explicitly opens RagImeControl.app, uses the patched Squirrel menu, or opens the Agent Gateway from an authenticated tailnet device; none of these actions run on the keystroke path",
+    "sidecarEndpoint": "the native host uses local 8766 management endpoints; remote devices use the loopback-only 8768 Agent Gateway through Tailscale Serve, while voice status remains in the mode-0600 agent status file",
     "candidateSourceType": "runtime/control artifact, not a candidate source",
     "keyPolicy": "the app does not intercept typing; a setting can affect Squirrel key policy only through the validated runtime bridge",
-    "dataSource": "sidecar settings/status/history, model registry, memory governance state, diagnostics, and RagImeVoice agent status",
+    "dataSource": "sidecar settings/status/history, Agent sessions and Rooms, model registry, memory governance state, diagnostics, and RagImeVoice agent status; remote authority comes from an exact Tailscale login allowlist plus the server-owned route policy",
     "foregroundTraceEvents": [
       "source_badge_setting_applied",
       "key_policy_setting_applied",
       "matching_squirrel_foreground_case_required"
     ],
-    "acceptanceCommand": "RAG_IME_CONTROL_SKIP_LIVE=1 scripts/check_control_center_footprint.sh && python3 -m unittest tests.test_native_control_center tests.test_runtime_lifecycle_control_plane -v",
-    "failureFallback": "Closing or failing to launch the Control Center must not block normal Rime composition; settings without a matching Squirrel trace remain backend-only.",
-    "userVisibleBehavior": "The user sees one native Control Center. RagImeVoice stays headless and the local API root returns JSON rather than a second browser console.",
+    "acceptanceCommand": "RAG_IME_CONTROL_SKIP_LIVE=1 scripts/check_control_center_footprint.sh && RAG_IME_CONTROL_TRANSPORT=http RAG_IME_CONTROL_BUILD_CHANNEL=production scripts/build_control_center_web.sh && python3 -m unittest tests.test_native_control_center tests.test_runtime_lifecycle_control_plane tests.test_agent_gateway_remote tests.test_control_api_route_policy -v",
+    "failureFallback": "Closing the Control Center, losing the tailnet route, or rejecting a remote identity must not block normal Rime composition or local native control; non-remote-safe operations remain local-only.",
+    "userVisibleBehavior": "The user sees the same Control Center in the native Mac host and, after explicit Tailscale setup, on other tailnet devices. RagImeVoice stays headless, 8766 stays local, and remote retries do not start duplicate Agent turns.",
     "tests": [
-      "python3 -m unittest tests.test_native_control_center tests.test_runtime_lifecycle_control_plane -v"
+      "python3 -m unittest tests.test_native_control_center tests.test_runtime_lifecycle_control_plane tests.test_agent_gateway_remote tests.test_control_api_route_policy -v"
     ],
     "v1Status": "backend_only"
   },
@@ -316,5 +316,27 @@
       "python3 -m unittest tests.test_minimind_quality_gate -v"
     ],
     "v1Status": "offline_tool"
+  },
+  {
+    "featureId": "accessibility-window-context-and-control",
+    "userValue": "Let the Agent understand and operate the current macOS app through semantic controls, and let the quick-generate bolt use the same window context without taking a screenshot.",
+    "currentStatus": "The Accessibility-only native bridge, stable node references, bounded tree diff, stale-state revalidation, R2 action approval, product lifecycle integration, and quick-generate window-context injection pass automated build and contract tests; a user-authorized foreground TCC run is still pending.",
+    "realImeTrigger": "the user presses the quick-generate bolt in the Squirrel assistant card, or an Agent session explicitly calls desktop_semantic",
+    "sidecarEndpoint": "/active-rag/start for quick-generate context and the port-8768 desktop_semantic Agent tool for status, list, inspect, and approved actions",
+    "candidateSourceType": "Accessibility window context for active-RAG generation, plus an explicit Agent tool; never a passive Rime candidate source",
+    "keyPolicy": "normal typing remains owned by Rime; desktop mutations require an R2 approval and are bound to snapshot, revision, node, and application hashes",
+    "dataSource": "macOS Accessibility Tree attributes and actions only; the quick-generate and desktop-semantic routes do not use screenshots, OCR, or model-supplied coordinates",
+    "foregroundTraceEvents": [
+      "active_rag_window_context_capture_scheduled",
+      "active_rag_context_button_triggered",
+      "matching_accessibility_foreground_case_required"
+    ],
+    "acceptanceCommand": "scripts/build_desktop_bridge.sh && python3 -m unittest tests.test_desktop_bridge tests.test_desktop_agent_tools tests.test_window_context tests.test_build_patched_squirrel -v",
+    "failureFallback": "Missing Accessibility trust, secure input, sensitive apps or fields, private browsing, changed focus, expired approvals, stale trees, and unavailable AX bounds fail closed without falling back to screenshots or caller-provided coordinates.",
+    "userVisibleBehavior": "Quick generation can use the active window title, focused control, labels, values, and actions as bounded context; the Agent can inspect a target app and request semantic actions that execute only after approval and a fresh tree check.",
+    "tests": [
+      "python3 -m unittest tests.test_desktop_bridge tests.test_desktop_agent_tools tests.test_window_context tests.test_build_patched_squirrel -v"
+    ],
+    "v1Status": "backend_only"
   }
 ]

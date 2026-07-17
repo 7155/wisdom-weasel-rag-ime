@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Iterable, Mapping
+from urllib.parse import unquote
 
 from .errors import ControlApiError, ControlErrorCode
 from .models import ControlAccessContext, ControlMethod, ControlRequest, ControlScope
@@ -96,6 +97,22 @@ class ControlPathId(str, Enum):
     AGENT_WAKE_SCHEDULES_CREATE = "agent.wakeSchedules.create"
     AGENT_WAKE_SCHEDULE_RUNS = "agent.wakeSchedule.runs"
     AGENT_WAKE_SCHEDULE_ACTION = "agent.wakeSchedule.action"
+
+    BROWSER_STATUS = "browser.status"
+    BROWSER_PAIRING = "browser.pairing"
+    BROWSER_TABS = "browser.tabs"
+    BROWSER_SNAPSHOT_LATEST = "browser.snapshot.latest"
+    BROWSER_SNAPSHOT_IMAGE = "browser.snapshot.image"
+    BROWSER_TRACES = "browser.traces"
+    BROWSER_PERMISSIONS = "browser.permissions"
+    BROWSER_PERMISSION_GET = "browser.permission.get"
+    BROWSER_PERMISSION_DECIDE = "browser.permission.decide"
+    BROWSER_MODE_UPDATE = "browser.mode.update"
+    BROWSER_PAIRING_ROTATE = "browser.pairing.rotate"
+    BROWSER_COMMAND = "browser.command"
+    BROWSER_STOP = "browser.stop"
+    BROWSER_MANAGED_START = "browser.managed.start"
+    BROWSER_MANAGED_STOP = "browser.managed.stop"
 
     PLANNING_DASHBOARD = "planning.dashboard"
     PLANNING_MUTATION_PREVIEW = "planning.mutation.preview"
@@ -198,6 +215,7 @@ class ControlRouteSpec:
     body: frozenset[str] = frozenset()
     required_body: frozenset[str] = frozenset()
     remote_body: frozenset[str] = frozenset()
+    remote_required_body: frozenset[str] | None = None
     remote_body_values: Mapping[str, frozenset[object]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -247,6 +265,11 @@ class ControlRouteSpec:
             raise ValueError("required body keys must be allowlisted")
         if not self.remote_body.issubset(self.body):
             raise ValueError("remote body keys must be a subset of local body keys")
+        if (
+            self.remote_required_body is not None
+            and not self.remote_required_body.issubset(self.remote_body)
+        ):
+            raise ValueError("remote required body keys must be remotely allowlisted")
         if set(self.param_values) - self.params:
             raise ValueError("param value allowlists must name declared parameters")
         if set(self.remote_body_values) - self.remote_body:
@@ -290,10 +313,15 @@ class ControlRouteSpec:
                 raise _invalid_field("query", key)
 
         allowed_body = self.remote_body if context.is_remote else self.body
+        required_body = (
+            self.remote_required_body
+            if context.is_remote and self.remote_required_body is not None
+            else self.required_body
+        )
         _validate_keys(
             request.body,
             allowed=allowed_body,
-            required=self.required_body,
+            required=required_body,
             field_name="body",
         )
         if request.body and self.method is ControlMethod.GET:
@@ -350,6 +378,8 @@ class ControlRouteSpec:
             result["binary"] = True
         if self.remote_query is not None:
             result["remoteQuery"] = sorted(self.remote_query)
+        if self.remote_required_body is not None:
+            result["remoteRequiredBody"] = sorted(self.remote_required_body)
         if include_targets:
             result["target"] = {
                 "8766": self.local_8766_path or "facade",
@@ -375,6 +405,14 @@ class ControlRoutePolicy:
             extra = sorted(set(table) - {item.value for item in ControlPathId})
             raise ValueError(f"control route table is incomplete: missing={missing}, extra={extra}")
         self._routes = MappingProxyType(table)
+        self._http_routes = tuple(
+            (
+                route,
+                _compile_target_template(route.local_8766_path),
+            )
+            for route in table.values()
+            if route.local_8766_path is not None
+        )
 
     def resolve(self, path_id: str | ControlPathId) -> ControlRouteSpec:
         raw = path_id.value if isinstance(path_id, ControlPathId) else str(path_id)
@@ -397,6 +435,80 @@ class ControlRoutePolicy:
         route.authorize(context)
         route.validate_request(request, context)
         return route
+
+    def authorize_http(
+        self,
+        *,
+        method: str | ControlMethod,
+        path: str,
+        query: Mapping[str, object],
+        body: Mapping[str, object],
+        context: ControlAccessContext,
+        request_id: str = "http-request",
+    ) -> ControlRouteSpec:
+        """Resolve a fixed legacy HTTP path back to its canonical pathId policy."""
+
+        try:
+            control_method = method if isinstance(method, ControlMethod) else ControlMethod(str(method))
+        except ValueError as exc:
+            raise ControlApiError(
+                ControlErrorCode.METHOD_NOT_ALLOWED,
+                "unsupported control HTTP method",
+                status=405,
+            ) from exc
+
+        candidates: list[tuple[ControlRouteSpec, dict[str, object]]] = []
+        for route, pattern in self._http_routes:
+            if route.method is not control_method:
+                continue
+            match = pattern.fullmatch(path)
+            if match is None:
+                continue
+            candidates.append(
+                (
+                    route,
+                    {key: unquote(value) for key, value in match.groupdict().items()},
+                )
+            )
+        for path_id, facade_path in _FACADE_HTTP_PATHS.items():
+            route = self._routes[path_id.value]
+            if route.method is control_method and path == facade_path:
+                candidates.append((route, {}))
+
+        if not candidates:
+            raise ControlApiError(
+                ControlErrorCode.ROUTE_NOT_FOUND,
+                "control HTTP route is not allowlisted",
+                details={"method": control_method.value, "path": path[:256]},
+                status=404,
+            )
+
+        errors: list[ControlApiError] = []
+        for route, params in candidates:
+            try:
+                self.authorize(
+                    ControlRequest(
+                        request_id=request_id,
+                        path_id=route.path_id.value,
+                        params=params,
+                        query=query,
+                        body=body,
+                    ),
+                    context,
+                )
+                return route
+            except ControlApiError as exc:
+                errors.append(exc)
+
+        for code in (
+            ControlErrorCode.ROUTE_NOT_ALLOWED,
+            ControlErrorCode.SCOPE_REQUIRED,
+            ControlErrorCode.INVALID_REQUEST,
+        ):
+            match = next((error for error in errors if error.code is code), None)
+            if match is not None:
+                raise match
+        raise errors[0]
 
     def manifest(
         self,
@@ -435,6 +547,7 @@ def _route(
     body: Iterable[str] = (),
     required_body: Iterable[str] = (),
     remote_body: Iterable[str] = (),
+    remote_required_body: Iterable[str] | None = None,
     remote_body_values: Mapping[str, Iterable[object]] | None = None,
 ) -> ControlRouteSpec:
     return ControlRouteSpec(
@@ -456,6 +569,11 @@ def _route(
         body=frozenset(body),
         required_body=frozenset(required_body),
         remote_body=frozenset(remote_body),
+        remote_required_body=(
+            frozenset(remote_required_body)
+            if remote_required_body is not None
+            else None
+        ),
         remote_body_values={key: frozenset(values) for key, values in (remote_body_values or {}).items()},
     )
 
@@ -468,6 +586,8 @@ _ARTIFACT = {"artifactId"}
 _CONTEXT_ITEM = {"sessionId", "itemId"}
 _CONTEXT_TRACE = {"sessionId", "traceId"}
 _WAKE_SCHEDULE = {"scheduleId"}
+_BROWSER_SNAPSHOT = {"snapshotId"}
+_BROWSER_PERMISSION = {"promptId"}
 _KNOWLEDGE_BASE = {"kbId"}
 _KNOWLEDGE_DOCUMENT = {"kbId", "fileId"}
 _KNOWLEDGE_ASSET = {"kbId", "fileId", "assetId"}
@@ -511,7 +631,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_ARCHIVE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"archived"}, required_body={"archived"}, remote_body={"archived"}),
         _route(ControlPathId.AGENT_SESSION_MODE_UPDATE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION, body={"mode", "workspaceRoots", "toolProfileVersion", "toolAllowlistMode", "allowedTools"}, required_body={"mode"}),
         _route(ControlPathId.AGENT_SESSION_DELETE, ControlMethod.DELETE, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION),
-        _route(ControlPathId.AGENT_SESSION_PROMPT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/prompt", "/control/v1/agent/sessions/{sessionId}/prompt", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"message", "attachments", "clientMessageId"}, required_body={"message"}, remote_body={"message", "attachments", "clientMessageId"}),
+        _route(ControlPathId.AGENT_SESSION_PROMPT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/prompt", "/control/v1/agent/sessions/{sessionId}/prompt", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"message", "attachments", "clientMessageId"}, required_body={"message"}, remote_body={"message", "attachments", "clientMessageId"}, remote_required_body={"message", "clientMessageId"}),
         _route(ControlPathId.AGENT_SESSION_FORKS_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/forks", "/control/v1/agent/sessions/{sessionId}/forks", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_FORKS_CREATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/forks", "/control/v1/agent/sessions/{sessionId}/forks", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"entryId", "title"}, required_body={"entryId"}, remote_body={"entryId", "title"}),
         _route(ControlPathId.AGENT_SESSION_ABORT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/abort", "/control/v1/agent/sessions/{sessionId}/abort", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION),
@@ -537,7 +657,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_ARCHIVE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"archived", "title", "roomKind", "avatar", "description", "scenarioPrompt", "routingPolicy", "routingConfig", "moderatorParticipantId"}, remote_body={"archived", "title", "roomKind", "avatar", "description", "scenarioPrompt", "routingPolicy", "routingConfig", "moderatorParticipantId"}),
-        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds"}),
+        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds"}, remote_required_body={"message", "clientMessageId"}),
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_ROOM_TOPICS, ControlMethod.GET, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"includeArchived"}),
         _route(ControlPathId.AGENT_ROOM_TOPIC_CREATE, ControlMethod.POST, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"title", "summary"}, required_body={"title"}, remote_body={"title", "summary"}),
@@ -570,6 +690,22 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_WAKE_SCHEDULES_CREATE, ControlMethod.POST, "/api/agent/wake-schedules", "/control/v1/agent/wake-schedules", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "instruction", "targetType", "targetSessionId", "targetRoleId", "targetRoleVersion", "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns", "planningTaskId", "confirmText"}, required_body={"instruction", "targetType", "wakeAtMs", "confirmText"}, remote_body={"title", "instruction", "targetType", "targetSessionId", "targetRoleId", "targetRoleVersion", "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns", "planningTaskId", "confirmText"}, remote_body_values={"targetType": {"session", "role"}, "recurrenceKind": {"once", "daily", "weekly"}, "confirmText": {"schedule"}}),
         _route(ControlPathId.AGENT_WAKE_SCHEDULE_RUNS, ControlMethod.GET, "/api/agent/wake-schedules/{scheduleId}/runs", "/control/v1/agent/wake-schedules/{scheduleId}/runs", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_WAKE_SCHEDULE, query={"limit"}),
         _route(ControlPathId.AGENT_WAKE_SCHEDULE_ACTION, ControlMethod.POST, "/api/agent/wake-schedules/{scheduleId}/action", "/control/v1/agent/wake-schedules/{scheduleId}/action", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_WAKE_SCHEDULE, body={"action", "confirmText"}, required_body={"action", "confirmText"}, remote_body={"action", "confirmText"}, remote_body_values={"action": {"pause", "resume", "cancel", "retry"}, "confirmText": {"apply"}}),
+
+        _route(ControlPathId.BROWSER_STATUS, ControlMethod.GET, "/api/browser/status", "/control/v1/browser/status"),
+        _route(ControlPathId.BROWSER_PAIRING, ControlMethod.GET, "/api/browser/pairing", "/control/v1/browser/pairing"),
+        _route(ControlPathId.BROWSER_TABS, ControlMethod.GET, "/api/browser/tabs", "/control/v1/browser/tabs"),
+        _route(ControlPathId.BROWSER_SNAPSHOT_LATEST, ControlMethod.GET, "/api/browser/snapshots/latest", "/control/v1/browser/snapshots/latest", query={"deviceId", "tabId", "includeMarkdown"}),
+        _route(ControlPathId.BROWSER_SNAPSHOT_IMAGE, ControlMethod.GET, "/api/browser/snapshots/{snapshotId}/image", "/control/v1/browser/snapshots/{snapshotId}/image", params=_BROWSER_SNAPSHOT, binary=True),
+        _route(ControlPathId.BROWSER_TRACES, ControlMethod.GET, "/api/browser/traces", "/control/v1/browser/traces", query={"limit"}),
+        _route(ControlPathId.BROWSER_PERMISSIONS, ControlMethod.GET, "/api/browser/permissions", "/control/v1/browser/permissions", query={"limit"}),
+        _route(ControlPathId.BROWSER_PERMISSION_GET, ControlMethod.GET, "/api/browser/permissions/{promptId}", "/control/v1/browser/permissions/{promptId}", params=_BROWSER_PERMISSION),
+        _route(ControlPathId.BROWSER_PERMISSION_DECIDE, ControlMethod.POST, "/api/browser/permissions/{promptId}/decision", "/control/v1/browser/permissions/{promptId}/decision", params=_BROWSER_PERMISSION, body={"decision"}, required_body={"decision"}),
+        _route(ControlPathId.BROWSER_MODE_UPDATE, ControlMethod.POST, "/api/browser/mode", "/control/v1/browser/mode", body={"mode"}, required_body={"mode"}),
+        _route(ControlPathId.BROWSER_PAIRING_ROTATE, ControlMethod.POST, "/api/browser/pairing/rotate", "/control/v1/browser/pairing/rotate"),
+        _route(ControlPathId.BROWSER_COMMAND, ControlMethod.POST, "/api/browser/command", "/control/v1/browser/command", body={"action", "deviceId", "tabId", "refId", "url", "text", "clear", "direction", "amount", "timeoutMs", "timeoutSeconds"}, required_body={"action"}),
+        _route(ControlPathId.BROWSER_STOP, ControlMethod.POST, "/api/browser/stop", "/control/v1/browser/stop"),
+        _route(ControlPathId.BROWSER_MANAGED_START, ControlMethod.POST, "/api/browser/managed/start", "/control/v1/browser/managed/start"),
+        _route(ControlPathId.BROWSER_MANAGED_STOP, ControlMethod.POST, "/api/browser/managed/stop", "/control/v1/browser/managed/stop"),
 
         _route(ControlPathId.PLANNING_DASHBOARD, ControlMethod.GET, "/api/planning/dashboard", "/control/v1/planning/dashboard", scopes=[ControlScope.PLANNING_READ], remote_safe=True, query={"date", "project"}),
         _route(ControlPathId.PLANNING_MUTATION_PREVIEW, ControlMethod.POST, "/api/planning/mutation/preview", "/control/v1/planning/mutation/preview", body={"kind", "payload", "expectedRuntimeRevision"}, required_body={"kind", "payload", "expectedRuntimeRevision"}),
@@ -652,6 +788,24 @@ def route_manifest(*, include_targets: bool = True) -> list[dict[str, object]]:
     """Return the canonical pathId manifest for TS/Swift mirror generation."""
 
     return default_route_policy().manifest(include_targets=include_targets)
+
+
+_FACADE_HTTP_PATHS = {
+    ControlPathId.CONTROL_BOOTSTRAP: "/api/agent/control/bootstrap",
+    ControlPathId.CONTROL_CAPABILITIES: "/api/agent/control/capabilities",
+}
+
+
+def _compile_target_template(target: str) -> re.Pattern[str]:
+    offset = 0
+    chunks = ["^"]
+    for match in _TEMPLATE_PARAMETER_PATTERN.finditer(target):
+        chunks.append(re.escape(target[offset : match.start()]))
+        chunks.append(f"(?P<{match.group(1)}>[^/]+)")
+        offset = match.end()
+    chunks.append(re.escape(target[offset:]))
+    chunks.append("$")
+    return re.compile("".join(chunks))
 
 
 def _validate_target_template(target: str, params: frozenset[str]) -> None:

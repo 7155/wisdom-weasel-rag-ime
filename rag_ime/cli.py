@@ -1147,6 +1147,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     agent_gateway.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_AGENT_GATEWAY_PORT", "8768")))
     agent_gateway.add_argument("--project", default="wisdom-weasel-rag-ime")
     agent_gateway.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
+    agent_gateway.add_argument(
+        "--web-dist",
+        default=os.environ.get(
+            "RAG_IME_AGENT_GATEWAY_WEB_DIST",
+            str(Path(__file__).resolve().parents[1] / "control-center-web" / "dist"),
+        ),
+        help="Production HTTP control-center build served by the Agent Gateway.",
+    )
 
     mlx_predictor_server = subparsers.add_parser(
         "mlx-predictor-server",
@@ -3065,7 +3073,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 port=args.port,
                 db_path=Path(args.db_path),
                 project=args.project,
-                static_dir=Path("."),
+                static_dir=Path(args.web_dist).expanduser(),
                 seed_if_empty=not args.no_seed,
                 core=core,
                 server_name="agent gateway",

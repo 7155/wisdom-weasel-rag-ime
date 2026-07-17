@@ -19,6 +19,7 @@ class AgentRoomIntercomTests(unittest.TestCase):
         self.sessions.initialize()
         self.first = self.sessions.create(title="研究员")
         self.second = self.sessions.create(title="审阅员")
+        self.third = self.sessions.create(title="执行员")
         self.rooms = AgentRoomStore(self.db_path, room_dir=self.root / "rooms")
         self.rooms.initialize()
         self.room = self.rooms.create(
@@ -37,10 +38,17 @@ class AgentRoomIntercomTests(unittest.TestCase):
                     "roleVersion": "1",
                     "displayName": "审阅员",
                 },
+                {
+                    "sessionId": self.third["id"],
+                    "roleId": "worker",
+                    "roleVersion": "1",
+                    "displayName": "执行员",
+                },
             ],
         )
         self.first_participant = self.room["participants"][0]
         self.second_participant = self.room["participants"][1]
+        self.third_participant = self.room["participants"][2]
         self.store = AgentRoomIntercomStore(self.db_path)
         self.store.initialize()
 
@@ -202,6 +210,57 @@ class AgentRoomIntercomTests(unittest.TestCase):
 
             self.assertIn("generation changed", final["error"])
             self.assertEqual(delivered, [])
+        finally:
+            router.close()
+
+    def test_busy_oldest_target_does_not_block_an_idle_target(self) -> None:
+        idle = {
+            str(self.second["id"]): False,
+            str(self.third["id"]): True,
+        }
+        generations = {
+            str(self.first["id"]): 1,
+            str(self.second["id"]): 1,
+            str(self.third["id"]): 1,
+        }
+        delivered: list[str] = []
+        router = AgentRoomIntercomRouter(
+            self.store,
+            generation_provider=lambda session_id: generations[session_id],
+            idle_probe=lambda session_id: idle[session_id],
+            delivery_handler=lambda item: delivered.append(
+                str(item["targetSessionId"])
+            )
+            or {"turnId": "turn:fair"},
+            audit_publisher=lambda _item, _phase: None,
+        )
+        try:
+            blocked = router.enqueue(
+                str(self.first["id"]),
+                {
+                    "kind": "send",
+                    "targetParticipantId": self.second_participant["id"],
+                    "clientMessageId": "fair-1",
+                    "content": "等待忙碌目标",
+                },
+            )
+            ready = router.enqueue(
+                str(self.first["id"]),
+                {
+                    "kind": "send",
+                    "targetParticipantId": self.third_participant["id"],
+                    "clientMessageId": "fair-2",
+                    "content": "空闲目标可以先处理",
+                },
+            )
+
+            self._wait_for_status(str(ready["id"]), "delivered")
+
+            self.assertEqual(
+                self.store.get(str(blocked["id"]))["status"],
+                "queued",
+            )
+            self.assertEqual(delivered, [str(self.third["id"])])
         finally:
             router.close()
 

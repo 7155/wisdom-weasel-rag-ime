@@ -48,6 +48,7 @@ export interface MockControlTransportOptions {
   knowledgeDocumentSource?: (
     input: KnowledgeDocumentSourceReadInput,
   ) => KnowledgeDocumentSourcePayload | Promise<KnowledgeDocumentSourcePayload>;
+  browserSnapshotImageUrl?: (snapshotId: string) => string;
   externalAction?: (
     request: ExternalActionRequest,
   ) => ExternalActionReceipt | Promise<ExternalActionReceipt>;
@@ -78,6 +79,7 @@ export class MockControlTransport implements ControlTransport {
   private readonly knowledgeImportReceipts: KnowledgeDocumentImportReceipt[];
   private readonly knowledgeAsset?: MockControlTransportOptions['knowledgeAsset'];
   private readonly knowledgeDocumentSource?: MockControlTransportOptions['knowledgeDocumentSource'];
+  private readonly snapshotImageUrl?: MockControlTransportOptions['browserSnapshotImageUrl'];
   private readonly externalAction?: MockControlTransportOptions['externalAction'];
   private readonly now: () => number;
   private nextSubscriptionId = 1;
@@ -113,6 +115,7 @@ export class MockControlTransport implements ControlTransport {
     this.knowledgeImportReceipts = [...(options.knowledgeImportReceipts ?? [])];
     this.knowledgeAsset = options.knowledgeAsset;
     this.knowledgeDocumentSource = options.knowledgeDocumentSource;
+    this.snapshotImageUrl = options.browserSnapshotImageUrl;
     this.externalAction = options.externalAction;
     this.now = options.now ?? Date.now;
   }
@@ -136,6 +139,11 @@ export class MockControlTransport implements ControlTransport {
     throwIfAborted(request.signal);
     const contract = request.responseContract ?? controlRoute(request.pathId).responseContract;
     return (contract ? parseContract(contract, value) : value) as Response;
+  }
+
+  browserSnapshotImageUrl(snapshotId: string): string {
+    if (!this.snapshotImageUrl) return '';
+    return this.snapshotImageUrl(snapshotId);
   }
 
   subscribe<Event = unknown>(

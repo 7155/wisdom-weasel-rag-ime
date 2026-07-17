@@ -702,8 +702,10 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_runtime",
                 "ime_configuration",
                 "ime_agents",
+                "ime_browser",
                 "agent_plan",
                 "ime_plugins",
+                "desktop_semantic",
                 "workspace_list",
                 "workspace_read",
                 "workspace_search",
@@ -756,11 +758,23 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(configuration_tool["operationRisks"]["export"], "R1")
         self.assertEqual(configuration_tool["operationRisks"]["restore_preview"], "R0")
         self.assertEqual(configuration_tool["operationRisks"]["restore_apply"], "R3")
+        browser_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_browser")
+        self.assertEqual(browser_tool["riskLevel"], "R1")
+        self.assertEqual(browser_tool["operationRisks"]["snapshot"], "R0")
+        self.assertEqual(browser_tool["operationRisks"]["screenshot"], "R0")
+        self.assertEqual(browser_tool["operationRisks"]["navigate"], "R1")
+        self.assertEqual(browser_tool["operationRisks"]["type"], "R1")
         workspace_shell = next(
             manifest for manifest in manifests if manifest["id"] == "workspace_shell"
         )
         self.assertEqual(workspace_shell["sessionModes"], ["coordinator"])
         self.assertEqual(workspace_shell["operationRisks"], {"run": "R2"})
+        desktop = next(manifest for manifest in manifests if manifest["id"] == "desktop_semantic")
+        self.assertEqual(desktop["riskLevel"], "R2")
+        self.assertEqual(
+            desktop["operationRisks"],
+            {"status": "R0", "list": "R0", "inspect": "R0", "act": "R2"},
+        )
         self.assertTrue(
             all(
                 manifest["riskLevel"] == "R0"
@@ -774,6 +788,8 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "ime_models",
                     "ime_runtime",
                     "ime_configuration",
+                    "ime_browser",
+                    "desktop_semantic",
                     "workspace_patch",
                     "workspace_shell",
                 }
@@ -1713,6 +1729,10 @@ class ControlToolGatewayTests(unittest.TestCase):
             def list_room_intercom(self, session_id, payload):
                 return {"ok": True, "sessionId": session_id, "items": [], **dict(payload)}
 
+            def assign_room_work(self, session_id, payload):
+                calls.append((session_id, dict(payload)))
+                return {"ok": True, "work": {"id": "room-work:1"}}
+
         gateway = ControlToolGateway(
             sessions=self.store,
             management=self.management,
@@ -1738,6 +1758,22 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn("sourceSessionId", calls[0][1])
         self.assertNotIn("sourceParticipantId", calls[0][1])
         self.assertEqual(calls[0][1]["kind"], "send")
+
+        assignment = gateway.execute(
+            self._tool_call(
+                "ime_agents",
+                "room_assign",
+                targetParticipantId="participant:reviewer",
+                clientMessageId="turn-7-work-1",
+                objective="复核网关边界",
+                expectedOutput="证据与结论",
+                acceptanceCriteria=["包含测试回执"],
+                sourceSessionId="forged-session",
+            )
+        )
+        self.assertTrue(assignment["result"]["ok"])
+        self.assertEqual(calls[1][0], self.session["id"])
+        self.assertNotIn("sourceSessionId", calls[1][1])
 
     def test_agent_can_create_validate_and_propose_but_cannot_apply_a_plugin(self) -> None:
         calls: list[tuple[str, object]] = []

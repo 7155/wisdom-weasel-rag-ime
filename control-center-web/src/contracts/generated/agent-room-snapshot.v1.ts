@@ -62,6 +62,12 @@ export interface Room {
   artifacts?: {
     [k: string]: unknown;
   }[];
+  /**
+   * @maxItems 100
+   */
+  workItems?: {
+    [k: string]: unknown;
+  }[];
 }
 export interface Participant {
   schemaVersion: 'rag-ime.agent-participant.v1';

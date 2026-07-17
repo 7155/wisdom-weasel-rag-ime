@@ -20,6 +20,7 @@ from .agent_configuration import (
     runtime_policy_from_configuration,
 )
 from .agent_context_runtime import AgentContextRuntime, compose_runtime_prompt
+from .agent_command_receipts import AgentCommandReceiptStore
 from .agent_events import AgentEventHub
 from .agent_delegation import AgentDelegationCoordinator
 from .agent_media import AgentMediaStore
@@ -31,6 +32,7 @@ from .agent_room_intercom import (
     AgentRoomIntercomStore,
     AgentRoomTargetBusy,
 )
+from .agent_room_work import AgentRoomWorkStore
 from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
@@ -86,6 +88,8 @@ class AgentService:
         self.sessions.initialize()
         self.context_runtime = AgentContextRuntime(db_path)
         self.context_runtime.initialize()
+        self.command_receipts = AgentCommandReceiptStore(db_path)
+        self.command_receipts.initialize()
         seed_configuration = dict(
             configuration_defaults
             or default_agent_configuration(
@@ -103,6 +107,7 @@ class AgentService:
         self._pending_room_turn_by_session: dict[str, str] = {}
         self._room_turn_by_session_turn: dict[tuple[str, str], str] = {}
         self._room_topic_by_room_turn: dict[str, str] = {}
+        self._room_user_priority_sessions: set[str] = set()
         self.runtime_factory.apply_policy(
             runtime_policy_from_configuration(
                 self.configuration_store.snapshot()["configuration"]
@@ -120,6 +125,8 @@ class AgentService:
             ),
         )
         self.rooms.initialize()
+        self.room_work = AgentRoomWorkStore(db_path)
+        self.room_work.initialize()
         self.room_events = AgentRoomEventHub(self.rooms)
         self.events = AgentEventHub(
             sequence_loader=self.sessions.max_event_sequence,
@@ -166,6 +173,7 @@ class AgentService:
             delivery_handler=self._deliver_room_intercom,
             audit_publisher=self._publish_room_intercom_audit,
         )
+        self.room_work.reconcile_intercom_outcomes()
         self._approval_executor: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._memory_maintenance_probe: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._process_id_provider = process_id_provider
@@ -1158,11 +1166,9 @@ class AgentService:
                     else "researcher" if role.role_id == "hermes-v1"
                     else "executor"
                 )
-                tool_profile = (
-                    "subagent-readonly-v1"
-                    if role.role_id == "hermes-v1"
-                    else role.defaults.tool_profile_version
-                )
+                # Room participants are first-class Agent sessions, not delegated
+                # subagents. Collaboration duties must not silently reduce tools.
+                tool_profile = role.defaults.tool_profile_version
                 session = self.create_session(
                     {
                         "title": f"{room_title} · {role.display_name}",
@@ -1238,22 +1244,68 @@ class AgentService:
         if not message:
             raise ValueError("room message must not be empty")
         client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
-        room = self.rooms.get(room_id)
-        for value in room["participants"]:
-            if not isinstance(value, Mapping) or value.get("status") != "active":
-                continue
-            session = self.sessions.get(str(value["sessionId"]))
-            if session.get("status") == "busy":
-                raise ValueError("agent room already has an active speaker")
         requested_ids = payload.get("participantIds")
         if requested_ids is None:
             requested_participant_ids: list[str] = []
         elif isinstance(requested_ids, list):
             requested_participant_ids = [
-                str(value or "").strip() for value in requested_ids if str(value or "").strip()
+                str(value or "").strip()
+                for value in requested_ids
+                if str(value or "").strip()
             ]
         else:
             raise ValueError("participantIds must be an array")
+        if not client_message_id:
+            return self._post_room_message_once(
+                room_id,
+                message=message,
+                client_message_id="",
+                requested_participant_ids=requested_participant_ids,
+            )
+        claim = self.command_receipts.begin(
+            command_scope="room_message",
+            scope_id=room_id,
+            client_message_id=client_message_id,
+            payload={
+                "message": message,
+                "participantIds": requested_participant_ids,
+            },
+        )
+        if claim.replay_response is not None:
+            return {**claim.replay_response, "idempotentReplay": True}
+        try:
+            response = self._post_room_message_once(
+                room_id,
+                message=message,
+                client_message_id=client_message_id,
+                requested_participant_ids=requested_participant_ids,
+            )
+        except Exception as exc:
+            self.command_receipts.fail(
+                claim,
+                command_scope="room_message",
+                scope_id=room_id,
+                client_message_id=client_message_id,
+                error=exc,
+            )
+            raise
+        return self.command_receipts.complete(
+            claim,
+            command_scope="room_message",
+            scope_id=room_id,
+            client_message_id=client_message_id,
+            response=response,
+        )
+
+    def _post_room_message_once(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        requested_participant_ids: Sequence[str],
+    ) -> dict[str, object]:
+        room = self.rooms.get(room_id)
         profiles: dict[str, dict[str, object]] = {}
         for value in room["participants"]:
             if not isinstance(value, Mapping):
@@ -1272,38 +1324,51 @@ class AgentService:
             profiles=profiles,
         )
         target = self.rooms.participant(str(decision["targetParticipantId"]))
-        room_turn_id = f"room-turn:{uuid.uuid4()}"
-        topic_id = str(room.get("activeTopicId") or "")
-        user_event_payload: dict[str, object] = {
-            "text": message,
-            "targetParticipantIds": list(decision["selectedParticipantIds"]),
-        }
-        if client_message_id:
-            user_event_payload["clientMessageId"] = client_message_id
-        self.room_events.publish(
-            room_id=room_id,
-            event_type="user_message",
-            payload=user_event_payload,
-            turn_id=room_turn_id,
-            topic_id=topic_id,
-        )
-        self.room_events.publish(
-            room_id=room_id,
-            event_type="route_decision",
-            payload=decision,
-            turn_id=room_turn_id,
-            participant_id=str(target["id"]),
-            source_session_id=str(target["sessionId"]),
-            topic_id=topic_id,
-        )
         target_session_id = str(target["sessionId"])
-        self._begin_room_turn(target_session_id, room_turn_id, topic_id)
-        recent_messages = self.rooms.recent_public_messages(
-            room_id,
-            topic_id=topic_id,
-            exclude_turn_id=room_turn_id,
-            limit=24,
-        )
+        with self._room_turn_lock:
+            self._room_user_priority_sessions.add(target_session_id)
+        if not self._room_target_idle(target_session_id, allow_user_priority=True):
+            with self._room_turn_lock:
+                self._room_user_priority_sessions.discard(target_session_id)
+            raise ValueError("selected Room participant is currently busy")
+        try:
+            room_turn_id = f"room-turn:{uuid.uuid4()}"
+            topic_id = str(room.get("activeTopicId") or "")
+            user_event_payload: dict[str, object] = {
+                "text": message,
+                "targetParticipantIds": list(decision["selectedParticipantIds"]),
+            }
+            if client_message_id:
+                user_event_payload["clientMessageId"] = client_message_id
+            self.room_events.publish(
+                room_id=room_id,
+                event_type="user_message",
+                payload=user_event_payload,
+                turn_id=room_turn_id,
+                topic_id=topic_id,
+            )
+            self.room_events.publish(
+                room_id=room_id,
+                event_type="route_decision",
+                payload=decision,
+                turn_id=room_turn_id,
+                participant_id=str(target["id"]),
+                source_session_id=str(target["sessionId"]),
+                topic_id=topic_id,
+            )
+            self._begin_room_turn(target_session_id, room_turn_id, topic_id)
+            unread = self.rooms.unread_public_messages(
+                room_id,
+                str(target["id"]),
+                topic_id=topic_id,
+                exclude_turn_id=room_turn_id,
+                limit=24,
+            )
+        except Exception:
+            self._cancel_room_turn(target_session_id, room_turn_id)
+            with self._room_turn_lock:
+                self._room_user_priority_sessions.discard(target_session_id)
+            raise
         try:
             accepted = self.prompt(
                 target_session_id,
@@ -1312,12 +1377,19 @@ class AgentService:
                         room,
                         target,
                         message,
-                        recent_messages=recent_messages,
+                        recent_messages=[
+                            item
+                            for item in unread["items"]
+                            if isinstance(item, Mapping)
+                        ],
+                        omitted_message_count=int(unread["omittedCount"]),
                     )
                 },
             )
         except Exception as exc:
             self._cancel_room_turn(target_session_id, room_turn_id)
+            with self._room_turn_lock:
+                self._room_user_priority_sessions.discard(target_session_id)
             self.room_events.publish(
                 room_id=room_id,
                 event_type="turn_failed",
@@ -1328,10 +1400,18 @@ class AgentService:
                 topic_id=topic_id,
             )
             raise
+        with self._room_turn_lock:
+            self._room_user_priority_sessions.discard(target_session_id)
         self._accept_room_turn(
             target_session_id,
             str(accepted.get("turnId") or ""),
             room_turn_id,
+        )
+        self.rooms.advance_delivery_cursor(
+            room_id,
+            str(target["id"]),
+            topic_id=topic_id,
+            through_sequence=int(unread["throughSequence"]),
         )
         self.rooms.commit_route(room_id, decision)
         return {
@@ -1376,6 +1456,197 @@ class AgentService:
             "participant": participant,
             "room": self.rooms.get(str(participant["roomId"])),
             "items": self.room_intercom.list(
+                session_id,
+                status=str(value.get("status") or ""),
+                limit=_integer(value.get("limit"), default=100, minimum=1, maximum=200),
+            ),
+        }
+
+    def assign_room_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        participant = self.rooms.participant_for_session(session_id)
+        if participant is None:
+            raise ValueError("session is not an active Room participant")
+        room = self.rooms.get(str(participant["roomId"]))
+        work, created = self.room_work.assign(
+            session_id,
+            payload,
+            root_turn_id=self.rooms.latest_turn_for_participant(
+                str(participant["roomId"]),
+                str(participant["id"]),
+            ),
+            topic_id=str(room.get("activeTopicId") or ""),
+        )
+        delivery: Mapping[str, object] | None = None
+        if created:
+            self._publish_room_work_activity(
+                work,
+                phase="assigned",
+                actor=participant,
+            )
+        if str(work.get("state") or "") == "queued":
+            criteria = "\n".join(
+                f"- {_bounded_text(value, maximum=240)}"
+                for value in list(work.get("acceptanceCriteria", []))[:6]
+            )
+            try:
+                delivery = self.room_intercom.enqueue(
+                    session_id,
+                    {
+                        "kind": "send",
+                        "targetParticipantId": work["offeredToParticipantId"],
+                        "clientMessageId": work["clientMessageId"],
+                        "workItemId": work["id"],
+                        "workAction": "assignment",
+                        "content": (
+                            f"责任交接 WorkItem {work['id']}\n"
+                            f"目标：{_bounded_text(work['objective'], maximum=1_200)}\n"
+                            f"交付物：{_bounded_text(work['expectedOutput'], maximum=800)}\n"
+                            f"验收标准：\n{criteria}\n"
+                            "请先按责任账本执行；完成后调用 room_submit，"
+                            "不要再用普通 @ 消息冒充交付。"
+                        ),
+                    },
+                )
+            except Exception as exc:
+                failed = self.room_work.fail_assignment(
+                    str(work["id"]),
+                    actor_participant_id=str(participant["id"]),
+                    reason=str(exc),
+                )
+                self._publish_room_work_activity(
+                    failed,
+                    phase="assignment_failed",
+                    actor=participant,
+                )
+                raise
+        return {
+            "schemaVersion": "rag-ime.agent-room-work-operation.v1",
+            "ok": True,
+            "operation": "assign",
+            "created": created,
+            "work": work,
+            "delivery": dict(delivery) if isinstance(delivery, Mapping) else None,
+        }
+
+    def submit_room_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        actor = self._require_room_participant(session_id)
+        work = self.room_work.submit(session_id, payload)
+        self._publish_room_work_activity(work, phase="submitted", actor=actor)
+        reviewer_id = self.room_work.reviewer_participant_id(str(work["id"]))
+        delivery = self._notify_room_work(
+            session_id,
+            work,
+            target_participant_id=reviewer_id,
+            action="submission",
+            content=(
+                f"WorkItem {work['id']} 已提交验收。\n"
+                f"交付摘要：{_bounded_text(work['resultSummary'], maximum=3_000)}\n"
+                "请核对验收标准后调用 room_accept 或 room_return。"
+            ),
+        )
+        return self._room_work_operation("submit", work, delivery=delivery)
+
+    def accept_room_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        actor = self._require_room_participant(session_id)
+        work = self.room_work.accept(session_id, payload)
+        self._publish_room_work_activity(work, phase="completed", actor=actor)
+        delivery = self._notify_room_work(
+            session_id,
+            work,
+            target_participant_id=str(work["currentOwnerParticipantId"]),
+            action="accepted",
+            content=f"WorkItem {work['id']} 已通过验收，责任闭环完成。",
+        )
+        return self._room_work_operation("accept", work, delivery=delivery)
+
+    def return_room_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        actor = self._require_room_participant(session_id)
+        work = self.room_work.return_for_revision(session_id, payload)
+        self._publish_room_work_activity(work, phase="returned", actor=actor)
+        delivery = self._notify_room_work(
+            session_id,
+            work,
+            target_participant_id=str(work["currentOwnerParticipantId"]),
+            action="revision",
+            content=(
+                f"WorkItem {work['id']} 需要第 {work['revision']} 次修订。\n"
+                f"原因：{payload.get('reason')}\n"
+                "完成修订后重新调用 room_submit。"
+            ),
+        )
+        return self._room_work_operation("return", work, delivery=delivery)
+
+    def block_room_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        actor = self._require_room_participant(session_id)
+        work = self.room_work.block(session_id, payload)
+        self._publish_room_work_activity(work, phase="blocked", actor=actor)
+        delivery = self._notify_room_work(
+            session_id,
+            work,
+            target_participant_id=str(work["accountableParticipantId"]),
+            action="blocked",
+            content=(
+                f"WorkItem {work['id']} 已阻塞。\n"
+                f"原因：{_bounded_text(dict(work['blocker']).get('reason'), maximum=1_600)}\n"
+                f"下一步：{_bounded_text(dict(work['blocker']).get('nextStep'), maximum=1_600)}"
+            ),
+        )
+        return self._room_work_operation("block", work, delivery=delivery)
+
+    def escalate_room_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        actor = self._require_room_participant(session_id)
+        work = self.room_work.escalate(session_id, payload)
+        self._publish_room_work_activity(work, phase="escalated", actor=actor)
+        delivery = self._notify_room_work(
+            session_id,
+            work,
+            target_participant_id=str(work["accountableParticipantId"]),
+            action="escalated",
+            content=(
+                f"WorkItem {work['id']} 已升级给责任人。\n"
+                f"原因：{_bounded_text(dict(work['blocker']).get('reason'), maximum=1_600)}\n"
+                f"建议下一步：{_bounded_text(dict(work['blocker']).get('nextStep'), maximum=1_600)}"
+            ),
+        )
+        return self._room_work_operation("escalate", work, delivery=delivery)
+
+    def list_room_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        value = dict(payload or {})
+        participant = self._require_room_participant(session_id, active_only=False)
+        return {
+            "schemaVersion": "rag-ime.agent-room-work-list.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "participant": participant,
+            "items": self.room_work.list_for_session(
                 session_id,
                 status=str(value.get("status") or ""),
                 limit=_integer(value.get("limit"), default=100, minimum=1, maximum=200),
@@ -1841,13 +2112,52 @@ class AgentService:
             if payload.get("_contextSourceToken") is self._context_source_token
             else "user"
         )
-        return self._prompt_with_checkpoint(
-            session_id=session_id,
-            message=message,
-            checkpoint_text=message,
-            attachment_ids=attachment_ids,
+        if not client_message_id:
+            return self._prompt_with_checkpoint(
+                session_id=session_id,
+                message=message,
+                checkpoint_text=message,
+                attachment_ids=attachment_ids,
+                client_message_id="",
+                context_source=context_source,
+            )
+        receipt_payload = {
+            "message": message,
+            "attachments": attachment_ids,
+            "contextSource": context_source,
+        }
+        claim = self.command_receipts.begin(
+            command_scope="session_prompt",
+            scope_id=session_id,
             client_message_id=client_message_id,
-            context_source=context_source,
+            payload=receipt_payload,
+        )
+        if claim.replay_response is not None:
+            return {**claim.replay_response, "idempotentReplay": True}
+        try:
+            response = self._prompt_with_checkpoint(
+                session_id=session_id,
+                message=message,
+                checkpoint_text=message,
+                attachment_ids=attachment_ids,
+                client_message_id=client_message_id,
+                context_source=context_source,
+            )
+        except Exception as exc:
+            self.command_receipts.fail(
+                claim,
+                command_scope="session_prompt",
+                scope_id=session_id,
+                client_message_id=client_message_id,
+                error=exc,
+            )
+            raise
+        return self.command_receipts.complete(
+            claim,
+            command_scope="session_prompt",
+            scope_id=session_id,
+            client_message_id=client_message_id,
+            response=response,
         )
 
     def deep_search(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -2834,14 +3144,46 @@ class AgentService:
         binding = self.sessions.runtime_binding(session_id)
         return max(0, int(binding.get("generation") or 0)) if binding else 0
 
-    def _room_target_idle(self, session_id: str) -> bool:
+    def _room_target_idle(
+        self,
+        session_id: str,
+        *,
+        allow_user_priority: bool = False,
+    ) -> bool:
+        if not allow_user_priority:
+            with self._room_turn_lock:
+                if session_id in self._room_user_priority_sessions:
+                    return False
         session = self.sessions.get(session_id)
         if str(session.get("status") or "") not in {"idle", "active"}:
             return False
-        return str(self.runtime.runtime_status().get("status") or "") not in {
-            "starting",
-            "busy",
+        runtime_status = self.runtime.runtime_status()
+        if str(runtime_status.get("status") or "") == "starting":
+            return False
+        capabilities = (
+            runtime_status.get("capabilities")
+            if isinstance(runtime_status.get("capabilities"), Mapping)
+            else {}
+        )
+        if not _bool(capabilities.get("multiSession")):
+            return str(runtime_status.get("status") or "") != "busy"
+        active_session_ids = {
+            str(value)
+            for value in runtime_status.get("activeSessionIds", [])
+            if str(value or "").strip()
         }
+        if session_id in active_session_ids:
+            return False
+        participant = self.rooms.participant_for_session(session_id, active_only=False)
+        if participant is None:
+            return False
+        room = self.rooms.get(str(participant["roomId"]))
+        room_session_ids = {
+            str(value.get("sessionId") or "")
+            for value in room.get("participants", [])
+            if isinstance(value, Mapping)
+        }
+        return len(active_session_ids & room_session_ids) < 2
 
     def _deliver_room_intercom(
         self,
@@ -2852,7 +3194,12 @@ class AgentService:
             raise AgentRoomTargetBusy("target participant is not idle")
         source = self.rooms.participant(str(item.get("sourceParticipantId") or ""))
         target = self.rooms.participant(str(item.get("targetParticipantId") or ""))
+        room = self.rooms.get(
+            str(item.get("roomId") or target.get("roomId") or "")
+        )
         kind = str(item.get("kind") or "send")
+        work_item_id = str(item.get("workItemId") or "")
+        work = self.room_work.get(work_item_id) if work_item_id else None
         reply_instruction = {
             "ask": (
                 "这是一个需要回复的问题。完成判断后，请调用 ime_agents.room_reply，"
@@ -2876,13 +3223,21 @@ class AgentService:
                 "sourceDisplayName": str(source.get("displayName") or ""),
                 "targetParticipantId": str(target.get("id") or ""),
                 "replyTo": str(item.get("replyTo") or ""),
+                "workItemId": work_item_id,
+                "workAction": str(item.get("workAction") or ""),
                 "content": str(item.get("content") or ""),
                 "replyInstruction": reply_instruction,
             },
         )
         accepted, trace_id, delivered = self._runtime_prompt_with_context(
             target_session_id,
-            "请处理刚收到的房间协作消息，并继续当前协作任务。",
+            _room_intercom_prompt(
+                room,
+                target,
+                item,
+                source=source,
+                work=work,
+            ),
             source_kind="room",
         )
         return {
@@ -2896,6 +3251,37 @@ class AgentService:
         item: Mapping[str, object],
         phase: str,
     ) -> None:
+        work_item_id = str(item.get("workItemId") or "")
+        work_action = str(item.get("workAction") or "")
+        if work_item_id and work_action == "assignment":
+            if phase == "delivered":
+                work = self.room_work.accept_assignment(
+                    work_item_id,
+                    target_participant_id=str(item.get("targetParticipantId") or ""),
+                    accepted_turn_id=str(item.get("acceptedTurnId") or ""),
+                )
+                actor = self.rooms.participant(
+                    str(item.get("targetParticipantId") or "")
+                )
+                self._publish_room_work_activity(
+                    work,
+                    phase="accepted",
+                    actor=actor,
+                )
+            elif phase in {"failed", "stale"}:
+                work = self.room_work.fail_assignment(
+                    work_item_id,
+                    actor_participant_id=str(item.get("sourceParticipantId") or ""),
+                    reason=str(item.get("error") or phase),
+                )
+                actor = self.rooms.participant(
+                    str(item.get("sourceParticipantId") or "")
+                )
+                self._publish_room_work_activity(
+                    work,
+                    phase="assignment_failed",
+                    actor=actor,
+                )
         self.room_events.publish(
             room_id=str(item.get("roomId") or ""),
             event_type="participant_activity",
@@ -2908,6 +3294,8 @@ class AgentService:
                     "sourceParticipantId": str(item.get("sourceParticipantId") or ""),
                     "targetParticipantId": str(item.get("targetParticipantId") or ""),
                     "replyTo": str(item.get("replyTo") or ""),
+                    "workItemId": work_item_id,
+                    "workAction": work_action,
                     "status": str(item.get("status") or ""),
                     "content": str(item.get("content") or "")[:4_000],
                     "acceptedTurnId": str(item.get("acceptedTurnId") or ""),
@@ -2917,6 +3305,82 @@ class AgentService:
             turn_id=str(item.get("acceptedTurnId") or item.get("id") or ""),
             participant_id=str(item.get("sourceParticipantId") or ""),
             source_session_id=str(item.get("sourceSessionId") or ""),
+        )
+
+    def _require_room_participant(
+        self,
+        session_id: str,
+        *,
+        active_only: bool = True,
+    ) -> dict[str, object]:
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=active_only,
+        )
+        if participant is None:
+            raise ValueError("session is not a Room participant")
+        return participant
+
+    def _notify_room_work(
+        self,
+        session_id: str,
+        work: Mapping[str, object],
+        *,
+        target_participant_id: str,
+        action: str,
+        content: str,
+    ) -> Mapping[str, object] | None:
+        source = self._require_room_participant(session_id)
+        if target_participant_id == str(source["id"]):
+            return None
+        return self.room_intercom.enqueue(
+            session_id,
+            {
+                "kind": "send",
+                "targetParticipantId": target_participant_id,
+                "clientMessageId": (
+                    f"work-{action}:{work['id']}:{work.get('revision', 0)}"
+                ),
+                "workItemId": work["id"],
+                "workAction": action,
+                "content": content,
+            },
+        )
+
+    @staticmethod
+    def _room_work_operation(
+        operation: str,
+        work: Mapping[str, object],
+        *,
+        delivery: Mapping[str, object] | None,
+    ) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.agent-room-work-operation.v1",
+            "ok": True,
+            "operation": operation,
+            "work": dict(work),
+            "delivery": dict(delivery) if isinstance(delivery, Mapping) else None,
+        }
+
+    def _publish_room_work_activity(
+        self,
+        work: Mapping[str, object],
+        *,
+        phase: str,
+        actor: Mapping[str, object],
+    ) -> None:
+        self.room_events.publish(
+            room_id=str(work.get("roomId") or ""),
+            event_type="participant_activity",
+            payload={
+                "activityKind": "work",
+                "phase": phase,
+                "work": dict(work),
+            },
+            turn_id=str(work.get("rootTurnId") or work.get("id") or ""),
+            participant_id=str(actor.get("id") or ""),
+            source_session_id=str(actor.get("sessionId") or ""),
+            topic_id=str(work.get("topicId") or ""),
         )
 
 
@@ -3090,6 +3554,8 @@ def _room_participant_prompt(
     message: str,
     *,
     recent_messages: Sequence[Mapping[str, object]] = (),
+    omitted_message_count: int = 0,
+    request_heading: str = "用户在 Room 中的请求",
 ) -> str:
     """Materialize bounded Room context without changing canonical message identity."""
 
@@ -3122,18 +3588,22 @@ def _room_participant_prompt(
     else:
         role_instruction = {
             "coordinator": (
-                "你是本轮调控者。先判断是否需要分工；需要调研时用 ime_agents.room_ask "
-                "询问只读调研者，需要明确执行时用 ime_agents.room_send 指派执行者，"
-                "再结合回信汇总结论。简单请求可以直接回答，不要为了展示协作而机械分派。"
+                "你是本轮调控者，也是责任协调者。简单请求直接处理；需要交接责任时必须使用 "
+                "ime_agents.room_assign，写清目标、交付物和验收标准。收到 room_submit "
+                "后用 room_accept 或 room_return 闭环；只询问信息时仍可用 "
+                "ime_agents.room_ask，不要用普通 room_send 冒充任务分派。"
             ),
             "researcher": (
-                "你是只读调研者。只使用当前只读工具浏览、读取和搜索授权工作区，"
-                "不得写文件或运行 Shell；如果这是 room_ask 投递的任务，完成后用 "
-                "ime_agents.room_reply 返回有证据的结论。"
+                "你是调研者。优先调查证据、定位风险并给出可验证结论；可用工具和操作能力"
+                "以当前 Session 的工具策略、授权工作区与审批边界为准。承担 WorkItem 后"
+                "用 room_submit 交付证据；遇到真实阻塞用 room_block，不能完成时用 "
+                "room_escalate，不要把责任随意 @ 回去。"
             ),
         }.get(
             role,
-            "你是执行者。可以在授权工作区内完成明确操作，但写入、Shell 和外部动作仍必须遵守工具审批边界。",
+            "你是执行者。可以在授权工作区内完成明确操作，但写入、Shell 和外部动作仍必须"
+            "遵守工具审批边界。承担 WorkItem 后用 room_submit 交付；阻塞或无法完成时分别"
+            "使用 room_block / room_escalate。",
         )
     active_topic = next(
         (
@@ -3152,6 +3622,39 @@ def _room_participant_prompt(
         for event in recent_messages[-24:]
         if (line := _room_context_line(event, participant_names))
     ]
+    target_id = str(target.get("id") or "")
+    work_lines = []
+    for work in room.get("workItems", []):
+        if not isinstance(work, Mapping):
+            continue
+        state = str(work.get("state") or "")
+        if state not in {"queued", "active", "review", "blocked"}:
+            continue
+        if target_id not in {
+            str(work.get("accountableParticipantId") or ""),
+            str(work.get("currentOwnerParticipantId") or ""),
+            str(work.get("offeredToParticipantId") or ""),
+        }:
+            continue
+        relation = (
+            "待接收"
+            if str(work.get("offeredToParticipantId") or "") == target_id
+            else "当前负责"
+            if str(work.get("currentOwnerParticipantId") or "") == target_id
+            else "最终负责"
+        )
+        work_lines.append(
+            f"- {work.get('id')} [{state}; {relation}; revision={work.get('revision', 0)}] "
+            f"{_bounded_text(work.get('objective'), maximum=500)}"
+        )
+        if len(work_lines) >= 8:
+            break
+    transcript_note = (
+        f"- 另有 {omitted_message_count} 条较早未读消息已越过本次上下文窗口；"
+        "需要时以话题摘要、Artifact 和 WorkItem 为准。"
+        if omitted_message_count > 0
+        else ""
+    )
     return (
         "受管 Room 上下文（由 RAG-IME Agent Kernel 提供）\n"
         f"Room：{_bounded_text(room.get('title'), maximum=120)}\n"
@@ -3166,12 +3669,51 @@ def _room_participant_prompt(
         f"{chr(10).join(workspace_lines) or '- 未提供'}\n\n"
         "协作成员：\n"
         f"{chr(10).join(participant_lines) or '- 未提供'}\n\n"
+        "责任账本（只显示与你有关的开放 WorkItem）：\n"
+        f"{chr(10).join(work_lines) or '- 当前没有开放责任'}\n\n"
         "当前话题的近期公开对话：\n"
-        f"{chr(10).join(transcript_lines) or '- 暂无'}\n\n"
+        f"{chr(10).join(transcript_lines) or '- 暂无'}\n"
+        f"{transcript_note}\n\n"
+        "协作协议：普通 room_send / room_ask / room_reply 只传消息，不转移责任；"
+        "room_assign 只有在目标 Pi 回合被接受后才转移 owner。最大责任深度 3、"
+        "每个根任务最多 6 次分派、最多 2 次返修。禁止把未产生新证据的任务传回祖先，"
+        "禁止无限互相 @。\n\n"
         "身份由结构化 participantId 记录。不要输出或模仿“[某某的发言]”之类的手写发言头，"
         "也不要讨论内部路由、邀请模板或系统标记。\n\n"
-        "用户在 Room 中的请求：\n"
+        f"{request_heading}：\n"
         f"{message}"
+    )
+
+
+def _room_intercom_prompt(
+    room: Mapping[str, object],
+    target: Mapping[str, object],
+    item: Mapping[str, object],
+    *,
+    source: Mapping[str, object],
+    work: Mapping[str, object] | None,
+) -> str:
+    kind = str(item.get("kind") or "send")
+    action = str(item.get("workAction") or "")
+    direct_message = (
+        "请处理本回合 transientContext 中唯一的房间协作消息。"
+        f"来源是 {source.get('displayName')}，消息类型是 {kind}。"
+        + (
+            f"它关联 WorkItem {work.get('id')}，责任动作是 {action or 'message'}。"
+            if work is not None
+            else ""
+        )
+        + (
+            f"这是需要关联回复的问题；完成后调用 ime_agents.room_reply，replyTo={item.get('id')}。"
+            if kind == "ask"
+            else ""
+        )
+    )
+    return _room_participant_prompt(
+        room,
+        target,
+        direct_message,
+        request_heading="直接协作投递",
     )
 
 

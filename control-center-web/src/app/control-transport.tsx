@@ -266,7 +266,7 @@ function previewResponse(pathId: ControlPathId): unknown {
         stringValue(record(request.params).traceId) || 'context-trace:preview',
       );
     case 'agent.rooms.list':
-      return { ok: true, rooms: [] };
+      return { ok: true, rooms: [previewRoomSnapshot('room-preview').room] };
     case 'agent.room.snapshot':
       return (request: ControlRequest) => previewRoomSnapshot(String(request.params?.roomId ?? 'room-preview'));
     case 'agent.roles.list':
@@ -281,6 +281,7 @@ function previewResponse(pathId: ControlPathId): unknown {
           previewTool('planning.tasks', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
           previewTool('ime.memory', '记忆与工具书', '渐进查询 Memory Book，并通过可审阅草案维护长期记忆', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
           previewTool('ime_knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
+          previewTool('ime_browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'screenshot', 'trace', 'navigate', 'click', 'type', 'scroll', 'wait', 'stop']),
         ],
       };
     case 'agent.subagents.list':
@@ -402,6 +403,77 @@ function previewResponse(pathId: ControlPathId): unknown {
           { id: 'mineru_local_http', name: 'MinerU', available: false, status: 'disabled' },
         ],
       };
+    case 'browser.status':
+      return {
+        ok: true,
+        mode: 'codrive',
+        clients: [{
+          deviceId: 'chrome-preview',
+          displayName: '我的 Chrome',
+          clientKind: 'user',
+          connected: true,
+          activeTabId: 23,
+        }],
+        latestSnapshot: previewBrowserSnapshot(),
+        managedBrowser: {
+          running: false,
+          profilePath: '~/Library/Application Support/RagIme/BrowserCopilot/managed-profile',
+        },
+      };
+    case 'browser.pairing':
+      return {
+        ok: true,
+        pairingToken: 'preview-pairing-token',
+        tokenFingerprint: 'preview-4d7a',
+        extensionPath: '~/Library/Application Support/RagIme/BrowserCopilot/extension',
+        bridgeUrl: 'http://127.0.0.1:8766',
+      };
+    case 'browser.tabs':
+      return {
+        ok: true,
+        items: [{
+          deviceId: 'chrome-preview',
+          tabId: 23,
+          title: 'Agent Runtime 架构',
+          url: 'https://docs.example.com/agent-runtime',
+          active: true,
+        }],
+      };
+    case 'browser.snapshot.latest':
+      return previewBrowserSnapshot();
+    case 'browser.permissions':
+      return {
+        ok: true,
+        items: [{
+          promptId: 'bperm-preview',
+          deviceId: 'chrome-preview',
+          origin: 'https://research.example.com',
+          action: 'domain_transition',
+          reason: '首次进入调研站点',
+          status: 'pending',
+          decision: '',
+          createdAtMs: Date.now() - 36_000,
+        }],
+      };
+    case 'browser.traces':
+      return {
+        ok: true,
+        items: [{
+          commandId: 'bcmd-preview',
+          action: 'snapshot',
+          status: 'completed',
+          durationMs: 184,
+          result: { summary: '已读取 3 个 Frame 和 18 个可交互元素' },
+        }],
+      };
+    case 'browser.mode.update':
+    case 'browser.pairing.rotate':
+    case 'browser.command':
+    case 'browser.stop':
+    case 'browser.managed.start':
+    case 'browser.managed.stop':
+    case 'browser.permission.decide':
+      return { ok: true };
     case 'configuration.settings':
       return { ok: true, configured: true, settings: {} };
     case 'configuration.schema':
@@ -473,6 +545,32 @@ function previewMemoryPage(
     };
   }
   return { ok: true, items: [], nextCursor: '', limit: 50 };
+}
+
+function previewBrowserSnapshot(): Record<string, unknown> {
+  return {
+    ok: true,
+    snapshotId: 'snap-preview-runtime',
+    deviceId: 'chrome-preview',
+    tabId: 23,
+    url: 'https://docs.example.com/agent-runtime',
+    title: 'Agent Runtime 架构',
+    summary: '3 个 Frame · 18 个可交互元素',
+    markdown: [
+      '# Agent Runtime 架构',
+      'URL: https://docs.example.com/agent-runtime',
+      '当前页面说明浏览器快照如何进入 Agent Tool。',
+      '## 页面操作',
+      '- [0:e1] button "运行验证"',
+      '- [0:e2] link "查看执行轨迹"',
+      '- [0:e3] textbox "输入检索问题"',
+      '## 安全边界',
+      '密码字段不会进入页面快照，跨站导航需要单独批准。',
+    ].join('\n'),
+    interactiveCount: 18,
+    hasScreenshot: false,
+    createdAtMs: Date.now() - 2_000,
+  };
 }
 
 function previewKnowledgeBase(): Record<string, unknown> {
@@ -749,8 +847,53 @@ function previewRoomSnapshot(roomId: string) {
       id: roomId,
       title: '迁移作战室',
       status: 'active',
+      roomKind: 'collaboration',
+      avatar: 'briefcase',
+      description: '验证责任交接、流式投影与多端控制面板',
       routingPolicy: 'moderator',
       moderatorParticipantId: 'participant-zhiyou',
+      activeTopicId: 'topic-preview',
+      workspaceRoots: ['/Volumes/work/wisdom-weasel-rag-ime'],
+      topics: [{
+        schemaVersion: 'rag-ime.agent-room-topic.v1',
+        id: 'topic-preview',
+        roomId,
+        title: '网关升级',
+        summary: '保持 Pi Session 独立，以 WorkItem 责任账本完成协作闭环。',
+        status: 'active',
+        ordinal: 0,
+        createdAtMs: now,
+        updatedAtMs: now,
+      }],
+      artifacts: [],
+      workItems: [{
+        schemaVersion: 'rag-ime.agent-room-work-item.v1',
+        id: 'room-work:preview',
+        roomId,
+        topicId: 'topic-preview',
+        rootTurnId: `${roomId}:turn-1`,
+        rootWorkId: 'room-work:preview',
+        parentWorkId: '',
+        objective: '核对多端网关回放与责任闭环',
+        expectedOutput: '测试证据和风险说明',
+        acceptanceCriteria: ['目标回合接受后才转移 owner', '交付经过协调者验收'],
+        accountableParticipantId: 'participant-zhiyou',
+        currentOwnerParticipantId: 'participant-hermes',
+        offeredToParticipantId: '',
+        createdByParticipantId: 'participant-zhiyou',
+        clientMessageId: 'preview-assignment',
+        state: 'review',
+        depth: 1,
+        revision: 1,
+        resultSummary: '已完成回放游标与公平队列测试。',
+        artifactRefs: [],
+        evidenceRefs: ['test:room-replay'],
+        blocker: {},
+        acceptedTurnId: 'turn:preview-worker',
+        createdAtMs: now + 2,
+        updatedAtMs: now + 7,
+        completedAtMs: null,
+      }],
       createdAtMs: now,
       updatedAtMs: now + events.length,
       lastEventSequence: events.length,
@@ -780,6 +923,7 @@ function previewParticipant(
     roleId,
     roleVersion: '1',
     displayName,
+    collaborationRole: ordinal === 0 ? 'coordinator' : 'researcher',
     status: 'active',
     ordinal,
     createdAtMs: 1,

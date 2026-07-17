@@ -53,6 +53,8 @@ def prepare_release_candidate(
     normalized_apps = _validate_apps(apps)
     if control_app := normalized_apps.get("control"):
         _validate_web_control_app(control_app)
+    if desktop_bridge_app := normalized_apps.get("desktopBridge"):
+        _validate_desktop_bridge_app(desktop_bridge_app)
     files = sorted(set(project_files if project_files is not None else _candidate_files(repo_root)))
     source_files = [
         relative
@@ -201,6 +203,32 @@ def _validate_web_control_app(app: Path) -> None:
         or frontend_marker.get("previewFixturesExcluded") is not True
     ):
         raise ValueError("control app is not a verified Web Control Center release")
+
+
+def _validate_desktop_bridge_app(app: Path) -> None:
+    marker_path = (
+        app
+        / "Contents"
+        / "Resources"
+        / "rag-ime-desktop-bridge-build-marker.json"
+    )
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        raise ValueError("desktop bridge app must contain a verified build marker") from exc
+    capabilities = marker.get("capabilities")
+    if (
+        marker.get("schemaVersion") != "rag-ime.desktop-bridge-build-marker.v1"
+        or marker.get("gitDirty") is True
+        or not isinstance(capabilities, dict)
+        or capabilities.get("accessibilitySemantics") is not True
+        or capabilities.get("treeDiff") is not True
+        or capabilities.get("semanticActions") is not True
+        or capabilities.get("liveStateRevalidation") is not True
+        or capabilities.get("modelSuppliedCoordinates") is not False
+        or capabilities.get("screenCapture") is not False
+    ):
+        raise ValueError("desktop bridge app is not Accessibility-only or provenance-clean")
 
 
 def _deterministic_tar_gz(path: Path):

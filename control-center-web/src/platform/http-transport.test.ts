@@ -5,6 +5,18 @@ import { agentEventFixture } from '@/test/fixtures/events';
 import { HttpControlTransport } from './http-transport';
 
 describe('HttpControlTransport', () => {
+  it('resolves browser snapshot images against the configured HTTP origin', () => {
+    const transport = new HttpControlTransport({
+      baseUrl: 'https://gateway.example.test/control/',
+      fetch: vi.fn() as typeof fetch,
+    });
+
+    expect(transport.browserSnapshotImageUrl('snap_remote-1')).toBe(
+      'https://gateway.example.test/api/browser/snapshots/snap_remote-1/image',
+    );
+    expect(() => transport.browserSnapshotImageUrl('../private')).toThrow(/bounded snapshotId/);
+  });
+
   it('uses a fixed route mapping rather than caller-provided URLs', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

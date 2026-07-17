@@ -8,6 +8,7 @@ import {
 } from './routes';
 import { SseParser, type ParsedSseEvent } from './sse';
 import {
+  assertBrowserSnapshotId,
   assertControlRequest,
   assertControlSubscription,
   browserCapabilities,
@@ -109,6 +110,11 @@ export class HttpControlTransport implements ControlTransport {
     }
     const contract = request.responseContract ?? route.responseContract;
     return (contract ? parseContract(contract, payload) : payload) as Response;
+  }
+
+  browserSnapshotImageUrl(snapshotId: string): string {
+    assertBrowserSnapshotId(snapshotId);
+    return this.url('browser.snapshot.image', { snapshotId }, undefined).toString();
   }
 
   async importKnowledgeDocuments(

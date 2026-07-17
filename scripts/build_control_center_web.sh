@@ -14,8 +14,10 @@ BUILD_CHANNEL="${RAG_IME_CONTROL_BUILD_CHANNEL:-preview}"
   echo "RAG_IME_CONTROL_BUILD_CHANNEL must be preview or production" >&2
   exit 2
 }
-if [[ "$BUILD_CHANNEL" == "production" && "$CONTROL_TRANSPORT" != "native" ]]; then
-  echo "production control-center builds require native transport" >&2
+if [[ "$BUILD_CHANNEL" == "production" \
+  && "$CONTROL_TRANSPORT" != "native" \
+  && "$CONTROL_TRANSPORT" != "http" ]]; then
+  echo "production control-center builds require native or http transport" >&2
   exit 2
 fi
 

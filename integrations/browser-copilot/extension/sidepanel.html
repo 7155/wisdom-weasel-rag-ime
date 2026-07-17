@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智鼬 Browser Co-pilot</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header>
+      <span class="brand-mark" aria-hidden="true">鼬</span>
+      <div>
+        <h1>Browser Co-pilot</h1>
+        <p>智鼬浏览器共驾</p>
+      </div>
+      <span id="connection" class="status">未连接</span>
+    </header>
+
+    <main>
+      <section class="page-state" aria-labelledby="page-title">
+        <p class="eyebrow">当前页面</p>
+        <h2 id="page-title">等待页面快照</h2>
+        <p id="page-url">打开普通网页后会自动同步。</p>
+        <div class="actions">
+          <button id="sync" type="button">同步页面</button>
+          <button id="capture" class="secondary" type="button">同步并截图</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="connection-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">本机连接</p>
+            <h2 id="connection-title">控制中心</h2>
+          </div>
+          <button id="toggle-settings" class="icon-button" type="button" aria-label="连接设置">⚙</button>
+        </div>
+        <form id="settings" hidden>
+          <label for="bridge-url">桥接地址</label>
+          <input id="bridge-url" name="bridgeUrl" value="http://127.0.0.1:8766" />
+          <label for="pairing-token">配对凭据</label>
+          <input id="pairing-token" name="pairingToken" type="password" autocomplete="off" />
+          <label for="display-name">设备名称</label>
+          <input id="display-name" name="displayName" value="我的 Chrome" />
+          <button type="submit">保存并连接</button>
+        </form>
+        <dl id="runtime">
+          <div><dt>模式</dt><dd id="mode">观察</dd></div>
+          <div><dt>设备</dt><dd id="device">未配对</dd></div>
+          <div><dt>最近同步</dt><dd id="last-sync">暂无</dd></div>
+        </dl>
+      </section>
+    </main>
+
+    <footer>页面内容只保存在本机；密码字段不会交给 Agent。</footer>
+    <script src="sidepanel.js" type="module"></script>
+  </body>
+</html>

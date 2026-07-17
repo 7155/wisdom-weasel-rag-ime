@@ -18,6 +18,7 @@ from .agent_room_routing import (
     normalize_routing_policy,
     plan_room_route,
 )
+from .agent_room_work import work_item_payload
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 
@@ -196,7 +197,24 @@ class AgentRoomStore:
                 """,
                 (room_id,),
             ).fetchall()
-        return _room_payload(row, participants, topics, artifacts)
+            work_items = conn.execute(
+                """
+                SELECT * FROM agent_room_work_items
+                WHERE room_id = ?
+                ORDER BY
+                    CASE state
+                        WHEN 'blocked' THEN 0
+                        WHEN 'review' THEN 1
+                        WHEN 'active' THEN 2
+                        WHEN 'queued' THEN 3
+                        ELSE 4
+                    END,
+                    updated_at_ms DESC
+                LIMIT 100
+                """,
+                (room_id,),
+            ).fetchall()
+        return _room_payload(row, participants, topics, artifacts, work_items)
 
     def list(self, *, include_archived: bool = False, limit: int = 100) -> list[dict[str, object]]:
         bounded = max(1, min(int(limit), 200))
@@ -727,6 +745,113 @@ class AgentRoomStore:
             ).fetchall()
         return [_room_event_payload(row) for row in rows]
 
+    def unread_public_messages(
+        self,
+        room_id: str,
+        participant_id: str,
+        *,
+        topic_id: str = "",
+        exclude_turn_id: str = "",
+        limit: int = 24,
+    ) -> dict[str, object]:
+        """Return one participant's bounded unread public lane and ack watermark."""
+
+        bounded = max(1, min(int(limit), 100))
+        with self._connect() as conn:
+            participant = conn.execute(
+                """
+                SELECT id FROM agent_room_participants
+                WHERE id = ? AND room_id = ?
+                """,
+                (participant_id, room_id),
+            ).fetchone()
+            if participant is None:
+                raise AgentParticipantNotFound(participant_id)
+            cursor = conn.execute(
+                """
+                SELECT last_sequence FROM agent_room_delivery_cursors
+                WHERE room_id = ? AND participant_id = ? AND topic_id = ?
+                """,
+                (room_id, participant_id, topic_id),
+            ).fetchone()
+            after_sequence = int(cursor["last_sequence"]) if cursor is not None else 0
+            clauses = [
+                "room_id = ?",
+                "sequence > ?",
+                "event_type IN ('user_message', 'participant_message')",
+            ]
+            params: list[object] = [room_id, after_sequence]
+            if topic_id:
+                clauses.append("topic_id = ?")
+                params.append(topic_id)
+            if exclude_turn_id:
+                clauses.append("turn_id != ?")
+                params.append(exclude_turn_id)
+            count_row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS count, COALESCE(MAX(sequence), ?) AS through_sequence
+                FROM agent_room_events
+                WHERE {' AND '.join(clauses)}
+                """,  # noqa: S608 - clauses are fixed internal strings
+                (after_sequence, *params),
+            ).fetchone()
+            rows = conn.execute(
+                f"""
+                SELECT * FROM (
+                    SELECT * FROM agent_room_events
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY sequence DESC LIMIT ?
+                ) ORDER BY sequence ASC
+                """,  # noqa: S608 - clauses are fixed internal strings
+                (*params, bounded),
+            ).fetchall()
+        count = int(count_row["count"] if count_row is not None else 0)
+        through_sequence = int(
+            count_row["through_sequence"] if count_row is not None else after_sequence
+        )
+        return {
+            "items": [_room_event_payload(row) for row in rows],
+            "cursorSequence": after_sequence,
+            "throughSequence": through_sequence,
+            "omittedCount": max(0, count - len(rows)),
+        }
+
+    def advance_delivery_cursor(
+        self,
+        room_id: str,
+        participant_id: str,
+        *,
+        topic_id: str = "",
+        through_sequence: int,
+        updated_at_ms: int | None = None,
+    ) -> None:
+        sequence = max(0, int(through_sequence))
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_room_delivery_cursors(
+                    room_id, participant_id, topic_id, last_sequence, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(room_id, participant_id, topic_id) DO UPDATE SET
+                    last_sequence = MAX(last_sequence, excluded.last_sequence),
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (room_id, participant_id, topic_id, sequence, timestamp),
+            )
+
+    def latest_turn_for_participant(self, room_id: str, participant_id: str) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT turn_id FROM agent_room_events
+                WHERE room_id = ? AND participant_id = ? AND turn_id != ''
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (room_id, participant_id),
+            ).fetchone()
+        return str(row["turn_id"]) if row is not None else ""
+
     def append_event(
         self,
         *,
@@ -866,6 +991,23 @@ class AgentRoomStore:
                 """,
                 (room_id,),
             ).fetchall()
+            work_rows = conn.execute(
+                """
+                SELECT * FROM agent_room_work_items
+                WHERE room_id = ?
+                ORDER BY
+                    CASE state
+                        WHEN 'blocked' THEN 0
+                        WHEN 'review' THEN 1
+                        WHEN 'active' THEN 2
+                        WHEN 'queued' THEN 3
+                        ELSE 4
+                    END,
+                    updated_at_ms DESC
+                LIMIT 100
+                """,
+                (room_id,),
+            ).fetchall()
             bounds_row = conn.execute(
                 """
                 SELECT COUNT(*) AS event_count,
@@ -886,7 +1028,13 @@ class AgentRoomStore:
                 (room_id, ROOM_SNAPSHOT_EVENT_LIMIT),
             ).fetchall()
 
-        room = _room_payload(room_row, participant_rows, topic_rows, artifact_rows)
+        room = _room_payload(
+            room_row,
+            participant_rows,
+            topic_rows,
+            artifact_rows,
+            work_rows,
+        )
         events = [_room_event_payload(row) for row in event_rows]
         retained_count = int(bounds_row["event_count"]) if bounds_row is not None else 0
         retained_first = int(bounds_row["first_sequence"]) if bounds_row is not None else 0
@@ -1038,6 +1186,7 @@ def _room_payload(
     participants: Sequence[sqlite3.Row],
     topics: Sequence[sqlite3.Row],
     artifacts: Sequence[sqlite3.Row],
+    work_items: Sequence[sqlite3.Row],
 ) -> dict[str, object]:
     routing_policy = str(row["routing_mode"] or row["routing_policy"])
     payload: dict[str, object] = {
@@ -1068,6 +1217,7 @@ def _room_payload(
         "participants": [_participant_payload(item) for item in participants],
         "topics": [_topic_payload(item) for item in topics],
         "artifacts": [_artifact_payload(item) for item in artifacts],
+        "workItems": [work_item_payload(item) for item in work_items],
     }
     validate_contract(payload, "agent-room.v1.json")
     return payload

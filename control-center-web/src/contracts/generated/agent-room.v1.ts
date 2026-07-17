@@ -81,4 +81,10 @@ export interface AgentRoomV1 {
   artifacts?: {
     [k: string]: unknown;
   }[];
+  /**
+   * @maxItems 100
+   */
+  workItems?: {
+    [k: string]: unknown;
+  }[];
 }

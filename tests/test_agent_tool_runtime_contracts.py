@@ -86,7 +86,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             if item["enabled"] is True
         }
 
-        self.assertEqual(len(manifests), 18)
+        self.assertEqual(len(manifests), 20)
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
                 schema = manifest["parameters"]
@@ -117,7 +117,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             separators=(",", ":"),
         ).encode("utf-8")
 
-        self.assertLess(len(encoded), 25_000)
+        self.assertLess(len(encoded), 27_000)
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
@@ -146,6 +146,18 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(
             self._branch(tools["agent_schedule"], "schedule")["required"],
             ["op", "instruction", "targetType", "wakeAtMs"],
+        )
+        self.assertEqual(
+            self._branch(tools["ime_browser"], "navigate")["required"],
+            ["op", "url"],
+        )
+        self.assertEqual(
+            self._branch(tools["ime_browser"], "type")["required"],
+            ["op", "refId", "text"],
+        )
+        self.assertEqual(
+            self._branch(tools["desktop_semantic"], "act")["required"],
+            ["op", "snapshotId", "revision", "nodeRef", "action"],
         )
 
         delegate = self._branch(tools["ime_agents"], "delegate")
@@ -204,7 +216,19 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(effective["workspace_read"], {"read"})
         self.assertEqual(effective["workspace_search"], {"search"})
         self.assertTrue(
-            {"room_send", "room_ask", "room_reply", "room_mailbox"}.issubset(
+            {
+                "room_send",
+                "room_ask",
+                "room_reply",
+                "room_mailbox",
+                "room_assign",
+                "room_submit",
+                "room_accept",
+                "room_return",
+                "room_block",
+                "room_escalate",
+                "room_work",
+            }.issubset(
                 effective["ime_agents"]
             )
         )

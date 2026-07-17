@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 INCLUDE_SQUIRREL=0
+INCLUDE_DESKTOP=1
 INCLUDE_VOICE=1
 INCLUDE_MAINTENANCE=1
 INCLUDE_MLX="auto"
@@ -14,6 +15,7 @@ Usage: scripts/install_product_stack.sh [options]
 
 Options:
   --include-squirrel    Rebuild and install the patched Squirrel input method.
+  --skip-desktop        Do not install the Accessibility-only desktop bridge.
   --skip-voice          Do not install the optional voice agent.
   --skip-maintenance    Do not install the Memory Book maintenance job.
   --skip-mlx            Do not reinstall the MLX predictor.
@@ -28,6 +30,7 @@ EOF
 while (($#)); do
   case "$1" in
     --include-squirrel) INCLUDE_SQUIRREL=1 ;;
+    --skip-desktop) INCLUDE_DESKTOP=0 ;;
     --skip-voice) INCLUDE_VOICE=0 ;;
     --skip-maintenance) INCLUDE_MAINTENANCE=0 ;;
     --skip-mlx) INCLUDE_MLX=0 ;;
@@ -47,12 +50,28 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] \
 fi
 
 echo "Installing product runtime generation $SOURCE_COMMIT"
+EXTENSION_SOURCE="$ROOT/integrations/browser-copilot/extension"
+EXTENSION_DEST="$APP_SUPPORT_DIR/BrowserCopilot/extension"
+if [[ ! -f "$EXTENSION_SOURCE/manifest.json" ]]; then
+  echo "missing Browser Co-pilot extension manifest" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$EXTENSION_DEST")"
+rm -rf "$EXTENSION_DEST"
+ditto "$EXTENSION_SOURCE" "$EXTENSION_DEST"
+echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
+
+required=(--require control --require sidecar --require squirrel)
+if [[ "$INCLUDE_DESKTOP" == "1" ]]; then
+  "$ROOT/scripts/install_desktop_bridge_launch_agent.sh"
+  required+=(--require desktopBridge)
+fi
+
 # The stack owns launch order. Prevent the standalone Sidecar installer from
 # also refreshing the gateway, otherwise launchd sees two back-to-back
 # bootout/bootstrap cycles for the same label and can reject the second one.
 RAG_IME_INSTALL_AGENT_GATEWAY=0 "$ROOT/scripts/install_sidecar_launch_agent.sh"
 
-required=(--require control --require sidecar --require squirrel)
 if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]]; then
   "$ROOT/scripts/install_agent_gateway_launch_agent.sh"
   required+=(--require piRuntime)

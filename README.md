@@ -324,8 +324,9 @@ scripts/prepare_squirrel_workspace.sh
 scripts/build_patched_squirrel.sh build
 ```
 
-Build or install the only supported Control Center, the React app hosted by the
-minimal WebKit shell:
+Build or install the supported Control Center. The same React application runs
+inside the minimal WebKit shell on the Mac and as a same-origin HTTP build on
+the isolated Agent Gateway:
 
 ```bash
 scripts/build_control_center.sh
@@ -346,6 +347,42 @@ The stack installer isolates each worker's copied Python package, records its
 source commit, refuses dirty tracked source by default, and audits the complete
 installed generation before returning success.
 
+### Multi-Device Agent Gateway
+
+The Agent Gateway remains a control-plane process on loopback `127.0.0.1:8768`.
+It serves the production HTTP Control Center and the existing REST/SSE API from
+one origin. Squirrel and the foreground typing path continue to use the
+separate `127.0.0.1:8766` Sidecar; remote devices never enter that hot path.
+
+For local development:
+
+```bash
+RAG_IME_CONTROL_TRANSPORT=http \
+RAG_IME_CONTROL_BUILD_CHANNEL=production \
+  scripts/build_control_center_web.sh
+python3 -m rag_ime.cli agent-gateway \
+  --host 127.0.0.1 \
+  --port 8768 \
+  --web-dist control-center-web/dist
+```
+
+To expose the already installed gateway to phones, tablets, and other Macs on
+the same tailnet:
+
+```bash
+scripts/configure_agent_gateway_tailscale.sh enable --login you@example.com
+scripts/configure_agent_gateway_tailscale.sh status
+scripts/configure_agent_gateway_tailscale.sh disable
+```
+
+This route uses tailnet-only Tailscale Serve, never public Funnel. The gateway
+accepts remote requests only when Serve supplies an allowlisted
+`Tailscale-User-Login`; it then applies the canonical remote-safe route and
+scope policy. Provider credentials, plugin installation, arbitrary files,
+database apply operations, and input-method configuration remain local-only.
+Session prompts and Room messages use durable `clientMessageId` receipts, so a
+network retry cannot silently start the same Agent turn twice.
+
 Installing an input method changes user-level macOS state. Use an attended
 foreground session and verify the actual UI rather than trusting an HTTP
 response:
@@ -358,6 +395,26 @@ scripts/verify_squirrel_foreground_trace.sh
 The optional voice lane, Active RAG provider, and Notion Worker each have
 separate setup in the Web Control Center; none is required for the local
 core.
+
+## Browser Co-pilot
+
+The optional Chrome extension under `integrations/browser-copilot/` adds a
+local, auditable browser lane without putting full pages into every Agent
+prompt:
+
+- the extension keeps compact multi-frame page snapshots in the existing local
+  SQLite control plane;
+- `ime_browser` reads snapshots or screenshots on demand and sends write
+  actions through the existing Agent approval flow;
+- the Control Center exposes browser selection, visual and structured page
+  views, site permissions, execution traces, pairing, and an isolated managed
+  Chrome profile;
+- first-time cross-origin navigation requests a site decision and asks the
+  Agent to retry after approval; passwords are never included in snapshots.
+
+The product installer copies the unpacked extension to
+`~/Library/Application Support/RagIme/BrowserCopilot/extension`. Load that
+directory once from `chrome://extensions` with Developer mode enabled.
 
 ## Validation And Release Gates
 
@@ -388,6 +445,7 @@ See the [release-manifest template](release/release-manifest.example.json).
 | `rag_ime/` | Python sidecar, local RAG/memory core, model runtime adapters, management API, and release audit. |
 | `squirrel-patches/` | Pinned Squirrel patch, Swift overlay, and patch application checks. |
 | `control-center-web/` | React settings, diagnostics, knowledge, planning, and Agent UI. |
+| `integrations/browser-copilot/` | Local Chrome extension for compact page snapshots, screenshots, approved actions, and site-permission prompts. |
 | `macos/RagImeControlWebHost/` | Minimal AppKit/WebKit host and allowlisted native bridge for the Web Control Center. |
 | `macos/RagImeVoice/` | Headless push-to-talk agent, microphone pipeline, and cursor insertion. |
 | `macos/Shared/` | Shared native Keychain and streaming-ASR protocol code. |
@@ -456,3 +514,8 @@ applicable notices and exact corresponding source; see
   adapts the workflow to its existing local worker, SQLite storage, and Control
   Center design; it does not copy or redistribute Yuxi source code or import
   Yuxi's Neo4j/PostgreSQL/Milvus runtime stack.
+- [VCPToolBox](https://github.com/lioensky/VCPToolBox) informed the live browser
+  perception and human-Agent co-browsing direction. Browser Co-pilot is a
+  project-native implementation built on this repository's existing approval,
+  SQLite, Agent Tool, and Control Center contracts rather than copied VCP
+  extension source.

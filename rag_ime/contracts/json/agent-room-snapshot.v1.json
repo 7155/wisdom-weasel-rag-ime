@@ -141,6 +141,11 @@
           "type": "array",
           "maxItems": 100,
           "items": {"type": "object"}
+        },
+        "workItems": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"type": "object"}
         }
       }
     },

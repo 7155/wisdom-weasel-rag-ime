@@ -1068,6 +1068,59 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(deleted["mediaFilesDeleted"], 1)
         self.assertEqual(list(self.service.media.root.glob("*.blob")), [])
 
+    def test_prompt_client_message_id_is_durable_and_idempotent(self) -> None:
+        session = self.service.create_session({"title": "多端幂等"})["session"]
+        session_id = str(session["id"])
+        payload = {"message": "只执行一次", "clientMessageId": "device-command-1"}
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:idempotent:1",
+                "piEntryId": "pi-entry:idempotent:1",
+                "response": {"success": True},
+            },
+        ) as prompt:
+            first = self.service.prompt(session_id, payload)
+
+        prompt.assert_called_once()
+        completed, _ = self.service.events.replay(session_id)
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in completed
+                    if event.event_type == "message_completed"
+                    and event.payload.get("clientMessageId") == "device-command-1"
+                ]
+            ),
+            1,
+        )
+        self.service.close()
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config",
+                session_dir=self.root / "sessions",
+                logs_dir=self.root / "logs",
+            ),
+            process_id_provider=lambda: self.process_id,
+        )
+        with patch.object(self.service.runtime, "prompt") as replay_prompt:
+            replay = self.service.prompt(session_id, payload)
+        replay_prompt.assert_not_called()
+        self.assertNotIn("idempotentReplay", first)
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(replay["turnId"], first["turnId"])
+        with self.assertRaisesRegex(ValueError, "different command payload"):
+            self.service.prompt(
+                session_id,
+                {"message": "不能复用标识", "clientMessageId": "device-command-1"},
+            )
+
     def test_text_only_pi_model_rejects_managed_image_before_prompt(self) -> None:
         session = self.service.create_session({"title": "文本模型"})["session"]
         session_id = str(session["id"])

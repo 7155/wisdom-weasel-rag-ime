@@ -15,6 +15,7 @@ from typing import Callable, Mapping, Sequence
 SCHEMA_VERSION = "rag-ime.macos-uninstall.v1"
 LAUNCH_AGENT_LABELS = (
     "com.rag-ime.frontend",
+    "com.rag-ime.desktop-bridge",
     "com.rag-ime.memory-book-maintenance",
     "com.rag-ime.mlx-predictor",
     "com.rag-ime.sidecar",
@@ -22,6 +23,7 @@ LAUNCH_AGENT_LABELS = (
 )
 APP_BUNDLES = (
     ("RagImeControl.app", "com.rag-ime.control"),
+    ("RagImeDesktopBridge.app", "com.rag-ime.desktop-bridge"),
     ("RagImeVoice.app", "com.rag-ime.voice"),
 )
 RIME_MANAGED_BLOCKS = (

@@ -172,6 +172,62 @@ class AgentRoomTests(unittest.TestCase):
             list(range(3, 103)),
         )
 
+    def test_participant_public_cursor_prevents_reinjecting_old_room_messages(self) -> None:
+        room = self.store.create(
+            title="游标房间",
+            routing_policy="moderator",
+            participants=[
+                self._participant("zhiyou-v1", "智鼬"),
+                self._participant("hermes-v1", "Hermes"),
+            ],
+        )
+        participant_id = str(room["participants"][1]["id"])
+        room_id = str(room["id"])
+        topic_id = str(room["activeTopicId"])
+        for sequence in range(3):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="user_message",
+                payload={"text": f"消息 {sequence}"},
+                turn_id=f"turn:{sequence}",
+                topic_id=topic_id,
+            )
+
+        unread = self.store.unread_public_messages(
+            room_id,
+            participant_id,
+            topic_id=topic_id,
+            limit=2,
+        )
+        self.assertEqual(unread["omittedCount"], 1)
+        self.assertEqual(
+            [item["payload"]["text"] for item in unread["items"]],
+            ["消息 1", "消息 2"],
+        )
+        self.store.advance_delivery_cursor(
+            room_id,
+            participant_id,
+            topic_id=topic_id,
+            through_sequence=int(unread["throughSequence"]),
+        )
+        self.store.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "新消息"},
+            turn_id="turn:new",
+            topic_id=topic_id,
+        )
+
+        next_unread = self.store.unread_public_messages(
+            room_id,
+            participant_id,
+            topic_id=topic_id,
+        )
+        self.assertEqual(
+            [item["payload"]["text"] for item in next_unread["items"]],
+            ["新消息"],
+        )
+
     def test_empty_room_snapshot_has_zero_cursor(self) -> None:
         room = self.store.create(
             title="空房间",
@@ -368,7 +424,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         current_session = self.service.sessions.get(str(current["sessionId"]))
         future_session = self.service.sessions.get(str(future["sessionId"]))
         self.assertEqual(hermes_session["mode"], "coordinator")
-        self.assertEqual(hermes_session["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertEqual(hermes_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(current_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(future_session["modelProfile"], "openai/gpt-5.4")
         self.assertEqual(future_session["thinkingLevel"], "max")
@@ -382,14 +438,25 @@ class AgentRoomServiceTests(unittest.TestCase):
                     "clientMessageId": "room-client-1",
                 },
             )
+            replay = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "@智鼬·初识 请先诊断状态",
+                    "clientMessageId": "room-client-1",
+                },
+            )
         prompt.assert_called_once()
         self.assertEqual(prompt.call_args.args[0], str(hermes["sessionId"]))
         room_prompt = prompt.call_args.args[1]["message"]
-        self.assertIn("你是只读调研者", room_prompt)
+        self.assertIn("你是调研者", room_prompt)
+        self.assertIn("以当前 Session 的工具策略", room_prompt)
+        self.assertNotIn("不得写文件或运行 Shell", room_prompt)
         self.assertIn(str(self.root.resolve()), room_prompt)
         self.assertIn("@智鼬·初识 请先诊断状态", room_prompt)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(replay["roomTurnId"], accepted["roomTurnId"])
 
         self.service.events.publish(
             str(hermes["sessionId"]),
@@ -444,6 +511,37 @@ class AgentRoomServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)
+
+    def test_room_user_priority_is_released_when_turn_preparation_fails(self) -> None:
+        created = self.service.create_room(
+            {
+                "title": "异常恢复",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )
+        room = created["room"]
+        target = room["participants"][0]
+        with patch.object(
+            self.service.room_events,
+            "publish",
+            side_effect=RuntimeError("event store unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "event store unavailable"):
+                self.service.post_room_message(
+                    str(room["id"]),
+                    {
+                        "message": f"@{target['displayName']} 请检查状态",
+                        "participantIds": [str(target["id"])],
+                    },
+                )
+        self.assertNotIn(
+            str(target["sessionId"]),
+            self.service._room_user_priority_sessions,
+        )
 
     def test_room_rejects_duplicate_roles_and_archives_without_deleting_sessions(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be unique"):

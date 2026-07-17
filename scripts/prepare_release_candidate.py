@@ -21,6 +21,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--squirrel-source", default="/tmp/rag-ime-squirrel")
     parser.add_argument("--squirrel-app", default="/tmp/rag-ime-squirrel-derived-data/Build/Products/Release/Squirrel.app")
     parser.add_argument("--control-app", default=str(ROOT / "build" / "RagImeControl.app"))
+    parser.add_argument(
+        "--desktop-bridge-app",
+        default=str(ROOT / "build" / "RagImeDesktopBridge.app"),
+    )
     parser.add_argument("--voice-app", default=str(ROOT / "build" / "RagImeVoice.app"))
     args = parser.parse_args(argv)
     try:
@@ -29,7 +33,12 @@ def main(argv: list[str] | None = None) -> int:
             release_id=args.release_id,
             output_root=args.output,
             squirrel_source=args.squirrel_source,
-            apps={"squirrel": args.squirrel_app, "control": args.control_app, "voice": args.voice_app},
+            apps={
+                "squirrel": args.squirrel_app,
+                "control": args.control_app,
+                "desktopBridge": args.desktop_bridge_app,
+                "voice": args.voice_app,
+            },
         )
     except (OSError, RuntimeError, ValueError) as exc:
         report = {"ok": False, "error": str(exc)}

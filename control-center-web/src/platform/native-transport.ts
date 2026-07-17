@@ -15,6 +15,7 @@ import type {
   RagImeNativeMessageHandler,
 } from './native-bridge';
 import {
+  assertBrowserSnapshotId,
   assertControlRequest,
   assertControlSubscription,
   controlRequestWirePayload,
@@ -122,6 +123,11 @@ export class NativeControlTransport implements ControlTransport {
     const result = await this.call('request', controlRequestWirePayload(request), request.signal);
     const contract = request.responseContract ?? controlRoute(request.pathId).responseContract;
     return (contract ? parseContract(contract, result) : result) as Response;
+  }
+
+  browserSnapshotImageUrl(snapshotId: string): string {
+    assertBrowserSnapshotId(snapshotId);
+    return `http://127.0.0.1:8766/api/browser/snapshots/${encodeURIComponent(snapshotId)}/image`;
   }
 
   subscribe<Event = unknown>(

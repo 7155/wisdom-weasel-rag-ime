@@ -21,7 +21,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
         (upstream / "README.md").write_text("fake squirrel\n", encoding="utf-8")
         (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
             "import Foundation\nstruct RagImeSidecarRequest: Codable { let privacyDisposition: String }\n"
-            "struct RagImeDisplayCandidate { let displayLayout: String? }\n",
+            "struct RagImeDisplayCandidate { let displayLayout: String? }\n"
+            "struct RagImeWindowContextSnapshot {}\n",
             encoding="utf-8",
         )
         (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
@@ -44,6 +45,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed\n"
             "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle\n"
             "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens\n"
+            "  // captureWindowContext AXUIElementCopyMultipleAttributeValues\n"
             "}\n",
             encoding="utf-8",
         )
@@ -75,6 +77,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func foregroundSnapshot() { _ = \"ragImeSelectedTextProvider.captureForegroundTextForSidecar\" }",
                     "  func queuedForegroundSnapshot() { _ = \"ragImeForegroundContextResolver.captureFromAccessibility(\" }",
                     "  func probeRagImeForegroundPrivacyAndContext() { _ = \"privacy_probe_timeout\" }",
+                    '  // active_rag_window_context_capture_scheduled "usesScreenCapture": false',
                     "  func foregroundCaptureResolved() { _ = \"foreground_context_capture_resolved\" }",
                     "  func foregroundCaptureFailed() { _ = \"foreground_context_capture_failed\" }",
                     "  func sideCandidateFeedbackRecorded() { _ = \"side_candidate_feedback_recorded\" }",
@@ -234,7 +237,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "base"], cwd=upstream, check=True, capture_output=True, text=True)
 
             (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
-                "import CryptoKit\nimport Foundation\nstruct RagImeSidecarRequest: Codable { let privacyDisposition: String }\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
+                "import CryptoKit\nimport Foundation\nstruct RagImeSidecarRequest: Codable { let privacyDisposition: String }\nstruct RagImeDisplayCandidate { let displayLayout: String? }\nstruct RagImeWindowContextSnapshot {}\n",
                 encoding="utf-8",
             )
             (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
@@ -270,6 +273,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed",
                         "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle",
                         "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens",
+                        "  // captureWindowContext AXUIElementCopyMultipleAttributeValues",
                         "}",
                     ]
                 )
@@ -304,6 +308,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         '  func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }',
                         '  func queuedForegroundSnapshot() { _ = "ragImeForegroundContextResolver.captureFromAccessibility(" }',
                         '  func probeRagImeForegroundPrivacyAndContext() { _ = "privacy_probe_timeout" }',
+                        '  // active_rag_window_context_capture_scheduled "usesScreenCapture": false',
                         '  func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }',
                         '  func foregroundCaptureFailed() { _ = "foreground_context_capture_failed" }',
                         '  func sideCandidateFeedbackRecorded() { _ = "side_candidate_feedback_recorded" }',

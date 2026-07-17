@@ -296,7 +296,7 @@ class ControlCenterWebHostTests(unittest.TestCase):
             ({"transport": "mock"}, "console.log('native-only');\n"),
             ({"buildChannel": "preview"}, "console.log('native-only');\n"),
             ({}, "throw new Error('No mock response registered for system.health');\n"),
-            ({}, "const endpoint = 'http://127.0.0.1:8766';\n"),
+            ({}, "throw new Error('ControlTransportHttpError');\n"),
             ({}, "const session = 'session-preview';\n"),
             ({"previewFixturesExcluded": False}, "console.log('native-only');\n"),
         )
@@ -316,6 +316,24 @@ class ControlCenterWebHostTests(unittest.TestCase):
                         text=True,
                     )
                     self.assertNotEqual(result.returncode, 0)
+
+    def test_native_dist_guard_allows_the_browser_snapshot_image_route(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-browser-image-dist-") as temporary:
+            dist = Path(temporary)
+            _write_native_dist(
+                dist,
+                javascript=(
+                    "const image = "
+                    "'http://127.0.0.1:8766/api/browser/snapshots/snap_native/image';\n"
+                ),
+            )
+            result = subprocess.run(
+                ["bash", str(DIST_CHECK), str(dist), "native", "production"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_native_dist_guard_rejects_a_stale_source_commit(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-stale-dist-") as temporary:

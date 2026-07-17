@@ -148,6 +148,7 @@ class ActiveRagStartRequest:
     local_retrieval_skip_reason: str = ""
     rag_enabled_lanes: tuple[tuple[str, bool], ...] = ()
     rag_lane_weights: tuple[tuple[str, float], ...] = ()
+    window_context: dict[str, object] = field(default_factory=dict)
     visual_context: dict[str, object] = field(default_factory=dict)
 
 
@@ -686,6 +687,7 @@ class ActiveRagService:
             reserved_output_tokens=int(context_preferences.get("reservedOutputTokens") or 1024),
             recent_input_baseline=int(context_preferences.get("recentInputBaseline") or 20),
             recent_input_maximum=int(context_preferences.get("recentInputMaximum") or 80),
+            window_context=request.window_context,
         )
         packet_current_input = context_packet.get("currentInput") if isinstance(context_packet.get("currentInput"), dict) else {}
         injected_context = compact_whitespace(str(packet_current_input.get("committedTail") or effective_context))

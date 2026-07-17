@@ -13,6 +13,50 @@ from rag_ime.text_utils import stable_text_hash
 
 
 class ActiveRagDebugServerTests(unittest.TestCase):
+    def test_debug_service_normalizes_accessibility_window_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=Path(temp_dir) / "active-rag-window.sqlite",
+                    seed_if_empty=False,
+                )
+            )
+            request = service._active_rag_request_from_payload(
+                {
+                    "selectedText": "结合当前窗口继续写",
+                    "privacyDisposition": "allowed",
+                    "windowContext": {
+                        "schemaVersion": "rag-ime.window-context.v1",
+                        "captureMode": "accessibility_semantics",
+                        "snapshotId": "axsnap_1",
+                        "revision": 2,
+                        "privacyDisposition": "allowed",
+                        "application": {
+                            "pid": 42,
+                            "bundleId": "app.test",
+                            "name": "Test",
+                            "windowTitle": "项目计划",
+                        },
+                        "focusedNodeRef": "ax_text",
+                        "nodes": [
+                            {
+                                "nodeRef": "ax_text",
+                                "parentRef": "",
+                                "depth": 0,
+                                "role": "AXTextArea",
+                                "label": "正文",
+                                "value": "真实窗口语义",
+                                "focused": True,
+                            }
+                        ],
+                    },
+                }
+            )
+
+        self.assertEqual(request.window_context["captureMode"], "accessibility_semantics")
+        self.assertEqual(request.window_context["application"]["windowTitle"], "项目计划")
+        self.assertEqual(request.window_context["nodes"][0]["value"], "真实窗口语义")
+
     def test_debug_service_blocks_sensitive_active_rag_without_storing_hash_or_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service = DebugImeService(

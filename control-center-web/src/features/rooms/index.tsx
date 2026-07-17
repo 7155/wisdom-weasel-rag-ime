@@ -38,6 +38,34 @@ export type RoomKind = 'collaboration' | 'roleplay';
 export type RoomRoutingPolicy = 'moderator' | 'manual_mentions' | 'sequential' | 'natural' | 'invite_only';
 export interface RoomTopic { id: string; roomId: string; title: string; summary: string; status: 'active' | 'archived'; ordinal: number; createdAtMs: number; updatedAtMs: number; }
 export interface RoomArtifact { id: string; roomId: string; topicId: string; displayName: string; path: string; mediaType: string; status: 'active' | 'archived'; createdAtMs: number; updatedAtMs: number; }
+export type RoomWorkState = 'queued' | 'active' | 'review' | 'blocked' | 'done' | 'failed' | 'cancelled';
+export interface RoomWorkItem {
+  id: string;
+  roomId: string;
+  topicId: string;
+  rootTurnId: string;
+  rootWorkId: string;
+  parentWorkId: string;
+  objective: string;
+  expectedOutput: string;
+  acceptanceCriteria: string[];
+  accountableParticipantId: string;
+  currentOwnerParticipantId: string;
+  offeredToParticipantId: string;
+  createdByParticipantId: string;
+  clientMessageId: string;
+  state: RoomWorkState;
+  depth: number;
+  revision: number;
+  resultSummary: string;
+  artifactRefs: string[];
+  evidenceRefs: string[];
+  blocker: Record<string, unknown>;
+  acceptedTurnId: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  completedAtMs: number | null;
+}
 export interface RoomSummary {
   id: string;
   title: string;
@@ -54,6 +82,7 @@ export interface RoomSummary {
   workspaceRoots?: string[];
   topics?: RoomTopic[];
   artifacts?: RoomArtifact[];
+  workItems?: RoomWorkItem[];
   updatedAtMs: number;
   participants: RoomParticipant[];
 }
@@ -228,7 +257,10 @@ export function RoomsFeature() {
             next: (event) => {
               if (!active || subscriptionGeneration !== generation) return;
               batcher.push(event);
-              if (['room_config_changed', 'topic_changed', 'artifact_changed'].includes(event.eventType)) {
+              if (
+                ['room_config_changed', 'topic_changed', 'artifact_changed'].includes(event.eventType)
+                || (event.eventType === 'participant_activity' && event.payload.activityKind === 'work')
+              ) {
                 scheduleSnapshotReload();
               }
             },
@@ -263,6 +295,7 @@ export function RoomsFeature() {
   const room = rooms.find((item) => item.id === selectedId);
   const visibleTurnOrder = projection.roomId === selectedId ? projection.turnOrder : [];
   const roomCanSend = room?.status === 'active';
+  const activeWork = room?.workItems?.find((work) => ['blocked', 'review', 'active', 'queued'].includes(work.state));
   const hasManualMention = Boolean(room && room.routingPolicy === 'manual_mentions' && room.participants.some((participant) => draft.includes(`@${participant.displayName}`)));
   const hasInvite = Boolean(room && room.routingPolicy === 'invite_only' && room.participants.some((participant) => participant.id === invitedParticipantId));
   const canSend = Boolean(
@@ -693,7 +726,7 @@ export function RoomsFeature() {
             <IconButton label="管理 Room 话题" icon={<Plus size={14} />} disabled={topicSaving} onClick={() => { setTopicError(''); setTopicsOpen(true); }} tooltip />
           </div>
           <div className="room-context-actions">
-            <span>{room.description || (room.roomKind === 'roleplay' ? '自然多角色交流' : '共享工作区协作')}</span>
+            {activeWork ? <span className="room-work-summary" data-state={activeWork.state} title={activeWork.objective}><GitBranch size={13} />{roomWorkStateLabel(activeWork.state)} · {participantName(room, activeWork.currentOwnerParticipantId)} · {activeWork.objective}</span> : <span>{room.description || (room.roomKind === 'roleplay' ? '自然多角色交流' : '共享工作区协作')}</span>}
             {room.roomKind !== 'roleplay' ? <IconButton label="添加共享文件" icon={artifactPicking ? <LoaderCircle className="ui-spin" size={15} /> : <FilePlus2 size={15} />} disabled={artifactPicking || room.status !== 'active'} onClick={() => void addRoomArtifact()} tooltip /> : null}
           </div>
         </div> : <div aria-hidden="true" className="room-context-bar room-context-bar--empty" />}
@@ -919,10 +952,26 @@ function uniquePaths(values: string[]): string[] { return values.map((value) => 
 function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }
 function roomPathName(room: RoomSummary): string { return room.workspaceRoots?.[0] ? pathName(room.workspaceRoots[0]) : '未绑定项目'; }
 function roomRoleLabel(roleId: string, moderatorRoleId: string): string {
-  if (roleId === moderatorRoleId) return roleId === 'hermes-v1' ? '调控 · 只读' : '调控者';
-  if (roleId === 'hermes-v1') return '只读调研';
+  if (roleId === moderatorRoleId) return '调控者';
+  if (roleId === 'hermes-v1') return '调研者';
   if (roleId === 'zhiyou-v1') return '执行者';
   return '协作角色';
+}
+
+function participantName(room: RoomSummary, participantId: string): string {
+  return room.participants.find((participant) => participant.id === participantId)?.displayName ?? '待接收';
+}
+
+function roomWorkStateLabel(state: RoomWorkState): string {
+  return {
+    queued: '待接收',
+    active: '执行中',
+    review: '待验收',
+    blocked: '已阻塞',
+    done: '已完成',
+    failed: '未完成',
+    cancelled: '已取消',
+  }[state];
 }
 
 function roomAvatarOptions(): { value: string; label: string }[] {

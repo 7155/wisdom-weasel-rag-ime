@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAIN="gui/$(id -u)"
 
-for label in com.rag-ime.sidecar com.rag-ime.mlx-predictor; do
+for label in com.rag-ime.sidecar com.rag-ime.mlx-predictor com.rag-ime.desktop-bridge; do
   plist="$HOME/Library/LaunchAgents/$label.plist"
   launchctl bootout "$DOMAIN" "$plist" >/dev/null 2>&1 || true
   launchctl disable "$DOMAIN/$label" >/dev/null 2>&1 || true
@@ -14,6 +14,8 @@ done
 pkill -f 'sidecar_launch.py.*mlx-predictor-server' >/dev/null 2>&1 || true
 pkill -f 'sidecar_launch.py.*sidecar-server' >/dev/null 2>&1 || true
 pkill -f 'rag_ime.cli mlx-predictor-server' >/dev/null 2>&1 || true
+pkill -f '/Contents/MacOS/RagImeDesktopBridge([[:space:]]|$)' >/dev/null 2>&1 || true
+rm -f "${RAG_IME_DESKTOP_BRIDGE_SOCKET:-${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}/desktop-bridge.sock}"
 pkill -f '/Library/Input Methods/RAG-IME.app|RAG-IME.app|im.rag-ime.inputmethod.RagIme' >/dev/null 2>&1 || true
 pkill -f "$HOME/Library/Input Methods/Squirrel.app/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
 
