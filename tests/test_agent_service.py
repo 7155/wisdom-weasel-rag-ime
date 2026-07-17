@@ -1250,6 +1250,15 @@ class AgentServiceTests(unittest.TestCase):
                 session_id,
                 {"message": "不能复用标识", "clientMessageId": "device-command-1"},
             )
+        with self.assertRaisesRegex(ValueError, "different command payload"):
+            self.service.prompt(
+                session_id,
+                {
+                    "message": "只执行一次",
+                    "delivery": "steer",
+                    "clientMessageId": "device-command-1",
+                },
+            )
 
     def test_text_only_pi_model_rejects_managed_image_before_prompt(self) -> None:
         session = self.service.create_session({"title": "文本模型"})["session"]
@@ -1275,6 +1284,48 @@ class AgentServiceTests(unittest.TestCase):
                     {"message": "看看图片", "attachments": [imported["mediaId"]]},
                 )
         prompt.assert_not_called()
+
+    def test_steer_and_follow_up_delivery_reuse_the_active_turn_and_are_visible(self) -> None:
+        session = self.service.create_session({"title": "排队消息"})["session"]
+        session_id = str(session["id"])
+        for delivery in ("steer", "followUp"):
+            client_message_id = f"web-{delivery}"
+            with patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "queued": True,
+                    "delivery": delivery,
+                    "turnId": "turn:active:1",
+                    "piEntryId": f"queue:{client_message_id}",
+                    "response": {"success": True},
+                },
+            ) as prompt:
+                result = self.service.prompt(
+                    session_id,
+                    {
+                        "message": f"{delivery} message",
+                        "delivery": delivery,
+                        "clientMessageId": client_message_id,
+                    },
+                )
+
+            self.assertEqual(prompt.call_args.kwargs["delivery"], delivery)
+            self.assertEqual(result["turnId"], "turn:active:1")
+
+        events, _ = self.service.events.replay(session_id)
+        user_messages = [
+            event.payload["message"] for event in events
+            if event.event_type == "message_completed"
+        ]
+        self.assertEqual(
+            [message["blocks"][0]["data"]["delivery"] for message in user_messages],
+            ["steer", "followUp"],
+        )
+        self.assertEqual({message["turnId"] for message in user_messages}, {"turn:active:1"})
+        with self.assertRaisesRegex(ValueError, "delivery"):
+            self.service.prompt(session_id, {"message": "bad", "delivery": "later"})
 
     def test_persisted_runtime_toggle_is_used_unless_development_env_overrides_it(self) -> None:
         settings = {"agent": {"pi": {"enabled": True, "idleTimeoutSeconds": 321}}}

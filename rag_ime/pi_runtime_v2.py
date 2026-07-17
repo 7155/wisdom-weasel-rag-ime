@@ -25,6 +25,7 @@ from .pi_runtime import (
     _last_assistant_error,
     _last_assistant_preview,
     _mapping,
+    _message_delivery,
     _model_reference_part,
     _pi_message_id,
     _pi_message_is_public,
@@ -32,6 +33,7 @@ from .pi_runtime import (
     _public_fork_candidate_text,
     _public_code_tool_activity,
     _public_pi_model,
+    _public_message_queue,
     _public_usage,
     _redact_mapping,
     _redact_runtime_text,
@@ -463,12 +465,12 @@ class PiRuntimeHostManager:
         *,
         images: list[Mapping[str, str]] | None = None,
         client_message_id: str = "",
+        delivery: str = "prompt",
     ) -> dict[str, object]:
         text = str(message).strip()
         if not text:
             raise ValueError("agent prompt must not be empty")
-        self.ensure(session_id)
-        client = self._require_client()
+        normalized_delivery = _message_delivery(delivery)
         params: dict[str, object] = {
             "sessionId": session_id,
             "message": text,
@@ -476,6 +478,32 @@ class PiRuntimeHostManager:
         }
         if images:
             params["images"] = [dict(image) for image in images]
+        if normalized_delivery != "prompt":
+            with self._lock:
+                state = self._states.setdefault(session_id, _HostedSessionState())
+                turn_id = state.turn_id
+                if not turn_id or state.abort_requested_turn_id:
+                    raise PiRuntimeError("Pi 当前没有可接收排队消息的活动回合")
+                self._cancel_idle_locked()
+            client = self._require_client()
+            method = "session.steer" if normalized_delivery == "steer" else "session.follow_up"
+            response = client.send(method, params)
+            response_turn_id = str(response.get("turnId") or turn_id)
+            if response_turn_id != turn_id:
+                raise PiRuntimeError("Pi 返回了不匹配的排队消息回合")
+            result: dict[str, object] = {
+                "accepted": True,
+                "queued": True,
+                "delivery": normalized_delivery,
+                "turnId": turn_id,
+                "piEntryId": f"queue:{str(client_message_id).strip()}" if client_message_id else "",
+                "response": response,
+            }
+            if client_message_id:
+                result["clientMessageId"] = str(client_message_id).strip()
+            return result
+        self.ensure(session_id)
+        client = self._require_client()
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             if state.turn_id:
@@ -516,7 +544,7 @@ class PiRuntimeHostManager:
             self.ensure(session_id)
             snapshot = self._require_client().send("session.snapshot", {"sessionId": session_id})
         except AgentRuntimeError:
-            return {"messages": [], "telemetry": None}
+            return {"messages": [], "telemetry": None, "messageQueue": None}
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
         result: list[dict[str, object]] = []
         current_turn_id = ""
@@ -537,9 +565,17 @@ class PiRuntimeHostManager:
                 ).to_payload()
             )
         telemetry = snapshot.get("telemetry")
+        raw_queue = _mapping(snapshot.get("messageQueue"))
+        message_queue = {
+            "steering": _public_message_queue(raw_queue.get("steering")),
+            "followUp": _public_message_queue(raw_queue.get("followUp")),
+            "steeringMode": str(raw_queue.get("steeringMode") or ""),
+            "followUpMode": str(raw_queue.get("followUpMode") or ""),
+        }
         return {
             "messages": result,
             "telemetry": dict(telemetry) if isinstance(telemetry, Mapping) else None,
+            "messageQueue": message_queue,
         }
 
     def debug_context(self, session_id: str, turn_id: str = "") -> dict[str, object]:
@@ -1142,6 +1178,17 @@ class PiRuntimeHostManager:
                     "message": message.to_payload(),
                     "usage": _public_usage(raw.get("message")),
                     "telemetry": dict(_mapping(raw.get("telemetry"))),
+                },
+                turn_id=turn_id,
+            )
+            return
+        if event_type == "queue_update":
+            self.events.publish(
+                session_id,
+                "message_queue_updated",
+                {
+                    "steering": _public_message_queue(raw.get("steering")),
+                    "followUp": _public_message_queue(raw.get("followUp")),
                 },
                 turn_id=turn_id,
             )

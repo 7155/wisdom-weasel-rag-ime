@@ -17,6 +17,7 @@ export interface AgentEventV1 {
     | 'reasoning_summary'
     | 'status_changed'
     | 'session_configuration_changed'
+    | 'message_queue_updated'
     | 'tool_started'
     | 'tool_progress'
     | 'tool_finished'

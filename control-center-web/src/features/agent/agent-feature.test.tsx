@@ -539,6 +539,46 @@ describe('Agent experience', () => {
     expect(prompt?.request.body).toMatchObject({ message: '检查 reducer 边界' });
   });
 
+  it('queues native steer and follow-up messages on the active turn', async () => {
+    const busySnapshot = {
+      ...previewAgentSnapshot('session-preview'),
+      status: 'working',
+      messageQueue: { steering: [], followUp: [] },
+    };
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder.length,
+    ).toBeGreaterThan(0));
+    act(() => useAgentLiveStore.getState().hydrateSnapshot('session-preview', busySnapshot));
+    await screen.findByRole('radiogroup', { name: '消息投递方式' });
+    await user.type(composer, '先停止继续搜索，直接核对实现');
+    await user.click(screen.getByRole('button', { name: '干预当前执行' }));
+
+    await user.click(screen.getByRole('radio', { name: '接续' }));
+    await user.type(composer, '完成后再整理测试结果');
+    await user.click(screen.getByRole('button', { name: '当前执行完成后接续' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(2));
+    const prompts = transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt');
+    expect(prompts[0]?.request.body).toMatchObject({
+      message: '先停止继续搜索，直接核对实现',
+      delivery: 'steer',
+    });
+    expect(prompts[1]?.request.body).toMatchObject({
+      message: '完成后再整理测试结果',
+      delivery: 'followUp',
+    });
+    expect(screen.getByText('干预当前执行')).toBeInTheDocument();
+    expect(screen.getByText('完成后接续')).toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.session.abort')).toBe(false);
+  });
+
   it('renders a bordered assistant placeholder immediately while the prompt request is pending', async () => {
     const pendingPrompt = new Promise(() => {});
     const transport = featureTransport(

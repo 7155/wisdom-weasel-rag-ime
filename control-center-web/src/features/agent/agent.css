@@ -149,6 +149,8 @@
 .agent-user-message { width: fit-content; max-width: 100%; padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--color-info) 16%, var(--color-border)); border-radius: 8px 8px 2px 8px; background: color-mix(in srgb, var(--color-info-soft) 72%, var(--color-surface)); color: var(--color-text); animation: agent-message-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-user-message .agent-markdown > :first-child, .agent-user-message .agent-markdown > :last-child { margin-block: 0; }
 .agent-user-message > small { display: block; margin-top: 6px; color: var(--color-text-tertiary); font-size: 13px; }
+.agent-user-message > .agent-user-message__delivery { width: max-content; border-left: 2px solid var(--color-accent); padding-left: 6px; color: var(--color-text-secondary); font-size: 12px; }
+.agent-user-message > .agent-user-message__delivery[data-delivery='followUp'] { border-left-color: var(--color-success); }
 .agent-message-actions { position: absolute; top: calc(100% + 3px); right: 0; display: flex; justify-content: flex-end; opacity: 0; transition: opacity var(--duration-enter) var(--ease-standard); }
 .agent-user-message-shell:hover .agent-message-actions,
 .agent-user-message-shell:focus-within .agent-message-actions,
@@ -415,16 +417,21 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-composer__edit > span { display: grid; min-width: 0; gap: 1px; }
 .agent-composer__edit strong { color: var(--color-text); font-size: 13px; }
 .agent-composer__edit small { overflow: hidden; color: var(--color-text-secondary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.agent-composer__toolbar { display: grid; min-height: 42px; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; gap: 7px; padding: 4px 7px 7px; }
+.agent-composer__toolbar { display: grid; min-height: 42px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 4px 7px 7px; }
 .agent-composer__controls { display: flex; min-width: 0; align-items: center; gap: 3px; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; }
 .agent-composer__controls::-webkit-scrollbar { display: none; }
+.agent-composer__delivery { display: inline-flex; flex: none; overflow: hidden; margin-left: 3px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); }
+.agent-composer__delivery button { min-width: 44px; height: 27px; border: 0; border-right: 1px solid var(--color-border); padding: 0 8px; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.agent-composer__delivery button:last-child { border-right: 0; }
+.agent-composer__delivery button[data-active='true'] { background: var(--color-surface); color: var(--color-text); font-weight: 650; box-shadow: inset 0 -2px 0 var(--color-accent); }
+.agent-composer__delivery button:disabled { cursor: default; opacity: .55; }
+.agent-composer__actions { display: flex; align-items: center; gap: 5px; }
 .agent-composer__picker { max-width: 240px; flex: 0 1 auto; }
 .agent-composer__picker .ui-button__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-composer__attachment { flex: 0 0 auto; border: 1px solid var(--color-border); background: var(--color-surface-subtle); color: var(--color-text-secondary); }
 .agent-composer__attachment:disabled { opacity: .62; }
 .agent-composer__send { width: 34px; height: 34px; border-radius: 50%; background: var(--color-text); color: var(--color-surface); }
-.agent-composer[data-busy] .agent-composer__send { background: var(--color-warning); }
-.agent-composer[data-busy] .agent-composer__send > span { animation: agent-status-breathe var(--duration-status-pulse) var(--ease-standard) infinite; }
+.agent-composer__stop { width: 34px; height: 34px; border-radius: 50%; color: var(--color-warning); }
 .agent-composer__attachments { display: flex; gap: 5px; padding: 8px 9px 0; overflow-x: auto; }
 .agent-composer__attachments > span { display: inline-flex; height: 28px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 5px 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-round); background: var(--color-surface-subtle); font-size: 13px; animation: agent-attachment-enter var(--duration-enter) var(--ease-standard) both; }
 .agent-composer__attachments button { display: grid; width: 18px; height: 18px; place-items: center; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
@@ -515,6 +522,10 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-status-section > header { display: grid; min-height: 24px; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 6px; margin-bottom: 7px; color: var(--color-text-secondary); }
 .agent-status-section > header strong { color: var(--color-text); font-size: 13px; }
 .agent-status-section > header span { min-width: 20px; padding: 1px 5px; border-radius: var(--radius-round); background: var(--color-surface); color: var(--color-text-tertiary); font: 600 13px var(--font-mono); text-align: center; }
+.agent-status-message-queue { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.agent-status-message-queue li { display: grid; min-width: 0; grid-template-columns: 34px minmax(0, 1fr); align-items: start; gap: 7px; font-size: 13px; }
+.agent-status-message-queue b { color: var(--color-accent); font-size: 12px; }
+.agent-status-message-queue span { display: -webkit-box; overflow: hidden; color: var(--color-text-secondary); -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .agent-session-telemetry { display: grid; min-width: 0; gap: 11px; padding-top: 2px; }
 .agent-session-telemetry__model { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
 .agent-session-telemetry__model > span { display: grid; min-width: 0; gap: 1px; }
@@ -825,7 +836,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-persona-avatar { width: 30px; height: 30px; }
   .agent-composer-wrap { padding: 6px 9px 10px; }
   .agent-composer textarea { min-height: 64px; padding-inline: 12px; }
-  .agent-composer__toolbar { grid-template-columns: minmax(0, 1fr) 34px; }
+  .agent-composer__toolbar { grid-template-columns: minmax(0, 1fr) auto; }
   .agent-composer__controls { padding-bottom: 1px; }
   .agent-composer__picker { max-width: 164px; flex: 0 0 auto; }
   .agent-command-palette { right: 9px; left: 9px; }
@@ -854,7 +865,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 }
 
 @media (max-width: 520px) {
-  .agent-composer__controls { overflow-x: hidden; }
+  .agent-composer__controls { overflow-x: auto; }
   .agent-composer__picker { width: 34px; min-width: 34px; max-width: 34px; flex: 0 0 34px; justify-content: center; padding-inline: 0; }
   .agent-composer__picker .ui-button__label { display: none; }
 }
@@ -907,8 +918,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
   .agent-status-empty[data-animated] > svg,
   .agent-fork-dialog__state svg,
-  .agent-fork-dialog footer button[data-loading='true'] svg,
-  .agent-composer[data-busy] .agent-composer__send > span {
+  .agent-fork-dialog footer button[data-loading='true'] svg {
     animation: none;
     opacity: 1;
   }
@@ -933,8 +943,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-empty[data-animated] > svg,
 :root[data-reduce-motion='true'] .agent-fork-dialog__state svg,
-:root[data-reduce-motion='true'] .agent-fork-dialog footer button[data-loading='true'] svg,
-:root[data-reduce-motion='true'] .agent-composer[data-busy] .agent-composer__send > span {
+:root[data-reduce-motion='true'] .agent-fork-dialog footer button[data-loading='true'] svg {
   animation: none;
   opacity: 1;
 }

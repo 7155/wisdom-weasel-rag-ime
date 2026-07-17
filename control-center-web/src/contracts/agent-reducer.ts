@@ -78,6 +78,12 @@ export interface AgentProjectionState {
   optimisticByClientMessageId: Record<string, string>;
   diagnostics: ProjectionDiagnostic[];
   telemetry?: AgentSessionTelemetryV1;
+  messageQueue: AgentMessageQueue;
+}
+
+export interface AgentMessageQueue {
+  steering: string[];
+  followUp: string[];
 }
 
 export type ProjectionDisposition =
@@ -99,6 +105,7 @@ export interface AgentSnapshot {
   resumeToken: string;
   status?: string;
   telemetry?: unknown;
+  messageQueue?: unknown;
 }
 
 export interface OptimisticAgentMessageInput {
@@ -106,6 +113,8 @@ export interface OptimisticAgentMessageInput {
   text: string;
   attachments?: string[];
   nowMs: number;
+  turnId?: string;
+  delivery?: 'prompt' | 'steer' | 'followUp';
 }
 
 const diagnosticLimit = 50;
@@ -127,6 +136,7 @@ export function createAgentProjection(sessionId: string): AgentProjectionState {
     optimisticByClientMessageId: {},
     diagnostics: [],
     telemetry: undefined,
+    messageQueue: { steering: [], followUp: [] },
   };
 }
 
@@ -200,6 +210,9 @@ export function reduceAgentEvent(
     case 'status_changed':
       next.status = text(payload.status) || next.status;
       touchTurn(next, event.turnId, turnStatusFromRuntime(next.status), event.createdAtMs);
+      break;
+    case 'message_queue_updated':
+      next.messageQueue = parseMessageQueue(payload);
       break;
     case 'reasoning_summary':
       upsertActivity(next, event, payload, 'completed');
@@ -290,7 +303,8 @@ export function appendOptimisticAgentMessage(
 
   const next = cloneState(state);
   const messageId = `local:${input.clientMessageId}`;
-  const turnId = `local-turn:${input.clientMessageId}`;
+  const turnId = input.turnId || `local-turn:${input.clientMessageId}`;
+  const existingTurnStatus = next.turnsById[turnId]?.status;
   const message: UiAgentMessage = {
     schemaVersion: 'rag-ime.agent-message.v1',
     id: messageId,
@@ -304,7 +318,10 @@ export function appendOptimisticAgentMessage(
         type: 'text',
         status: 'completed',
         presentationKind: 'plain_text',
-        data: { text: input.text },
+        data: {
+          text: input.text,
+          ...(input.delivery && input.delivery !== 'prompt' ? { delivery: input.delivery } : {}),
+        },
       },
     ],
     attachments: [...(input.attachments ?? [])],
@@ -317,7 +334,7 @@ export function appendOptimisticAgentMessage(
   next.messageOrder.push(messageId);
   next.optimisticByClientMessageId[input.clientMessageId] = messageId;
   attachMessageToTurn(next, message);
-  touchTurn(next, turnId, 'queued', input.nowMs);
+  if (!existingTurnStatus) touchTurn(next, turnId, 'queued', input.nowMs);
   next.status = 'busy';
   return next;
 }
@@ -358,6 +375,7 @@ export function applyAgentSnapshot(
   let next = createAgentProjection(state.sessionId);
   next.status = snapshot.status ?? state.status;
   next.telemetry = parseTelemetry(snapshot.telemetry) ?? state.telemetry;
+  next.messageQueue = parseMessageQueue(snapshot.messageQueue);
 
   const serverClientIds = new Set<string>();
   for (const rawMessage of snapshot.messages) {
@@ -456,6 +474,7 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
     resumeToken: text(payload.resumeToken ?? payload.lastEventId),
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
     ...(payload.telemetry === undefined ? {} : { telemetry: payload.telemetry }),
+    ...(payload.messageQueue === undefined ? {} : { messageQueue: payload.messageQueue }),
   };
 }
 
@@ -989,6 +1008,10 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
     activityOrder: [...state.activityOrder],
     optimisticByClientMessageId: { ...state.optimisticByClientMessageId },
     diagnostics: [...state.diagnostics],
+    messageQueue: {
+      steering: [...state.messageQueue.steering],
+      followUp: [...state.messageQueue.followUp],
+    },
     ...(state.gap ? { gap: { ...state.gap } } : {}),
   };
 }
@@ -1012,6 +1035,18 @@ function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function parseMessageQueue(value: unknown): AgentMessageQueue {
+  const source = record(value);
+  return {
+    steering: Array.isArray(source.steering)
+      ? source.steering.filter((item): item is string => typeof item === 'string')
+      : [],
+    followUp: Array.isArray(source.followUp)
+      ? source.followUp.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
 }
 
 function text(value: unknown): string {

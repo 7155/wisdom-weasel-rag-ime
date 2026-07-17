@@ -137,4 +137,50 @@ describe('AgentComposer macOS input methods', () => {
     fireEvent.keyDown(composer, { key: 'Escape' });
     expect(onEditPrevious).toHaveBeenCalledTimes(1);
   });
+
+  it('sends native steering and follow-up messages while keeping stop separate', () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    const { container } = render(
+      <TooltipProvider>
+        <AgentComposer
+          draft="补充要求"
+          attachments={[]}
+          session={previewSessions[0]}
+          commands={[]}
+          tools={[]}
+          toolCatalogStatus="ready"
+          imageSupport="supported"
+          busy
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={() => {}}
+          onToolSelect={() => {}}
+          onProductCommand={() => {}}
+          onSend={onSend}
+          onStop={onStop}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
+          onModelChange={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    const view = within(container);
+    const composer = view.getByRole('textbox', { name: '消息' });
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
+    expect(onSend).toHaveBeenLastCalledWith('steer');
+
+    fireEvent.click(view.getByRole('radio', { name: '接续' }));
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
+    expect(onSend).toHaveBeenLastCalledWith('followUp');
+
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', altKey: true });
+    expect(onSend).toHaveBeenLastCalledWith('followUp');
+    fireEvent.click(view.getByRole('button', { name: '停止本轮' }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(view.getByRole('button', { name: '添加图片' })).toBeEnabled();
+  });
 });

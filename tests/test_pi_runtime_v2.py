@@ -61,6 +61,8 @@ for line in sys.stdin:
             "sessionFile": str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
             "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
+            "messageQueue": {"steering": [], "followUp": [], "steeringMode": "one-at-a-time",
+                             "followUpMode": "one-at-a-time"},
         })
         result(request, {"snapshot": session, "evictedSessionId": None})
     elif method == "session.snapshot":
@@ -100,6 +102,17 @@ for line in sys.stdin:
         event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
         time.sleep(0.15)
         event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
+    elif method in {"session.steer", "session.follow_up"}:
+        turn_id = "turn-" + session_id
+        queue = sessions[session_id]["messageQueue"]
+        key = "steering" if method == "session.steer" else "followUp"
+        queue[key].append(params["message"])
+        delivery = "steer" if method == "session.steer" else "followUp"
+        result(request, {"accepted": True, "queued": True, "delivery": delivery,
+                         "turnId": turn_id, "messageQueue": queue})
+        event(session_id, turn_id, params.get("clientMessageId", ""),
+              {"type": "queue_update", "steering": queue["steering"],
+               "followUp": queue["followUp"]})
     elif method == "session.fork.candidates":
         result(request, {"items": sessions[session_id].get("forkItems", [])})
     elif method == "session.fork":
@@ -422,6 +435,46 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         with self.assertRaisesRegex(PiRuntimeError, "上一轮"):
             self.runtime.prompt(session_id, "不要覆盖旧回合")
+
+    def test_busy_turn_accepts_native_steer_and_follow_up_messages(self) -> None:
+        session_id = str(self.first["id"])
+        active = self.runtime.prompt(session_id, "hang-without-settled", client_message_id="initial")
+
+        steered = self.runtime.prompt(
+            session_id,
+            "先不要修改配置",
+            client_message_id="steer-1",
+            delivery="steer",
+        )
+        followed = self.runtime.prompt(
+            session_id,
+            "完成后再给我测试结果",
+            client_message_id="follow-1",
+            delivery="followUp",
+        )
+
+        self.assertEqual(steered["turnId"], active["turnId"])
+        self.assertEqual(followed["turnId"], active["turnId"])
+        self.assertTrue(steered["queued"])
+        self.assertEqual(followed["delivery"], "followUp")
+        _wait_until(
+            lambda: len([
+                item for item in self.events.replay(session_id)[0]
+                if item.event_type == "message_queue_updated"
+            ]) >= 2
+        )
+        queue_events = [
+            item for item in self.events.replay(session_id)[0]
+            if item.event_type == "message_queue_updated"
+        ]
+        self.assertEqual(queue_events[-1].payload["steering"], ["先不要修改配置"])
+        self.assertEqual(queue_events[-1].payload["followUp"], ["完成后再给我测试结果"])
+        snapshot = self.runtime.session_snapshot(session_id)
+        self.assertEqual(snapshot["messageQueue"]["steering"], ["先不要修改配置"])
+        self.assertEqual(snapshot["messageQueue"]["followUp"], ["完成后再给我测试结果"])
+        requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
+        self.assertIn("session.steer", [row["method"] for row in requests])
+        self.assertIn("session.follow_up", [row["method"] for row in requests])
 
     def test_abort_ack_without_agent_settled_retires_only_the_old_turn(self) -> None:
         session_id = str(self.first["id"])

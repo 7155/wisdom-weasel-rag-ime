@@ -10,6 +10,7 @@ import {
   ExternalLink,
   ListChecks,
   LoaderCircle,
+  MessagesSquare,
   Paperclip,
   PanelRightClose,
   Radar,
@@ -106,6 +107,10 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
               ))}
             </ol>
           ) : null}
+        </StatusSection>
+
+        <StatusSection icon={MessagesSquare} title="消息队列" count={(projection?.messageQueue.steering.length ?? 0) + (projection?.messageQueue.followUp.length ?? 0)}>
+          <MessageQueueView projection={projection} />
         </StatusSection>
 
         <StatusSection icon={Gauge} title="上下文与用量" count={projection?.telemetry?.compactionCount ?? 0}>
@@ -237,6 +242,18 @@ function SessionTelemetryView({ projection }: { projection?: AgentProjectionStat
         </div>
       ) : null}
     </div>
+  );
+}
+
+function MessageQueueView({ projection }: { projection?: AgentProjectionState }) {
+  const steering = projection?.messageQueue.steering ?? [];
+  const followUp = projection?.messageQueue.followUp ?? [];
+  if (!steering.length && !followUp.length) return <EmptyLine>当前没有待处理消息</EmptyLine>;
+  return (
+    <ol className="agent-status-message-queue">
+      {steering.map((message, index) => <li key={`steer:${index}:${message}`}><b>干预</b><span>{message}</span></li>)}
+      {followUp.map((message, index) => <li key={`follow:${index}:${message}`}><b>接续</b><span>{message}</span></li>)}
+    </ol>
   );
 }
 

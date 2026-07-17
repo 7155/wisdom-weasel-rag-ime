@@ -2146,6 +2146,11 @@ class AgentService:
             if isinstance(runtime_snapshot, Mapping) and isinstance(runtime_snapshot.get("telemetry"), Mapping)
             else None
         )
+        message_queue = (
+            runtime_snapshot.get("messageQueue")
+            if isinstance(runtime_snapshot, Mapping) and isinstance(runtime_snapshot.get("messageQueue"), Mapping)
+            else None
+        )
         replayed, _gap = self.events.replay(session_id)
         live_events = [
             event.to_payload()
@@ -2220,6 +2225,7 @@ class AgentService:
             "lastSequence": last_sequence,
             "resumeToken": f"{session_id}:{last_sequence}" if last_sequence else "",
             "telemetry": dict(telemetry) if isinstance(telemetry, Mapping) else None,
+            "messageQueue": dict(message_queue) if isinstance(message_queue, Mapping) else None,
         }
 
     def import_media(
@@ -2270,6 +2276,7 @@ class AgentService:
     def prompt(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         message = _required_text(payload, "message")
         client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
+        delivery = _prompt_delivery(payload.get("delivery"))
         raw_attachments = payload.get("attachments")
         if raw_attachments is None:
             attachment_ids: list[str] = []
@@ -2290,11 +2297,13 @@ class AgentService:
                 attachment_ids=attachment_ids,
                 client_message_id="",
                 context_source=context_source,
+                delivery=delivery,
             )
         receipt_payload = {
             "message": message,
             "attachments": attachment_ids,
             "contextSource": context_source,
+            "delivery": delivery,
         }
         claim = self.command_receipts.begin(
             command_scope="session_prompt",
@@ -2312,6 +2321,7 @@ class AgentService:
                 attachment_ids=attachment_ids,
                 client_message_id=client_message_id,
                 context_source=context_source,
+                delivery=delivery,
             )
         except Exception as exc:
             self.command_receipts.fail(
@@ -2405,6 +2415,7 @@ class AgentService:
         attachment_ids: list[str],
         client_message_id: str = "",
         context_source: str = "user",
+        delivery: str = "prompt",
     ) -> dict[str, object]:
         if attachment_ids:
             selected = self.runtime.model_catalog(session_id).get("selected")
@@ -2417,6 +2428,7 @@ class AgentService:
             images=images,
             client_message_id=client_message_id,
             source_kind=context_source,
+            delivery=delivery,
         )
         self.media.bind_to_pi_entry(
             session_id=session_id,
@@ -2436,6 +2448,7 @@ class AgentService:
             text=message,
             client_message_id=client_message_id,
             attachments=attachment_receipts,
+            delivery=delivery,
         )
         event_payload: dict[str, object] = {"message": user_message}
         if client_message_id:
@@ -2485,6 +2498,7 @@ class AgentService:
         images: list[Mapping[str, str]] | None = None,
         client_message_id: str = "",
         source_kind: str,
+        delivery: str = "prompt",
     ) -> tuple[dict[str, object], str, int]:
         trace_id = self.context_runtime.begin_trace(
             session_id,
@@ -2500,6 +2514,7 @@ class AgentService:
             metadata={
                 "hasImages": bool(images),
                 "imageCount": len(images or []),
+                "delivery": delivery,
             },
         )
         session = self.sessions.get(session_id)
@@ -2565,6 +2580,7 @@ class AgentService:
                 runtime_message,
                 images=images,
                 client_message_id=client_message_id,
+                delivery=delivery,
             )
         except Exception as exc:
             duration_ms = max(0, int((time.perf_counter() - started) * 1000))
@@ -4124,6 +4140,7 @@ def _prompt_user_message_payload(
     text: str,
     client_message_id: str,
     attachments: list[dict[str, object]],
+    delivery: str = "prompt",
 ) -> dict[str, object]:
     created_at_ms = int(datetime.now().timestamp() * 1000)
     blocks: list[dict[str, object]] = [
@@ -4132,7 +4149,10 @@ def _prompt_user_message_payload(
             "type": "text",
             "status": "completed",
             "presentationKind": "markdown",
-            "data": {"text": text},
+            "data": {
+                "text": text,
+                **({"delivery": delivery} if delivery != "prompt" else {}),
+            },
         }
     ]
     media_ids: list[str] = []
@@ -4193,6 +4213,13 @@ def _optional_client_message_id(value: object) -> str:
     if not normalized or len(normalized) > 128 or any(ord(char) < 32 for char in normalized):
         raise ValueError("clientMessageId must contain between 1 and 128 safe characters")
     return normalized
+
+
+def _prompt_delivery(value: object) -> str:
+    delivery = str(value or "prompt").strip()
+    if delivery not in {"prompt", "steer", "followUp"}:
+        raise ValueError("delivery must be prompt, steer, or followUp")
+    return delivery
 
 
 def _public_error(error: BaseException) -> str:

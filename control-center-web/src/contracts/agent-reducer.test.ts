@@ -112,6 +112,48 @@ describe('AgentEventReducer', () => {
     expect(recovered.messageOrder).toEqual(['server-user']);
   });
 
+  it('projects queued steering and follow-up messages without replacing the active turn', () => {
+    const active = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [serverMessage('active-user', 'user', 'turn-active', '继续检查')],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: 'session-1:1',
+      status: 'working',
+      messageQueue: { steering: [], followUp: [] },
+    });
+    const optimistic = appendOptimisticAgentMessage(active, {
+      clientMessageId: 'steer-1',
+      text: '先不要修改配置',
+      nowMs: 20,
+      turnId: 'turn-active',
+      delivery: 'steer',
+    });
+    const queued = reduceAgentEvent(
+      optimistic,
+      agentEvent(2, 'message_queue_updated', {
+        steering: ['先不要修改配置'],
+        followUp: ['完成后总结'],
+      }),
+    ).state;
+
+    expect(optimistic.turnOrder).toEqual(['turn-active']);
+    expect(optimistic.turnsById['turn-active']?.status).toBe('running');
+    expect(optimistic.messagesById['local:steer-1']?.blocks[0]?.data.delivery).toBe('steer');
+    expect(queued.messageQueue).toEqual({
+      steering: ['先不要修改配置'],
+      followUp: ['完成后总结'],
+    });
+
+    const restored = applyAgentSnapshot(queued, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 3,
+      resumeToken: 'session-1:3',
+      messageQueue: { steering: [], followUp: ['下一项任务'] },
+    });
+    expect(restored.messageQueue).toEqual({ steering: [], followUp: ['下一项任务'] });
+  });
+
   it('restores live tool and approval state from a snapshot without moving the SSE cursor', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [serverMessage('server-user', 'user', 'history:server-user', '执行检查')],

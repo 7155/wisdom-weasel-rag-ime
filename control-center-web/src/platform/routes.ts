@@ -177,7 +177,7 @@ export const CONTROL_ROUTES = {
     method: 'POST',
     path: '/api/agent/sessions/:sessionId/prompt',
     params: { sessionId: null },
-    body: ['message', 'attachments', 'clientMessageId'],
+    body: ['message', 'attachments', 'clientMessageId', 'delivery'],
     requiredBody: ['message'],
   },
   'agent.session.rewrite': {

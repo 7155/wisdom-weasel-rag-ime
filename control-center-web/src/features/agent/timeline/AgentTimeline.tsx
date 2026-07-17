@@ -429,6 +429,9 @@ function MessageView({
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
   const visibleBlocks = user ? message.blocks : message.blocks.filter((block) => block.type !== 'error');
+  const delivery = user
+    ? text(message.blocks.find((block) => block.type === 'text')?.data.delivery)
+    : '';
   const branchText = message.blocks.map((block) => (
     text(block.data.text ?? block.data.markdown ?? block.data.message ?? block.data.summary)
   )).filter(Boolean).join('\n').trim();
@@ -449,6 +452,11 @@ function MessageView({
     <div className="agent-user-message-shell" data-actions={canFork || canEdit || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
         <AgentBlocks blocks={visibleBlocks} />
+        {delivery === 'steer' || delivery === 'followUp' ? (
+          <small className="agent-user-message__delivery" data-delivery={delivery}>
+            {delivery === 'steer' ? '干预当前执行' : '完成后接续'}
+          </small>
+        ) : null}
         {message.attachments.length ? <small>{message.attachments.length} 个附件</small> : null}
       </div>
       {canFork || canEdit ? (

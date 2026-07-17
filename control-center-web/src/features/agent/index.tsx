@@ -6,7 +6,7 @@ import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import type { UiAgentEvent } from '@/contracts/ui-events';
-import { AgentComposer, type AgentComposerEditState } from './composer/AgentComposer';
+import { AgentComposer, type AgentComposerEditState, type AgentMessageDelivery } from './composer/AgentComposer';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
 import { SessionRail } from './sessions/SessionRail';
 import {
@@ -106,9 +106,9 @@ function AgentWorkspace() {
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const ensure = useAgentLiveStore((state) => state.ensure);
-  const hasActiveTurn = useAgentLiveStore((state) => {
+  const activeTurnId = useAgentLiveStore((state) => {
     const projection = state.projections[selectedId];
-    if (!projection) return false;
+    if (!projection) return '';
     // Only the newest visible turn owns the composer stop action. Older
     // streaming flags can survive a reconnect, but must not turn a later
     // failed/completed turn back into a stoppable request.
@@ -116,9 +116,11 @@ function AgentWorkspace() {
       const turnId = projection.turnOrder[index];
       const turn = turnId ? projection.turnsById[turnId] : undefined;
       if (!turn || (turn.messageIds.length === 0 && turn.activityIds.length === 0)) continue;
-      return turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting';
+      return turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting'
+        ? turnId
+        : '';
     }
-    return false;
+    return '';
   });
   const pendingMemoryReview = useAgentLiveStore((state) => latestWaitingActivity(
     state.projections[selectedId],
@@ -326,7 +328,7 @@ function AgentWorkspace() {
     ?? personas.find((item) => item.visualProfile.avatarAssetId.includes('timeline-present'))
     ?? personas[0];
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
-  const busy = hasActiveTurn;
+  const busy = Boolean(activeTurnId);
   const branchBlocked = busy || sending;
   const rewriteBlocked = branchBlocked || rewriteResolving || !conversationRewriteAvailable;
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
@@ -414,8 +416,11 @@ function AgentWorkspace() {
     }
   }
 
-  async function send(): Promise<void> {
+  async function send(requestedDelivery: AgentMessageDelivery = busy ? 'steer' : 'prompt'): Promise<void> {
     if (!session || sending) return;
+    const delivery: AgentMessageDelivery = busy
+      ? (requestedDelivery === 'followUp' ? 'followUp' : 'steer')
+      : 'prompt';
     const value = draft.trim();
     if (editTarget) {
       if (!value && attachments.length === 0) return;
@@ -500,7 +505,7 @@ function AgentWorkspace() {
     const message = value || '请查看附件。';
     const selectedAttachments = attachments;
     setDraft(''); setAttachments([]); setError('');
-    await promptSession(session.id, message, selectedAttachments.map((item) => item.id), () => {
+    await promptSession(session.id, message, selectedAttachments.map((item) => item.id), delivery, () => {
       setDraft(value);
       setAttachments(selectedAttachments);
     });
@@ -510,6 +515,7 @@ function AgentWorkspace() {
     sessionId: string,
     message: string,
     attachmentIds: string[],
+    delivery: AgentMessageDelivery = 'prompt',
     restoreInput?: () => void,
   ): Promise<void> {
     const clientMessageId = `web-${crypto.randomUUID()}`;
@@ -518,6 +524,7 @@ function AgentWorkspace() {
       text: message,
       attachments: attachmentIds,
       nowMs: Date.now(),
+      ...(delivery === 'prompt' ? {} : { turnId: activeTurnId, delivery }),
     });
     setSending(true);
     setError('');
@@ -525,7 +532,7 @@ function AgentWorkspace() {
       await transport.request({
         pathId: 'agent.session.prompt',
         params: { sessionId },
-        body: { message, attachments: attachmentIds, clientMessageId },
+        body: { message, attachments: attachmentIds, clientMessageId, delivery },
       });
     } catch (requestError) {
       const failure = publicAgentErrorText(requestError);
@@ -985,7 +992,7 @@ function AgentWorkspace() {
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery) => void send(delivery)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />

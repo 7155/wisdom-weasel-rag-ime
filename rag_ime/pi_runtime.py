@@ -914,10 +914,37 @@ class PiRuntimeManager:
         *,
         images: list[Mapping[str, str]] | None = None,
         client_message_id: str = "",
+        delivery: str = "prompt",
     ) -> dict[str, object]:
         text = str(message).strip()
         if not text:
             raise ValueError("agent prompt must not be empty")
+        normalized_delivery = _message_delivery(delivery)
+        if normalized_delivery != "prompt":
+            with self._lock:
+                if not self._active_turn_id:
+                    raise PiRuntimeError("Pi 当前没有可接收排队消息的活动回合")
+                client = self._require_client_locked(session_id)
+                turn_id = self._active_turn_id
+                self._cancel_idle_locked()
+            command: dict[str, object] = {
+                "type": "steer" if normalized_delivery == "steer" else "follow_up",
+                "message": text,
+            }
+            if images:
+                command["images"] = [dict(image) for image in images]
+            response = client.send(command)
+            result: dict[str, object] = {
+                "accepted": True,
+                "queued": True,
+                "delivery": normalized_delivery,
+                "turnId": turn_id,
+                "piEntryId": f"queue:{str(client_message_id).strip()}" if client_message_id else "",
+                "response": response,
+            }
+            if client_message_id:
+                result["clientMessageId"] = str(client_message_id).strip()
+            return result
         self.ensure(session_id)
         turn_id = f"turn:{uuid.uuid4()}"
         with self._lock:
@@ -1624,6 +1651,17 @@ class PiRuntimeManager:
                 turn_id=turn_id,
             )
             return
+        if event_type == "queue_update":
+            self.events.publish(
+                session_id,
+                "message_queue_updated",
+                {
+                    "steering": _public_message_queue(raw.get("steering")),
+                    "followUp": _public_message_queue(raw.get("followUp")),
+                },
+                turn_id=turn_id,
+            )
+            return
         if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
             mapped_type = {
                 "tool_execution_start": "tool_started",
@@ -2239,6 +2277,19 @@ def _public_usage(value: object) -> dict[str, int]:
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _message_delivery(value: object) -> str:
+    delivery = str(value or "prompt").strip()
+    if delivery not in {"prompt", "steer", "followUp"}:
+        raise ValueError("agent message delivery must be prompt, steer, or followUp")
+    return delivery
+
+
+def _public_message_queue(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item)[:4_000] for item in value[:100] if isinstance(item, str) and item]
 
 
 def _integer(value: object) -> int:

@@ -485,6 +485,41 @@ class ControlRoutePolicyTests(unittest.TestCase):
         tools = entries[ControlPathId.AGENT_TOOLS_LIST.value]
         self.assertFalse(tools["remoteSafe"])
 
+    def test_remote_prompt_accepts_only_explicit_pi_delivery_modes(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        for delivery in ("prompt", "steer", "followUp"):
+            with self.subTest(delivery=delivery):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id=f"request-{delivery}",
+                        path_id=ControlPathId.AGENT_SESSION_PROMPT.value,
+                        params={"sessionId": "session-1"},
+                        body={
+                            "message": "继续",
+                            "clientMessageId": f"remote-{delivery}",
+                            "delivery": delivery,
+                        },
+                    ),
+                    context,
+                )
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-invalid-delivery",
+                    path_id=ControlPathId.AGENT_SESSION_PROMPT.value,
+                    params={"sessionId": "session-1"},
+                    body={
+                        "message": "继续",
+                        "clientMessageId": "remote-invalid",
+                        "delivery": "later",
+                    },
+                ),
+                context,
+            )
+
     def test_unknown_path_id_fails_closed(self) -> None:
         with self.assertRaises(ControlApiError) as raised:
             self.policy.resolve("debug.anything")

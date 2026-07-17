@@ -77,6 +77,7 @@ class AgentRuntimeDriver(Protocol):
         *,
         images: list[Mapping[str, str]] | None = None,
         client_message_id: str = "",
+        delivery: str = "prompt",
     ) -> dict[str, object]: ...
 
     def messages(self, session_id: str) -> list[dict[str, object]]: ...

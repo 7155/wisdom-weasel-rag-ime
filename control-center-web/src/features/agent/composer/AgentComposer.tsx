@@ -53,6 +53,8 @@ import type {
   ToolManifest,
 } from '../types';
 
+export type AgentMessageDelivery = 'prompt' | 'steer' | 'followUp';
+
 export function AgentComposer({
   draft,
   attachments,
@@ -104,7 +106,7 @@ export function AgentComposer({
   onPasteImages: (files: File[]) => void;
   onToolSelect: (tool: ToolManifest) => void;
   onProductCommand: (command: AgentProductCommandName) => void;
-  onSend: () => void;
+  onSend: (delivery: AgentMessageDelivery) => void;
   onStop: () => void;
   editState?: AgentComposerEditState;
   onEditPrevious?: () => void;
@@ -127,6 +129,7 @@ export function AgentComposer({
   const [dismissedDraft, setDismissedDraft] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [busyDelivery, setBusyDelivery] = useState<Exclude<AgentMessageDelivery, 'prompt'>>('steer');
   const commandCatalog = useMemo(
     () => buildCommandCatalog({ session, catalog, piCommands, tools, toolCatalogStatus, busy, sending }),
     [busy, catalog, piCommands, sending, session, toolCatalogStatus, tools],
@@ -259,7 +262,7 @@ export function AgentComposer({
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      if (busy) onStop(); else if (canSend) onSend();
+      if (canSend) onSend(busy ? (event.altKey ? 'followUp' : busyDelivery) : 'prompt');
     }
   }
   function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
@@ -350,22 +353,40 @@ export function AgentComposer({
               label={imageSupport === 'supported' ? '添加图片' : imageSupport === 'unsupported' ? '当前模型不支持图片' : '正在确认图片能力'}
               icon={<Plus size={18} />}
               onClick={onPickAttachments}
-              disabled={!session || busy || sending || imageSupport !== 'supported'}
+              disabled={!session || sending || imageSupport !== 'supported'}
               tooltip
             />
             <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
             <ToolPicker tools={tools} status={toolCatalogStatus} session={session} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
             <ModelTree catalog={catalog} disabled={busy || sending} requestOpen={modelPickerRequest} onChange={onModelChange} />
+            {busy ? (
+              <div className="agent-composer__delivery" role="radiogroup" aria-label="消息投递方式">
+                <button type="button" role="radio" aria-checked={busyDelivery === 'steer'} data-active={busyDelivery === 'steer' || undefined} onClick={() => setBusyDelivery('steer')} disabled={sending}>干预</button>
+                <button type="button" role="radio" aria-checked={busyDelivery === 'followUp'} data-active={busyDelivery === 'followUp' || undefined} onClick={() => setBusyDelivery('followUp')} disabled={sending}>接续</button>
+              </div>
+            ) : null}
           </div>
-          <IconButton
-            className="agent-composer__send"
-            label={stopping ? '正在停止本轮' : busy ? '停止本轮' : '发送'}
-            icon={stopping ? <LoaderCircle className="ui-spin" size={18} /> : busy ? <StopCircle size={18} /> : <Send size={18} />}
-            onClick={busy ? onStop : onSend}
-            disabled={stopping || (!busy && !canSend)}
-            aria-busy={stopping || undefined}
-            tooltip
-          />
+          <div className="agent-composer__actions">
+            {busy ? (
+              <IconButton
+                className="agent-composer__stop"
+                label={stopping ? '正在停止本轮' : '停止本轮'}
+                icon={stopping ? <LoaderCircle className="ui-spin" size={18} /> : <StopCircle size={18} />}
+                onClick={onStop}
+                disabled={stopping}
+                aria-busy={stopping || undefined}
+                tooltip
+              />
+            ) : null}
+            <IconButton
+              className="agent-composer__send"
+              label={busy ? (busyDelivery === 'steer' ? '干预当前执行' : '当前执行完成后接续') : '发送'}
+              icon={<Send size={18} />}
+              onClick={() => onSend(busy ? busyDelivery : 'prompt')}
+              disabled={stopping || !canSend}
+              tooltip
+            />
+          </div>
         </div>
       </div>
     </div>

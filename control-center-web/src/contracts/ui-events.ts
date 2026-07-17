@@ -10,6 +10,7 @@ export const knownAgentEventTypes = [
   'text_delta',
   'reasoning_summary',
   'status_changed',
+  'message_queue_updated',
   'tool_started',
   'tool_progress',
   'tool_finished',

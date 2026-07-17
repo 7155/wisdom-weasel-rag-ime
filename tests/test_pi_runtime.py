@@ -182,6 +182,11 @@ for line in sys.stdin:
         ]}
         emit({"type": "message_end", "message": assistant})
         emit({"type": "agent_end", "messages": [assistant]})
+    elif kind in {"steer", "follow_up"}:
+        steering = [command.get("message", "")] if kind == "steer" else []
+        follow_up = [command.get("message", "")] if kind == "follow_up" else []
+        emit({"id": request_id, "type": "response", "command": kind, "success": True})
+        emit({"type": "queue_update", "steering": steering, "followUp": follow_up})
     elif kind == "get_entries":
         selected = entries
         if command.get("since"):
@@ -768,6 +773,33 @@ class PiRuntimeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(PiRuntimeError, "上一轮"):
             self.runtime.prompt(session_id, "不要覆盖旧回合")
+
+    def test_busy_v1_runtime_accepts_steer_and_follow_up_messages(self) -> None:
+        session_id = str(self.session["id"])
+        approval = self.store.create_approval(
+            session_id=session_id,
+            tool_name="ime_memory",
+            operation="edit",
+            payload_sha256="b" * 64,
+            preview={"summary": "等待测试队列"},
+            risk_level="R1",
+        )
+        active = self.runtime.prompt(session_id, str(approval["approvalId"]))
+        _wait_until(lambda: self.runtime.has_pending_approval(session_id, str(approval["approvalId"])))
+
+        steered = self.runtime.prompt(session_id, "换一个处理方向", delivery="steer")
+        followed = self.runtime.prompt(session_id, "结束后总结", delivery="followUp")
+
+        self.assertEqual(steered["turnId"], active["turnId"])
+        self.assertEqual(followed["turnId"], active["turnId"])
+        self.assertEqual(steered["delivery"], "steer")
+        self.assertTrue(followed["queued"])
+        _wait_until(
+            lambda: len([
+                event for event in self.events.replay(session_id)[0]
+                if event.event_type == "message_queue_updated"
+            ]) >= 2
+        )
 
     def test_pi_user_echo_is_not_published_as_a_second_public_message(self) -> None:
         session_id = str(self.session["id"])
