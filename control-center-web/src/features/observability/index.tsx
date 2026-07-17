@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, EmptyState, IconButton } from '@/components/primitives';
 import type { ObservationEventV1 } from '@/contracts/generated/observation-event.v1';
+import { DebugContextInspector } from '@/features/agent/status/DebugContextInspector';
 import {
   InlineNotice,
   ManagementPage,
@@ -69,22 +70,30 @@ export function ObservabilityFeature() {
     [feed.items, needle],
   );
   const [selectedTraceId, setSelectedTraceId] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState('');
+  const [debugOpen, setDebugOpen] = useState(false);
   const selectedTrace = useMemo(
     () => visibleItems
       .filter((item) => item.traceId === selectedTraceId)
       .sort((left, right) => left.sequence - right.sequence),
     [selectedTraceId, visibleItems],
   );
+  const selectedEvent = visibleItems.find((item) => item.eventId === selectedEventId)
+    ?? selectedTrace.at(-1);
 
   useEffect(() => {
     if (!visibleItems.length) {
       setSelectedTraceId('');
+      setSelectedEventId('');
       return;
     }
     if (!visibleItems.some((item) => item.traceId === selectedTraceId)) {
       setSelectedTraceId(visibleItems[0].traceId);
     }
-  }, [selectedTraceId, visibleItems]);
+    if (!visibleItems.some((item) => item.eventId === selectedEventId)) {
+      setSelectedEventId(visibleItems[0].eventId);
+    }
+  }, [selectedEventId, selectedTraceId, visibleItems]);
 
   const runningCount = visibleItems.filter((item) =>
     ['queued', 'running', 'waiting'].includes(item.status),
@@ -135,7 +144,7 @@ export function ObservabilityFeature() {
         onRetry={() => void feed.refresh()}
       >
         <InlineNotice title="隐私边界" tone="info">
-          这里只保存状态、耗时、数量、ID 和指纹化元数据；不采集原始思维链、提示词、消息正文或 Agent 私信内容。
+          观察数据库只保存状态、耗时、数量、ID 和指纹化元数据。下方本机 Debug 检查器仅在你展开时向 Pi Runtime 读取临时内存，不持久化原始提示词或消息正文。
         </InlineNotice>
 
         {feed.streamError ? (
@@ -227,10 +236,13 @@ export function ObservabilityFeature() {
               <ol className="observation-timeline" aria-label="运行观察事件">
                 {visibleItems.map((item) => (
                   <ObservationRow
-                    active={item.traceId === selectedTraceId}
+                    active={item.eventId === selectedEvent?.eventId}
                     item={item}
                     key={item.eventId}
-                    onSelect={() => setSelectedTraceId(item.traceId)}
+                    onSelect={() => {
+                      setSelectedTraceId(item.traceId);
+                      setSelectedEventId(item.eventId);
+                    }}
                   />
                 ))}
               </ol>
@@ -257,16 +269,27 @@ export function ObservabilityFeature() {
                 </header>
                 <ol className="observation-trace">
                   {selectedTrace.map((item, index) => (
-                    <li data-category={item.category} key={`${item.eventId}:trace`}>
-                      <span className="observation-trace__index">{index + 1}</span>
-                      <div>
-                        <strong>{item.summary}</strong>
-                        <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
-                        <ObservationFacts item={item} />
-                      </div>
+                    <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} key={`${item.eventId}:trace`}>
+                      <button onClick={() => setSelectedEventId(item.eventId)} type="button">
+                        <span className="observation-trace__index">{index + 1}</span>
+                        <div>
+                          <strong>{item.summary}</strong>
+                          <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
+                          <ObservationFacts item={item} />
+                        </div>
+                      </button>
                     </li>
                   ))}
                 </ol>
+                {selectedEvent?.sessionId ? (
+                  <details
+                    className="observation-debug-context"
+                    onToggle={(event) => setDebugOpen(event.currentTarget.open)}
+                  >
+                    <summary><Database size={15} /><span><strong>查看本轮真实请求与上下文</strong><small>{selectedEvent.turnId ? `回合 ${shortId(selectedEvent.turnId)}` : '读取当前会话最新临时快照'}</small></span></summary>
+                    {debugOpen ? <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded /> : null}
+                  </details>
+                ) : null}
               </>
             ) : (
               <EmptyState
@@ -317,7 +340,7 @@ function ObservationFacts({ item }: { item: ObservationEventV1 }) {
   if (!facts.length) return null;
   return (
     <dl className="observation-facts">
-      {facts.slice(0, 6).map(([label, value]) => (
+      {facts.slice(0, 8).map(([label, value]) => (
         <div key={`${label}:${value}`}>
           <dt>{label}</dt>
           <dd>{value}</dd>
@@ -330,9 +353,13 @@ function ObservationFacts({ item }: { item: ObservationEventV1 }) {
 function observationFacts(item: ObservationEventV1): [string, string][] {
   const facts: [string, string][] = [];
   if (item.durationMs !== null) facts.push(['耗时', formatDuration(item.durationMs)]);
+  const model = primitiveAttribute(item.attributes.modelName) || primitiveAttribute(item.attributes.model);
+  const provider = primitiveAttribute(item.attributes.provider);
+  if (model) facts.push(['模型', model]);
+  if (provider) facts.push(['Provider', provider]);
   for (const [key, value] of Object.entries(item.metrics)) {
     if (value === null || typeof value === 'object') continue;
-    facts.push([metricLabel(key), displayValue(value)]);
+    facts.push([metricLabel(key), displayMetric(key, value)]);
   }
   if (item.refs.length) facts.push(['引用', String(item.refs.length)]);
   facts.push(['隐私', privacyLabel(item.privacyClass)]);
@@ -447,6 +474,8 @@ function phaseLabel(phase: string): string {
     turn_completed: '回合完成',
     turn_failed: '回合失败',
     message_completed: '消息完成',
+    compaction_started: '开始压缩',
+    compaction_completed: '压缩完成',
     status_changed: '状态更新',
     started: '已捕获',
     retrieval_complete: '检索完成',
@@ -471,13 +500,44 @@ function metricLabel(key: string): string {
     characterCount: '字符',
     pendingEventCount: '待整理',
     pendingDraftCount: '待审草案',
+    contextTokens: '上下文',
+    contextWindowTokens: '窗口',
+    contextPercent: '上下文占用',
+    remainingTokens: '剩余',
+    compactAtTokens: '压缩阈值',
+    tokensUntilCompact: '距压缩',
+    inputTokens: '输入 Token',
+    outputTokens: '输出 Token',
+    cacheReadTokens: '缓存读取',
+    cacheWriteTokens: '缓存写入',
+    totalTokens: '总 Token',
+    cacheHitPercent: '缓存命中',
+    compactionCount: '压缩次数',
+    tokensBefore: '压缩前',
+    estimatedTokensAfter: '压缩后约',
   } as Record<string, string>)[key] ?? key;
+}
+
+function displayMetric(key: string, value: unknown): string {
+  if (key.endsWith('Percent') && typeof value === 'number') return `${Math.round(value)}%`;
+  if (key.toLocaleLowerCase().includes('token') && typeof value === 'number') return formatTokens(value);
+  return displayValue(value);
 }
 
 function displayValue(value: unknown): string {
   if (typeof value === 'boolean') return value ? '是' : '否';
   if (typeof value === 'number') return String(numberValue(value));
   return String(value);
+}
+
+function primitiveAttribute(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+}
+
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return String(Math.max(0, Math.round(value)));
 }
 
 function privacyLabel(value: ObservationEventV1['privacyClass']): string {

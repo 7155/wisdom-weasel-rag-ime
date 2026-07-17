@@ -1215,6 +1215,8 @@ export const contractSchemas = {
           "memory_maintenance_updated",
           "user_input_required",
           "message_completed",
+          "compaction_started",
+          "compaction_completed",
           "turn_completed",
           "turn_failed",
           "snapshot_required",
@@ -1791,9 +1793,51 @@ export const contractSchemas = {
           "integer",
           "null"
         ]
+      },
+      "provider": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "usage": {
+        "$ref": "#/$defs/usage"
       }
     },
     "$defs": {
+      "usage": {
+        "type": "object",
+        "required": [
+          "input",
+          "output",
+          "cacheRead",
+          "cacheWrite",
+          "totalTokens"
+        ],
+        "properties": {
+          "input": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cacheRead": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cacheWrite": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalTokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "block": {
         "type": "object",
         "required": [
@@ -3539,6 +3583,219 @@ export const contractSchemas = {
         }
       }
     }
+  },
+  "agent-session-telemetry.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-session-telemetry.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "model",
+      "context",
+      "cumulativeUsage",
+      "latestUsage",
+      "latestCacheHitPercent",
+      "isCompacting",
+      "compactionCount",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-session-telemetry.v1"
+      },
+      "model": {
+        "type": "object",
+        "required": [
+          "provider",
+          "id",
+          "name"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "context": {
+        "type": "object",
+        "required": [
+          "tokens",
+          "contextWindow",
+          "percent",
+          "remainingTokens",
+          "compactAtTokens",
+          "tokensUntilCompact",
+          "reserveTokens",
+          "keepRecentTokens",
+          "autoCompactEnabled"
+        ],
+        "properties": {
+          "tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "contextWindow": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "remainingTokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "compactAtTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokensUntilCompact": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "reserveTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "keepRecentTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "autoCompactEnabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cumulativeUsage": {
+        "$ref": "#/$defs/usage"
+      },
+      "latestUsage": {
+        "$ref": "#/$defs/usage"
+      },
+      "latestCacheHitPercent": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 100
+      },
+      "isCompacting": {
+        "type": "boolean"
+      },
+      "compactionCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "latestCompaction": {
+        "type": "object",
+        "required": [
+          "reason",
+          "status",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "threshold",
+              "overflow"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "aborted"
+            ]
+          },
+          "tokensBefore": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "estimatedTokensAfter": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "willRetry": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "usage": {
+        "type": "object",
+        "required": [
+          "input",
+          "output",
+          "cacheRead",
+          "cacheWrite",
+          "totalTokens"
+        ],
+        "properties": {
+          "input": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cacheRead": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cacheWrite": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalTokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
   },
   "agent-session.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",

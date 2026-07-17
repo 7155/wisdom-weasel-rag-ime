@@ -7,10 +7,10 @@ import {
   LoaderCircle,
   Network,
   Paperclip,
+  PencilLine,
   Plus,
   Send,
   ShieldCheck,
-  SquareTerminal,
   StopCircle,
   Wrench,
   X,
@@ -66,6 +66,9 @@ export function AgentComposer({
   onProductCommand,
   onSend,
   onStop,
+  editState,
+  onEditPrevious,
+  onCancelEdit,
   onPermissionChange,
   onWorkspaceRootsChange,
   onModelChange,
@@ -95,6 +98,9 @@ export function AgentComposer({
   onProductCommand: (command: AgentProductCommandName) => void;
   onSend: () => void;
   onStop: () => void;
+  editState?: AgentComposerEditState;
+  onEditPrevious?: () => void;
+  onCancelEdit?: () => void;
   onPermissionChange: (selection: AgentPermissionSelection) => void;
   onWorkspaceRootsChange: () => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
@@ -106,6 +112,8 @@ export function AgentComposer({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
+  const lastEscapeAtRef = useRef(0);
+  const escapeResetRef = useRef(0);
   const [composerDraft, setComposerDraft] = useState(draft);
   const [activeCommandIndex, setActiveCommandIndex] = useState(0);
   const [dismissedDraft, setDismissedDraft] = useState<string | null>(null);
@@ -138,6 +146,17 @@ export function AgentComposer({
     // Do not let event-stream/catalog rerenders replace WebKit's marked text.
     if (!composingRef.current) setComposerDraft(draft);
   }, [draft]);
+  useEffect(() => {
+    if (!editState) return;
+    const frame = window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editState?.messageId]);
+  useEffect(() => () => window.clearTimeout(escapeResetRef.current), []);
   const canSend = Boolean(session && (draft.trim() || attachments.length) && !sending);
   function selectCommand(command: ComposerCommand): void {
     if (!command.enabled) return;
@@ -167,14 +186,9 @@ export function AgentComposer({
     setComposerDraft('');
     onDraftChange('');
   }
-  function toggleCommandPanel(): void {
-    setPaletteOpen((current) => !current);
-    setHelpOpen(false);
-    setDismissedDraft(null);
-    textareaRef.current?.focus();
-  }
   function changeDraft(event: ChangeEvent<HTMLTextAreaElement>): void {
     const nextDraft = event.currentTarget.value;
+    setDismissedDraft(null);
     if (paletteOpen) {
       setPaletteOpen(false);
       setHelpOpen(false);
@@ -215,6 +229,25 @@ export function AgentComposer({
         if (command) selectCommand(command);
         return;
       }
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (editState) {
+        lastEscapeAtRef.current = 0;
+        onCancelEdit?.();
+        return;
+      }
+      const now = Date.now();
+      if (lastEscapeAtRef.current > 0 && now - lastEscapeAtRef.current <= 650) {
+        lastEscapeAtRef.current = 0;
+        window.clearTimeout(escapeResetRef.current);
+        onEditPrevious?.();
+        return;
+      }
+      lastEscapeAtRef.current = now;
+      window.clearTimeout(escapeResetRef.current);
+      escapeResetRef.current = window.setTimeout(() => { lastEscapeAtRef.current = 0; }, 650);
+      return;
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
@@ -272,6 +305,13 @@ export function AgentComposer({
         </div>
       ) : null}
       <div className="agent-composer" data-busy={busy || undefined}>
+        {editState ? (
+          <div className="agent-composer__edit" role="status">
+            <PencilLine size={15} aria-hidden="true" />
+            <span><strong>正在修改这条消息</strong><small>发送后将从这里重新生成后续对话</small></span>
+            <IconButton label="取消修改" icon={<X size={15} />} size="small" onClick={onCancelEdit} tooltip />
+          </div>
+        ) : null}
         {attachments.length ? (
           <div className="agent-composer__attachments">
             {attachments.map((attachment) => (
@@ -298,14 +338,6 @@ export function AgentComposer({
         <div className="agent-composer__toolbar">
           <div className="agent-composer__controls">
             <IconButton
-              className="agent-composer__commands"
-              label={paletteOpen ? '关闭命令面板' : '打开命令面板'}
-              icon={<SquareTerminal size={18} />}
-              onClick={toggleCommandPanel}
-              aria-expanded={commandPanelVisible}
-              tooltip
-            />
-            <IconButton
               className="agent-composer__attachment"
               label={imageSupport === 'supported' ? '添加图片' : imageSupport === 'unsupported' ? '当前模型不支持图片' : '正在确认图片能力'}
               icon={<Plus size={18} />}
@@ -330,6 +362,11 @@ export function AgentComposer({
       </div>
     </div>
   );
+}
+
+export interface AgentComposerEditState {
+  entryId: string;
+  messageId: string;
 }
 
 function ToolPicker({

@@ -304,6 +304,69 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(catalog["items"][0]["entryId"], "entry-user-1")
 
+    def test_conversation_rewrite_rewinds_same_session_and_resets_live_projection(self) -> None:
+        session = self.service.create_session({"title": "原位修改"})["session"]
+        session_id = str(session["id"])
+        old_event = self.service.events.publish(
+            session_id,
+            "message_completed",
+            {"message": {"id": "old-branch-message"}},
+        )
+        with (
+            patch.object(
+                self.service.runtime,
+                "rewind_session",
+                return_value={"entryId": "entry-user-1", "leafId": "parent-entry"},
+            ) as rewind,
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:rewrite:1",
+                    "piEntryId": "pi-entry:rewrite:1",
+                    "response": {"success": True},
+                },
+            ) as prompt,
+        ):
+            response = self.service.rewrite_session(
+                session_id,
+                {
+                    "entryId": "entry-user-1",
+                    "message": "修改后的问题",
+                    "clientMessageId": "rewrite-command-1",
+                },
+            )
+
+        self.assertEqual(response["schemaVersion"], "rag-ime.agent-session-rewrite.v1")
+        self.assertEqual(response["sessionId"], session_id)
+        self.assertEqual(response["entryId"], "entry-user-1")
+        rewind.assert_called_once_with(session_id, entry_id="entry-user-1")
+        self.assertEqual(prompt.call_args.args[:2], (session_id, "修改后的问题"))
+        replay, gap = self.service.events.replay(session_id)
+        self.assertFalse(gap)
+        self.assertNotIn(old_event.event_id, [event.event_id for event in replay])
+        self.assertEqual(
+            [event.payload["message"]["id"] for event in replay if event.event_type == "message_completed"],
+            ["pi-entry:rewrite:1"],
+        )
+
+        with (
+            patch.object(self.service.runtime, "rewind_session") as replay_rewind,
+            patch.object(self.service.runtime, "prompt") as replay_prompt,
+        ):
+            replay_response = self.service.rewrite_session(
+                session_id,
+                {
+                    "entryId": "entry-user-1",
+                    "message": "修改后的问题",
+                    "clientMessageId": "rewrite-command-1",
+                },
+            )
+        replay_rewind.assert_not_called()
+        replay_prompt.assert_not_called()
+        self.assertTrue(replay_response["idempotentReplay"])
+
     def test_kernel_configuration_drives_new_sessions_and_runtime_policy(self) -> None:
         initial = self.service.configuration()["configuration"]
         defaults = self.service.update_configuration(

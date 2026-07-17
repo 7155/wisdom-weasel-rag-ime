@@ -24,6 +24,8 @@ AGENT_EVENT_TYPES = frozenset(
         "memory_maintenance_updated",
         "user_input_required",
         "message_completed",
+        "compaction_started",
+        "compaction_completed",
         "turn_completed",
         "turn_failed",
         "snapshot_required",
@@ -186,6 +188,9 @@ class AgentMessage:
     attachments: tuple[str, ...] = ()
     citations: tuple[str, ...] = ()
     completed_at_ms: int | None = None
+    provider: str = ""
+    model: str = ""
+    usage: dict[str, int] | None = None
     schema_version: str = "rag-ime.agent-message.v1"
 
     @classmethod
@@ -204,6 +209,11 @@ class AgentMessage:
             citations=tuple(str(item) for item in value.get("citations") or []),
             created_at_ms=int(value["createdAtMs"]),
             completed_at_ms=int(value["completedAtMs"]) if value.get("completedAtMs") is not None else None,
+            provider=str(value.get("provider") or ""),
+            model=str(value.get("model") or ""),
+            usage={str(key): int(item) for key, item in _mapping(value.get("usage")).items()}
+            if isinstance(value.get("usage"), Mapping)
+            else None,
         )
 
     def to_payload(self) -> dict[str, object]:
@@ -220,6 +230,12 @@ class AgentMessage:
             "createdAtMs": self.created_at_ms,
             "completedAtMs": self.completed_at_ms,
         }
+        if self.provider:
+            payload["provider"] = self.provider
+        if self.model:
+            payload["model"] = self.model
+        if self.usage is not None:
+            payload["usage"] = dict(self.usage)
         validate_contract(payload, "agent-message.v1.json")
         return payload
 

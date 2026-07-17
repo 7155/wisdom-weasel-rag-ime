@@ -20,6 +20,8 @@ export const knownAgentEventTypes = [
   'session_configuration_changed',
   'user_input_required',
   'message_completed',
+  'compaction_started',
+  'compaction_completed',
   'turn_completed',
   'turn_failed',
   'snapshot_required',
@@ -121,6 +123,15 @@ export interface UiAgentMessage {
   createdAtMs: number;
   completedAtMs?: number | null;
   clientMessageId?: string;
+  provider?: string;
+  model?: string;
+  usage?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    totalTokens: number;
+  };
 }
 
 export type UiControlEvent = UiAgentEvent | UiRoomEvent | UiObservationEvent;
@@ -183,6 +194,15 @@ export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMe
     typeof source.clientMessageId === 'string' && source.clientMessageId.length > 0
       ? source.clientMessageId
       : undefined;
+  const usage = source.usage
+    ? {
+        input: source.usage.input,
+        output: source.usage.output,
+        cacheRead: source.usage.cacheRead,
+        cacheWrite: source.usage.cacheWrite,
+        totalTokens: source.usage.totalTokens,
+      }
+    : undefined;
   return {
     schemaVersion: source.schemaVersion,
     id: source.id,
@@ -196,6 +216,9 @@ export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMe
     createdAtMs: source.createdAtMs,
     ...(source.completedAtMs === undefined ? {} : { completedAtMs: source.completedAtMs }),
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...(source.provider ? { provider: source.provider } : {}),
+    ...(source.model ? { model: source.model } : {}),
+    ...(usage ? { usage } : {}),
   };
 }
 

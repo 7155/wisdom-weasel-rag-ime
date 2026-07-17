@@ -180,6 +180,13 @@ export const CONTROL_ROUTES = {
     body: ['message', 'attachments', 'clientMessageId'],
     requiredBody: ['message'],
   },
+  'agent.session.rewrite': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/rewrite',
+    params: { sessionId: null },
+    body: ['entryId', 'message', 'attachments', 'clientMessageId'],
+    requiredBody: ['entryId', 'message'],
+  },
   'agent.session.forks.list': {
     method: 'GET',
     path: '/api/agent/sessions/:sessionId/forks',
@@ -280,6 +287,12 @@ export const CONTROL_ROUTES = {
     path: '/api/agent/sessions/:sessionId/context-traces/:traceId',
     params: { sessionId: null, traceId: null },
     responseContract: 'agent-context-trace.v1',
+  },
+  'agent.session.debugContext.get': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/debug-context',
+    params: { sessionId: null },
+    query: ['turnId'],
   },
   'agent.artifact.get': {
     method: 'GET',

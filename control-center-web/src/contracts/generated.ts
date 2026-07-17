@@ -32,6 +32,7 @@ import type { AgentRuntimeBindingV1 } from './generated/agent-runtime-binding.v1
 import type { AgentRuntimeV1 } from './generated/agent-runtime.v1';
 import type { AgentSessionForkCandidatesV1 } from './generated/agent-session-fork-candidates.v1';
 import type { AgentSessionForkCreateV1 } from './generated/agent-session-fork-create.v1';
+import type { AgentSessionTelemetryV1 } from './generated/agent-session-telemetry.v1';
 import type { AgentSessionV1 } from './generated/agent-session.v1';
 import type { AgentSubagentBatchV1 } from './generated/agent-subagent-batch.v1';
 import type { AgentSubagentRunV1 } from './generated/agent-subagent-run.v1';
@@ -98,6 +99,7 @@ export type {
   AgentRuntimeV1,
   AgentSessionForkCandidatesV1,
   AgentSessionForkCreateV1,
+  AgentSessionTelemetryV1,
   AgentSessionV1,
   AgentSubagentBatchV1,
   AgentSubagentRunV1,
@@ -165,6 +167,7 @@ export interface ContractTypeMap {
   'agent-runtime.v1': AgentRuntimeV1;
   'agent-session-fork-candidates.v1': AgentSessionForkCandidatesV1;
   'agent-session-fork-create.v1': AgentSessionForkCreateV1;
+  'agent-session-telemetry.v1': AgentSessionTelemetryV1;
   'agent-session.v1': AgentSessionV1;
   'agent-subagent-batch.v1': AgentSubagentBatchV1;
   'agent-subagent-run.v1': AgentSubagentRunV1;

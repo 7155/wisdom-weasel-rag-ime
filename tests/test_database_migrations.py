@@ -28,11 +28,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-                    41, 42, 43, 44, 45,
+                    41, 42, 43, 44, 45, 46,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 45)
+            self.assertEqual(status["currentVersion"], 46)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -182,7 +182,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 migrations_dir=migrations,
             )
 
-            self.assertEqual(result.applied_versions, (39, 40, 41, 42, 43, 44, 45))
+            self.assertEqual(result.applied_versions, (39, 40, 41, 42, 43, 44, 45, 46))
             self.assertEqual(
                 conn.execute(
                     "SELECT status FROM memory_cleanup_runs WHERE run_id = 'memory_book_legacy'"

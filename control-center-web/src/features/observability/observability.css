@@ -254,11 +254,26 @@ main[data-route-id='observability'] .observation-trace::before {
 
 main[data-route-id='observability'] .observation-trace li {
   position: relative;
+  min-width: 0;
+}
+
+main[data-route-id='observability'] .observation-trace li > button {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 8px;
+  width: 100%;
+  min-width: 0;
   min-height: 62px;
   padding-block: 9px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+main[data-route-id='observability'] .observation-trace li > button:hover {
+  background: color-mix(in srgb, var(--color-surface-muted) 66%, transparent);
 }
 
 main[data-route-id='observability'] .observation-trace__index {
@@ -285,7 +300,7 @@ main[data-route-id='observability'] .observation-trace li[data-category='memory'
   color: #714c7d;
 }
 
-main[data-route-id='observability'] .observation-trace li > div {
+main[data-route-id='observability'] .observation-trace li > button > div {
   display: grid;
   align-content: start;
   min-width: 0;

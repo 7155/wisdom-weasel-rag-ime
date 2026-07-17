@@ -269,6 +269,22 @@ class AgentService:
             raise KeyError(trace_id)
         return trace
 
+    def debug_context(self, session_id: str, turn_id: str = "") -> dict[str, object]:
+        self.sessions.get(session_id)
+        provider = getattr(self.runtime, "debug_context", None)
+        if not callable(provider):
+            return {
+                "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+                "sessionId": session_id,
+                "turnId": str(turn_id or ""),
+                "available": False,
+                "transient": True,
+                "context": None,
+                "telemetry": None,
+                "reason": "runtime does not expose transient debug context",
+            }
+        return dict(provider(session_id, str(turn_id or "")))
+
     def _runtime_tool_manifest(
         self,
         session: Mapping[str, object],
@@ -1961,6 +1977,118 @@ class AgentService:
         validate_contract(response, "agent-session-fork-create.v1.json")
         return response
 
+    def rewrite_session(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        """Rewind one persisted Pi conversation and submit replacement user text."""
+
+        self._rewritable_session(session_id)
+        entry_id = _required_text(payload, "entryId")
+        message = _required_text(payload, "message")
+        client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
+        raw_attachments = payload.get("attachments")
+        if raw_attachments is None:
+            attachment_ids: list[str] = []
+        elif isinstance(raw_attachments, list):
+            attachment_ids = [str(item) for item in raw_attachments]
+        else:
+            raise ValueError("attachments must be an array of managed mediaId values")
+
+        receipt_payload = {
+            "entryId": entry_id,
+            "message": message,
+            "attachments": attachment_ids,
+        }
+        if not client_message_id:
+            return self._rewrite_session_once(
+                session_id=session_id,
+                entry_id=entry_id,
+                message=message,
+                attachment_ids=attachment_ids,
+                client_message_id="",
+            )
+        claim = self.command_receipts.begin(
+            command_scope="session_rewrite",
+            scope_id=session_id,
+            client_message_id=client_message_id,
+            payload=receipt_payload,
+        )
+        if claim.replay_response is not None:
+            return {**claim.replay_response, "idempotentReplay": True}
+        try:
+            response = self._rewrite_session_once(
+                session_id=session_id,
+                entry_id=entry_id,
+                message=message,
+                attachment_ids=attachment_ids,
+                client_message_id=client_message_id,
+            )
+        except Exception as exc:
+            self.command_receipts.fail(
+                claim,
+                command_scope="session_rewrite",
+                scope_id=session_id,
+                client_message_id=client_message_id,
+                error=exc,
+            )
+            raise
+        return self.command_receipts.complete(
+            claim,
+            command_scope="session_rewrite",
+            scope_id=session_id,
+            client_message_id=client_message_id,
+            response=response,
+        )
+
+    def _rewrite_session_once(
+        self,
+        *,
+        session_id: str,
+        entry_id: str,
+        message: str,
+        attachment_ids: list[str],
+        client_message_id: str,
+    ) -> dict[str, object]:
+        rewind = getattr(self.runtime, "rewind_session", None)
+        if not callable(rewind):
+            raise ValueError("managed Pi runtime does not support in-place conversation rewrite")
+        # Resolve every attachment before changing Pi's active leaf. A bad
+        # image must not leave the conversation rewound without a new prompt.
+        if attachment_ids:
+            selected = self.runtime.model_catalog(session_id).get("selected")
+            if not isinstance(selected, Mapping) or selected.get("supportsImages") is not True:
+                raise ValueError("当前模型不支持图片，请切换到支持图片的模型后重试")
+            self.media.pi_images(session_id, attachment_ids)
+        rewound = dict(rewind(session_id, entry_id=entry_id))
+        self.events.invalidate_projection(session_id, reason="session_rewritten")
+        accepted = self._prompt_with_checkpoint(
+            session_id=session_id,
+            message=message,
+            checkpoint_text=message,
+            attachment_ids=attachment_ids,
+            client_message_id=client_message_id,
+            context_source="conversation_rewrite",
+        )
+        return {
+            **accepted,
+            "schemaVersion": "rag-ime.agent-session-rewrite.v1",
+            "ok": True,
+            "accepted": True,
+            "sessionId": session_id,
+            "entryId": entry_id,
+            "rewound": rewound,
+        }
+
+    def _rewritable_session(self, session_id: str) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        if str(session.get("sessionKind") or "conversation") != "conversation":
+            raise ValueError("only conversation Sessions can be rewritten")
+        if self.rooms.participant_for_session(session_id, active_only=False) is not None:
+            raise ValueError("room participant Sessions cannot be rewritten")
+        if self.delegation.owns_session(session_id):
+            raise ValueError("subagent Sessions cannot be rewritten")
+        if str(session.get("status") or "") not in {"idle", "active"}:
+            raise ValueError("conversation rewrite is only available for idle Sessions")
+        return session
+
     def _forkable_session(self, session_id: str) -> dict[str, object]:
         session = self.sessions.get(session_id)
         if str(session.get("sessionKind") or "conversation") != "conversation":
@@ -1981,7 +2109,20 @@ class AgentService:
         # any overlap without losing a live update.
         session = self.sessions.get(session_id)
         last_sequence = self.sessions.max_event_sequence(session_id)
-        messages = self.runtime.messages(session_id)
+        runtime_snapshot = None
+        snapshot_provider = getattr(self.runtime, "session_snapshot", None)
+        if callable(snapshot_provider):
+            runtime_snapshot = snapshot_provider(session_id)
+        messages = (
+            list(runtime_snapshot.get("messages") or [])
+            if isinstance(runtime_snapshot, Mapping)
+            else self.runtime.messages(session_id)
+        )
+        telemetry = (
+            runtime_snapshot.get("telemetry")
+            if isinstance(runtime_snapshot, Mapping) and isinstance(runtime_snapshot.get("telemetry"), Mapping)
+            else None
+        )
         replayed, _gap = self.events.replay(session_id)
         live_events = [
             event.to_payload()
@@ -2055,6 +2196,7 @@ class AgentService:
             "liveEvents": live_events,
             "lastSequence": last_sequence,
             "resumeToken": f"{session_id}:{last_sequence}" if last_sequence else "",
+            "telemetry": dict(telemetry) if isinstance(telemetry, Mapping) else None,
         }
 
     def import_media(

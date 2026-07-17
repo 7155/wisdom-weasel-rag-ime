@@ -16,6 +16,9 @@ export interface AgentMessageV1 {
   citations: string[];
   createdAtMs: number;
   completedAtMs?: number | null;
+  provider?: string;
+  model?: string;
+  usage?: Usage;
   [k: string]: unknown;
 }
 export interface Block {
@@ -43,4 +46,11 @@ export interface Block {
     [k: string]: unknown;
   };
   [k: string]: unknown;
+}
+export interface Usage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
 }

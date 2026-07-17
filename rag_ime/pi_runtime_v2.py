@@ -338,6 +338,11 @@ class PiRuntimeHostManager:
                     if host_negotiated
                     else installed and str(self.config.protocol_version or "") == _PROTOCOL_VERSION
                 ),
+                "conversationRewrite": (
+                    bool(capabilities.get("conversationRewrite"))
+                    if host_negotiated
+                    else False
+                ),
                 "multiSession": True,
                 "maxSessions": int(capabilities.get("maxSessions") or self.config.max_sessions),
                 "tools": True,
@@ -504,11 +509,14 @@ class PiRuntimeHostManager:
         return result
 
     def messages(self, session_id: str) -> list[dict[str, object]]:
+        return list(self.session_snapshot(session_id).get("messages") or [])
+
+    def session_snapshot(self, session_id: str) -> dict[str, object]:
         try:
             self.ensure(session_id)
             snapshot = self._require_client().send("session.snapshot", {"sessionId": session_id})
         except AgentRuntimeError:
-            return []
+            return {"messages": [], "telemetry": None}
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
         result: list[dict[str, object]] = []
         current_turn_id = ""
@@ -528,7 +536,62 @@ class PiRuntimeHostManager:
                     message_id=message_id,
                 ).to_payload()
             )
-        return result
+        telemetry = snapshot.get("telemetry")
+        return {
+            "messages": result,
+            "telemetry": dict(telemetry) if isinstance(telemetry, Mapping) else None,
+        }
+
+    def debug_context(self, session_id: str, turn_id: str = "") -> dict[str, object]:
+        self.ensure(session_id)
+        params: dict[str, object] = {"sessionId": session_id}
+        if str(turn_id).strip():
+            params["turnId"] = str(turn_id).strip()
+        result = self._require_client().send("session.debug.context", params)
+        return dict(result)
+
+    def rewind_session(self, session_id: str, *, entry_id: str) -> dict[str, object]:
+        normalized_entry_id = str(entry_id or "").strip()
+        if not normalized_entry_id:
+            raise ValueError("conversation rewrite entryId must not be empty")
+        with self._lifecycle_lock:
+            self._require_idle_fork_session(session_id)
+            try:
+                self.ensure(session_id)
+                client = self._require_client()
+                with self._lock:
+                    self._require_quiescent_fork_locked(session_id)
+                    self._cancel_idle_locked()
+                candidates = self._fork_candidates_from_result(
+                    client.send("session.fork.candidates", {"sessionId": session_id})
+                )
+                selected = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if candidate["entryId"] == normalized_entry_id
+                        and candidate["role"] == "user"
+                    ),
+                    None,
+                )
+                if selected is None:
+                    raise PiRuntimeError(
+                        "conversation rewrite entry must identify a public user message"
+                    )
+                response = client.send(
+                    "session.rewind",
+                    {"sessionId": session_id, "entryId": normalized_entry_id},
+                )
+                with self._lock:
+                    self._schedule_idle_locked()
+                return {
+                    "entryId": normalized_entry_id,
+                    "editorText": str(response.get("editorText") or selected["text"]),
+                    "leafId": str(response.get("leafId") or ""),
+                }
+            finally:
+                if str(self.sessions.get(session_id).get("status") or "") == "active":
+                    self.sessions.set_status(session_id, "idle")
 
     def fork_candidates(self, session_id: str) -> list[dict[str, object]]:
         with self._lifecycle_lock:
@@ -1028,18 +1091,6 @@ class PiRuntimeHostManager:
         turn_id = str(envelope.get("turnId") or "")
         client_message_id = str(envelope.get("clientMessageId") or "")
         event_type = str(raw.get("type") or "")
-        if event_type == "compaction_end":
-            compaction = (
-                dict(_mapping(raw.get("result")))
-                if isinstance(raw.get("result"), Mapping)
-                else dict(raw)
-            )
-            self._observe_compaction(
-                session_id,
-                compaction,
-                str(raw.get("trigger") or "").strip() or "automatic",
-            )
-            return
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             if turn_id and turn_id in state.retired_turn_ids:
@@ -1087,8 +1138,47 @@ class PiRuntimeHostManager:
             self.events.publish(
                 session_id,
                 "message_completed",
-                {"message": message.to_payload(), "usage": _public_usage(raw.get("message"))},
+                {
+                    "message": message.to_payload(),
+                    "usage": _public_usage(raw.get("message")),
+                    "telemetry": dict(_mapping(raw.get("telemetry"))),
+                },
                 turn_id=turn_id,
+            )
+            return
+        if event_type == "compaction_start":
+            self.events.publish(
+                session_id,
+                "compaction_started",
+                {
+                    "reason": str(raw.get("reason") or "threshold"),
+                    "telemetry": dict(_mapping(raw.get("telemetry"))),
+                },
+                turn_id=turn_id,
+            )
+            return
+        if event_type == "compaction_end":
+            result = _mapping(raw.get("result"))
+            payload: dict[str, object] = {
+                "reason": str(raw.get("reason") or "threshold"),
+                "aborted": bool(raw.get("aborted")),
+                "willRetry": bool(raw.get("willRetry")),
+                "tokensBefore": _integer(result.get("tokensBefore")),
+                "estimatedTokensAfter": _integer(result.get("estimatedTokensAfter")),
+                "telemetry": dict(_mapping(raw.get("telemetry"))),
+            }
+            if raw.get("errorMessage"):
+                payload["error"] = _redact_runtime_text(str(raw.get("errorMessage")))
+            self.events.publish(
+                session_id,
+                "compaction_completed",
+                payload,
+                turn_id=turn_id,
+            )
+            self._observe_compaction(
+                session_id,
+                dict(result) if result else dict(raw),
+                str(raw.get("trigger") or raw.get("reason") or "").strip() or "automatic",
             )
             return
         if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:

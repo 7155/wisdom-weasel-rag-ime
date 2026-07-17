@@ -1,5 +1,6 @@
 import type { UiAgentEvent, UiAgentMessage } from './ui-events';
-import { parseAgentEvent, tryParseAgentMessage } from './validators';
+import type { AgentSessionTelemetryV1 } from './generated/agent-session-telemetry.v1';
+import { parseAgentEvent, tryParseAgentMessage, validateContract } from './validators';
 
 export type AgentTurnStatus =
   | 'queued'
@@ -76,6 +77,7 @@ export interface AgentProjectionState {
   activityOrder: string[];
   optimisticByClientMessageId: Record<string, string>;
   diagnostics: ProjectionDiagnostic[];
+  telemetry?: AgentSessionTelemetryV1;
 }
 
 export type ProjectionDisposition =
@@ -96,6 +98,7 @@ export interface AgentSnapshot {
   lastSequence: number;
   resumeToken: string;
   status?: string;
+  telemetry?: unknown;
 }
 
 export interface OptimisticAgentMessageInput {
@@ -123,6 +126,7 @@ export function createAgentProjection(sessionId: string): AgentProjectionState {
     activityOrder: [],
     optimisticByClientMessageId: {},
     diagnostics: [],
+    telemetry: undefined,
   };
 }
 
@@ -177,6 +181,8 @@ export function reduceAgentEvent(
   next.lastEventId = event.eventId;
   next.resumeToken = event.resumeToken;
   const payload = record(event.payload);
+  const telemetry = parseTelemetry(payload.telemetry);
+  if (telemetry) next.telemetry = telemetry;
 
   switch (event.eventType) {
     case 'text_delta':
@@ -184,6 +190,12 @@ export function reduceAgentEvent(
       break;
     case 'message_completed':
       applyCompletedMessage(next, event, payload);
+      break;
+    case 'compaction_started':
+      upsertCompactionActivity(next, event, payload, 'running');
+      break;
+    case 'compaction_completed':
+      upsertCompactionActivity(next, event, payload, payload.error ? 'failed' : 'completed');
       break;
     case 'status_changed':
       next.status = text(payload.status) || next.status;
@@ -345,6 +357,7 @@ export function applyAgentSnapshot(
 ): AgentProjectionState {
   let next = createAgentProjection(state.sessionId);
   next.status = snapshot.status ?? state.status;
+  next.telemetry = parseTelemetry(snapshot.telemetry) ?? state.telemetry;
 
   const serverClientIds = new Set<string>();
   for (const rawMessage of snapshot.messages) {
@@ -442,6 +455,7 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
     lastSequence: integer(payload.lastSequence ?? payload.lastEventSequence),
     resumeToken: text(payload.resumeToken ?? payload.lastEventId),
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
+    ...(payload.telemetry === undefined ? {} : { telemetry: payload.telemetry }),
   };
 }
 
@@ -524,8 +538,18 @@ function applyCompletedMessage(
     return;
   }
   const clientMessageId = text(payload.clientMessageId) || parsed.value.clientMessageId || '';
-  const completedMessage = parsed.value.role === 'assistant'
-    ? completedAssistantSegment(state, event, parsed.value)
+  const usage = parseUsage(payload.usage);
+  const model = state.telemetry?.model;
+  const enriched = parsed.value.role === 'assistant'
+    ? {
+        ...parsed.value,
+        ...(parsed.value.usage || !usage ? {} : { usage }),
+        ...(parsed.value.provider || !model?.provider ? {} : { provider: model.provider }),
+        ...(parsed.value.model || !model?.id ? {} : { model: model.id }),
+      }
+    : parsed.value;
+  const completedMessage = enriched.role === 'assistant'
+    ? completedAssistantSegment(state, event, enriched)
     : { ...parsed.value, timelineSequence: event.sequence };
   upsertMessage(
     state,
@@ -538,6 +562,70 @@ function applyCompletedMessage(
     parsed.value.status === 'failed' ? 'failed' : 'running',
     event.createdAtMs,
   );
+}
+
+function upsertCompactionActivity(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+  status: AgentActivityProjection['status'],
+): void {
+  const runningId = [...state.activityOrder]
+    .reverse()
+    .find((activityId) => {
+      const activity = state.activitiesById[activityId];
+      return activity?.kind === 'context_compaction' && activity.status === 'running';
+    });
+  const id = runningId ?? `compaction:${event.eventId}`;
+  const previous = state.activitiesById[id];
+  const reason = text(payload.reason) || 'threshold';
+  const activity: AgentActivityProjection = {
+    id,
+    turnId: previous?.turnId || event.turnId || `maintenance:${event.sequence}`,
+    kind: 'context_compaction',
+    status,
+    summary: status === 'running' ? '正在压缩上下文' : '上下文压缩完成',
+    payload: { ...previous?.payload, ...payload },
+    createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
+    updatedAtMs: event.createdAtMs,
+    timelineSequence: previous?.timelineSequence ?? event.sequence,
+  };
+  activity.summary = status === 'failed'
+    ? '上下文压缩失败'
+    : status === 'running'
+      ? `${compactionReasonLabel(reason)}，正在压缩上下文`
+      : `${compactionReasonLabel(reason)}，上下文压缩完成`;
+  if (!previous) state.activityOrder.push(id);
+  state.activitiesById[id] = activity;
+  const turn = ensureTurn(state, activity.turnId, activity.createdAtMs);
+  if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
+}
+
+function compactionReasonLabel(reason: string): string {
+  if (reason === 'manual') return '手动触发';
+  if (reason === 'overflow') return '溢出恢复';
+  return '达到自动阈值';
+}
+
+function parseTelemetry(value: unknown): AgentSessionTelemetryV1 | undefined {
+  if (!value) return undefined;
+  const parsed = validateContract('agent-session-telemetry.v1', value);
+  return parsed.ok ? parsed.value : undefined;
+}
+
+function parseUsage(value: unknown): UiAgentMessage['usage'] | undefined {
+  const usage = record(value);
+  const fields = ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'] as const;
+  if (!fields.every((field) => typeof usage[field] === 'number' && Number.isFinite(usage[field]))) {
+    return undefined;
+  }
+  return {
+    input: integer(usage.input),
+    output: integer(usage.output),
+    cacheRead: integer(usage.cacheRead),
+    cacheWrite: integer(usage.cacheWrite),
+    totalTokens: integer(usage.totalTokens),
+  };
 }
 
 function streamingAssistantSegmentId(

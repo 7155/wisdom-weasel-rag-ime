@@ -5881,6 +5881,38 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if agent_session_id and agent_action == "debug-context":
+            if not self.service._include_raw_text():
+                self._write_json(
+                    HTTPStatus.FORBIDDEN,
+                    {
+                        "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+                        "ok": False,
+                        "available": False,
+                        "transient": True,
+                        "error": "本机原始上下文调试尚未启用",
+                    },
+                )
+                return
+            try:
+                response = self.service.agent.debug_context(
+                    agent_session_id,
+                    _query_first(query, "turnId"),
+                )
+            except Exception as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+                        "ok": False,
+                        "available": False,
+                        "transient": True,
+                        "error": _safe_debug_error(exc),
+                    },
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
         if context_session_id and context_item_action == "list":
             self._write_json(
                 HTTPStatus.OK,
@@ -6848,6 +6880,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "prompt":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
+            elif agent_session_id and agent_action == "rewrite":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.rewrite_session(agent_session_id, payload),
+                )
             elif agent_session_id and agent_action == "forks":
                 self._write_json(
                     HTTPStatus.CREATED,

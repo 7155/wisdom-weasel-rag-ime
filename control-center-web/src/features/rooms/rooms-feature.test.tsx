@@ -486,7 +486,7 @@ describe('Rooms experience', () => {
     await screen.findByText('还没有对话，发一条消息开始协作。');
     await user.click(screen.getByRole('button', { name: '展开 Room 状态' }));
     expect(screen.getByRole('complementary', { name: 'Room 状态' })).toHaveAttribute('data-open', 'true');
-    expect(screen.getByText('协作成员')).toBeInTheDocument();
+    expect(screen.getByText('协作成员上下文')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '收起 Room 状态' })).toBeInTheDocument();
   });
 

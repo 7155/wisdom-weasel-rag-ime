@@ -760,6 +760,7 @@ class PiRuntimeManager:
                 "rpc": installed,
                 "sessions": True,
                 "conversationFork": installed,
+                "conversationRewrite": False,
                 "tools": bool(self.config.extension_path),
                 "imageAttachments": True,
                 "coordinator": set(_COORDINATOR_TOOLS).issubset(set(self.config.tools)),
@@ -1278,6 +1279,12 @@ class PiRuntimeManager:
                 ).to_payload()
             )
         return True, public_messages
+
+    def rewind_session(self, session_id: str, *, entry_id: str) -> dict[str, object]:
+        del session_id, entry_id
+        raise PiRuntimeError(
+            "in-place conversation rewrite requires the managed Pi runtime host"
+        )
 
     def command_catalog(self, session_id: str) -> list[dict[str, object]]:
         """Return only commands Pi says are invokable through an RPC prompt."""
@@ -2046,6 +2053,9 @@ def _pi_message_payload(
         attachments=tuple(dict.fromkeys(attachments)),
         created_at_ms=created_at,
         completed_at_ms=created_at,
+        provider=str(raw.get("provider") or "").strip()[:80],
+        model=str(raw.get("responseModel") or raw.get("model") or "").strip()[:160],
+        usage=_public_usage(raw) if role == "assistant" else None,
     )
 
 

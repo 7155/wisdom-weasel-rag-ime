@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 170,
+  "routeCount": 172,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -31,6 +31,7 @@
     "agent.session.mode.update",
     "agent.session.delete",
     "agent.session.prompt",
+    "agent.session.rewrite",
     "agent.session.forks.list",
     "agent.session.forks.create",
     "agent.session.abort",
@@ -47,6 +48,7 @@
     "agent.session.contextItems.ack",
     "agent.session.contextTraces.list",
     "agent.session.contextTrace.get",
+    "agent.session.debugContext.get",
     "agent.artifact.get",
     "agent.media.list",
     "agent.deep-search",

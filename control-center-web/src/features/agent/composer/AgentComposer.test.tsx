@@ -100,5 +100,41 @@ describe('AgentComposer macOS input methods', () => {
     expect(controls).toContainElement(view.getByRole('button', { name: /当前权限可用工具/ }));
     expect(controls).not.toContainElement(send);
     expect(send.closest('.agent-composer__toolbar')).not.toBeNull();
+    expect(view.queryByRole('button', { name: '打开命令面板' })).not.toBeInTheDocument();
+  });
+
+  it('uses double Escape to request an in-place edit without disturbing IME input', () => {
+    const onEditPrevious = vi.fn();
+    const { container } = render(
+      <TooltipProvider>
+        <AgentComposer
+          draft=""
+          attachments={[]}
+          session={previewSessions[0]}
+          commands={[]}
+          tools={[]}
+          toolCatalogStatus="ready"
+          busy={false}
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={() => {}}
+          onToolSelect={() => {}}
+          onProductCommand={() => {}}
+          onSend={() => {}}
+          onStop={() => {}}
+          onEditPrevious={onEditPrevious}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
+          onModelChange={() => {}}
+        />
+      </TooltipProvider>,
+    );
+    const composer = within(container).getByRole('textbox', { name: '消息' });
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    expect(onEditPrevious).not.toHaveBeenCalled();
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    expect(onEditPrevious).toHaveBeenCalledTimes(1);
   });
 });

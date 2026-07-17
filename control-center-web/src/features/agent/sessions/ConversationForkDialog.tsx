@@ -33,6 +33,16 @@ export interface ConversationNode {
   createdAtMs: number;
 }
 
+export function resolveConversationEntryId(
+  response: unknown,
+  nodes: ConversationNode[],
+  projectedEntryId: string,
+): string {
+  const node = mergePathNodes(nodes, forkCandidates(response))
+    .find((item) => item.key === projectedEntryId);
+  return node?.branchEntryId ?? '';
+}
+
 export function ConversationForkDialog({
   open,
   sessionId,

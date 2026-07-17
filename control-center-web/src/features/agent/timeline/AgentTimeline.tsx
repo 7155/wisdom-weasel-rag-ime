@@ -1,5 +1,5 @@
-import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Virtuoso,
   type ScrollSeekConfiguration,
@@ -27,8 +27,10 @@ export function AgentTimeline({
   onOpenApproval,
   onRequestPermission,
   forkAvailable = false,
+  rewriteAvailable = false,
   jumpRequest,
   onForkFromMessage,
+  onEditMessage,
 }: {
   sessionId: string;
   persona?: AgentPersonaV1;
@@ -40,11 +42,14 @@ export function AgentTimeline({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
   forkAvailable?: boolean;
+  rewriteAvailable?: boolean;
   jumpRequest?: { messageId: string; requestId: number };
   onForkFromMessage?: (entryId: string) => void;
+  onEditMessage?: (messageId: string) => void;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [activeTargetId, setActiveTargetId] = useState('');
+  const [visibleRange, setVisibleRange] = useState({ startIndex: 0, endIndex: 0 });
   const turnOrder = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     if (!projection) return emptyIds;
@@ -53,6 +58,19 @@ export function AgentTimeline({
       return Boolean(turn && (turn.messageIds.length > 0 || turn.activityIds.length > 0));
     });
   }));
+  const markerKinds = useAgentLiveStore(useShallow((state) => turnOrder.map((turnId) => {
+    const projection = state.projections[sessionId];
+    const turn = projection?.turnsById[turnId];
+    if (!turn) return 'complete';
+    if (turn.status === 'failed') return 'failed';
+    if (turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting') return 'active';
+    const hasAssistant = turn.messageIds.some((messageId) => projection?.messagesById[messageId]?.role === 'assistant');
+    return hasAssistant ? 'complete' : 'user';
+  })));
+  useEffect(() => {
+    const lastIndex = Math.max(0, turnOrder.length - 1);
+    setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
+  }, [sessionId]);
   useEffect(() => {
     if (!jumpRequest?.messageId) return;
     const projection = useAgentLiveStore.getState().projections[sessionId];
@@ -91,10 +109,11 @@ export function AgentTimeline({
         key={sessionId}
         data={turnOrder}
         computeItemKey={(_index, turnId) => turnId}
-        followOutput="smooth"
+        followOutput={(isAtBottom) => isAtBottom ? 'auto' : false}
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
+        rangeChanged={setVisibleRange}
         scrollSeekConfiguration={agentScrollSeekConfiguration}
         itemContent={(_index, turnId) => (
           <AgentTurn
@@ -109,11 +128,35 @@ export function AgentTimeline({
             onOpenApproval={onOpenApproval}
             onRequestPermission={onRequestPermission}
             forkAvailable={forkAvailable}
+            rewriteAvailable={rewriteAvailable}
             activeTargetId={activeTargetId}
             onForkFromMessage={onForkFromMessage}
+            onEditMessage={onEditMessage}
           />
         )}
       />
+      {turnOrder.length > 1 ? (
+        <nav className="agent-conversation-nav" aria-label="快速跳转对话">
+          <span aria-hidden="true" />
+          {turnOrder.map((turnId, index) => {
+            const activeIndex = Math.floor((visibleRange.startIndex + visibleRange.endIndex) / 2);
+            const position = turnOrder.length === 1 ? 50 : (index / (turnOrder.length - 1)) * 100;
+            return (
+              <button
+                aria-current={index === activeIndex ? 'location' : undefined}
+                aria-label={`跳到第 ${index + 1} 轮`}
+                data-kind={markerKinds[index]}
+                data-visible={index >= visibleRange.startIndex && index <= visibleRange.endIndex || undefined}
+                key={turnId}
+                onClick={() => virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' })}
+                style={{ '--agent-nav-position': `${position}%` } as CSSProperties}
+                title={`第 ${index + 1} 轮`}
+                type="button"
+              />
+            );
+          })}
+        </nav>
+      ) : null}
     </div>
   );
 }
@@ -125,7 +168,12 @@ export const agentScrollSeekConfiguration = {
 
 const timelineComponents = {
   ScrollSeekPlaceholder: AgentTurnTombstone,
+  Footer: AgentTimelineFooter,
 };
+
+function AgentTimelineFooter() {
+  return <div className="agent-timeline__footer-space" aria-hidden="true" />;
+}
 
 function AgentTurnTombstone({
   height,
@@ -150,8 +198,10 @@ export function AgentTurn({
   onOpenApproval,
   onRequestPermission,
   forkAvailable = false,
+  rewriteAvailable = false,
   activeTargetId = '',
   onForkFromMessage,
+  onEditMessage,
 }: {
   sessionId: string;
   turnId: string;
@@ -163,8 +213,10 @@ export function AgentTurn({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
   forkAvailable?: boolean;
+  rewriteAvailable?: boolean;
   activeTargetId?: string;
   onForkFromMessage?: (entryId: string) => void;
+  onEditMessage?: (messageId: string) => void;
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
   const userIds = useAgentLiveStore(useShallow((state) => {
@@ -202,7 +254,7 @@ export function AgentTurn({
   const streamingMessageId = activeStreamingMessageId(turn.status, assistantMessages);
   return (
     <article className="agent-turn" data-turn-status={turn.status}>
-      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} />)}
+      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <PersonaAvatar persona={persona} presence={showWorking ? 'thinking' : presence} />
@@ -223,9 +275,8 @@ export function AgentTurn({
                 </div>
               ) : (
                 <div data-timeline-kind="activity" key={entry.key}>
-                  <ActivitySummary
+                  <ActivityGroupView
                     activities={entry.activities}
-                    inline
                     onApprovalDecision={onApprovalDecision}
                     onOpenApproval={onOpenApproval}
                     onRequestPermission={onRequestPermission}
@@ -359,17 +410,21 @@ function MessageView({
   messageId,
   user = false,
   forkAvailable = false,
+  rewriteAvailable = false,
   historyTarget = false,
   streaming,
   onForkFromMessage,
+  onEditMessage,
 }: {
   sessionId: string;
   messageId: string;
   user?: boolean;
   forkAvailable?: boolean;
+  rewriteAvailable?: boolean;
   historyTarget?: boolean;
   streaming?: boolean;
   onForkFromMessage?: (entryId: string) => void;
+  onEditMessage?: (messageId: string) => void;
 }) {
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
@@ -382,14 +437,52 @@ function MessageView({
     && !messageId.startsWith('local:')
     && Boolean(branchText)
     && Boolean(onForkFromMessage);
+  const canEdit = user
+    && rewriteAvailable
+    && (message.status === 'completed' || message.status === 'failed')
+    && !messageId.startsWith('local:')
+    && Boolean(branchText)
+    && Boolean(onEditMessage);
   const showStreaming = !user && (streaming ?? message.status === 'streaming');
   const visibleStatus = showStreaming ? 'streaming' : message.status === 'streaming' ? 'completed' : message.status;
   return user ? (
-    <div className="agent-user-message-shell" data-actions={canFork || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
+    <div className="agent-user-message-shell" data-actions={canFork || canEdit || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
         <AgentBlocks blocks={visibleBlocks} />
         {message.attachments.length ? <small>{message.attachments.length} 个附件</small> : null}
       </div>
+      {canFork || canEdit ? (
+        <div className="agent-message-actions">
+          {canEdit ? (
+            <IconButton
+              label="修改这条消息"
+              icon={<PencilLine size={14} />}
+              size="small"
+              onClick={() => onEditMessage?.(messageId)}
+              tooltip
+              tooltipSide="left"
+            />
+          ) : null}
+          {canFork ? (
+          <IconButton
+            label="从这条消息创建分支"
+            icon={<GitBranch size={14} />}
+            size="small"
+            onClick={() => onForkFromMessage?.(messageId)}
+            tooltip
+            tooltipSide="left"
+          />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  ) : (
+    <div className="agent-assistant-message-shell" data-actions={canFork || undefined}>
+      <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
+        <AgentBlocks blocks={visibleBlocks} streaming={showStreaming} />
+        {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
+      </div>
+      {!showStreaming ? <AgentMessageUsage message={message} /> : null}
       {canFork ? (
         <div className="agent-message-actions">
           <IconButton
@@ -403,24 +496,75 @@ function MessageView({
         </div>
       ) : null}
     </div>
-  ) : (
-    <div className="agent-assistant-message-shell" data-actions={canFork || undefined}>
-      <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
-        <AgentBlocks blocks={visibleBlocks} streaming={showStreaming} />
-        {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
-      </div>
-      {canFork ? (
-        <div className="agent-message-actions">
-          <IconButton
-            label="从这条消息创建分支"
-            icon={<GitBranch size={14} />}
-            size="small"
-            onClick={() => onForkFromMessage?.(messageId)}
-            tooltip
-            tooltipSide="left"
-          />
-        </div>
+  );
+}
+
+function AgentMessageUsage({ message }: { message: AgentMessageProjection }) {
+  const usage = message.usage;
+  if (!usage || usage.totalTokens <= 0) return null;
+  const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+  const cachePercent = promptTokens > 0 ? Math.round((usage.cacheRead / promptTokens) * 100) : 0;
+  return (
+    <div className="agent-message-usage" aria-label="本轮模型与 Token 用量">
+      {message.model ? <span title="本轮模型">{message.model}</span> : null}
+      {message.provider ? <span title="模型提供方">{message.provider}</span> : null}
+      <span title="输入 Token">输入 {formatTokens(promptTokens)}</span>
+      <span title="输出 Token">输出 {formatTokens(usage.output)}</span>
+      <strong title="本轮缓存读取占提示 Token 的比例">缓存 {cachePercent}%</strong>
+    </div>
+  );
+}
+
+function ActivityGroupView({
+  activities,
+  onApprovalDecision,
+  onOpenApproval,
+  onRequestPermission,
+}: {
+  activities: AgentActivityProjection[];
+  onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  onOpenApproval?: (activity: AgentActivityProjection) => void;
+  onRequestPermission?: () => void;
+}) {
+  const compactions = activities.filter((activity) => activity.kind === 'context_compaction');
+  const ordinary = activities.filter((activity) => activity.kind !== 'context_compaction');
+  return (
+    <>
+      {compactions.map((activity) => <ContextCompactionNotice key={activity.id} activity={activity} />)}
+      {ordinary.length ? (
+        <ActivitySummary
+          activities={ordinary}
+          inline
+          onApprovalDecision={onApprovalDecision}
+          onOpenApproval={onOpenApproval}
+          onRequestPermission={onRequestPermission}
+        />
       ) : null}
+    </>
+  );
+}
+
+function ContextCompactionNotice({ activity }: { activity: AgentActivityProjection }) {
+  const running = activity.status === 'running';
+  const failed = activity.status === 'failed';
+  const before = numberValue(activity.payload.tokensBefore);
+  const after = numberValue(activity.payload.estimatedTokensAfter);
+  const reason = text(activity.payload.reason);
+  const reasonLabel = reason === 'manual' ? '手动触发' : reason === 'overflow' ? '溢出恢复' : '达到自动阈值';
+  return (
+    <div className="agent-compaction-notice" data-state={activity.status} role="status" aria-live="polite">
+      <span className="agent-compaction-notice__mark" aria-hidden="true"><RefreshCcw size={15} /></span>
+      <span>
+        <strong>{running ? '正在压缩上下文' : failed ? '上下文压缩失败' : '上下文已压缩'}</strong>
+        <small>
+          {running
+            ? `${reasonLabel}，正在生成可继续对话的摘要`
+            : before > 0 && after > 0
+              ? `${formatTokens(before)} → 约 ${formatTokens(after)}，下一轮响应后校准实际占用`
+              : `${reasonLabel}，下一轮响应后校准实际占用`}
+        </small>
+      </span>
+      {running ? <i className="agent-compaction-notice__pulse" aria-hidden="true" /> : null}
     </div>
   );
 }
@@ -480,4 +624,14 @@ function formatElapsed(durationMs: number): string {
   const minutes = Math.floor(seconds / 60);
   const remaining = seconds % 60;
   return minutes > 0 ? `${minutes}分 ${remaining}秒` : `${remaining}秒`;
+}
+
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 1 : 2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return String(Math.max(0, Math.round(value)));
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
 }

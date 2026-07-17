@@ -20,6 +20,7 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "messages",
         "events",
         "prompt",
+        "rewrite",
         "forks",
         "abort",
         "review",
@@ -29,6 +30,7 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "model",
         "thinking",
         "intercom",
+        "debug-context",
     }:
         return "", ""
     return session_id, action

@@ -6,10 +6,14 @@ import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import type { UiAgentEvent } from '@/contracts/ui-events';
-import { AgentComposer } from './composer/AgentComposer';
+import { AgentComposer, type AgentComposerEditState } from './composer/AgentComposer';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
 import { SessionRail } from './sessions/SessionRail';
-import { ConversationForkDialog, type ConversationNode } from './sessions/ConversationForkDialog';
+import {
+  ConversationForkDialog,
+  resolveConversationEntryId,
+  type ConversationNode,
+} from './sessions/ConversationForkDialog';
 import { NewSessionDialog, type NewSessionInput } from './sessions/NewSessionDialog';
 import { AgentStatusPanel } from './status/AgentStatusPanel';
 import { useMediaQuery, useModalPanel } from './overlay-dialog';
@@ -73,6 +77,10 @@ function AgentWorkspace() {
   const [tools, setTools] = useState<ToolManifest[]>([]);
   const [toolCatalogStatus, setToolCatalogStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [conversationForkAvailable, setConversationForkAvailable] = useState(false);
+  const [conversationRewriteAvailable, setConversationRewriteAvailable] = useState(false);
+  const [editTarget, setEditTarget] = useState<AgentComposerEditState>();
+  const [rewriteResolving, setRewriteResolving] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -159,7 +167,7 @@ function AgentWorkspace() {
     setLoading(true);
     try {
       const [sessionResponse, roleResponse] = await Promise.all([
-        transport.request({ pathId: 'agent.sessions.list', query: { limit: 100 } }),
+        transport.request({ pathId: 'agent.sessions.list', query: { limit: 100, includeArchived: showArchived } }),
         transport.request({ pathId: 'agent.roles.list' }),
       ]);
       const nextSessions = sessionItems(sessionResponse);
@@ -191,7 +199,7 @@ function AgentWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [transport]);
+  }, [showArchived, transport]);
 
   useEffect(() => { void loadSessions(requestedSessionId); }, [loadSessions, requestedSessionId]);
   useEffect(() => {
@@ -199,6 +207,8 @@ function AgentWorkspace() {
     setCatalog(undefined);
     setCommands([]);
     setConversationForkAvailable(false);
+    setConversationRewriteAvailable(false);
+    setEditTarget(undefined);
     setForkDialogInitialEntryId('');
     setTimelineJumpRequest(undefined);
   }, [selectedId]);
@@ -264,9 +274,13 @@ function AgentWorkspace() {
             ? runtimePayload.capabilities
             : {};
           setConversationForkAvailable(runtimeCapabilities.conversationFork === true);
+          setConversationRewriteAvailable(runtimeCapabilities.conversationRewrite === true);
         },
         () => {
-          if (active) setConversationForkAvailable(false);
+          if (active) {
+            setConversationForkAvailable(false);
+            setConversationRewriteAvailable(false);
+          }
         },
       );
       const [modelResult, commandResult, toolResult] = await Promise.allSettled([
@@ -314,6 +328,7 @@ function AgentWorkspace() {
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
   const busy = hasActiveTurn;
   const branchBlocked = busy || sending;
+  const rewriteBlocked = branchBlocked || rewriteResolving || !conversationRewriteAvailable;
   const imageSupport = useMemo(() => selectedModelImageSupport(catalog), [catalog]);
   useEffect(() => {
     if (!busy) setStopping(false);
@@ -348,6 +363,31 @@ function AgentWorkspace() {
     if (mobileViewport) setRailOpen(false);
   }
 
+  async function archiveSession(sessionId: string, archived: boolean): Promise<void> {
+    try {
+      await transport.request({
+        pathId: 'agent.session.archive',
+        params: { sessionId },
+        body: { archived },
+      });
+      await loadSessions(selectedId === sessionId && archived && !showArchived ? '' : selectedId);
+      setError('');
+    } catch (requestError) {
+      setError(errorText(requestError));
+    }
+  }
+
+  async function deleteSession(sessionId: string): Promise<void> {
+    try {
+      await transport.request({ pathId: 'agent.session.delete', params: { sessionId } });
+      useAgentLiveStore.getState().clear(sessionId);
+      await loadSessions(selectedId === sessionId ? '' : selectedId);
+      setError('');
+    } catch (requestError) {
+      setError(errorText(requestError));
+    }
+  }
+
   async function createSession(input: NewSessionInput): Promise<boolean> {
     const creationPersona = defaultPersona;
     if (!creationPersona) {
@@ -377,6 +417,42 @@ function AgentWorkspace() {
   async function send(): Promise<void> {
     if (!session || sending) return;
     const value = draft.trim();
+    if (editTarget) {
+      if (!value && attachments.length === 0) return;
+      if (attachments.length && imageSupport !== 'supported') {
+        setError(imageSupport === 'unsupported'
+          ? '当前模型不支持图片，请移除图片或切换到支持图片的模型。'
+          : '尚未确认当前模型的图片能力，请稍后再发送。');
+        return;
+      }
+      const message = value || '请查看附件。';
+      const selectedAttachments = attachments;
+      const target = editTarget;
+      setDraft('');
+      setAttachments([]);
+      setSending(true);
+      setError('');
+      try {
+        await transport.request({
+          pathId: 'agent.session.rewrite',
+          params: { sessionId: session.id },
+          body: {
+            entryId: target.entryId,
+            message,
+            attachments: selectedAttachments.map((item) => item.id),
+            clientMessageId: `web-rewrite-${crypto.randomUUID()}`,
+          },
+        });
+        setEditTarget(undefined);
+      } catch (requestError) {
+        setDraft(value);
+        setAttachments(selectedAttachments);
+        setError(errorText(requestError));
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
     if (value === '/new') { setDraft(''); setNewSessionOpen(true); return; }
     if (value === '/resume') { setDraft(''); setRailOpen(true); return; }
     if (value === '/branch') { setDraft(''); openForkDialog(); return; }
@@ -560,6 +636,65 @@ function AgentWorkspace() {
     if (!session) return;
     setForkDialogInitialEntryId(initialEntryId);
     setForkDialogOpen(true);
+  }
+
+  async function beginEditMessage(messageId = ''): Promise<void> {
+    if (!session || rewriteBlocked) {
+      setError(conversationRewriteAvailable
+        ? '请等待当前回复结束后再修改历史消息。'
+        : '当前 Pi Runtime 尚未提供原位修改能力。');
+      return;
+    }
+    const projection = agentProjection(session.id);
+    const message = messageId
+      ? projection.messagesById[messageId]
+      : [...projection.messageOrder]
+        .reverse()
+        .map((id) => projection.messagesById[id])
+        .find((item) => item?.role === 'user' && !item.id.startsWith('local:'));
+    if (!message || message.role !== 'user' || message.id.startsWith('local:')) {
+      setError('当前对话里没有可修改的上一条用户消息。');
+      return;
+    }
+    const text = message.blocks
+      .map((block) => typeof block.data.text === 'string' ? block.data.text : '')
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (!text && message.attachments.length === 0) {
+      setError('这条消息没有可编辑的公开内容。');
+      return;
+    }
+    setRewriteResolving(true);
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.session.forks.list',
+        params: { sessionId: session.id },
+      });
+      if (selectedIdRef.current !== session.id) return;
+      const entryId = resolveConversationEntryId(response, conversationNodes, message.id);
+      if (!entryId) throw new Error('Pi 没有返回这条公开消息对应的可回溯锚点。');
+      setEditTarget({ entryId, messageId: message.id });
+      setDraft(text);
+      setAttachments(message.attachments.map((id, index) => ({
+        id,
+        name: `原附件 ${index + 1}`,
+        mimeType: '',
+        byteSize: 0,
+        source: 'path',
+      })));
+      setError('');
+    } catch (requestError) {
+      setError(publicAgentErrorText(requestError, '暂时无法定位这条历史消息。'));
+    } finally {
+      setRewriteResolving(false);
+    }
+  }
+
+  function cancelEdit(): void {
+    setEditTarget(undefined);
+    setDraft('');
+    setAttachments([]);
   }
 
   function jumpToMessage(messageId: string): void {
@@ -833,7 +968,7 @@ function AgentWorkspace() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
-      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onClose={closeMobileRail} />
+      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={(sessionId) => void deleteSession(sessionId)} onClose={closeMobileRail} />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section className="agent-conversation" aria-hidden={railModal || statusModal || undefined} inert={railModal || statusModal ? true : undefined}>
         <header className="agent-conversation__header">
@@ -845,9 +980,9 @@ function AgentWorkspace() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={() => void send()} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />

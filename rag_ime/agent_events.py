@@ -86,6 +86,45 @@ class AgentEventHub:
 
         return remove
 
+    def invalidate_projection(
+        self,
+        session_id: str,
+        *,
+        reason: str = "session_rewritten",
+    ) -> AgentEventEnvelope:
+        """Drop stale replay state and make live clients reload the runtime snapshot."""
+
+        with self._lock:
+            envelope = self._build_event_locked(
+                session_id,
+                "snapshot_required",
+                {"reason": str(reason or "session_rewritten")},
+                turn_id="",
+                created_at_ms=None,
+            )
+            # The invalidation itself is a live control event. Keeping it in
+            # replay would let a reconnect apply the old projection before the
+            # authoritative snapshot has replaced it.
+            self._events[session_id].clear()
+            subscribers = tuple(self._subscribers.get(session_id, ()))
+            for subscriber in subscribers:
+                while True:
+                    try:
+                        subscriber.get_nowait()
+                    except queue.Empty:
+                        break
+                try:
+                    subscriber.put_nowait(envelope)
+                except queue.Full:
+                    pass
+            observers = tuple(self._observers)
+        for observer in observers:
+            try:
+                observer(envelope)
+            except Exception:
+                pass
+        return envelope
+
     def subscribe(
         self,
         session_id: str,

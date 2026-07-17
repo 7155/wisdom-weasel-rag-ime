@@ -20,7 +20,8 @@ describe('ObservabilityFeature', () => {
     expect(await screen.findByRole('heading', { name: '运行观察' })).toBeInTheDocument();
     const timeline = await screen.findByRole('list', { name: '运行观察事件' });
     expect(within(timeline).getByText('ime.memory 已完成')).toBeInTheDocument();
-    expect(screen.getByText('不采集原始思维链、提示词、消息正文或 Agent 私信内容。', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('观察数据库只保存状态、耗时、数量、ID 和指纹化元数据。', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('不持久化原始提示词或消息正文。', { exact: false })).toBeInTheDocument();
     expect(screen.queryByText('PRIVATE_TOOL_RESULT')).not.toBeInTheDocument();
 
     await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(1));

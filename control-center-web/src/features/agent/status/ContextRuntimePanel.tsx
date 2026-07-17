@@ -22,6 +22,7 @@ import {
 } from '@/components/primitives';
 import type { AgentContextItemV1 } from '@/contracts/generated/agent-context-item.v1';
 import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
+import { DebugContextInspector } from './DebugContextInspector';
 
 interface ContextTraceSummary {
   traceId: string;
@@ -211,7 +212,7 @@ function ContextPipelineDialog({
       <DialogContent className="agent-context-pipeline-dialog">
         <DialogHeader>
           <DialogTitle>上下文管线</DialogTitle>
-          <DialogDescription>查看每个阶段如何形成当前 Pi Runtime 请求。原始提示词与敏感路径不会在这里显示。</DialogDescription>
+          <DialogDescription>查看每个阶段如何形成当前 Pi Runtime 请求；本机 Debug 模式下可继续核对原始输入与最终 Provider Payload。</DialogDescription>
         </DialogHeader>
         <div className="agent-context-pipeline-layout">
           <nav aria-label="上下文组装记录">
@@ -230,7 +231,12 @@ function ContextPipelineDialog({
           <section className="agent-context-pipeline-detail" aria-live="polite">
             {traceQuery.isPending ? <ContextEmpty animated>正在读取管线</ContextEmpty> : null}
             {traceQuery.error ? <ContextEmpty tone="danger">这条管线暂时无法读取</ContextEmpty> : null}
-            {traceQuery.data ? <ContextTraceGraph trace={traceQuery.data} /> : null}
+            {traceQuery.data ? (
+              <>
+                <ContextTraceGraph trace={traceQuery.data} />
+                <DebugContextInspector sessionId={sessionId} turnId={traceQuery.data.turnId} embedded />
+              </>
+            ) : null}
           </section>
         </div>
       </DialogContent>

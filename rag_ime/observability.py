@@ -433,6 +433,13 @@ class ObservationHub:
         attributes: dict[str, object] = {"sourceEventType": event_type}
         metrics: dict[str, object] = {}
 
+        telemetry = _telemetry_projection(payload.get("telemetry"))
+        _apply_agent_telemetry_observation(
+            telemetry,
+            attributes=attributes,
+            metrics=metrics,
+        )
+
         if event_type == "message_completed":
             message = payload.get("message") if isinstance(payload.get("message"), Mapping) else {}
             role = _bounded_label(
@@ -465,7 +472,39 @@ class ObservationHub:
                     minimum=0,
                 ),
             )
+            provider = _bounded_label(payload.get("provider") or message.get("provider"))
+            model = _bounded_label(payload.get("model") or message.get("model"))
+            if provider:
+                attributes["provider"] = provider
+            if model:
+                attributes["model"] = model
+            usage = payload.get("usage") if isinstance(payload.get("usage"), Mapping) else message.get("usage")
+            if isinstance(usage, Mapping):
+                _apply_usage_metrics(usage, metrics)
             status = "completed"
+        elif event_type in {"compaction_started", "compaction_completed"}:
+            category = "context"
+            reason = _bounded_label(payload.get("reason"), fallback="threshold")
+            attributes["reason"] = reason
+            if event_type == "compaction_started":
+                status = "running"
+                summary = "上下文压缩已开始"
+            else:
+                failed = payload.get("isError") is True
+                aborted = payload.get("aborted") is True
+                status = "failed" if failed else "cancelled" if aborted else "completed"
+                summary = {
+                    "failed": "上下文压缩未完成",
+                    "cancelled": "上下文压缩已取消",
+                    "completed": "上下文压缩已完成",
+                }[status]
+                metrics["tokensBefore"] = _integer(
+                    payload.get("tokensBefore"), default=0, minimum=0
+                )
+                metrics["estimatedTokensAfter"] = _integer(
+                    payload.get("estimatedTokensAfter"), default=0, minimum=0
+                )
+                attributes["willRetry"] = payload.get("willRetry") is True
         elif event_type == "reasoning_summary":
             summary = "Agent 已更新公开推理摘要"
             status = "running"
@@ -925,6 +964,26 @@ def _agent_projection_payload(event: AgentEventEnvelope) -> dict[str, object]:
                 else 0
             ),
         )
+        provider = _bounded_label(message.get("provider") or source.get("provider"))
+        model = _bounded_label(message.get("model") or source.get("model"))
+        usage = message.get("usage") if isinstance(message.get("usage"), Mapping) else source.get("usage")
+        if provider:
+            payload["provider"] = provider
+        if model:
+            payload["model"] = model
+        if isinstance(usage, Mapping):
+            payload["usage"] = _usage_projection(usage)
+    elif event_type in {"compaction_started", "compaction_completed"}:
+        payload.update(
+            reason=_bounded_label(source.get("reason"), fallback="threshold"),
+            aborted=source.get("aborted") is True,
+            willRetry=source.get("willRetry") is True,
+            tokensBefore=_integer(source.get("tokensBefore"), default=0, minimum=0),
+            estimatedTokensAfter=_integer(
+                source.get("estimatedTokensAfter"), default=0, minimum=0
+            ),
+            isError=bool(source.get("error")),
+        )
     elif event_type == "status_changed":
         payload["status"] = _bounded_label(source.get("status"), fallback="updated")
     elif event_type in {"tool_started", "tool_progress", "tool_finished"}:
@@ -959,7 +1018,116 @@ def _agent_projection_payload(event: AgentEventEnvelope) -> dict[str, object]:
         )
     elif source.get("isError") is not None:
         payload["isError"] = source.get("isError") is True
+    telemetry = _telemetry_projection(source.get("telemetry"))
+    if telemetry:
+        payload["telemetry"] = telemetry
     return payload
+
+
+def _telemetry_projection(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, object] = {}
+    model = value.get("model") if isinstance(value.get("model"), Mapping) else {}
+    public_model = {
+        key: label
+        for key in ("provider", "id", "name")
+        if (label := _bounded_label(model.get(key)))
+    }
+    if public_model:
+        result["model"] = public_model
+
+    context = value.get("context") if isinstance(value.get("context"), Mapping) else {}
+    public_context: dict[str, object] = {}
+    for key in (
+        "tokens",
+        "contextWindow",
+        "remainingTokens",
+        "compactAtTokens",
+        "tokensUntilCompact",
+    ):
+        number = _optional_integer(context.get(key))
+        if number is not None:
+            public_context[key] = number
+    percent = _optional_number(context.get("percent"))
+    if percent is not None:
+        public_context["percent"] = min(percent, 100.0)
+    if public_context:
+        result["context"] = public_context
+
+    latest_usage = value.get("latestUsage")
+    if isinstance(latest_usage, Mapping):
+        result["latestUsage"] = _usage_projection(latest_usage)
+    cache_hit = _optional_number(value.get("latestCacheHitPercent"))
+    if cache_hit is not None:
+        result["latestCacheHitPercent"] = min(cache_hit, 100.0)
+    result["isCompacting"] = value.get("isCompacting") is True
+    result["compactionCount"] = _integer(
+        value.get("compactionCount"), default=0, minimum=0
+    )
+    return result
+
+
+def _usage_projection(value: Mapping[object, object]) -> dict[str, int]:
+    return {
+        key: _integer(value.get(key), default=0, minimum=0)
+        for key in ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
+    }
+
+
+def _apply_agent_telemetry_observation(
+    telemetry: Mapping[str, object],
+    *,
+    attributes: dict[str, object],
+    metrics: dict[str, object],
+) -> None:
+    if not telemetry:
+        return
+    model = telemetry.get("model") if isinstance(telemetry.get("model"), Mapping) else {}
+    for source_key, target_key in (
+        ("provider", "provider"),
+        ("id", "model"),
+        ("name", "modelName"),
+    ):
+        label = _bounded_label(model.get(source_key))
+        if label:
+            attributes[target_key] = label
+
+    context = telemetry.get("context") if isinstance(telemetry.get("context"), Mapping) else {}
+    for source_key, target_key in (
+        ("tokens", "contextTokens"),
+        ("contextWindow", "contextWindowTokens"),
+        ("percent", "contextPercent"),
+        ("remainingTokens", "remainingTokens"),
+        ("compactAtTokens", "compactAtTokens"),
+        ("tokensUntilCompact", "tokensUntilCompact"),
+    ):
+        if context.get(source_key) is not None:
+            metrics[target_key] = context[source_key]
+
+    latest_usage = telemetry.get("latestUsage")
+    if isinstance(latest_usage, Mapping):
+        _apply_usage_metrics(latest_usage, metrics)
+    if telemetry.get("latestCacheHitPercent") is not None:
+        metrics["cacheHitPercent"] = telemetry["latestCacheHitPercent"]
+    metrics["compactionCount"] = _integer(
+        telemetry.get("compactionCount"), default=0, minimum=0
+    )
+    attributes["isCompacting"] = telemetry.get("isCompacting") is True
+
+
+def _apply_usage_metrics(
+    usage: Mapping[object, object],
+    metrics: dict[str, object],
+) -> None:
+    for source_key, target_key in (
+        ("input", "inputTokens"),
+        ("output", "outputTokens"),
+        ("cacheRead", "cacheReadTokens"),
+        ("cacheWrite", "cacheWriteTokens"),
+        ("totalTokens", "totalTokens"),
+    ):
+        metrics[target_key] = _integer(usage.get(source_key), default=0, minimum=0)
 
 
 def _room_projection_event(event: Mapping[str, object]) -> dict[str, object]:

@@ -17,6 +17,7 @@ import type { ReactNode } from 'react';
 import { IconButton } from '@/components/primitives';
 import type { RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from '.';
+import { useAgentLiveStore } from '../agent/state/live-store';
 import '../agent/agent.css';
 
 export function RoomStatusPanel({
@@ -83,8 +84,8 @@ export function RoomStatusPanel({
           {room?.workspaceRoots?.length ? <div className="agent-status-files">{room.workspaceRoots.map((path) => <RoomStatusRow detail={path} icon={FolderKanban} key={path} title={pathName(path)} />)}</div> : <RoomStatusEmpty>{room?.roomKind === 'roleplay' ? '角色群聊不绑定项目路径' : '这个旧 Room 尚未绑定项目路径'}</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={room?.participants.length ?? 0} icon={Bot} title="协作成员">
-          {room?.participants.length ? <div className="room-status-participants">{room.participants.map((participant) => <RoomStatusRow detail={`${collaborationRoleLabel(participant.collaborationRole)} · ${participant.status === 'active' ? '已加入' : '暂未参与'}`} icon={Bot} key={participant.id} title={participant.displayName} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
+        <RoomStatusSection count={room?.participants.length ?? 0} icon={Bot} title="协作成员上下文">
+          {room?.participants.length ? <div className="room-status-participants">{room.participants.map((participant) => <RoomParticipantTelemetry key={participant.id} participant={participant} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
         </RoomStatusSection>
 
         {room ? (
@@ -100,6 +101,42 @@ export function RoomStatusPanel({
       </div>
     </aside>
   );
+}
+
+function RoomParticipantTelemetry({ participant }: { participant: NonNullable<RoomSummary['participants']>[number] }) {
+  const telemetry = useAgentLiveStore((state) => state.projections[participant.sessionId]?.telemetry);
+  if (!telemetry) {
+    return <RoomStatusRow detail={`${collaborationRoleLabel(participant.collaborationRole)} · ${participant.status === 'active' ? '已加入' : '暂未参与'}`} icon={Bot} title={participant.displayName} />;
+  }
+  const context = telemetry.context;
+  const cumulative = telemetry.cumulativeUsage;
+  const promptTokens = cumulative.input + cumulative.cacheRead + cumulative.cacheWrite;
+  const cachePercent = promptTokens > 0 ? Math.round((cumulative.cacheRead / promptTokens) * 100) : 0;
+  const percent = context.percent === null ? null : Math.min(100, Math.max(0, context.percent));
+  return (
+    <article className="room-participant-telemetry" data-compacting={telemetry.isCompacting || undefined}>
+      <header>
+        <span><strong>{participant.displayName}</strong><small>{telemetry.model.name || telemetry.model.id} · {collaborationRoleLabel(participant.collaborationRole)}</small></span>
+        <i data-state={participant.status}>{telemetry.isCompacting ? '压缩中' : participant.status === 'active' ? 'ACTIVE' : 'IDLE'}</i>
+      </header>
+      <div className="room-participant-telemetry__numbers">
+        <span title="累计提示 Token">{roomTokenCount(promptTokens)} 输入</span>
+        <span title="累计输出 Token">{roomTokenCount(cumulative.output)} 输出</span>
+        <strong title="累计缓存命中率">缓存 {cachePercent}%</strong>
+      </div>
+      <div className="room-participant-telemetry__bar" aria-label={percent === null ? '上下文占用待校准' : `上下文已使用 ${Math.round(percent)}%`}>
+        <span style={{ width: `${percent ?? 0}%` }} />
+        <b>{percent === null ? '待校准' : `${Math.round(percent)}%`}</b>
+      </div>
+      <p>{context.tokensUntilCompact === null ? '下一轮响应后校准' : `距自动压缩约 ${roomTokenCount(context.tokensUntilCompact)}`}</p>
+    </article>
+  );
+}
+
+function roomTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 1 : 2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return String(Math.max(0, Math.round(value)));
 }
 
 function RoomStatusSection({ icon: Icon, title, count, children }: { icon: LucideIcon; title: string; count: number; children: ReactNode }) {

@@ -6,6 +6,7 @@ import {
   CircleDashed,
   FileText,
   FolderKanban,
+  Gauge,
   ExternalLink,
   ListChecks,
   LoaderCircle,
@@ -107,6 +108,10 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           ) : null}
         </StatusSection>
 
+        <StatusSection icon={Gauge} title="上下文与用量" count={projection?.telemetry?.compactionCount ?? 0}>
+          <SessionTelemetryView projection={projection} />
+        </StatusSection>
+
         <StatusSection icon={Wrench} title="关键步骤" count={view.tools.length}>
           {view.tools.length ? (
             <div className="agent-status-tools">
@@ -187,6 +192,66 @@ function useDeferredStatusContent(open: boolean): boolean {
     };
   }, [open]);
   return ready;
+}
+
+function SessionTelemetryView({ projection }: { projection?: AgentProjectionState }) {
+  const telemetry = projection?.telemetry;
+  if (!telemetry) return <EmptyLine>发送一轮消息后显示上下文与缓存数据</EmptyLine>;
+  const context = telemetry.context;
+  const cumulative = telemetry.cumulativeUsage;
+  const promptTokens = cumulative.input + cumulative.cacheRead + cumulative.cacheWrite;
+  const cachePercent = promptTokens > 0 ? Math.round((cumulative.cacheRead / promptTokens) * 100) : 0;
+  const percent = context.percent === null ? null : Math.min(100, Math.max(0, context.percent));
+  return (
+    <div className="agent-session-telemetry" data-compacting={telemetry.isCompacting || undefined}>
+      <div className="agent-session-telemetry__model">
+        <span><strong>{telemetry.model.name || telemetry.model.id}</strong><small>{telemetry.model.provider}</small></span>
+        {telemetry.isCompacting ? <i><LoaderCircle size={13} />压缩中</i> : null}
+      </div>
+      <div className="agent-session-telemetry__usage" aria-label="会话累计 Token 用量">
+        <span><small>输入</small><strong>{formatTokenCount(promptTokens)}</strong></span>
+        <span><small>输出</small><strong>{formatTokenCount(cumulative.output)}</strong></span>
+        <span><small>缓存</small><strong data-cache={cachePercent > 0 || undefined}>{cachePercent}%</strong></span>
+      </div>
+      <div className="agent-session-telemetry__context">
+        <div>
+          <span><strong>上下文</strong><small>{percent === null ? '待下一轮校准' : `${formatTokenCount(context.tokens ?? 0)} / ${formatTokenCount(context.contextWindow)}`}</small></span>
+          <b>{percent === null ? '—' : `${Math.round(percent)}%`}</b>
+        </div>
+        <div className="agent-session-telemetry__track" aria-hidden="true">
+          <span style={{ width: `${percent ?? 0}%` }} />
+          {context.contextWindow > 0 ? <i style={{ left: `${Math.min(100, (context.compactAtTokens / context.contextWindow) * 100)}%` }} /> : null}
+        </div>
+        <p>
+          {context.tokensUntilCompact === null
+            ? '刚完成压缩，下一轮模型响应后恢复精确计量'
+            : context.autoCompactEnabled
+              ? `距自动压缩约 ${formatTokenCount(context.tokensUntilCompact)}`
+              : `剩余上下文 ${formatTokenCount(context.remainingTokens ?? 0)} · 自动压缩已关闭`}
+        </p>
+      </div>
+      {telemetry.latestCompaction ? (
+        <div className="agent-session-telemetry__compaction" data-state={telemetry.latestCompaction.status}>
+          <LoaderCircle size={14} data-running={telemetry.latestCompaction.status === 'running' || undefined} />
+          <span><strong>{telemetry.latestCompaction.status === 'running' ? '正在压缩' : `已压缩 ${telemetry.compactionCount} 次`}</strong><small>{compactionSummary(telemetry.latestCompaction)}</small></span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function compactionSummary(value: NonNullable<NonNullable<AgentProjectionState['telemetry']>['latestCompaction']>): string {
+  if (value.status === 'running') return '正在生成精简摘要';
+  if (value.tokensBefore && value.estimatedTokensAfter) {
+    return `${formatTokenCount(value.tokensBefore)} → 约 ${formatTokenCount(value.estimatedTokensAfter)}`;
+  }
+  return value.status === 'failed' ? '压缩未完成' : '下一轮响应后校准占用';
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 1 : 2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return String(Math.max(0, Math.round(value)));
 }
 
 function StatusSection({

@@ -103,7 +103,12 @@ function createPreviewTransport(): MockControlTransport {
     previewMemoryRunStatus = 'rolled_back';
     return previewMemoryWorkReceipt('knowledge.database.rollback', false);
   };
-  routes['agent.sessions.list'] = () => ({ ok: true, sessions: [...sessions] });
+  routes['agent.sessions.list'] = (request: ControlRequest) => ({
+    ok: true,
+    sessions: sessions.filter((session) => (
+      record(request.query).includeArchived === true || stringValue(session.status) !== 'archived'
+    )),
+  });
   routes['agent.roles.list'] = () => ({ ok: true, roles: previewPersonas });
   routes['agent.sessions.create'] = (request: ControlRequest) => {
     const body = record(request.body);
@@ -116,6 +121,24 @@ function createPreviewTransport(): MockControlTransport {
     );
     sessions.unshift(session);
     return { ok: true, session };
+  };
+  routes['agent.session.archive'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    const index = sessions.findIndex((session) => stringValue(session.id) === sessionId);
+    const archived = record(request.body).archived === true;
+    if (index < 0) throw new Error('Preview session not found.');
+    sessions[index] = {
+      ...sessions[index],
+      status: archived ? 'archived' : 'idle',
+      updatedAtMs: Date.now(),
+    };
+    return { ok: true, session: sessions[index] };
+  };
+  routes['agent.session.delete'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    const index = sessions.findIndex((session) => stringValue(session.id) === sessionId);
+    if (index >= 0) sessions.splice(index, 1);
+    return { ok: true, sessionId };
   };
   routes['agent.session.forks.list'] = (request: ControlRequest) => ({
     schemaVersion: 'rag-ime.agent-session-fork-candidates.v1',
@@ -253,7 +276,7 @@ function previewResponse(pathId: ControlPathId): unknown {
         idleTimeoutSeconds: 900,
         activeSessionId: 'session-preview',
         lastError: '',
-        capabilities: { conversationFork: true },
+        capabilities: { conversationFork: true, conversationRewrite: true },
       };
     case 'agent.session.models':
       return {
@@ -303,6 +326,11 @@ function previewResponse(pathId: ControlPathId): unknown {
       return (request: ControlRequest) => previewContextTrace(
         stringValue(record(request.params).sessionId) || 'session-preview',
         stringValue(record(request.params).traceId) || 'context-trace:preview',
+      );
+    case 'agent.session.debugContext.get':
+      return (request: ControlRequest) => previewDebugContext(
+        stringValue(record(request.params).sessionId) || 'session-preview',
+        stringValue(record(request.query).turnId) || 'turn-preview',
       );
     case 'agent.rooms.list':
       return { ok: true, rooms: [previewRoomSnapshot('room-preview').room] };
@@ -1241,6 +1269,63 @@ function previewContextTrace(
     ],
     createdAtMs,
     updatedAtMs: createdAtMs + 7,
+  };
+}
+
+function previewDebugContext(sessionId: string, turnId: string): Record<string, unknown> {
+  const now = Date.now() - 17_000;
+  return {
+    schemaVersion: 'rag-ime.pi-debug-context-response.v1',
+    sessionId,
+    turnId,
+    available: true,
+    transient: true,
+    context: {
+      schemaVersion: 'rag-ime.pi-debug-context.v1',
+      sessionId,
+      turnId,
+      clientMessageId: 'preview-message',
+      capturedAtMs: now,
+      updatedAtMs: now + 120,
+      prompt: '<rag-ime-user-query>检查当前上下文与缓存命中情况</rag-ime-user-query>',
+      systemPrompt: 'You are the local RagIme coding agent. Follow the current role and workspace policy.',
+      systemPromptOptions: { cwd: '/Volumes/work/project', enabledTools: ['read', 'grep'] },
+      model: { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2', api: 'responses' },
+      activeTools: ['read', 'grep', 'memory_search'],
+      toolSchemas: [
+        { name: 'read', description: 'Read a local file', parameters: { type: 'object', properties: { path: { type: 'string' } } } },
+        { name: 'memory_search', description: 'Search approved memory', parameters: { type: 'object', properties: { query: { type: 'string' } } } },
+      ],
+      contextWindows: [{
+        index: 1,
+        capturedAtMs: now + 80,
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: '检查当前上下文与缓存命中情况' }] },
+          { role: 'assistant', content: [{ type: 'text', text: '我会读取真实运行时指标。' }] },
+        ],
+      }],
+      providerRequests: [{
+        index: 1,
+        capturedAtMs: now + 120,
+        payload: {
+          model: 'gpt-5.2',
+          instructions: 'You are the local RagIme coding agent.',
+          input: [{ role: 'user', content: [{ type: 'input_text', text: '检查当前上下文与缓存命中情况' }] }],
+          tools: [{ type: 'function', name: 'memory_search' }],
+        },
+      }],
+    },
+    telemetry: {
+      schemaVersion: 'rag-ime.agent-session-telemetry.v1',
+      model: { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2' },
+      context: { tokens: 98_560, contextWindow: 128_000, percent: 77, remainingTokens: 29_440, compactAtTokens: 111_616, tokensUntilCompact: 13_056, reserveTokens: 16_384, keepRecentTokens: 20_000, autoCompactEnabled: true },
+      cumulativeUsage: { input: 7_200, output: 3_562, cacheRead: 64_800, cacheWrite: 0, totalTokens: 75_562 },
+      latestUsage: { input: 1_400, output: 562, cacheRead: 12_600, cacheWrite: 0, totalTokens: 14_562 },
+      latestCacheHitPercent: 90,
+      isCompacting: false,
+      compactionCount: 2,
+      updatedAtMs: now + 120,
+    },
   };
 }
 

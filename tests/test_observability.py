@@ -54,6 +54,106 @@ class ObservationHubTests(unittest.TestCase):
         self.assertNotIn('"args"', serialized)
         self.assertNotIn('"result"', serialized)
 
+    def test_agent_model_context_and_cache_telemetry_survives_without_raw_prompts(self) -> None:
+        self.hub.enqueue_agent_event(
+            AgentEventEnvelope(
+                event_id="session-telemetry:1",
+                session_id="session-telemetry",
+                turn_id="turn-telemetry",
+                sequence=1,
+                created_at_ms=150,
+                event_type="message_completed",
+                payload={
+                    "message": {
+                        "role": "assistant",
+                        "provider": "openai",
+                        "model": "gpt-test",
+                        "usage": {
+                            "input": 120,
+                            "output": 30,
+                            "cacheRead": 80,
+                            "cacheWrite": 5,
+                            "totalTokens": 235,
+                        },
+                        "blocks": [{"text": "PRIVATE_ASSISTANT_BODY"}],
+                    },
+                    "telemetry": {
+                        "model": {
+                            "provider": "openai",
+                            "id": "gpt-test",
+                            "name": "GPT Test",
+                        },
+                        "context": {
+                            "tokens": 4_000,
+                            "contextWindow": 16_000,
+                            "percent": 25,
+                            "remainingTokens": 12_000,
+                            "compactAtTokens": 14_000,
+                            "tokensUntilCompact": 10_000,
+                        },
+                        "latestUsage": {
+                            "input": 120,
+                            "output": 30,
+                            "cacheRead": 80,
+                            "cacheWrite": 5,
+                            "totalTokens": 235,
+                        },
+                        "latestCacheHitPercent": 39.02,
+                        "isCompacting": False,
+                        "compactionCount": 2,
+                        "providerRequest": {"prompt": "PRIVATE_PROVIDER_PROMPT"},
+                    },
+                },
+                resume_token="session-telemetry:1",
+            )
+        )
+        self.assertTrue(self.hub.flush())
+
+        event = self.hub.snapshot({"sessionId": "session-telemetry"})["items"][0]
+
+        self.assertEqual(event["attributes"]["provider"], "openai")
+        self.assertEqual(event["attributes"]["model"], "gpt-test")
+        self.assertEqual(event["metrics"]["contextTokens"], 4_000)
+        self.assertEqual(event["metrics"]["contextWindowTokens"], 16_000)
+        self.assertEqual(event["metrics"]["inputTokens"], 120)
+        self.assertEqual(event["metrics"]["cacheReadTokens"], 80)
+        self.assertAlmostEqual(event["metrics"]["cacheHitPercent"], 39.02)
+        self.assertEqual(event["metrics"]["compactionCount"], 2)
+        serialized = json.dumps(event, ensure_ascii=False)
+        self.assertNotIn("PRIVATE_ASSISTANT_BODY", serialized)
+        self.assertNotIn("PRIVATE_PROVIDER_PROMPT", serialized)
+        self.assertNotIn("providerRequest", serialized)
+
+    def test_compaction_projection_reports_context_transition_without_error_text(self) -> None:
+        self.hub.enqueue_agent_event(
+            AgentEventEnvelope(
+                event_id="session-compaction:1",
+                session_id="session-compaction",
+                turn_id="turn-compaction",
+                sequence=1,
+                created_at_ms=175,
+                event_type="compaction_completed",
+                payload={
+                    "reason": "threshold",
+                    "tokensBefore": 14_200,
+                    "estimatedTokensAfter": 3_200,
+                    "error": "PRIVATE_RUNTIME_ERROR",
+                    "willRetry": True,
+                },
+                resume_token="session-compaction:1",
+            )
+        )
+        self.assertTrue(self.hub.flush())
+
+        event = self.hub.snapshot({"sessionId": "session-compaction"})["items"][0]
+
+        self.assertEqual(event["category"], "context")
+        self.assertEqual(event["status"], "failed")
+        self.assertEqual(event["metrics"]["tokensBefore"], 14_200)
+        self.assertEqual(event["metrics"]["estimatedTokensAfter"], 3_200)
+        self.assertEqual(event["attributes"]["willRetry"], True)
+        self.assertNotIn("PRIVATE_RUNTIME_ERROR", json.dumps(event, ensure_ascii=False))
+
     def test_room_intercom_projection_never_stores_private_message_content(self) -> None:
         self.hub.observe_room_event(
             {

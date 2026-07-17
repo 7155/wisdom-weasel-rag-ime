@@ -70,6 +70,27 @@ class AgentEventHubTests(unittest.TestCase):
         published = failing.publish("session-a", "status_changed", {"status": "busy"})
         self.assertEqual(published.sequence, 1)
 
+    def test_projection_invalidation_discards_old_replay_and_refreshes_live_subscribers(self) -> None:
+        recorded = []
+        hub = AgentEventHub(event_recorder=recorded.append)
+        old = hub.publish("session-a", "message_completed", {"message": {"id": "old"}})
+        stream = hub.subscribe("session-a")
+        self.assertEqual(next(stream), b": connected\n\n")
+        self.assertEqual(_sse_payload(next(stream))["eventId"], old.event_id)
+
+        invalidation = hub.invalidate_projection("session-a")
+        control = _sse_payload(next(stream))
+        self.assertEqual(control["eventId"], invalidation.event_id)
+        self.assertEqual(control["eventType"], "snapshot_required")
+        self.assertEqual(control["payload"]["reason"], "session_rewritten")
+
+        current = hub.publish("session-a", "message_completed", {"message": {"id": "new"}})
+        replay, gap = hub.replay("session-a")
+        self.assertFalse(gap)
+        self.assertEqual([event.event_id for event in replay], [current.event_id])
+        self.assertEqual(recorded, [old, invalidation, current])
+        stream.close()
+
 
 def _sse_payload(chunk: bytes) -> dict[str, object]:
     data_line = next(line for line in chunk.decode("utf-8").splitlines() if line.startswith("data: "))

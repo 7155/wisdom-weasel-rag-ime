@@ -42,6 +42,7 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_MODE_UPDATE = "agent.session.mode.update"
     AGENT_SESSION_DELETE = "agent.session.delete"
     AGENT_SESSION_PROMPT = "agent.session.prompt"
+    AGENT_SESSION_REWRITE = "agent.session.rewrite"
     AGENT_SESSION_FORKS_LIST = "agent.session.forks.list"
     AGENT_SESSION_FORKS_CREATE = "agent.session.forks.create"
     AGENT_SESSION_ABORT = "agent.session.abort"
@@ -58,6 +59,7 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_CONTEXT_ITEM_ACK = "agent.session.contextItems.ack"
     AGENT_SESSION_CONTEXT_TRACES_LIST = "agent.session.contextTraces.list"
     AGENT_SESSION_CONTEXT_TRACE_GET = "agent.session.contextTrace.get"
+    AGENT_SESSION_DEBUG_CONTEXT_GET = "agent.session.debugContext.get"
     AGENT_ARTIFACT_GET = "agent.artifact.get"
     AGENT_MEDIA_LIST = "agent.media.list"
     AGENT_DEEP_SEARCH = "agent.deep-search"
@@ -643,6 +645,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_MODE_UPDATE, ControlMethod.PATCH, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION, body={"mode", "workspaceRoots", "toolProfileVersion", "toolAllowlistMode", "allowedTools"}, required_body={"mode"}),
         _route(ControlPathId.AGENT_SESSION_DELETE, ControlMethod.DELETE, "/api/agent/sessions/{sessionId}", "/control/v1/agent/sessions/{sessionId}", params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_PROMPT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/prompt", "/control/v1/agent/sessions/{sessionId}/prompt", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"message", "attachments", "clientMessageId"}, required_body={"message"}, remote_body={"message", "attachments", "clientMessageId"}, remote_required_body={"message", "clientMessageId"}),
+        _route(ControlPathId.AGENT_SESSION_REWRITE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/rewrite", "/control/v1/agent/sessions/{sessionId}/rewrite", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"entryId", "message", "attachments", "clientMessageId"}, required_body={"entryId", "message"}, remote_body={"entryId", "message", "attachments", "clientMessageId"}, remote_required_body={"entryId", "message", "clientMessageId"}),
         _route(ControlPathId.AGENT_SESSION_FORKS_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/forks", "/control/v1/agent/sessions/{sessionId}/forks", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
         _route(ControlPathId.AGENT_SESSION_FORKS_CREATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/forks", "/control/v1/agent/sessions/{sessionId}/forks", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"entryId", "title"}, required_body={"entryId"}, remote_body={"entryId", "title"}),
         _route(ControlPathId.AGENT_SESSION_ABORT, ControlMethod.POST, "/api/agent/sessions/{sessionId}/abort", "/control/v1/agent/sessions/{sessionId}/abort", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION),
@@ -659,6 +662,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_CONTEXT_ITEM_ACK, ControlMethod.POST, "/api/agent/sessions/{sessionId}/context-items/{itemId}/ack", "/control/v1/agent/sessions/{sessionId}/context-items/{itemId}/ack", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_CONTEXT_ITEM),
         _route(ControlPathId.AGENT_SESSION_CONTEXT_TRACES_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-traces", "/control/v1/agent/sessions/{sessionId}/context-traces", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"limit"}),
         _route(ControlPathId.AGENT_SESSION_CONTEXT_TRACE_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-traces/{traceId}", "/control/v1/agent/sessions/{sessionId}/context-traces/{traceId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_CONTEXT_TRACE),
+        _route(ControlPathId.AGENT_SESSION_DEBUG_CONTEXT_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/debug-context", None, params=_SESSION, query={"turnId"}),
         _route(ControlPathId.AGENT_ARTIFACT_GET, ControlMethod.GET, "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ARTIFACT, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_MEDIA_LIST, ControlMethod.GET, "/api/agent/media", "/control/v1/agent/media", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_DEEP_SEARCH, ControlMethod.POST, "/api/agent/deep-search", "/control/v1/agent/deep-search", body={"query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"}, required_body={"query", "privacyDisposition"}),
