@@ -10,6 +10,7 @@ from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_t
 
 
 SMART_RAG_CONTEXT_PACKET_SCHEMA_VERSION = "rag-ime.smart-context-packet.v1"
+ACTIVE_RAG_RECENT_INPUT_CAP = 8
 
 
 def build_post_commit_context_packet(
@@ -268,22 +269,29 @@ def build_active_rag_context_packet(
         maximum_tokens=900,
     )
     window_context_tokens = _window_context_estimated_tokens(compact_window_context)
-    planning_items, remaining_tokens = _take_budgeted_items(
-        raw_planning_items,
-        remaining_tokens=remaining_tokens,
-        text_keys=("title", "detail"),
-        limit=24,
-    )
-    recent_items, remaining_tokens = _take_budgeted_recent_items(
-        raw_recent_items,
-        remaining_tokens=remaining_tokens,
-        limit=max(20, min(200, int(recent_input_maximum))),
-    )
+    # Retrieved facts must reach the model before continuity history. Otherwise
+    # a long recent-input tail can consume the budget after retrieval succeeds.
     rag_hints, remaining_tokens = _take_budgeted_items(
         _rag_evidence_hints(evidence_items),
         remaining_tokens=remaining_tokens,
         text_keys=("text",),
         limit=24,
+    )
+    planning_items, remaining_tokens = _take_budgeted_items(
+        raw_planning_items,
+        remaining_tokens=remaining_tokens,
+        text_keys=("title", "detail"),
+        limit=12,
+    )
+    generation_recent_limit = min(
+        ACTIVE_RAG_RECENT_INPUT_CAP,
+        max(1, int(recent_input_baseline)),
+        max(1, int(recent_input_maximum)),
+    )
+    recent_items, remaining_tokens = _take_budgeted_recent_items(
+        raw_recent_items,
+        remaining_tokens=remaining_tokens,
+        limit=generation_recent_limit,
     )
     selected_rag_ids = {str(item.get("evidenceId") or "") for item in rag_hints}
     notebook_items = [item for item in raw_notebook_items if str(item.get("id") or "") in selected_rag_ids]
@@ -326,6 +334,7 @@ def build_active_rag_context_packet(
         "priority": [
             "currentInput",
             "windowContext",
+            "ragEvidence",
             "planning",
             "recentCompleteInputs",
             "timeline",
@@ -352,8 +361,9 @@ def build_active_rag_context_packet(
             "role": "continuity_context",
             "maySupportIntent": True,
             "maySupportFacts": False,
-            "baselineEvents": max(10, min(80, int(recent_input_baseline))),
+            "baselineEvents": max(1, min(80, int(recent_input_baseline))),
             "maxEvents": max(20, min(200, int(recent_input_maximum))),
+            "generationEventCap": generation_recent_limit,
             "events": recent_items,
             "negativeSignals": [],
         },

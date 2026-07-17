@@ -568,6 +568,22 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(provider.calls[1].selected_text, request.selected_text)
         self.assertTrue(ready["diagnostics"]["modelRequest"]["contentRetryCompleted"])
 
+    def test_active_rag_generates_surface_request_id_when_panel_session_is_missing(self) -> None:
+        provider = FakeActiveRagProvider(("已生成内部请求标识并完成补全",))
+        service = ActiveRagService(completion_provider=provider)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(_request(selected_text="补全当前内容", panel_session_id=""))
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        completion_request = provider.calls[0]
+        self.assertEqual(ready["status"], "ready")
+        self.assertTrue(completion_request.surface_request_id.startswith("active-rag-surface:"))
+        self.assertEqual(
+            completion_request.context_packet["currentInput"]["panelSessionId"],
+            completion_request.surface_request_id,
+        )
+
     def test_active_rag_governed_recovery_finishes_as_no_suggestion_with_diagnostics(self) -> None:
         provider = FailingActiveRagProvider()
         service = ActiveRagService(completion_provider=provider)
@@ -677,6 +693,8 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertTrue(context_packet["oneRing"]["events"])
         self.assertFalse(context_packet["oneRing"]["maySupportFacts"])
         self.assertEqual(context_packet["oneRing"]["baselineEvents"], 20)
+        self.assertEqual(context_packet["oneRing"]["generationEventCap"], 8)
+        self.assertLessEqual(len(context_packet["oneRing"]["events"]), 8)
         self.assertIn("recentCompleteInputs", context_packet["trace"]["contextSourceTokens"])
         self.assertTrue(context_packet["notebook"]["items"])
         diagnostics = ready["diagnostics"]
@@ -944,7 +962,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(provider.calls[0].current_context, foreground)
         self.assertFalse(ready["diagnostics"]["contextInjection"]["contextTruncatedToBudget"])
 
-    def test_active_rag_final_packet_can_use_more_than_twenty_recent_inputs_within_budget(self) -> None:
+    def test_active_rag_final_packet_caps_recent_inputs_even_when_budget_is_large(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-context-budget-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "active-rag-context-budget.sqlite")
             for index in range(1, 41):
@@ -969,7 +987,8 @@ class ActiveRagServiceTests(unittest.TestCase):
         trace = provider.calls[0].context_packet["trace"]
         payload = json.loads(build_deepseek_completion_messages(provider.calls[0])[1]["content"])
         self.assertEqual(ready["status"], "ready")
-        self.assertGreater(trace["contextSourceCounts"]["recentInputs"], 20)
+        self.assertEqual(trace["contextSourceCounts"]["recentInputs"], 8)
+        self.assertGreaterEqual(trace["trimmedSourceCounts"]["recentInputs"], 32)
         self.assertLessEqual(trace["estimatedContextTokens"], trace["availableContextTokens"])
         self.assertTrue(trace["withinSoftBudget"])
         self.assertEqual(

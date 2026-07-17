@@ -689,6 +689,7 @@ class ActiveRagService:
         provider = self.completion_provider
         if provider is None:
             return ()
+        surface_request_id = request.panel_session_id or f"active-rag-surface:{uuid.uuid4().hex[:16]}"
         try:
             if not bool(getattr(provider, "uses_managed_pi", False)):
                 assert_deepseek_scene_allowed("active_rag")
@@ -716,7 +717,7 @@ class ActiveRagService:
             selected_text_hash=request.selected_text_hash,
             frontend_revision=request.frontend_revision,
             selection_epoch=request.selection_epoch,
-            panel_session_id=request.panel_session_id,
+            panel_session_id=surface_request_id,
             project=request.project,
             app=request.app or request.front_app_bundle_id,
             evidence=grounding_evidence,
@@ -746,7 +747,7 @@ class ActiveRagService:
             max_candidates=request.max_candidates,
             max_chars=request.max_chars,
             latency_budget_ms=_remote_completion_budget_ms(request),
-            surface_request_id=request.panel_session_id,
+            surface_request_id=surface_request_id,
             front_app_bundle_id=request.front_app_bundle_id,
         )
         resolved_model_request = resolved_active_rag_current_request(completion_request)
