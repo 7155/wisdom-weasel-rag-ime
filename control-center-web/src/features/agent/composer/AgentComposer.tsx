@@ -1,5 +1,6 @@
 import {
   BrainCircuit,
+  BookOpenText,
   Check,
   ChevronRight,
   FolderOpen,
@@ -28,6 +29,7 @@ import {
 } from 'react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import * as Checkbox from '@radix-ui/react-checkbox';
+import * as Switch from '@radix-ui/react-switch';
 import {
   Button,
   Dialog,
@@ -81,12 +83,14 @@ export function AgentComposer({
   onCancelEdit,
   onPermissionChange,
   onWorkspaceRootsChange,
+  onProjectContextChange = () => {},
   onModelChange,
   modelPickerRequest = 0,
   permissionPickerRequest = 0,
   toolPickerRequest = 0,
   helpRequest = 0,
   imageSupport = 'unknown',
+  projectContextChanging = false,
 }: {
   draft: string;
   attachments: ComposerAttachment[];
@@ -113,12 +117,14 @@ export function AgentComposer({
   onCancelEdit?: () => void;
   onPermissionChange: (selection: AgentPermissionSelection) => void;
   onWorkspaceRootsChange: () => void;
+  onProjectContextChange?: (enabled: boolean) => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
   permissionPickerRequest?: number;
   toolPickerRequest?: number;
   helpRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
+  projectContextChanging?: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -357,6 +363,11 @@ export function AgentComposer({
               tooltip
             />
             <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
+            <ProjectContextPicker
+              session={session}
+              disabled={busy || sending || projectContextChanging}
+              onChange={onProjectContextChange}
+            />
             <ToolPicker tools={tools} status={toolCatalogStatus} session={session} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
             <ModelTree catalog={catalog} disabled={busy || sending} requestOpen={modelPickerRequest} onChange={onModelChange} />
             {busy ? (
@@ -390,6 +401,55 @@ export function AgentComposer({
         </div>
       </div>
     </div>
+  );
+}
+
+function ProjectContextPicker({
+  session,
+  disabled,
+  onChange,
+}: {
+  session?: SessionSummary;
+  disabled: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  const enabled = session?.projectContextEnabled !== false;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          aria-label={`项目指令：${enabled ? '已加载' : '未加载'}`}
+          className="agent-composer__picker agent-composer__project-context"
+          data-enabled={enabled || undefined}
+          size="small"
+          title={`项目指令：${enabled ? '已加载' : '未加载'}`}
+          variant="quiet"
+          disabled={!session || disabled}
+          leadingIcon={<BookOpenText size={15} />}
+        >项目指令</Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="agent-picker-popover agent-project-context-picker">
+        <header>
+          <BookOpenText size={16} />
+          <span><strong>项目指令</strong><small>当前对话的 System Prompt 资源</small></span>
+        </header>
+        <label className="agent-project-context-picker__toggle">
+          <span>
+            <strong>加载 AGENTS.md / CLAUDE.md</strong>
+            <small>从全局目录和当前工作区祖先目录按 Pi 原生顺序读取</small>
+          </span>
+          <Switch.Root
+            aria-label="加载 AGENTS.md / CLAUDE.md"
+            checked={enabled}
+            disabled={disabled}
+            onCheckedChange={onChange}
+          >
+            <Switch.Thumb />
+          </Switch.Root>
+        </label>
+        <p className="agent-picker-popover__note">切换后会重建本对话的 Pi Runtime；历史消息不变，下一轮使用新的项目指令设置。</p>
+      </PopoverContent>
+    </Popover>
   );
 }
 

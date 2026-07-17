@@ -87,6 +87,7 @@ function AgentWorkspace() {
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [modelChanging, setModelChanging] = useState(false);
+  const [projectContextChanging, setProjectContextChanging] = useState(false);
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
@@ -929,6 +930,35 @@ function AgentWorkspace() {
     }
   }
 
+  async function changeProjectContext(enabled: boolean): Promise<void> {
+    if (!session || session.projectContextEnabled === enabled) return;
+    setProjectContextChanging(true);
+    try {
+      const explicit = session.toolAllowlistMode === 'explicit';
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: session.id },
+        body: {
+          mode: session.mode,
+          workspaceRoots: session.workspaceRoots,
+          toolProfileVersion: session.toolProfileVersion ?? 'control-center-v1',
+          toolAllowlistMode: explicit ? 'explicit' : 'profile',
+          ...(explicit ? { allowedTools: session.allowedTools ?? [] } : {}),
+          projectContextEnabled: enabled,
+        },
+      });
+      const updated = isRecord(response.session)
+        ? response.session as unknown as SessionSummary
+        : { ...session, projectContextEnabled: enabled };
+      setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
+      setError('');
+    } catch (requestError) {
+      setError(`项目指令设置没有更新。${errorText(requestError)}`);
+    } finally {
+      setProjectContextChanging(false);
+    }
+  }
+
   async function changeModel(provider: string, modelId: string, level: ThinkingLevel): Promise<void> {
     if (!session || !catalog) return;
     const targetModel = catalog.providers.find((item) => item.id === provider)?.models.find((item) => item.id === modelId);
@@ -1003,7 +1033,7 @@ function AgentWorkspace() {
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery) => void send(delivery)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving || projectContextChanging} projectContextChanging={projectContextChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery) => void send(delivery)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onProjectContextChange={(enabled) => void changeProjectContext(enabled)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />

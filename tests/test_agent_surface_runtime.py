@@ -73,6 +73,7 @@ class _SurfaceRuntimeStub:
         model_id,
         thinking_level,
         message,
+        on_text_delta=None,
         timeout_seconds=120.0,
     ):
         call = {
@@ -84,8 +85,12 @@ class _SurfaceRuntimeStub:
             "timeoutSeconds": timeout_seconds,
         }
         self.completions.append(call)
+        if on_text_delta is not None:
+            on_text_delta("继续完成")
+            on_text_delta("这段文字。")
         return {
             "text": "继续完成这段文字。",
+            "firstTokenMs": 3800,
             "elapsedMs": 4200,
             "usage": {"totalTokens": 24},
         }
@@ -130,6 +135,8 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
             "activeRag": {
                 "quickModel": "deepseek/deepseek-v4-flash",
                 "quickThinkingLevel": "off",
+                "visualModel": "gpt/gpt-5.6-luna",
+                "visualThinkingLevel": "low",
             }
         }
         self.surface = AgentSurfaceRuntime(
@@ -162,12 +169,14 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.completions[0]["modelId"], "deepseek-v4-flash")
         self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "off")
         self.assertIn("不调用工具", str(self.runtime.completions[0]["message"]))
+        self.assertIn("可按内容需要使用简洁 Markdown", str(self.runtime.completions[0]["message"]))
         self.assertEqual(self.runtime.prompt_session_ids, [])
         self.assertEqual(self.sessions.list(include_internal=True), [])
         self.assertEqual(self.sessions.list(), [])
 
     def test_provider_forwards_ax_context_packet_and_evidence_without_a_screenshot(self) -> None:
         provider = PiSurfaceCompletionProvider(local_runtime=self.surface)
+        partials: list[str] = []
         request = DeepSeekCompletionRequest(
             scene="active_rag",
             current_context="根据界面继续",
@@ -187,9 +196,11 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
             front_app_bundle_id="com.example.Editor",
         )
 
-        result = list(provider.stream_candidates(request))
+        result = list(provider.stream_candidates(request, on_text_delta=partials.append))
 
         self.assertTrue(result[0].metadata["semanticContextUsed"])
+        self.assertEqual(result[0].metadata["firstTokenMs"], 3800)
+        self.assertEqual(partials, ["继续完成", "继续完成这段文字。"])
         call = self.runtime.completions[0]
         self.assertEqual(call["provider"], "deepseek")
         self.assertEqual(call["modelId"], "deepseek-v4-flash")

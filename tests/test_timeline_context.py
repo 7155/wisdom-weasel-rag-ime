@@ -88,26 +88,8 @@ class TimelineContextTests(unittest.TestCase):
         self.assertEqual(pack["schemaVersion"], "rag-ime.timeline-context.v1")
         self.assertIn("主动 DeepSeek 生成按钮", pack["recentInput"])
         self.assertEqual(pack["dailyBooks"][0]["title"], "Active RAG 时间线")
-        self.assertEqual([item["sourceType"] for item in evidence], ["daily_book", "recent_input_context"])
-        self.assertEqual(evidence[0]["surfaceHints"], ["DeepSeek 生成", "主动候选"])
-
-    def test_timeline_slice_does_not_let_history_starve_books(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-grounding-first-") as tmp:
-            core = LocalSqliteCoreClient(Path(tmp) / "timeline.sqlite")
-            event_id = 0
-            for index in range(12):
-                event_id = _record_event(core, f"历史句子{index}：这是一条完整但只用于连续性的输入")
-            _insert_daily_book(core, event_id=event_id)
-
-            evidence = timeline_evidence_pack_from_core(
-                core,
-                project="wisdom-weasel-rag-ime",
-                max_items=2,
-            )
-
-        self.assertEqual(len(evidence), 2)
-        self.assertEqual(evidence[0]["sourceType"], "daily_book")
-        self.assertEqual(evidence[1]["sourceType"], "recent_input_context")
+        self.assertEqual([item["sourceType"] for item in evidence], ["recent_input_context", "daily_book"])
+        self.assertEqual(evidence[1]["surfaceHints"], ["DeepSeek 生成", "主动候选"])
 
 
 def _record_event(core: LocalSqliteCoreClient, text: str) -> int:

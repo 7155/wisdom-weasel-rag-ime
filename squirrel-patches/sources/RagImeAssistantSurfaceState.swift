@@ -8,12 +8,14 @@ enum RagImeAssistantMotion {
     static let micro: TimeInterval = 0.10
     static let entrance: TimeInterval = 0.14
     static let transition: TimeInterval = 0.18
+    static let progressHandoff: TimeInterval = 0.36
     static let ambientPulse: TimeInterval = 0.72
   }
 
   enum Distance {
     static let tiny: CGFloat = 3
     static let small: CGFloat = 5
+    static let progressHandoff: CGFloat = 14
   }
 
   static let stagger: TimeInterval = 0.04

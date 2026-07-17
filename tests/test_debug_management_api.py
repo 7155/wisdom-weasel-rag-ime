@@ -793,11 +793,11 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("token", denied_payload["error"])
         self.assertTrue(allowed_payload["ok"])
 
-    def test_active_rag_rejects_legacy_visual_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "visualContext is disabled"):
+    def test_active_rag_rejects_screenshots_in_favor_of_ax_window_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "AX windowContext"):
             self.service._active_rag_request_from_payload(
                 {
-                    "selectedText": "根据截图补全",
+                    "selectedText": "根据界面补全",
                     "privacyDisposition": "allowed",
                     "frontAppBundleId": "com.example.Editor",
                     "visualContext": {

@@ -105,6 +105,8 @@ class PiRuntimeConfig:
     agent_dir: Path
     session_dir: Path
     logs_dir: Path
+    debug_context_dir: Path | None = None
+    debug_context_max_bytes: int = 1024 * 1024 * 1024
     node_executable: str = "node"
     idle_timeout_seconds: int = 900
     command_timeout_seconds: float = 15.0
@@ -142,6 +144,7 @@ class PiRuntimeConfig:
         ).expanduser()
         executable_value = os.environ.get("RAG_IME_PI_EXECUTABLE", "").strip()
         extension_value = os.environ.get("RAG_IME_PI_EXTENSION", "").strip()
+        debug_context_value = os.environ.get("RAG_IME_PI_DEBUG_CONTEXT_DIR", "").strip()
         node_value = os.environ.get("RAG_IME_PI_NODE", "").strip()
         expected_pi_version = os.environ.get("RAG_IME_PI_VERSION", "0.80.7").strip() or "0.80.7"
         development_tools = tuple(
@@ -194,6 +197,17 @@ class PiRuntimeConfig:
             agent_dir=app_support / "Agent" / "config",
             session_dir=app_support / "Agent" / "sessions",
             logs_dir=app_support / "Agent" / "logs",
+            debug_context_dir=(
+                Path(debug_context_value).expanduser()
+                if debug_context_value
+                else app_support / "Agent" / "debug-context"
+            ),
+            debug_context_max_bytes=_env_int(
+                "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES",
+                1024 * 1024 * 1024,
+                minimum=1,
+                maximum=1024 * 1024 * 1024,
+            ),
             node_executable=node_executable,
             idle_timeout_seconds=_env_int(
                 "RAG_IME_PI_IDLE_TIMEOUT_SECONDS",
@@ -368,6 +382,11 @@ class PiRuntimeConfig:
         environment["PI_CODING_AGENT_DIR"] = str(self.agent_dir)
         environment["RAG_IME_PI_AGENT_DIR"] = str(self.agent_dir)
         environment["RAG_IME_PI_SESSION_DIR"] = str(self.session_dir)
+        if self.debug_context_dir is not None:
+            environment["RAG_IME_PI_DEBUG_CONTEXT_DIR"] = str(self.debug_context_dir)
+            environment["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"] = str(
+                min(1024 * 1024 * 1024, max(1, int(self.debug_context_max_bytes)))
+            )
         environment["RAG_IME_PI_MAX_SESSIONS"] = str(self.max_sessions)
         if self.tool_gateway_token:
             environment["RAG_IME_AGENT_TOOL_TOKEN"] = self.tool_gateway_token
@@ -1433,9 +1452,10 @@ class PiRuntimeManager:
         model_id: str,
         thinking_level: str,
         message: str,
+        on_text_delta: Callable[[str], None] | None = None,
         timeout_seconds: float = 120.0,
     ) -> dict[str, object]:
-        del request_id, provider, model_id, thinking_level, message, timeout_seconds
+        del request_id, provider, model_id, thinking_level, message, on_text_delta, timeout_seconds
         raise PiRuntimeError("stateless completion requires Pi Runtime Host protocol v2")
 
     def cancel_completion(self, request_id: str) -> bool:

@@ -1,16 +1,31 @@
 import { useQuery } from '@tanstack/react-query';
-import { Braces, Check, Clipboard, Database, FileText, Gauge, Wrench } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  Braces,
+  Check,
+  ChevronRight,
+  Clipboard,
+  Database,
+  FileText,
+  Gauge,
+  HardDrive,
+  Layers3,
+  MessageSquareText,
+  PackageOpen,
+  Wrench,
+} from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
 import './DebugContextInspector.css';
 
-interface DebugSection {
+interface DebugStage {
   id: string;
   label: string;
   detail: string;
   kind: 'text' | 'json';
   value: unknown;
+  channel: 'system' | 'tools' | 'messages' | 'wire';
+  note?: string;
 }
 
 export function DebugContextInspector({
@@ -38,68 +53,83 @@ export function DebugContextInspector({
     staleTime: 2_000,
   });
   const response = useMemo(() => normalizeDebugResponse(query.data), [query.data]);
-  const sections = useMemo(() => debugSections(response.context), [response.context]);
-  const [selectedId, setSelectedId] = useState('prompt');
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!sections.some((section) => section.id === selectedId)) {
-      setSelectedId(sections[0]?.id ?? '');
-    }
-  }, [sections, selectedId]);
-  const selected = sections.find((section) => section.id === selectedId);
-  const rendered = selected ? renderDebugValue(selected) : '';
+  const stages = useMemo(() => debugStages(response.context), [response.context]);
+  const [copiedId, setCopiedId] = useState('');
 
-  async function copySelected(): Promise<void> {
+  async function copyStage(stage: DebugStage): Promise<void> {
+    const rendered = renderDebugValue(stage);
     if (!rendered) return;
     try {
       await navigator.clipboard.writeText(rendered);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_400);
+      setCopiedId(stage.id);
+      window.setTimeout(() => setCopiedId(''), 1_400);
     } catch {
-      setCopied(false);
+      setCopiedId('');
     }
   }
 
   return (
     <section className="debug-context-inspector" data-embedded={embedded || undefined}>
       <header className="debug-context-inspector__header">
-        <span><Database size={15} /><strong>请求与原始上下文</strong><small>本机 Debug · 临时内存，不写入观察数据库</small></span>
-        {selected ? (
-          <IconButton
-            icon={copied ? <Check size={14} /> : <Clipboard size={14} />}
-            label={copied ? '已复制' : '复制当前内容'}
-            onClick={() => void copySelected()}
-            size="small"
-            tooltip
-          />
-        ) : null}
+        <span>
+          <Layers3 size={15} />
+          <strong>模型上下文增量</strong>
+          <small>按 Pi 实际装配顺序，每步只显示本次新增内容</small>
+        </span>
       </header>
-      {query.isPending ? <p className="debug-context-inspector__empty">正在向 Pi Runtime 读取本轮临时快照</p> : null}
-      {query.error ? <p className="debug-context-inspector__empty" data-tone="warning">{debugContextErrorMessage(query.error)}</p> : null}
-      {!query.isPending && !query.error && !response.available ? <p className="debug-context-inspector__empty">这轮没有可用的临时上下文；Runtime 重启后不会保留旧快照</p> : null}
+      <DebugStorage storage={response.storage} />
+      {query.isPending ? <p className="debug-context-inspector__empty">正在读取本轮上下文快照</p> : null}
+      {query.error ? <p className="debug-context-inspector__empty" data-tone="warning">上下文快照不可用，或本轮来自旧版 Runtime</p> : null}
+      {!query.isPending && !query.error && !response.available ? <p className="debug-context-inspector__empty">这轮尚未生成上下文快照</p> : null}
       {response.available ? <DebugTelemetryStrip telemetry={response.telemetry} /> : null}
-      {sections.length ? (
-        <div className="debug-context-inspector__workspace">
-          <nav aria-label="原始上下文部分">
-            {sections.map((section) => (
-              <button
-                aria-current={section.id === selectedId ? 'true' : undefined}
-                key={section.id}
-                onClick={() => setSelectedId(section.id)}
-                type="button"
-              >
-                <DebugSectionIcon id={section.id} />
-                <span><strong>{section.label}</strong><small>{section.detail}</small></span>
-              </button>
-            ))}
-          </nav>
-          <section className="debug-context-inspector__payload" aria-live="polite">
-            <header><strong>{selected?.label}</strong><small>{selected?.detail}</small></header>
-            <pre>{rendered}</pre>
-          </section>
-        </div>
+      {stages.length ? (
+        <ol className="debug-context-inspector__pipeline" aria-label="模型上下文注入顺序">
+          {stages.map((stage, index) => (
+            <li key={stage.id} data-channel={stage.channel}>
+              <details>
+                <summary>
+                  <span className="debug-context-inspector__ordinal">{index + 1}</span>
+                  <DebugStageIcon channel={stage.channel} />
+                  <span className="debug-context-inspector__stage-copy">
+                    <strong>{stage.label}</strong>
+                    <small>{stage.detail}</small>
+                  </span>
+                  <em>{stage.channel === 'wire' ? '传输快照' : '本步新增'}</em>
+                  <ChevronRight size={14} />
+                </summary>
+                <section className="debug-context-inspector__stage-value">
+                  {stage.note ? <p>{stage.note}</p> : null}
+                  <IconButton
+                    icon={copiedId === stage.id ? <Check size={14} /> : <Clipboard size={14} />}
+                    label={copiedId === stage.id ? '已复制' : `复制${stage.label}`}
+                    onClick={() => void copyStage(stage)}
+                    size="small"
+                    tooltip
+                  />
+                  <pre>{renderDebugValue(stage)}</pre>
+                </section>
+              </details>
+            </li>
+          ))}
+        </ol>
       ) : null}
     </section>
+  );
+}
+
+function DebugStorage({ storage }: { storage: Record<string, unknown> }) {
+  const persistent = storage.persistent === true;
+  const directory = text(storage.directory);
+  if (!Object.keys(storage).length) return null;
+  return (
+    <div className="debug-context-inspector__storage" data-persistent={persistent || undefined}>
+      <HardDrive size={14} />
+      <span>
+        <strong>{persistent ? '快照已持久化' : '快照存储不可用'}</strong>
+        <small title={directory}>{directory || text(storage.error) || 'Pi Runtime 未返回存储位置'}</small>
+      </span>
+      <b>{formatBytes(finiteNumber(storage.usedBytes) ?? 0)} / {formatBytes(finiteNumber(storage.maxBytes) ?? 0)}</b>
+    </div>
   );
 }
 
@@ -117,80 +147,185 @@ function DebugTelemetryStrip({ telemetry }: { telemetry: Record<string, unknown>
   );
 }
 
-function debugSections(context: Record<string, unknown>): DebugSection[] {
+function debugStages(context: Record<string, unknown>): DebugStage[] {
   if (!Object.keys(context).length) return [];
-  const sections: DebugSection[] = [
-    { id: 'prompt', label: 'Runtime 输入', detail: `${text(context.prompt).length} 字符`, kind: 'text', value: text(context.prompt) },
-    { id: 'system-prompt', label: 'System Prompt', detail: `${text(context.systemPrompt).length} 字符`, kind: 'text', value: text(context.systemPrompt) },
-    { id: 'system-options', label: 'Prompt 构建选项', detail: 'Pi 资源装配参数', kind: 'json', value: context.systemPromptOptions },
-    { id: 'tools', label: '活动工具 Schema', detail: `${array(context.activeTools).length} 个工具`, kind: 'json', value: { activeTools: context.activeTools, schemas: context.toolSchemas } },
-  ];
+  const stages: DebugStage[] = [];
+  const options = record(context.systemPromptOptions);
+  const customPrompt = text(options.customPrompt);
+  const finalSystemPrompt = text(context.systemPrompt);
+  if (customPrompt) {
+    stages.push(stage('system:base', 'System 基础指令', customPrompt, 'system'));
+  } else if (finalSystemPrompt) {
+    stages.push({
+      ...stage('system:base', 'System Prompt', finalSystemPrompt, 'system'),
+      note: '当前 Runtime 没有暴露更细的基础模板分段，因此这里只显示这一段原始结果。',
+    });
+  }
+
+  const appendSystemPrompt = text(options.appendSystemPrompt);
+  if (appendSystemPrompt) {
+    stages.push(stage('system:append', '附加 System 指令', appendSystemPrompt, 'system'));
+  }
+
+  array(options.contextFiles).forEach((item, index) => {
+    const contextFile = record(item);
+    const path = text(contextFile.path) || `项目指令 ${index + 1}`;
+    stages.push({
+      ...stage(`system:context:${index}`, fileName(path), text(contextFile.content), 'system'),
+      detail: `${path} · ${text(contextFile.content).length} 字符`,
+    });
+  });
+
+  const skills = array(options.skills).map(skillSummary);
+  if (skills.length) {
+    stages.push({
+      id: 'system:skills',
+      label: 'Skills 目录',
+      detail: `${skills.length} 项 · Pi 将这些记录编码为可加载技能清单`,
+      kind: 'json',
+      value: skills,
+      channel: 'system',
+    });
+  }
+
+  const cwd = text(options.cwd);
+  if (cwd) {
+    stages.push(stage('system:cwd', '当前工作目录', `Current working directory: ${cwd}`, 'system'));
+  }
+
+  const activeTools = array(context.activeTools).map(String);
+  const toolSchemas = array(context.toolSchemas);
+  if (activeTools.length || toolSchemas.length) {
+    stages.push({
+      id: 'tools',
+      label: '活动工具定义',
+      detail: `${activeTools.length || toolSchemas.length} 个工具 · 独立结构通道`,
+      kind: 'json',
+      value: { activeTools, schemas: toolSchemas },
+      channel: 'tools',
+      note: '工具名称和参数 Schema 由 Provider 作为结构化 tools 字段传入，不会伪装成一段普通 System 文本。',
+    });
+  }
+
+  const windows = array(context.contextWindows);
+  const initialMessages = array(record(windows[0]).messages);
+  const currentMessageIndex = lastUserMessageIndex(initialMessages);
+  const history = currentMessageIndex >= 0
+    ? initialMessages.filter((_, index) => index !== currentMessageIndex)
+    : initialMessages;
+  if (history.length) {
+    stages.push({
+      id: 'messages:history',
+      label: '历史消息',
+      detail: `${history.length} 条模型上下文消息`,
+      kind: 'json',
+      value: history,
+      channel: 'messages',
+    });
+  }
+
+  const prompt = text(context.prompt);
+  if (prompt || currentMessageIndex >= 0) {
+    stages.push(stage(
+      'messages:current',
+      '当前用户输入',
+      prompt || initialMessages[currentMessageIndex],
+      'messages',
+    ));
+  }
+
   const modelCalls = array(context.modelCalls);
-  if (modelCalls.length) {
-    sections.push({
-      id: 'model-calls',
-      label: '模型调用链',
-      detail: `${modelCalls.length} 次模型调用`,
-      kind: 'json',
-      value: modelCalls,
-    });
+  const providerRequests = array(context.providerRequests);
+  const callCount = Math.max(modelCalls.length, windows.length, providerRequests.length);
+  for (let index = 0; index < callCount; index += 1) {
+    if (index > 0) {
+      const delta = modelCallDelta(modelCalls, windows, index);
+      if (delta.length) {
+        stages.push({
+          id: `messages:delta:${index + 1}`,
+          label: `模型调用 ${index + 1} 上下文增量`,
+          detail: `${delta.length} 条新增消息`,
+          kind: 'json',
+          value: delta,
+          channel: 'messages',
+        });
+      }
+    }
+    const request = record(providerRequests[index]);
+    if (Object.keys(request).length) {
+      stages.push({
+        id: `wire:${index + 1}`,
+        label: `Provider 请求 ${finiteNumber(request.index) ?? index + 1}`,
+        detail: 'OpenAI 兼容传输信封',
+        kind: 'json',
+        value: request.payload,
+        channel: 'wire',
+        note: '这是 API 线上的 JSON 信封。model、stream 等是请求控制字段；role、content、tools 保留结构边界，Provider 再用模板或特殊 Token 编码，并不是把 JSON 标点原样拼成普通文本。',
+      });
+    }
   }
-  const toolExecutions = array(context.toolExecutions);
-  if (toolExecutions.length) {
-    sections.push({
-      id: 'tool-executions',
-      label: '工具调用实录',
-      detail: `${toolExecutions.length} 次工具执行`,
-      kind: 'json',
-      value: toolExecutions,
-    });
-  }
-  const toolBatches = array(context.toolBatches);
-  if (toolBatches.length) {
-    sections.push({
-      id: 'tool-batches',
-      label: '工具执行批次',
-      detail: `${toolBatches.length} 个串并行批次`,
-      kind: 'json',
-      value: toolBatches,
-    });
-  }
-  array(context.contextWindows).forEach((item, index) => {
-    const window = record(item);
-    sections.push({
-      id: `context:${index}`,
-      label: `模型上下文 ${finiteNumber(window.index) ?? index + 1}`,
-      detail: `${array(window.messages).length} 条消息`,
-      kind: 'json',
-      value: window.messages,
-    });
-  });
-  array(context.providerRequests).forEach((item, index) => {
-    const request = record(item);
-    sections.push({
-      id: `provider:${index}`,
-      label: `Provider 请求 ${finiteNumber(request.index) ?? index + 1}`,
-      detail: '发送前最终 Payload',
-      kind: 'json',
-      value: request.payload,
-    });
-  });
-  return sections;
+  return stages;
 }
 
-function DebugSectionIcon({ id }: { id: string }) {
-  if (id === 'tools' || id === 'tool-executions' || id === 'tool-batches') return <Wrench size={14} />;
-  if (id.startsWith('provider:')) return <Braces size={14} />;
-  if (id.startsWith('context:')) return <Database size={14} />;
-  return <FileText size={14} />;
+function stage(
+  id: string,
+  label: string,
+  value: unknown,
+  channel: DebugStage['channel'],
+): DebugStage {
+  const length = typeof value === 'string' ? value.length : 0;
+  return {
+    id,
+    label,
+    detail: length ? `${length} 字符` : '本步原始增量',
+    kind: typeof value === 'string' ? 'text' : 'json',
+    value,
+    channel,
+  };
 }
 
-function renderDebugValue(section: DebugSection): string {
-  if (section.kind === 'text') return text(section.value);
+function modelCallDelta(modelCalls: unknown[], windows: unknown[], index: number): unknown[] {
+  const captured = record(record(modelCalls[index]).contextDelta);
+  const added = array(captured.addedMessages);
+  if (added.length) return added;
+  const previous = array(record(windows[index - 1]).messages);
+  const current = array(record(windows[index]).messages);
+  let prefix = 0;
+  while (prefix < previous.length && prefix < current.length && stableJson(previous[prefix]) === stableJson(current[prefix])) {
+    prefix += 1;
+  }
+  return current.slice(prefix);
+}
+
+function skillSummary(value: unknown): Record<string, unknown> {
+  const skill = record(value);
+  return Object.fromEntries(
+    ['name', 'description', 'filePath', 'baseDir', 'source', 'disableModelInvocation']
+      .filter((key) => skill[key] !== undefined)
+      .map((key) => [key, skill[key]]),
+  );
+}
+
+function lastUserMessageIndex(messages: unknown[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (text(record(messages[index]).role) === 'user') return index;
+  }
+  return -1;
+}
+
+function DebugStageIcon({ channel }: { channel: DebugStage['channel'] }): ReactNode {
+  if (channel === 'tools') return <Wrench size={14} />;
+  if (channel === 'wire') return <Braces size={14} />;
+  if (channel === 'messages') return <MessageSquareText size={14} />;
+  return <PackageOpen size={14} />;
+}
+
+function renderDebugValue(stage: DebugStage): string {
+  if (stage.kind === 'text') return text(stage.value);
   try {
-    return JSON.stringify(section.value ?? null, null, 2);
+    return JSON.stringify(stage.value ?? null, null, 2);
   } catch {
-    return String(section.value ?? '');
+    return String(stage.value ?? '');
   }
 }
 
@@ -198,20 +333,15 @@ function normalizeDebugResponse(value: unknown): {
   available: boolean;
   context: Record<string, unknown>;
   telemetry: Record<string, unknown>;
+  storage: Record<string, unknown>;
 } {
   const response = record(value);
   return {
     available: response.available === true,
     context: record(response.context),
     telemetry: record(response.telemetry),
+    storage: record(response.storage),
   };
-}
-
-function debugContextErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message.trim();
-  const value = record(error);
-  const message = text(value.message) || text(value.error);
-  return message || '无法读取本轮临时上下文，请确认 Pi Runtime 与本机 Debug 设置。';
 }
 
 function tokenPair(tokens: unknown, window: unknown): string {
@@ -230,8 +360,27 @@ function tokenCount(value: number): string {
   return String(Math.max(0, Math.round(value)));
 }
 
+function formatBytes(value: number): string {
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(value === 1024 ** 3 ? 0 : 1)} GiB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${Math.round(value)} B`;
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null;
+}
+
+function fileName(path: string): string {
+  return path.split('/').filter(Boolean).at(-1) || path;
+}
+
+function stableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function record(value: unknown): Record<string, unknown> {

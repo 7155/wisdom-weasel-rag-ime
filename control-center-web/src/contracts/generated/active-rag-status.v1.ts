@@ -47,6 +47,92 @@ export interface ActiveRagStatusV1 {
       elapsedMs: number;
       [k: string]: unknown;
     };
+    progress?: {
+      stage: string;
+      elapsedMs: number;
+      context: {
+        foregroundChars?: number;
+        windowNodeCount?: number;
+        windowCaptureMode?: string;
+        recentInputCount?: number;
+        recentInputChars?: number;
+        recentInputUsed?: boolean;
+        [k: string]: unknown;
+      };
+      retrieval: {
+        attempted?: boolean;
+        elapsedMs?: number;
+        retrievedCount?: number;
+        evidenceCount?: number;
+        contextEvidenceCount?: number;
+        /**
+         * @maxItems 3
+         */
+        items?:
+          | []
+          | [
+              {
+                sourceType?: string;
+                sourceLane?: string;
+                title?: string;
+                preview?: string;
+                [k: string]: unknown;
+              },
+            ]
+          | [
+              {
+                sourceType?: string;
+                sourceLane?: string;
+                title?: string;
+                preview?: string;
+                [k: string]: unknown;
+              },
+              {
+                sourceType?: string;
+                sourceLane?: string;
+                title?: string;
+                preview?: string;
+                [k: string]: unknown;
+              },
+            ]
+          | [
+              {
+                sourceType?: string;
+                sourceLane?: string;
+                title?: string;
+                preview?: string;
+                [k: string]: unknown;
+              },
+              {
+                sourceType?: string;
+                sourceLane?: string;
+                title?: string;
+                preview?: string;
+                [k: string]: unknown;
+              },
+              {
+                sourceType?: string;
+                sourceLane?: string;
+                title?: string;
+                preview?: string;
+                [k: string]: unknown;
+              },
+            ];
+        [k: string]: unknown;
+      };
+      model: {
+        attempted?: boolean;
+        partialVisible?: boolean;
+        partialChars?: number;
+        firstTokenMs?: number;
+        providerFirstTokenMs?: number;
+        providerElapsedMs?: number;
+        qualityRetry?: boolean;
+        qualityRetryReason?: string;
+        [k: string]: unknown;
+      };
+      [k: string]: unknown;
+    };
     [k: string]: unknown;
   };
   traceEvents?: unknown[];

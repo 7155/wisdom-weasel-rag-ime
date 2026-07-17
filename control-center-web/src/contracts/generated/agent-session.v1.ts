@@ -30,6 +30,7 @@ export interface AgentSessionV1 {
   toolProfileVersion: string;
   toolAllowlistMode?: 'profile' | 'explicit';
   allowedTools?: string[];
+  projectContextEnabled: boolean;
   createdAtMs: number;
   updatedAtMs: number;
   lastOpenedAtMs?: number;

@@ -1812,7 +1812,13 @@ class AgentService:
             session = self.sessions.archive(session_id, archived=_bool(payload.get("archived")))
         if any(
             key in payload
-            for key in ("mode", "toolProfileVersion", "toolAllowlistMode", "allowedTools")
+            for key in (
+                "mode",
+                "toolProfileVersion",
+                "toolAllowlistMode",
+                "allowedTools",
+                "projectContextEnabled",
+            )
         ):
             requested_mode = str(payload.get("mode") or session.get("mode") or "").strip()
             role = self.personas.resolve(session["roleId"], session["roleVersion"])
@@ -1880,11 +1886,20 @@ class AgentService:
                 tool_id.startswith("workspace_") for tool_id in allowed_tools or []
             ):
                 raise ValueError("assistant sessions cannot enable workspace tools")
+            if "projectContextEnabled" in payload and not isinstance(
+                payload.get("projectContextEnabled"), bool
+            ):
+                raise ValueError("projectContextEnabled must be a boolean")
             session = self.sessions.set_runtime_policy(
                 session_id,
                 mode=requested_mode,
                 tool_profile_version=requested_profile,
                 allowed_tools=allowed_tools,
+                project_context_enabled=(
+                    bool(payload["projectContextEnabled"])
+                    if "projectContextEnabled" in payload
+                    else None
+                ),
                 workspace_roots=[str(value) for value in roots] if isinstance(roots, list) else None,
             )
         maintenance = (
@@ -1961,6 +1976,7 @@ class AgentService:
             role_version=str(source["roleVersion"]),
             model_profile=str(source["modelProfile"]),
             tool_profile_version=str(source["toolProfileVersion"]),
+            project_context_enabled=bool(source.get("projectContextEnabled", True)),
             workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
             shell_policy_version=str(source.get("shellPolicyVersion") or "") or None,
             session_kind="conversation",
@@ -1976,6 +1992,7 @@ class AgentService:
             mode=str(source["mode"]),
             tool_profile_version=str(source["toolProfileVersion"]),
             allowed_tools=allowed_tools,
+            project_context_enabled=bool(source.get("projectContextEnabled", True)),
             workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
         )
         try:

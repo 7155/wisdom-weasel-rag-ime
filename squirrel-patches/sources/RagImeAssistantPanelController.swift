@@ -441,7 +441,11 @@ final class RagImeAssistantPanelController {
         width: predictionWidth,
         height: RagImeSuggestionCardView.predictionHeight(candidateCount: realCandidates.count, hasAction: hasAction)
       )
-    case .explicitGenerating: return NSSize(width: 78, height: RagImeSuggestionCardView.thinkingHeight)
+    case .explicitGenerating:
+      return NSSize(
+        width: min(configuredMaximumWidth, RagImeSuggestionCardView.thinkingWidth),
+        height: RagImeSuggestionCardView.thinkingHeight
+      )
     case .explicitNoSuggestion, .explicitError:
       return NSSize(width: max(320, predictionWidth), height: RagImeSuggestionCardView.errorHeight)
     case .explicitResult:

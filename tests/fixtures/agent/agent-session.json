@@ -17,5 +17,6 @@
   "messageCount": 0,
   "lastMessagePreview": "",
   "workspaceRoots": [],
+  "projectContextEnabled": true,
   "shellPolicyVersion": "assistant-no-shell-v1"
 }

@@ -81,17 +81,14 @@ def build_timeline_context_pack(
     )
     recent_input = compact_whitespace(str(recent_context.get("rendered") or ""))
     recent_records = recent_context.get("records") if isinstance(recent_context.get("records"), list) else []
-    recent_evidence: list[dict[str, object]] = []
+    evidence: list[dict[str, object]] = []
     for record in recent_records:
         if isinstance(record, dict):
-            recent_evidence.append(_recent_record_evidence(record))
-    planning_evidence: list[dict[str, object]] = []
+            evidence.append(_recent_record_evidence(record))
     if planning_enabled and planning_injected:
-        planning_evidence = _planning_evidence(core, project=normalized_project)
-    book_evidence = [_book_evidence(book) for book in books]
-    # Recent input is continuity context, not factual grounding. Keep governed
-    # plans and Books ahead of it so max_items slicing cannot starve them.
-    evidence = [*planning_evidence, *book_evidence, *recent_evidence]
+        evidence.extend(_planning_evidence(core, project=normalized_project))
+    for book in books:
+        evidence.append(_book_evidence(book))
     recent_observability = (
         dict(recent_context.get("observability"))
         if isinstance(recent_context.get("observability"), dict)
@@ -165,7 +162,7 @@ def timeline_evidence_pack_from_core(
         app=app,
         current_context=current_context,
         selected_text=selected_text,
-        book_limit=min(8, max(1, int(max_items) // 4)) if int(max_items) > 0 else 0,
+        book_limit=min(8, max(0, int(max_items) // 4)),
     )
     evidence = pack.get("evidencePack")
     if not isinstance(evidence, list):

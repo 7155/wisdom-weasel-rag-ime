@@ -279,6 +279,130 @@ export const contractSchemas = {
                 "minimum": 0
               }
             }
+          },
+          "progress": {
+            "type": "object",
+            "required": [
+              "stage",
+              "elapsedMs",
+              "context",
+              "retrieval",
+              "model"
+            ],
+            "properties": {
+              "stage": {
+                "type": "string"
+              },
+              "elapsedMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "context": {
+                "type": "object",
+                "properties": {
+                  "foregroundChars": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "windowNodeCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "windowCaptureMode": {
+                    "type": "string"
+                  },
+                  "recentInputCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "recentInputChars": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "recentInputUsed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "retrieval": {
+                "type": "object",
+                "properties": {
+                  "attempted": {
+                    "type": "boolean"
+                  },
+                  "elapsedMs": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "retrievedCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "evidenceCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "contextEvidenceCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "items": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "sourceType": {
+                          "type": "string"
+                        },
+                        "sourceLane": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "preview": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "attempted": {
+                    "type": "boolean"
+                  },
+                  "partialVisible": {
+                    "type": "boolean"
+                  },
+                  "partialChars": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "firstTokenMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "providerFirstTokenMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "providerElapsedMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "qualityRetry": {
+                    "type": "boolean"
+                  },
+                  "qualityRetryReason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -3769,6 +3893,7 @@ export const contractSchemas = {
       "roleVersion",
       "modelProfile",
       "toolProfileVersion",
+      "projectContextEnabled",
       "createdAtMs",
       "updatedAtMs",
       "messageCount",
@@ -3906,6 +4031,9 @@ export const contractSchemas = {
           "minLength": 1
         },
         "uniqueItems": true
+      },
+      "projectContextEnabled": {
+        "type": "boolean"
       },
       "createdAtMs": {
         "type": "integer",

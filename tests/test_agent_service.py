@@ -153,6 +153,7 @@ class AgentServiceTests(unittest.TestCase):
         session = created["session"]
         session_id = str(session["id"])
         self.assertEqual(session["title"], "连续 对话")
+        self.assertTrue(session["projectContextEnabled"])
 
         listed = self.service.list_sessions()
         self.assertEqual(listed["items"][0]["id"], session_id)
@@ -193,6 +194,16 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(restored_profile["toolProfileVersion"], "control-center-v1")
         self.assertEqual(restored_profile["toolAllowlistMode"], "profile")
         self.assertEqual(restored_profile["allowedTools"], [])
+        context_disabled = self.service.update_session(
+            session_id,
+            {"mode": "assistant", "projectContextEnabled": False},
+        )["session"]
+        self.assertFalse(context_disabled["projectContextEnabled"])
+        with self.assertRaisesRegex(ValueError, "must be a boolean"):
+            self.service.update_session(
+                session_id,
+                {"mode": "assistant", "projectContextEnabled": "false"},
+            )
         with self.assertRaisesRegex(ValueError, "explicit native confirmation"):
             self.service.update_session(
                 session_id,

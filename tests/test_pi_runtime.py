@@ -364,6 +364,11 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("test-secret", repr(config))
         child = config.child_environment()
         self.assertEqual(child["DEEPSEEK_API_KEY"], "test-secret")
+        self.assertEqual(
+            child["RAG_IME_PI_DEBUG_CONTEXT_DIR"],
+            str(self.root / "support" / "Agent" / "debug-context"),
+        )
+        self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "1073741824")
         self.assertNotIn("RAG_IME_DEEPSEEK_API_KEY", child)
         config.prepare_agent_config()
         models_path = config.agent_dir / "models.json"

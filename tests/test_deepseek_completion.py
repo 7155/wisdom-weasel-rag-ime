@@ -57,6 +57,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(user_payload["maxChars"], 0)
         self.assertIn("不设字符上限", user_payload["task"])
         self.assertIn("后续可以换行分段", user_payload["task"])
+        self.assertIn("可按内容需要使用简洁 Markdown", messages[0]["content"])
         self.assertNotIn("只输出一行", user_payload["task"])
 
     def test_active_rag_foreground_only_rejects_unrequested_character_recommendations(self) -> None:

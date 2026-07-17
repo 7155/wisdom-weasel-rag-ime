@@ -279,6 +279,7 @@ class PiRuntimeHostManager:
         self._states: dict[str, _HostedSessionState] = {}
         self._open_sessions: set[str] = set()
         self._active_completion_ids: set[str] = set()
+        self._completion_sinks: dict[str, Callable[[str], None]] = {}
         self._status = "stopped" if config.enabled else "disabled"
         self._last_error = ""
         self._host_capabilities: dict[str, object] = {}
@@ -362,6 +363,7 @@ class PiRuntimeHostManager:
                     else installed and str(self.config.protocol_version or "") == _PROTOCOL_VERSION
                 ),
                 "transientContext": bool(capabilities.get("transientContext")),
+                "persistentDebugContext": bool(capabilities.get("persistentDebugContext")),
                 "imageAttachments": True,
                 "coordinator": True,
                 "modelConfigured": self.config.model_configured,
@@ -427,8 +429,11 @@ class PiRuntimeHostManager:
                 "cwd": cwd,
                 "systemPrompt": self.config.system_prompt_for_session(session),
                 "toolManifest": self.tool_catalog(session_id),
-                "noContextFiles": str(session.get("toolProfileVersion") or "")
-                in {"ime-surface-v1", "voice-refinement-v1"},
+                "noContextFiles": (
+                    str(session.get("toolProfileVersion") or "")
+                    in {"ime-surface-v1", "voice-refinement-v1"}
+                    or not bool(session.get("projectContextEnabled", True))
+                ),
             }
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
@@ -927,6 +932,7 @@ class PiRuntimeHostManager:
         model_id: str,
         thinking_level: str,
         message: str,
+        on_text_delta: Callable[[str], None] | None = None,
         timeout_seconds: float = 120.0,
     ) -> dict[str, object]:
         normalized_request_id = _model_reference_part(
@@ -958,16 +964,20 @@ class PiRuntimeHostManager:
                     raise PiRuntimeError("Pi stateless completion request is already active")
                 self._cancel_idle_locked()
                 self._active_completion_ids.add(normalized_request_id)
+                if on_text_delta is not None:
+                    self._completion_sinks[normalized_request_id] = on_text_delta
                 self._status = "busy"
         try:
-            return client.send(
+            result = client.send(
                 "completion.once",
                 params,
                 timeout=bounded_timeout + 5.0,
             )
+            return result
         finally:
             with self._lock:
                 self._active_completion_ids.discard(normalized_request_id)
+                self._completion_sinks.pop(normalized_request_id, None)
                 if not any(state.turn_id for state in self._states.values()):
                     self._status = "ready"
                 self._schedule_idle_locked()
@@ -1180,6 +1190,7 @@ class PiRuntimeHostManager:
                         state.abort_timer.cancel()
                 self._open_sessions.clear()
                 self._active_completion_ids.clear()
+                self._completion_sinks.clear()
                 self._states.clear()
                 self._status = "stopped" if self.config.enabled else "disabled"
             if client is not None:
@@ -1203,10 +1214,21 @@ class PiRuntimeHostManager:
             "runtime.notice",
         }:
             return
+        raw = dict(_mapping(envelope.get("payload")))
+        if envelope.get("event") == "runtime.notice" and str(raw.get("type") or "") == "completion_text_delta":
+            request_id = str(raw.get("requestId") or "")
+            delta = str(raw.get("delta") or "")
+            with self._lock:
+                sink = self._completion_sinks.get(request_id)
+            if sink is not None and delta:
+                try:
+                    sink(delta)
+                except Exception:
+                    pass
+            return
         session_id = str(envelope.get("sessionId") or "")
         if not session_id:
             return
-        raw = dict(_mapping(envelope.get("payload")))
         turn_id = str(envelope.get("turnId") or "")
         client_message_id = str(envelope.get("clientMessageId") or "")
         event_type = str(raw.get("type") or "")

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "rag-ime.contract.agent-session.v1",
   "type": "object",
-  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
+  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "projectContextEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-session.v1"},
     "id": {"type": "string", "minLength": 1},
@@ -32,6 +32,7 @@
     "toolProfileVersion": {"type": "string", "minLength": 1},
     "toolAllowlistMode": {"type": "string", "enum": ["profile", "explicit"]},
     "allowedTools": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "projectContextEnabled": {"type": "boolean"},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "lastOpenedAtMs": {"type": "integer", "minimum": 0},

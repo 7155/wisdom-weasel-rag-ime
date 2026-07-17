@@ -108,6 +108,7 @@ class AgentRuntimeDriver(Protocol):
         model_id: str,
         thinking_level: str,
         message: str,
+        on_text_delta: Callable[[str], None] | None = None,
         timeout_seconds: float = 120.0,
     ) -> dict[str, object]: ...
 
