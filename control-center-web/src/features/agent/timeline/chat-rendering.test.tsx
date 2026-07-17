@@ -111,6 +111,11 @@ describe('Agent chat rendering', () => {
       '```',
       'plain fenced block',
       '```',
+      '',
+      '```jsonl',
+      '{"type":"message","id":"entry-1"}',
+      '{"type":"tool_result","ok":true}',
+      '```',
     ].join('\n');
 
     const { container } = render(<TooltipProvider><MarkdownBody text={markdown} /></TooltipProvider>);
@@ -124,7 +129,10 @@ describe('Agent chat rendering', () => {
     expect(screen.getByText('ControlTransport').tagName).toBe('CODE');
     expect(container.querySelector('pre[data-language="ts"]')).toHaveTextContent('const ready = true;');
     expect(container.querySelector('pre[data-language="text"]')).toHaveTextContent('plain fenced block');
-    expect(container.querySelectorAll('.agent-code-block')).toHaveLength(2);
+    const jsonl = container.querySelector('pre[data-language="jsonl"]');
+    expect(jsonl).toHaveTextContent('{"type":"message","id":"entry-1"}');
+    expect(jsonl?.querySelector('code')).toHaveClass('agent-code-block__content');
+    expect(container.querySelectorAll('.agent-code-block')).toHaveLength(3);
   });
 
   it('anchors the streaming cursor inside the final Markdown text container', () => {

@@ -74,10 +74,39 @@ describe('Agent experience', () => {
     const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
     await user.click(within(dialog).getByRole('button', { name: '删除' }));
     expect(onDelete).toHaveBeenCalledWith('session-memory');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /删除“记忆整理”/ })).not.toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: '任务列表选项' }));
     await user.click(await screen.findByRole('menuitemcheckbox', { name: '显示已归档任务' }));
     expect(onShowArchivedChange).toHaveBeenCalledWith(true);
+  });
+
+  it('keeps the delete confirmation open and shows the backend error when deletion fails', async () => {
+    const onDelete = vi.fn().mockRejectedValue(new Error('DELETE requires application/json'));
+    const user = userEvent.setup();
+    const { container } = render(
+      <TooltipProvider>
+        <SessionRail
+          sessions={previewSessions}
+          selectedId="session-preview"
+          loading={false}
+          onSelect={() => {}}
+          onCreate={() => {}}
+          onDelete={onDelete}
+        />
+      </TooltipProvider>,
+    );
+    const targetRow = [...container.querySelectorAll('.agent-session-row-shell')]
+      .find((row) => row.textContent?.includes('记忆整理'));
+
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多任务操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除任务' }));
+    const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('DELETE requires application/json');
+    expect(dialog).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '删除' })).not.toBeDisabled());
   });
 
   it('resolves projected message ids to real Pi transcript entry ids', () => {
@@ -96,10 +125,14 @@ describe('Agent experience', () => {
     }], 'projected-message-id')).toBe('pi-jsonl-entry-42');
   });
 
-  it('renders a lightweight right-edge conversation navigator', async () => {
+  it('renders a right-edge conversation navigator with turn previews', async () => {
     renderAgent(featureTransport());
     const navigator = await screen.findByRole('navigation', { name: '快速跳转对话' });
-    expect(within(navigator).getAllByRole('button').length).toBeGreaterThan(1);
+    const markers = within(navigator).getAllByRole('button');
+    expect(markers.length).toBeGreaterThan(1);
+    expect(markers[0]).toHaveTextContent('第 1 轮');
+    expect(navigator).toHaveTextContent('读取输入法工具书');
+    expect(navigator).toHaveTextContent('智鼬');
   });
 
   it('creates a real Pi-backed conversation branch and restores the selected message as draft', async () => {
@@ -1468,6 +1501,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
     const attachmentButton = await screen.findByRole('button', { name: '添加图片' });
     expect(attachmentButton).toBeVisible();
     expect(attachmentButton).toBeEnabled();

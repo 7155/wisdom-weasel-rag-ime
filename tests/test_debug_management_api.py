@@ -793,6 +793,24 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("token", denied_payload["error"])
         self.assertTrue(allowed_payload["ok"])
 
+    def test_active_rag_rejects_legacy_visual_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "visualContext is disabled"):
+            self.service._active_rag_request_from_payload(
+                {
+                    "selectedText": "根据截图补全",
+                    "privacyDisposition": "allowed",
+                    "frontAppBundleId": "com.example.Editor",
+                    "visualContext": {
+                        "schemaVersion": "rag-ime.visual-context.v1",
+                        "mimeType": "image/png",
+                        "dataBase64": base64.b64encode(PNG_1X1).decode("ascii"),
+                        "pixelWidth": 1,
+                        "pixelHeight": 1,
+                        "source": "front_app_window",
+                    },
+                }
+            )
+
     def test_rag_core_v3_preview_is_read_only(self) -> None:
         event_ref = self.core.record_event(
             InputEvent(
@@ -1979,8 +1997,6 @@ class DebugManagementApiTests(unittest.TestCase):
 
             delete_request = Request(
                 f"{base_url}/sessions/{session_id}",
-                data=b"{}",
-                headers={"Content-Type": "application/json"},
                 method="DELETE",
             )
             with urlopen(delete_request, timeout=5) as response:

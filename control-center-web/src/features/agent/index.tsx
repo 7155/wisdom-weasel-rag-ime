@@ -383,10 +383,14 @@ function AgentWorkspace() {
     try {
       await transport.request({ pathId: 'agent.session.delete', params: { sessionId } });
       useAgentLiveStore.getState().clear(sessionId);
+      setSessions((current) => current.filter((item) => item.id !== sessionId));
+      if (selectedId === sessionId) setSelectedId('');
       await loadSessions(selectedId === sessionId ? '' : selectedId);
       setError('');
     } catch (requestError) {
-      setError(errorText(requestError));
+      const message = errorText(requestError);
+      setError(message);
+      throw new Error(message, { cause: requestError });
     }
   }
 
@@ -985,7 +989,7 @@ function AgentWorkspace() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
-      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={(sessionId) => void deleteSession(sessionId)} onClose={closeMobileRail} />
+      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onClose={closeMobileRail} />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section className="agent-conversation" aria-hidden={railModal || statusModal || undefined} inert={railModal || statusModal ? true : undefined}>
         <header className="agent-conversation__header">

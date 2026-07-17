@@ -129,49 +129,6 @@ export const contractSchemas = {
           }
         },
         "additionalProperties": false
-      },
-      "visualContext": {
-        "type": "object",
-        "required": [
-          "schemaVersion",
-          "mimeType",
-          "dataBase64",
-          "pixelWidth",
-          "pixelHeight",
-          "source"
-        ],
-        "properties": {
-          "schemaVersion": {
-            "const": "rag-ime.visual-context.v1"
-          },
-          "mimeType": {
-            "type": "string",
-            "enum": [
-              "image/jpeg",
-              "image/png"
-            ]
-          },
-          "dataBase64": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 6991000
-          },
-          "pixelWidth": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10000
-          },
-          "pixelHeight": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10000
-          },
-          "source": {
-            "type": "string",
-            "maxLength": 80
-          }
-        },
-        "additionalProperties": false
       }
     },
     "additionalProperties": true

@@ -67,6 +67,22 @@ export function AgentTimeline({
     const hasAssistant = turn.messageIds.some((messageId) => projection?.messagesById[messageId]?.role === 'assistant');
     return hasAssistant ? 'complete' : 'user';
   })));
+  const markerUserPreviews = useAgentLiveStore(useShallow((state) => turnOrder.map((turnId) => {
+    const projection = state.projections[sessionId];
+    const turn = projection?.turnsById[turnId];
+    const message = turn?.messageIds
+      .map((messageId) => projection?.messagesById[messageId])
+      .find((item) => item?.role === 'user');
+    return messagePreview(message);
+  })));
+  const markerAssistantPreviews = useAgentLiveStore(useShallow((state) => turnOrder.map((turnId) => {
+    const projection = state.projections[sessionId];
+    const turn = projection?.turnsById[turnId];
+    const messages = turn?.messageIds
+      .map((messageId) => projection?.messagesById[messageId])
+      .filter((item): item is AgentMessageProjection => item?.role === 'assistant') ?? [];
+    return messagePreview(messages.at(-1));
+  })));
   useEffect(() => {
     const lastIndex = Math.max(0, turnOrder.length - 1);
     setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
@@ -141,18 +157,34 @@ export function AgentTimeline({
           {turnOrder.map((turnId, index) => {
             const activeIndex = Math.floor((visibleRange.startIndex + visibleRange.endIndex) / 2);
             const position = turnOrder.length === 1 ? 50 : (index / (turnOrder.length - 1)) * 100;
+            const userPreview = markerUserPreviews[index];
+            const assistantPreview = markerAssistantPreviews[index];
+            const markerKind = markerKinds[index];
             return (
               <button
                 aria-current={index === activeIndex ? 'location' : undefined}
                 aria-label={`跳到第 ${index + 1} 轮`}
-                data-kind={markerKinds[index]}
+                data-edge={index === 0 ? 'start' : index === turnOrder.length - 1 ? 'end' : undefined}
+                data-kind={markerKind}
                 data-visible={index >= visibleRange.startIndex && index <= visibleRange.endIndex || undefined}
                 key={turnId}
                 onClick={() => virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' })}
                 style={{ '--agent-nav-position': `${position}%` } as CSSProperties}
-                title={`第 ${index + 1} 轮`}
+                title={userPreview || assistantPreview || `第 ${index + 1} 轮`}
                 type="button"
-              />
+              >
+                <span aria-hidden="true" className="agent-conversation-nav__preview">
+                  <span className="agent-conversation-nav__preview-head">
+                    <strong>第 {index + 1} 轮</strong>
+                    <em data-kind={markerKind}>{turnMarkerLabel(markerKind)}</em>
+                  </span>
+                  {userPreview ? <small><b>你</b><span>{userPreview}</span></small> : null}
+                  <small>
+                    <b>{persona?.displayName ?? '智鼬'}</b>
+                    <span>{assistantPreview || turnMarkerLabel(markerKind)}</span>
+                  </small>
+                </span>
+              </button>
             );
           })}
         </nav>
@@ -603,6 +635,21 @@ function turnStatusLabel(status: string): string {
   if (status === 'queued') return '排队中';
   if (status === 'aborted') return '已停止';
   return '已完成';
+}
+
+function turnMarkerLabel(kind: string): string {
+  if (kind === 'active') return '进行中';
+  if (kind === 'failed') return '未完成';
+  if (kind === 'user') return '待回复';
+  return '已完成';
+}
+
+function messagePreview(message?: AgentMessageProjection): string {
+  if (!message) return '';
+  const value = message.blocks.map((block) => (
+    text(block.data.text ?? block.data.markdown ?? block.data.code ?? block.data.message ?? block.data.summary)
+  )).filter(Boolean).join(' ').replace(/\s+/gu, ' ').trim();
+  return value.slice(0, 140);
 }
 
 const emptyIds: string[] = [];

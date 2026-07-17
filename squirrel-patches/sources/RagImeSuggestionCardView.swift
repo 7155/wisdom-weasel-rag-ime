@@ -73,10 +73,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private let accentRail = NSView()
   private let actionSeparator = NSView()
   private let actionContainer = NSView()
-  private let actionDividerLeading = NSView()
-  private let actionDividerTrailing = NSView()
+  private let actionDivider = NSView()
   private let quickGenerateButton = NSButton(title: "生成", target: nil, action: nil)
-  private let visualGenerateButton = NSButton(title: "看图", target: nil, action: nil)
   private let deepSearchButton = NSButton(title: "深度", target: nil, action: nil)
   private let statusHalo = NSView()
   private let statusIcon = NSImageView()
@@ -99,8 +97,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private var candidateIndexes: [Int] = []
   private var quickActionCandidate: RagImeDisplayCandidate?
   private var quickActionCandidateIndex: Int?
-  private var visualActionCandidate: RagImeDisplayCandidate?
-  private var visualActionCandidateIndex: Int?
   private var deepActionCandidate: RagImeDisplayCandidate?
   private var deepActionCandidateIndex: Int?
   private var canReplaceSelection = false
@@ -142,8 +138,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     actionContainer.wantsLayer = true
     actionContainer.layer?.cornerRadius = 6
     actionContainer.layer?.masksToBounds = true
-    actionDividerLeading.wantsLayer = true
-    actionDividerTrailing.wantsLayer = true
+    actionDivider.wantsLayer = true
     quickGenerateButton.isBordered = false
     quickGenerateButton.focusRingType = .none
     quickGenerateButton.font = RagImeAssistantTypography.action
@@ -155,21 +150,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     quickGenerateButton.layer?.cornerRadius = 0
     quickGenerateButton.target = self
     quickGenerateButton.action = #selector(startActiveRag)
-    quickGenerateButton.toolTip = "文字生成：使用连续的 Pi 联想会话"
+    quickGenerateButton.toolTip = "文字生成：使用当前窗口的辅助功能语义"
     quickGenerateButton.setAccessibilityLabel("文字生成")
-    visualGenerateButton.isBordered = false
-    visualGenerateButton.focusRingType = .none
-    visualGenerateButton.font = RagImeAssistantTypography.action
-    visualGenerateButton.alignment = .center
-    visualGenerateButton.image = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "看图生成")
-    visualGenerateButton.imagePosition = .imageLeading
-    visualGenerateButton.contentTintColor = .systemIndigo
-    visualGenerateButton.wantsLayer = true
-    visualGenerateButton.layer?.cornerRadius = 0
-    visualGenerateButton.target = self
-    visualGenerateButton.action = #selector(startVisualActiveRag)
-    visualGenerateButton.toolTip = "看图生成：附带当前应用窗口截图"
-    visualGenerateButton.setAccessibilityLabel("看图生成")
     deepSearchButton.isBordered = false
     deepSearchButton.focusRingType = .none
     deepSearchButton.font = RagImeAssistantTypography.action
@@ -185,9 +167,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     deepSearchButton.setAccessibilityLabel("使用 Pi 深度查找")
     updateActionGroupChrome()
     actionContainer.addSubview(quickGenerateButton)
-    actionContainer.addSubview(actionDividerLeading)
-    actionContainer.addSubview(visualGenerateButton)
-    actionContainer.addSubview(actionDividerTrailing)
+    actionContainer.addSubview(actionDivider)
     actionContainer.addSubview(deepSearchButton)
     [actionSeparator, actionContainer].forEach(addSubview)
     statusHalo.wantsLayer = true
@@ -264,7 +244,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       statusIcon.frame = statusHalo.frame
       statusLabel.frame = NSRect(x: 160, y: 10, width: max(80, bounds.width - 170), height: 24)
     case .compactPrediction, .expandedPredictions:
-      let hasAction = quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil
+      let hasAction = quickActionCandidate != nil || deepActionCandidate != nil
       let actionOffset = hasAction ? Self.actionHeight : 0
       let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
       for (index, row) in rows.enumerated() {
@@ -343,18 +323,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     }
     quickActionCandidateIndex = quickAction?.offset
     quickActionCandidate = quickAction?.element
-    let visualAction = indexedCandidates.first {
-      $0.element.selectionAction == "start_visual_rag_from_context"
-    }
-    visualActionCandidateIndex = visualAction?.offset
-    visualActionCandidate = visualAction?.element
     let deepAction = indexedCandidates.first {
       $0.element.selectionAction == "start_agent_deep_search_from_context"
     }
     deepActionCandidateIndex = deepAction?.offset
     deepActionCandidate = deepAction?.element
     quickGenerateButton.isEnabled = quickActionCandidate != nil
-    visualGenerateButton.isEnabled = visualActionCandidate != nil
     deepSearchButton.isEnabled = deepActionCandidate != nil
     let nextSignature = ([state.rawValue, payload.snapshotId] + candidates.map {
       $0.candidateStableId ?? "\($0.sourceType):\($0.insertText)"
@@ -371,12 +345,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       statusLabel.stringValue = payload.statusText.isEmpty ? "正在联想" : providerNeutralStatus(payload.statusText)
       [statusHalo, statusIcon, statusLabel].forEach { $0.isHidden = false }
       quickGenerateButton.imagePosition = .imageOnly
-      visualGenerateButton.imagePosition = .imageOnly
       deepSearchButton.imagePosition = .imageOnly
-      actionContainer.isHidden = quickActionCandidate == nil && visualActionCandidate == nil && deepActionCandidate == nil
+      actionContainer.isHidden = quickActionCandidate == nil && deepActionCandidate == nil
     case .compactPrediction, .expandedPredictions:
       quickGenerateButton.imagePosition = .imageLeading
-      visualGenerateButton.imagePosition = .imageLeading
       deepSearchButton.imagePosition = .imageLeading
       let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
       for index in rows.indices where index < visibleCount {
@@ -391,7 +363,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
           )
         }
       }
-      if quickActionCandidate != nil || visualActionCandidate != nil || deepActionCandidate != nil {
+      if quickActionCandidate != nil || deepActionCandidate != nil {
         [actionSeparator, actionContainer].forEach { $0.isHidden = false }
       }
     case .explicitGenerating:
@@ -475,7 +447,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   static func isActionCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
     candidate.sourceType == "action"
       || candidate.selectionAction == "start_active_rag_from_context"
-      || candidate.selectionAction == "start_visual_rag_from_context"
       || candidate.selectionAction == "start_agent_deep_search_from_context"
   }
 
@@ -649,35 +620,22 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private func layoutActionBar(frame: NSRect, compact: Bool) {
     actionContainer.frame = frame
     let dividerWidth: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
-    let segment = max(0, floor((frame.width - dividerWidth * 2) / 3))
+    let segment = max(0, floor((frame.width - dividerWidth) / 2))
     let dividerInset: CGFloat = compact ? 5 : 4
     quickGenerateButton.frame = NSRect(x: 0, y: 0, width: segment, height: frame.height)
-    actionDividerLeading.frame = NSRect(
+    actionDivider.frame = NSRect(
       x: segment,
       y: dividerInset,
       width: dividerWidth,
       height: max(0, frame.height - dividerInset * 2)
     )
-    visualGenerateButton.frame = NSRect(
+    deepSearchButton.frame = NSRect(
       x: segment + dividerWidth,
       y: 0,
-      width: segment,
-      height: frame.height
-    )
-    actionDividerTrailing.frame = NSRect(
-      x: segment * 2 + dividerWidth,
-      y: dividerInset,
-      width: dividerWidth,
-      height: max(0, frame.height - dividerInset * 2)
-    )
-    deepSearchButton.frame = NSRect(
-      x: segment * 2 + dividerWidth * 2,
-      y: 0,
-      width: max(0, frame.width - segment * 2 - dividerWidth * 2),
+      width: max(0, frame.width - segment - dividerWidth),
       height: frame.height
     )
     quickGenerateButton.alignment = .center
-    visualGenerateButton.alignment = .center
     deepSearchButton.alignment = .center
   }
 
@@ -693,10 +651,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     let dividerColor = NSColor.separatorColor
       .withAlphaComponent(increaseContrast ? 0.88 : 0.48)
       .cgColor
-    actionDividerLeading.layer?.backgroundColor = dividerColor
-    actionDividerTrailing.layer?.backgroundColor = dividerColor
+    actionDivider.layer?.backgroundColor = dividerColor
     quickGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
-    visualGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
     deepSearchButton.layer?.backgroundColor = NSColor.clear.cgColor
   }
 
@@ -722,11 +678,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   @objc private func startActiveRag() {
     guard let quickActionCandidate, let quickActionCandidateIndex else { return }
     onSelect?(quickActionCandidate, quickActionCandidateIndex, .insert)
-  }
-
-  @objc private func startVisualActiveRag() {
-    guard let visualActionCandidate, let visualActionCandidateIndex else { return }
-    onSelect?(visualActionCandidate, visualActionCandidateIndex, .insert)
   }
 
   @objc private func startAgentDeepSearch() {

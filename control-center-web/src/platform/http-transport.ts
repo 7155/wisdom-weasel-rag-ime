@@ -98,7 +98,7 @@ export class HttpControlTransport implements ControlTransport {
 
     const url = this.url(request.pathId, request.params, request.query);
     const headers = new Headers({ Accept: 'application/json' });
-    if (request.body !== undefined) headers.set('Content-Type', 'application/json');
+    if (route.method !== 'GET') headers.set('Content-Type', 'application/json');
     const response = await this.fetchImpl(url, {
       method: route.method,
       headers,

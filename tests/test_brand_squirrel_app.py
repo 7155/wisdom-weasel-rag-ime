@@ -40,6 +40,7 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
         self.assertEqual(info["TISInputSourceID"], "im.rag-ime.inputmethod.RagIme")
         self.assertEqual(info["InputMethodConnectionName"], "RagIme_Connection")
         self.assertFalse(info["SUEnableAutomaticChecks"])
+        self.assertFalse(info["SUAutomaticallyUpdate"])
         modes = info["ComponentInputModeDict"]["tsInputModeListKey"]
         self.assertEqual(set(modes), {"im.rag-ime.inputmethod.RagIme.Hans", "im.rag-ime.inputmethod.RagIme.Hant"})
         self.assertEqual(modes["im.rag-ime.inputmethod.RagIme.Hans"]["TISInputSourceID"], "im.rag-ime.inputmethod.RagIme.Hans")
@@ -71,6 +72,8 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
             strings = _read_plist(app / "Contents" / "Resources" / "en.lproj" / "InfoPlist.strings")
 
         self.assertEqual(info["CFBundleDisplayName"], "智鼬输入法")
+        self.assertFalse(info["SUEnableAutomaticChecks"])
+        self.assertFalse(info["SUAutomaticallyUpdate"])
         self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hans"], "智鼬输入法")
         self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hant"], "智鼬输入法（繁体）")
 
@@ -85,6 +88,7 @@ def _write_fake_squirrel_app(path: Path) -> Path:
         "TISInputSourceID": "im.rime.inputmethod.Squirrel",
         "InputMethodConnectionName": "Squirrel_Connection",
         "SUEnableAutomaticChecks": True,
+        "SUAutomaticallyUpdate": True,
         "ComponentInputModeDict": {
             "tsInputModeListKey": {
                 "im.rime.inputmethod.Squirrel.Hans": {

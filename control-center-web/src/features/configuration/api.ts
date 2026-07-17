@@ -8,6 +8,7 @@ export const configurationQueryKeys = {
   settings: () => [...configurationQueryKeys.root, 'settings'] as const,
   schema: () => [...configurationQueryKeys.root, 'schema'] as const,
   capabilities: () => [...configurationQueryKeys.root, 'capabilities'] as const,
+  models: () => [...configurationQueryKeys.root, 'pi-models'] as const,
   providers: () => [...configurationQueryKeys.root, 'providers'] as const,
   oauth: (loginId: string) => [...configurationQueryKeys.root, 'provider-oauth', loginId] as const,
 };
@@ -42,8 +43,19 @@ export function useConfigurationQueries() {
     queryFn: () => transport.capabilities(),
     staleTime: Infinity,
   });
+  const modelCatalogSupported = Boolean(
+    capabilities.data?.routeIds?.includes('agent.role.models'),
+  );
+  const modelCatalog = useQuery({
+    queryKey: configurationQueryKeys.models(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'agent.role.models', signal }),
+    enabled: modelCatalogSupported,
+    staleTime: 0,
+  });
   return {
     capabilities,
+    modelCatalog,
+    modelCatalogSupported,
     schema,
     settings,
     transport,

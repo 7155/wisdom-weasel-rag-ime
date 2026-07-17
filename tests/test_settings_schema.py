@@ -42,6 +42,9 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertTrue(defaults["activeRag"]["capture"]["clipboardFallback"])
         self.assertEqual(defaults["activeRag"]["defaultPlacement"], "replace_selection")
         self.assertEqual(defaults["activeRag"]["maxCandidates"], 1)
+        self.assertEqual(defaults["activeRag"]["quickModel"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(defaults["activeRag"]["quickThinkingLevel"], "off")
+        self.assertNotIn("visualModel", defaults["activeRag"])
         self.assertTrue(defaults["activeRag"]["allowRemoteModel"])
         self.assertTrue(defaults["privacy"]["allowRemoteModelForActiveRag"])
         self.assertEqual(defaults["models"]["activeRag"], "deepseek-v4")
@@ -63,6 +66,9 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["default"], 5000)
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
+        self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
+        self.assertEqual(fields["activeRag.quickThinkingLevel"]["options"], ["off", "low"])
+        self.assertNotIn("activeRag.visualModel", fields)
 
     def test_flatten_roundtrip(self) -> None:
         original = {"interaction": {"postCommit": {"panelTtlMs": 4200}}, "display": {"badges": {"model": "模"}}}

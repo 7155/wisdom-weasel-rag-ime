@@ -383,7 +383,6 @@ class RagImeDemoQualityTests(unittest.TestCase):
             }
             == {
                 "start_active_rag_from_context",
-                "start_visual_rag_from_context",
                 "start_agent_deep_search_from_context",
             },
             display,

@@ -54,7 +54,18 @@ for line in sys.stdin:
                          "piVersion": "0.80.7", "capabilities": {"multiSession": True, "maxSessions": 4,
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
                          "transientContext": True,
+                         "statelessCompletion": True,
                          "conversationFork": True}})
+    elif method == "completion.once":
+        result(request, {
+            "requestId": params["requestId"], "text": "one-shot reply",
+            "provider": params["provider"], "modelId": params["modelId"],
+            "thinkingLevel": params["thinkingLevel"],
+            "elapsedMs": 4200,
+            "usage": {"totalTokens": 32},
+        })
+    elif method == "completion.cancel":
+        result(request, {"requestId": params["requestId"], "cancelled": True})
     elif method == "session.open":
         session = sessions.setdefault(session_id, {
             "sessionId": session_id, "piSessionId": "pi-" + session_id,
@@ -212,6 +223,33 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "stored": True,
             "status": "checkpointed",
         }
+
+    def test_stateless_completion_does_not_open_or_persist_a_session(self) -> None:
+        result = self.runtime.complete_once(
+            request_id="surface-one-shot-1",
+            provider="deepseek",
+            model_id="deepseek-v4-flash",
+            thinking_level="off",
+            message="只回复这一次",
+            timeout_seconds=15,
+        )
+
+        self.assertEqual(result["text"], "one-shot reply")
+        self.assertEqual(result["elapsedMs"], 4200)
+        self.assertEqual(list((self.root / "sessions").glob("*.jsonl")), [])
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        methods = [request["method"] for request in requests]
+        self.assertEqual(methods, ["hello", "completion.once"])
+        params = requests[-1]["params"]
+        self.assertEqual(params["provider"], "deepseek")
+        self.assertEqual(params["modelId"], "deepseek-v4-flash")
+        self.assertEqual(params["thinkingLevel"], "off")
+        self.assertNotIn("sessionId", params)
+        self.assertNotIn("images", params)
+        self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
     def test_manual_and_automatic_compaction_notify_memory_checkpoint_observer(self) -> None:
         session_id = str(self.first["id"])

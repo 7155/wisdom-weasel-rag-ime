@@ -787,8 +787,12 @@ def validate_candidate_contract(result, *, require):
                 errors.append(f"{source_type} row {index + 1} must remain unnumbered")
             if source_type == "action":
                 action_indices.append(index)
-                if selection_action != "start_active_rag_from_context" or display_lane != "active_rag":
-                    errors.append("DeepSeek action row has the wrong routing contract")
+                allowed_action_routes = {
+                    ("start_active_rag_from_context", "active_rag"),
+                    ("start_agent_deep_search_from_context", "agent_deep_search"),
+                }
+                if (selection_action, display_lane) not in allowed_action_routes:
+                    errors.append("semantic action row has the wrong routing contract")
             continue
 
         selectable_index += 1

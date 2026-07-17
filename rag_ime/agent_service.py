@@ -1906,7 +1906,10 @@ class AgentService:
         if self.delegation.owns_session(session_id):
             raise ValueError("subagent sessions cannot be deleted directly")
         runtime = self.runtime_status()
-        if runtime.get("activeSessionId") == session_id:
+        if (
+            runtime.get("activeSessionId") == session_id
+            or session_id in {str(value) for value in runtime.get("openSessionIds") or []}
+        ):
             self.runtime.stop()
         media_files_deleted = self.media.delete_session_files(session_id)
         runtime_binding = self.sessions.runtime_binding(session_id)

@@ -123,8 +123,10 @@ info["CFBundleDisplayName"] = display_name
 info.pop("CFBundleIconName", None)
 info["TISInputSourceID"] = bundle_id
 info["InputMethodConnectionName"] = connection_name
-if bundle_id != default_bundle_id:
-    info["SUEnableAutomaticChecks"] = False
+# This is a patched product component, even when it keeps Squirrel's canonical
+# bundle id. Sparkle must never replace it with an upstream unpatched build.
+info["SUEnableAutomaticChecks"] = False
+info["SUAutomaticallyUpdate"] = False
 
 mode_dict["tsInputModeListKey"] = {
     hans_id: hans,

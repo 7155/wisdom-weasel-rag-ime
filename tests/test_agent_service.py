@@ -234,6 +234,25 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
 
+    def test_delete_stops_a_runtime_that_still_has_the_session_open(self) -> None:
+        session = self.service.create_session({"title": "打开中的会话"})["session"]
+        session_id = str(session["id"])
+        with (
+            patch.object(
+                self.service,
+                "runtime_status",
+                return_value={
+                    "activeSessionId": None,
+                    "openSessionIds": [session_id],
+                },
+            ),
+            patch.object(self.service.runtime, "stop") as stop,
+        ):
+            deleted = self.service.delete_session(session_id)
+
+        self.assertTrue(deleted["ok"])
+        stop.assert_called_once_with()
+
     def test_dangerous_auto_approval_applies_and_audits_a_hash_bound_preview(self) -> None:
         session = self.service.create_session({"title": "完全信任测试"})["session"]
         session_id = str(session["id"])

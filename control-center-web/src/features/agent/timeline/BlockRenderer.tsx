@@ -311,7 +311,7 @@ function CodeBlock({
         data-language={language}
         tabIndex={0}
       >
-        <code data-stream-tail={streamingTail || undefined}>{code}<StreamingCursor active={streamingTail} /></code>
+        <code className="agent-code-block__content" data-stream-tail={streamingTail || undefined}>{code}<StreamingCursor active={streamingTail} /></code>
       </pre>
     </figure>
   );

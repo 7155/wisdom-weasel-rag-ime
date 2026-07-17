@@ -33,7 +33,6 @@ class DeepSeekCompletionRequest:
     recovery_mode: bool = False
     surface_request_id: str = ""
     front_app_bundle_id: str = ""
-    visual_context: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)

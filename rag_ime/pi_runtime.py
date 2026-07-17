@@ -1425,6 +1425,23 @@ class PiRuntimeManager:
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
         return models
 
+    def complete_once(
+        self,
+        *,
+        request_id: str,
+        provider: str,
+        model_id: str,
+        thinking_level: str,
+        message: str,
+        timeout_seconds: float = 120.0,
+    ) -> dict[str, object]:
+        del request_id, provider, model_id, thinking_level, message, timeout_seconds
+        raise PiRuntimeError("stateless completion requires Pi Runtime Host protocol v2")
+
+    def cancel_completion(self, request_id: str) -> bool:
+        del request_id
+        return False
+
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
         normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
         normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)

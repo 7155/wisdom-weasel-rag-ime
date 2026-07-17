@@ -61,6 +61,20 @@ class SettingsStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be <= 65535"):
             self.store.update_settings({"knowledgeLibrary.parser.mineru.port": 65536})
 
+    def test_one_shot_lightning_model_reference_and_thinking_are_bounded(self) -> None:
+        result = self.store.update_settings(
+            {
+                "activeRag.quickModel": "deepseek/deepseek-v4-flash",
+                "activeRag.quickThinkingLevel": "off",
+            }
+        )
+
+        self.assertEqual(result.settings["activeRag"]["quickThinkingLevel"], "off")
+        with self.assertRaisesRegex(ValueError, "must be one of: off, low"):
+            self.store.update_settings({"activeRag.quickThinkingLevel": "high"})
+        with self.assertRaisesRegex(ValueError, "provider/model reference"):
+            self.store.update_settings({"activeRag.quickModel": "deepseek-v4-flash"})
+
     def test_dotted_leaf_update_preserves_persisted_sibling_overrides(self) -> None:
         self.store.update_settings(
             {

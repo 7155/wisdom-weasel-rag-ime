@@ -149,7 +149,6 @@ class ActiveRagStartRequest:
     rag_enabled_lanes: tuple[tuple[str, bool], ...] = ()
     rag_lane_weights: tuple[tuple[str, float], ...] = ()
     window_context: dict[str, object] = field(default_factory=dict)
-    visual_context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -746,7 +745,6 @@ class ActiveRagService:
             latency_budget_ms=_remote_completion_budget_ms(request),
             surface_request_id=request.panel_session_id,
             front_app_bundle_id=request.front_app_bundle_id,
-            visual_context=dict(request.visual_context),
         )
         resolved_model_request = resolved_active_rag_current_request(completion_request)
         messages = build_deepseek_completion_messages(completion_request)
@@ -1850,11 +1848,10 @@ def _initial_session_diagnostics(
             "frontendContextChars": request.frontend_context_chars,
             "frontendContextHash": request.frontend_context_hash,
             "captureWarnings": capture_warnings,
-            "visualContext": {
-                "present": bool(request.visual_context),
-                "mimeType": str(request.visual_context.get("mimeType") or ""),
-                "pixelWidth": int(request.visual_context.get("pixelWidth") or 0),
-                "pixelHeight": int(request.visual_context.get("pixelHeight") or 0),
+            "windowContext": {
+                "present": bool(request.window_context),
+                "captureMode": str(request.window_context.get("captureMode") or ""),
+                "nodeCount": int(request.window_context.get("nodeCount") or 0),
             },
         },
         "route": route,
