@@ -1,0 +1,4 @@
+interface:
+  display_name: "RAG-IME 记忆整理"
+  short_description: "清理、合并并审阅输入法长期记忆，批准后再更新数据库"
+  default_prompt: "Use the RAG-IME memory tools to inspect curated memory, propose a cleanup draft, and wait for selective approval before applying changes."

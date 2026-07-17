@@ -1,7 +1,7 @@
 import {
+  AppWindow,
   Archive,
   BookOpen,
-  BrainCircuit,
   Database,
   EyeOff,
   Network,
@@ -39,8 +39,9 @@ import {
   type MemoryKind,
 } from './api';
 import { MemoryRelations } from './MemoryRelations';
-import { PersonalKnowledgeWorkbench } from './PersonalKnowledgeWorkbench';
+import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
 import {
+  InlineNotice,
   ManagementPage,
   ManagementSection,
   MetricStrip,
@@ -62,6 +63,7 @@ import type { JsonValue } from '@/platform/transport';
 import './memory.css';
 
 const kinds = [
+  { value: 'apps', label: '应用' },
   { value: 'books', label: '主题书' },
   { value: 'atoms', label: '原子' },
   { value: 'tags', label: '标签' },
@@ -71,12 +73,18 @@ const kinds = [
   { value: 'negative', label: '负反馈' },
 ] as const;
 
+function defaultMemoryStatus(kind: MemoryKind): string {
+  if (kind === 'phrases') return 'approved';
+  if (kind === 'evidence') return '';
+  return 'active';
+}
+
 export function MemoryFeature() {
   const [view, setView] = useState<'catalog' | 'relations' | 'organize'>('catalog');
   const [kind, setKind] = useState<MemoryKind>('books');
   const [draftQuery, setDraftQuery] = useState('');
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState(defaultMemoryStatus('books'));
   const [ownerKey, setOwnerKey] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [editOpen, setEditOpen] = useState(false);
@@ -129,11 +137,16 @@ export function MemoryFeature() {
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection title="记忆概览">
           <MetricStrip items={[
-            { label: '输入记录', value: numberValue(summaryPayload.eventCount), detail: '已记录', icon: Database },
-            { label: '记忆项', value: numberValue(summaryPayload.memoryItemCount), detail: '所有状态', icon: BrainCircuit },
-            { label: '整理证据', value: numberValue(summaryPayload.evidenceSourceCount), detail: '可追溯', icon: Archive },
+            { label: '应用', value: numberValue(summaryPayload.appCount), detail: '独立上下文边界', icon: AppWindow },
+            { label: '完整输入', value: numberValue(summaryPayload.completeInputCount, numberValue(summaryPayload.eventCount)), detail: `${numberValue(summaryPayload.blockedFragmentCount)} 条碎片已隔离`, icon: Database },
             { label: '主题书', value: numberValue(summaryPayload.memoryBookCount), detail: '长期主题', icon: BookOpen },
-            { label: '原子', value: numberValue(summaryPayload.memoryAtomCount), detail: '结构化片段', icon: Tags },
+            {
+              label: '原子',
+              value: numberValue(summaryPayload.memoryAtomCount),
+              detail: `共 ${numberValue(summaryPayload.memoryAtomTotalCount, numberValue(summaryPayload.memoryAtomCount))} 条 · 历史 ${numberValue(summaryPayload.memoryAtomArchivedCount)} · 碎片证据 ${numberValue(summaryPayload.memoryAtomSourceArchiveCount)}`,
+              icon: Tags,
+            },
+            { label: '整理证据', value: numberValue(summaryPayload.evidenceSourceCount), detail: '可追溯', icon: Archive },
             { label: '已遗忘', value: numberValue(summaryPayload.forgottenSourceCount), detail: '不参与整理', icon: EyeOff },
             { label: '待判断', value: numberValue(summaryPayload.needsReviewSourceCount), detail: '每日复查', icon: RefreshCw, tone: numberValue(summaryPayload.needsReviewSourceCount) ? 'warning' : 'success' },
           ]} />
@@ -151,10 +164,12 @@ export function MemoryFeature() {
           </TabsList>
           <TabsContent value="catalog">
             <ManagementSection
-              title={kind === 'tags' ? '标签节点目录' : '记忆目录'}
+              title={kind === 'tags' ? '标签节点目录' : kind === 'apps' ? '应用上下文' : '记忆目录'}
               description={kind === 'tags'
                 ? '检索和管理图谱中的标签节点；节点关系在标签图谱中呈现。'
-                : '按类型、状态和内容查找记忆。'}
+                : kind === 'apps'
+                  ? '不同应用的输入、上下文分段和长期记忆保持独立来源。'
+                  : '按类型、状态和内容查找记忆。'}
               trailing={kind === 'tags' ? (
                 <Button leadingIcon={<Network size={14} />} onClick={() => setView('relations')} size="small">
                   查看标签图谱
@@ -163,9 +178,10 @@ export function MemoryFeature() {
             >
               <div className="mgmt-stack">
                 <SegmentedControl aria-label="记忆类型" items={kinds} onValueChange={(next) => {
-                  setKind(next);
-                  setStatus('');
-                  if (!ownerAwareKind(next)) setOwnerKey('');
+                  const nextKind = next as MemoryKind;
+                  setKind(nextKind);
+                  setStatus(defaultMemoryStatus(nextKind));
+                  if (!ownerAwareKind(nextKind)) setOwnerKey('');
                   setSelectedId('');
                   setEditOpen(false);
                 }} value={kind} />
@@ -232,8 +248,13 @@ export function MemoryFeature() {
               {selected ? <MemoryCatalogDetail kind={kind} row={selected} /> : (
                 <EmptyState description="从目录中选择一项，查看完整摘要与可用操作。" icon={BookOpen} title="尚未选择记忆" />
               )}
-              <div className="mgmt-grid-2">
-                {kind === 'evidence' ? (
+              {kind === 'apps' ? (
+                <InlineNotice title="应用边界由输入来源维护" tone="info">
+                  App 不是可编辑记忆；回车封口、切换应用和上下文分段会自动更新这里的统计。
+                </InlineNotice>
+              ) : (
+                <div className="mgmt-grid-2">
+                  {kind === 'evidence' ? (
                   <MemoryEvidenceDispositionAction
                     disabledReason={sourceDispositionBlockedReason()}
                     onChanged={refresh}
@@ -303,7 +324,8 @@ export function MemoryFeature() {
                     )}
                   </>
                 )}
-              </div>
+                </div>
+              )}
             </ManagementSection>
 
             <ManagementSection title="维护草案" description="批量整理必须先生成可逐项审阅的草案。">
@@ -319,7 +341,7 @@ export function MemoryFeature() {
             <MemoryRelations enabled={view === 'relations'} />
           </TabsContent>
           <TabsContent value="organize">
-            <PersonalKnowledgeWorkbench />
+            <MemoryCurationWorkbench enabled={view === 'organize'} />
           </TabsContent>
         </ViewTabs>
         <MemoryEditDialog
@@ -411,6 +433,13 @@ function normalizeMemoryRow(item: Record<string, unknown>): Record<string, unkno
     sensitive: item.sensitive,
     canForget: item.canForget,
     canRestore: item.canRestore,
+    bundleId: item.bundleId ?? item.app,
+    eventCount: item.eventCount,
+    finalizedSegmentCount: item.finalizedSegmentCount,
+    contextGroupCount: item.contextGroupCount,
+    atomCount: item.atomCount,
+    bookCount: item.bookCount,
+    latestAtMs: item.latestAtMs,
     updatedAtMs: item.updatedAtMs ?? item.updated_at_ms,
   };
 }
@@ -438,13 +467,26 @@ function MemoryCatalogDetail({ kind, row }: { kind: MemoryKind; row: Record<stri
         <p>{stringValue(row.detail, '暂无摘要')}</p>
       </div>
       <dl>
-        <div><dt>状态</dt><dd>{statusLabel(stringValue(row.status))}</dd></div>
-        <div><dt>来源</dt><dd>{sourceLabel(stringValue(row.source))}</dd></div>
-        {stringValue(row.ownerKind) ? (
-          <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
-        ) : null}
-        <div><dt>更新</dt><dd>{formatUpdatedAt(numberValue(row.updatedAtMs ?? row.updated_at_ms))}</dd></div>
-        <div><dt>关联</dt><dd>{values.length ? `${values.length} 项` : '暂无'}</dd></div>
+        {kind === 'apps' ? (
+          <>
+            <div><dt>完整输入</dt><dd>{numberValue(row.eventCount)} 段</dd></div>
+            <div><dt>回车封口</dt><dd>{numberValue(row.finalizedSegmentCount)} 段</dd></div>
+            <div><dt>上下文分段</dt><dd>{numberValue(row.contextGroupCount)} 个</dd></div>
+            <div><dt>长期记忆</dt><dd>{numberValue(row.atomCount)} 原子 · {numberValue(row.bookCount)} 书</dd></div>
+            <div><dt>Bundle ID</dt><dd>{stringValue(row.bundleId, stringValue(row.id))}</dd></div>
+            <div><dt>最近输入</dt><dd>{formatUpdatedAt(numberValue(row.latestAtMs))}</dd></div>
+          </>
+        ) : (
+          <>
+            <div><dt>状态</dt><dd>{statusLabel(stringValue(row.status))}</dd></div>
+            <div><dt>来源</dt><dd>{sourceLabel(stringValue(row.source))}</dd></div>
+            {stringValue(row.ownerKind) ? (
+              <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
+            ) : null}
+            <div><dt>更新</dt><dd>{formatUpdatedAt(numberValue(row.updatedAtMs ?? row.updated_at_ms))}</dd></div>
+            <div><dt>关联</dt><dd>{values.length ? `${values.length} 项` : '暂无'}</dd></div>
+          </>
+        )}
       </dl>
       {values.length ? <div className="memory-catalog-detail__tags">{values.slice(0, 8).map((value) => <span key={value}>{value}</span>)}</div> : null}
     </section>
@@ -655,6 +697,8 @@ function MemoryEditFields({
     </Field>
   );
 
+  if (kind === 'apps') return null;
+
   if (kind === 'books') {
     return <>
       <Field htmlFor="memory-edit-title" label="标题" required><Input id="memory-edit-title" maxLength={240} onChange={(event) => update('title', event.target.value)} value={draft.title} /></Field>
@@ -717,6 +761,7 @@ function memoryEditDraft(kind: MemoryKind, row: Record<string, unknown> | undefi
 }
 
 function memoryEditBody(kind: MemoryKind, id: string, draft: MemoryEditDraft): Record<string, JsonValue> {
+  if (kind === 'apps') return { kind, id };
   if (kind === 'books') return { kind, id, title: draft.title.trim(), summary: draft.summary.trim(), tags: splitList(draft.tags) };
   if (kind === 'atoms') return { kind, id, text: draft.text.trim(), tags: splitList(draft.tags) };
   if (kind === 'tags') return { kind, id, title: draft.title.trim(), description: draft.description.trim(), type: draft.type.trim() || 'concept', aliases: splitList(draft.aliases), color: draft.color };
@@ -726,6 +771,7 @@ function memoryEditBody(kind: MemoryKind, id: string, draft: MemoryEditDraft): R
 }
 
 function memoryEditValidation(kind: MemoryKind, draft: MemoryEditDraft): string {
+  if (kind === 'apps') return '应用上下文由输入来源自动维护，不能手动编辑。';
   if ((kind === 'books' || kind === 'tags') && !draft.title.trim()) return '请填写标题。';
   if ((kind === 'atoms' || kind === 'phrases') && !draft.text.trim()) return '请填写内容。';
   if (kind === 'negative' && !draft.reason.trim()) return '请填写原因。';
@@ -792,6 +838,7 @@ function AgentMemoryAction({
 
 function kindLabel(kind: MemoryKind): string {
   return {
+    apps: '应用',
     books: '主题书',
     atoms: '记忆原子',
     tags: '标签',
@@ -819,6 +866,9 @@ function memoryStatusOptions(kind: MemoryKind) {
     { value: 'active', label: '使用中' },
     { value: 'approved', label: '已确认' },
     { value: 'archived', label: '已归档' },
+    { value: 'hidden', label: '历史保留' },
+    { value: 'superseded', label: '已合并' },
+    { value: 'source_archive', label: '碎片证据' },
     { value: 'disabled', label: '已暂停' },
     { value: 'suppressed', label: '已抑制' },
   ];
@@ -829,6 +879,9 @@ function statusLabel(status: string): string {
     active: '使用中',
     approved: '已确认',
     archived: '已归档',
+    hidden: '历史保留',
+    superseded: '已合并',
+    source_archive: '碎片证据',
     disabled: '已暂停',
     suppressed: '已抑制',
     inactive: '未启用',
@@ -844,7 +897,7 @@ function statusLabel(status: string): string {
 
 function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (status === 'active' || status === 'approved' || status === 'consolidated') return 'success';
-  if (status === 'archived' || status === 'inactive' || status === 'not_for_memory' || status === 'expired') return 'info';
+  if (status === 'archived' || status === 'hidden' || status === 'source_archive' || status === 'inactive' || status === 'not_for_memory' || status === 'expired') return 'info';
   if (status === 'disabled' || status === 'suppressed' || status === 'pending' || status === 'needs_review' || status === 'remember') return 'warning';
   if (status === 'tombstoned') return 'danger';
   return 'neutral';
@@ -853,6 +906,7 @@ function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' |
 function sourceLabel(source: string): string {
   const normalized = source.toLocaleLowerCase('en-US');
   if (!normalized) return '本地记忆';
+  if (normalized.includes('input_app')) return '应用上下文';
   if (normalized.includes('dsv4') || normalized.includes('deepseek')) return '智能整理';
   if (normalized.includes('user')) return '用户编辑';
   if (normalized.includes('import')) return '导入';

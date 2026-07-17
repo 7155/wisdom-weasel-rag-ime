@@ -188,7 +188,6 @@ _AUTO_PREDICTION_TRIGGER_CONFIG = (
     _AUTO_PREDICTION_TRIGGER.config.ignore_cooldown_ms,
 )
 _GROUP_SHORT_BUFFER = GroupShortBuffer()
-_RECORDED_COMMIT_BURSTS: dict[str, int] = {}
 _POST_COMMIT_COMPLETION_CACHE: "PostCommitCompletionCache"
 _POST_COMMIT_PRESENTATION_STREAM_LOCK = RLock()
 _POST_COMMIT_PRESENTATION_STREAM_STAGES: dict[str, tuple[int, float]] = {}
@@ -4902,7 +4901,6 @@ def clear_refresh_debounce_cache() -> None:
         _AUTO_PREDICTION_TRIGGER.clear()
         _AUTO_PREDICTION_JOB_DECISIONS.clear()
         _GROUP_SHORT_BUFFER.clear()
-        _RECORDED_COMMIT_BURSTS.clear()
 
 
 def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
@@ -5758,6 +5756,7 @@ def apply_commit_burst_prediction_gate(
         "acceptedCandidate": _bool(payload.get("acceptedCandidateContinuation"), default=False),
         "remoteDeepSeekAutoCallCount": 0,
         "memoryRecordingEnabled": memory_recording_enabled,
+        "rawFragmentPersistence": "disabled",
     }
     if not trigger_decision.should_refresh:
         return trigger_decision, {**base, "reason": trigger_decision.reason, "traceEvent": "prediction_trigger_skipped"}
@@ -5777,40 +5776,10 @@ def apply_commit_burst_prediction_gate(
             for item in payload.get("commitBurstTexts", [])
             if compact_whitespace(str(item))
         ] if isinstance(payload.get("commitBurstTexts"), list) else []
-        burst_key = stable_text_hash(
-            "\x1f".join(
-                (
-                    snapshot.session_id,
-                    str(snapshot.frontend_transaction.frontend_revision),
-                    group_id,
-                    _string(foreground_context_gate.get("contextHash")),
-                    *burst_texts,
-                )
-            )
-        )
+        # Per-commit pieces are prediction-only process state. Persisting them
+        # created one-word atoms and transport tags. Squirrel now writes one
+        # finalized input segment through /api/commit on Enter/App boundary.
         recorded_event_ids: list[str] = []
-        if memory_recording_enabled and burst_texts and burst_key not in _RECORDED_COMMIT_BURSTS:
-            for committed_text in burst_texts:
-                recorded_event_ids.append(
-                    adapter.commit_text(
-                        committed_text,
-                        recent_context=compact_whitespace(snapshot.committed_context)[-300:],
-                        preedit="",
-                        schema_id="rime_sidecar",
-                        app=snapshot.app or snapshot.frontend_transaction.front_app_bundle_id or "squirrel",
-                        project=snapshot.project,
-                        privacy_disposition=privacy_disposition,
-                        source="squirrel_rime_commit_burst",
-                        provider_name="rime-commit",
-                        tags=("squirrel", "rime-commit", "group-buffer"),
-                        context_group_id=group_id,
-                        context_group_level=_string(_mapping(payload.get("foregroundText")).get("contextGroupLevel")) or "app",
-                    )
-                )
-            _RECORDED_COMMIT_BURSTS[burst_key] = current
-            while len(_RECORDED_COMMIT_BURSTS) > 512:
-                oldest = min(_RECORDED_COMMIT_BURSTS, key=_RECORDED_COMMIT_BURSTS.get)  # type: ignore[arg-type]
-                _RECORDED_COMMIT_BURSTS.pop(oldest, None)
         if memory_recording_enabled:
             buffered_texts = burst_texts or ([preview] if preview else [])
             for buffered_text in buffered_texts:

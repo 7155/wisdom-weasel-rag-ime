@@ -8,6 +8,7 @@ import { HistoryFeature } from '@/features/history';
 import { InputMethodFeature } from '@/features/input-method';
 import { KnowledgeFeature } from '@/features/knowledge';
 import { MemoryFeature } from '@/features/memory';
+import { ObservabilityFeature } from '@/features/observability';
 import { OverviewFeature } from '@/features/overview';
 import { PlanningFeature } from '@/features/planning';
 import { PluginsFeature } from '@/features/plugins';
@@ -29,6 +30,7 @@ export const router = createHashRouter([
   { path: '/memory', element: <MemoryFeature /> },
   { path: '/knowledge', element: <KnowledgeFeature /> },
   { path: '/history', element: <HistoryFeature /> },
+  { path: '/observability', element: <ObservabilityFeature /> },
   { path: '/diagnostics', element: <DiagnosticsFeature /> },
   { path: '/configuration', element: <ConfigurationFeature /> },
   { path: '/_primitives', element: <PrimitivesShowcase /> },

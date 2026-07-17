@@ -362,10 +362,11 @@ def _bounded_int(value: object, default: int, minimum: int, maximum: int) -> int
 
 def _recent_record_evidence(record: dict[str, object]) -> dict[str, object]:
     text = compact_whitespace(str(record.get("text") or ""))
+    app = compact_whitespace(str(record.get("app") or ""))
     return {
         "sourceType": "recent_input_context",
         "sourceLane": "timeline_recent_input",
-        "title": "最近完整输入",
+        "title": f"最近完整输入 · {app}" if app else "最近完整输入",
         "evidencePreview": text,
         "surfaceHints": [],
         "tags": ["recent_input", "timeline"],
@@ -374,8 +375,11 @@ def _recent_record_evidence(record: dict[str, object]) -> dict[str, object]:
             "source": "recent_complete_input",
             "recordId": record.get("id"),
             "createdAtMs": record.get("createdAtMs"),
+            "app": app,
             "contextOnly": True,
             "complete": record.get("complete"),
+            "finalized": record.get("finalized"),
+            "injectable": record.get("injectable"),
         },
     }
 

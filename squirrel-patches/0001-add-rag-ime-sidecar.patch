@@ -1902,7 +1902,7 @@ index 0000000000000000000000000000000000000000..8ac605fd81db04eb4fdbedb6246d39c2
 +  _ = previousChangeCount
 +}
 +
-+private func ragImeContextGroupId(prefix: String, values: [String]) -> String {
++func ragImeContextGroupId(prefix: String, values: [String]) -> String {
 +  let material = values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: "\u{001f}")
 +  let digest = ragImeStableTextHash(material).replacingOccurrences(of: "sha256:", with: "")
 +  return "\(prefix):\(digest.prefix(16))"
@@ -2227,6 +2227,34 @@ index 0000000000000000000000000000000000000000..aec4fe5622dc1ae734b8c77abcd283c1
 +    return try JSONDecoder().decode(RagImeAcceptedEditFeedbackReceipt.self, from: data)
 +  }
 +
++  func recordFinalizedInputSegment(
++    text: String,
++    recentContext: String,
++    app: String,
++    contextGroupId: String,
++    privacyDisposition: String
++  ) throws {
++    guard privacyDisposition == "allowed" else {
++      throw RagImeSidecarError.transport("foreground privacy disposition is not allowed")
++    }
++    guard let sidecarURL else {
++      throw RagImeSidecarError.transport("sidecar_url missing; finalized input requires the local sidecar")
++    }
++    let payload = RagImeCommitPayload(
++      text: text,
++      recentContext: recentContext,
++      preedit: "",
++      app: app,
++      project: project,
++      source: "squirrel_input_segment",
++      tags: ["input-segment", "finalized", "complete-input"],
++      contextGroupId: contextGroupId,
++      contextGroupLevel: "app",
++      privacyDisposition: privacyDisposition
++    )
++    _ = try postJSON(payload, to: endpoint("commit", base: sidecarURL))
++  }
++
 +  func recordSideCandidateCommitLegacy(
 +    _ candidate: RagImeDisplayCandidate,
 +    insertText: String,
@@ -2244,6 +2272,7 @@ index 0000000000000000000000000000000000000000..aec4fe5622dc1ae734b8c77abcd283c1
 +      text: insertText,
 +      recentContext: recentContext,
 +      preedit: preedit,
++      app: "",
 +      project: project,
 +      source: "squirrel_rime_sidecar",
 +      tags: ["squirrel", "rime-sidecar"],
@@ -2367,6 +2396,7 @@ index 0000000000000000000000000000000000000000..aec4fe5622dc1ae734b8c77abcd283c1
 +  let text: String
 +  let recentContext: String
 +  let preedit: String
++  let app: String
 +  let project: String
 +  let source: String
 +  let tags: [String]
@@ -4417,6 +4447,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +  private var ragImeCommittedContextUpdatedAt: Date = .distantPast
 +  private var ragImeLastForegroundTextSnapshot: RagImeForegroundTextSnapshot?
 +  private let ragImeCommittedContextLimit: Int = 800
++  private var ragImeActiveInputBuffer: String = ""
++  private var ragImeActiveInputBufferUpdatedAt: Date = .distantPast
++  private let ragImeActiveInputBufferLimit: Int = 2000
 +  private var ragImeInputGeneration: Int = 0
 +  private var ragImeFrontendRevision: Int = 0
 +  private var ragImeSelectionEpoch: Int = 0
@@ -4549,6 +4582,12 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +          handled = processKey(rimeKeycode, modifiers: rimeModifiers)
 +          rimeUpdate()
 +        }
++      }
++      if (keyCode == 36 || keyCode == 76)
++        && !modifiers.contains(.command)
++        && !modifiers.contains(.control)
++        && !modifiers.contains(.option) {
++        finalizeRagImeActiveInputBuffer(reason: "return_key", app: currentApp)
 +      }
 +
 +    default:
@@ -4997,6 +5036,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +
 +    let previousApp = currentApp
 +    if !resolvedBundleId.isEmpty && resolvedBundleId != previousApp {
++      finalizeRagImeActiveInputBuffer(reason: "front_app_changed", app: previousApp)
 +      invalidateRagImeForegroundTransaction(reason: "front_app_changed")
 +      dismissRagImeAssistantOverlay(reason: "front_app_changed")
 +      currentApp = resolvedBundleId
@@ -5071,6 +5111,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +  override func deactivateServer(_ sender: Any!) {
 +    hidePalettes()
 +    commitComposition(sender)
++    finalizeRagImeActiveInputBuffer(reason: "deactivate_server", app: currentApp)
 +    invalidateRagImeForegroundTransaction(reason: "deactivate_server")
 +    client = nil
 +  }
@@ -5290,6 +5331,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    ragImeSelectionEpoch += 1
 +    ragImeCommittedContext = ""
 +    ragImeCommittedContextUpdatedAt = .distantPast
++    ragImeActiveInputBuffer = ""
++    ragImeActiveInputBufferUpdatedAt = .distantPast
 +    ragImeLastForegroundTextSnapshot = nil
 +    ragImeForegroundCaptureToken = nil
 +    ragImeCommitBurstWorkItem?.cancel()
@@ -6514,14 +6557,26 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      default: return nil
 +      }
 +    }()
++    let activeInput = ragImeCompactWhitespace(ragImeActiveInputBuffer)
 +    let capturedBefore = ragImeCompactWhitespace(freshForeground?.surroundingBefore ?? "")
 +    let useClientContext = clientContext.count > capturedBefore.count
 +    let surroundingBefore = useClientContext ? clientContext : capturedBefore
 +    let surroundingAfter = ragImeCompactWhitespace(freshForeground?.surroundingAfter ?? "")
-+    // Insert-at-caret generation is grounded in text before the caret. Window
-+    // semantics are a separate, lower-priority context source.
-+    let context = surroundingBefore
-+    let anchorText = ragImeActiveRagContextAnchor(context.isEmpty ? semanticQuery : context)
++    // Insert-at-caret generation is grounded in text before the caret. Text
++    // after the caret remains provenance, but must not replace the current
++    // request with a later paragraph from the same editor.
++    let context: String
++    if activeInput.isEmpty || surroundingBefore.hasSuffix(activeInput) {
++      context = surroundingBefore
++    } else if surroundingBefore.isEmpty {
++      context = activeInput
++    } else {
++      context = ragImeCompactWhitespace([surroundingBefore, activeInput].joined(separator: "\n"))
++    }
++    // Lightning uses the editable current paragraph as its intent anchor.
++    // Full host context remains secondary evidence and is never persisted here.
++    let anchorBasis = activeInput.isEmpty ? (context.isEmpty ? semanticQuery : context) : activeInput
++    let anchorText = ragImeActiveRagContextAnchor(anchorBasis)
 +    guard !anchorText.isEmpty else {
 +      traceRagImeFrontendEvent("active_rag_context_button_rejected", fields: [
 +        "reason": "empty_context_anchor",
@@ -6551,9 +6606,11 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      placement: "insert_after_selection",
 +      intent: "complete",
 +      context: requestContext,
-+      contextSource: useClientContext
-+        ? "text_input_client"
-+        : (freshForeground?.source ?? (clientContext.isEmpty ? "missing" : "text_input_client")),
++      contextSource: activeInput.isEmpty
++        ? (useClientContext
++          ? "text_input_client"
++          : (freshForeground?.source ?? (clientContext.isEmpty ? "missing" : "text_input_client")))
++        : "active_input_buffer",
 +      contextChars: requestContext.count,
 +      contextHash: ragImeStableTextHash(requestContext),
 +      project: sidecarClient.project,
@@ -6576,6 +6633,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      } ?? 0,
 +      "imkContextChars": imkForeground.map { ragImeCompactWhitespace($0.surroundingBefore).count } ?? 0,
 +      "clientContextChars": clientContext.count,
++      "activeInputBufferChars": activeInput.count,
 +      "contextChars": request.context.count,
 +      "windowContextNodes": windowContext?.nodeCount ?? 0,
 +      "windowContextHash": windowContext.map { ragImeStableTextHash($0.semanticText) } ?? "",
@@ -9842,6 +9900,78 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +    let combined = [ragImeCommittedContext, normalized].filter { !$0.isEmpty }.joined(separator: " ")
 +    ragImeCommittedContext = boundedRagImeCommittedContext(combined)
 +    ragImeCommittedContextUpdatedAt = Date()
++  }
++
++  func rememberRagImeActiveInputFragment(_ text: String) {
++    guard !text.isEmpty else { return }
++    let combined = ragImeActiveInputBuffer + text
++    let normalized = combined.trimmingCharacters(in: .newlines)
++    ragImeActiveInputBuffer = normalized.count > ragImeActiveInputBufferLimit
++      ? String(normalized.suffix(ragImeActiveInputBufferLimit))
++      : normalized
++    ragImeActiveInputBufferUpdatedAt = Date()
++  }
++
++  func removeLastRagImeActiveInputCharacter() {
++    var value = ragImeActiveInputBuffer
++    guard !value.isEmpty else { return }
++    value.removeLast()
++    ragImeActiveInputBuffer = value
++    ragImeActiveInputBufferUpdatedAt = value.isEmpty ? .distantPast : Date()
++  }
++
++  func finalizeRagImeActiveInputBuffer(reason: String, app: String) {
++    let text = ragImeCompactWhitespace(ragImeActiveInputBuffer)
++    ragImeActiveInputBuffer = ""
++    ragImeActiveInputBufferUpdatedAt = .distantPast
++    guard !text.isEmpty else { return }
++    guard ragImePrivacyDisposition == "allowed", let sidecarClient = ragImeSidecarClient else {
++      traceRagImeFrontendEvent("input_segment_finalize_suppressed", fields: [
++        "reason": reason,
++        "privacyDisposition": ragImePrivacyDisposition,
++        "textChars": text.count,
++        "frontAppBundleId": app,
++      ])
++      return
++    }
++    let recentContext = boundedRagImeCommittedContext(ragImeCommittedContext)
++    let groupId = ragImeContextGroupId(prefix: "app", values: [app])
++    let privacyDisposition = ragImePrivacyDisposition
++    traceRagImeFrontendEvent("input_segment_finalized", fields: [
++      "reason": reason,
++      "textChars": text.count,
++      "frontAppBundleId": app,
++      "contextGroupId": groupId,
++      "traceIncludesText": false,
++    ])
++    DispatchQueue.global(qos: .utility).async { [weak self] in
++      do {
++        try sidecarClient.recordFinalizedInputSegment(
++          text: text,
++          recentContext: recentContext,
++          app: app,
++          contextGroupId: groupId,
++          privacyDisposition: privacyDisposition
++        )
++        DispatchQueue.main.async {
++          self?.traceRagImeFrontendEvent("input_segment_recorded", fields: [
++            "reason": reason,
++            "textChars": text.count,
++            "frontAppBundleId": app,
++            "contextGroupId": groupId,
++          ])
++        }
++      } catch {
++        DispatchQueue.main.async {
++          self?.traceRagImeFrontendEvent("input_segment_record_failed", fields: [
++            "reason": reason,
++            "textChars": text.count,
++            "frontAppBundleId": app,
++            "error": String(describing: error),
++          ])
++        }
++      }
++    }
    }
 -}
  
@@ -9849,6 +9979,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +  func removeLastRagImeCommittedContextCharacterIfNoComposition() {
 +    let currentRawInput = session != 0 ? (rimeAPI.get_input(session).map { String(cString: $0) } ?? "") : ""
 +    guard currentRawInput.isEmpty else { return }
++    removeLastRagImeActiveInputCharacter()
 +    removeLastRagImeCommittedContextCharacter()
 +  }
 +
@@ -10097,6 +10228,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..7b02bfafe7e1906fb3c23edef6bfcc48
 +      // The physical commit path only mutates local state. IMK selectedRange /
 +      // attributedSubstring and all Accessibility IPC are deferred or omitted.
 +      rememberRagImeCommittedContext(string)
++      rememberRagImeActiveInputFragment(string)
 +      scheduleRagImeCommitBurstPrediction(committedText: string)
 +      observeRagImePostCommitContinuationIfReady()
 +    }

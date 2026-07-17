@@ -10,7 +10,7 @@ LOCK_DIR="${RAG_IME_MEMORY_BOOK_MAINTENANCE_LOCK_DIR:-$OUT_DIR/.maintenance.lock
 LOCK_OWNER_FILE="$LOCK_DIR/owner.pid"
 STALE_LOCK_SECONDS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_STALE_LOCK_SECONDS:-21600}"
 SINCE_DAYS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS:-7}"
-RECENT_LIMIT="${RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT:-120}"
+RECENT_LIMIT="${RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT:-48}"
 APPLY="${RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY:-0}"
 LEGACY_MAINTENANCE="${RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE:-0}"
 MODEL_ENV_PATH="${RAG_IME_DEEPSEEK_ENV:-${RAG_IME_MODEL_ENV:-}}"
@@ -333,7 +333,7 @@ payload = {
     "ok": True,
     "generatedAt": datetime.now(timezone.utc).isoformat(),
     "applied": applied == "true",
-    "reviewRequired": applied != "true",
+    "reviewRequired": False,
     "planPath": plan_path,
     "previewLog": preview_path,
     "validateLog": validate_path,
@@ -352,6 +352,7 @@ try:
     preview = json.loads(Path(preview_path).read_text(encoding="utf-8"))
     run = preview.get("run") if isinstance(preview.get("run"), dict) else {}
     payload["storedDraft"] = bool(preview.get("storedDraft"))
+    payload["reviewRequired"] = payload["storedDraft"] and applied != "true"
     payload["reusedDraft"] = bool(preview.get("reusedDraft"))
     payload["runId"] = str(run.get("runId") or "")
 except Exception as exc:

@@ -1,5 +1,12 @@
 import { BookOpen, Boxes, Network, RefreshCw, Search, Tags } from 'lucide-react';
-import { useDeferredValue, useMemo, useState, type KeyboardEvent } from 'react';
+import {
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 import { Button, EmptyState, Input, SegmentedControl, Select } from '@/components/primitives';
 import {
   ManagementSection,
@@ -248,6 +255,16 @@ function TagNetwork({
   const selected = availableNodes.find((node) => node.id === activeId) ?? null;
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
   const entity = useMemoryEntityQuery('tag', selected?.entityId ?? '', Boolean(selected));
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const node = graph.nodes.find((item) => item.id === activeId);
+    if (!viewport || !node) return;
+    const renderedWidth = Math.max(viewport.clientWidth, 820);
+    const targetX = (node.x / graph.width) * renderedWidth;
+    viewport.scrollLeft = Math.max(0, targetX - viewport.clientWidth / 2);
+  }, [activeId, graph]);
 
   return (
     <>
@@ -259,12 +276,19 @@ function TagNetwork({
           title="标签"
         />
         <div className="memory-explorer__visual">
+          <GraphLegend view="tags" />
           <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.nodes.length} />
-          <div className="memory-graph__viewport" role="group" aria-label="标签当前页局部关系图">
+          <div
+            aria-label="标签当前页局部关系图"
+            className="memory-graph__viewport"
+            ref={viewportRef}
+            role="group"
+          >
             <svg
               aria-labelledby="memory-tag-graph-title memory-tag-graph-description"
               className="memory-graph__canvas"
               height={graph.height}
+              style={{ height: graph.height }}
               viewBox={`0 0 ${graph.width} ${graph.height}`}
               width={graph.width}
             >
@@ -279,6 +303,7 @@ function TagNetwork({
                   <line
                     className="memory-graph__edge"
                     data-emphasized={emphasized || undefined}
+                    data-muted={!emphasized || undefined}
                     key={`${edge.source}-${edge.target}-${edge.type}`}
                     strokeWidth={edge.strokeWidth}
                     x1={source.x}
@@ -306,8 +331,8 @@ function TagNetwork({
                   >
                     <title>{accessibleLabel}</title>
                     <circle className="memory-graph__node-shape" fill={node.color} r={node.radius} stroke={node.color} />
-                    <text className="memory-graph__node-label" textAnchor="middle" y={-1}>{truncateGraphLabel(node.label, 10)}</text>
-                    <text className="memory-graph__node-count" textAnchor="middle" y={13}>{node.itemCount} 记忆</text>
+                    <text className="memory-graph__node-count memory-graph__node-count--inside" textAnchor="middle" y={4}>{node.itemCount}</text>
+                    <text className="memory-graph__node-label memory-graph__node-label--outside" textAnchor="middle" y={node.radius + 19}>{truncateGraphLabel(node.label, 18)}</text>
                   </g>
                 );
               })}
@@ -378,12 +403,14 @@ function GroupTagNetwork({
           tags={availableTags}
         />
         <div className="memory-explorer__visual">
+          <GraphLegend view="groups" />
           <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.groups.length + graph.tags.length} />
           <div className="memory-graph__viewport" role="group" aria-label="分组与标签关系图">
             <svg
               aria-labelledby="memory-group-graph-title memory-group-graph-description"
               className="memory-graph__canvas memory-graph__canvas--bipartite"
               height={graph.height}
+              style={{ height: graph.height }}
               viewBox={`0 0 ${graph.width} ${graph.height}`}
               width={graph.width}
             >
@@ -401,6 +428,7 @@ function GroupTagNetwork({
                     aria-label={`${group.label} 到 ${tag.label}，${formatRelation(edge.relation)}，来源 ${formatSource(edge.source)}`}
                     className="memory-graph__edge memory-graph__edge--membership"
                     data-emphasized={emphasized || undefined}
+                    data-muted={!emphasized || undefined}
                     key={`${edge.groupId}-${edge.tagId}`}
                     strokeWidth={Math.max(1, .8 + edge.weight)}
                     x1={group.x + group.width / 2}
@@ -525,12 +553,14 @@ function GroupBookNetwork({
           onSelect={onSelect}
         />
         <div className="memory-explorer__visual">
+          <GraphLegend view="books" />
           <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.groups.length + graph.books.length} />
           <div className="memory-graph__viewport" role="group" aria-label="分组与主题书关系图">
             <svg
               aria-labelledby="memory-book-graph-title memory-book-graph-description"
               className="memory-graph__canvas memory-graph__canvas--bipartite"
               height={graph.height}
+              style={{ height: graph.height }}
               viewBox={`0 0 ${graph.width} ${graph.height}`}
               width={graph.width}
             >
@@ -548,6 +578,7 @@ function GroupBookNetwork({
                     aria-label={`${group.label} 到 ${book.label}，${formatRelation(edge.relation)}，来源 ${formatSource(edge.source)}`}
                     className="memory-graph__edge memory-graph__edge--membership"
                     data-emphasized={emphasized || undefined}
+                    data-muted={!emphasized || undefined}
                     key={`${edge.groupId}-${edge.bookId}`}
                     strokeWidth={Math.max(1, .8 + edge.weight)}
                     x1={group.x + group.width / 2}
@@ -750,6 +781,17 @@ function GraphTruthNotice({ edgeCount, nodeCount }: { edgeCount: number; nodeCou
         ? `当前显示 ${nodeCount} 项记忆与 ${edgeCount} 条已记录关系。`
         : `${nodeCount} 项记忆目前没有已记录关系。`}
     </p>
+  );
+}
+
+function GraphLegend({ view }: { view: RelationView }) {
+  return (
+    <div className="memory-graph__legend" role="group" aria-label="关系图图例">
+      {view === 'tags' ? <span><i data-shape="tag" />标签 · 大小表示记忆量</span> : <span><i data-shape="group" />分组</span>}
+      {view === 'groups' ? <span><i data-shape="tag" />标签</span> : null}
+      {view === 'books' ? <span><i data-shape="book" />主题书</span> : null}
+      <span><i data-shape="edge" />当前节点的已记录关系</span>
+    </div>
   );
 }
 

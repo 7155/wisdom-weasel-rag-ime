@@ -52,6 +52,7 @@ from .external_actions import (
     load_external_action_result,
     materialize_portable_restore_plan,
 )
+from .observability import ObservationHub
 from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory
 
 
@@ -127,7 +128,11 @@ class AgentService:
         self.rooms.initialize()
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
+        self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
+        self._remove_observation_room_observer = self.room_events.add_observer(
+            self.observations.enqueue_room_event
+        )
         self.events = AgentEventHub(
             sequence_loader=self.sessions.max_event_sequence,
             event_recorder=self._record_event,
@@ -2985,7 +2990,28 @@ class AgentService:
             heartbeat_seconds=heartbeat_seconds,
         )
 
+    def observation_snapshot(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        return self.observations.snapshot(payload)
+
+    def subscribe_observations(
+        self,
+        *,
+        after_event_id: str = "",
+        filters: Mapping[str, object] | None = None,
+        heartbeat_seconds: float = 10.0,
+    ) -> Iterator[bytes]:
+        return self.observations.subscribe(
+            after_event_id=after_event_id,
+            filters=filters,
+            heartbeat_seconds=heartbeat_seconds,
+        )
+
     def close(self) -> None:
+        self._remove_observation_room_observer()
+        self.observations.close()
         self._remove_wake_observer()
         self.wake_scheduler.close()
         self.room_intercom.close()
@@ -3059,6 +3085,10 @@ class AgentService:
             if intercom is not None:
                 intercom.notify()
         participant = self.rooms.participant_for_session(event.session_id)
+        self.observations.enqueue_agent_event(
+            event,
+            room_id=str(participant.get("roomId") or "") if participant is not None else "",
+        )
         if participant is None:
             return
         mapped_type, public_data = _room_event_projection(event)

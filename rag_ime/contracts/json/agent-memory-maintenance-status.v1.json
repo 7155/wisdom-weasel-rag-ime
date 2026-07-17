@@ -22,7 +22,7 @@
     "autoApply": {"type": "boolean", "const": false},
     "scheduledDraftOnly": {"type": "boolean", "const": true},
     "due": {"type": "boolean"},
-    "dueReason": {"type": "string", "enum": ["pending_events", "idle", "daily", "owner_daily", "not_due"]},
+    "dueReason": {"type": "string", "enum": ["pending_events", "idle", "daily", "owner_daily", "draft_pending_review", "not_due"]},
     "idleMs": {"type": "integer", "minimum": 0},
     "compileState": {
       "type": "object",
@@ -70,7 +70,7 @@
         "properties": {
           "runId": {"type": "string", "minLength": 1},
           "createdAtMs": {"type": "integer", "minimum": 0},
-          "status": {"type": "string", "enum": ["draft", "applied", "partial", "rolled_back", "superseded", "empty"]},
+          "status": {"type": "string", "enum": ["draft", "applied", "partial", "rolled_back", "superseded", "dismissed", "empty"]},
           "summary": {"type": "string"},
           "diffCount": {"type": "integer", "minimum": 0},
           "bundleHash": {"type": "string"},

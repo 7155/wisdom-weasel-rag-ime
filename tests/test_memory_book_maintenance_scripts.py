@@ -118,7 +118,12 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertIn('RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"', source)
         self.assertIn("--save-draft", source)
         self.assertIn('"mode": "owner_scoped"', source)
-        self.assertIn('"reviewRequired": applied != "true"', source)
+        self.assertIn(
+            '"reviewRequired": any(bool(item.get("reviewRequired")) for item in results)',
+            source,
+        )
+        self.assertIn('payload["storedDraft"] = bool(preview.get("storedDraft"))', source)
+        self.assertIn('payload["reviewRequired"] = payload["storedDraft"] and applied != "true"', source)
         self.assertIn('if [[ "$APPLY" == "1"', source)
 
 

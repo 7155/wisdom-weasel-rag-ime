@@ -3,8 +3,8 @@ import { routeRegistry } from '@/app/route-registry';
 
 describe('route registry', () => {
   it('contains every control-center route exactly once', () => {
-    expect(routeRegistry).toHaveLength(14);
-    expect(new Set(routeRegistry.map((route) => route.id)).size).toBe(14);
-    expect(new Set(routeRegistry.map((route) => route.path)).size).toBe(14);
+    expect(routeRegistry).toHaveLength(15);
+    expect(new Set(routeRegistry.map((route) => route.id)).size).toBe(15);
+    expect(new Set(routeRegistry.map((route) => route.path)).size).toBe(15);
   });
 });

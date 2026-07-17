@@ -86,6 +86,80 @@
   line-height: 1.5;
 }
 
+.memory-curation {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+  padding-top: var(--space-3);
+}
+
+.memory-curation__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.memory-curation__header > div:first-child { min-width: 0; }
+.memory-curation__header h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
+.memory-curation__header span {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.memory-curation__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+}
+
+.memory-curation__list {
+  display: grid;
+  min-width: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.memory-curation__row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: 11px 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--duration-enter) var(--ease-standard);
+}
+
+.memory-curation__row:hover { background: var(--color-surface-hover); }
+.memory-curation__row[data-selected='true'] { box-shadow: inset 3px 0 0 var(--color-accent); background: var(--color-accent-soft); }
+.memory-curation__row > input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--color-accent); }
+.memory-curation__row > input:disabled { cursor: wait; opacity: .6; }
+
+.memory-curation__copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.memory-curation__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.memory-curation__title strong,
+.memory-curation__copy > span,
+.memory-curation__copy small { overflow-wrap: anywhere; }
+.memory-curation__title strong { font-size: 13px; }
+.memory-curation__copy > span { color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; }
+.memory-curation__copy small { color: var(--color-text-tertiary); font-size: 13px; }
+
 .memory-edit-dialog {
   width: min(560px, calc(100vw - 32px));
 }
@@ -324,6 +398,42 @@
   font-size: 13px;
 }
 
+.memory-graph__legend {
+  display: flex;
+  min-height: 34px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.memory-graph__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memory-graph__legend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.memory-graph__legend i[data-shape='tag'] { border-radius: 50%; }
+.memory-graph__legend i[data-shape='book'] { width: 15px; height: 10px; }
+.memory-graph__legend i[data-shape='edge'] {
+  width: 18px;
+  height: 0;
+  border: 0;
+  border-top: 2px solid var(--color-accent);
+  background: transparent;
+}
+
 .memory-graph__truth[data-empty='true'] {
   color: var(--color-warning);
   background: var(--color-warning-soft);
@@ -351,6 +461,8 @@
   stroke: var(--color-accent);
   opacity: .9;
 }
+
+.memory-graph__edge[data-muted='true'] { opacity: .12; }
 
 .memory-graph__edge--membership {
   stroke-width: 1.15;
@@ -395,6 +507,20 @@
   font-size: 13px;
   letter-spacing: 0;
   pointer-events: none;
+}
+
+.memory-graph__node-count--inside {
+  fill: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.memory-graph__node-label--outside {
+  paint-order: stroke;
+  stroke: var(--color-surface-subtle);
+  stroke-width: 4px;
+  stroke-linejoin: round;
 }
 
 .memory-graph__bipartite-label {
@@ -683,6 +809,8 @@
   .memory-catalog-detail { grid-template-columns: 1fr; }
   .memory-catalog-detail dl { border-left: 0; border-top: 1px solid var(--color-border); }
   .memory-edit-form__split { grid-template-columns: 1fr; }
+  .memory-curation__header { align-items: stretch; flex-direction: column; }
+  .memory-curation__actions { flex-wrap: wrap; }
 
   .memory-relations__toolbar,
   .memory-graph__inspector {

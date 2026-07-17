@@ -1,0 +1,72 @@
+/* eslint-disable */
+/**
+ * This file is generated. Do not edit it by hand.
+ * Source: rag_ime/contracts/json/observation-snapshot.v1.json
+ */
+
+export interface ObservationSnapshotV1 {
+  schemaVersion: 'rag-ime.observation-snapshot.v1';
+  generatedAtMs: number;
+  firstSequence: number;
+  lastSequence: number;
+  resumeToken: string;
+  truncated: boolean;
+  filters: {
+    [k: string]: unknown;
+  };
+  counts: {
+    total: number;
+    byCategory: {
+      [k: string]: unknown;
+    };
+    byStatus: {
+      [k: string]: unknown;
+    };
+  };
+  items: Event[];
+}
+export interface Event {
+  schemaVersion: 'rag-ime.observation-event.v1';
+  eventType: 'observation' | 'snapshot_required';
+  eventId: string;
+  sequence: number;
+  resumeToken: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId: string;
+  sessionId: string;
+  roomId: string;
+  turnId: string;
+  runId: string;
+  category:
+    | 'context'
+    | 'retrieval'
+    | 'memory'
+    | 'tool'
+    | 'agent'
+    | 'room'
+    | 'intercom'
+    | 'approval'
+    | 'runtime'
+    | 'system';
+  phase: string;
+  name: string;
+  status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'info';
+  summary: string;
+  createdAtMs: number;
+  startedAtMs: number;
+  endedAtMs: number | null;
+  durationMs: number | null;
+  privacyClass: 'metadata' | 'redacted' | 'owner_local';
+  metrics: {
+    [k: string]: unknown;
+  };
+  attributes: {
+    [k: string]: unknown;
+  };
+  refs: {
+    kind: string;
+    id: string;
+    label: string;
+  }[];
+}

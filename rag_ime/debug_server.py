@@ -13,7 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -103,6 +103,10 @@ from .memory_book_compiler import (
     rollback_memory_book_run,
     store_memory_book_plan,
     update_stored_memory_book_diff,
+)
+from .memory_curation import (
+    MEMORY_CURATION_ARCHITECTURE,
+    curation_decisions_to_compile_output,
 )
 from .memory_generator import (
     MemoryGenerationError,
@@ -218,14 +222,14 @@ def _knowledge_database_contract_state(
     stale = memory_book_run_is_stale(conn, run=run)
     newer_applied_run = find_newer_applied_memory_book_run(conn, run_id=run_id)
     status = _string(run.get("status"))
-    can_apply = status == "draft" and not stale and pending_count > 0
+    can_apply = status == "draft" and not stale and bool(diffs)
     can_rollback = status in {"applied", "partial"} and applied_count > 0 and newer_applied_run is None
     if stale:
         apply_blocked_reason = "The knowledge database run is stale."
     elif status != "draft":
         apply_blocked_reason = "The knowledge database run is not a draft."
-    elif pending_count == 0:
-        apply_blocked_reason = "The knowledge database run has no selected pending changes."
+    elif not diffs:
+        apply_blocked_reason = "The knowledge database run contains no review decisions."
     else:
         apply_blocked_reason = ""
     rollback_blocked_reason = (
@@ -391,6 +395,9 @@ class DebugImeService:
                     "http://127.0.0.1:8768",
                 ),
             )
+        self.active_rag.bind_observation_observer(
+            self.agent.observations.enqueue_active_rag_record
+        )
         runtime_factory_config = getattr(self.agent.runtime_factory, "config", None)
         self.pi_provider_auth = config.pi_provider_auth_service or PiProviderAuthService.from_runtime(
             runtime_factory_config
@@ -2169,6 +2176,8 @@ class DebugImeService:
                 minimum=1_000,
                 maximum=300_000,
             ),
+            curation_scope=_string(payload.get("scope")).lower() or "incremental",
+            curation_policy=_string(payload.get("policy")).lower() or "conservative",
         )
         try:
             return {**self.knowledge_workbench.start(request), "routeStatus": route}
@@ -2268,10 +2277,18 @@ class DebugImeService:
                 expected_revision=expected_revision,
                 required_confirm="apply",
                 summary={
-                    "title": "应用知识库整理草案",
+                    "title": (
+                        "应用记忆整理草案"
+                        if state["pendingCount"]
+                        else "确认排除本批记忆建议"
+                    ),
                     "items": [
                         f"运行: {run_id}",
-                        f"待应用变更: {state['pendingCount']}",
+                        (
+                            f"待应用变更: {state['pendingCount']}"
+                            if state["pendingCount"]
+                            else "正式记忆不会发生变化"
+                        ),
                         _string(state.get("summary"))[:160],
                     ],
                     "risk": "R2",
@@ -2372,6 +2389,19 @@ class DebugImeService:
             self.management.events.publish(
                 "knowledge_database_changed",
                 {"runId": run_id, "action": "apply", "receiptId": response.get("receiptId")},
+            )
+            self.agent.observations.emit_memory_event(
+                phase="applied",
+                status="completed",
+                summary="已批准的记忆整理草案已应用",
+                run_id=run_id,
+                refs=[
+                    {
+                        "kind": "receipt",
+                        "id": _string(response.get("receiptId")),
+                        "label": "应用回执",
+                    }
+                ],
             )
             return response
         except Exception as exc:
@@ -2500,6 +2530,19 @@ class DebugImeService:
             self.management.events.publish(
                 "knowledge_database_changed",
                 {"runId": run_id, "action": "rollback", "receiptId": response.get("receiptId")},
+            )
+            self.agent.observations.emit_memory_event(
+                phase="rolled_back",
+                status="cancelled",
+                summary="记忆整理应用已回滚",
+                run_id=run_id,
+                refs=[
+                    {
+                        "kind": "receipt",
+                        "id": _string(response.get("receiptId")),
+                        "label": "回滚回执",
+                    }
+                ],
             )
             return response
         except Exception as exc:
@@ -2726,12 +2769,18 @@ class DebugImeService:
     ) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
             raise ValueError("database organization requires local SQLite core")
+        scope = request.curation_scope
+        policy = request.curation_policy
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             bundle = build_memory_book_source_bundle(
                 conn,
                 project=request.project,
-                since_days=30,
-                limit=120,
+                since_days=7 if scope == "global" else 30,
+                limit=500 if scope == "global" else 48,
+                after_event_id=0 if scope == "global" else None,
+                newest_first=scope == "global",
+                curation_scope=scope,
+                catalog_only=scope == "global",
             )
             existing = find_memory_book_draft_for_bundle(
                 conn,
@@ -2741,7 +2790,7 @@ class DebugImeService:
         if existing is not None:
             plan = memory_book_plan_from_stored_run(existing)
             validation = inspect_memory_book_plan(plan)
-            return {
+            response = {
                 "schemaVersion": "rag-ime.knowledge-database-organize.v1",
                 "ok": bool(validation.get("ok")),
                 "dryRun": True,
@@ -2753,17 +2802,48 @@ class DebugImeService:
                     "bundleHash": bundle.get("bundleHash"),
                     "eventCount": len(bundle.get("recentEvents") or []),
                     "redactionStats": bundle.get("redactionStats"),
+                    "scope": scope,
+                    "architecture": str(
+                        dict(plan.get("metadata") or {}).get("curationArchitecture")
+                        or MEMORY_CURATION_ARCHITECTURE
+                    ),
                 },
                 "plan": plan,
                 "validation": validation,
                 "storedRun": existing,
             }
+            self.agent.observations.emit_memory_event(
+                phase="draft_ready",
+                status="waiting",
+                summary="记忆整理草案已复用，等待审阅",
+                run_id=_string(existing.get("runId") or existing.get("run_id")),
+                metrics={
+                    "eventCount": len(bundle.get("recentEvents") or []),
+                    "changeCount": int(existing.get("diffCount") or 0),
+                    "reused": True,
+                },
+            )
+            return response
         config = load_deepseek_config()
+        if scope == "global":
+            config = replace(
+                config,
+                memory_book_max_tokens=max(
+                    4096,
+                    int(config.memory_book_max_tokens),
+                ),
+            )
         organizer = DeepSeekMemoryOrganizer(config)
-        compile_output = organizer.compile_memory_book(
+        decisions = organizer.compile_memory_curation(
             bundle=bundle,
             project=request.project,
             instruction=request.question,
+            policy=policy,
+        )
+        compile_output = curation_decisions_to_compile_output(
+            decisions,
+            source_bundle=bundle,
+            project=request.project,
         )
         plan = memory_book_plan_from_compile_output(
             compile_output,
@@ -2781,23 +2861,54 @@ class DebugImeService:
                     plan,
                     supersede_project_drafts=True,
                 )
-        return {
+        stored_draft = bool(
+            stored_run
+            and str(stored_run.get("status") or "") == "draft"
+            and (
+                int(stored_run.get("diffCount") or 0) > 0
+                or bool(stored_run.get("diffs"))
+            )
+        )
+        response = {
             "schemaVersion": "rag-ime.knowledge-database-organize.v1",
             "ok": bool(validation.get("ok")),
             "dryRun": True,
             "applySupported": True,
             "applyRequiresReview": True,
-            "storedDraft": bool(stored_run),
+            "storedDraft": stored_draft,
+            "reviewRequired": stored_draft,
             "reusedDraft": False,
             "source": {
                 "bundleHash": bundle.get("bundleHash"),
                 "eventCount": len(bundle.get("recentEvents") or []),
                 "redactionStats": bundle.get("redactionStats"),
+                "scope": scope,
+                "architecture": MEMORY_CURATION_ARCHITECTURE,
+                "lexicon": dict(compile_output.get("lexiconDiagnostics") or {}),
             },
             "plan": plan,
             "validation": validation,
             "storedRun": stored_run,
         }
+        run_id = _string(stored_run.get("runId") or stored_run.get("run_id"))
+        self.agent.observations.emit_memory_event(
+            phase="draft_ready" if stored_draft else "draft_finished",
+            status="waiting" if stored_draft else "completed" if validation.get("ok") else "failed",
+            summary=(
+                "记忆整理草案已生成，等待审阅"
+                if stored_draft
+                else "本批记忆整理未产生待审变更"
+                if validation.get("ok")
+                else "记忆整理草案校验失败"
+            ),
+            run_id=run_id,
+            metrics={
+                "eventCount": len(bundle.get("recentEvents") or []),
+                "changeCount": int(stored_run.get("diffCount") or 0),
+                "reused": False,
+            },
+        )
+        return response
 
     def agent_memory_maintenance_prepare(self, payload: dict[str, Any]) -> dict[str, object]:
         instruction = compact_whitespace(_string(payload.get("instruction")))[:800] or (
@@ -2898,6 +3009,8 @@ class DebugImeService:
             project=_string(payload.get("project")) or self.config.project,
             app="com.rag-ime.control.agent",
             client_id="pi-control-agent",
+            curation_scope=_string(payload.get("scope")).lower() or "incremental",
+            curation_policy=_string(payload.get("policy")).lower() or "conservative",
         )
         return self._knowledge_workbench_database_organizer(request)
 
@@ -2982,7 +3095,9 @@ class DebugImeService:
             "ok": True,
             "revisionHash": revision_hash,
             "stale": stale,
-            "canApply": run_status == "draft" and not stale and pending_count > 0,
+            # A draft with every item excluded can still be confirmed to finish
+            # review and advance the evidence cursor without mutating memory.
+            "canApply": run_status == "draft" and not stale and bool(diffs),
             "canRollback": (
                 run_status in {"applied", "partial"}
                 and applied_count > 0
@@ -2996,6 +3111,7 @@ class DebugImeService:
             ),
             "run": {
                 "runId": run_id,
+                "createdAtMs": int(run.get("createdAtMs") or 0),
                 "status": run_status,
                 "summary": _string(run.get("summary"))[:240],
                 "provider": _string(run.get("provider")),
@@ -3128,6 +3244,27 @@ class DebugImeService:
             ),
             "idleMs": idle_ms,
             "compileState": compile_state,
+            "draftCoverage": {
+                "coveredThroughEventId": int(
+                    compile_state.get("lastDraftedEventId") or 0
+                ),
+                "undraftedEventCount": int(
+                    compile_state.get("undraftedEventCount") or 0
+                ),
+                "coversAllPending": bool(
+                    compile_state.get("draftCoversPending")
+                ),
+                "lastDraftRunId": str(
+                    compile_state.get("lastDraftRunId") or ""
+                ),
+            },
+            "automation": {
+                "minimumNewEvents": 50,
+                "idleThresholdMs": 20 * 60 * 1000,
+                "dailyIntervalMs": 24 * 60 * 60 * 1000,
+                "schedulerPollIntervalMs": 60 * 60 * 1000,
+                "autoApply": False,
+            },
             "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
             "runs": runs,
             "ownerCuration": owner_curation,
@@ -5439,6 +5576,25 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             )
             return
+        if parsed.path in (
+            "/api/observability/events",
+            "/control/v1/observability/events",
+        ):
+            query = parse_qs(parsed.query or "")
+            self._stream_observation_events(
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "lastEventId")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                ),
+                filters={
+                    key: _query_first(query, key)
+                    for key in ("sessionId", "roomId", "traceId", "category", "status")
+                    if _query_first(query, key)
+                },
+            )
+            return
         agent_session_id, agent_action = agent_session_route(parsed.path)
         if agent_session_id and agent_action == "events":
             query = parse_qs(parsed.query or "")
@@ -5591,6 +5747,35 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK,
                 response,
             )
+            return
+        if parsed.path in (
+            "/api/observability/snapshot",
+            "/control/v1/observability/snapshot",
+        ):
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.observation_snapshot(
+                        {
+                            key: _query_first(query, key)
+                            for key in (
+                                "limit",
+                                "beforeSequence",
+                                "sessionId",
+                                "roomId",
+                                "traceId",
+                                "category",
+                                "status",
+                            )
+                            if _query_first(query, key)
+                        }
+                    ),
+                )
+            except Exception as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": str(exc)},
+                )
             return
         knowledge_parts = _knowledge_route_parts(parsed.path)
         if knowledge_parts is not None:
@@ -6027,6 +6212,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if parsed.path in {
+            "/api/memory/apps",
             "/api/memory/books",
             "/api/memory/atoms",
             "/api/memory/tags",
@@ -7226,6 +7412,30 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
         self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _stream_observation_events(
+        self,
+        *,
+        after_event_id: str = "",
+        filters: Mapping[str, object] | None = None,
+    ) -> None:
+        stream = self.service.agent.subscribe_observations(
+            after_event_id=after_event_id,
+            filters=filters,
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         try:
             for chunk in stream:

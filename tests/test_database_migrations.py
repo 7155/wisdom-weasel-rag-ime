@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import shutil
 import tempfile
 import unittest
 from contextlib import closing
@@ -26,12 +27,12 @@ class DatabaseMigrationTests(unittest.TestCase):
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                    31, 32, 33, 34, 35, 36, 37, 40, 41,
-                    42, 43, 44,
+                    31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                    41, 42, 43, 44, 45,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 44)
+            self.assertEqual(status["currentVersion"], 45)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -84,6 +85,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_wake_schedules", tables)
             self.assertIn("agent_wake_runs", tables)
             self.assertIn("agent_command_receipts", tables)
+            self.assertIn("agent_room_work_items", tables)
+            self.assertIn("agent_room_work_events", tables)
+            self.assertIn("agent_room_delivery_cursors", tables)
             room_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_rooms)")
             }
@@ -95,6 +99,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("routing_mode", room_columns)
             self.assertIn("active_topic_id", room_columns)
             self.assertIn("collaboration_role", participant_columns)
+            self.assertIn("agent_observation_events", tables)
             session_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_sessions)")
             }
@@ -129,6 +134,76 @@ class DatabaseMigrationTests(unittest.TestCase):
                     "tool_profile_version",
                 }.issubset(persona_columns)
             )
+
+    def test_atom_first_migration_supersedes_preexisting_memory_book_draft(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-v38-") as tmp, closing(
+            sqlite3.connect(":memory:")
+        ) as conn, conn:
+            migrations = Path(__file__).resolve().parents[1] / "rag_ime" / "db" / "migrations"
+            migrations_v38 = Path(tmp)
+            for source in sorted(migrations.glob("*.sql")):
+                if int(source.name.split("_", 1)[0]) <= 38:
+                    shutil.copy2(source, migrations_v38 / source.name)
+            apply_database_migrations(
+                conn,
+                migrations_dir=migrations_v38,
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_runs(
+                    run_id, created_at_ms, provider, model, status, summary, metadata_json
+                ) VALUES (
+                    'memory_book_legacy', 1, 'deepseek', 'legacy', 'draft', '旧草案',
+                    '{"project":"wisdom-weasel-rag-ime"}'
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_diffs(
+                    run_id, op, payload_json, status, created_at_ms
+                ) VALUES ('memory_book_legacy', 'upsert_memory_atom', '{}', 'pending', 1)
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_compile_state(
+                    project, last_compiled_event_id, last_run_ms, pending_event_count,
+                    last_bundle_hash, last_drafted_event_id, last_draft_ms,
+                    last_draft_bundle_hash, last_draft_run_id
+                ) VALUES (
+                    'wisdom-weasel-rag-ime', 7, 1, 2, 'old', 9, 2, 'draft', 'memory_book_legacy'
+                )
+                """
+            )
+
+            result = apply_database_migrations(
+                conn,
+                migrations_dir=migrations,
+            )
+
+            self.assertEqual(result.applied_versions, (39, 40, 41, 42, 43, 44, 45))
+            self.assertEqual(
+                conn.execute(
+                    "SELECT status FROM memory_cleanup_runs WHERE run_id = 'memory_book_legacy'"
+                ).fetchone()[0],
+                "superseded",
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT status FROM memory_cleanup_diffs WHERE run_id = 'memory_book_legacy'"
+                ).fetchone()[0],
+                "rejected",
+            )
+            state = conn.execute(
+                """
+                SELECT last_drafted_event_id, last_draft_ms,
+                       last_draft_bundle_hash, last_draft_run_id
+                FROM memory_compile_state
+                WHERE project = 'wisdom-weasel-rag-ime'
+                """
+            ).fetchone()
+            self.assertEqual(state, (0, 0, "", ""))
 
     def test_legacy_feedback_table_is_rebuilt_without_losing_rows(self) -> None:
         with closing(sqlite3.connect(":memory:")) as conn, conn:

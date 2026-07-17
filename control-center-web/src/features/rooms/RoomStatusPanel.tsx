@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   Paperclip,
   PanelRightClose,
+  Radar,
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
@@ -85,6 +86,17 @@ export function RoomStatusPanel({
         <RoomStatusSection count={room?.participants.length ?? 0} icon={Bot} title="协作成员">
           {room?.participants.length ? <div className="room-status-participants">{room.participants.map((participant) => <RoomStatusRow detail={`${collaborationRoleLabel(participant.collaborationRole)} · ${participant.status === 'active' ? '已加入' : '暂未参与'}`} icon={Bot} key={participant.id} title={participant.displayName} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
         </RoomStatusSection>
+
+        {room ? (
+          <a
+            className="agent-status-observation-link"
+            href={`#/observability?roomId=${encodeURIComponent(room.id)}`}
+          >
+            <Radar size={16} />
+            <span><strong>运行观察</strong><small>查看本 Room 的路由、私信与协作轨迹</small></span>
+            <GitBranch size={15} />
+          </a>
+        ) : null}
       </div>
     </aside>
   );

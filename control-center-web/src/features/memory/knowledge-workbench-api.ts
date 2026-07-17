@@ -13,6 +13,7 @@ export const knowledgeQueryKeys = {
 export const knowledgeMutationPathIds = {
   start: 'knowledge.start',
   cancel: 'knowledge.cancel',
+  databaseDraftEdit: 'knowledge.database.draft.edit',
   databaseApplyPreview: 'knowledge.database.apply.preview',
   databaseApply: 'knowledge.database.apply',
   databaseRollback: 'knowledge.database.rollback',
@@ -72,6 +73,7 @@ export function useKnowledgeMutationBoundary() {
 
   const databaseAvailability = (blockedReason = ''): MutationAvailability => {
     const routeState = routeAvailability([
+      knowledgeMutationPathIds.databaseDraftEdit,
       knowledgeMutationPathIds.databaseApplyPreview,
       knowledgeMutationPathIds.databaseApply,
       knowledgeMutationPathIds.databaseRollback,

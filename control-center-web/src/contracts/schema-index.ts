@@ -1375,6 +1375,7 @@ export const contractSchemas = {
           "idle",
           "daily",
           "owner_daily",
+          "draft_pending_review",
           "not_due"
         ]
       },
@@ -1495,6 +1496,7 @@ export const contractSchemas = {
                 "partial",
                 "rolled_back",
                 "superseded",
+                "dismissed",
                 "empty"
               ]
             },
@@ -4422,6 +4424,7 @@ export const contractSchemas = {
           "recent",
           "trace",
           "maintenance_status",
+          "curation_prepare",
           "maintenance_preview",
           "maintenance_review",
           "maintenance_apply",
@@ -7384,6 +7387,438 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1,
         "maxLength": 256
+      }
+    }
+  },
+  "observation-event.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.observation-event.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "eventType",
+      "eventId",
+      "sequence",
+      "resumeToken",
+      "traceId",
+      "spanId",
+      "parentSpanId",
+      "sessionId",
+      "roomId",
+      "turnId",
+      "runId",
+      "category",
+      "phase",
+      "name",
+      "status",
+      "summary",
+      "createdAtMs",
+      "startedAtMs",
+      "endedAtMs",
+      "durationMs",
+      "privacyClass",
+      "metrics",
+      "attributes",
+      "refs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.observation-event.v1"
+      },
+      "eventType": {
+        "type": "string",
+        "enum": [
+          "observation",
+          "snapshot_required"
+        ]
+      },
+      "eventId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "resumeToken": {
+        "type": "string",
+        "minLength": 1
+      },
+      "traceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "spanId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentSpanId": {
+        "type": "string"
+      },
+      "sessionId": {
+        "type": "string"
+      },
+      "roomId": {
+        "type": "string"
+      },
+      "turnId": {
+        "type": "string"
+      },
+      "runId": {
+        "type": "string"
+      },
+      "category": {
+        "type": "string",
+        "enum": [
+          "context",
+          "retrieval",
+          "memory",
+          "tool",
+          "agent",
+          "room",
+          "intercom",
+          "approval",
+          "runtime",
+          "system"
+        ]
+      },
+      "phase": {
+        "type": "string",
+        "minLength": 1
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "waiting",
+          "completed",
+          "failed",
+          "cancelled",
+          "info"
+        ]
+      },
+      "summary": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "startedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "endedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "durationMs": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "privacyClass": {
+        "type": "string",
+        "enum": [
+          "metadata",
+          "redacted",
+          "owner_local"
+        ]
+      },
+      "metrics": {
+        "type": "object"
+      },
+      "attributes": {
+        "type": "object"
+      },
+      "refs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "observation-snapshot.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.observation-snapshot.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "generatedAtMs",
+      "firstSequence",
+      "lastSequence",
+      "resumeToken",
+      "truncated",
+      "filters",
+      "counts",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.observation-snapshot.v1"
+      },
+      "generatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "firstSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "resumeToken": {
+        "type": "string",
+        "minLength": 1
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "filters": {
+        "type": "object"
+      },
+      "counts": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "total",
+          "byCategory",
+          "byStatus"
+        ],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "byCategory": {
+            "type": "object"
+          },
+          "byStatus": {
+            "type": "object"
+          }
+        }
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/event"
+        }
+      }
+    },
+    "$defs": {
+      "event": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "eventType",
+          "eventId",
+          "sequence",
+          "resumeToken",
+          "traceId",
+          "spanId",
+          "parentSpanId",
+          "sessionId",
+          "roomId",
+          "turnId",
+          "runId",
+          "category",
+          "phase",
+          "name",
+          "status",
+          "summary",
+          "createdAtMs",
+          "startedAtMs",
+          "endedAtMs",
+          "durationMs",
+          "privacyClass",
+          "metrics",
+          "attributes",
+          "refs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.observation-event.v1"
+          },
+          "eventType": {
+            "type": "string",
+            "enum": [
+              "observation",
+              "snapshot_required"
+            ]
+          },
+          "eventId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resumeToken": {
+            "type": "string",
+            "minLength": 1
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "spanId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parentSpanId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "roomId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "context",
+              "retrieval",
+              "memory",
+              "tool",
+              "agent",
+              "room",
+              "intercom",
+              "approval",
+              "runtime",
+              "system"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled",
+              "info"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "startedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "durationMs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "privacyClass": {
+            "type": "string",
+            "enum": [
+              "metadata",
+              "redacted",
+              "owner_local"
+            ]
+          },
+          "metrics": {
+            "type": "object"
+          },
+          "attributes": {
+            "type": "object"
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "id",
+                "label"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },

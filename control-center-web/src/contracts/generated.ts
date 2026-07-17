@@ -60,6 +60,8 @@ import type { MemoryCatalogV1 } from './generated/memory-catalog.v1';
 import type { MemoryEntityV1 } from './generated/memory-entity.v1';
 import type { MemoryGraphV1 } from './generated/memory-graph.v1';
 import type { MemoryReadErrorV1 } from './generated/memory-read-error.v1';
+import type { ObservationEventV1 } from './generated/observation-event.v1';
+import type { ObservationSnapshotV1 } from './generated/observation-snapshot.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
 import type { PiRuntimeManifestV1 } from './generated/pi-runtime-manifest.v1';
 import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
@@ -124,6 +126,8 @@ export type {
   MemoryEntityV1,
   MemoryGraphV1,
   MemoryReadErrorV1,
+  ObservationEventV1,
+  ObservationSnapshotV1,
   OverlayConfigV1,
   PiRuntimeManifestV1,
   RimeRankSelectionV1,
@@ -189,6 +193,8 @@ export interface ContractTypeMap {
   'memory-entity.v1': MemoryEntityV1;
   'memory-graph.v1': MemoryGraphV1;
   'memory-read-error.v1': MemoryReadErrorV1;
+  'observation-event.v1': ObservationEventV1;
+  'observation-snapshot.v1': ObservationSnapshotV1;
   'overlay-config.v1': OverlayConfigV1;
   'pi-runtime-manifest.v1': PiRuntimeManifestV1;
   'rime-rank-selection.v1': RimeRankSelectionV1;

@@ -6,6 +6,7 @@ import { asRecord, stringValue } from '@/features/overview/management-ui';
 import type { ControlTransport, JsonValue } from '@/platform/transport';
 
 export type MemoryKind =
+  | 'apps'
   | 'books'
   | 'atoms'
   | 'tags'
@@ -33,6 +34,8 @@ export const memoryQueryKeys = {
     focusId,
   ] as const,
   entity: (kind: MemoryEntityKind, entityId: string) => [...memoryQueryKeys.root, 'entity', kind, entityId] as const,
+  curationStatus: () => [...memoryQueryKeys.root, 'curation-status'] as const,
+  curationRun: (runId: string) => [...memoryQueryKeys.root, 'curation-run', runId] as const,
   capabilities: () => [...memoryQueryKeys.root, 'capabilities'] as const,
 };
 
@@ -108,7 +111,7 @@ export function useMemoryGraphQueries(
         ...(query ? { query } : {}),
         ...(tagFocusId ? { focusId: tagFocusId } : {}),
         depth: 1,
-        nodeLimit: query ? 200 : 50,
+        nodeLimit: query ? 120 : 32,
         edgeLimit: query ? 500 : 150,
         minWeight: 0,
       },
@@ -127,7 +130,7 @@ export function useMemoryGraphQueries(
         ...(query ? { query } : {}),
         ...(groupFocusId ? { focusId: groupFocusId } : {}),
         depth: 1,
-        nodeLimit: query ? 200 : 80,
+        nodeLimit: query ? 120 : 48,
         edgeLimit: query ? 500 : 160,
         minWeight: 0,
       },
@@ -135,6 +138,35 @@ export function useMemoryGraphQueries(
     }),
   });
   return { groups, tags };
+}
+
+export function useMemoryCurationQueries(enabled: boolean) {
+  const transport = useControlTransport();
+  const status = useQuery({
+    enabled,
+    queryKey: memoryQueryKeys.curationStatus(),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.memoryMaintenance.run',
+      query: { limit: 12 },
+      signal,
+    }),
+  });
+  const statusPayload = asRecord(status.data);
+  const runs = Array.isArray(statusPayload.runs)
+    ? statusPayload.runs.map(asRecord)
+    : [];
+  const latest = runs.find((item) => stringValue(item.status) === 'draft') ?? runs[0];
+  const runId = stringValue(latest?.runId);
+  const run = useQuery({
+    enabled: enabled && Boolean(runId),
+    queryKey: memoryQueryKeys.curationRun(runId),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.memoryMaintenance.run',
+      query: { runId },
+      signal,
+    }),
+  });
+  return { run, runId, status };
 }
 
 export function useMemoryEntityQuery(

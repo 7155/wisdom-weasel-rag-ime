@@ -1,4 +1,9 @@
-import { parseAgentEvent, parseContract, parseRoomEvent } from '@/contracts/validators';
+import {
+  parseAgentEvent,
+  parseContract,
+  parseObservationEvent,
+  parseRoomEvent,
+} from '@/contracts/validators';
 import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/routes';
 import {
   assertControlRequest,
@@ -173,7 +178,9 @@ export class MockControlTransport implements ControlTransport {
             ? parseAgentEvent(event)
             : streamKind === 'room'
               ? parseRoomEvent(event)
-              : event;
+              : streamKind === 'observation'
+                ? parseObservationEvent(event)
+                : event;
         subscription.lastEventId = resumeToken(parsed) || subscription.lastEventId;
         subscription.observer.next(parsed);
         if (isSnapshotRequired(parsed)) subscription.observer.snapshotRequired?.(parsed);

@@ -21,6 +21,7 @@ from rag_ime.codex_history import (
     load_codex_history_records,
     load_eval_cases,
 )
+from rag_ime.input_quality import MEMORY_CONTEXT_OPT_IN_TAG
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputSuggestion
 
@@ -351,6 +352,14 @@ class CodexHistoryTests(unittest.TestCase):
             curated=True,
         )
         self.assertIn("curated", curated.tags)
+        self.assertNotIn(MEMORY_CONTEXT_OPT_IN_TAG, curated.tags)
+        opted_in = input_event_from_codex_record(
+            record,
+            project="wisdom-weasel-rag-ime",
+            curated=True,
+            memory_context_opt_in=True,
+        )
+        self.assertIn(MEMORY_CONTEXT_OPT_IN_TAG, opted_in.tags)
 
     def test_directory_import_prefers_recent_sessions_and_skips_runtime_noise(self) -> None:
         history_dir = self.root / "history-dir"
@@ -719,6 +728,7 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.codex-history-import.v1")
         self.assertEqual(payload["records"], 2)
         self.assertEqual(payload["imported"], 0)
+        self.assertFalse(payload["memoryContextOptIn"])
         if db_path.exists():
             with closing(sqlite3.connect(db_path)) as conn, conn:
                 table = conn.execute(
@@ -803,6 +813,7 @@ class CodexHistoryTests(unittest.TestCase):
                     str(db_path),
                     "import-codex-history",
                     "--curated",
+                    "--memory-context-opt-in",
                     "--path",
                     str(self.history),
                     "--project",
@@ -813,6 +824,7 @@ class CodexHistoryTests(unittest.TestCase):
         import_payload = json.loads(stdout.getvalue())
         self.assertEqual(import_payload["imported"], 2)
         self.assertEqual(import_payload["duplicateSkipped"], 0)
+        self.assertTrue(import_payload["memoryContextOptIn"])
 
         second_stdout = io.StringIO()
         with redirect_stdout(second_stdout):
@@ -822,6 +834,7 @@ class CodexHistoryTests(unittest.TestCase):
                     str(db_path),
                     "import-codex-history",
                     "--curated",
+                    "--memory-context-opt-in",
                     "--path",
                     str(self.history),
                     "--project",
@@ -885,6 +898,7 @@ class CodexHistoryTests(unittest.TestCase):
                     str(db_path),
                     "import-codex-history",
                     "--curated",
+                    "--memory-context-opt-in",
                     "--path",
                     str(self.history),
                     "--project",
@@ -1865,6 +1879,7 @@ class CodexHistoryTests(unittest.TestCase):
                     str(db_path),
                     "import-codex-history",
                     "--curated",
+                    "--memory-context-opt-in",
                     "--path",
                     str(self.history),
                     "--project",
@@ -1950,6 +1965,7 @@ class CodexHistoryTests(unittest.TestCase):
                 load_codex_history_records(self.history, limit=2)[1],
                 project="wisdom-weasel-rag-ime",
                 curated=True,
+                memory_context_opt_in=True,
             )
         )
         suggestions = core.suggest_for_input(current_input="FTS5", project="wisdom-weasel-rag-ime")

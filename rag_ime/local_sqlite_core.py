@@ -16,6 +16,7 @@ from typing import Any, Iterator
 from .core_client import CoreMemory
 from .daily_planner import detect_task_completion
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity, embed_query
+from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG, source_context_enabled
 from .memory_cleanup import (
     apply_cleanup_diff,
     apply_cleanup_run,
@@ -70,6 +71,21 @@ _CURATED_EVENT_SQL = """
 )
 """
 _CURATED_EVENT_TAGS = {"compiled-memory", "compiled-phrase", "curated", "phrase-memory", "stable-memory"}
+_SOURCE_CONTEXT_ENABLED_EVENT_SQL = f"""
+(
+    e.source != 'codex_history'
+    OR e.tags_json LIKE '%"{MEMORY_CONTEXT_OPT_IN_TAG}"%'
+)
+"""
+_SOURCE_CONTEXT_ENABLED_MEMORY_ITEM_SQL = f"""
+NOT EXISTS (
+    SELECT 1
+    FROM input_events source_event
+    WHERE source_event.id = mi.source_event_id
+      AND source_event.source = 'codex_history'
+      AND COALESCE(source_event.tags_json, '[]') NOT LIKE '%"{MEMORY_CONTEXT_OPT_IN_TAG}"%'
+)
+"""
 _PHRASE_FEEDBACK_SELECT_COLUMNS = """
                 COALESCE(pfb.phrase_accepted_count, s.accepted_count) AS phrase_accepted_count,
                 COALESCE(pfb.phrase_skipped_count, s.skipped_count) AS phrase_skipped_count,
@@ -246,6 +262,7 @@ class LocalSqliteCoreClient:
             raise ValueError("committed_text must not be empty")
         created_at = event.created_at_ms or now_ms()
         tags_json = json.dumps(list(event.tags), ensure_ascii=False)
+        context_enabled = source_context_enabled(event.source, tags=event.tags)
         with self._connect() as conn:
             cur = conn.execute(
                 """
@@ -277,39 +294,42 @@ class LocalSqliteCoreClient:
                 "INSERT INTO memory_state(event_id, updated_at_ms) VALUES (?, ?)",
                 (event_id, created_at),
             )
-            conn.execute(
-                """
-                INSERT INTO phrase_stats(committed_text, input_frequency, first_seen_ms, last_seen_ms)
-                VALUES (?, 1, ?, ?)
-                ON CONFLICT(committed_text) DO UPDATE SET
-                    input_frequency = phrase_stats.input_frequency + 1,
-                    last_seen_ms = excluded.last_seen_ms
-                """,
-                (text, created_at, created_at),
+            if context_enabled:
+                conn.execute(
+                    """
+                    INSERT INTO phrase_stats(committed_text, input_frequency, first_seen_ms, last_seen_ms)
+                    VALUES (?, 1, ?, ?)
+                    ON CONFLICT(committed_text) DO UPDATE SET
+                        input_frequency = phrase_stats.input_frequency + 1,
+                        last_seen_ms = excluded.last_seen_ms
+                    """,
+                    (text, created_at, created_at),
+                )
+                if event.project:
+                    conn.execute(
+                        """
+                        INSERT INTO phrase_project_stats(committed_text, project, input_frequency, first_seen_ms, last_seen_ms)
+                        VALUES (?, ?, 1, ?, ?)
+                        ON CONFLICT(committed_text, project) DO UPDATE SET
+                            input_frequency = phrase_project_stats.input_frequency + 1,
+                            last_seen_ms = excluded.last_seen_ms
+                        """,
+                        (text, event.project, created_at, created_at),
+                    )
+                if event.app:
+                    conn.execute(
+                        """
+                        INSERT INTO phrase_app_stats(committed_text, app, input_frequency, first_seen_ms, last_seen_ms)
+                        VALUES (?, ?, 1, ?, ?)
+                        ON CONFLICT(committed_text, app) DO UPDATE SET
+                            input_frequency = phrase_app_stats.input_frequency + 1,
+                            last_seen_ms = excluded.last_seen_ms
+                        """,
+                        (text, event.app, created_at, created_at),
+                    )
+            legacy_retrieval_allowed = context_enabled and (
+                not self.memory_v2_enabled or _event_has_curated_import_signal(event.tags)
             )
-            if event.project:
-                conn.execute(
-                    """
-                    INSERT INTO phrase_project_stats(committed_text, project, input_frequency, first_seen_ms, last_seen_ms)
-                    VALUES (?, ?, 1, ?, ?)
-                    ON CONFLICT(committed_text, project) DO UPDATE SET
-                        input_frequency = phrase_project_stats.input_frequency + 1,
-                        last_seen_ms = excluded.last_seen_ms
-                    """,
-                    (text, event.project, created_at, created_at),
-                )
-            if event.app:
-                conn.execute(
-                    """
-                    INSERT INTO phrase_app_stats(committed_text, app, input_frequency, first_seen_ms, last_seen_ms)
-                    VALUES (?, ?, 1, ?, ?)
-                    ON CONFLICT(committed_text, app) DO UPDATE SET
-                        input_frequency = phrase_app_stats.input_frequency + 1,
-                        last_seen_ms = excluded.last_seen_ms
-                    """,
-                    (text, event.app, created_at, created_at),
-                )
-            legacy_retrieval_allowed = not self.memory_v2_enabled or _event_has_curated_import_signal(event.tags)
             if legacy_retrieval_allowed:
                 document = _event_fts_document(
                     text,
@@ -369,15 +389,16 @@ class LocalSqliteCoreClient:
             # Planning must never make a foreground commit fail: ambiguous
             # matches are stored for confirmation and planner errors are
             # isolated from the immutable input ledger.
-            try:
-                detect_task_completion(
-                    conn,
-                    text=text,
-                    source_event_id=event_id,
-                    project=event.project,
-                )
-            except (sqlite3.Error, ValueError):
-                pass
+            if context_enabled:
+                try:
+                    detect_task_completion(
+                        conn,
+                        text=text,
+                        source_event_id=event_id,
+                        project=event.project,
+                    )
+                except (sqlite3.Error, ValueError):
+                    pass
         self._clear_suggestion_cache()
         return f"event:{event_id}"
 
@@ -2174,7 +2195,11 @@ class LocalSqliteCoreClient:
     ) -> list[sqlite3.Row]:
         params: list[Any] = []
         joins = ""
-        where = ["mi.status IN ('active', 'approved')", "mi.privacy_class != 'sensitive'"]
+        where = [
+            "mi.status IN ('active', 'approved')",
+            "mi.privacy_class != 'sensitive'",
+            _SOURCE_CONTEXT_ENABLED_MEMORY_ITEM_SQL,
+        ]
         order = "mi.updated_at_ms DESC"
         if kind:
             where.append("mi.kind = ?")
@@ -2232,6 +2257,7 @@ class LocalSqliteCoreClient:
             f"mi.id IN ({placeholders})",
             "mi.status IN ('active', 'approved')",
             "mi.privacy_class != 'sensitive'",
+            _SOURCE_CONTEXT_ENABLED_MEMORY_ITEM_SQL,
         ]
         if project:
             where.append("(mi.project = ? OR mi.project = '')")
@@ -2429,7 +2455,12 @@ class LocalSqliteCoreClient:
         if not query_vector:
             return {}
         params: list[Any] = [self.embedding_provider.fingerprint]
-        where = ["v.provider_fingerprint = ?", "mi.status IN ('active', 'approved')", "mi.privacy_class != 'sensitive'"]
+        where = [
+            "v.provider_fingerprint = ?",
+            "mi.status IN ('active', 'approved')",
+            "mi.privacy_class != 'sensitive'",
+            _SOURCE_CONTEXT_ENABLED_MEMORY_ITEM_SQL,
+        ]
         if project:
             where.append("(mi.project = ? OR mi.project = '')")
             params.append(project)
@@ -2767,7 +2798,7 @@ class LocalSqliteCoreClient:
 
     def _search_rows(self, *, fts_query: str, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = [fts_query]
-        where = ["memory_fts MATCH ?", "s.deleted = 0"]
+        where = ["memory_fts MATCH ?", "s.deleted = 0", _SOURCE_CONTEXT_ENABLED_EVENT_SQL]
         if self.memory_v2_enabled:
             where.append(_CURATED_EVENT_SQL)
         if project:
@@ -2808,7 +2839,7 @@ class LocalSqliteCoreClient:
         if not query_vector:
             return [], {}
         where_params: list[Any] = [self.embedding_provider.fingerprint]
-        where = ["v.provider_fingerprint = ?", "s.deleted = 0"]
+        where = ["v.provider_fingerprint = ?", "s.deleted = 0", _SOURCE_CONTEXT_ENABLED_EVENT_SQL]
         if self.memory_v2_enabled:
             where.append(_CURATED_EVENT_SQL)
         if project:
@@ -2916,7 +2947,7 @@ class LocalSqliteCoreClient:
 
     def _recent_rows(self, *, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = []
-        where = ["s.deleted = 0"]
+        where = ["s.deleted = 0", _SOURCE_CONTEXT_ENABLED_EVENT_SQL]
         if self.memory_v2_enabled:
             where.append(_CURATED_EVENT_SQL)
         if project:
@@ -3940,7 +3971,10 @@ def _row_should_skip_recent_context(row: sqlite3.Row) -> bool:
         return True
     if "runtime-noise" in tags or "role:event_msg" in tags or "role:assistant" in tags or "role:system" in tags:
         return True
-    if str(row["source"]).strip().lower() in {"codex_internal_context", "tool_output"}:
+    source = str(row["source"]).strip().lower()
+    if source == "codex_history" and MEMORY_CONTEXT_OPT_IN_TAG not in tags:
+        return True
+    if source in {"codex_internal_context", "tool_output"}:
         return True
     text = compact_whitespace(
         " ".join(

@@ -11,7 +11,40 @@ from rag_ime.models import InputEvent
 
 
 class InputEventAssemblyTests(unittest.TestCase):
-    def test_adjacent_rime_fragments_become_one_complete_input(self) -> None:
+    def test_codex_history_is_disabled_without_explicit_memory_opt_in(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "created_at_ms": 1_000,
+                "source": "codex_history",
+                "committed_text": "我继续按计划检查代码。",
+                "tags_json": '["codex-history","role:event_msg"]',
+                "app": "codex",
+            },
+            {
+                "id": 2,
+                "created_at_ms": 2_000,
+                "source": "codex_history",
+                "committed_text": "以后整理记忆时要保留完整历史。",
+                "tags_json": '["codex-history","role:user"]',
+                "app": "codex",
+            },
+            {
+                "id": 3,
+                "created_at_ms": 3_000,
+                "source": "codex_history",
+                "committed_text": "这条会话已经经过人工选择，可以进入记忆上下文。",
+                "tags_json": '["codex-history","role:user","memory-context-opt-in"]',
+                "app": "codex",
+            },
+        ]
+
+        records = assemble_input_rows(rows)
+
+        self.assertEqual([item["sourceEventIds"] for item in records], [[3]])
+        self.assertEqual(records[0]["text"], "这条会话已经经过人工选择，可以进入记忆上下文。")
+
+    def test_adjacent_legacy_fragments_are_assembled_but_never_injectable_without_enter(self) -> None:
         rows = [
             {
                 "id": index,
@@ -32,7 +65,9 @@ class InputEventAssemblyTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["text"], "我今天完成了输入法测试")
         self.assertEqual(records[0]["sourceEventIds"], [1, 2, 3, 4])
-        self.assertTrue(records[0]["complete"])
+        self.assertFalse(records[0]["complete"])
+        self.assertFalse(records[0]["injectable"])
+        self.assertIn("missing_finalized_boundary", records[0]["qualityReasons"])
 
     def test_dynamic_budget_can_select_more_than_twenty_records(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-recent-context-") as temporary:
@@ -87,17 +122,113 @@ class InputEventAssemblyTests(unittest.TestCase):
         self.assertGreater(len(result["records"][0]["text"]), 100)
         self.assertFalse(result["records"][0].get("truncated", False))
 
+    def test_isolated_words_and_transport_tokens_never_enter_agent_context(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-noise-gate-") as temporary:
+            core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")
+            core.initialize()
+            _record(core, "ai", created_at_ms=1_000)
+            _record(core, "sidecar-selected", created_at_ms=2_000)
+            _record(core, "这是已经完成并且可以理解的一整段输入。", created_at_ms=3_000)
+            with core._connect() as conn:
+                result = recent_complete_input_context(conn)
 
-def _record(core: LocalSqliteCoreClient, text: str, *, created_at_ms: int) -> None:
+        self.assertNotIn("sidecar-selected", result["rendered"])
+        self.assertNotIn("] ai", result["rendered"])
+        self.assertIn("一整段输入", result["rendered"])
+        self.assertEqual(result["observability"]["blockedRecordCount"], 2)
+
+    def test_new_squirrel_segment_requires_finalized_boundary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-finalized-gate-") as temporary:
+            core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")
+            core.initialize()
+            _record(
+                core,
+                "这段输入还没有按下回车所以不能注入上下文",
+                created_at_ms=1_000,
+                source="squirrel_input_segment",
+            )
+            _record(
+                core,
+                "这段输入已经按下回车，可以进入普通 Agent 上下文。",
+                created_at_ms=2_000,
+                source="squirrel_input_segment",
+                tags=("input-segment", "finalized", "complete-input"),
+            )
+            with core._connect() as conn:
+                result = recent_complete_input_context(conn)
+
+        self.assertNotIn("还没有按下回车", result["rendered"])
+        self.assertIn("已经按下回车", result["rendered"])
+
+    def test_records_are_split_by_app_and_app_is_rendered_for_agent(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "created_at_ms": 1_000,
+                "source": "squirrel_rime_commit_burst",
+                "committed_text": "我正在 Codex 里整理记忆功能",
+                "app": "com.openai.codex",
+                "context_group_id": "app:codex",
+            },
+            {
+                "id": 2,
+                "created_at_ms": 1_200,
+                "source": "squirrel_rime_commit_burst",
+                "committed_text": "随后切到微信回复另一件完全不同的事情",
+                "app": "com.tencent.xinWeChat",
+                "context_group_id": "app:wechat",
+            },
+        ]
+
+        records = assemble_input_rows(rows)
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual([item["app"] for item in records], ["com.openai.codex", "com.tencent.xinWeChat"])
+
+        with tempfile.TemporaryDirectory(prefix="rag-ime-app-context-") as temporary:
+            core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")
+            core.initialize()
+            _record(core, "我正在 Codex 里整理记忆功能。", created_at_ms=1_000, app="com.openai.codex")
+            with core._connect() as conn:
+                result = recent_complete_input_context(conn)
+        self.assertIn("[App: com.openai.codex]", result["rendered"])
+
+    def test_recent_context_never_replaces_the_committed_utterance(self) -> None:
+        records = assemble_input_rows(
+            [
+                {
+                    "id": 1,
+                    "created_at_ms": 1_000,
+                    "source": "manual",
+                    "committed_text": "这是本次真正完成的输入。",
+                    "recent_context": "这里是编辑器里很长的旧文档，它不是本次用户输入，不能冒充记忆。",
+                    "app": "com.openai.codex",
+                }
+            ]
+        )
+
+        self.assertEqual(records[0]["text"], "这是本次真正完成的输入。")
+
+
+def _record(
+    core: LocalSqliteCoreClient,
+    text: str,
+    *,
+    created_at_ms: int,
+    source: str = "manual",
+    tags: tuple[str, ...] = (),
+    app: str = "com.openai.codex",
+) -> None:
     core.record_event(
         InputEvent(
             event_id=None,
             created_at_ms=created_at_ms,
-            source="manual",
+            source=source,
             committed_text=text,
             privacy_disposition="allowed",
             project="wisdom-weasel-rag-ime",
-            app="com.openai.codex",
+            app=app,
+            tags=tags,
         )
     )
 

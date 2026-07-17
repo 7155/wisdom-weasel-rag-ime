@@ -109,6 +109,46 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["pollAfterMs"], 0)
 
+    def test_active_rag_trace_observer_runs_without_enabling_the_jsonl_journal(self) -> None:
+        records: list[dict[str, object]] = []
+        service = ActiveRagService(
+            completion_provider=FakeActiveRagProvider(("观察候选",)),
+            trace_observer=lambda record: records.append(record),
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(_request(selected_text="观察上下文"))
+            _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(
+            [record["phase"] for record in records],
+            ["started", "retrieval_complete", "ready"],
+        )
+        self.assertTrue(all(record["privacy"]["rawTextIncluded"] is False for record in records))
+        self.assertNotIn("观察上下文", json.dumps(records, ensure_ascii=False))
+        self.assertNotIn("观察候选", json.dumps(records, ensure_ascii=False))
+
+    def test_active_rag_observation_observer_receives_only_compact_metadata(self) -> None:
+        records: list[dict[str, object]] = []
+        service = ActiveRagService(
+            completion_provider=FakeActiveRagProvider(("观察候选",)),
+            observation_observer=lambda record: records.append(record),
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(_request(selected_text="观察上下文"))
+            _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(
+            [record["phase"] for record in records],
+            ["started", "retrieval_complete", "ready"],
+        )
+        self.assertEqual(records[0]["request"]["selectedText"]["chars"], 5)
+        self.assertNotIn("model", records[0])
+        self.assertNotIn("traceEvents", records[0])
+        self.assertNotIn("观察上下文", json.dumps(records, ensure_ascii=False))
+        self.assertNotIn("观察候选", json.dumps(records, ensure_ascii=False))
+
     def test_active_rag_persists_redacted_full_chain_across_terminal_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             trace_path = Path(tmpdir) / "active-rag-chain.jsonl"

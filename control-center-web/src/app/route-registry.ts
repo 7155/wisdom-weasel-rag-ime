@@ -11,6 +11,7 @@ export type RouteId =
   | 'memory'
   | 'knowledge'
   | 'history'
+  | 'observability'
   | 'diagnostics'
   | 'configuration';
 
@@ -35,6 +36,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'memory', path: '/memory', label: '记忆', shortLabel: '记忆', group: 'knowledge' },
   { id: 'knowledge', path: '/knowledge', label: '知识库', shortLabel: '知识', group: 'knowledge' },
   { id: 'history', path: '/history', label: '历史', shortLabel: '历史', group: 'knowledge' },
+  { id: 'observability', path: '/observability', label: '运行观察', shortLabel: '观察', group: 'system' },
   { id: 'diagnostics', path: '/diagnostics', label: '诊断', shortLabel: '诊断', group: 'system' },
   { id: 'configuration', path: '/configuration', label: '配置', shortLabel: '配置', group: 'system' },
 ] as const;

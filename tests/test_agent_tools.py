@@ -217,6 +217,19 @@ class _Management:
 
     def memory_page(self, kind, request):
         self.memory_requests.append((kind, request))
+        if kind == "apps":
+            return {
+                "items": [
+                    {
+                        "id": "com.openai.codex",
+                        "title": "Codex",
+                        "eventCount": 12,
+                        "atomCount": 3,
+                        "bookCount": 1,
+                    }
+                ],
+                "nextCursor": "",
+            }
         if kind == "books":
             return {
                 "items": [
@@ -494,6 +507,7 @@ class _Facade:
 
     def agent_memory_maintenance_run(self, payload):
         status = self.memory_run_status
+        diff_count = 0 if status == "empty" else 3
         return {
             "ok": True,
             "revisionHash": f"sha256:{status}",
@@ -509,9 +523,17 @@ class _Facade:
                 "runKind": "manual_curation",
                 "bundleHash": "sha256:bundle",
                 "sourceCursor": {"fromEventId": 10, "toEventId": 16},
-                "diffCount": 3,
-                "pendingDiffCount": 3 if status == "draft" else 0,
-                "appliedDiffCount": 3 if status == "applied" else 0,
+                "diffCount": diff_count,
+                "pendingDiffCount": diff_count if status == "draft" else 0,
+                "appliedDiffCount": diff_count if status == "applied" else 0,
+                "operationCounts": (
+                    {
+                        "upsert_memory_book": 1,
+                        "upsert_memory_atom": 2,
+                    }
+                    if diff_count
+                    else {}
+                ),
                 "changes": [
                     {
                         "diffId": 1,
@@ -658,6 +680,67 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(result["maintenance"]["policy"], "review")
         self.assertFalse(result["maintenance"]["autoApply"])
         self.assertEqual(result["maintenance"]["runs"][0]["status"], "draft")
+
+    def test_runtime_memory_tool_discloses_operation_specific_schema(self) -> None:
+        manifests = self.gateway.runtime_manifests(self.session)
+        memory = next(item for item in manifests if item["name"] == "ime_memory")
+        parameters = memory["parameters"]
+        branches = parameters["oneOf"]
+        by_operation = {
+            branch["properties"]["op"]["const"]: branch
+            for branch in branches
+        }
+
+        self.assertIn("curation_prepare", by_operation)
+        self.assertEqual(
+            parameters["properties"]["scope"]["enum"],
+            ["incremental", "global"],
+        )
+        self.assertEqual(
+            parameters["properties"]["policy"]["enum"],
+            ["conservative"],
+        )
+        self.assertEqual(
+            by_operation["maintenance_review"]["required"],
+            ["op", "runId"],
+        )
+        self.assertNotIn("changes", str(parameters))
+
+    def test_runtime_knowledge_and_plan_tools_keep_static_and_backend_schemas_aligned(self) -> None:
+        manifests = self.gateway.runtime_manifests(self.session)
+        knowledge = next(item for item in manifests if item["name"] == "ime_knowledge")
+        plan = next(item for item in manifests if item["name"] == "agent_plan")
+
+        knowledge_branches = {
+            branch["properties"]["op"]["const"]: branch
+            for branch in knowledge["parameters"]["oneOf"]
+        }
+        self.assertEqual(
+            knowledge_branches["search"]["required"],
+            ["op", "kbId", "query"],
+        )
+        self.assertEqual(
+            knowledge_branches["find"]["properties"]["patterns"]["maxItems"],
+            10,
+        )
+        self.assertFalse(knowledge_branches["open"]["additionalProperties"])
+
+        plan_branches = {
+            branch["properties"]["op"]["const"]: branch
+            for branch in plan["parameters"]["oneOf"]
+        }
+        self.assertCountEqual(
+            plan_branches["update"]["anyOf"],
+            [{"required": ["itemId"]}, {"required": ["title"]}],
+        )
+        self.assertFalse(plan_branches["update"]["additionalProperties"])
+
+    def test_memory_list_exposes_app_as_provenance_not_a_semantic_tag(self) -> None:
+        result = self.gateway.execute(self._call("list", kind="apps", limit=8))["result"]
+
+        self.assertEqual(result["kind"], "apps")
+        self.assertEqual(result["items"][0]["id"], "com.openai.codex")
+        self.assertEqual(result["items"][0]["eventCount"], 12)
 
     def test_unknown_operations_and_archived_sessions_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported"):
@@ -1019,7 +1102,10 @@ class ControlToolGatewayTests(unittest.TestCase):
             self._call("maintenance_preview", instruction="整理本次 Pi 会话的最终事实")
         )["result"]
         self.assertTrue(preview["reviewRequired"])
-        self.assertEqual(preview["run"]["runId"], "memory_book_draft")
+        self.assertTrue(preview["needsReview"])
+        self.assertEqual(preview["runId"], "memory_book_draft")
+        self.assertEqual(preview["counts"]["upsert_memory_book"], 1)
+        self.assertNotIn("run", preview)
         self.assertEqual(self.facade.memory_run_status, "draft")
 
         review = self.gateway.execute(
@@ -1027,7 +1113,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         )["result"]
         self.assertTrue(review["reviewRequired"])
         self.assertTrue(review["canApply"])
-        self.assertEqual(review["run"]["changes"][0]["title"], "Pi 控制中心")
+        self.assertEqual(review["diffCount"], 3)
+        self.assertNotIn("changes", review)
+        self.assertNotIn("run", review)
 
         prepared = self.gateway.execute(
             self._call("maintenance_apply", runId="memory_book_draft")
@@ -1061,6 +1149,26 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(self.facade.memory_run_status, "rolled_back")
         self.assertEqual(rolled_back["revertedRunId"], "memory_book_draft")
         self.assertFalse(rolled_back["undoAvailable"])
+
+    def test_memory_curation_prepare_returns_compact_no_change_receipt(self) -> None:
+        self.facade.memory_run_status = "empty"
+
+        result = self.gateway.execute(
+            self._call(
+                "curation_prepare",
+                scope="incremental",
+                policy="conservative",
+            )
+        )["result"]
+
+        self.assertEqual(result["runId"], "memory_book_draft")
+        self.assertEqual(result["counts"], {})
+        self.assertEqual(result["diffCount"], 0)
+        self.assertFalse(result["needsReview"])
+        self.assertFalse(result["reviewRequired"])
+        self.assertFalse(result["storedDraft"])
+        self.assertNotIn("run", result)
+        self.assertNotIn("changes", result)
 
     def test_memory_apply_fails_closed_when_draft_changes_after_preview(self) -> None:
         prepared = self.gateway.execute(
@@ -1715,6 +1823,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn('sessionMode === "coordinator"', extension)
         self.assertIn("/tool/approval-result", extension)
         self.assertIn('const reviewTitlePrefix = "RAG-IME-REVIEW:"', extension)
+        self.assertIn("const memoryParameterSchema", extension)
+        self.assertIn('"curation_prepare"', extension)
+        self.assertIn("parameterSchema: memoryParameterSchema", extension)
         self.assertIn("result.reviewRequired === true", extension)
         self.assertIn("resolvedReviewRunIds.has(runId)", extension)
 

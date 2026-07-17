@@ -11,6 +11,13 @@ from typing import Any
 
 from .db import apply_database_migrations
 from .deepseek_memory_organizer import MEMORY_BOOK_COMPILE_SCHEMA_VERSION
+from .input_event_assembly import reconstruct_input_fragment_run
+from .input_quality import (
+    FINALIZED_INPUT_SOURCE,
+    RIME_FRAGMENT_SOURCE,
+    assess_input_text,
+    source_context_enabled,
+)
 from .memory_ingest import normalize_text, upsert_memory_item
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms, truncate_text
 
@@ -54,7 +61,7 @@ _PATH_RE = re.compile(
     re.IGNORECASE,
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-_RIME_FRAGMENT_SOURCE = "squirrel_rime_commit_burst"
+_RIME_FRAGMENT_SOURCE = RIME_FRAGMENT_SOURCE
 _MODEL_GENERATED_EVENT_SOURCES = {
     "api_core_optimizer",
     "api_lexicon_optimizer",
@@ -70,6 +77,10 @@ _RUNTIME_PROBE_MARKERS = (
     "wait for llm/model",
     "wait for the next prediction",
 )
+_RUNTIME_PROBE_SIGNATURES = (
+    ("渐进工具披露验收", "tool_search", "tool_load"),
+    ("上一轮得到的插件数量是多少", "只回复数字", "不要调用工具"),
+)
 
 
 def build_memory_book_source_bundle(
@@ -79,23 +90,40 @@ def build_memory_book_source_bundle(
     since_days: int = 7,
     limit: int = 80,
     after_event_id: int | None = None,
+    newest_first: bool = False,
+    curation_scope: str = "incremental",
+    catalog_only: bool = False,
 ) -> dict[str, object]:
     state = memory_compile_state(conn, project=project)
-    cursor = int(state["lastCompiledEventId"]) if after_event_id is None else max(0, int(after_event_id))
+    applied_cursor = int(state["lastCompiledEventId"])
+    cursor = (
+        applied_cursor
+        if catalog_only or after_event_id is None
+        else max(0, int(after_event_id))
+    )
     cutoff_ms = now_ms() - max(1, int(since_days)) * 24 * 60 * 60 * 1000
-    rows = conn.execute(
-        """
-        SELECT e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
-               e.app, e.project, e.tags_json, e.context_group_id, e.context_group_level
-        FROM input_events AS e
-        WHERE e.id > ?
-          AND e.created_at_ms >= ?
-          AND (? = '' OR e.project = ? OR e.project = '')
-        ORDER BY e.id ASC
-        LIMIT ?
-        """,
-        (cursor, cutoff_ms, project, project, max(1, int(limit))),
-    ).fetchall()
+    event_order = "DESC" if newest_first else "ASC"
+    rows = (
+        []
+        if catalog_only
+        else conn.execute(
+            f"""
+            SELECT e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
+                   e.app, e.project, e.tags_json, e.context_group_id, e.context_group_level
+            FROM input_events e
+            LEFT JOIN memory_state s ON s.event_id = e.id
+            WHERE e.id > ?
+              AND e.created_at_ms >= ?
+              AND (? = '' OR e.project = ? OR e.project = '')
+              AND COALESCE(s.deleted, 0) = 0
+            ORDER BY e.id {event_order}
+            LIMIT ?
+            """,
+            (cursor, cutoff_ms, project, project, max(1, int(limit))),
+        ).fetchall()
+    )
+    if newest_first:
+        rows = list(reversed(rows))
     raw_events: list[dict[str, object]] = []
     redaction_stats = _empty_redaction_counts()
     for row in rows:
@@ -148,6 +176,7 @@ def build_memory_book_source_bundle(
     _merge_counts(redaction_stats, feedback_redactions)
     _merge_counts(redaction_stats, rime_feedback_redactions)
     existing_books = _existing_book_summaries(conn, project=project)
+    existing_atoms = _existing_memory_atoms(conn, project=project)
     existing_groups = _existing_semantic_groups(conn, project=project)
     existing_tags = _existing_semantic_tags(conn)
     existing_tag_edges = _existing_semantic_tag_edges(conn)
@@ -155,16 +184,27 @@ def build_memory_book_source_bundle(
     max_event_id = max(raw_event_ids, default=cursor)
     pending_count = int(
         conn.execute(
-            """
-            SELECT COUNT(*) FROM input_events AS e
-            WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
-            """,
+            """SELECT COUNT(*) FROM input_events e
+               LEFT JOIN memory_state s ON s.event_id = e.id
+               WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
+                 AND COALESCE(s.deleted, 0) = 0""",
             (cursor, project, project),
         ).fetchone()[0]
     )
     payload = {
         "schemaVersion": "rag-ime.memory-book-source-bundle.v1",
         "project": project,
+        "curationScope": (
+            "global" if compact_whitespace(curation_scope).lower() == "global" else "incremental"
+        ),
+        "catalogAudit": bool(catalog_only),
+        "evidenceOrder": (
+            "catalog_only"
+            if catalog_only
+            else "latest_retained"
+            if newest_first
+            else "cursor_forward"
+        ),
         "sinceDays": max(1, int(since_days)),
         "exportedAtMs": now_ms(),
         "redactionStats": redaction_stats,
@@ -174,6 +214,7 @@ def build_memory_book_source_bundle(
         "feedback": feedback,
         "rimeRankFeedback": rime_rank_feedback,
         "existingMemoryBooks": existing_books,
+        "existingMemoryAtoms": existing_atoms,
         "existingSemanticGroups": existing_groups,
         "existingSemanticTags": existing_tags,
         "existingTagEdges": existing_tag_edges,
@@ -214,6 +255,17 @@ def _reconstruct_memory_source_events(
 
     for event in raw_events:
         source = compact_whitespace(str(event.get("source") or ""))
+        source_tags = _strings(event.get("sourceMetadataTags"))
+        if source == "codex_history" and "role:user" not in source_tags:
+            excluded_counts["codex_history:non_user"] = (
+                excluded_counts.get("codex_history:non_user", 0) + 1
+            )
+            continue
+        if not source_context_enabled(source, tags=source_tags):
+            excluded_counts[f"{source}:source_not_enabled"] = (
+                excluded_counts.get(f"{source}:source_not_enabled", 0) + 1
+            )
+            continue
         if source in _MODEL_GENERATED_EVENT_SOURCES or source in _NON_MEMORY_EVENT_SOURCES:
             excluded_counts[source] = excluded_counts.get(source, 0) + 1
             continue
@@ -286,22 +338,10 @@ def collapse_rime_fragment_run(events: list[dict[str, object]]) -> dict[str, obj
         ],
         limit=50_000,
     )
-    committed_parts: list[str] = []
-    committed_chars = 0
-    reconstructed = ""
-    for item in events:
-        fragment = str(item.get("text") or "")
-        if fragment and committed_chars < 16_000:
-            remaining = 16_000 - committed_chars
-            committed_parts.append(fragment[:remaining])
-            committed_chars += min(len(fragment), remaining)
-        context = compact_whitespace(str(item.get("recentContext") or ""))
-        if len(context) > len(reconstructed):
-            reconstructed = context
-    committed = compact_whitespace("".join(committed_parts))
-    if len(committed) > len(reconstructed):
-        reconstructed = committed
-    reconstructed = reconstructed[:16_000]
+    reconstructed = reconstruct_input_fragment_run(
+        [str(item.get("text") or "") for item in events],
+        [str(item.get("recentContext") or "") for item in events],
+    )
     last = dict(events[-1])
     tags = _unique_strings(
         [tag for item in events for tag in _strings(item.get("sourceMetadataTags"))],
@@ -332,6 +372,7 @@ def _filter_reconstructed_memory_events(
     dropped_doctor = 0
     dropped_probe = 0
     dropped_fragment = 0
+    quality_reason_counts: dict[str, int] = {}
     for event in events:
         text = compact_whitespace(str(event.get("text") or ""))
         group_id = compact_whitespace(str(event.get("contextGroupId") or "")).lower()
@@ -339,13 +380,36 @@ def _filter_reconstructed_memory_events(
             dropped_doctor += 1
             continue
         lowered = text.lower()
-        if sum(marker in lowered for marker in _RUNTIME_PROBE_MARKERS) >= 2:
+        if sum(marker in lowered for marker in _RUNTIME_PROBE_MARKERS) >= 2 or any(
+            all(marker in lowered for marker in signature)
+            for signature in _RUNTIME_PROBE_SIGNATURES
+        ):
             dropped_probe += 1
             continue
-        if len(text) < 4 or not _evidence_tokens(text):
+        source = compact_whitespace(str(event.get("source") or ""))
+        source_ids = _positive_ints(event.get("sourceEventIds") or [event.get("eventId")])
+        reconstruction = event.get("reconstruction") if isinstance(event.get("reconstruction"), dict) else {}
+        reconstructed = bool(reconstruction)
+        quality = assess_input_text(
+            text,
+            source=_RIME_FRAGMENT_SOURCE if reconstructed else source,
+            source_count=len(source_ids),
+            finalized=(
+                False
+                if reconstructed
+                else source != FINALIZED_INPUT_SOURCE
+                or "finalized" in _strings(event.get("sourceMetadataTags"))
+                or "complete-input" in _strings(event.get("sourceMetadataTags"))
+            ),
+            reconstructed=reconstructed,
+            tags=_strings(event.get("sourceMetadataTags")),
+        )
+        if not quality.memory_eligible or not _evidence_tokens(text):
             dropped_fragment += 1
+            for reason in quality.reasons or ("no_evidence_tokens",):
+                quality_reason_counts[reason] = quality_reason_counts.get(reason, 0) + 1
             continue
-        filtered.append(dict(event))
+        filtered.append({**event, **quality.payload()})
 
     merged: list[dict[str, object]] = []
     duplicate_count = 0
@@ -381,6 +445,7 @@ def _filter_reconstructed_memory_events(
         "droppedDoctorEventCount": dropped_doctor,
         "droppedRuntimeProbeCount": dropped_probe,
         "droppedLowSignalEventCount": dropped_fragment,
+        "droppedQualityReasons": quality_reason_counts,
         "mergedDuplicateEventCount": duplicate_count,
     }
 
@@ -388,18 +453,41 @@ def _filter_reconstructed_memory_events(
 def memory_compile_state(conn: sqlite3.Connection, *, project: str) -> dict[str, object]:
     _ensure_compile_state_table(conn)
     row = conn.execute(
-        "SELECT last_compiled_event_id, last_run_ms, pending_event_count, last_bundle_hash "
+        "SELECT last_compiled_event_id, last_run_ms, pending_event_count, last_bundle_hash, "
+        "last_drafted_event_id, last_draft_ms, last_draft_bundle_hash, last_draft_run_id "
         "FROM memory_compile_state WHERE project = ?",
         (project,),
     ).fetchone()
     last_event_id = int(row["last_compiled_event_id"] or 0) if row is not None else 0
+    last_drafted_event_id = (
+        int(row["last_drafted_event_id"] or 0) if row is not None else 0
+    )
+    last_draft_run_id = str(row["last_draft_run_id"] or "") if row is not None else ""
+    last_draft_status = ""
+    if last_draft_run_id:
+        draft_row = conn.execute(
+            "SELECT status FROM memory_cleanup_runs WHERE run_id = ?",
+            (last_draft_run_id,),
+        ).fetchone()
+        if draft_row is not None:
+            last_draft_status = str(draft_row["status"] or "")
     pending = int(
         conn.execute(
-            """
-            SELECT COUNT(*) FROM input_events AS e
-            WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
-            """,
+            """SELECT COUNT(*) FROM input_events e
+               LEFT JOIN memory_state s ON s.event_id = e.id
+               WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
+                 AND COALESCE(s.deleted, 0) = 0""",
             (last_event_id, project, project),
+        ).fetchone()[0]
+    )
+    undrafted_cursor = max(last_event_id, last_drafted_event_id)
+    undrafted = int(
+        conn.execute(
+            """SELECT COUNT(*) FROM input_events e
+               LEFT JOIN memory_state s ON s.event_id = e.id
+               WHERE e.id > ? AND (? = '' OR e.project = ? OR e.project = '')
+                 AND COALESCE(s.deleted, 0) = 0""",
+            (undrafted_cursor, project, project),
         ).fetchone()[0]
     )
     return {
@@ -408,6 +496,16 @@ def memory_compile_state(conn: sqlite3.Connection, *, project: str) -> dict[str,
         "lastRunMs": int(row["last_run_ms"] or 0) if row is not None else 0,
         "pendingEventCount": pending,
         "lastBundleHash": str(row["last_bundle_hash"] or "") if row is not None else "",
+        "lastDraftedEventId": last_drafted_event_id,
+        "lastDraftMs": int(row["last_draft_ms"] or 0) if row is not None else 0,
+        "lastDraftBundleHash": (
+            str(row["last_draft_bundle_hash"] or "") if row is not None else ""
+        ),
+        "lastDraftRunId": last_draft_run_id,
+        "lastDraftStatus": last_draft_status,
+        "activeDraftPendingReview": last_draft_status == "draft",
+        "undraftedEventCount": undrafted,
+        "draftCoversPending": undrafted == 0,
     }
 
 
@@ -425,12 +523,21 @@ def memory_compile_due(
     state = memory_compile_state(conn, project=project)
     if manual:
         return True, "manual", state
-    if int(state["pendingEventCount"]) >= max(1, int(min_events)):
+    if bool(state.get("activeDraftPendingReview")):
+        # Keep one authoritative review batch. New input waits behind it instead
+        # of causing an hourly model call that supersedes unreviewed decisions.
+        return False, "draft_pending_review", state
+    undrafted = int(state["undraftedEventCount"])
+    if undrafted >= max(1, int(min_events)):
         return True, "pending_events", state
-    if int(state["pendingEventCount"]) > 0 and int(idle_ms) >= max(1, int(idle_threshold_ms)):
+    if undrafted > 0 and int(idle_ms) >= max(1, int(idle_threshold_ms)):
         return True, "idle", state
     current = now_ms() if current_ms is None else max(0, int(current_ms))
-    if int(state["pendingEventCount"]) > 0 and current - int(state["lastRunMs"]) >= max(1, int(daily_interval_ms)):
+    last_maintenance_ms = max(
+        int(state["lastRunMs"]),
+        int(state["lastDraftMs"]),
+    )
+    if undrafted > 0 and current - last_maintenance_ms >= max(1, int(daily_interval_ms)):
         return True, "daily", state
     return False, "not_due", state
 
@@ -831,7 +938,20 @@ def memory_book_plan_from_compile_output(
         if isinstance(payload, dict):
             payload["ownerKind"] = normalized_owner_kind
             payload["ownerId"] = normalized_owner_id
-    if not diffs and source_bundle:
+    curation_architecture = compact_whitespace(
+        str(compile_output.get("curationArchitecture") or "")
+    )
+    curation_outcome = compact_whitespace(
+        str(compile_output.get("curationOutcome") or "")
+    )
+    if curation_architecture.startswith("atom-first"):
+        # The plan is the authoritative write surface. A native lexicon
+        # candidate can be filtered out after model-independent validation, so
+        # the raw compiler arrays must not claim a review is still required.
+        curation_outcome = "changes" if diffs else "no_changes"
+    if not diffs and source_bundle and curation_outcome == "no_changes":
+        warnings.append("curation_review_found_no_changes")
+    elif not diffs and source_bundle:
         # Never turn raw history into semantic memory when the organizer did
         # not produce a governed result. The cursor stays pending so a later
         # DSV4 run can retry instead of indexing uncleaned ASR/user text.
@@ -849,6 +969,10 @@ def memory_book_plan_from_compile_output(
             "modelDiagnostics": dict(compile_output.get("modelDiagnostics") or {}),
             "modelBundleStats": dict(compile_output.get("modelBundleStats") or {}),
             "instruction": _sanitize_text(str(compile_output.get("instruction") or ""), max_chars=600)[0],
+            "curationArchitecture": curation_architecture,
+            "curationOutcome": curation_outcome,
+            "curationDiagnostics": dict(compile_output.get("curationDiagnostics") or {}),
+            "lexiconDiagnostics": dict(compile_output.get("lexiconDiagnostics") or {}),
             "tagGraphDiagnostics": {
                 "existingTags": len(_list_of_dicts((source_bundle or {}).get("existingSemanticTags"))),
                 "existingEdges": len(_list_of_dicts((source_bundle or {}).get("existingTagEdges"))),
@@ -917,8 +1041,14 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
     if compact_whitespace(str(plan.get("schemaVersion") or "")) != MEMORY_BOOK_RUN_SCHEMA_VERSION:
         errors.append(_issue(0, "", "schemaVersion", "unsupported_schema_version"))
     source_cursor = dict(metadata.get("sourceCursor") or {})
-    if not diffs and int(source_cursor.get("pendingEventCount") or 0) > 0:
+    no_change_review = (
+        compact_whitespace(str(metadata.get("curationOutcome") or "")) == "no_changes"
+        and compact_whitespace(str(metadata.get("curationArchitecture") or "")).startswith("atom-first")
+    )
+    if not diffs and int(source_cursor.get("pendingEventCount") or 0) > 0 and not no_change_review:
         errors.append(_issue(0, "", "diffs", "organizer_returned_no_governed_memory"))
+    elif not diffs and no_change_review:
+        warnings.append(_issue(0, "", "diffs", "curation_review_found_no_changes"))
     for index, diff in enumerate(diffs, start=1):
         op = compact_whitespace(str(diff.get("op") or ""))
         payload = diff.get("payload") if isinstance(diff.get("payload"), dict) else {}
@@ -1161,7 +1291,7 @@ def store_memory_book_plan(
     *,
     supersede_project_drafts: bool = False,
 ) -> dict[str, object]:
-    """Persist a validated compiler plan as a draft without changing user memory."""
+    """Persist a validated compiler plan without applying proposed memory changes."""
     validation = inspect_memory_book_plan(plan)
     if not validation.get("ok"):
         raise ValueError("memory book plan failed validation")
@@ -1172,6 +1302,14 @@ def store_memory_book_plan(
         if supersede_project_drafts:
             _supersede_project_memory_book_drafts(conn, plan=plan)
         _persist_memory_book_run(conn, plan)
+        if _list_of_dicts(plan.get("diffs")):
+            _record_draft_compile_state(conn, plan=plan)
+        else:
+            # A no-change Atom review is already complete: it mutates no user
+            # memory and therefore needs no approval, but its evidence cursor
+            # must advance or the scheduler would call the model forever.
+            _sync_run_status(conn, run_id)
+            _advance_compile_state(conn, plan=plan)
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1329,8 +1467,14 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
                 (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
             )
         resolved_status = _sync_run_status(conn, run_id)
+        _advance_compile_state(
+            conn,
+            plan={
+                "runId": run_id,
+                "metadata": dict(current.get("metadata") or {}),
+            },
+        )
         if rows:
-            _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
             _transition_owner_curation_sources(
                 conn,
                 run=current,
@@ -2661,10 +2805,12 @@ def _sync_run_status(conn: sqlite3.Connection, run_id: str) -> str:
     if not statuses:
         status = "empty"
     elif not effective_statuses:
-        # This helper runs only when applying or rolling back a run, not while
-        # individual review choices are being edited. Reaching it with every
-        # diff rejected therefore resolves the review as an empty run.
-        status = "empty"
+        run = conn.execute(
+            "SELECT run_kind FROM memory_cleanup_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        run_kind = "" if run is None else compact_whitespace(str(run["run_kind"] or ""))
+        status = "empty" if run_kind in {"daily_curation", "manual_curation"} else "dismissed"
     elif effective_statuses == {"applied"}:
         status = "applied"
     elif effective_statuses == {"rolled_back"}:
@@ -3157,6 +3303,52 @@ def _ensure_compile_state_table(conn: sqlite3.Connection) -> None:
     apply_database_migrations(conn)
 
 
+def _record_draft_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object]) -> None:
+    metadata = dict(plan.get("metadata") or {})
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    cursor = dict(metadata.get("sourceCursor") or {})
+    to_event_id = max(0, int(cursor.get("toEventId") or 0))
+    run_id = compact_whitespace(str(plan.get("runId") or ""))
+    if not project or to_event_id <= 0 or not run_id:
+        return
+    _ensure_compile_state_table(conn)
+    pending = int(
+        conn.execute(
+            """SELECT COUNT(*) FROM input_events e
+               LEFT JOIN memory_state s ON s.event_id = e.id
+               WHERE e.id > COALESCE(
+                   (SELECT last_compiled_event_id FROM memory_compile_state WHERE project = ?),
+                   0
+               )
+                 AND (? = '' OR e.project = ? OR e.project = '')
+                 AND COALESCE(s.deleted, 0) = 0""",
+            (project, project, project),
+        ).fetchone()[0]
+    )
+    timestamp = now_ms()
+    bundle_hash = compact_whitespace(str(metadata.get("bundleHash") or ""))
+    conn.execute(
+        """
+        INSERT INTO memory_compile_state(
+            project, last_compiled_event_id, last_run_ms, pending_event_count,
+            last_bundle_hash, last_drafted_event_id, last_draft_ms,
+            last_draft_bundle_hash, last_draft_run_id
+        )
+        VALUES (?, 0, 0, ?, '', ?, ?, ?, ?)
+        ON CONFLICT(project) DO UPDATE SET
+            pending_event_count = excluded.pending_event_count,
+            last_drafted_event_id = MAX(
+                memory_compile_state.last_drafted_event_id,
+                excluded.last_drafted_event_id
+            ),
+            last_draft_ms = excluded.last_draft_ms,
+            last_draft_bundle_hash = excluded.last_draft_bundle_hash,
+            last_draft_run_id = excluded.last_draft_run_id
+        """,
+        (project, pending, to_event_id, timestamp, bundle_hash, run_id),
+    )
+
+
 def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object]) -> None:
     metadata = dict(plan.get("metadata") or {})
     if compact_whitespace(str(metadata.get("runKind") or "legacy")) != "legacy":
@@ -3178,15 +3370,33 @@ def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object])
     )
     conn.execute(
         """
-        INSERT INTO memory_compile_state(project, last_compiled_event_id, last_run_ms, pending_event_count, last_bundle_hash)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO memory_compile_state(
+            project, last_compiled_event_id, last_run_ms, pending_event_count,
+            last_bundle_hash, last_drafted_event_id, last_draft_ms,
+            last_draft_bundle_hash, last_draft_run_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(project) DO UPDATE SET
             last_compiled_event_id = MAX(memory_compile_state.last_compiled_event_id, excluded.last_compiled_event_id),
             last_run_ms = excluded.last_run_ms,
             pending_event_count = excluded.pending_event_count,
-            last_bundle_hash = excluded.last_bundle_hash
+            last_bundle_hash = excluded.last_bundle_hash,
+            last_drafted_event_id = MAX(memory_compile_state.last_drafted_event_id, excluded.last_drafted_event_id),
+            last_draft_ms = MAX(memory_compile_state.last_draft_ms, excluded.last_draft_ms),
+            last_draft_bundle_hash = excluded.last_draft_bundle_hash,
+            last_draft_run_id = excluded.last_draft_run_id
         """,
-        (project, to_event_id, now_ms(), pending, compact_whitespace(str(metadata.get("bundleHash") or ""))),
+        (
+            project,
+            to_event_id,
+            now_ms(),
+            pending,
+            compact_whitespace(str(metadata.get("bundleHash") or "")),
+            to_event_id,
+            now_ms(),
+            compact_whitespace(str(metadata.get("bundleHash") or "")),
+            compact_whitespace(str(plan.get("runId") or "")),
+        ),
     )
 
 
@@ -3310,12 +3520,111 @@ def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[
             "tags": [_sanitize_text(tag, max_chars=48)[0] for tag in _json_list(row["tags_json"])],
             "sourceEventIds": _json_list(row["source_event_ids_json"]),
             "memoryAtomIds": _json_list(row["memory_atom_ids_json"]),
+            "semanticGroupIds": [
+                str(member[0])
+                for member in conn.execute(
+                    "SELECT group_id FROM memory_semantic_group_members "
+                    "WHERE member_type = 'book' AND member_id = ? "
+                    "ORDER BY weight DESC LIMIT 8",
+                    (str(row["book_id"] or ""),),
+                ).fetchall()
+            ],
             "status": str(row["status"] or "active"),
             "updatedAtMs": int(row["updated_at_ms"] or 0),
             "archivedAtMs": int(row["archived_at_ms"] or 0),
         }
         for row in rows
     ]
+
+
+def _existing_memory_atoms(conn: sqlite3.Connection, *, project: str) -> list[dict[str, object]]:
+    """Return the compact global Atom catalog used for semantic deduplication."""
+
+    rows = conn.execute(
+        """
+        SELECT id, kind, text, canonical_text, source_event_ids_json,
+               source_memory_ids_json, scope_app, scope_project, confidence,
+               quality_score, status, updated_at_ms
+        FROM memory_atoms
+        WHERE status IN ('active', 'approved', 'superseded')
+          AND (? = '' OR scope_project = ? OR scope_project = '' OR scope_project IS NULL)
+        ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+                 quality_score DESC, updated_at_ms DESC, id ASC
+        LIMIT 500
+        """,
+        (project, project),
+    ).fetchall()
+    result: list[dict[str, object]] = []
+    for row in rows:
+        atom_id = str(row["id"] or "")
+        aliases: list[str] = []
+        surface_hints: list[str] = []
+        query_expansions: list[str] = []
+        for alias_row in conn.execute(
+            """
+            SELECT alias, alias_type
+            FROM memory_aliases
+            WHERE memory_atom_id = ?
+            ORDER BY weight DESC, created_at_ms DESC
+            LIMIT 64
+            """,
+            (atom_id,),
+        ).fetchall():
+            value = _sanitize_text(str(alias_row["alias"] or ""), max_chars=80)[0]
+            if not value:
+                continue
+            alias_type = str(alias_row["alias_type"] or "alias")
+            if alias_type == "surface_hint":
+                surface_hints.append(value)
+            elif alias_type == "query_expansion":
+                query_expansions.append(value)
+            else:
+                aliases.append(value)
+        result.append(
+            {
+                "atomId": atom_id,
+                "kind": str(row["kind"] or "project_fact"),
+                "canonicalText": _sanitize_text(
+                    str(row["canonical_text"] or row["text"] or ""),
+                    max_chars=500,
+                )[0],
+                "sourceEventIds": _json_list(row["source_event_ids_json"]),
+                "sourceMemoryIds": _json_list(row["source_memory_ids_json"]),
+                "app": _sanitize_text(str(row["scope_app"] or ""), max_chars=120)[0],
+                "project": _sanitize_text(str(row["scope_project"] or ""), max_chars=120)[0],
+                "confidence": float(row["confidence"] or 0.0),
+                "qualityScore": float(row["quality_score"] or 0.0),
+                "status": str(row["status"] or "active"),
+                "tags": [
+                    _sanitize_text(str(tag_row[0] or ""), max_chars=48)[0]
+                    for tag_row in conn.execute(
+                        """
+                        SELECT mt.tag
+                        FROM memory_atom_tags mat
+                        JOIN memory_tags mt ON CAST(mt.id AS TEXT) = mat.tag_id
+                        WHERE mat.memory_atom_id = ? AND mt.status = 'active'
+                        ORDER BY mat.weight DESC, mt.quality_score DESC
+                        LIMIT 24
+                        """,
+                        (atom_id,),
+                    ).fetchall()
+                    if str(tag_row[0] or "")
+                ],
+                "semanticGroupIds": [
+                    str(member[0])
+                    for member in conn.execute(
+                        "SELECT group_id FROM memory_semantic_group_members "
+                        "WHERE member_type = 'atom' AND member_id = ? "
+                        "ORDER BY weight DESC LIMIT 8",
+                        (atom_id,),
+                    ).fetchall()
+                ],
+                "aliases": aliases,
+                "surfaceHints": surface_hints,
+                "queryExpansions": query_expansions,
+            }
+        )
+    return result
 
 
 def _match_existing_topic_book(
@@ -3522,7 +3831,12 @@ def _legal_source_event_ids(source_bundle: dict[str, object] | None) -> list[int
         for event_id in _positive_ints(event.get("sourceEventIds") or [event.get("eventId")]):
             if event_id not in result:
                 result.append(event_id)
-    for collection_name in ("existingMemoryBooks", "existingSemanticGroups", "existingSemanticTags"):
+    for collection_name in (
+        "existingMemoryBooks",
+        "existingMemoryAtoms",
+        "existingSemanticGroups",
+        "existingSemanticTags",
+    ):
         for item in _list_of_dicts(source_bundle.get(collection_name)):
             for event_id in _positive_ints(item.get("sourceEventIds")):
                 if event_id not in result:

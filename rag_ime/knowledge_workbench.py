@@ -41,6 +41,8 @@ class KnowledgeWorkbenchRequest:
     client_id: str = "native-control-center"
     max_chars: int = 0
     latency_budget_ms: int = 120_000
+    curation_scope: str = "incremental"
+    curation_policy: str = "conservative"
 
 
 @dataclass(frozen=True)
@@ -761,6 +763,8 @@ def _normalized_request(request: KnowledgeWorkbenchRequest) -> KnowledgeWorkbenc
         client_id=compact_whitespace(request.client_id) or "native-control-center",
         max_chars=_output_char_limit(request.max_chars),
         latency_budget_ms=max(1000, min(300_000, int(request.latency_budget_ms))),
+        curation_scope=compact_whitespace(request.curation_scope).lower() or "incremental",
+        curation_policy=compact_whitespace(request.curation_policy).lower() or "conservative",
     )
 
 
@@ -769,6 +773,10 @@ def _validate_request(request: KnowledgeWorkbenchRequest) -> None:
         raise ValueError(f"unsupported knowledge mode: {request.mode}")
     if request.mode != "organize_database" and not request.question:
         raise ValueError("question is required")
+    if request.curation_scope not in {"incremental", "global"}:
+        raise ValueError(f"unsupported memory curation scope: {request.curation_scope}")
+    if request.curation_policy not in {"conservative"}:
+        raise ValueError(f"unsupported memory curation policy: {request.curation_policy}")
 
 
 def _session_payload(session: KnowledgeWorkbenchSession) -> dict[str, object]:

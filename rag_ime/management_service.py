@@ -38,6 +38,7 @@ from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_boo
 from .memory_graph_read import read_memory_entity, read_memory_graph
 from .memory_ingest import looks_sensitive, normalize_text
 from .memory_ownership import normalize_memory_owner, sql_memory_owner_predicate
+from .input_quality import FINALIZED_INPUT_SOURCE, RIME_FRAGMENT_SOURCE, assess_input_text
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
 from .management_work_contract import (
@@ -603,6 +604,7 @@ class ManagementService:
 
     def memory_page(self, kind: str, request: PageRequest) -> dict[str, object]:
         handlers = {
+            "apps": self._memory_apps,
             "books": self._memory_books,
             "atoms": self._memory_atoms,
             "tags": self._memory_tags,
@@ -2254,8 +2256,16 @@ class ManagementService:
                 if "input_events" in tables:
                     pending = int(
                         conn.execute(
-                            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (project = ? OR project = '')",
-                            (last_event_id, self.project),
+                            """
+                            SELECT COUNT(*)
+                            FROM input_events e
+                            LEFT JOIN memory_state ms ON ms.event_id = e.id
+                            WHERE e.id > ?
+                              AND (e.project = ? OR e.project = '')
+                              AND COALESCE(ms.deleted, 0) = 0
+                              AND e.source != ?
+                            """,
+                            (last_event_id, self.project, RIME_FRAGMENT_SOURCE),
                         ).fetchone()[0]
                     )
                 last_run_ms = int(row["last_run_ms"] or 0)
@@ -2276,18 +2286,65 @@ class ManagementService:
         return _component("memoryCompiler", ok, detail, metadata)
 
     def _summary_counts(self) -> dict[str, object]:
-        names = {
-            "eventCount": "input_events",
-            "memoryItemCount": "memory_items",
-            "memoryBookCount": "memory_books",
-            "memoryAtomCount": "memory_atoms",
-            "retrievalDocCount": "memory_retrieval_docs",
-        }
         result: dict[str, object] = {}
         with self._connect() as conn:
             tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
-            for key, table in names.items():
-                result[key] = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) if table in tables else 0
+            result["eventCount"] = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM input_events e
+                    LEFT JOIN memory_state ms ON ms.event_id = e.id
+                    WHERE COALESCE(ms.deleted, 0) = 0
+                    """
+                ).fetchone()[0]
+            ) if "input_events" in tables else 0
+            result["memoryItemCount"] = int(
+                conn.execute("SELECT COUNT(*) FROM memory_items WHERE status IN ('active', 'approved')").fetchone()[0]
+            ) if "memory_items" in tables else 0
+            result["memoryBookCount"] = int(
+                conn.execute("SELECT COUNT(*) FROM memory_books WHERE status IN ('active', 'approved')").fetchone()[0]
+            ) if "memory_books" in tables else 0
+            result["memoryAtomCount"] = int(
+                conn.execute("SELECT COUNT(*) FROM memory_atoms WHERE status IN ('active', 'approved')").fetchone()[0]
+            ) if "memory_atoms" in tables else 0
+            result["memoryAtomTotalCount"] = int(
+                conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0]
+            ) if "memory_atoms" in tables else 0
+            result["memoryAtomArchivedCount"] = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM memory_atoms
+                    WHERE status NOT IN ('active', 'approved')
+                      AND kind != 'source_event_archive'
+                    """
+                ).fetchone()[0]
+            ) if "memory_atoms" in tables else 0
+            result["memoryAtomSourceArchiveCount"] = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_atoms WHERE kind = 'source_event_archive'"
+                ).fetchone()[0]
+            ) if "memory_atoms" in tables else 0
+            result["memoryTagCount"] = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_tags WHERE status = 'active' AND source IN ('dsv4', 'user')"
+                ).fetchone()[0]
+            ) if "memory_tags" in tables else 0
+            result["retrievalDocCount"] = int(
+                conn.execute("SELECT COUNT(*) FROM memory_retrieval_docs WHERE status = 'active'").fetchone()[0]
+            ) if "memory_retrieval_docs" in tables else 0
+            result["blockedFragmentCount"] = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM input_events e
+                    JOIN memory_state ms ON ms.event_id = e.id
+                    WHERE e.source = ? AND ms.deleted = 1
+                    """,
+                    (RIME_FRAGMENT_SOURCE,),
+                ).fetchone()[0]
+            ) if {"input_events", "memory_state"}.issubset(tables) else 0
             if "memory_compile_state" in tables:
                 result["pendingCompileEvents"] = int(conn.execute("SELECT COALESCE(SUM(pending_event_count), 0) FROM memory_compile_state").fetchone()[0])
             else:
@@ -2360,7 +2417,131 @@ class ManagementService:
                 ]
             else:
                 result["owners"] = []
+        apps, _ = self._memory_apps(PageRequest(limit=100))
+        result["appCount"] = len(apps)
+        result["completeInputCount"] = sum(int(item.get("eventCount") or 0) for item in apps)
         return result
+
+    def _memory_apps(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
+        """Project complete input and durable memory through the foreground App boundary."""
+
+        if request.status and request.status != "active":
+            return [], ""
+        with self._connect() as conn:
+            event_rows = conn.execute(
+                """
+                SELECT e.id, e.created_at_ms, e.source, e.committed_text, e.app,
+                       e.tags_json, e.context_group_id
+                FROM input_events e
+                LEFT JOIN memory_state ms ON ms.event_id = e.id
+                WHERE COALESCE(ms.deleted, 0) = 0
+                ORDER BY e.created_at_ms DESC, e.id DESC
+                """
+            ).fetchall()
+            atom_rows = conn.execute(
+                """
+                SELECT id, scope_app, source_event_ids_json
+                FROM memory_atoms
+                WHERE status IN ('active', 'approved') AND privacy_level != 'sensitive'
+                """
+            ).fetchall()
+            book_rows = conn.execute(
+                """
+                SELECT book_id, app, source_event_ids_json
+                FROM memory_books
+                WHERE status IN ('active', 'approved')
+                """
+            ).fetchall()
+
+        stats: dict[str, dict[str, object]] = {}
+        event_apps: dict[int, str] = {}
+        for row in event_rows:
+            app = _normalize_memory_app(row["app"])
+            if not app or _memory_app_is_internal(app):
+                continue
+            tags = [str(value) for value in _json_list(row["tags_json"])]
+            if str(row["source"] or "") == "codex_history" and "role:user" not in tags:
+                continue
+            quality = assess_input_text(
+                str(row["committed_text"] or ""),
+                source=str(row["source"] or ""),
+                tags=tags,
+            )
+            if not quality.injectable:
+                continue
+            event_id = int(row["id"])
+            event_apps[event_id] = app
+            item = stats.setdefault(
+                app,
+                {
+                    "eventCount": 0,
+                    "finalizedSegmentCount": 0,
+                    "latestAtMs": 0,
+                    "contextGroupIds": set(),
+                    "atomIds": set(),
+                    "bookIds": set(),
+                },
+            )
+            item["eventCount"] = int(item["eventCount"]) + 1
+            if str(row["source"] or "").strip().lower() == FINALIZED_INPUT_SOURCE:
+                item["finalizedSegmentCount"] = int(item["finalizedSegmentCount"]) + 1
+            item["latestAtMs"] = max(int(item["latestAtMs"]), int(row["created_at_ms"] or 0))
+            context_group_id = compact_whitespace(str(row["context_group_id"] or ""))
+            if context_group_id:
+                item["contextGroupIds"].add(context_group_id)  # type: ignore[union-attr]
+
+        for row in atom_rows:
+            linked_apps = _memory_row_apps(
+                explicit_app=row["scope_app"],
+                source_event_ids=_json_list(row["source_event_ids_json"]),
+                event_apps=event_apps,
+            )
+            for app in linked_apps:
+                if app in stats:
+                    stats[app]["atomIds"].add(str(row["id"]))  # type: ignore[union-attr]
+        for row in book_rows:
+            linked_apps = _memory_row_apps(
+                explicit_app=row["app"],
+                source_event_ids=_json_list(row["source_event_ids_json"]),
+                event_apps=event_apps,
+            )
+            for app in linked_apps:
+                if app in stats:
+                    stats[app]["bookIds"].add(str(row["book_id"]))  # type: ignore[union-attr]
+
+        items: list[dict[str, object]] = []
+        query = request.query.casefold()
+        for app, item in stats.items():
+            title = _memory_app_title(app)
+            if query and query not in app.casefold() and query not in title.casefold():
+                continue
+            event_count = int(item["eventCount"])
+            atom_count = len(item["atomIds"])  # type: ignore[arg-type]
+            book_count = len(item["bookIds"])  # type: ignore[arg-type]
+            items.append(
+                {
+                    "id": app,
+                    "app": app,
+                    "bundleId": app,
+                    "title": title,
+                    "detail": f"{event_count} 段完整输入 · {atom_count} 个记忆原子 · {book_count} 本主题书",
+                    "source": "input_app",
+                    "status": "active",
+                    "type": "app",
+                    "eventCount": event_count,
+                    "finalizedSegmentCount": int(item["finalizedSegmentCount"]),
+                    "contextGroupCount": len(item["contextGroupIds"]),  # type: ignore[arg-type]
+                    "atomCount": atom_count,
+                    "bookCount": book_count,
+                    "latestAtMs": int(item["latestAtMs"]),
+                    "updatedAtMs": int(item["latestAtMs"]),
+                }
+            )
+        items.sort(key=lambda item: (-int(item["latestAtMs"]), str(item["title"])))
+        cursor = _cursor_int(request.cursor)
+        page = items[cursor: cursor + request.limit]
+        next_cursor = str(cursor + request.limit) if cursor + request.limit < len(items) else ""
+        return page, next_cursor
 
     def _memory_books(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
         limit = request.limit
@@ -2455,12 +2636,18 @@ class ManagementService:
                 WHERE privacy_level != 'sensitive'
                   AND (? = 0 OR rowid < ?)
                   AND (? = '' OR text LIKE ? OR canonical_text LIKE ? OR kind LIKE ? OR scope_project LIKE ? OR scope_app LIKE ?)
-                  AND (? = '' OR status = ?)
+                  AND (
+                    ? = ''
+                    OR (? = 'source_archive' AND kind = 'source_event_archive')
+                    OR (? = 'hidden' AND status = 'hidden' AND kind != 'source_event_archive')
+                    OR (? NOT IN ('source_archive', 'hidden') AND status = ?)
+                  )
                   AND {owner_clause}
                 ORDER BY rowid DESC LIMIT ?
                 """,
                 (
                     cursor, cursor, request.query, like, like, like, like, like,
+                    request.status, request.status, request.status,
                     request.status, request.status, *owner_params, limit + 1,
                 ),
             ).fetchall()
@@ -2489,6 +2676,8 @@ class ManagementService:
             item["textPreview"] = text
             item["sourceEventCount"] = len(_json_list(item.pop("source_event_ids_json", "[]")))
             item["tags"] = tags_by_atom.get(str(item["id"]), [])
+            if str(item.get("type") or "") == "source_event_archive":
+                item["status"] = "source_archive"
             items.append(item)
         next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
         return items, next_cursor
@@ -3676,6 +3865,65 @@ def _runtime_action_preview_summary(action: str) -> dict[str, object]:
 
 def _constant_time_text_equal(value: object, expected: str) -> bool:
     return hmac.compare_digest(str(value or "").strip(), expected)
+
+
+def _normalize_memory_app(value: object) -> str:
+    app = compact_whitespace(str(value or ""))
+    if app.casefold() == "codex":
+        return "com.openai.codex"
+    return app
+
+
+def _memory_app_is_internal(app: str) -> bool:
+    return app.casefold() in {
+        "cli",
+        "manual",
+        "ragimecontrol",
+        "ragimemac",
+        "squirrel",
+        "unknown-app",
+        "com.rag-ime.control",
+        "com.rag-ime.control.agent",
+        "com.rag-ime.control.demo",
+        "demo.textedit",
+    }
+
+
+def _memory_app_title(app: str) -> str:
+    known = {
+        "com.apple.TextEdit": "文本编辑",
+        "com.apple.Safari": "Safari",
+        "com.google.Chrome": "Chrome",
+        "com.microsoft.VSCode": "Visual Studio Code",
+        "com.microsoft.edgemac": "Microsoft Edge",
+        "com.mitchellh.ghostty": "Ghostty",
+        "com.openai.codex": "Codex",
+        "com.tencent.xinWeChat": "微信",
+    }
+    if app in known:
+        return known[app]
+    label = app.rsplit(".", 1)[-1].strip()
+    return label or app
+
+
+def _memory_row_apps(
+    *,
+    explicit_app: object,
+    source_event_ids: list[object],
+    event_apps: Mapping[int, str],
+) -> set[str]:
+    apps: set[str] = set()
+    app = _normalize_memory_app(explicit_app)
+    if app and not _memory_app_is_internal(app):
+        apps.add(app)
+    for value in source_event_ids:
+        try:
+            event_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if event_app := event_apps.get(event_id):
+            apps.add(event_app)
+    return apps
 
 
 def page_request(payload: Mapping[str, object]) -> PageRequest:

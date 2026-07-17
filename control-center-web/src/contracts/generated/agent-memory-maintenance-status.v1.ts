@@ -11,7 +11,8 @@ export interface AgentMemoryMaintenanceStatusV1 {
   autoApply: false;
   scheduledDraftOnly: true;
   due: boolean;
-  dueReason: 'pending_events' | 'idle' | 'daily' | 'owner_daily' | 'not_due';
+  dueReason:
+    'pending_events' | 'idle' | 'daily' | 'owner_daily' | 'draft_pending_review' | 'not_due';
   idleMs: number;
   compileState: {
     project: string;
@@ -40,7 +41,7 @@ export interface AgentMemoryMaintenanceStatusV1 {
   runs: {
     runId: string;
     createdAtMs: number;
-    status: 'draft' | 'applied' | 'partial' | 'rolled_back' | 'superseded' | 'empty';
+    status: 'draft' | 'applied' | 'partial' | 'rolled_back' | 'superseded' | 'dismissed' | 'empty';
     summary: string;
     diffCount: number;
     bundleHash: string;

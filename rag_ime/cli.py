@@ -53,6 +53,10 @@ from .memory_book_compiler import (
     rollback_memory_book_run,
     store_memory_book_plan,
 )
+from .memory_curation import (
+    MEMORY_CURATION_ARCHITECTURE,
+    curation_decisions_to_compile_output,
+)
 from .memory_cleanup import cleanup_plan_from_payload, cleanup_plan_to_payload, inspect_cleanup_plan, load_cleanup_run_from_file
 from .memory_compiler import (
     build_memory_compile_bundle,
@@ -407,10 +411,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     memory_book_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
     memory_book_preview.add_argument("--since-days", type=int, default=7)
-    memory_book_preview.add_argument("--recent-limit", type=int, default=80)
+    memory_book_preview.add_argument("--recent-limit", type=int, default=48)
     memory_book_preview.add_argument("--provider", choices=("deepseek",), default="deepseek")
     memory_book_preview.add_argument("--model", default="")
     memory_book_preview.add_argument("--model-env-path", default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "") or os.environ.get("RAG_IME_MODEL_ENV", ""))
+    memory_book_preview.add_argument(
+        "--scope",
+        choices=("incremental", "global"),
+        default="incremental",
+        help="Incremental uses the applied cursor; global rechecks all retained source evidence.",
+    )
+    memory_book_preview.add_argument(
+        "--policy",
+        choices=("conservative",),
+        default="conservative",
+        help="Atom decision policy. Conservative is the only production policy.",
+    )
     memory_book_preview.add_argument("--output", default="")
     memory_book_preview.add_argument(
         "--save-draft",
@@ -620,6 +636,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--curated",
         action="store_true",
         help="Treat the import as pre-reviewed retrieval material. Default imports stay raw until DSV4 organizes them.",
+    )
+    import_codex.add_argument(
+        "--memory-context-opt-in",
+        action="store_true",
+        help="Explicitly allow imported Codex history to enter retrieval and Agent context.",
     )
 
     prune_codex = subparsers.add_parser(
@@ -1716,7 +1737,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     conn,
                     project=args.project,
                     since_days=max(1, int(args.since_days)),
-                    limit=max(1, int(args.recent_limit)),
+                    limit=(
+                        500
+                        if args.scope == "global"
+                        else max(1, int(args.recent_limit))
+                    ),
+                    after_event_id=0 if args.scope == "global" else None,
+                    newest_first=args.scope == "global",
+                    curation_scope=args.scope,
+                    catalog_only=args.scope == "global",
                 )
                 existing_draft = (
                     find_memory_book_draft_for_bundle(
@@ -1738,8 +1767,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config = load_deepseek_config(args.model_env_path or None)
                 if args.model:
                     config = replace(config, model=args.model)
+                if args.scope == "global":
+                    config = replace(
+                        config,
+                        memory_book_max_tokens=max(
+                            4096,
+                            int(config.memory_book_max_tokens),
+                        ),
+                    )
                 organizer = DeepSeekMemoryOrganizer(config)
-                compile_output = organizer.compile_memory_book(bundle=bundle, project=args.project)
+                decisions = organizer.compile_memory_curation(
+                    bundle=bundle,
+                    project=args.project,
+                    policy=args.policy,
+                )
+                compile_output = curation_decisions_to_compile_output(
+                    decisions,
+                    source_bundle=bundle,
+                    project=args.project,
+                )
                 provider_name = organizer.provider_name
                 model_name = config.model
                 plan = memory_book_plan_from_compile_output(
@@ -1763,6 +1809,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.output:
             Path(args.output).parent.mkdir(parents=True, exist_ok=True)
             Path(args.output).write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        stored_draft = bool(
+            stored_run
+            and str(stored_run.get("status") or "") == "draft"
+            and (
+                int(stored_run.get("diffCount") or 0) > 0
+                or bool(stored_run.get("diffs"))
+            )
+        )
         print(
             json.dumps(
                 {
@@ -1770,7 +1824,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "ok": bool(validation.get("ok")),
                     "dryRun": True,
                     "memoryApplied": False,
-                    "storedDraft": stored_run is not None,
+                    "storedDraft": stored_draft,
+                    "reviewRequired": stored_draft,
                     "reusedDraft": reused_draft,
                     "project": args.project,
                     "provider": provider_name,
@@ -1780,6 +1835,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "recentLimit": max(1, int(args.recent_limit)),
                         "eventCount": len(bundle.get("recentEvents") or []),
                         "bundleHash": str(bundle.get("bundleHash") or ""),
+                        "scope": args.scope,
+                        "architecture": MEMORY_CURATION_ARCHITECTURE,
+                        "lexicon": dict(compile_output.get("lexiconDiagnostics") or {})
+                        if existing_draft is None
+                        else dict(plan.get("metadata", {}).get("lexiconDiagnostics") or {}),
                     },
                     "validation": validation,
                     "run": plan,
@@ -2416,6 +2476,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             record,
                             project=args.project,
                             curated=bool(args.curated),
+                            memory_context_opt_in=bool(args.memory_context_opt_in),
                         )
                     )
                 )
@@ -2427,6 +2488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "project": args.project,
                     "dryRun": args.dry_run,
                     "retrievalMode": "curated" if args.curated else "raw_pending_dsv4",
+                    "memoryContextOptIn": bool(args.memory_context_opt_in),
                     "roles": "any" if role_filter is None else list(role_filter),
                     "records": len(records),
                     "imported": 0 if args.dry_run else len(event_ids),

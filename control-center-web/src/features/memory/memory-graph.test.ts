@@ -87,6 +87,8 @@ describe('memory graph layout', () => {
       weight: 0.9,
       evidenceCount: 6,
     }));
+    expect(forward.height).toBe(360);
+    expect(new Set(forward.nodes.map((node) => `${node.x}:${node.y}`)).size).toBe(2);
   });
 
   it('builds a collision-free Group and Tag graph at the maximum visible node count', () => {

@@ -13,6 +13,7 @@ from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.agent_hook import build_first_run_injection
 from rag_ime.cli import main, run_acceptance, seed_demo_memories
 from rag_ime.core_client import default_fixture_memories
+from rag_ime.input_quality import MEMORY_CONTEXT_OPT_IN_TAG
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent, MemoryAction
 from rag_ime.text_utils import now_ms
@@ -1428,6 +1429,101 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         blob = "\n".join(item.surface_text for item in suggestions)
         self.assertNotIn("apply_patch", blob)
         self.assertNotIn("*** Begin Patch", blob)
+
+    def test_codex_history_never_enters_recent_context_or_legacy_retrieval(self) -> None:
+        self.core.reset()
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms() - 1,
+                source="codex_history",
+                committed_text="旧 Codex 会话里的火星索引污染。",
+                privacy_disposition="allowed",
+                project="wisdom-weasel-rag-ime",
+                tags=("codex-history", "role:user", "curated"),
+            )
+        )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms(),
+                source="manual_commit",
+                committed_text="最近输入法封口内容应该进入上下文。",
+                privacy_disposition="allowed",
+                project="wisdom-weasel-rag-ime",
+                tags=("curated",),
+            )
+        )
+
+        recent = self.core.recent_input_context(
+            project="wisdom-weasel-rag-ime",
+            limit=5,
+        )
+        memories = self.core.retrieve_memories(
+            current_input="火星索引污染",
+            project="wisdom-weasel-rag-ime",
+            top_k=5,
+        )
+
+        self.assertIn("最近输入法封口内容", recent)
+        self.assertNotIn("火星索引污染", recent)
+        self.assertFalse(any("火星索引污染" in memory.text for memory in memories))
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            indexed = conn.execute(
+                "SELECT COUNT(*) FROM memory_fts f JOIN input_events e ON e.id = f.rowid WHERE e.source = 'codex_history'"
+            ).fetchone()[0]
+            active = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM memory_items mi
+                JOIN input_events e ON e.id = mi.source_event_id
+                WHERE e.source = 'codex_history' AND mi.status IN ('active', 'approved')
+                """
+            ).fetchone()[0]
+            phrase_signal = conn.execute(
+                "SELECT COUNT(*) FROM phrase_stats WHERE committed_text LIKE '%火星索引污染%'"
+            ).fetchone()[0]
+        self.assertEqual(indexed, 0)
+        self.assertEqual(active, 0)
+        self.assertEqual(phrase_signal, 0)
+
+    def test_codex_history_explicit_context_opt_in_enables_retrieval(self) -> None:
+        self.core.reset()
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms(),
+                source="codex_history",
+                committed_text="显式授权的月球索引可以进入个人记忆。",
+                privacy_disposition="allowed",
+                project="wisdom-weasel-rag-ime",
+                tags=("codex-history", "role:user", "curated", MEMORY_CONTEXT_OPT_IN_TAG),
+            )
+        )
+
+        recent = self.core.recent_input_context(project="wisdom-weasel-rag-ime", limit=5)
+        memories = self.core.retrieve_memories(
+            current_input="月球索引个人记忆",
+            project="wisdom-weasel-rag-ime",
+            top_k=5,
+        )
+
+        self.assertIn("月球索引", recent)
+        self.assertTrue(any("月球索引" in memory.text for memory in memories))
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            indexed = conn.execute(
+                "SELECT COUNT(*) FROM memory_fts f JOIN input_events e ON e.id = f.rowid WHERE e.source = 'codex_history'"
+            ).fetchone()[0]
+            active = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM memory_items mi
+                JOIN input_events e ON e.id = mi.source_event_id
+                WHERE e.source = 'codex_history' AND mi.status IN ('active', 'approved')
+                """
+            ).fetchone()[0]
+        self.assertEqual(indexed, 1)
+        self.assertEqual(active, 1)
 
     def test_runtime_memory_summary_rows_are_filtered_from_retrieval(self) -> None:
         self.core.reset()

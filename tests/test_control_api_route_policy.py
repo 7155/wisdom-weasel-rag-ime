@@ -436,6 +436,22 @@ class ControlRoutePolicyTests(unittest.TestCase):
         control_events = entries[ControlPathId.CONTROL_EVENTS.value]
         self.assertEqual(control_events["target"]["8766"], "/api/agent/events")
 
+        observation_snapshot = entries[ControlPathId.OBSERVABILITY_SNAPSHOT.value]
+        self.assertEqual(
+            observation_snapshot["target"]["8766"],
+            "/api/observability/snapshot",
+        )
+        self.assertEqual(
+            observation_snapshot["target"]["8768"],
+            "/control/v1/observability/snapshot",
+        )
+        self.assertTrue(observation_snapshot["remoteSafe"])
+
+        observation_events = entries[ControlPathId.OBSERVABILITY_EVENTS.value]
+        self.assertTrue(observation_events["subscription"])
+        self.assertIn("lastEventId", observation_events["query"])
+        self.assertIn("sessionId", observation_events["query"])
+
         templates = entries[ControlPathId.AGENT_SUBAGENTS_TEMPLATES.value]
         self.assertEqual(
             templates["target"]["8766"],

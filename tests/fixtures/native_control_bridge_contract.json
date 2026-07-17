@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 168,
+  "routeCount": 170,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -12,6 +12,8 @@
     "input.lexicon.review",
     "input.lexicon.apply",
     "input.lexicon.rollback",
+    "observability.snapshot",
+    "observability.events",
     "agent.runtime.get",
     "agent.runtime.ensure",
     "agent.providers.get",

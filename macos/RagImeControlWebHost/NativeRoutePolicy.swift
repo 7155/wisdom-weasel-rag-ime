@@ -95,6 +95,8 @@ final class NativeRoutePolicy {
             "input.lexicon.review": route("GET", "/api/rime-lexicon/review", "/control/v1/input/lexicon/review", query: ["limit", "project"]),
             "input.lexicon.apply": route("POST", "/api/rime-lexicon/apply", "/control/v1/input/lexicon/apply", bodyKeys: ["reviewToken", "selectedKeys", "confirmText", "project", "limit"], requiredBodyKeys: ["reviewToken", "selectedKeys", "confirmText"]),
             "input.lexicon.rollback": route("POST", "/api/rime-lexicon/rollback", "/control/v1/input/lexicon/rollback", bodyKeys: ["rollbackId"], requiredBodyKeys: ["rollbackId"]),
+            "observability.snapshot": route("GET", "/api/observability/snapshot", "/control/v1/observability/snapshot", query: ["limit", "beforeSequence", "sessionId", "roomId", "traceId", "category", "status"], remoteSafe: true),
+            "observability.events": route("GET", "/api/observability/events", "/control/v1/observability/events", query: ["sessionId", "roomId", "traceId", "category", "status"], remoteSafe: true, subscription: true),
             "agent.runtime.get": route("GET", "/api/agent/runtime", "/control/v1/agent/runtime", remoteSafe: true),
             "agent.runtime.ensure": route("POST", "/api/agent/runtime/ensure", "/control/v1/agent/runtime/ensure", bodyKeys: ["sessionId"], requiredBodyKeys: ["sessionId"]),
             "agent.providers.get": route("GET", "/api/agent/providers", "/control/v1/agent/providers"),

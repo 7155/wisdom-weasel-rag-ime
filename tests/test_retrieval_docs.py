@@ -104,6 +104,75 @@ class RetrievalDocsTests(unittest.TestCase):
         self.assertIn("Daily Book", row["query_expansions_text"])
         self.assertEqual(row["time_key"], "daily:2026-07-06")
 
+    def test_retrieval_docs_exclude_raw_app_archives_and_superseded_baselines(self) -> None:
+        with self.connect() as conn:
+            timestamp = now_ms()
+            conn.executemany(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, summary, normalized_text,
+                    project, status, confidence, quality_score, created_at_ms,
+                    updated_at_ms, metadata_json, archived_at_ms,
+                    last_active_at_ms, archive_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, 'wisdom-weasel-rag-ime', 'archived',
+                          1.0, 1.0, ?, ?, '{}', ?, ?, ?)
+                """,
+                (
+                    (
+                        "book:app-history",
+                        "app_archive",
+                        "app-history",
+                        "Codex 完整输入归档",
+                        "仅用于追溯",
+                        "codex 完整输入归档",
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        "complete_input_history",
+                    ),
+                    (
+                        "book:old-baseline",
+                        "topic",
+                        "old-baseline",
+                        "旧自动主题",
+                        "已被人工基线替代",
+                        "旧自动主题",
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        "superseded_by_curated_baseline",
+                    ),
+                    (
+                        "book:user-archive",
+                        "topic",
+                        "user-archive",
+                        "用户归档主题",
+                        "显式历史检索时仍可召回",
+                        "用户归档主题",
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        "user-requested-archive",
+                    ),
+                ),
+            )
+            report = rebuild_retrieval_docs(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+            indexed = {
+                str(row["source_id"])
+                for row in conn.execute(
+                    "SELECT source_id FROM memory_retrieval_docs WHERE doc_type = 'book'"
+                ).fetchall()
+            }
+
+        self.assertEqual(report["counts"]["book"], 1)
+        self.assertEqual(indexed, {"book:user-archive"})
+
     def test_retrieval_docs_include_surface_hints_and_query_expansions(self) -> None:
         event_id = self._record_seed_event()
         plan = memory_book_plan_from_compile_output(

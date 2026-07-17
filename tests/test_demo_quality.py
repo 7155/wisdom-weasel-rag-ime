@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.codex_history import load_codex_history_records
+from rag_ime.input_quality import MEMORY_CONTEXT_OPT_IN_TAG
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import ModelPrediction
 from rag_ime.rime_sidecar import (
@@ -146,7 +147,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 project=PROJECT,
                 app="codex",
                 source="codex_history",
-                tags=tuple(dict.fromkeys((*tags, "curated"))),
+                tags=tuple(dict.fromkeys((*tags, "curated", MEMORY_CONTEXT_OPT_IN_TAG))),
                 privacy_disposition="allowed",
             )
 
@@ -167,7 +168,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             project=PROJECT,
             app="codex",
             source="codex_history",
-            tags=("frequency", "quality", "curated"),
+            tags=("frequency", "quality", "curated", MEMORY_CONTEXT_OPT_IN_TAG),
             privacy_disposition="allowed",
         )
         suggestion = self.adapter.suggest(SuggestionRequest(current_input="Codex 用户输入 质量测试", top_k=1))[0]

@@ -51,6 +51,122 @@ class ManagementPaginationTests(unittest.TestCase):
         self.assertNotIn("recentContext", first["items"][0])
         self.assertTrue(first["items"][0]["textHash"].startswith("sha256:"))
 
+    def test_memory_apps_only_count_complete_inputs_and_keep_app_provenance(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_001_000,
+                source="squirrel_input_segment",
+                committed_text="把当前输入缓冲区按回车封口后再写入长期记忆。",
+                privacy_disposition="allowed",
+                app="com.openai.codex",
+                project="wisdom-weasel-rag-ime",
+                tags=("input-segment", "finalized", "complete-input"),
+                context_group_id="app:com.openai.codex:segment:1",
+                context_group_level="app",
+            )
+        )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_001_001,
+                source="squirrel_rime_commit_burst",
+                committed_text="ai",
+                privacy_disposition="allowed",
+                app="com.openai.codex",
+                project="wisdom-weasel-rag-ime",
+                tags=("rime-commit",),
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            event_id = int(
+                conn.execute(
+                    "SELECT id FROM input_events WHERE source = 'squirrel_input_segment' ORDER BY id DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+            conn.execute(
+                "UPDATE memory_state SET deleted = 1 WHERE event_id = (SELECT MAX(id) FROM input_events)"
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, source_event_ids_json, source_memory_ids_json,
+                    scope_app, privacy_level, status, created_at_ms, updated_at_ms
+                ) VALUES ('atom:codex', 'preference', '输入封口边界', ?, '[]',
+                          'com.openai.codex', 'local', 'active', 1, 1)
+                """,
+                (json.dumps([event_id]),),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, app, source_event_ids_json,
+                    memory_atom_ids_json, status, created_at_ms, updated_at_ms
+                ) VALUES ('book:codex', 'topic', 'codex', 'Codex 输入',
+                          'com.openai.codex', ?, '["atom:codex"]', 'active', 1, 1)
+                """,
+                (json.dumps([event_id]),),
+            )
+
+        result = self.service.management.memory_page(
+            "apps",
+            page_request({"limit": 10, "query": "Codex"}),
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["rawTextVisible"])
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["id"], "com.openai.codex")
+        self.assertEqual(item["eventCount"], 1)
+        self.assertEqual(item["finalizedSegmentCount"], 1)
+        self.assertEqual(item["contextGroupCount"], 1)
+        self.assertEqual(item["atomCount"], 1)
+        self.assertEqual(item["bookCount"], 1)
+
+    def test_memory_summary_separates_active_history_and_raw_evidence_atoms(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, source_event_ids_json, source_memory_ids_json,
+                    privacy_level, status, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, '[]', '[]', 'local', ?, 1, 1)
+                """,
+                (
+                    ("atom:active", "project_requirement", "仍在使用", "active"),
+                    ("atom:superseded", "project_requirement", "已被新版替代", "superseded"),
+                    ("atom:hidden", "project_fact", "历史保留", "hidden"),
+                    ("atom:source", "source_event_archive", "原始碎片证据", "hidden"),
+                ),
+            )
+
+        result = self.service.management.memory_summary()
+
+        self.assertEqual(result["memoryAtomCount"], 1)
+        self.assertEqual(result["memoryAtomTotalCount"], 4)
+        self.assertEqual(result["memoryAtomArchivedCount"], 2)
+        self.assertEqual(result["memoryAtomSourceArchiveCount"], 1)
+
+        preserved = self.service.management.memory_page(
+            "atoms",
+            page_request({"limit": 10, "status": "hidden"}),
+        )
+        source_archive = self.service.management.memory_page(
+            "atoms",
+            page_request({"limit": 10, "status": "source_archive"}),
+        )
+
+        self.assertEqual(
+            {str(item["id"]) for item in preserved["items"]},
+            {"atom:hidden"},
+        )
+        self.assertEqual(
+            [str(item["id"]) for item in source_archive["items"]],
+            ["atom:source"],
+        )
+        self.assertEqual(source_archive["items"][0]["status"], "source_archive")
+
     def test_memory_groups_are_paginated_human_readable_and_do_not_return_raw_events(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(

@@ -22,6 +22,8 @@ class ControlPathId(str, Enum):
     INPUT_LEXICON_REVIEW = "input.lexicon.review"
     INPUT_LEXICON_APPLY = "input.lexicon.apply"
     INPUT_LEXICON_ROLLBACK = "input.lexicon.rollback"
+    OBSERVABILITY_SNAPSHOT = "observability.snapshot"
+    OBSERVABILITY_EVENTS = "observability.events"
 
     AGENT_RUNTIME_GET = "agent.runtime.get"
     AGENT_RUNTIME_ENSURE = "agent.runtime.ensure"
@@ -601,6 +603,13 @@ _PAGE_QUERY = {
     "ownerId",
 }
 _LAST_EVENT_QUERY = {"lastEventId"}
+_OBSERVATION_FILTER_QUERY = {
+    "sessionId",
+    "roomId",
+    "traceId",
+    "category",
+    "status",
+}
 
 
 def default_route_policy() -> ControlRoutePolicy:
@@ -614,6 +623,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.INPUT_LEXICON_REVIEW, ControlMethod.GET, "/api/rime-lexicon/review", "/control/v1/input/lexicon/review", query={"limit", "project"}),
         _route(ControlPathId.INPUT_LEXICON_APPLY, ControlMethod.POST, "/api/rime-lexicon/apply", "/control/v1/input/lexicon/apply", body={"reviewToken", "selectedKeys", "confirmText", "project", "limit"}, required_body={"reviewToken", "selectedKeys", "confirmText"}),
         _route(ControlPathId.INPUT_LEXICON_ROLLBACK, ControlMethod.POST, "/api/rime-lexicon/rollback", "/control/v1/input/lexicon/rollback", body={"rollbackId"}, required_body={"rollbackId"}),
+        _route(ControlPathId.OBSERVABILITY_SNAPSHOT, ControlMethod.GET, "/api/observability/snapshot", "/control/v1/observability/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit", "beforeSequence", *_OBSERVATION_FILTER_QUERY}),
+        _route(ControlPathId.OBSERVABILITY_EVENTS, ControlMethod.GET, "/api/observability/events", "/control/v1/observability/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, query={*_LAST_EVENT_QUERY, *_OBSERVATION_FILTER_QUERY}, required_query=_LAST_EVENT_QUERY),
 
         _route(ControlPathId.AGENT_RUNTIME_GET, ControlMethod.GET, "/api/agent/runtime", "/control/v1/agent/runtime", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_RUNTIME_ENSURE, ControlMethod.POST, "/api/agent/runtime/ensure", "/control/v1/agent/runtime/ensure", body={"sessionId"}, required_body={"sessionId"}),

@@ -28,6 +28,8 @@ type ToolParams = {
   traceId?: string;
   runId?: string;
   instruction?: string;
+  scope?: "incremental" | "global";
+  policy?: "conservative";
   eventId?: string;
   taskId?: string;
   planningTaskId?: string;
@@ -136,6 +138,7 @@ const knowledgeParameterSchema: Record<string, unknown> = {
         caseSensitive: { type: "boolean" },
         maxWindows: { type: "integer", minimum: 1, maximum: 20 },
         windowSize: { type: "integer", minimum: 4, maximum: 120 },
+        offset: { type: "integer", minimum: 0, maximum: 1000000 },
       },
     },
     {
@@ -201,6 +204,98 @@ const planningParameterSchema: Record<string, unknown> = {
         },
       },
     },
+  ],
+};
+
+const memoryParameterSchema: Record<string, unknown> = {
+  description: "每次只选择一个操作；草案由 curation_prepare 在后台生成，主对话不枚举数据库变更。",
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: { const: "catalog", description: "读取少量 Book、Group、Tag 目录。" },
+        query: { type: "string", maxLength: 240 },
+        limit: { type: "integer", minimum: 1, maximum: 8 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "bookId"],
+      properties: {
+        op: { const: "read", description: "按 catalog 返回的 bookId 读取一本 Memory Book。" },
+        bookId: { type: "string", minLength: 1, maxLength: 240 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: { const: "recent", description: "读取少量已封口且通过质量门禁的近期最终输入。" },
+        query: { type: "string", maxLength: 240 },
+        limit: { type: "integer", minimum: 1, maximum: 12 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "traceId"],
+      properties: {
+        op: { const: "trace", description: "读取一条已有记忆整理追溯记录。" },
+        traceId: { type: "string", minLength: 1, maxLength: 240 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: { const: "maintenance_status", description: "查看自动草案触发状态，不生成或应用草案。" },
+        limit: { type: "integer", minimum: 1, maximum: 30 },
+      },
+    },
+    ...["curation_prepare", "maintenance_preview"].map((op) => ({
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: {
+          const: op,
+          description: op === "curation_prepare"
+            ? "生成一个 Atom-first 可审阅草案，只返回 runId 和计数，绝不自动应用。"
+            : "旧客户端兼容别名；新调用使用 curation_prepare。",
+        },
+        scope: { type: "string", enum: ["incremental", "global"] },
+        policy: { type: "string", enum: ["conservative"] },
+        instruction: { type: "string", maxLength: 800 },
+      },
+    })),
+    ...["maintenance_review", "maintenance_apply", "maintenance_rollback"].map((op) => ({
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "runId"],
+      properties: {
+        op: { const: op },
+        runId: { type: "string", minLength: 1, maxLength: 240 },
+      },
+    })),
+    ...["list", "search"].map((op) => ({
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: { const: op },
+        kind: {
+          type: "string",
+          enum: ["apps", "books", "atoms", "tags", "phrases", "groups", "negative"],
+        },
+        query: { type: "string", maxLength: 240 },
+        limit: { type: "integer", minimum: 1, maximum: 20 },
+      },
+    })),
   ],
 };
 
@@ -318,13 +413,14 @@ const toolSpecs: ToolSpec[] = [
   {
     name: "ime_memory",
     label: "记忆与工具书",
-    description: "查询 Memory Book、Group、Tag，并通过原生审阅维护长期记忆。",
+    description: "查询 Memory Book；需要整理时用 curation_prepare 生成 Atom-first 草案。系统也会自动生成草案，但永不自动应用。",
     operations: [
       "catalog",
       "read",
       "recent",
       "trace",
       "maintenance_status",
+      "curation_prepare",
       "maintenance_preview",
       "maintenance_review",
       "maintenance_apply",
@@ -338,6 +434,7 @@ const toolSpecs: ToolSpec[] = [
       recent: "正在召回近期最终输入",
       trace: "正在追溯记忆来源",
       maintenance_status: "正在检查记忆整理任务",
+      curation_prepare: "正在生成 Atom-first 待审草案",
       maintenance_preview: "正在比较新增证据并生成待审草案",
       maintenance_review: "正在逐项审阅记忆草案",
       maintenance_apply: "正在准备记忆草案应用预览",
@@ -348,9 +445,11 @@ const toolSpecs: ToolSpec[] = [
     guidelines: [
       "当前连续会话没有相关证据，或证据已过期、冲突、主题变化时，先用 catalog 查找相关 Book、Group 和 Tag；已有足够且仍有效的前文证据时直接复用，不要每轮机械重复检索。",
       "需要详细证据时再用 read；需要近期上下文时用 recent；不要在回答正文显示内部 ID 或 [L:...] 标签。",
-      "maintenance_preview 和 maintenance_review 会立即暂停当前回合并打开控制中心审阅；恢复后只简要说明审阅结果并结束本轮，不要再次调用记忆维护工具。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
-      "应用或回滚只能使用 maintenance_status/maintenance_preview 返回的真实 runId，不能猜测内部 ID。",
+      "需要整理时只调用一次 curation_prepare；不要在主对话逐条生成或复述 Atom、Group、Tag、Book 和词库操作。maintenance_preview 仅为旧客户端别名。",
+      "curation_prepare 和 maintenance_review 会立即暂停当前回合并打开控制中心审阅；恢复后只简要说明审阅结果并结束本轮，不要再次调用记忆维护工具。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
+      "应用或回滚只能使用 maintenance_status/curation_prepare 返回的真实 runId，不能猜测内部 ID。",
     ],
+    parameterSchema: memoryParameterSchema,
   },
   {
     name: "ime_knowledge",
@@ -518,6 +617,7 @@ const toolSpecs: ToolSpec[] = [
               enum: ["pending", "in_progress", "completed"],
             },
           },
+          anyOf: [{ required: ["itemId"] }, { required: ["title"] }],
         },
       ],
     },
@@ -724,7 +824,7 @@ function parametersFor(spec: ToolSpec) {
       recurrenceKind: { type: "string", enum: ["once", "daily", "weekly"] },
       recurrenceInterval: { type: "integer", minimum: 1, maximum: 30 },
       maxRuns: { type: "integer", minimum: 1, maximum: 100 },
-      kind: { type: "string", enum: ["books", "atoms", "tags", "phrases", "groups", "negative"] },
+      kind: { type: "string", enum: ["apps", "books", "atoms", "tags", "phrases", "groups", "negative"] },
       date: { type: "string", maxLength: 24 },
       project: { type: "string", maxLength: 160 },
       action: { type: "string", enum: ["complete", "start", "reopen", "cancel"] },

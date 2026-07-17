@@ -5,6 +5,7 @@ import re
 import sqlite3
 
 from .embeddings import EmbeddingProvider
+from .input_quality import source_context_enabled
 from .text_utils import build_fts_document, compact_whitespace, now_ms
 
 
@@ -91,7 +92,11 @@ def sync_event_to_memory_v2(
     phrase_item_id: int | None = None
     curated_item_id: int | None = None
     normalized_source_tags = {normalize_text(tag) for tag in tags}
-    curated_import = bool(normalized_source_tags & _CURATED_IMPORT_SIGNALS) and privacy_class != "sensitive"
+    curated_import = (
+        source_context_enabled(source, tags=tags)
+        and bool(normalized_source_tags & _CURATED_IMPORT_SIGNALS)
+        and privacy_class != "sensitive"
+    )
     phrase_import = bool(normalized_source_tags & {"compiled-phrase", "phrase-memory"})
     stable_import = bool(normalized_source_tags & {"compiled-memory", "stable-memory"}) or (
         "curated" in normalized_source_tags and not phrase_import

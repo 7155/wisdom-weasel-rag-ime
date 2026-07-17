@@ -12,6 +12,7 @@ export const routes = [
   { id: 'memory', label: '记忆' },
   { id: 'knowledge', label: '知识库' },
   { id: 'history', label: '历史' },
+  { id: 'observability', label: '运行观察' },
   { id: 'diagnostics', label: '诊断' },
   { id: 'configuration', label: '配置' },
 ] as const;

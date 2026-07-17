@@ -11,6 +11,7 @@ import {
   Mic2,
   MonitorDot,
   Puzzle,
+  Radar,
   Settings,
   UsersRound,
   type LucideIcon,
@@ -30,6 +31,7 @@ export const routeIcons: Record<RouteId, LucideIcon> = {
   memory: Brain,
   knowledge: BookOpen,
   history: History,
+  observability: Radar,
   diagnostics: Activity,
   configuration: Settings,
 };

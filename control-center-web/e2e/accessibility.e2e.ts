@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
-const auditedRoutes = ['overview', 'agent', 'rooms', 'configuration'] as const;
+const auditedRoutes = ['overview', 'agent', 'rooms', 'observability', 'configuration'] as const;
 
 test('representative desktop and mobile routes have no WCAG A/AA violations', async ({
   page,

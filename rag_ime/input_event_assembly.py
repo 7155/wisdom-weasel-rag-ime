@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, time as datetime_time, timedelta
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from .daily_planner import estimate_tokens
+from .input_quality import (
+    FINALIZED_INPUT_SOURCE,
+    RIME_FRAGMENT_SOURCE,
+    assess_input_text,
+    source_context_enabled,
+)
 from .text_utils import compact_whitespace, stable_text_hash
 
 
 INPUT_CONTEXT_SCHEMA_VERSION = "rag-ime.recent-complete-input-context.v1"
 
-_RIME_FRAGMENT_SOURCE = "squirrel_rime_commit_burst"
+_RIME_FRAGMENT_SOURCE = RIME_FRAGMENT_SOURCE
 _SKIPPED_SOURCES = {
     "api_core_optimizer",
     "api_lexicon_optimizer",
@@ -113,10 +120,11 @@ def recent_complete_input_context(
         params,
     ).fetchall()
     assembled = assemble_input_rows(list(reversed(rows)))
+    eligible = [item for item in assembled if bool(item.get("injectable"))]
     selected: list[dict[str, object]] = []
     used_tokens = 0
     limit = max(max(1, int(baseline_records)), min(200, int(max_records)))
-    for record in reversed(assembled):
+    for record in reversed(eligible):
         text = compact_whitespace(str(record.get("text") or ""))
         if not text:
             continue
@@ -133,7 +141,8 @@ def recent_complete_input_context(
             break
     selected.reverse()
     rendered = "\n".join(
-        f"[{_date_label(int(item.get('createdAtMs') or 0))}] {item.get('text', '')}"
+        f"[{_date_label(int(item.get('createdAtMs') or 0))}]"
+        f"[App: {_app_label(str(item.get('app') or ''))}] {item.get('text', '')}"
         for item in selected
     )
     return {
@@ -143,6 +152,9 @@ def recent_complete_input_context(
         "observability": {
             "rawEventCount": len(rows),
             "assembledRecordCount": len(assembled),
+            "eligibleRecordCount": len(eligible),
+            "blockedRecordCount": len(assembled) - len(eligible),
+            "blockedReasons": _blocked_reason_counts(assembled),
             "selectedRecordCount": len(selected),
             "baselineRecordCount": max(1, int(baseline_records)),
             "maxRecordCount": limit,
@@ -170,6 +182,11 @@ def assemble_input_rows(rows: Sequence[Mapping[str, object]]) -> list[dict[str, 
         source = compact_whitespace(str(row["source"] if "source" in row.keys() else ""))
         text = compact_whitespace(str(row["committed_text"] if "committed_text" in row.keys() else row.get("text", "")))
         if source in _SKIPPED_SOURCES or not text:
+            continue
+        tags = _tags(row)
+        if source == "codex_history" and "role:user" not in tags:
+            continue
+        if not source_context_enabled(source, tags=tags):
             continue
         if source == _RIME_FRAGMENT_SOURCE:
             if fragment_run and not _fragments_belong_together(fragment_run[-1], row):
@@ -208,11 +225,19 @@ def _fragments_belong_together(previous: Mapping[str, object], current: Mapping[
 def _collapse_fragment_run(events: Sequence[Mapping[str, object]]) -> dict[str, object]:
     source_ids = [_int_value(item, "id", "eventId") for item in events]
     source_ids = [value for value in source_ids if value > 0]
-    committed = compact_whitespace("".join(_value(item, "committed_text", "text") for item in events))
-    contexts = [_value(item, "recent_context", "recentContext") for item in events]
-    contexts = [value for value in contexts if value]
-    reconstructed = max([committed, *contexts], key=len, default=committed)
+    reconstructed = reconstruct_input_fragment_run(
+        [_value(item, "committed_text", "text") for item in events],
+        [_value(item, "recent_context", "recentContext") for item in events],
+    )
     last = events[-1]
+    quality = assess_input_text(
+        reconstructed,
+        source=_RIME_FRAGMENT_SOURCE,
+        source_count=len(source_ids),
+        finalized=False,
+        reconstructed=True,
+        tags=(tag for item in events for tag in _tags(item)),
+    )
     return {
         "id": f"assembled:{source_ids[0] if source_ids else 0}-{source_ids[-1] if source_ids else 0}",
         "text": reconstructed,
@@ -225,7 +250,8 @@ def _collapse_fragment_run(events: Sequence[Mapping[str, object]]) -> dict[str, 
         "project": _value(last, "project"),
         "contextGroupId": _value(last, "context_group_id", "contextGroupId"),
         "contextGroupLevel": _value(last, "context_group_level", "contextGroupLevel") or "app",
-        "complete": _record_is_complete(reconstructed, source_count=len(source_ids)),
+        "finalized": False,
+        **quality.payload(),
         "reconstruction": {"method": "rime-fragment-run", "rawEventCount": len(events)},
     }
 
@@ -233,35 +259,88 @@ def _collapse_fragment_run(events: Sequence[Mapping[str, object]]) -> dict[str, 
 def _standalone_record(row: Mapping[str, object], *, text: str) -> dict[str, object]:
     event_id = _int_value(row, "id", "eventId")
     recent_context = compact_whitespace(_value(row, "recent_context", "recentContext"))
+    # A short commit is not useful by itself, but older Squirrel events may
+    # carry the bounded foreground field snapshot that gives it meaning. Keep
+    # that trusted context without allowing an arbitrary editor document to
+    # replace the actual input event.
     use_context = bool(
         recent_context
         and len(recent_context) > len(text)
+        and len(recent_context) <= 180
+        and len(recent_context) <= len(text) + 120
         and (len(text) < 8 or text in recent_context)
     )
     reconstructed = recent_context if use_context else text
+    source = _value(row, "source") or "input"
+    tags = _tags(row)
+    finalized = source != FINALIZED_INPUT_SOURCE or (
+        "finalized" in tags or "complete-input" in tags
+    )
+    quality = assess_input_text(
+        reconstructed,
+        source=source,
+        source_count=1,
+        finalized=finalized,
+        reconstructed=use_context,
+        tags=tags,
+    )
     return {
         "id": f"event:{event_id}" if event_id else f"event:{stable_text_hash(reconstructed).split(':')[-1][:12]}",
         "text": reconstructed,
         "textHash": stable_text_hash(reconstructed),
         "sourceEventIds": [event_id] if event_id else [],
         "sourceEventCount": 1 if event_id else 0,
-        "source": _value(row, "source") or "input",
+        "source": source,
         "createdAtMs": _int_value(row, "created_at_ms", "createdAtMs"),
         "app": _value(row, "app"),
         "project": _value(row, "project"),
         "contextGroupId": _value(row, "context_group_id", "contextGroupId"),
         "contextGroupLevel": _value(row, "context_group_level", "contextGroupLevel") or "app",
-        "complete": _record_is_complete(reconstructed, source_count=1),
+        "finalized": finalized,
+        **quality.payload(),
         "reconstruction": {
-            "method": "standalone-context" if use_context else "standalone",
+            "method": (
+                "standalone-context"
+                if use_context
+                else "finalized-input-segment"
+                if source == FINALIZED_INPUT_SOURCE
+                else "standalone"
+            ),
             "rawEventCount": 1,
         },
     }
 
 
-def _record_is_complete(text: str, *, source_count: int) -> bool:
-    value = compact_whitespace(text)
-    return bool(_SENTENCE_END_RE.search(value) or len(value) >= 6 or source_count >= 2)
+def join_input_fragments(fragments: Iterable[str]) -> str:
+    """Join committed IME pieces without turning Chinese commits into spaced words."""
+
+    return compact_whitespace("".join(str(fragment or "") for fragment in fragments))
+
+
+def reconstruct_input_fragment_run(fragments: Sequence[str], recent_contexts: Sequence[str]) -> str:
+    """Use a compact cumulative snapshot only when it clearly covers this run.
+
+    Old Squirrel builds stored one final foreground snapshot beside every burst
+    fragment. A bounded snapshot can recover Backspace corrections, while a
+    large editor paragraph must never replace the actual committed run.
+    """
+
+    joined = join_input_fragments(fragments)
+    contexts = [compact_whitespace(item) for item in recent_contexts if compact_whitespace(item)]
+    if not joined or not contexts:
+        return joined
+    latest = contexts[-1]
+    if len(latest) > min(180, len(joined) + 48):
+        return joined
+    cursor = 0
+    for fragment in (compact_whitespace(item) for item in fragments):
+        if not fragment:
+            continue
+        index = latest.find(fragment, cursor)
+        if index < 0:
+            return joined
+        cursor = index + len(fragment)
+    return latest if len(latest) >= len(joined) else joined
 
 
 def _day_window(target: date, *, label: str, template: datetime) -> TemporalWindow:
@@ -301,6 +380,38 @@ def _date_label(timestamp_ms: int) -> str:
     if timestamp_ms <= 0:
         return "unknown"
     return datetime.fromtimestamp(timestamp_ms / 1000).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _app_label(app: str) -> str:
+    value = compact_whitespace(app)
+    return value or "unknown"
+
+
+def _blocked_reason_counts(records: Sequence[Mapping[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        if bool(record.get("injectable")):
+            continue
+        reasons = record.get("qualityReasons")
+        if not isinstance(reasons, list):
+            reasons = ["unknown"]
+        for reason in reasons:
+            key = compact_whitespace(str(reason)) or "unknown"
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _tags(row: Mapping[str, object]) -> list[str]:
+    raw = _value(row, "tags_json", "tagsJson")
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [compact_whitespace(str(item)) for item in payload if compact_whitespace(str(item))]
 
 
 def _value(row: Mapping[str, object], *keys: str) -> str:

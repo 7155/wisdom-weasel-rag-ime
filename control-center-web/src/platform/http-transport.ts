@@ -1,4 +1,9 @@
-import { parseAgentEvent, parseContract, parseRoomEvent } from '@/contracts/validators';
+import {
+  parseAgentEvent,
+  parseContract,
+  parseObservationEvent,
+  parseRoomEvent,
+} from '@/contracts/validators';
 
 import {
   controlRoute,
@@ -414,6 +419,8 @@ function parseStreamEvent(streamKind: ControlStreamKind, item: ParsedSseEvent): 
       return parseRoomEvent(payload);
     case 'control':
       return payload;
+    case 'observation':
+      return parseObservationEvent(payload);
   }
 }
 

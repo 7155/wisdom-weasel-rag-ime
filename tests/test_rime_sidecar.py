@@ -880,7 +880,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             300,
         )
 
-    def test_v1_commit_burst_gate_records_grouped_commits_once(self) -> None:
+    def test_v1_commit_burst_gate_keeps_fragments_out_of_persistent_memory(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-burst-sidecar-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
             core.initialize()
@@ -914,16 +914,13 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             payload["commitBurstReady"] = True
             fired = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
             self.assertTrue(fired["predictionTrigger"]["providerCallAllowed"])
-            self.assertEqual(core.event_count(), 2)
-            with core._connect() as conn:
-                rows = conn.execute(
-                    "SELECT context_group_id, context_group_level FROM input_events ORDER BY id"
-                ).fetchall()
-            self.assertEqual([(row[0], row[1]) for row in rows], [("doc:test", "document"), ("doc:test", "document")])
+            self.assertEqual(core.event_count(), 0)
+            self.assertEqual(fired["predictionTrigger"]["recordedEventIds"], [])
+            self.assertEqual(fired["predictionTrigger"]["rawFragmentPersistence"], "disabled")
 
             duplicate = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
             self.assertEqual(duplicate["predictionTrigger"]["reason"], "duplicate_context_hash")
-            self.assertEqual(core.event_count(), 2)
+            self.assertEqual(core.event_count(), 0)
 
     def test_v1_commit_burst_fallback_group_uses_full_short_digest(self) -> None:
         payload = self._post_commit_payload(request_seq=20)

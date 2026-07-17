@@ -2745,6 +2745,45 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(apply_payload["result"]["diff"]["status"], "applied")
         self.assertEqual(self._audit_count("cleanup_diff_apply"), 1)
 
+    def test_observation_snapshot_is_available_on_local_and_gateway_paths(self) -> None:
+        self.service.agent.observations.emit_memory_event(
+            phase="draft_ready",
+            status="waiting",
+            summary="记忆整理草案已生成，等待审阅",
+            run_id="memory-run-http",
+            metrics={"changeCount": 3},
+        )
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            payloads = []
+            for path in (
+                "/api/observability/snapshot?category=memory&limit=10",
+                "/control/v1/observability/snapshot?category=memory&limit=10",
+            ):
+                with urlopen(
+                    f"http://127.0.0.1:{server.server_port}{path}",
+                    timeout=5,
+                ) as response:
+                    payloads.append(json.loads(response.read().decode("utf-8")))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        for payload in payloads:
+            self.assertEqual(payload["schemaVersion"], "rag-ime.observation-snapshot.v1")
+            self.assertEqual(payload["counts"]["total"], 1)
+            self.assertEqual(payload["items"][0]["runId"], "memory-run-http")
+            self.assertNotIn("text", payload["items"][0]["attributes"])
+
     def test_api_root_names_the_single_native_control_center(self) -> None:
         class Handler(DebugRequestHandler):
             pass

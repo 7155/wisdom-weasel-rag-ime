@@ -15,30 +15,62 @@ afterEach(() => {
 });
 
 describe('MemoryFeature relations', () => {
-  it('keeps the personal knowledge workbench under the third memory tab', async () => {
+  it('keeps Agent memory curation under the third memory tab instead of knowledge tasks', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
         'memory.summary': { ok: true, eventCount: 3, memoryItemCount: 2, memoryBookCount: 1, memoryAtomCount: 1, pendingCompileEvents: 0 },
         'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
-        'knowledge.routeStatus': {
-          ok: true,
-          deepseekReady: true,
-          modes: ['knowledge_answer', 'organize_database'],
-          streaming: { knowledgeWorkbench: true },
-          deepseekRoute: { remoteReady: true, passivePostCommitRemoteAllowed: false },
-          notion: { ready: false, submitConfigured: false, pollConfigured: false },
-        },
+        'agent.memoryMaintenance.run': (request: ControlRequest) => request.query?.runId
+          ? memoryCurationRun()
+          : memoryCurationStatus(),
       },
     });
     renderMemory(transport);
 
     expect(await screen.findByRole('heading', { name: '记忆', level: 1 })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '个人知识整理' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '记忆整理审核' })).not.toBeInTheDocument();
     await user.click(await screen.findByRole('tab', { name: '整理' }));
-    expect(await screen.findByRole('heading', { name: '个人知识整理', level: 2 })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('输入一个明确的知识任务')).toBeInTheDocument();
-    expect(transport.requests.some((call) => call.request.pathId === 'knowledge.routeStatus')).toBe(true);
+    expect(await screen.findByRole('heading', { name: '记忆整理审核', level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole('list', { name: '记忆整理建议' })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('输入一个明确的知识任务')).not.toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.memoryMaintenance.run')).toBe(true);
+    expect(transport.requests.some((call) => call.request.pathId === 'knowledge.routeStatus')).toBe(false);
+  });
+
+  it('updates only the selected Agent draft item before any database apply', async () => {
+    const user = userEvent.setup();
+    let secondSelected = false;
+    const transport = new MockControlTransport({
+      capabilities: { features: { managementWorkContract: true, knowledgeDatabaseWorkContract: true } },
+      routes: {
+        'memory.summary': { ok: true, appCount: 1, completeInputCount: 3, memoryBookCount: 1, memoryAtomCount: 1, pendingCompileEvents: 0 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'agent.memoryMaintenance.run': (request: ControlRequest) => {
+          if (!request.query?.runId) return memoryCurationStatus();
+          const result = memoryCurationRun();
+          const changes = ((result.run as Record<string, unknown>).changes as Record<string, unknown>[]);
+          changes[1] = { ...changes[1], selected: secondSelected, status: secondSelected ? 'approved' : 'rejected' };
+          return result;
+        },
+        'knowledge.database.draft.edit': (request: ControlRequest) => {
+          expect(request.body).toEqual({ runId: 'memory_book_test', diffId: 2, selected: true });
+          secondSelected = true;
+          return { ok: true, runId: 'memory_book_test', diffId: 2, selected: true };
+        },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '整理' }));
+    const checkbox = await screen.findByRole('checkbox', { name: '选择 合并输入法同义标签' });
+    expect(checkbox).not.toBeChecked();
+    await user.click(checkbox);
+
+    await waitFor(() => expect(checkbox).toBeChecked());
+    expect(screen.getByText('2 / 2 已选择')).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'knowledge.database.draft.edit')).toHaveLength(1);
+    expect(transport.requests.some((call) => call.request.pathId === 'knowledge.database.apply')).toBe(false);
   });
 
   it('uses the live tag field as the catalog title', async () => {
@@ -56,6 +88,80 @@ describe('MemoryFeature relations', () => {
     expect(screen.getByRole('button', { name: '查看标签图谱' })).toBeInTheDocument();
     expect((await screen.findAllByText('Agent Runtime')).length).toBeGreaterThan(0);
     expect(screen.getByText('Agent 生命周期与工具边界')).toBeInTheDocument();
+  });
+
+  it('starts from active memory and keeps preserved history inspectable', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 10, memoryAtomCount: 103, pendingCompileEvents: 0 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+      },
+    });
+    renderMemory(transport);
+
+    await waitFor(() => {
+      const request = transport.requests.find((call) => call.request.pathId === 'memory.pages');
+      expect(request?.request.query?.status).toBe('active');
+    });
+    await user.click(await screen.findByRole('combobox', { name: '状态' }));
+    expect(await screen.findByRole('option', { name: '历史保留' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '已合并' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '碎片证据' })).toBeInTheDocument();
+  });
+
+  it('shows App as a first-class context boundary without exposing raw fragments', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': {
+          ok: true,
+          appCount: 1,
+          completeInputCount: 8,
+          blockedFragmentCount: 44,
+          memoryBookCount: 1,
+          memoryAtomCount: 2,
+          memoryAtomTotalCount: 8,
+          memoryAtomArchivedCount: 4,
+          memoryAtomSourceArchiveCount: 2,
+          pendingCompileEvents: 0,
+        },
+        'memory.pages': (request: ControlRequest) => request.params?.kind === 'apps'
+          ? {
+              ok: true,
+              rawTextVisible: false,
+              items: [{
+                id: 'com.openai.codex',
+                title: 'Codex',
+                detail: '8 段完整输入 · 2 个记忆原子 · 1 本主题书',
+                source: 'input_app',
+                status: 'active',
+                type: 'app',
+                bundleId: 'com.openai.codex',
+                eventCount: 8,
+                finalizedSegmentCount: 5,
+                contextGroupCount: 3,
+                atomCount: 2,
+                bookCount: 1,
+                latestAtMs: 1_784_006_400_000,
+              }],
+              nextCursor: '',
+              limit: 50,
+            }
+          : memoryPage(String(request.params?.kind ?? '')),
+      },
+    });
+    renderMemory(transport);
+
+    expect(await screen.findByText('共 8 条 · 历史 4 · 碎片证据 2')).toBeInTheDocument();
+    await user.click(await screen.findByRole('radio', { name: '应用' }));
+    expect(screen.getByRole('heading', { name: '应用上下文', level: 2 })).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: /Codex/ }));
+    const detail = screen.getByRole('region', { name: 'Codex 详情' });
+    expect(within(detail).getByText('8 段')).toBeInTheDocument();
+    expect(within(detail).getByText('com.openai.codex')).toBeInTheDocument();
+    expect(screen.getByText('应用边界由输入来源维护')).toBeInTheDocument();
+    expect(screen.queryByText('ai')).not.toBeInTheDocument();
   });
 
   it('opens the real tag graph directly from the tag catalog projection', async () => {
@@ -645,6 +751,54 @@ function renderMemory(transport: MockControlTransport) {
       </TooltipProvider>
     </MemoryRouter>,
   );
+}
+
+function memoryCurationStatus(): Record<string, unknown> {
+  return {
+    ok: true,
+    policy: 'review',
+    autoApply: false,
+    pendingDraftCount: 1,
+    runs: [{ runId: 'memory_book_test', status: 'draft', diffCount: 2, createdAtMs: 1_784_006_400_000 }],
+  };
+}
+
+function memoryCurationRun(): Record<string, unknown> {
+  return {
+    ok: true,
+    stale: false,
+    canApply: true,
+    canRollback: false,
+    run: {
+      runId: 'memory_book_test',
+      status: 'draft',
+      createdAtMs: 1_784_006_400_000,
+      diffCount: 2,
+      pendingDiffCount: 1,
+      changes: [
+        {
+          diffId: 1,
+          operation: 'upsert_memory_atom',
+          operationLabel: '更新记忆条目',
+          status: 'pending',
+          selected: true,
+          title: '输入封口边界',
+          detail: 'Backspace 修改缓冲区，Enter 后才写入完整段落。',
+          sourceCount: 3,
+        },
+        {
+          diffId: 2,
+          operation: 'merge_semantic_tag',
+          operationLabel: '合并标签',
+          status: 'rejected',
+          selected: false,
+          title: '合并输入法同义标签',
+          detail: '保留用户命名作为别名。',
+          sourceCount: 2,
+        },
+      ],
+    },
+  };
 }
 
 function memoryGraph(plane: string): Record<string, unknown> {

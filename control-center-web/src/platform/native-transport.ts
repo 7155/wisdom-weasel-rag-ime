@@ -1,4 +1,9 @@
-import { parseAgentEvent, parseContract, parseRoomEvent } from '@/contracts/validators';
+import {
+  parseAgentEvent,
+  parseContract,
+  parseObservationEvent,
+  parseRoomEvent,
+} from '@/contracts/validators';
 
 import {
   controlRoute,
@@ -444,6 +449,8 @@ function parseNativeEvent(streamKind: ControlStreamKind | undefined, value: unkn
       return parseRoomEvent(value);
     case 'control':
       return value;
+    case 'observation':
+      return parseObservationEvent(value);
     default:
       throw new NativeBridgeCallError('event arrived for a non-subscription route');
   }

@@ -175,6 +175,8 @@ class ActiveRagService:
         completion_provider=None,
         trace_path: Path | None = None,
         trace_include_text: bool | Callable[[], bool] = False,
+        trace_observer: Callable[[dict[str, object]], None] | None = None,
+        observation_observer: Callable[[dict[str, object]], None] | None = None,
     ):
         self.core = core
         if self.core is not None:
@@ -182,10 +184,24 @@ class ActiveRagService:
         self.completion_provider = completion_provider
         self.trace_path = Path(trace_path).expanduser() if trace_path is not None else None
         self.trace_include_text = trace_include_text
+        self.trace_observer = trace_observer
+        self.observation_observer = observation_observer
         self._lock = threading.RLock()
         self._trace_lock = threading.RLock()
         self._sessions: dict[str, ActiveRagSession] = {}
         self._blocked_responses: dict[str, dict[str, object]] = {}
+
+    def bind_trace_observer(
+        self,
+        observer: Callable[[dict[str, object]], None] | None,
+    ) -> None:
+        self.trace_observer = observer
+
+    def bind_observation_observer(
+        self,
+        observer: Callable[[dict[str, object]], None] | None,
+    ) -> None:
+        self.observation_observer = observer
 
     def start(self, request: ActiveRagStartRequest) -> dict[str, object]:
         sensitive_reason = active_rag_sensitive_block_reason(request)
@@ -444,28 +460,54 @@ class ActiveRagService:
         trace-text switch is enabled.
         """
 
-        path = self.trace_path
-        if path is None or active_rag_sensitive_block_reason(session.request):
+        if active_rag_sensitive_block_reason(session.request):
             return
-        include_text = self._trace_include_text_enabled()
-        record = _active_rag_chain_trace_record(session, phase=phase, include_text=include_text)
-        try:
-            with self._trace_lock:
-                _append_active_rag_chain_trace(path, record)
-            session.diagnostics["tracePersistence"] = {
-                "enabled": True,
-                "lastPhase": phase,
-                "lastWrittenAtMs": int(record["timestampMs"]),
-                "rawTextIncluded": include_text,
-                "error": "",
-            }
-        except OSError as exc:
-            session.diagnostics["tracePersistence"] = {
-                "enabled": True,
-                "lastPhase": phase,
-                "rawTextIncluded": include_text,
-                "error": _safe_failure_reason(exc),
-            }
+        path = self.trace_path
+        observer = self.trace_observer
+        if path is not None or observer is not None:
+            include_text = self._trace_include_text_enabled()
+            record = _active_rag_chain_trace_record(
+                session,
+                phase=phase,
+                include_text=include_text,
+            )
+        else:
+            include_text = False
+            record = None
+        if path is not None and record is not None:
+            try:
+                with self._trace_lock:
+                    _append_active_rag_chain_trace(path, record)
+                session.diagnostics["tracePersistence"] = {
+                    "enabled": True,
+                    "lastPhase": phase,
+                    "lastWrittenAtMs": int(record["timestampMs"]),
+                    "rawTextIncluded": include_text,
+                    "error": "",
+                }
+            except OSError as exc:
+                session.diagnostics["tracePersistence"] = {
+                    "enabled": True,
+                    "lastPhase": phase,
+                    "rawTextIncluded": include_text,
+                    "error": _safe_failure_reason(exc),
+                }
+        if observer is not None and record is not None:
+            try:
+                observer(record)
+            except Exception:
+                # Trace projection is passive and cannot fail an Active RAG run.
+                pass
+        observation_observer = self.observation_observer
+        if observation_observer is not None:
+            try:
+                observation_observer(
+                    _active_rag_observation_record(session, phase=phase)
+                )
+            except Exception:
+                # Runtime observation is best-effort and must not add latency
+                # or failure coupling to the explicit Active RAG request.
+                pass
 
     def _run_session(self, session_id: str) -> None:
         with self._lock:
@@ -1983,6 +2025,35 @@ def _active_rag_chain_trace_record(
         },
         "failure": _bounded_trace_value(diagnostics.get("failure") or {}, include_text=include_text),
         "traceEvents": _bounded_trace_value(session.trace_events, include_text=include_text),
+    }
+
+
+def _active_rag_observation_record(
+    session: ActiveRagSession,
+    *,
+    phase: str,
+) -> dict[str, object]:
+    request = session.request
+    timestamp_ms = now_ms()
+    return {
+        "schemaVersion": "rag-ime.active-rag-observation.v1",
+        "timestampMs": timestamp_ms,
+        "phase": compact_whitespace(phase),
+        "sessionId": session.session_id,
+        "status": session.status,
+        "elapsedMs": max(0, timestamp_ms - int(session.created_at_ms)),
+        "privacy": {"rawTextIncluded": False},
+        "request": {
+            "frontAppBundleId": request.front_app_bundle_id,
+            "project": request.project,
+            "app": request.app,
+            "intent": request.intent,
+            "selectedText": {"chars": len(request.selected_text)},
+            "currentContext": {"chars": len(request.context)},
+            "providedEvidenceCount": len(request.evidence_pack),
+        },
+        "retrieval": {"evidenceCount": len(session.evidence)},
+        "generation": {"candidateCount": len(session.candidates)},
     }
 
 

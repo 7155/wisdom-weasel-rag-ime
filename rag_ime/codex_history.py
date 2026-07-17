@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG
 from .models import InputEvent, InputSuggestion
 from .text_utils import compact_whitespace, now_ms, truncate_text
 
@@ -152,6 +153,7 @@ def input_event_from_codex_record(
     *,
     project: str,
     curated: bool = False,
+    memory_context_opt_in: bool = False,
 ) -> InputEvent:
     source_label = f"{Path(record.source_path).name}:{record.line_number}"
     role = f" role:{record.role}" if record.role else ""
@@ -167,7 +169,12 @@ def input_event_from_codex_record(
         app="codex",
         project=project,
         provider_name="codex-history-import",
-        tags=record.tags + (f"record:{record.record_id[:12]}",) + (("curated",) if curated else ()),
+        tags=(
+            record.tags
+            + (f"record:{record.record_id[:12]}",)
+            + (("curated",) if curated else ())
+            + ((MEMORY_CONTEXT_OPT_IN_TAG,) if memory_context_opt_in else ())
+        ),
     )
 
 

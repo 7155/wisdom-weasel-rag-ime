@@ -563,6 +563,13 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-status-row strong, .agent-status-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-status-row strong { font-size: 13px; }
 .agent-status-row small { color: var(--color-text-tertiary); font-size: 13px; }
+.agent-status-observation-link { display: grid; min-height: 58px; grid-template-columns: 22px minmax(0, 1fr) 16px; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); text-decoration: none; }
+.agent-status-observation-link:hover { background: var(--color-surface); color: var(--color-text); }
+.agent-status-observation-link > svg:first-child { color: #2c7157; }
+.agent-status-observation-link > svg:last-child { color: var(--color-text-tertiary); }
+.agent-status-observation-link > span { display: grid; min-width: 0; gap: 2px; }
+.agent-status-observation-link strong { color: var(--color-text); font-size: 13px; }
+.agent-status-observation-link small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .agent-status-subagent { display: grid; min-height: 58px; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 7px; border-top: 1px solid color-mix(in srgb, var(--color-border) 62%, transparent); }
 .agent-status-subagent:first-child { border-top: 0; }
 .agent-status-subagent__state { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; background: var(--color-surface); color: var(--color-text-tertiary); }

@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -1109,6 +1109,7 @@ class AgentRoomEventHub:
         self.store = store
         self._lock = threading.RLock()
         self._subscribers: dict[str, set[queue.Queue[dict[str, object]]]] = {}
+        self._observers: set[Callable[[Mapping[str, object]], None]] = set()
 
     def publish(self, **values: object) -> dict[str, object]:
         with self._lock:
@@ -1123,7 +1124,29 @@ class AgentRoomEventHub:
                     subscriber.put_nowait(event)
                 except (queue.Empty, queue.Full):
                     pass
+        with self._lock:
+            observers = tuple(self._observers)
+        for observer in observers:
+            try:
+                observer(event)
+            except Exception:
+                # Room projections are diagnostic side effects and must never
+                # interrupt the primary conversation or intercom delivery.
+                pass
         return event
+
+    def add_observer(
+        self,
+        observer: Callable[[Mapping[str, object]], None],
+    ) -> Callable[[], None]:
+        with self._lock:
+            self._observers.add(observer)
+
+        def remove() -> None:
+            with self._lock:
+                self._observers.discard(observer)
+
+        return remove
 
     def subscribe(
         self,

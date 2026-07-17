@@ -39,9 +39,32 @@ class FakeMemoryBookOrganizer:
     def provider_name(self) -> str:
         return "deepseek"
 
-    def compile_memory_book(self, *, bundle: dict[str, object], project: str) -> dict[str, object]:
-        event_id = int((bundle.get("recentEvents") or [{"eventId": 1}])[0]["eventId"])
-        return sample_compile_output(event_id)
+    def compile_memory_curation(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        policy: str = "conservative",
+    ) -> dict[str, object]:
+        del bundle, project, policy
+        return {
+            "schemaVersion": "rag-ime.memory-curation-decisions.v1",
+            "decisions": [
+                {
+                    "action": "create",
+                    "evidenceRefs": ["E1"],
+                    "canonicalText": "RAG 输入法使用多路召回。",
+                    "kind": "project_requirement",
+                    "topicRef": "new:input-method",
+                    "topicTitle": "输入法",
+                    "tags": ["new:RAG", "new:多路召回"],
+                    "confidence": 0.9,
+                    "qualityScore": 0.9,
+                }
+            ],
+            "tagMerges": [],
+            "warnings": [],
+        }
 
 
 class MemoryBookCompilerTests(unittest.TestCase):
@@ -117,9 +140,10 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertTrue(payload["validation"]["ok"])
         self.assertTrue(output.exists())
         plan = json.loads(output.read_text(encoding="utf-8"))
-        phrase = next(item for item in plan["diffs"] if item["op"] == "add_phrase_candidate")
-        self.assertEqual(phrase["payload"]["pinyin"], "duo lu zhao hui")
-        self.assertEqual(phrase["payload"]["reviewSource"], "dsv4")
+        atom = next(item for item in plan["diffs"] if item["op"] == "upsert_memory_atom")
+        self.assertEqual(atom["payload"]["canonicalText"], "RAG 输入法使用多路召回。")
+        self.assertEqual(plan["metadata"]["curationArchitecture"], "atom-first-v1")
+        self.assertFalse(any(item["op"] == "add_phrase_candidate" for item in plan["diffs"]))
         with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_cleanup_runs WHERE run_id LIKE 'memory_book_%'").fetchone()[0], 0)
@@ -128,9 +152,19 @@ class MemoryBookCompilerTests(unittest.TestCase):
         class CountingOrganizer(FakeMemoryBookOrganizer):
             calls = 0
 
-            def compile_memory_book(self, *, bundle: dict[str, object], project: str) -> dict[str, object]:
+            def compile_memory_curation(
+                self,
+                *,
+                bundle: dict[str, object],
+                project: str,
+                policy: str = "conservative",
+            ) -> dict[str, object]:
                 type(self).calls += 1
-                return super().compile_memory_book(bundle=bundle, project=project)
+                return super().compile_memory_curation(
+                    bundle=bundle,
+                    project=project,
+                    policy=policy,
+                )
 
         original = cli_module.DeepSeekMemoryOrganizer
         cli_module.DeepSeekMemoryOrganizer = CountingOrganizer
@@ -308,6 +342,47 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(correction["rejectedText"], "错别宇")
         self.assertEqual(correction["acceptedText"], "错别字")
         self.assertEqual(correction["preedit"], "cuo bie zi")
+
+    def test_source_bundle_excludes_progressive_tool_disclosure_acceptance_probes(self) -> None:
+        prompts = (
+            "这是渐进工具披露验收。必须先调用 tool_search，再调用 tool_load。",
+            "上一轮得到的插件数量是多少？只回复数字，不要调用工具。",
+        )
+        for prompt in prompts:
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source="pi_agent_user",
+                    committed_text=prompt,
+                    privacy_disposition="allowed",
+                    project="wisdom-weasel-rag-ime",
+                )
+            )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms(),
+                source="pi_agent_user",
+                committed_text="请解释 tool_search 和 tool_load 的职责边界。",
+                privacy_disposition="allowed",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                since_days=7,
+                limit=80,
+            )
+
+        texts = [str(item["text"]) for item in bundle["recentEvents"]]
+        self.assertNotIn(prompts[0], texts)
+        self.assertNotIn(prompts[1], texts)
+        self.assertIn("请解释 tool_search 和 tool_load 的职责边界。", texts)
+        self.assertEqual(bundle["reconstruction"]["droppedRuntimeProbeCount"], 2)
 
     def test_memory_book_compile_requires_source_event_ids(self) -> None:
         output = sample_compile_output(self.event_id)

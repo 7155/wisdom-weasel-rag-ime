@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   Paperclip,
   PanelRightClose,
+  Radar,
   Search,
   TriangleAlert,
   Wrench,
@@ -142,8 +143,16 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
             </div>
           ) : null}
         </StatusSection>
-
         <ContextRuntimeSections sessionId={sessionId} open={open} />
+
+        <a
+          className="agent-status-observation-link"
+          href={`#/observability?sessionId=${encodeURIComponent(sessionId)}`}
+        >
+          <Radar size={16} />
+          <span><strong>运行观察</strong><small>查看本会话的工具、检索与记忆轨迹</small></span>
+          <ChevronRight size={15} />
+        </a>
       </div> : <div aria-hidden="true" className="agent-status-panel__body agent-status-panel__body--pending" />}
     </aside>
   );

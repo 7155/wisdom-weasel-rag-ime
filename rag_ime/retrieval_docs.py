@@ -4,6 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
+from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG
 from .memory_schema_v2 import ensure_memory_v2_schema
 from .text_utils import build_fts_document, compact_whitespace, now_ms
 
@@ -167,10 +168,17 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         WHERE status IN ('active', 'approved')
           AND privacy_class != 'sensitive'
           AND kind != 'raw_event'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM input_events source_event
+              WHERE source_event.id = memory_items.source_event_id
+                AND source_event.source = 'codex_history'
+                AND COALESCE(source_event.tags_json, '[]') NOT LIKE ?
+          )
           AND (? = '' OR project = ? OR project = '')
         ORDER BY updated_at_ms DESC, id DESC
         """,
-        (project, project),
+        (f'%"{MEMORY_CONTEXT_OPT_IN_TAG}"%', project, project),
     ).fetchall()
     docs: list[dict[str, object]] = []
     for row in rows:
@@ -278,6 +286,11 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                archived_at_ms, last_active_at_ms, archive_reason
         FROM memory_books
         WHERE status IN ('active', 'approved', 'archived')
+          AND book_type != 'app_archive'
+          AND archive_reason NOT IN (
+              'complete_input_history',
+              'superseded_by_curated_baseline'
+          )
           AND (? = '' OR project = ? OR project = '')
         ORDER BY updated_at_ms DESC
         """,

@@ -97,13 +97,17 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "ime_memory",
         "domain": "memory",
         "displayName": "记忆与工具书",
-        "description": "渐进查询 Memory Book，并通过可审阅草案维护长期记忆",
+        "description": (
+            "查询 Memory Book；需要整理时调用 curation_prepare 生成 Atom-first 草案。"
+            "系统也会按新增数量、空闲或每日周期自动生成草案，但永不自动应用。"
+        ),
         "operations": (
             "catalog",
             "read",
             "recent",
             "trace",
             "maintenance_status",
+            "curation_prepare",
             "maintenance_preview",
             "maintenance_review",
             "maintenance_apply",
@@ -4423,6 +4427,8 @@ class ControlToolGateway:
                     "limit": _bounded_int(args.get("limit"), default=10, minimum=1, maximum=30),
                     "ownerKind": mutable_owner[0],
                     "ownerId": mutable_owner[1],
+                    "scope": _bounded_text(args.get("scope"), maximum=24) or "incremental",
+                    "policy": _bounded_text(args.get("policy"), maximum=24) or "conservative",
                 },
             )
             draft_count = _safe_int(payload.get("pendingDraftCount"))
@@ -4433,7 +4439,7 @@ class ControlToolGateway:
                 "summary": f"有 {pending_count} 条来源待整理、{draft_count} 份草案待审阅",
                 "maintenance": _safe_payload(payload),
             }
-        if operation == "maintenance_preview":
+        if operation in {"curation_prepare", "maintenance_preview"}:
             payload = self._facade_call(
                 "agent_memory_maintenance_prepare",
                 {
@@ -4464,17 +4470,30 @@ class ControlToolGateway:
             _require_memory_run_owner(run, mutable_owner)
             diff_count = _safe_int(run.get("diffCount"))
             reused = payload.get("reusedDraft") is True
+            receipt = _compact_memory_run_for_agent(run)
+            needs_review = receipt["status"] == "draft" and diff_count > 0
             return {
                 "summary": (
                     f"已复用现有记忆草案，共 {diff_count} 项差异"
                     if reused
-                    else f"已生成记忆草案，共 {diff_count} 项差异"
+                    else (
+                        f"已生成记忆草案，共 {diff_count} 项差异"
+                        if needs_review
+                        else "本轮证据已完成整理，没有需要写入的变更"
+                    )
                 ),
-                "reviewRequired": True,
-                "storedDraft": True,
+                "runId": receipt["runId"],
+                "counts": receipt["operationCounts"],
+                "diffCount": receipt["diffCount"],
+                "needsReview": needs_review,
+                # Pi's native review bridge still consumes this compatibility
+                # field; the semantic result field is needsReview.
+                "reviewRequired": needs_review,
+                "storedDraft": needs_review,
                 "reusedDraft": reused,
-                "source": _safe_payload(payload.get("source")),
-                "run": _safe_payload(run),
+                # The Memory page fetches full diffs out of band. Returning the
+                # whole draft here would feed dozens of database operations
+                # back into the main Agent transcript for no useful reason.
             }
         if operation == "maintenance_review":
             run_id = _bounded_text(args.get("runId"), maximum=240)
@@ -4490,16 +4509,24 @@ class ControlToolGateway:
             )
             run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
             _require_memory_run_owner(run, mutable_owner)
+            receipt = _compact_memory_run_for_agent(run)
+            needs_review = (
+                receipt["status"] == "draft"
+                and int(receipt["diffCount"]) > 0
+            )
             return {
                 "summary": f"已读取记忆草案 {run_id} 的 {_safe_int(run.get('diffCount'))} 项差异",
-                "reviewRequired": True,
+                "runId": receipt["runId"],
+                "counts": receipt["operationCounts"],
+                "diffCount": receipt["diffCount"],
+                "needsReview": needs_review,
+                "reviewRequired": needs_review,
                 "canApply": review.get("canApply") is True,
                 "canRollback": review.get("canRollback") is True,
                 "stale": review.get("stale") is True,
-                "run": _safe_payload(run),
             }
         kind = _bounded_text(args.get("kind"), maximum=40) or "atoms"
-        if kind not in {"books", "atoms", "tags", "phrases", "groups"}:
+        if kind not in {"apps", "books", "atoms", "tags", "phrases", "groups"}:
             raise ValueError("unsupported memory list kind")
         query = _bounded_text(args.get("query"), maximum=240)
         limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=20)
@@ -4962,6 +4989,20 @@ def _catalog_book(item: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _compact_memory_run_for_agent(run: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "runId": _bounded_text(run.get("runId"), maximum=240),
+        "createdAtMs": _safe_int(run.get("createdAtMs")),
+        "status": _bounded_text(run.get("status"), maximum=40),
+        "summary": _bounded_text(run.get("summary"), maximum=240),
+        "diffCount": _safe_int(run.get("diffCount")),
+        "pendingDiffCount": _safe_int(run.get("pendingDiffCount")),
+        "appliedDiffCount": _safe_int(run.get("appliedDiffCount")),
+        "operationCounts": _safe_payload(run.get("operationCounts")),
+        "sourceCursor": _safe_payload(run.get("sourceCursor")),
+    }
+
+
 def _catalog_group(item: Mapping[str, object]) -> dict[str, object]:
     return {
         "kind": "group",
@@ -5297,10 +5338,53 @@ def _tool_profile_allows(
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())
 
 
+def _runtime_memory_tool_parameter_schema(
+    operations: list[str],
+) -> dict[str, object]:
+    required_by_operation = {
+        "read": ("bookId",),
+        "trace": ("traceId",),
+        "maintenance_review": ("runId",),
+        "maintenance_apply": ("runId",),
+        "maintenance_rollback": ("runId",),
+    }
+    return {
+        "type": "object",
+        "description": "每次选择一个记忆操作；整理只生成草案并等待用户审阅。",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": operations},
+            "query": {"type": "string", "maxLength": 240},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 30},
+            "kind": {
+                "type": "string",
+                "enum": ["apps", "books", "atoms", "tags", "phrases", "groups"],
+            },
+            "bookId": {"type": "string", "minLength": 1, "maxLength": 240},
+            "traceId": {"type": "string", "minLength": 1, "maxLength": 240},
+            "runId": {"type": "string", "minLength": 1, "maxLength": 240},
+            "instruction": {"type": "string", "maxLength": 800},
+            "scope": {"type": "string", "enum": ["incremental", "global"]},
+            "policy": {"type": "string", "enum": ["conservative"]},
+        },
+        "oneOf": [
+            {
+                "required": ["op", *required_by_operation.get(operation, ())],
+                "properties": {"op": {"const": operation}},
+            }
+            for operation in operations
+        ],
+    }
+
+
 def _runtime_tool_parameter_schema(
     tool_id: str,
     operations: list[object],
 ) -> dict[str, object]:
+    normalized_operations = [str(operation) for operation in operations]
+    if tool_id == "ime_memory":
+        return _runtime_memory_tool_parameter_schema(normalized_operations)
     configured = _RUNTIME_TOOL_PARAMETER_SCHEMAS.get(tool_id)
     if configured is not None:
         allowed = {str(operation) for operation in operations}
@@ -5323,7 +5407,6 @@ def _runtime_tool_parameter_schema(
             return {**configured, "oneOf": filtered}
         return dict(configured)
     argument_names = _RUNTIME_TOOL_ARGUMENTS.get(tool_id, ())
-    normalized_operations = [str(operation) for operation in operations]
     properties = {
         "op": {"type": "string", "enum": normalized_operations},
         **{

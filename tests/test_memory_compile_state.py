@@ -10,11 +10,13 @@ from pathlib import Path
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import (
     apply_memory_book_plan,
+    apply_stored_memory_book_run,
     build_memory_book_source_bundle,
     memory_book_plan_from_compile_output,
     memory_compile_due,
     memory_compile_state,
     inspect_memory_book_plan,
+    store_memory_book_plan,
 )
 from rag_ime.models import InputEvent
 from rag_ime.text_utils import now_ms
@@ -78,6 +80,34 @@ class MemoryCompileStateTest(unittest.TestCase):
             after = memory_compile_state(conn, project="ime")
             self.assertEqual(after["lastCompiledEventId"], before["lastCompiledEventId"])
 
+    def test_global_catalog_bundle_audits_catalog_without_consuming_pending_evidence(self) -> None:
+        [
+            self.core.record_event(self._event(text, "doc:a"))
+            for text in (
+                "第一条完整历史输入用于全库整理",
+                "第二条完整历史输入用于全库整理",
+                "第三条完整历史输入用于全库整理",
+            )
+        ]
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="ime",
+                after_event_id=0,
+                limit=2,
+                newest_first=True,
+                curation_scope="global",
+                catalog_only=True,
+            )
+
+        self.assertEqual(bundle["recentEvents"], [])
+        self.assertEqual(bundle["curationScope"], "global")
+        self.assertTrue(bundle["catalogAudit"])
+        self.assertEqual(bundle["evidenceOrder"], "catalog_only")
+        self.assertEqual(bundle["cursor"]["fromEventId"], 0)
+        self.assertEqual(bundle["cursor"]["toEventId"], 0)
+        self.assertEqual(bundle["cursor"]["pendingEventCount"], 3)
+
     def test_due_policy_supports_event_idle_daily_and_manual_triggers(self) -> None:
         self.core.record_event(self._event("保持普通拼音稳定", "doc:a"))
         with self._connect() as conn:
@@ -86,6 +116,119 @@ class MemoryCompileStateTest(unittest.TestCase):
             due, reason, _ = memory_compile_due(conn, project="ime", current_ms=24 * 60 * 60 * 1000 + 1)
             self.assertTrue(due)
             self.assertEqual(reason, "daily")
+
+    def test_saved_review_draft_covers_events_without_advancing_applied_cursor(self) -> None:
+        first_id = int(
+            self.core.record_event(self._event("自动生成草案但不直接应用", "doc:a")).split(":", 1)[1]
+        )
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(conn, project="ime")
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": "记忆整理只自动生成草案，不自动应用。",
+                            "sourceEventIds": [first_id],
+                        }
+                    ],
+                    "curationArchitecture": "atom-first-v1",
+                    "curationOutcome": "changes",
+                },
+                project="ime",
+                provider="deepseek",
+                model="v4-flash",
+                source_bundle=bundle,
+            )
+            store_memory_book_plan(conn, plan)
+            state = memory_compile_state(conn, project="ime")
+            due, reason, _ = memory_compile_due(
+                conn,
+                project="ime",
+                idle_ms=24 * 60 * 60 * 1000,
+            )
+
+        self.assertEqual(state["lastCompiledEventId"], 0)
+        self.assertEqual(state["lastDraftedEventId"], first_id)
+        self.assertEqual(state["pendingEventCount"], 1)
+        self.assertEqual(state["undraftedEventCount"], 0)
+        self.assertTrue(state["draftCoversPending"])
+        self.assertTrue(state["activeDraftPendingReview"])
+        self.assertFalse(due)
+        self.assertEqual(reason, "draft_pending_review")
+
+        self.core.record_event(self._event("新增证据会进入下一份草案", "doc:a"))
+        with self._connect() as conn:
+            next_state = memory_compile_state(conn, project="ime")
+            self.assertEqual(next_state["undraftedEventCount"], 1)
+            due, reason, blocked_state = memory_compile_due(
+                conn,
+                project="ime",
+                idle_ms=20 * 60 * 1000,
+            )
+            self.assertFalse(due)
+            self.assertEqual(reason, "draft_pending_review")
+            self.assertEqual(blocked_state["undraftedEventCount"], 1)
+
+    def test_no_change_review_advances_cursor_without_waiting_for_approval(self) -> None:
+        event_id = int(
+            self.core.record_event(self._event("这个输入没有长期记忆价值", "doc:a")).split(":", 1)[1]
+        )
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(conn, project="ime")
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "curationArchitecture": "atom-first-v1",
+                    "curationOutcome": "no_changes",
+                    "curationDiagnostics": {"ignoredDecisionCount": 1},
+                },
+                project="ime",
+                provider="deepseek",
+                model="v4-flash",
+                source_bundle=bundle,
+            )
+            stored = store_memory_book_plan(conn, plan)
+            state = memory_compile_state(conn, project="ime")
+
+        self.assertEqual(stored["status"], "empty")
+        self.assertEqual(state["lastCompiledEventId"], event_id)
+        self.assertEqual(state["pendingEventCount"], 0)
+        self.assertFalse(state["activeDraftPendingReview"])
+
+    def test_review_can_exclude_every_change_and_still_complete_the_batch(self) -> None:
+        event_id = int(
+            self.core.record_event(self._event("候选建议可以全部排除", "doc:a")).split(":", 1)[1]
+        )
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(conn, project="ime")
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": "这条建议稍后由用户排除。",
+                            "sourceEventIds": [event_id],
+                        }
+                    ],
+                    "curationArchitecture": "atom-first-v1",
+                    "curationOutcome": "changes",
+                },
+                project="ime",
+                provider="deepseek",
+                model="v4-flash",
+                source_bundle=bundle,
+            )
+            draft = store_memory_book_plan(conn, plan)
+            for diff in draft["diffs"]:
+                conn.execute(
+                    "UPDATE memory_cleanup_diffs SET status = 'rejected' WHERE id = ?",
+                    (diff["diffId"],),
+                )
+            completed = apply_stored_memory_book_run(conn, run_id=plan["runId"])
+            state = memory_compile_state(conn, project="ime")
+
+        self.assertEqual(completed["status"], "dismissed")
+        self.assertEqual(state["lastCompiledEventId"], event_id)
+        self.assertEqual(state["pendingEventCount"], 0)
+        self.assertFalse(state["activeDraftPendingReview"])
 
     def test_negative_phrase_and_supersede_apply_with_source_provenance(self) -> None:
         event_id = int(self.core.record_event(self._event("旧事实需要更新", "doc:a")).split(":", 1)[1])
@@ -185,7 +328,7 @@ class MemoryCompileStateTest(unittest.TestCase):
         for key in ("secret", "path", "phone", "identity", "paymentCard", "ipAddress"):
             self.assertGreater(int(stats[key]), 0)
 
-    def test_source_bundle_reconstructs_rime_fragments_before_dsv4(self) -> None:
+    def test_source_bundle_quarantines_legacy_rime_fragments_without_enter_boundary(self) -> None:
         base = now_ms()
         ids = [
             int(
@@ -226,27 +369,14 @@ class MemoryCompileStateTest(unittest.TestCase):
         with self._connect() as conn:
             bundle = build_memory_book_source_bundle(conn, project="ime", after_event_id=0)
             events = bundle["recentEvents"]
-            self.assertEqual(len(events), 1)
-            self.assertEqual(events[0]["text"], "目前BM25这些真实实现")
-            self.assertEqual(events[0]["sourceEventIds"], ids)
+            self.assertEqual(events, [])
             self.assertEqual(bundle["rawEventCount"], 5)
             self.assertEqual(bundle["reconstruction"]["excludedGeneratedEventCount"], 1)
-
-            plan = memory_book_plan_from_compile_output(
-                {
-                    "memoryAtoms": [
-                        {
-                            "canonicalText": "BM25 已在输入法项目中真实实现。",
-                            "sourceEventIds": [ids[0], ids[-1]],
-                        }
-                    ]
-                },
-                project="ime",
-                provider="deepseek",
-                model="deepseek-v4-flash",
-                source_bundle=bundle,
+            self.assertEqual(bundle["reconstruction"]["droppedLowSignalEventCount"], 1)
+            self.assertEqual(
+                bundle["reconstruction"]["droppedQualityReasons"]["missing_finalized_boundary"],
+                1,
             )
-            self.assertTrue(inspect_memory_book_plan(plan)["ok"])
 
     def test_source_bundle_filters_runtime_probes_and_merges_duplicate_user_text(self) -> None:
         base = now_ms()

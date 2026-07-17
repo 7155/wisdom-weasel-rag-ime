@@ -2,6 +2,7 @@ import type {
   AgentEventV1,
   AgentMessageV1,
   AgentRoomEventV1,
+  ObservationEventV1,
 } from './generated';
 
 export const knownAgentEventTypes = [
@@ -94,6 +95,10 @@ export interface UiRoomEvent {
   rawEventType?: string;
 }
 
+export type UiObservationEvent = ObservationEventV1 & {
+  streamKind: 'observation';
+};
+
 export interface UiAgentBlock {
   id: string;
   type: KnownAgentBlockType;
@@ -118,7 +123,7 @@ export interface UiAgentMessage {
   clientMessageId?: string;
 }
 
-export type UiControlEvent = UiAgentEvent | UiRoomEvent;
+export type UiControlEvent = UiAgentEvent | UiRoomEvent | UiObservationEvent;
 
 const agentEventTypeSet = new Set<string>(knownAgentEventTypes);
 const roomEventTypeSet = new Set<string>(knownRoomEventTypes);
@@ -161,6 +166,12 @@ export function normalizeRoomEvent(value: Record<string, unknown>): UiRoomEvent 
     eventType: known ? (rawEventType as KnownRoomEventType) : 'unknown',
     ...(known ? {} : { rawEventType }),
   };
+}
+
+export function normalizeObservationEvent(
+  value: ObservationEventV1,
+): UiObservationEvent {
+  return { ...value, streamKind: 'observation' };
 }
 
 export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMessage {

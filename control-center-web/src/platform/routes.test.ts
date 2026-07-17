@@ -17,6 +17,8 @@ const canonicalPathIds = [
   'input.lexicon.review',
   'input.lexicon.apply',
   'input.lexicon.rollback',
+  'observability.snapshot',
+  'observability.events',
   'agent.runtime.get',
   'agent.runtime.ensure',
   'agent.providers.get',

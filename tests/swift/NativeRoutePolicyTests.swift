@@ -67,6 +67,23 @@ struct NativeRoutePolicyTests {
         )
         expect(controlEvents.request.url?.path == "/api/agent/events", "canonical control event route")
 
+        let observationSnapshot = try policy.resolveRequest(
+            pathId: "observability.snapshot",
+            parameters: [:],
+            query: ["sessionId": "session-a", "limit": "100"],
+            body: nil
+        )
+        expect(observationSnapshot.request.url?.path == "/api/observability/snapshot", "observation snapshot route")
+
+        let observationEvents = try policy.resolveSubscription(
+            pathId: "observability.events",
+            parameters: [:],
+            query: ["sessionId": "session-a"],
+            lastEventId: "observation:41"
+        )
+        expect(observationEvents.request.url?.path == "/api/observability/events", "observation event route")
+        expect(observationEvents.request.value(forHTTPHeaderField: "Last-Event-ID") == "observation:41", "observation resume cursor")
+
         let roomSnapshot = try policy.resolveRequest(
             pathId: "agent.room.snapshot",
             parameters: ["roomId": "room:alpha"],

@@ -10,9 +10,11 @@ import {
 import {
   normalizeAgentEvent,
   normalizeAgentMessage,
+  normalizeObservationEvent,
   normalizeRoomEvent,
   type UiAgentEvent,
   type UiAgentMessage,
+  type UiObservationEvent,
   type UiRoomEvent,
 } from './ui-events';
 
@@ -87,6 +89,10 @@ export function parseRoomEvent(value: unknown): UiRoomEvent {
     return normalizeRoomEvent(value as Record<string, unknown>);
   }
   throw new ContractValidationError('agent-room-event.v1', strict.issues);
+}
+
+export function parseObservationEvent(value: unknown): UiObservationEvent {
+  return normalizeObservationEvent(parseContract('observation-event.v1', value));
 }
 
 export function parseAgentMessage(value: unknown): UiAgentMessage {

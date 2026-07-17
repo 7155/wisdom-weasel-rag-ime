@@ -15,6 +15,7 @@ const GRAPH_COLORS = {
 
 const TAG_GRAPH_WIDTH = 1_000;
 const TAG_GRAPH_HEIGHT = 540;
+const COMPACT_TAG_GRAPH_HEIGHT = 360;
 const BIPARTITE_GRAPH_WIDTH = 1_000;
 const MIN_BIPARTITE_GRAPH_HEIGHT = 620;
 const BIPARTITE_CONTENT_TOP = 72;
@@ -296,9 +297,10 @@ export function tagEdgeStrokeWidth(weight: number, evidenceCount: number): numbe
 export function buildTagGraph(tags: readonly MemoryTagNode[]): TagGraphLayout {
   const sorted = [...tags].sort(compareTags);
   const visible = sorted.slice(0, MAX_TAG_GRAPH_NODES);
+  const graphHeight = visible.length <= 4 ? COMPACT_TAG_GRAPH_HEIGHT : TAG_GRAPH_HEIGHT;
   const nodes = visible.map((tag, index) => ({
     ...tag,
-    ...tagPosition(index, visible.length),
+    ...tagPosition(index, visible.length, graphHeight),
     radius: tagNodeRadius(tag.itemCount),
   }));
   const visibleIds = new Set(nodes.map((node) => node.id));
@@ -324,7 +326,7 @@ export function buildTagGraph(tags: readonly MemoryTagNode[]): TagGraphLayout {
 
   return {
     width: TAG_GRAPH_WIDTH,
-    height: TAG_GRAPH_HEIGHT,
+    height: graphHeight,
     nodes,
     edges: [...edgesByKey.entries()].sort(([left], [right]) => compareText(left, right)).map(([, edge]) => edge),
     clipped: sorted.length > visible.length,
@@ -673,17 +675,29 @@ function mergeConnections(
   return [...merged.values()].sort((a, b) => compareText(a.targetId, b.targetId));
 }
 
-function tagPosition(index: number, count: number): { x: number; y: number } {
-  if (index === 0) return { x: TAG_GRAPH_WIDTH / 2, y: TAG_GRAPH_HEIGHT / 2 };
+function tagPosition(index: number, count: number, height: number): { x: number; y: number } {
+  if (count === 1) return { x: TAG_GRAPH_WIDTH / 2, y: height / 2 - 12 };
+  if (count === 2) {
+    return { x: index === 0 ? 350 : 650, y: height / 2 - 12 };
+  }
+  if (count <= 4) {
+    if (index === 0) return { x: TAG_GRAPH_WIDTH / 2, y: 105 };
+    const lowerCount = count - 1;
+    const lowerX = lowerCount === 1
+      ? TAG_GRAPH_WIDTH / 2
+      : 250 + ((index - 1) * 500) / (lowerCount - 1);
+    return { x: lowerX, y: 260 };
+  }
+  if (index === 0) return { x: TAG_GRAPH_WIDTH / 2, y: height / 2 };
   const innerCount = Math.min(7, Math.max(0, count - 1));
   if (index <= innerCount) {
     const angle = -Math.PI / 2 + (2 * Math.PI * (index - 1)) / Math.max(1, innerCount);
-    return { x: 500 + Math.cos(angle) * 220, y: 270 + Math.sin(angle) * 132 };
+    return { x: 500 + Math.cos(angle) * 220, y: height / 2 + Math.sin(angle) * 132 };
   }
   const outerCount = Math.max(1, count - innerCount - 1);
   const outerIndex = index - innerCount - 1;
   const angle = -Math.PI / 2 + (2 * Math.PI * outerIndex) / outerCount;
-  return { x: 500 + Math.cos(angle) * 420, y: 270 + Math.sin(angle) * 218 };
+  return { x: 500 + Math.cos(angle) * 420, y: height / 2 + Math.sin(angle) * 218 };
 }
 
 function preferredTagById(tags: readonly MemoryTagNode[]): Map<string, MemoryTagNode> {

@@ -1,7 +1,7 @@
 import type { GeneratedContractName } from '@/contracts/generated';
 
 export type ControlHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
-export type ControlStreamKind = 'agent' | 'room' | 'control';
+export type ControlStreamKind = 'agent' | 'room' | 'control' | 'observation';
 
 export interface ControlRouteDefinition {
   method: ControlHttpMethod;
@@ -50,6 +50,34 @@ export const CONTROL_ROUTES = {
     path: '/api/rime-lexicon/rollback',
     body: ['rollbackId'],
     requiredBody: ['rollbackId'],
+  },
+  'observability.snapshot': {
+    method: 'GET',
+    path: '/api/observability/snapshot',
+    query: [
+      'limit',
+      'beforeSequence',
+      'sessionId',
+      'roomId',
+      'traceId',
+      'category',
+      'status',
+    ],
+    responseContract: 'observation-snapshot.v1',
+  },
+  'observability.events': {
+    method: 'GET',
+    path: '/api/observability/events',
+    query: [
+      'lastEventId',
+      'sessionId',
+      'roomId',
+      'traceId',
+      'category',
+      'status',
+    ],
+    requiredQuery: ['lastEventId'],
+    subscription: 'observation',
   },
   'overview.get': { method: 'GET', path: '/api/overview' },
 
@@ -441,8 +469,7 @@ export const CONTROL_ROUTES = {
   'agent.memoryMaintenance.run': {
     method: 'GET',
     path: '/api/agent/memory-maintenance',
-    query: ['runId', 'project'],
-    requiredQuery: ['runId'],
+    query: ['runId', 'project', 'limit'],
   },
   'agent.subagents.templates': {
     method: 'GET',
@@ -618,7 +645,7 @@ export const CONTROL_ROUTES = {
   'memory.pages': {
     method: 'GET',
     path: '/api/memory/:kind',
-    params: { kind: ['books', 'atoms', 'tags', 'phrases', 'evidence', 'groups', 'negative'] },
+    params: { kind: ['apps', 'books', 'atoms', 'tags', 'phrases', 'evidence', 'groups', 'negative'] },
     query: ['limit', 'cursor', 'query', 'status', 'ownerKind', 'ownerId'],
   },
   'memory.graph.get': {

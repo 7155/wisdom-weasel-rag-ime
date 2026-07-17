@@ -22,6 +22,7 @@ from rag_ime.managed_pi_runtime import (
     MANIFEST_NAME,
     ManagedPiRuntimeError,
     build_managed_pi_runtime_manifest,
+    discover_managed_pi_runtime,
     write_managed_pi_runtime_manifest,
 )
 
@@ -42,6 +43,15 @@ def _default_node() -> str:
     configured = os.environ.get("RAG_IME_MANAGED_NODE", "").strip()
     if configured:
         return configured
+    try:
+        installed = discover_managed_pi_runtime(
+            Path.home() / "Library" / "Application Support" / "RagIme"
+        )
+        installed_node = Path(installed.node_executable)
+        if installed_node.is_file():
+            return str(installed_node)
+    except (OSError, ManagedPiRuntimeError):
+        pass
     codex_runtime = (
         Path.home()
         / ".cache"
@@ -139,6 +149,32 @@ def _source_revision(pi_root: Path) -> tuple[str, str]:
     return f"{commit}+dirty.{dirty_digest}", dirty_digest
 
 
+def _hash_tree(path: Path) -> bytes:
+    digest = hashlib.sha256()
+    if not path.is_dir():
+        return digest.digest()
+    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+        digest.update(item.relative_to(path).as_posix().encode("utf-8"))
+        digest.update(item.read_bytes())
+    return digest.digest()
+
+
+def _runtime_host_banner(skills_root: Path) -> str:
+    skill_names = sorted(item.name for item in skills_root.iterdir() if item.is_dir()) if skills_root.is_dir() else []
+    return (
+        'import { createRequire as __createRequire } from "node:module"; '
+        'import { delimiter as __pathDelimiter, dirname as __dirname, join as __join } from "node:path"; '
+        'import { fileURLToPath as __fileURLToPath } from "node:url"; '
+        'const require = __createRequire(import.meta.url); '
+        f'const __ragImeSkillNames = {json.dumps(skill_names, ensure_ascii=True)}; '
+        'const __ragImeRuntimeDir = __dirname(__fileURLToPath(import.meta.url)); '
+        'const __ragImeSkillPaths = __ragImeSkillNames.map((name) => __join(__ragImeRuntimeDir, "skills", name)); '
+        'const __ragImeConfiguredSkills = process.env.RAG_IME_PI_SKILL_PATHS || ""; '
+        'process.env.RAG_IME_PI_SKILL_PATHS = '
+        '[...__ragImeSkillPaths, __ragImeConfiguredSkills].filter(Boolean).join(__pathDelimiter);'
+    )
+
+
 def _smoke_runtime(node: Path, entrypoint: Path) -> dict[str, object]:
     request = {
         "protocolVersion": "2",
@@ -224,9 +260,11 @@ def main(argv: list[str] | None = None) -> int:
         pi_version = str(json.loads(package_json.read_text(encoding="utf-8"))["version"])
         source_commit, dirty_digest = _source_revision(pi_root)
         provider_bridge_source = ROOT / "rag_ime" / "node" / "pi_provider_bridge_bundled.ts"
+        product_skills = ROOT / "integrations" / "pi" / "skills"
         packager_digest = hashlib.sha256(
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
+            + _hash_tree(product_skills)
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:10]
         commit_prefix = source_commit.split("+", 1)[0][:12]
@@ -252,6 +290,11 @@ def main(argv: list[str] | None = None) -> int:
             bundled_skills = package_root / "skills"
             if bundled_skills.is_dir():
                 shutil.copytree(bundled_skills, runtime_dir / "skills")
+            if product_skills.is_dir():
+                runtime_skills = runtime_dir / "skills"
+                runtime_skills.mkdir(exist_ok=True)
+                for skill in sorted(item for item in product_skills.iterdir() if item.is_dir()):
+                    shutil.copytree(skill, runtime_skills / skill.name, dirs_exist_ok=True)
             bundled_entrypoint = runtime_dir / "cli.mjs"
             _run(
                 [
@@ -262,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--format=esm",
                     "--target=node22",
                     f"--outfile={bundled_entrypoint}",
-                    '--banner:js=import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
+                    f'--banner:js={_runtime_host_banner(product_skills)}',
                 ],
                 cwd=pi_root,
             )
