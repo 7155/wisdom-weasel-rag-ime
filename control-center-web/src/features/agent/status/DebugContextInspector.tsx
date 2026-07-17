@@ -75,7 +75,7 @@ export function DebugContextInspector({
         ) : null}
       </header>
       {query.isPending ? <p className="debug-context-inspector__empty">正在向 Pi Runtime 读取本轮临时快照</p> : null}
-      {query.error ? <p className="debug-context-inspector__empty" data-tone="warning">原始上下文未启用，或这轮请求来自旧版 Runtime</p> : null}
+      {query.error ? <p className="debug-context-inspector__empty" data-tone="warning">{debugContextErrorMessage(query.error)}</p> : null}
       {!query.isPending && !query.error && !response.available ? <p className="debug-context-inspector__empty">这轮没有可用的临时上下文；Runtime 重启后不会保留旧快照</p> : null}
       {response.available ? <DebugTelemetryStrip telemetry={response.telemetry} /> : null}
       {sections.length ? (
@@ -125,6 +125,36 @@ function debugSections(context: Record<string, unknown>): DebugSection[] {
     { id: 'system-options', label: 'Prompt 构建选项', detail: 'Pi 资源装配参数', kind: 'json', value: context.systemPromptOptions },
     { id: 'tools', label: '活动工具 Schema', detail: `${array(context.activeTools).length} 个工具`, kind: 'json', value: { activeTools: context.activeTools, schemas: context.toolSchemas } },
   ];
+  const modelCalls = array(context.modelCalls);
+  if (modelCalls.length) {
+    sections.push({
+      id: 'model-calls',
+      label: '模型调用链',
+      detail: `${modelCalls.length} 次模型调用`,
+      kind: 'json',
+      value: modelCalls,
+    });
+  }
+  const toolExecutions = array(context.toolExecutions);
+  if (toolExecutions.length) {
+    sections.push({
+      id: 'tool-executions',
+      label: '工具调用实录',
+      detail: `${toolExecutions.length} 次工具执行`,
+      kind: 'json',
+      value: toolExecutions,
+    });
+  }
+  const toolBatches = array(context.toolBatches);
+  if (toolBatches.length) {
+    sections.push({
+      id: 'tool-batches',
+      label: '工具执行批次',
+      detail: `${toolBatches.length} 个串并行批次`,
+      kind: 'json',
+      value: toolBatches,
+    });
+  }
   array(context.contextWindows).forEach((item, index) => {
     const window = record(item);
     sections.push({
@@ -149,7 +179,7 @@ function debugSections(context: Record<string, unknown>): DebugSection[] {
 }
 
 function DebugSectionIcon({ id }: { id: string }) {
-  if (id === 'tools') return <Wrench size={14} />;
+  if (id === 'tools' || id === 'tool-executions' || id === 'tool-batches') return <Wrench size={14} />;
   if (id.startsWith('provider:')) return <Braces size={14} />;
   if (id.startsWith('context:')) return <Database size={14} />;
   return <FileText size={14} />;
@@ -175,6 +205,13 @@ function normalizeDebugResponse(value: unknown): {
     context: record(response.context),
     telemetry: record(response.telemetry),
   };
+}
+
+function debugContextErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  const value = record(error);
+  const message = text(value.message) || text(value.error);
+  return message || '无法读取本轮临时上下文，请确认 Pi Runtime 与本机 Debug 设置。';
 }
 
 function tokenPair(tokens: unknown, window: unknown): string {

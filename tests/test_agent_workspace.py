@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
 
@@ -122,6 +123,29 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertNotIn("outside-secret-content", str(result))
         with self.assertRaisesRegex(WorkspaceHarnessError, "coordinator"):
             harness.search(self.assistant, {"query": "hello"})
+
+    def test_name_search_checks_shallow_project_files_before_deep_trees(self) -> None:
+        search_root = Path(self.temp.name) / "search-project"
+        deep = search_root / "a-huge" / "one" / "two"
+        agent_docs = search_root / "docs" / "agent"
+        deep.mkdir(parents=True)
+        agent_docs.mkdir(parents=True)
+        (deep / "decoy.txt").write_text("not the target\n", encoding="utf-8")
+        target = agent_docs / "questions.md"
+        target.write_text("learning trail\n", encoding="utf-8")
+        session = {
+            "id": "agent:search",
+            "mode": "coordinator",
+            "workspaceRoots": [str(search_root.resolve())],
+        }
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        with patch("rag_ime.agent_workspace._MAX_SEARCH_FILES", 1):
+            result = harness.search(session, {"query": "questions.md", "mode": "name"})
+
+        self.assertEqual(result["filesScanned"], 1)
+        self.assertEqual(len(result["matches"]), 1)
+        self.assertEqual(result["matches"][0]["path"], str(target.resolve()))
 
     def test_patch_preview_is_hash_bound_and_apply_is_atomic(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})

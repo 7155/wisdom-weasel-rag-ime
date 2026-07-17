@@ -385,6 +385,24 @@ struct NativeRoutePolicyTests {
         )
         expect(localAgentTools.request.url?.port == 8768, "local Agent route uses the dedicated gateway")
         expect(localAgentTools.request.url?.path == "/api/agent/tools", "local Agent gateway uses the live HTTP surface")
+        let debugContext = try policy.resolveRequest(
+            pathId: "agent.session.debugContext.get",
+            parameters: ["sessionId": "session:alpha"],
+            query: ["turnId": "turn:one"],
+            body: nil
+        )
+        expect(debugContext.request.url?.port == 8768, "debug context always uses the Pi gateway")
+        expect(debugContext.request.url?.path == "/api/agent/sessions/session:alpha/debug-context", "debug context keeps the local gateway route")
+        expect(debugContext.request.url?.query == "turnId=turn:one", "debug context forwards the turn identifier")
+        expectThrows("debug context stays local only") {
+            _ = try gatewayPreferredPolicy.resolveRequest(
+                pathId: "agent.session.debugContext.get",
+                parameters: ["sessionId": "session:alpha"],
+                query: [:],
+                body: nil,
+                scope: .remote
+            )
+        }
         let remoteHealth = try gatewayPreferredPolicy.resolveRequest(
             pathId: "system.health",
             parameters: [:],

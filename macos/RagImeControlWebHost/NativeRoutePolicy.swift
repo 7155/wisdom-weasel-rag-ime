@@ -47,6 +47,7 @@ private struct NativeRouteDefinition {
     let method: String
     let localPath: String
     let gatewayPath: String?
+    let requiresGateway: Bool
     let allowedQuery: Set<String>
     let requiredQuery: Set<String>
     let remoteSafe: Bool
@@ -71,12 +72,14 @@ final class NativeRoutePolicy {
             subscription: Bool = false,
             bodyKeys: Set<String> = [],
             requiredBodyKeys: Set<String> = [],
-            binary: Bool = false
+            binary: Bool = false,
+            requiresGateway: Bool = false
         ) -> NativeRouteDefinition {
             NativeRouteDefinition(
                 method: method,
                 localPath: localPath,
                 gatewayPath: gatewayPath,
+                requiresGateway: requiresGateway,
                 allowedQuery: query,
                 requiredQuery: requiredQuery,
                 remoteSafe: remoteSafe,
@@ -131,7 +134,13 @@ final class NativeRoutePolicy {
             "agent.session.contextItems.ack": route("POST", "/api/agent/sessions/{sessionId}/context-items/{itemId}/ack", "/control/v1/agent/sessions/{sessionId}/context-items/{itemId}/ack", remoteSafe: true),
             "agent.session.contextTraces.list": route("GET", "/api/agent/sessions/{sessionId}/context-traces", "/control/v1/agent/sessions/{sessionId}/context-traces", query: ["limit"], remoteSafe: true),
             "agent.session.contextTrace.get": route("GET", "/api/agent/sessions/{sessionId}/context-traces/{traceId}", "/control/v1/agent/sessions/{sessionId}/context-traces/{traceId}", remoteSafe: true),
-            "agent.session.debugContext.get": route("GET", "/api/agent/sessions/{sessionId}/debug-context", nil, query: ["turnId"]),
+            "agent.session.debugContext.get": route(
+                "GET",
+                "/api/agent/sessions/{sessionId}/debug-context",
+                nil,
+                query: ["turnId"],
+                requiresGateway: true
+            ),
             "agent.artifact.get": route("GET", "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.media.list": route("GET", "/api/agent/media", "/control/v1/agent/media", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.deep-search": route("POST", "/api/agent/deep-search", "/control/v1/agent/deep-search", bodyKeys: ["query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"], requiredBodyKeys: ["query", "privacyDisposition"]),
@@ -358,7 +367,7 @@ final class NativeRoutePolicy {
             throw NativeRoutePolicyError.routeNotRemoteSafe(pathId)
         }
 
-        let useGateway = preferGateway && definition.gatewayPath != nil
+        let useGateway = definition.requiresGateway || (preferGateway && definition.gatewayPath != nil)
         let template = useGateway && scope == .remote
             ? definition.gatewayPath!
             : definition.localPath

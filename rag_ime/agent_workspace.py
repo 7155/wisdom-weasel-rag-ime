@@ -9,6 +9,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,7 @@ _SENSITIVE_NAMES = frozenset(
 )
 _SENSITIVE_PARTS = frozenset({".git", ".ssh", ".gnupg", ".aws", ".azure", ".keychain"})
 _SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".sqlite", ".sqlite3", ".db")
+_MAX_SEARCH_FILES = 5_000
 _FORBIDDEN_COMMAND = re.compile(
     r"(?ix)(?:^|[;&|()\s])"
     r"(?:sudo|su|security|tccutil|csrutil|spctl|kmutil|kextload|nvram|diskutil|"
@@ -207,7 +209,7 @@ class WorkspaceHarness:
         truncated = False
         for target, root in targets:
             for path in self._search_files(target, root):
-                if files_scanned >= 5_000 or len(matches) >= limit:
+                if files_scanned >= _MAX_SEARCH_FILES or len(matches) >= limit:
                     truncated = True
                     break
                 files_scanned += 1
@@ -551,9 +553,11 @@ class WorkspaceHarness:
                 )
 
     def _search_files(self, target: Path, root: Path):
-        pending = [target]
+        # Search shallow paths first so a large nested tree cannot consume the
+        # whole scan budget before nearby project files are considered.
+        pending = deque([target])
         while pending:
-            current = pending.pop()
+            current = pending.popleft()
             if current.is_symlink() or self._is_sensitive(current, root):
                 continue
             if current.is_file():
@@ -562,7 +566,7 @@ class WorkspaceHarness:
             if not current.is_dir():
                 continue
             try:
-                children = sorted(current.iterdir(), key=lambda path: path.name.lower(), reverse=True)
+                children = sorted(current.iterdir(), key=lambda path: path.name.lower())
             except OSError:
                 continue
             pending.extend(children)
