@@ -55,8 +55,10 @@ class AgentContextRuntimeTests(unittest.TestCase):
         materialized = self.runtime.materialize(self.session_id)
         self.assertEqual(materialized["itemIds"], [first["itemId"]])
         self.assertIn("结论正文", str(materialized["prompt"]))
-        self.assertIn("## 产品层独立上下文", str(materialized["prompt"]))
-        self.assertIn("## 上下文 1: 协作消息", str(materialized["prompt"]))
+        self.assertIn("## room_intercom: 协作消息", str(materialized["prompt"]))
+        self.assertNotIn("privateToken", str(materialized["prompt"]))
+        self.assertNotIn("来源类型", str(materialized["prompt"]))
+        self.assertNotIn("生命周期", str(materialized["prompt"]))
 
         self.runtime.mark_delivered(
             list(materialized["itemIds"]),

@@ -157,6 +157,8 @@ class AgentServiceTests(unittest.TestCase):
         session_id = str(session["id"])
         self.assertEqual(session["title"], "连续 对话")
         self.assertTrue(session["projectContextEnabled"])
+        self.assertFalse(session["piSkillsEnabled"])
+        self.assertFalse(session["codexSkillsEnabled"])
 
         listed = self.service.list_sessions()
         self.assertEqual(listed["items"][0]["id"], session_id)
@@ -202,10 +204,26 @@ class AgentServiceTests(unittest.TestCase):
             {"mode": "assistant", "projectContextEnabled": False},
         )["session"]
         self.assertFalse(context_disabled["projectContextEnabled"])
+        external_skills_enabled = self.service.update_session(
+            session_id,
+            {
+                "mode": "assistant",
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            },
+        )["session"]
+        self.assertTrue(external_skills_enabled["piSkillsEnabled"])
+        self.assertTrue(external_skills_enabled["codexSkillsEnabled"])
+        self.assertFalse(external_skills_enabled["projectContextEnabled"])
         with self.assertRaisesRegex(ValueError, "must be a boolean"):
             self.service.update_session(
                 session_id,
                 {"mode": "assistant", "projectContextEnabled": "false"},
+            )
+        with self.assertRaisesRegex(ValueError, "codexSkillsEnabled must be a boolean"):
+            self.service.update_session(
+                session_id,
+                {"mode": "assistant", "codexSkillsEnabled": "true"},
             )
         with self.assertRaisesRegex(ValueError, "explicit native confirmation"):
             self.service.update_session(
@@ -363,8 +381,8 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(second_envelope["message"], "第二轮")
         self.assertEqual(first_envelope["transientContext"], "")
         self.assertEqual(second_envelope["transientContext"], "")
-        self.assertIn("## 新 Session 个人记忆召回", first_envelope["sessionContext"])
-        self.assertIn("首问“第一轮”", first_envelope["sessionContext"])
+        self.assertIn("## Session 记忆", first_envelope["sessionContext"])
+        self.assertNotIn("召回依据", first_envelope["sessionContext"])
         self.assertEqual(second_envelope["sessionContext"], first_envelope["sessionContext"])
         self.assertNotIn('"queryFree":true', first_envelope["sessionContext"])
         self.assertTrue(first["memoryEvidence"]["stored"])
@@ -469,7 +487,7 @@ class AgentServiceTests(unittest.TestCase):
         envelope = json.loads(
             runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
         )
-        self.assertIn("## 新 Session 个人记忆召回", envelope["sessionContext"])
+        self.assertIn("## Session 记忆", envelope["sessionContext"])
         self.assertEqual(envelope["message"], "按当前问题重新召回")
 
     def test_next_prompt_repairs_first_query_bootstrap_failure(self) -> None:
@@ -574,7 +592,7 @@ class AgentServiceTests(unittest.TestCase):
         retry_envelope = json.loads(
             retried.call_args.args[1].removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
         )
-        self.assertIn("## 新 Session 个人记忆召回", first_envelope["sessionContext"])
+        self.assertIn("## Session 记忆", first_envelope["sessionContext"])
         self.assertEqual(retry_envelope["message"], "第一轮")
         self.assertEqual(retry_envelope["sessionContext"], first_envelope["sessionContext"])
         self.assertEqual(accepted["contextItemsDelivered"], 1)
@@ -2152,8 +2170,8 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertIn("控制中心使用连续 Pi Session", sent_envelope["message"])
         self.assertIn("任何写操作仍必须经过原生审批", sent_envelope["message"])
-        self.assertIn("## 新 Session 个人记忆召回", sent_envelope["sessionContext"])
-        self.assertIn("首问“最近我在做什么？”", sent_envelope["sessionContext"])
+        self.assertIn("## Session 记忆", sent_envelope["sessionContext"])
+        self.assertNotIn("召回依据", sent_envelope["sessionContext"])
         self.assertNotIn('"queryFree":true', sent_envelope["sessionContext"])
         sources = self.service.list_memory_sources({"sessionId": first["sessionId"]})["items"]
         self.assertEqual(

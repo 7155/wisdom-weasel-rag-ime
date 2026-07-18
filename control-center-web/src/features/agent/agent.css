@@ -499,6 +499,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-composer__picker[data-permission='dangerous'] { border-color: color-mix(in srgb, var(--color-danger) 46%, var(--color-border)); background: var(--color-danger-soft); color: var(--color-danger); }
 .agent-composer__project-context[data-enabled='true'] { color: var(--color-success); }
 .agent-project-context-picker__toggle { display: grid; min-height: 64px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 8px; cursor: pointer; }
+.agent-project-context-picker__toggle + .agent-project-context-picker__toggle { border-top: 1px solid var(--color-border); }
 .agent-project-context-picker__toggle > span { display: grid; min-width: 0; gap: 3px; }
 .agent-project-context-picker__toggle strong { font-size: 13px; }
 .agent-project-context-picker__toggle small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; }

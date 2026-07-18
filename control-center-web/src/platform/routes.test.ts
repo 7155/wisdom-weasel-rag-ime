@@ -337,7 +337,7 @@ describe('control route policy', () => {
     ).toThrow(/body field/);
   });
 
-  it('allows the per-session project context switch', () => {
+  it('allows the per-session context resource switches', () => {
     expect(() => assertControlRequest({
       pathId: 'agent.session.mode.update',
       params: { sessionId: 'agent:session-a' },
@@ -347,6 +347,8 @@ describe('control route policy', () => {
         toolProfileVersion: 'control-center-v1',
         toolAllowlistMode: 'profile',
         projectContextEnabled: false,
+        piSkillsEnabled: true,
+        codexSkillsEnabled: true,
       },
     })).not.toThrow();
   });

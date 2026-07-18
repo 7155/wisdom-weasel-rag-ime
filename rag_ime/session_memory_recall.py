@@ -67,8 +67,8 @@ class SessionMemoryRecallBuilder:
         role_id: str,
         query_text: str,
         room_ids: Sequence[str] = (),
-        max_items: int = 8,
-        max_chars: int = 6_400,
+        max_items: int = 10,
+        max_chars: int = 10_000,
         generated_at_ms: int | None = None,
     ) -> dict[str, object]:
         session = compact_whitespace(session_id)
@@ -86,7 +86,7 @@ class SessionMemoryRecallBuilder:
             room_ids=room_ids,
         )
         bounded_items = max(1, min(int(max_items), 12))
-        bounded_chars = max(1_200, min(int(max_chars), 12_000))
+        bounded_chars = max(1_200, min(int(max_chars), 16_000))
         generated = int(
             generated_at_ms
             if generated_at_ms is not None
@@ -305,18 +305,19 @@ def _select_hits(
         is_activity_timeline = bool(
             {"daily", "activity-timeline"}.intersection(normalized_tags)
         )
+        per_item_chars = 1_400 if doc_type == "book" else 900
         text = (
             _focused_activity_excerpt(
                 str(item.get("text") or ""),
                 query_text=query_text,
-                max_chars=760,
+                max_chars=per_item_chars,
             )
             if is_activity_timeline
-            else truncate_text(str(item.get("text") or ""), 760)
+            else truncate_text(str(item.get("text") or ""), per_item_chars)
         )
         if not source_id or not text or source_id in seen_sources:
             continue
-        type_limit = 2 if doc_type == "book" else 5
+        type_limit = 2 if doc_type == "book" else 8
         if type_counts[doc_type] >= type_limit:
             continue
         if selected and used_chars + len(text) > max_chars:

@@ -1,6 +1,14 @@
 ---
 name: rag-ime-memory-curator
 description: Governed workflow for reviewing evidence and proposing RAG-IME memory changes through ime_memory and agent_role_book. Use for remember, correct, forget, rollback, Timeline review, Topic Book curation, or Role Book proposals; every durable activation remains bound to native approval.
+when:
+  - 用户要求审阅、整理、应用或回滚智鼬记忆草案
+  - 用户询问 ime_memory 草案审批流程
+does: 用 ime_memory 准备并受控应用记忆草案。
+notFor:
+  - 普通记忆查询或自动生成
+  - 直接读写 SQLite
+  - 绕过逐项审批
 ---
 
 # RAG-IME Memory Curator

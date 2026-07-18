@@ -59,6 +59,8 @@ class AgentSessionStore:
         thinking_level: str = "",
         tool_profile_version: str = "control-center-v1",
         project_context_enabled: bool = True,
+        pi_skills_enabled: bool = False,
+        codex_skills_enabled: bool = False,
         workspace_roots: Iterable[str] = (),
         shell_policy_version: str | None = None,
         session_kind: str = "conversation",
@@ -106,10 +108,11 @@ class AgentSessionStore:
                 INSERT INTO agent_sessions(
                     id, title, session_mode, role_id, role_version, role_book_revision_id,
                     model_profile, thinking_level,
-                    tool_profile_version, project_context_enabled, workspace_roots_json,
+                    tool_profile_version, project_context_enabled,
+                    pi_skills_enabled, codex_skills_enabled, workspace_roots_json,
                     shell_policy_version, session_kind, created_at_ms, updated_at_ms,
                     last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -122,6 +125,8 @@ class AgentSessionStore:
                     normalized_thinking,
                     tool_profile_version,
                     1 if project_context_enabled else 0,
+                    1 if pi_skills_enabled else 0,
+                    1 if codex_skills_enabled else 0,
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     shell_policy,
                     normalized_kind,
@@ -451,6 +456,8 @@ class AgentSessionStore:
         tool_profile_version: str,
         allowed_tools: Iterable[str] | None,
         project_context_enabled: bool | None = None,
+        pi_skills_enabled: bool | None = None,
+        codex_skills_enabled: bool | None = None,
         workspace_roots: Iterable[str] | None = None,
         updated_at_ms: int | None = None,
     ) -> dict[str, object]:
@@ -472,6 +479,16 @@ class AgentSessionStore:
             if project_context_enabled is None
             else bool(project_context_enabled)
         )
+        load_pi_skills = (
+            bool(current.get("piSkillsEnabled", False))
+            if pi_skills_enabled is None
+            else bool(pi_skills_enabled)
+        )
+        load_codex_skills = (
+            bool(current.get("codexSkillsEnabled", False))
+            if codex_skills_enabled is None
+            else bool(codex_skills_enabled)
+        )
         shell_policy = (
             "coordinator-per-command-v1"
             if normalized_mode == "coordinator"
@@ -483,7 +500,8 @@ class AgentSessionStore:
                 """
                 UPDATE agent_sessions
                 SET session_mode = ?, tool_profile_version = ?, workspace_roots_json = ?,
-                    shell_policy_version = ?, project_context_enabled = ?, updated_at_ms = ?
+                    shell_policy_version = ?, project_context_enabled = ?,
+                    pi_skills_enabled = ?, codex_skills_enabled = ?, updated_at_ms = ?
                 WHERE id = ?
                 """,
                 (
@@ -492,6 +510,8 @@ class AgentSessionStore:
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     shell_policy,
                     1 if context_enabled else 0,
+                    1 if load_pi_skills else 0,
+                    1 if load_codex_skills else 0,
                     timestamp,
                     session_id,
                 ),
@@ -1155,6 +1175,8 @@ def _session_payload(
         "toolAllowlistMode": "explicit" if allowed_tools is not None else "profile",
         "allowedTools": allowed_tools or [],
         "projectContextEnabled": bool(row["project_context_enabled"]),
+        "piSkillsEnabled": bool(row["pi_skills_enabled"]),
+        "codexSkillsEnabled": bool(row["codex_skills_enabled"]),
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
         "lastOpenedAtMs": int(row["last_opened_at_ms"]),

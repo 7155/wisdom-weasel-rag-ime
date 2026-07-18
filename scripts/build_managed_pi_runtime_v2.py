@@ -180,9 +180,12 @@ def _runtime_host_banner(skills_root: Path) -> str:
         f'const __ragImeSkillNames = {json.dumps(skill_names, ensure_ascii=True)}; '
         'const __ragImeRuntimeDir = __dirname(__fileURLToPath(import.meta.url)); '
         'const __ragImeSkillPaths = __ragImeSkillNames.map((name) => __join(__ragImeRuntimeDir, "skills", name)); '
+        'const __ragImeRoutingCards = __join(__ragImeRuntimeDir, "skill-routing-cards.json"); '
         'const __ragImeConfiguredSkills = process.env.RAG_IME_PI_SKILL_PATHS || ""; '
         'process.env.RAG_IME_PI_SKILL_PATHS = '
-        '[...__ragImeSkillPaths, __ragImeConfiguredSkills].filter(Boolean).join(__pathDelimiter);'
+        '[...__ragImeSkillPaths, __ragImeConfiguredSkills].filter(Boolean).join(__pathDelimiter); '
+        'process.env.RAG_IME_PI_SKILL_ROUTING_CARDS = '
+        'process.env.RAG_IME_PI_SKILL_ROUTING_CARDS || __ragImeRoutingCards;'
     )
 
 
@@ -276,10 +279,12 @@ def main(argv: list[str] | None = None) -> int:
         ) * 1_000
         provider_bridge_source = ROOT / "rag_ime" / "node" / "pi_provider_bridge_bundled.ts"
         product_skills = ROOT / "integrations" / "pi" / "skills"
+        skill_routing_cards = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
         packager_digest = hashlib.sha256(
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
             + _hash_tree(product_skills)
+            + skill_routing_cards.read_bytes()
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
             + product_commit.encode("ascii")
         ).hexdigest()[:10]
@@ -303,10 +308,8 @@ def main(argv: list[str] | None = None) -> int:
             bin_dir = staging / "bin"
             runtime_dir.mkdir(mode=0o700)
             bin_dir.mkdir(mode=0o700)
-            bundled_skills = package_root / "skills"
-            if bundled_skills.is_dir():
-                shutil.copytree(bundled_skills, runtime_dir / "skills")
             _copy_product_skills(product_skills, runtime_dir / "skills")
+            shutil.copy2(skill_routing_cards, runtime_dir / "skill-routing-cards.json")
             bundled_entrypoint = runtime_dir / "cli.mjs"
             _run(
                 [

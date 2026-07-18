@@ -263,7 +263,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
-    def test_session_project_context_setting_controls_pi_context_file_loading(self) -> None:
+    def test_session_context_resource_settings_reach_pi_session_open(self) -> None:
         session_id = str(self.first["id"])
         self.store.set_runtime_policy(
             session_id,
@@ -271,6 +271,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
             tool_profile_version="control-center-v1",
             allowed_tools=None,
             project_context_enabled=False,
+            pi_skills_enabled=True,
+            codex_skills_enabled=True,
         )
 
         self.runtime.ensure(session_id)
@@ -281,6 +283,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
         ]
         opened = next(request for request in requests if request["method"] == "session.open")
         self.assertTrue(opened["params"]["noContextFiles"])
+        self.assertTrue(opened["params"]["piSkillsEnabled"])
+        self.assertTrue(opened["params"]["codexSkillsEnabled"])
 
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
         events = _pi_tool_history_events(

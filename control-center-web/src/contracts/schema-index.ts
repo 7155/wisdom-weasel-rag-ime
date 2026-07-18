@@ -4482,6 +4482,9 @@ export const contractSchemas = {
           "roleBookRevisionId",
           "modelProfile",
           "toolProfileVersion",
+          "projectContextEnabled",
+          "piSkillsEnabled",
+          "codexSkillsEnabled",
           "createdAtMs",
           "updatedAtMs",
           "messageCount",
@@ -4536,6 +4539,15 @@ export const contractSchemas = {
           "toolProfileVersion": {
             "type": "string",
             "minLength": 1
+          },
+          "projectContextEnabled": {
+            "type": "boolean"
+          },
+          "piSkillsEnabled": {
+            "type": "boolean"
+          },
+          "codexSkillsEnabled": {
+            "type": "boolean"
           },
           "createdAtMs": {
             "type": "integer",
@@ -4788,6 +4800,8 @@ export const contractSchemas = {
       "modelProfile",
       "toolProfileVersion",
       "projectContextEnabled",
+      "piSkillsEnabled",
+      "codexSkillsEnabled",
       "createdAtMs",
       "updatedAtMs",
       "messageCount",
@@ -4931,6 +4945,12 @@ export const contractSchemas = {
         "uniqueItems": true
       },
       "projectContextEnabled": {
+        "type": "boolean"
+      },
+      "piSkillsEnabled": {
+        "type": "boolean"
+      },
+      "codexSkillsEnabled": {
         "type": "boolean"
       },
       "createdAtMs": {

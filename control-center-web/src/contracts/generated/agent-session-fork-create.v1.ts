@@ -23,6 +23,9 @@ export interface Session {
   roleBookRevisionId: string;
   modelProfile: string;
   toolProfileVersion: string;
+  projectContextEnabled: boolean;
+  piSkillsEnabled: boolean;
+  codexSkillsEnabled: boolean;
   createdAtMs: number;
   updatedAtMs: number;
   messageCount: number;

@@ -434,6 +434,8 @@ class PiRuntimeHostManager:
                     in {"ime-surface-v1", "voice-refinement-v1"}
                     or not bool(session.get("projectContextEnabled", True))
                 ),
+                "piSkillsEnabled": bool(session.get("piSkillsEnabled", False)),
+                "codexSkillsEnabled": bool(session.get("codexSkillsEnabled", False)),
             }
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
