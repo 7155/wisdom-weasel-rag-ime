@@ -11844,8 +11844,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      selectionRule: "field_context_if_not_shorter_else_ime_buffer"
 +    )
 +    return RagImeFinalizedInputCapture(text: selectedText, metadata: metadata)
-  }
-
+   }
+ 
 -  @objc func openRimeFolder() {
 -    NSApp.squirrelAppDelegate.openRimeFolder()
 +  func ragImeAccessibilityCanRepresentFinalizedInput(
