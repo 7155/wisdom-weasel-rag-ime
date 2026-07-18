@@ -15,7 +15,7 @@
   "$defs": {
     "session": {
       "type": "object",
-      "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "roleBookRevisionId", "modelProfile", "toolProfileVersion", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
+      "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "roleBookRevisionId", "modelProfile", "toolProfileVersion", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
       "properties": {
         "schemaVersion": {"type": "string", "const": "rag-ime.agent-session.v1"},
         "id": {"type": "string", "minLength": 1},
@@ -27,6 +27,9 @@
         "roleBookRevisionId": {"type": "string", "maxLength": 240},
         "modelProfile": {"type": "string", "minLength": 1},
         "toolProfileVersion": {"type": "string", "minLength": 1},
+        "projectContextEnabled": {"type": "boolean"},
+        "piSkillsEnabled": {"type": "boolean"},
+        "codexSkillsEnabled": {"type": "boolean"},
         "createdAtMs": {"type": "integer", "minimum": 0},
         "updatedAtMs": {"type": "integer", "minimum": 0},
         "messageCount": {"type": "integer", "minimum": 0},

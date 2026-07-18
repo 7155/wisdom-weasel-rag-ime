@@ -19,5 +19,7 @@
   "lastMessagePreview": "",
   "workspaceRoots": [],
   "projectContextEnabled": true,
+  "piSkillsEnabled": false,
+  "codexSkillsEnabled": false,
   "shellPolicyVersion": "assistant-no-shell-v1"
 }

@@ -525,6 +525,8 @@ struct NativeRoutePolicyTests {
                 "workspaceRoots": ["/tmp/project"],
                 "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
                 "projectContextEnabled": false,
+                "piSkillsEnabled": true,
+                "codexSkillsEnabled": true,
             ]
         )
         expectThrows("persona prompt remains server owned") {

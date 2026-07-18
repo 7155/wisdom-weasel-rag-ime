@@ -25,6 +25,8 @@ export type SessionSummary = Pick<
     | 'toolAllowlistMode'
     | 'allowedTools'
     | 'projectContextEnabled'
+    | 'piSkillsEnabled'
+    | 'codexSkillsEnabled'
   >>;
 
 export interface AgentPermissionSelection {

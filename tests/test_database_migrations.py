@@ -29,11 +29,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58,
+                    51, 52, 53, 54, 55, 56, 57, 58, 60,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 58)
+            self.assertEqual(status["currentVersion"], 60)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -132,6 +132,8 @@ class DatabaseMigrationTests(unittest.TestCase):
                 }.issubset(memory_source_columns)
             )
             self.assertIn("project_context_enabled", session_columns)
+            self.assertIn("pi_skills_enabled", session_columns)
+            self.assertIn("codex_skills_enabled", session_columns)
             self.assertIn("role_book_revision_id", session_columns)
             for table, primary_key in (
                 ("memory_items", "memory_id"),
@@ -217,7 +219,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (39, 40, 41, 42, 43, 44, 45, 46, 47, 51, 52, 53, 54, 55, 56, 57, 58),
+                (39, 40, 41, 42, 43, 44, 45, 46, 47, 51, 52, 53, 54, 55, 56, 57, 58, 60),
             )
             self.assertEqual(
                 conn.execute(

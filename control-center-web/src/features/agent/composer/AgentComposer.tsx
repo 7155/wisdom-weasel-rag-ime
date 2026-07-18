@@ -84,13 +84,15 @@ export function AgentComposer({
   onPermissionChange,
   onWorkspaceRootsChange,
   onProjectContextChange = () => {},
+  onPiSkillsChange = () => {},
+  onCodexSkillsChange = () => {},
   onModelChange,
   modelPickerRequest = 0,
   permissionPickerRequest = 0,
   toolPickerRequest = 0,
   helpRequest = 0,
   imageSupport = 'unknown',
-  projectContextChanging = false,
+  contextResourcesChanging = false,
 }: {
   draft: string;
   attachments: ComposerAttachment[];
@@ -118,13 +120,15 @@ export function AgentComposer({
   onPermissionChange: (selection: AgentPermissionSelection) => void;
   onWorkspaceRootsChange: () => void;
   onProjectContextChange?: (enabled: boolean) => void;
+  onPiSkillsChange?: (enabled: boolean) => void;
+  onCodexSkillsChange?: (enabled: boolean) => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
   permissionPickerRequest?: number;
   toolPickerRequest?: number;
   helpRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
-  projectContextChanging?: boolean;
+  contextResourcesChanging?: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -363,10 +367,12 @@ export function AgentComposer({
               tooltip
             />
             <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
-            <ProjectContextPicker
+            <ContextResourcesPicker
               session={session}
-              disabled={busy || sending || projectContextChanging}
-              onChange={onProjectContextChange}
+              disabled={busy || sending || contextResourcesChanging}
+              onProjectContextChange={onProjectContextChange}
+              onPiSkillsChange={onPiSkillsChange}
+              onCodexSkillsChange={onCodexSkillsChange}
             />
             <ToolPicker tools={tools} status={toolCatalogStatus} session={session} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
             <ModelTree catalog={catalog} disabled={busy || sending} requestOpen={modelPickerRequest} onChange={onModelChange} />
@@ -404,25 +410,31 @@ export function AgentComposer({
   );
 }
 
-function ProjectContextPicker({
+function ContextResourcesPicker({
   session,
   disabled,
-  onChange,
+  onProjectContextChange,
+  onPiSkillsChange,
+  onCodexSkillsChange,
 }: {
   session?: SessionSummary;
   disabled: boolean;
-  onChange: (enabled: boolean) => void;
+  onProjectContextChange: (enabled: boolean) => void;
+  onPiSkillsChange: (enabled: boolean) => void;
+  onCodexSkillsChange: (enabled: boolean) => void;
 }) {
-  const enabled = session?.projectContextEnabled !== false;
+  const projectContextEnabled = session?.projectContextEnabled !== false;
+  const piSkillsEnabled = session?.piSkillsEnabled === true;
+  const codexSkillsEnabled = session?.codexSkillsEnabled === true;
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button
-          aria-label={`项目指令：${enabled ? '已加载' : '未加载'}`}
+          aria-label={`项目指令：${projectContextEnabled ? '已加载' : '未加载'}`}
           className="agent-composer__picker agent-composer__project-context"
-          data-enabled={enabled || undefined}
+          data-enabled={projectContextEnabled || piSkillsEnabled || codexSkillsEnabled || undefined}
           size="small"
-          title={`项目指令：${enabled ? '已加载' : '未加载'}`}
+          title="项目指令与 Skill 来源"
           variant="quiet"
           disabled={!session || disabled}
           leadingIcon={<BookOpenText size={15} />}
@@ -431,7 +443,7 @@ function ProjectContextPicker({
       <PopoverContent align="start" className="agent-picker-popover agent-project-context-picker">
         <header>
           <BookOpenText size={16} />
-          <span><strong>项目指令</strong><small>当前对话的 System Prompt 资源</small></span>
+          <span><strong>上下文资源</strong><small>当前对话的项目指令与 Skill 来源</small></span>
         </header>
         <label className="agent-project-context-picker__toggle">
           <span>
@@ -440,14 +452,42 @@ function ProjectContextPicker({
           </span>
           <Switch.Root
             aria-label="加载 AGENTS.md / CLAUDE.md"
-            checked={enabled}
+            checked={projectContextEnabled}
             disabled={disabled}
-            onCheckedChange={onChange}
+            onCheckedChange={onProjectContextChange}
           >
             <Switch.Thumb />
           </Switch.Root>
         </label>
-        <p className="agent-picker-popover__note">切换后会重建本对话的 Pi Runtime；历史消息不变，下一轮使用新的项目指令设置。</p>
+        <label className="agent-project-context-picker__toggle">
+          <span>
+            <strong>加载 Pi Skills</strong>
+            <small>读取 Pi 用户 Skill 目录；输入法自己的 Skills 不受此开关影响</small>
+          </span>
+          <Switch.Root
+            aria-label="加载 Pi Skills"
+            checked={piSkillsEnabled}
+            disabled={disabled}
+            onCheckedChange={onPiSkillsChange}
+          >
+            <Switch.Thumb />
+          </Switch.Root>
+        </label>
+        <label className="agent-project-context-picker__toggle">
+          <span>
+            <strong>加载 Codex Skills</strong>
+            <small>读取 Codex 与通用 Agents Skill 目录；默认关闭</small>
+          </span>
+          <Switch.Root
+            aria-label="加载 Codex Skills"
+            checked={codexSkillsEnabled}
+            disabled={disabled}
+            onCheckedChange={onCodexSkillsChange}
+          >
+            <Switch.Thumb />
+          </Switch.Root>
+        </label>
+        <p className="agent-picker-popover__note">切换后会重建 Pi Runtime；历史消息不变，下一轮使用新的上下文资源设置。</p>
       </PopoverContent>
     </Popover>
   );

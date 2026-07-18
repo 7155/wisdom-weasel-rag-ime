@@ -1,0 +1,421 @@
+{
+  "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
+  "scope": {
+    "codexVisibleEntries": 48,
+    "piInstalledEntries": 2,
+    "canonicalCards": 40
+  },
+  "coverage": {
+    "representedSourceEntries": 50,
+    "duplicateSourceMultiplicity": {
+      "openai-docs": 2,
+      "codeagent": 2,
+      "notion:knowledge-capture": 3,
+      "notion:meeting-intelligence": 2,
+      "notion:research-documentation": 3,
+      "notion:spec-to-implementation": 2,
+      "pdf": 2,
+      "project-devlog": 2
+    }
+  },
+  "cards": [
+    {
+      "name": "imagegen",
+      "when": [
+        "用户要求生成照片、插画、纹理、精灵、mockup 或抠图等位图",
+        "用户要求编辑已有位图或根据参考图生成变体"
+      ],
+      "does": "生成或编辑栅格图像，并把结果作为位图资产交付。",
+      "notFor": [
+        "修改 SVG、矢量图、代码图形或既有 Logo",
+        "更适合用 HTML、CSS 或 Canvas 构建"
+      ]
+    },
+    {
+      "name": "openai-docs",
+      "when": [
+        "用户询问 OpenAI 产品、API、Codex、ChatGPT 或模型能力",
+        "用户需要最新模型选择、迁移或带出处的官方说明"
+      ],
+      "does": "检索 OpenAI/Codex 官方文档并给出带链接的当前答案。",
+      "notFor": [
+        "非 OpenAI 的一般编程文档",
+        "用非官方资料替代可用的官方来源"
+      ]
+    },
+    {
+      "name": "plugin-creator",
+      "when": [
+        "用户要求创建新的个人 Codex 插件或补充插件目录结构",
+        "用户要求维护 plugin.json、个人 marketplace 条目、排序元数据或本地插件重装流程"
+      ],
+      "does": "创建或更新合法的 Codex 插件骨架、manifest 和个人 marketplace 配置。"
+    },
+    {
+      "name": "review-agent",
+      "when": [
+        "另一个 Agent 委派只读代码审查",
+        "需要检查未提交改动、基线分支差异、提交或自定义审查范围"
+      ],
+      "does": "只读检查完整变更，按严重度返回所有可操作缺陷。",
+      "notFor": [
+        "直接修改代码、提交、推送或发布评审评论",
+        "没有明确审查目标的一般代码任务"
+      ]
+    },
+    {
+      "name": "skill-creator",
+      "when": [
+        "用户要创建新 Skill",
+        "用户要更新现有 Skill，使其封装专门知识、工作流或工具集成"
+      ],
+      "does": "指导设计、编写和校验可触发、可维护的 Skill。"
+    },
+    {
+      "name": "skill-installer",
+      "when": [
+        "用户要求列出可安装 Skill",
+        "用户要求从精选目录或 GitHub 仓库安装 Skill，包括私有仓库"
+      ],
+      "does": "把指定 Skill 安装到 CODEX_HOME 的 skills 目录。",
+      "notFor": [
+        "从零编写或重构 Skill 内容"
+      ]
+    },
+    {
+      "name": "browser:control-in-app-browser",
+      "when": [
+        "任务需要操作应用内 Browser 的页面或登录态",
+        "需要导航、点击、输入、截图或本地 Web 测试"
+      ],
+      "does": "读取和操作应用内 Browser 的真实交互状态。",
+      "notFor": [
+        "已有连接器、API 或 CLI 可直接完成",
+        "明确依赖用户 Chrome 状态"
+      ]
+    },
+    {
+      "name": "chrome:control-chrome",
+      "when": [
+        "任务依赖用户现有 Chrome 标签页、登录会话或扩展状态",
+        "用户明确要求在其 Chrome 中读取或执行操作"
+      ],
+      "does": "控制用户 Chrome 的真实浏览器状态。",
+      "notFor": [
+        "已有专用连接器、API 或 CLI 可直接完成的任务",
+        "不应接触用户日常 Chrome 状态的隔离浏览任务"
+      ]
+    },
+    {
+      "name": "codeagent",
+      "when": [
+        "需要把复杂代码任务委派给 Codex、Claude 或 Gemini 等多个 AI 后端",
+        "需要使用 @文件引用或比较多后端结构化输出"
+      ],
+      "does": "运行 codeagent-wrapper，把文件上下文交给指定后端并返回结构化结果。"
+    },
+    {
+      "name": "codex",
+      "when": [
+        "需要专门委派 Codex CLI 完成代码分析、重构或自动代码修改",
+        "任务需要通过 @文件引用给 Codex 提供明确源码范围"
+      ],
+      "does": "执行 Codex CLI 并返回其代码任务结果。",
+      "notFor": [
+        "需要同时比较多个 AI 后端的任务"
+      ]
+    },
+    {
+      "name": "computer-use:computer-use",
+      "when": [
+        "任务必须读取或操作本机 Mac 应用的可见 UI",
+        "没有更合适的连接器、API 或 CLI 可以完成该操作"
+      ],
+      "does": "通过 Computer Use 观察并控制本地 Mac 应用。",
+      "notFor": [
+        "存在专用连接器、API 或 CLI 的任务"
+      ]
+    },
+    {
+      "name": "context-checkpoint",
+      "when": [
+        "任务长期、多步骤或即将受到聊天压缩影响",
+        "关键决定、约束、命令或路径需要保存或恢复",
+        "用户明确要求记录、总结、保存上下文或从之前会话继续"
+      ],
+      "does": "在 docs/agent/memory 写入上下文 checkpoint 并维护索引。",
+      "notFor": [
+        "无需跨轮保存状态的简单独立问题"
+      ]
+    },
+    {
+      "name": "doc",
+      "when": [
+        "任务涉及读取、创建或编辑 docx 文件",
+        "Word 文档的排版或布局保真度需要渲染检查"
+      ],
+      "does": "使用 python-docx 处理 docx，并通过 render_docx.py 做视觉验证。"
+    },
+    {
+      "name": "documents:documents",
+      "when": [
+        "需要在容器内创建、编辑、修订或评论 Word/docx 文档",
+        "产物面向 Word 或 Google Docs，且要求严格渲染和版式验证"
+      ],
+      "does": "通过文档 artifact 工作流生成、修订并反复渲染验证文档。"
+    },
+    {
+      "name": "find-skills",
+      "when": [
+        "用户询问怎样完成某类任务并怀疑可能已有 Skill",
+        "用户要求查找、推荐或安装能扩展能力的 Skill"
+      ],
+      "does": "发现适合需求的可安装 Skill，并引导后续安装。"
+    },
+    {
+      "name": "github:gh-address-comments",
+      "when": [
+        "用户要求处理 PR 未解决的评审线程或行内评论",
+        "需要根据具体评审意见实现选定修复"
+      ],
+      "does": "读取 PR 评审上下文并实现未解决线程要求的修复。",
+      "notFor": [
+        "一般 PR 摘要",
+        "只处理 GitHub Actions 失败"
+      ]
+    },
+    {
+      "name": "github:gh-fix-ci",
+      "when": [
+        "用户要求调试或修复 GitHub PR 中失败的 GitHub Actions 检查"
+      ],
+      "does": "检查 PR 元数据、Actions 日志和补丁上下文，再实现获准的 CI 修复。",
+      "notFor": [
+        "非 GitHub Actions 的 CI 系统",
+        "普通代码评审意见"
+      ]
+    },
+    {
+      "name": "github:github",
+      "when": [
+        "用户需要一般 GitHub 仓库、PR 或 Issue 帮助",
+        "用户需要 PR/Issue 摘要、分诊或了解仓库状态"
+      ],
+      "does": "通过 GitHub App 检索和分诊仓库、PR 与 Issue。",
+      "notFor": [
+        "明确属于评审、Actions 修复或发布流程"
+      ]
+    },
+    {
+      "name": "github:yeet",
+      "when": [
+        "用户明确要求把本地修改发布到 GitHub",
+        "任务需要确认范围、提交、推送分支并创建 draft PR"
+      ],
+      "does": "有意地提交并推送本地变更，再通过 GitHub App 创建 draft PR。",
+      "notFor": [
+        "用户只要求本地修改或尚未授权发布"
+      ]
+    },
+    {
+      "name": "hatch-pet",
+      "when": [
+        "用户要求创建新的 Codex v2 动画宠物或自定义吉祥物",
+        "用户要求修复现有宠物、非像素宠物、品牌风格宠物或 8x11 spritesheet"
+      ],
+      "does": "生成或修复包含标准动画、方向、QA 和 v2 打包信息的 Codex 宠物。"
+    },
+    {
+      "name": "latex-document",
+      "when": [
+        "任务涉及创建、编译、调试、检查、转换或分析 LaTeX/PDF 文档",
+        "任务是报告、论文、简历、演示、海报、引文、表格、图表、表单或格式转换的端到端 LaTeX 工作流"
+      ],
+      "does": "使用 LaTeX 工具链和辅助脚本完成文档生产、编译与预览。"
+    },
+    {
+      "name": "notion-knowledge-capture",
+      "when": [
+        "用户要把对话、笔记或决定沉淀为 Notion 知识",
+        "目标产物是 wiki、how-to、decision 或 FAQ，并需要正确链接"
+      ],
+      "does": "把当前材料整理成结构化、可链接的 Notion 页面。"
+    },
+    {
+      "name": "notion-meeting-intelligence",
+      "when": [
+        "用户要基于 Notion 上下文准备会议",
+        "需要议程、会前材料、补充研究或按参会者定制内容"
+      ],
+      "does": "汇集 Notion 与补充研究，生成面向具体参会者的会议材料。"
+    },
+    {
+      "name": "notion-research-documentation",
+      "when": [
+        "需要跨多个 Notion 来源开展研究",
+        "用户要把 Notion 信息综合成带引用的 brief、比较或报告"
+      ],
+      "does": "检索并综合 Notion 知识，生成结构化、带出处的研究文档。"
+    },
+    {
+      "name": "notion-spec-to-implementation",
+      "when": [
+        "用户要把 Notion PRD 或功能规格转成实施计划",
+        "需要从规格创建任务并跟踪实现进度"
+      ],
+      "does": "把 Notion 规格转换为实施步骤、任务和进度跟踪结构。"
+    },
+    {
+      "name": "pdf",
+      "when": [
+        "任务涉及读取、创建、审查、提取或修改 PDF",
+        "PDF 的实际页面布局需要通过逐页渲染进行视觉验证"
+      ],
+      "does": "使用 Poppler 和 PDF Python 工具完成 PDF 处理、渲染与版式验证。"
+    },
+    {
+      "name": "playwright",
+      "when": [
+        "任务需要从终端自动化真实浏览器",
+        "需要导航、表单填写、快照、截图、数据提取或 UI 流程调试"
+      ],
+      "does": "通过 playwright-cli 或包装脚本执行可重复的浏览器自动化。"
+    },
+    {
+      "name": "presentations:presentations",
+      "when": [
+        "用户要求创建或编辑 PowerPoint 演示文稿",
+        "目标产物面向 Google Slides"
+      ],
+      "does": "创建或编辑 PowerPoint/Google Slides 演示文稿。"
+    },
+    {
+      "name": "project-devlog",
+      "when": [
+        "用户要求记录笔记、Todo、聊天摘要或 Git 状态",
+        "用户说记录、继续、恢复上下文、理解之前工作或类似项目连续性指令",
+        "用户说 plan、计划、仔细思考等规划触发词"
+      ],
+      "does": "维护 docs/agent 下的项目日志、摘要或按触发词创建计划文档。",
+      "notFor": [
+        "用户没有要求时更新 todo.md"
+      ]
+    },
+    {
+      "name": "screenshot",
+      "when": [
+        "用户明确要求截取桌面、系统、应用窗口或指定像素区域",
+        "现有专用工具无法完成所需的系统级截图"
+      ],
+      "does": "调用操作系统级截图能力并返回指定画面。"
+    },
+    {
+      "name": "sites:sites-building",
+      "when": [
+        "用户要求使用 Sites 构建网站、落地页、作品集、仪表盘、门户、追踪器或内部工具",
+        "项目包含 .openai/hosting.json"
+      ],
+      "does": "使用 Sites 构建可运行的网站体验。"
+    },
+    {
+      "name": "sites:sites-hosting",
+      "when": [
+        "sites-building 已完成并需要托管",
+        "用户要求发布、部署或管理 Sites 项目，或项目包含 .openai/hosting.json"
+      ],
+      "does": "使用 Sites 完成网站发布、部署和托管管理。",
+      "notFor": [
+        "尚未完成站点构建的纯设计任务"
+      ]
+    },
+    {
+      "name": "spreadsheets:spreadsheets",
+      "when": [
+        "用户要求创建、编辑、分析或验证 xlsx、xls、csv 或 tsv",
+        "用户需要生成可导入 Google Sheets 的工作簿"
+      ],
+      "does": "创建、修改、分析并验证独立表格文件和工作簿。",
+      "notFor": [
+        "控制当前 Excel 应用或 live 会话"
+      ]
+    },
+    {
+      "name": "spreadsheets:excel-live-control",
+      "when": [
+        "用户在 Codex 中标记 Excel 应用",
+        "用户继续已有的 live Excel 任务或连接会话"
+      ],
+      "does": "通过加载项或连接会话控制当前 Excel 工作簿。",
+      "notFor": [
+        "独立表格文件处理",
+        "Google Sheets"
+      ]
+    },
+    {
+      "name": "template-creator:template-creator",
+      "when": [
+        "$template-creator 被调用",
+        "基于所附 Word、PowerPoint、Excel 创建或更新模板"
+      ],
+      "does": "创建或更新 artifact-template Skill。",
+      "notFor": [
+        "用现有模板制作一次性产物"
+      ]
+    },
+    {
+      "name": "tongji-thesis-pipeline",
+      "when": [
+        "在同济论文仓库中同步 drafts 到 LaTeX",
+        "需要重新生成论文 PDF/Word、保持二者同源一致或在导出前检查章节"
+      ],
+      "does": "运行同济论文仓库的同步、内容检查和 PDF/Word 导出流水线。",
+      "notFor": [
+        "其他仓库的一般 LaTeX 文档任务"
+      ]
+    },
+    {
+      "name": "vcp-thesis-api",
+      "when": [
+        "论文任务需要调用本地 VCP OpenAI-compatible 后端",
+        "需要列模型、验证连接、发送 chat completions 或结合论文日记 RAG 生成内容"
+      ],
+      "does": "调用本地 VCP 论文后端，完成证据约束的问答和写作请求。",
+      "notFor": [
+        "无需 VCP 本地索引的一般论文编辑"
+      ]
+    },
+    {
+      "name": "visualize:visualize",
+      "when": [
+        "用户要求直观展示某个机制如何工作",
+        "用户需要模拟器、实验台、地图、图表、比较、场景或可调参数探索"
+      ],
+      "does": "在对话中创建可视化或可交互的探索工具。"
+    },
+    {
+      "name": "rag-ime-plugin-creator",
+      "when": [
+        "用户要求创建、校验或安装智鼬 managed plugin",
+        "用户要把插件草案提交控制中心审批"
+      ],
+      "does": "用 ime_plugins 创建、校验并提交安装申请。",
+      "notFor": [
+        "绕过控制中心直接安装、启停或回滚",
+        "写入密钥或未声明的高风险权限"
+      ]
+    },
+    {
+      "name": "rag-ime-memory-curator",
+      "when": [
+        "用户要求审阅、整理、应用或回滚智鼬记忆草案",
+        "用户询问 ime_memory 草案审批流程"
+      ],
+      "does": "用 ime_memory 准备并受控应用记忆草案。",
+      "notFor": [
+        "普通记忆查询或自动生成",
+        "直接读写 SQLite",
+        "绕过逐项审批"
+      ]
+    }
+  ]
+}

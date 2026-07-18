@@ -1300,6 +1300,34 @@ describe('Agent experience', () => {
     expect(window.location.hash).toBe('#/configuration');
   });
 
+  it('persists Pi and Codex Skill source switches through the current session settings route', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const contextButton = await screen.findByRole('button', { name: '项目指令：已加载' });
+    await user.click(contextButton);
+    await user.click(screen.getByRole('switch', { name: '加载 Pi Skills' }));
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: expect.objectContaining({ piSkillsEnabled: true }),
+      }),
+    })));
+
+    const codexSwitch = screen.getByRole('switch', { name: '加载 Codex Skills' });
+    await waitFor(() => expect(codexSwitch).toBeEnabled());
+    await user.click(codexSwitch);
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: expect.objectContaining({ codexSkillsEnabled: true }),
+      }),
+    })));
+  });
+
   it('requires a native workspace choice before enabling coordinator mode', async () => {
     const assistantSession = {
       ...previewSessions[0]!,

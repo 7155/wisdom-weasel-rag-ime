@@ -2120,6 +2120,8 @@ class AgentService:
                 "toolAllowlistMode",
                 "allowedTools",
                 "projectContextEnabled",
+                "piSkillsEnabled",
+                "codexSkillsEnabled",
             )
         ):
             requested_mode = str(payload.get("mode") or session.get("mode") or "").strip()
@@ -2188,10 +2190,13 @@ class AgentService:
                 tool_id.startswith("workspace_") for tool_id in allowed_tools or []
             ):
                 raise ValueError("assistant sessions cannot enable workspace tools")
-            if "projectContextEnabled" in payload and not isinstance(
-                payload.get("projectContextEnabled"), bool
+            for boolean_key in (
+                "projectContextEnabled",
+                "piSkillsEnabled",
+                "codexSkillsEnabled",
             ):
-                raise ValueError("projectContextEnabled must be a boolean")
+                if boolean_key in payload and not isinstance(payload.get(boolean_key), bool):
+                    raise ValueError(f"{boolean_key} must be a boolean")
             session = self.sessions.set_runtime_policy(
                 session_id,
                 mode=requested_mode,
@@ -2200,6 +2205,16 @@ class AgentService:
                 project_context_enabled=(
                     bool(payload["projectContextEnabled"])
                     if "projectContextEnabled" in payload
+                    else None
+                ),
+                pi_skills_enabled=(
+                    bool(payload["piSkillsEnabled"])
+                    if "piSkillsEnabled" in payload
+                    else None
+                ),
+                codex_skills_enabled=(
+                    bool(payload["codexSkillsEnabled"])
+                    if "codexSkillsEnabled" in payload
                     else None
                 ),
                 workspace_roots=[str(value) for value in roots] if isinstance(roots, list) else None,
@@ -2282,6 +2297,8 @@ class AgentService:
             model_profile=str(source["modelProfile"]),
             tool_profile_version=str(source["toolProfileVersion"]),
             project_context_enabled=bool(source.get("projectContextEnabled", True)),
+            pi_skills_enabled=bool(source.get("piSkillsEnabled", False)),
+            codex_skills_enabled=bool(source.get("codexSkillsEnabled", False)),
             workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
             shell_policy_version=str(source.get("shellPolicyVersion") or "") or None,
             session_kind="conversation",
@@ -2298,6 +2315,8 @@ class AgentService:
             tool_profile_version=str(source["toolProfileVersion"]),
             allowed_tools=allowed_tools,
             project_context_enabled=bool(source.get("projectContextEnabled", True)),
+            pi_skills_enabled=bool(source.get("piSkillsEnabled", False)),
+            codex_skills_enabled=bool(source.get("codexSkillsEnabled", False)),
             workspace_roots=[str(value) for value in source.get("workspaceRoots") or []],
         )
         try:

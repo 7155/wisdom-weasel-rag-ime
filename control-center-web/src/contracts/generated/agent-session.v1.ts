@@ -32,6 +32,8 @@ export interface AgentSessionV1 {
   toolAllowlistMode?: 'profile' | 'explicit';
   allowedTools?: string[];
   projectContextEnabled: boolean;
+  piSkillsEnabled: boolean;
+  codexSkillsEnabled: boolean;
   createdAtMs: number;
   updatedAtMs: number;
   lastOpenedAtMs?: number;

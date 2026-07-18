@@ -6,9 +6,11 @@ import { AgentComposer } from './AgentComposer';
 
 afterEach(cleanup);
 
-describe('AgentComposer project instructions', () => {
-  it('lets the user disable Pi project context for the current session', async () => {
+describe('AgentComposer context resources', () => {
+  it('controls project instructions, Pi Skills, and Codex Skills independently', async () => {
     const onProjectContextChange = vi.fn();
+    const onPiSkillsChange = vi.fn();
+    const onCodexSkillsChange = vi.fn();
     const user = userEvent.setup();
     render(
       <TooltipProvider>
@@ -26,6 +28,8 @@ describe('AgentComposer project instructions', () => {
             updatedAtMs: 1,
             workspaceRoots: ['/tmp/project'],
             projectContextEnabled: true,
+            piSkillsEnabled: false,
+            codexSkillsEnabled: false,
           }}
           commands={[]}
           tools={[]}
@@ -43,6 +47,8 @@ describe('AgentComposer project instructions', () => {
           onPermissionChange={vi.fn()}
           onWorkspaceRootsChange={vi.fn()}
           onProjectContextChange={onProjectContextChange}
+          onPiSkillsChange={onPiSkillsChange}
+          onCodexSkillsChange={onCodexSkillsChange}
           onModelChange={vi.fn()}
         />
       </TooltipProvider>,
@@ -50,7 +56,11 @@ describe('AgentComposer project instructions', () => {
 
     await user.click(screen.getByRole('button', { name: '项目指令：已加载' }));
     await user.click(screen.getByRole('switch', { name: '加载 AGENTS.md / CLAUDE.md' }));
+    await user.click(screen.getByRole('switch', { name: '加载 Pi Skills' }));
+    await user.click(screen.getByRole('switch', { name: '加载 Codex Skills' }));
 
     expect(onProjectContextChange).toHaveBeenCalledWith(false);
+    expect(onPiSkillsChange).toHaveBeenCalledWith(true);
+    expect(onCodexSkillsChange).toHaveBeenCalledWith(true);
   });
 });
