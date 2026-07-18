@@ -35,7 +35,7 @@ struct VoiceRecognitionContract: Codable, Equatable {
         fullResultReplacement: true,
         providerResponseMetadata: true,
         thirdPassRefinement: true,
-        thirdPassRefinementEnabled: false
+        thirdPassRefinementEnabled: UserDefaults.standard.bool(forKey: "thirdPassRefinementEnabled")
     )
 }
 

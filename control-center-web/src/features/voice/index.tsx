@@ -442,7 +442,9 @@ export function VoiceFeature() {
             </InlineNotice>
           ) : lastRecognition.finalRevisedPartial !== true && lastRecognition.localSmoothingApplied !== true ? (
             <InlineNotice title="火山 Final 与临时稿相同" tone="info">
-              已记录响应阶段及 utterances/additions 元数据；下次相同情况会自动进入独立第三遍文字校对。
+              {deployedRecognition.thirdPassRefinementEnabled === true
+                ? '已记录响应阶段及 utterances/additions 元数据；下次相同情况会自动进入独立第三遍文字校对。'
+                : '已记录响应阶段及 utterances/additions 元数据；第三遍文字校对当前关闭，将直接采用火山 Final。'}
             </InlineNotice>
           ) : null}
           {booleanValue(lastRecognition.finalReceived) && stringValue(lastRecognition.providerResponseStage) ? (

@@ -90,7 +90,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("fullResultReplacement: true", status)
         self.assertIn("providerResponseMetadata: true", status)
         self.assertIn("thirdPassRefinement: true", status)
-        self.assertIn("thirdPassRefinementEnabled: false", status)
+        self.assertIn('UserDefaults.standard.bool(forKey: "thirdPassRefinementEnabled")', status)
         self.assertIn("VoiceThirdPassRefiner.isEnabled", coordinator)
         self.assertIn("voice-agent-status.json", status)
         self.assertIn(".posixPermissions: 0o600", status)
