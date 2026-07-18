@@ -22,6 +22,7 @@ describe('AgentComposer project instructions', () => {
             status: 'idle',
             roleId: 'zhiyou-v1',
             roleVersion: '1',
+            roleBookRevisionId: 'role-book-revision-1',
             updatedAtMs: 1,
             workspaceRoots: ['/tmp/project'],
             projectContextEnabled: true,

@@ -76,10 +76,20 @@ class ControlPathId(str, Enum):
     AGENT_ROOM_ARTIFACTS = "agent.room.artifacts"
     AGENT_ROOM_ARTIFACT_ADD = "agent.room.artifact.add"
     AGENT_ROOM_ARTIFACT_UPDATE = "agent.room.artifact.update"
+    AGENT_ROOM_WORK_ITEMS_LIST = "agent.room.workItems.list"
+    AGENT_ROOM_WORK_ITEM_CREATE = "agent.room.workItem.create"
+    AGENT_ROOM_WORK_ITEM_GET = "agent.room.workItem.get"
+    AGENT_ROOM_WORK_ITEM_REASSIGN = "agent.room.workItem.reassign"
     AGENT_ROLES_LIST = "agent.roles.list"
     AGENT_ROLES_CREATE = "agent.roles.create"
     AGENT_ROLE_MODELS = "agent.role.models"
     AGENT_ROLE_RUNTIME_DEFAULTS_UPDATE = "agent.role.runtimeDefaults.update"
+    AGENT_ROLE_BOOK_GET = "agent.roleBook.get"
+    AGENT_ROLE_BOOK_ACTIVATION_PREVIEW = "agent.roleBook.activation.preview"
+    AGENT_ROLE_BOOK_ACTIVATION_APPLY = "agent.roleBook.activation.apply"
+    AGENT_ROLE_BOOK_ACTIVATION_ROLLBACK = "agent.roleBook.activation.rollback"
+    AGENT_ROLE_BOOK_DRAFT_DECISION = "agent.roleBook.draft.decision"
+    AGENT_PERSONAL_CONTEXT_OBSERVABILITY = "agent.personalContext.observability"
     AGENT_TOOLS_LIST = "agent.tools.list"
     AGENT_EXTENSIONS_LIST = "agent.extensions.list"
     AGENT_EXTENSIONS_CREATE = "agent.extensions.create"
@@ -134,6 +144,10 @@ class ControlPathId(str, Enum):
     MEMORY_BOOK_ARCHIVE_PREVIEW = "memory.book.archive.preview"
     MEMORY_BOOK_ARCHIVE_APPLY = "memory.book.archive.apply"
     MEMORY_BOOK_ARCHIVE_ROLLBACK = "memory.book.archive.rollback"
+    MEMORY_ACTIVITY_TIMELINE_GET = "memory.activityTimeline.get"
+    MEMORY_ACTIVITY_TIMELINE_BUILD = "memory.activityTimeline.build"
+    MEMORY_ACTIVITY_TIMELINE_APPROVE = "memory.activityTimeline.approve"
+    MEMORY_ACTIVITY_TIMELINE_REJECT = "memory.activityTimeline.reject"
     HISTORY_PAGE = "history.page"
     HISTORY_DETAIL = "history.detail"
     HISTORY_TOMBSTONE_PREVIEW = "history.tombstone.preview"
@@ -584,6 +598,7 @@ def _route(
 
 _SESSION = {"sessionId"}
 _ROOM = {"roomId"}
+_ROOM_WORK_ITEM = {"roomId", "workItemId"}
 _APPROVAL = {"approvalId"}
 _RUN = {"runId"}
 _ARTIFACT = {"artifactId"}
@@ -672,7 +687,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_ARCHIVE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"archived", "title", "roomKind", "avatar", "description", "scenarioPrompt", "routingPolicy", "routingConfig", "moderatorParticipantId"}, remote_body={"archived", "title", "roomKind", "avatar", "description", "scenarioPrompt", "routingPolicy", "routingConfig", "moderatorParticipantId"}),
-        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds"}, remote_required_body={"message", "clientMessageId"}),
+        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds", "workItemId"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds", "workItemId"}, remote_required_body={"message", "clientMessageId"}),
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_ROOM_TOPICS, ControlMethod.GET, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"includeArchived"}),
         _route(ControlPathId.AGENT_ROOM_TOPIC_CREATE, ControlMethod.POST, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"title", "summary"}, required_body={"title"}, remote_body={"title", "summary"}),
@@ -680,10 +695,20 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_ARTIFACTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/artifacts", "/control/v1/agent/rooms/{roomId}/artifacts", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"includeArchived", "topicId", "limit"}),
         _route(ControlPathId.AGENT_ROOM_ARTIFACT_ADD, ControlMethod.POST, "/api/agent/rooms/{roomId}/artifacts", "/control/v1/agent/rooms/{roomId}/artifacts", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"path", "displayName", "topicId", "mediaType", "participantId"}, required_body={"path"}, remote_body={"path", "displayName", "topicId", "mediaType", "participantId"}),
         _route(ControlPathId.AGENT_ROOM_ARTIFACT_UPDATE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}/artifacts", "/control/v1/agent/rooms/{roomId}/artifacts", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"artifactId", "archived"}, required_body={"artifactId", "archived"}, remote_body={"artifactId", "archived"}),
+        _route(ControlPathId.AGENT_ROOM_WORK_ITEMS_LIST, ControlMethod.GET, "/api/agent/rooms/{roomId}/work-items", "/control/v1/agent/rooms/{roomId}/work-items", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"state", "ownerParticipantId", "limit"}),
+        _route(ControlPathId.AGENT_ROOM_WORK_ITEM_CREATE, ControlMethod.POST, "/api/agent/rooms/{roomId}/work-items", "/control/v1/agent/rooms/{roomId}/work-items", params=_ROOM, body={"objective", "expectedOutput", "currentOwnerParticipantId", "createdByParticipantId", "clientMessageId", "accountableParticipantId", "topicId", "rootTurnId", "parentWorkId", "acceptanceCriteria", "state", "depth"}, required_body={"objective", "expectedOutput", "currentOwnerParticipantId", "clientMessageId"}),
+        _route(ControlPathId.AGENT_ROOM_WORK_ITEM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}/work-items/{workItemId}", "/control/v1/agent/rooms/{roomId}/work-items/{workItemId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM_WORK_ITEM),
+        _route(ControlPathId.AGENT_ROOM_WORK_ITEM_REASSIGN, ControlMethod.POST, "/api/agent/rooms/{roomId}/work-items/{workItemId}/reassign", "/control/v1/agent/rooms/{roomId}/work-items/{workItemId}/reassign", params=_ROOM_WORK_ITEM, body={"actorParticipantId", "targetParticipantId", "reason"}, required_body={"actorParticipantId", "targetParticipantId"}),
         _route(ControlPathId.AGENT_ROLES_LIST, ControlMethod.GET, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_ROLES_CREATE, ControlMethod.POST, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, required_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes"}, remote_body_values={"timelineModel": {"luna", "terra", "sol"}}),
         _route(ControlPathId.AGENT_ROLE_MODELS, ControlMethod.GET, "/api/agent/roles/models", "/control/v1/agent/roles/models", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_ROLE_RUNTIME_DEFAULTS_UPDATE, ControlMethod.POST, "/api/agent/roles/runtime-defaults", "/control/v1/agent/roles/runtime-defaults", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"roleId", "roleVersion", "provider", "modelId", "thinkingLevel"}, required_body={"roleId", "roleVersion", "provider", "modelId", "thinkingLevel"}, remote_body={"roleId", "roleVersion", "provider", "modelId", "thinkingLevel"}, remote_body_values={"thinkingLevel": {"off", "minimal", "low", "medium", "high", "xhigh", "max"}}),
+        _route(ControlPathId.AGENT_ROLE_BOOK_GET, ControlMethod.GET, "/api/agent/role-book", "/control/v1/agent/role-book", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"roleId", "roleVersion", "limit"}, required_query={"roleId", "roleVersion"}),
+        _route(ControlPathId.AGENT_ROLE_BOOK_ACTIVATION_PREVIEW, ControlMethod.POST, "/api/agent/role-book/activation/preview", "/control/v1/agent/role-book/activation/preview", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"roleId", "roleVersion", "revisionId", "draftId", "traitIndexes", "capabilityIndexes"}, required_body={"roleId", "roleVersion"}, remote_body={"roleId", "roleVersion", "revisionId", "draftId", "traitIndexes", "capabilityIndexes"}),
+        _route(ControlPathId.AGENT_ROLE_BOOK_ACTIVATION_APPLY, ControlMethod.POST, "/api/agent/role-book/activation/apply", "/control/v1/agent/role-book/activation/apply", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"roleId", "roleVersion", "revisionId", "draftId", "traitIndexes", "capabilityIndexes", "previewToken", "payloadSha256", "confirmText"}, required_body={"roleId", "roleVersion", "previewToken", "payloadSha256", "confirmText"}, remote_body={"roleId", "roleVersion", "revisionId", "draftId", "traitIndexes", "capabilityIndexes", "previewToken", "payloadSha256", "confirmText"}, remote_body_values={"confirmText": {"apply"}}),
+        _route(ControlPathId.AGENT_ROLE_BOOK_ACTIVATION_ROLLBACK, ControlMethod.POST, "/api/agent/role-book/activation/rollback", "/control/v1/agent/role-book/activation/rollback", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, remote_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, remote_body_values={"confirmText": {"rollback"}}),
+        _route(ControlPathId.AGENT_ROLE_BOOK_DRAFT_DECISION, ControlMethod.POST, "/api/agent/role-book/drafts/decision", "/control/v1/agent/role-book/drafts/decision", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"roleId", "roleVersion", "draftId", "decision"}, required_body={"roleId", "roleVersion", "draftId", "decision"}, remote_body={"roleId", "roleVersion", "draftId", "decision"}, remote_body_values={"decision": {"rejected", "deferred"}}),
+        _route(ControlPathId.AGENT_PERSONAL_CONTEXT_OBSERVABILITY, ControlMethod.GET, "/api/agent/personal-context/observability", "/control/v1/agent/personal-context/observability", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "roleId", "limit"}),
         _route(ControlPathId.AGENT_TOOLS_LIST, ControlMethod.GET, "/api/agent/tools", "/control/v1/agent/tools", query={"sessionId"}),
         _route(ControlPathId.AGENT_EXTENSIONS_LIST, ControlMethod.GET, "/api/agent/extensions", "/control/v1/agent/extensions"),
         _route(ControlPathId.AGENT_EXTENSIONS_CREATE, ControlMethod.POST, "/api/agent/extensions/drafts", "/control/v1/agent/extensions/drafts", body={"draftId", "manifest", "files"}, required_body={"draftId", "manifest", "files"}),
@@ -738,6 +763,10 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_PREVIEW, ControlMethod.POST, "/api/memory/book/archive/preview", "/control/v1/memory/book/archive/preview", body={"bookId", "archived", "reason", "expectedRuntimeRevision"}, required_body={"bookId", "archived", "expectedRuntimeRevision"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_APPLY, ControlMethod.POST, "/api/memory/book/archive/apply", "/control/v1/memory/book/archive/apply", body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}, required_body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_ROLLBACK, ControlMethod.POST, "/api/memory/book/archive/rollback", "/control/v1/memory/book/archive/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
+        _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_GET, ControlMethod.GET, "/api/memory/activity-timeline", "/control/v1/memory/activity-timeline", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"timelineId", "date", "status"}),
+        _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_BUILD, ControlMethod.POST, "/api/memory/activity-timeline/build", "/control/v1/memory/activity-timeline/build", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"date"}, required_body={"date"}, remote_body={"date"}),
+        _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_APPROVE, ControlMethod.POST, "/api/memory/activity-timeline/approve", "/control/v1/memory/activity-timeline/approve", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"timelineId", "expectedSourceEventHash", "confirmText"}, required_body={"timelineId", "expectedSourceEventHash", "confirmText"}, remote_body={"timelineId", "expectedSourceEventHash", "confirmText"}, remote_body_values={"confirmText": {"approve"}}),
+        _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_REJECT, ControlMethod.POST, "/api/memory/activity-timeline/reject", "/control/v1/memory/activity-timeline/reject", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"timelineId", "reason", "confirmText"}, required_body={"timelineId", "reason", "confirmText"}, remote_body={"timelineId", "reason", "confirmText"}, remote_body_values={"confirmText": {"reject"}}),
         _route(ControlPathId.HISTORY_PAGE, ControlMethod.GET, "/api/history/page", "/control/v1/history/page", scopes=[ControlScope.HISTORY_READ], remote_safe=True, query={"limit", "cursor", "query", "filter"}),
         _route(ControlPathId.HISTORY_DETAIL, ControlMethod.GET, "/api/history/detail", "/control/v1/history/detail", scopes=[ControlScope.HISTORY_READ], remote_safe=True, query={"eventId"}, required_query={"eventId"}),
         _route(ControlPathId.HISTORY_TOMBSTONE_PREVIEW, ControlMethod.POST, "/api/history/tombstone/preview", "/control/v1/history/tombstone/preview", body={"eventId", "reason", "expectedRuntimeRevision"}, required_body={"eventId", "expectedRuntimeRevision"}),

@@ -83,6 +83,7 @@ class DeepSeekMemoryOrganizer:
                             "recentEvents": model_bundle.get("recentEvents") or [],
                             "feedbackSummary": model_bundle.get("feedbackSummary") or {},
                             "rimeRankFeedback": model_bundle.get("rimeRankFeedback") or [],
+                            "existingMemoryAtoms": model_bundle.get("existingMemoryAtoms") or [],
                             "existingSemanticGroups": model_bundle.get("existingSemanticGroups") or [],
                         },
                         ensure_ascii=False,
@@ -620,6 +621,21 @@ def _model_facing_bundle(bundle: dict[str, object]) -> dict[str, object]:
             6,
             ("bookId", "title", "summary", "tags"),
         ),
+        "existingMemoryAtoms": compact_collection(
+            "existingMemoryAtoms",
+            48,
+            (
+                "atomId",
+                "kind",
+                "canonicalText",
+                "project",
+                "app",
+                "claimKey",
+                "lineageId",
+                "validFromMs",
+                "sourceEventIds",
+            ),
+        ),
         "existingSemanticGroups": compact_collection(
             "existingSemanticGroups",
             12,
@@ -730,7 +746,9 @@ def _memory_book_recovery_prompt() -> str:
         semanticTags 字段为 name/description/aliases/semanticGroupIds/sourceEventIds/confidence/qualityScore；
         每个 semanticTag 和 memoryAtom 的 semanticGroupIds 都必须引用上面输出的 groupId。
         memoryAtoms 字段为 canonicalText/summary/tags/semanticGroupIds/sourceEventIds/confidence/qualityScore/
-        directCandidateAllowed(false)；tagEdges 字段为 src/dst/edgeType/weight/evidenceEventIds；
+        claimKey/claimState/validFromMs/directCandidateAllowed(false)。claimKey 必须是同一可变事实跨版本稳定的
+        语义槽位，例如 project:rag-ime.runtime-model，不能包含具体值或日期；tagEdges 字段为
+        src/dst/edgeType/weight/evidenceEventIds；
         tagMerges 字段为 source/target/reason/evidenceEventIds/confidence，只有确定同义、缩写、大小写或新旧叫法时才合并；
         phraseCandidates 仅在有接受、退格或纠错证据时输出 text/pinyin/tags/weight/sourceEventIds。
         修正口语重复和明显错别字；问题、条件句、计划不能被改写成已完成事实。不得生成应用名、窗口名、
@@ -782,6 +800,9 @@ def _memory_book_system_prompt() -> str:
         surfaceHints 和 phraseCandidates 必须是 2 到 18 个中文字符或短术语。每个 phraseCandidate
         必须包含 text、pinyin、tags、weight、sourceEventIds；pinyin 使用小写无声调拼音，音节之间用单个空格，
         例如 {"text":"表情包","pinyin":"biao qing bao"}。不确定拼音时不要输出该词库候选。
+        每个 memoryAtom 必须给出稳定 claimKey。先检查 bundle.existingMemoryAtoms：同一事实槽位必须复用
+        其 claimKey；新证据改变该槽位的值时输出新 Atom，并在 supersedes 中列出旧 atomId。即使漏掉
+        supersedes，写入层也会按 claimKey 原子关闭旧版本。不要用 canonicalText 哈希或具体值充当 claimKey。
         canonicalText 和 summary 必须是清洗改正后的事实表达，而不是原始口语转录；无法由多条证据确认时
         降低 confidence 或不输出。canonicalText 只用于检索证据，不能直接作为输入法候选；
         directCandidateAllowed 默认 false。同时输出 tagMerges、negativePhrases 和 supersedes 数组。

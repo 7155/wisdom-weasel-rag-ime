@@ -780,6 +780,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "ime_planning",
                 "agent_schedule",
                 "ime_memory",
+                "agent_role_book",
                 "ime_knowledge",
                 "ime_models",
                 "ime_runtime",

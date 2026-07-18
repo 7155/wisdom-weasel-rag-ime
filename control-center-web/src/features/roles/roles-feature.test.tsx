@@ -68,6 +68,96 @@ describe('Roles experience', () => {
     });
   });
 
+  it('reviews and activates selected Role Book proposals through an R1 preview', async () => {
+    const user = userEvent.setup();
+    const persona = previewPersonas[0]!;
+    const roleBook = {
+      ok: true,
+      active: {
+        revisionId: 'revision:1',
+        revisionNumber: 1,
+        status: 'active',
+        sections: {
+          personality: [],
+          capabilities: [],
+          recentWork: [{ text: '完成上下文重构' }],
+          lessonsAndLimits: [],
+          activeCommitments: [],
+        },
+      },
+      history: [],
+      dailyDrafts: [{
+        draftId: 'role-book-draft:1',
+        createdAtMs: 1_800_000_000_000,
+        traitProposals: [{ text: '沟通时先给出具体例子', confidence: 0.9, sourceEvidenceIds: ['evidence:1'] }],
+        capabilityProposals: [{ text: '能修复 SQLite 事务恢复问题', confidence: 0.95, sourceEvidenceIds: ['evidence:1'] }],
+        decision: null,
+      }],
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: [persona] },
+      'agent.subagents.templates': { ok: true, items: [] },
+      'agent.roleBook.get': roleBook,
+      'agent.roleBook.activation.preview': {
+        ok: true,
+        previewToken: 'preview-role-book',
+        payloadSha256: 'sha256:role-book',
+        summary: {
+          risk: 'R1',
+          evidenceCount: 1,
+          items: ['采用 1 条协作特征', '采用 1 条能力证据'],
+          diff: {
+            sections: [{
+              section: 'personality',
+              label: '协作特征',
+              added: [{ itemId: 'trait:1', text: '沟通时先给出具体例子', evidenceIds: ['evidence:1'] }],
+              removed: [],
+              changed: [],
+            }],
+          },
+        },
+      },
+      'agent.roleBook.activation.apply': {
+        ok: true,
+        receiptId: 'receipt-role-book',
+        rollbackAvailable: true,
+        rollbackToken: 'rollback-role-book',
+        payloadSha256: 'sha256:role-book',
+        result: { revision: { revisionId: 'revision:2', status: 'active' } },
+      },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await screen.findByText(persona.tagline);
+    await user.click(screen.getByRole('radio', { name: '角色书' }));
+    await user.click(await screen.findByRole('checkbox', { name: /沟通时先给出具体例子/ }));
+    await user.click(screen.getByRole('checkbox', { name: /能修复 SQLite 事务恢复问题/ }));
+    await user.click(screen.getByRole('button', { name: '预览启用' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '启用角色书修订' });
+    expect(dialog).toHaveTextContent('R1 确认');
+    expect(dialog).toHaveTextContent('采用 1 条能力证据');
+    expect(dialog).toHaveTextContent('沟通时先给出具体例子');
+    expect(dialog).toHaveTextContent('已核验 1 条证据');
+    await user.click(screen.getByRole('button', { name: '确认启用' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.roleBook.activation.apply')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.roleBook.activation.preview')?.request.body).toEqual({
+      roleId: persona.roleId,
+      roleVersion: persona.version,
+      revisionId: '',
+      draftId: 'role-book-draft:1',
+      traitIndexes: [0],
+      capabilityIndexes: [0],
+    });
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.roleBook.activation.apply')?.request.body).toMatchObject({
+      previewToken: 'preview-role-book',
+      payloadSha256: 'sha256:role-book',
+      confirmText: 'apply',
+    });
+    expect(await screen.findByRole('button', { name: '撤销本次启用' })).toBeInTheDocument();
+  });
+
   it('persists a per-role default model and thinking level', async () => {
     const user = userEvent.setup();
     const configured = {

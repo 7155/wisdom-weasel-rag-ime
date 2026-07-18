@@ -8,7 +8,6 @@ from .hybrid_rag_retriever import retrieve_hybrid_rag_candidate_objects
 from .memory_ingest import normalize_text
 from .memory_models import MemoryCandidateV2
 from .models import InputSuggestion
-from .retrieval_docs import rebuild_retrieval_docs
 from .text_utils import compact_whitespace, truncate_text
 
 
@@ -34,7 +33,6 @@ def retrieve_candidates_v3(
     lane_weights: tuple[tuple[str, float], ...] = (),
     embedding_provider: EmbeddingProvider | None = None,
 ) -> list[MemoryCandidateV2]:
-    rebuild_retrieval_docs(conn, project=project)
     query_text = compact_whitespace(current_input or preedit or recent_context or committed_context)
     query = HybridRagQuery(
         query_text=query_text,

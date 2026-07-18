@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.daily-conversation-digest.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "digestId", "project", "roleId", "window",
+    "sourceEvidenceIds", "activityTimelineId", "sourceCounts", "summary", "highlights",
+    "recentWork", "caveats", "generatedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.daily-conversation-digest.v1"},
+    "digestId": {"type": "string", "minLength": 1},
+    "project": {"type": "string"},
+    "roleId": {"type": "string", "minLength": 1},
+    "window": {
+      "type": "object",
+      "required": ["startMs", "endMs"],
+      "properties": {
+        "startMs": {"type": "integer", "minimum": 0},
+        "endMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "sourceEvidenceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "activityTimelineId": {"type": "string"},
+    "sourceCounts": {"type": "object"},
+    "summary": {"type": "string", "minLength": 1},
+    "highlights": {"type": "array", "items": {"$ref": "#/$defs/digestItem"}},
+    "recentWork": {"type": "array", "items": {"$ref": "#/$defs/digestItem"}},
+    "caveats": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "generatedAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "digestItem": {
+      "type": "object",
+      "required": ["evidenceId", "sourceKind", "text", "occurredAtMs"],
+      "properties": {
+        "evidenceId": {"type": "string", "minLength": 1},
+        "sourceKind": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "occurredAtMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

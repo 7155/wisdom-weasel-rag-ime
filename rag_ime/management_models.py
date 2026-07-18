@@ -56,3 +56,4 @@ class PageRequest:
     status: str = ""
     kind: str = ""
     visible_owners: tuple[tuple[str, str], ...] = ()
+    project: str = ""

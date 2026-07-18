@@ -391,6 +391,203 @@ class AgentRoomServiceTests(unittest.TestCase):
             )
         self.assertEqual(self.service.list_sessions()["items"], [])
 
+    def test_natural_room_uses_pinned_role_book_as_advisory_profile(self) -> None:
+        role = self.service.personas.resolve("hermes-v1", "1")
+        self.service.role_books.ensure_seeded(
+            role.role_id,
+            role.version,
+            role.display_name,
+            role.summary,
+            role.version,
+        )
+        draft = self.service.role_books.propose_revision(
+            "hermes-v1",
+            "1",
+            {
+                "capabilities": [
+                    {
+                        "itemId": "capability:timeseries",
+                        "text": "时序数据库性能",
+                        "provenance": {
+                            "sourceType": "work-receipt",
+                            "sourceId": "work:timeseries",
+                            "observedAtMs": 100,
+                        },
+                        "evidenceIds": ["receipt:timeseries"],
+                    }
+                ]
+            },
+        )
+        active = self.service.role_books.activate_revision(draft["revisionId"])
+        room = self.service.create_room(
+            {
+                "title": "自然路由",
+                "routingPolicy": "natural",
+                "routingConfig": {"naturalJitter": 0},
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        hermes = next(
+            item for item in room["participants"] if item["roleId"] == "hermes-v1"
+        )
+        self.assertEqual(
+            self.service.sessions.get(str(hermes["sessionId"]))[
+                "roleBookRevisionId"
+            ],
+            active["revisionId"],
+        )
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:role-book"},
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {"message": "时序数据库性能"},
+            )
+
+        self.assertEqual(accepted["participant"]["id"], hermes["id"])
+        self.assertEqual(accepted["routeDecision"]["reason"], "descriptor_match")
+        evidence = self.service.memory_evidence.list(
+            role_id="hermes-v1",
+            session_id=str(hermes["sessionId"]),
+        )
+        self.assertEqual(evidence[0]["sourceKind"], "room_event")
+        self.assertFalse(evidence[0]["metadata"]["accepted"])
+
+    def test_active_work_item_owner_overrides_role_book_and_explicit_conflicts(self) -> None:
+        role = self.service.personas.resolve("hermes-v1", "1")
+        self.service.role_books.ensure_seeded(
+            role.role_id,
+            role.version,
+            role.display_name,
+            role.summary,
+            role.version,
+        )
+        draft = self.service.role_books.propose_revision(
+            "hermes-v1",
+            "1",
+            {
+                "capabilities": [
+                    {
+                        "itemId": "capability:timeseries-authority",
+                        "text": "时序数据库性能专项负责人",
+                        "provenance": {
+                            "sourceType": "work-receipt",
+                            "sourceId": "work:timeseries-authority",
+                            "observedAtMs": 100,
+                        },
+                        "evidenceIds": ["receipt:timeseries-authority"],
+                    }
+                ]
+            },
+        )
+        self.service.role_books.activate_revision(draft["revisionId"])
+        room = self.service.create_room(
+            {
+                "title": "WorkItem 权威路由",
+                "routingPolicy": "natural",
+                "routingConfig": {"naturalJitter": 0},
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        hermes = next(
+            item for item in room["participants"] if item["roleId"] == "hermes-v1"
+        )
+        vcp = next(
+            item for item in room["participants"] if item["roleId"] == "vcp-v1"
+        )
+        work_item = self.service.room_work.create(
+            room_id=str(room["id"]),
+            objective="完成时序数据库性能诊断",
+            expected_output="给出诊断报告",
+            current_owner_participant_id=str(vcp["id"]),
+            created_by_participant_id=str(vcp["id"]),
+            client_message_id="work-item-authority-1",
+            topic_id=str(room["activeTopicId"]),
+            state="active",
+        )
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:work-vcp"},
+        ):
+            routed = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "请处理时序数据库性能问题",
+                    "workItemId": work_item["id"],
+                },
+            )
+
+        self.assertEqual(routed["participant"]["id"], vcp["id"])
+        self.assertEqual(routed["routeDecision"]["reason"], "work_item_owner")
+        self.assertEqual(routed["workItem"]["id"], work_item["id"])
+
+        with self.assertRaisesRegex(ValueError, "conflicts with the WorkItem"):
+            self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "请处理时序数据库性能问题",
+                    "participantIds": [str(hermes["id"])],
+                    "workItemId": work_item["id"],
+                },
+            )
+
+        reassigned = self.service.room_work.reassign(
+            str(work_item["id"]),
+            actor_participant_id=str(vcp["id"]),
+            current_owner_participant_id=str(hermes["id"]),
+            reason="VCP 正式移交给 Hermes",
+        )
+        self.assertEqual(
+            reassigned["currentOwnerParticipantId"],
+            hermes["id"],
+        )
+        work_events = self.service.room_work.list_events(str(work_item["id"]))
+        self.assertEqual(
+            [event["eventType"] for event in work_events],
+            ["assigned", "accepted", "assigned"],
+        )
+        self.assertEqual(
+            work_events[-1]["payload"]["previousOwnerParticipantId"],
+            vcp["id"],
+        )
+        self.assertEqual(
+            work_events[-1]["payload"]["currentOwnerParticipantId"],
+            hermes["id"],
+        )
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:work-hermes"},
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "请处理时序数据库性能问题",
+                    "participantIds": [str(hermes["id"])],
+                    "workItemId": work_item["id"],
+                },
+            )
+
+        self.assertEqual(accepted["participant"]["id"], hermes["id"])
+        self.assertEqual(
+            accepted["workItem"]["currentOwnerParticipantId"],
+            hermes["id"],
+        )
+
     def test_service_creates_fresh_sessions_routes_one_speaker_and_mirrors_events(self) -> None:
         self.service.personas.set_runtime_defaults(
             "vcp-v1",

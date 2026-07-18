@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.daily-activity-timeline.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "timelineId", "project", "date", "timezone", "status",
+    "sourceEventIds", "sourceEventHash", "segments", "summary", "eventCount",
+    "segmentCount", "approvedBookId", "approvedBy", "approvedAtMs",
+    "createdAtMs", "updatedAtMs", "policy"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.daily-activity-timeline.v1"
+    },
+    "timelineId": {"type": "string", "minLength": 1},
+    "project": {"type": "string"},
+    "date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "timezone": {"type": "string", "minLength": 1},
+    "status": {
+      "type": "string",
+      "enum": ["draft", "approved", "rejected", "superseded"]
+    },
+    "sourceEventIds": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1},
+      "uniqueItems": true
+    },
+    "sourceEventHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "segments": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/segment"}
+    },
+    "summary": {"type": "string", "minLength": 1},
+    "eventCount": {"type": "integer", "minimum": 1},
+    "segmentCount": {"type": "integer", "minimum": 1},
+    "approvedBookId": {"type": "string"},
+    "approvedBy": {"type": "string"},
+    "approvedAtMs": {"type": "integer", "minimum": 0},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "derivedFromInputEvents", "longTermFact", "automaticPromotion",
+        "explicitApprovalRequired"
+      ],
+      "properties": {
+        "derivedFromInputEvents": {"type": "boolean", "const": true},
+        "longTermFact": {"type": "boolean", "const": false},
+        "automaticPromotion": {"type": "boolean", "const": false},
+        "explicitApprovalRequired": {"type": "boolean", "const": true}
+      }
+    }
+  },
+  "$defs": {
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segmentId", "position", "app", "sourceKinds", "contextGroupIds",
+        "startMs", "endMs", "eventCount", "sourceEventIds",
+        "sourceEventHash", "summary", "redactedEventCount"
+      ],
+      "properties": {
+        "segmentId": {"type": "string", "minLength": 1},
+        "position": {"type": "integer", "minimum": 0},
+        "app": {"type": "string", "minLength": 1},
+        "sourceKinds": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "contextGroupIds": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "startMs": {"type": "integer", "minimum": 0},
+        "endMs": {"type": "integer", "minimum": 0},
+        "eventCount": {"type": "integer", "minimum": 1},
+        "sourceEventIds": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 1},
+          "uniqueItems": true
+        },
+        "sourceEventHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "summary": {"type": "string", "minLength": 1},
+        "redactedEventCount": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

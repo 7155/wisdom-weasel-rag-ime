@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.role-book-revision-draft.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "draftId", "status", "project", "roleId",
+    "baseRoleVersion", "sourceDigestId", "sourceEvidenceIds", "patch",
+    "policy", "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.role-book-revision-draft.v1"},
+    "draftId": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "const": "draft"},
+    "project": {"type": "string"},
+    "roleId": {"type": "string", "minLength": 1},
+    "baseRoleVersion": {"type": "string", "minLength": 1},
+    "sourceDigestId": {"type": "string", "minLength": 1},
+    "sourceEvidenceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "patch": {
+      "type": "object",
+      "required": ["recentWork", "traitProposals", "capabilityProposals"],
+      "properties": {
+        "recentWork": {"type": "array", "items": {"type": "object"}},
+        "traitProposals": {"type": "array", "items": {"type": "object"}},
+        "capabilityProposals": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "defaultApply", "safeAutoApplyFields", "reviewRequiredFields"
+      ],
+      "properties": {
+        "defaultApply": {"type": "boolean", "const": false},
+        "safeAutoApplyFields": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["recentWork"]}
+        },
+        "reviewRequiredFields": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["traits", "capabilities"]}
+        }
+      }
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

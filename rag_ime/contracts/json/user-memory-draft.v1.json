@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.user-memory-draft.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "draftId", "status", "project", "roleId",
+    "sourceDigestId", "sourceEvidenceIds", "candidates", "policy",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.user-memory-draft.v1"},
+    "draftId": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "const": "review_required"},
+    "project": {"type": "string"},
+    "roleId": {"type": "string", "minLength": 1},
+    "sourceDigestId": {"type": "string", "minLength": 1},
+    "sourceEvidenceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "candidates": {"type": "array", "items": {"type": "object"}},
+    "policy": {
+      "type": "object",
+      "required": ["rawDialoguePromotion", "defaultApply"],
+      "properties": {
+        "rawDialoguePromotion": {"type": "string", "const": "forbidden"},
+        "defaultApply": {"type": "boolean", "const": false}
+      }
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

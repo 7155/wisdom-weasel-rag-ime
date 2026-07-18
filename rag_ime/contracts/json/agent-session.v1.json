@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "rag-ime.contract.agent-session.v1",
   "type": "object",
-  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "projectContextEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
+  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "roleBookRevisionId", "modelProfile", "toolProfileVersion", "projectContextEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-session.v1"},
     "id": {"type": "string", "minLength": 1},
@@ -27,6 +27,7 @@
     "sessionKind": {"type": "string", "enum": ["conversation", "subagent_runtime"]},
     "roleId": {"type": "string", "minLength": 1},
     "roleVersion": {"type": "string", "minLength": 1},
+    "roleBookRevisionId": {"type": "string", "maxLength": 240},
     "modelProfile": {"type": "string", "minLength": 1},
     "thinkingLevel": {"type": "string", "enum": ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"]},
     "toolProfileVersion": {"type": "string", "minLength": 1},

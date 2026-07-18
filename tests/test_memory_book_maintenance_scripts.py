@@ -70,6 +70,10 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertTrue(env_vars["RAG_IME_DEEPSEEK_ENV"].endswith("Application Support/RagIme/deepseek.env"))
         self.assertEqual(env_vars["RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY"], "0")
         self.assertEqual(env_vars["RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE"], "0")
+        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED"], "1")
+        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK"], "0")
+        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS"], "86400")
+        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT"], "500")
 
     def test_install_discovers_existing_app_support_model_env(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -125,6 +129,8 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertIn('payload["storedDraft"] = bool(preview.get("storedDraft"))', source)
         self.assertIn('payload["reviewRequired"] = payload["storedDraft"] and applied != "true"', source)
         self.assertIn('if [[ "$APPLY" == "1"', source)
+        self.assertIn("personal-context-maintenance-run", source)
+        self.assertIn('PERSONAL_CONTEXT_LOG="$OUT_DIR/personal-context-$STAMP.json"', source)
 
 
 if __name__ == "__main__":

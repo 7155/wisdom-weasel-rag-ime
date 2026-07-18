@@ -9,6 +9,7 @@ from rag_ime.agent_routes import (
     agent_context_trace_route,
     agent_media_route,
     agent_room_route,
+    agent_room_work_route,
     agent_session_route,
     agent_wake_schedule_route,
 )
@@ -161,6 +162,33 @@ class AgentRouteTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(agent_room_route(path), ("", ""))
+
+    def test_room_work_routes_are_strict_and_url_decoded(self) -> None:
+        self.assertEqual(
+            agent_room_work_route(
+                "/api/agent/rooms/room%3A123/work-items"
+            ),
+            ("room:123", "", "collection"),
+        )
+        self.assertEqual(
+            agent_room_work_route(
+                "/api/agent/rooms/room%3A123/work-items/work%3A456"
+            ),
+            ("room:123", "work:456", "get"),
+        )
+        self.assertEqual(
+            agent_room_work_route(
+                "/api/agent/rooms/room%3A123/work-items/work%3A456/reassign"
+            ),
+            ("room:123", "work:456", "reassign"),
+        )
+        for path in (
+            "/api/agent/rooms/room:123/work-items//reassign",
+            "/api/agent/rooms/room:123/work-items/work:456/unknown",
+            "/api/agent/rooms/room:123/work-items/work:456/extra/path",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(agent_room_work_route(path), ("", "", ""))
 
     def test_artifact_route_accepts_one_opaque_identifier_only(self) -> None:
         self.assertEqual(

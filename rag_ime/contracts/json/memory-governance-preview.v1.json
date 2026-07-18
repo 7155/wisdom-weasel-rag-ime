@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.memory-governance-preview.v1",
+  "title": "Memory Governance Preview",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "previewId",
+    "proposalId",
+    "operation",
+    "applyOperation",
+    "sessionId",
+    "project",
+    "targetId",
+    "memoryKind",
+    "proposedText",
+    "reason",
+    "evidenceIds",
+    "summary",
+    "status",
+    "reviewRequired",
+    "applyOperationAvailable",
+    "mutationApplied",
+    "writes",
+    "audit",
+    "createdAtMs",
+    "expiresAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.memory-governance-preview.v1"
+    },
+    "previewId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "proposalId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "operation": {
+      "type": "string",
+      "enum": ["remember_preview", "correct_preview", "forget_preview"]
+    },
+    "applyOperation": {
+      "type": "string",
+      "enum": ["remember_apply", "correct_apply", "forget_apply"]
+    },
+    "sessionId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "project": {"type": "string", "maxLength": 200},
+    "targetId": {"type": "string", "maxLength": 240},
+    "memoryKind": {
+      "type": "string",
+      "enum": ["", "fact", "preference", "decision", "commitment", "project_state"]
+    },
+    "proposedText": {"type": "string", "maxLength": 1200},
+    "reason": {"type": "string", "maxLength": 400},
+    "evidenceIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {"type": "string", "minLength": 1, "maxLength": 240}
+    },
+    "summary": {"type": "string", "minLength": 1, "maxLength": 400},
+    "status": {
+      "type": "string",
+      "enum": ["ready", "applied", "rolled_back", "expired", "failed"]
+    },
+    "reviewRequired": {"type": "boolean", "const": true},
+    "applyOperationAvailable": {"type": "boolean"},
+    "mutationApplied": {"type": "boolean", "const": false},
+    "writes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposalStored", "memoryAtoms", "memoryBooks", "retrievalVectors"],
+      "properties": {
+        "proposalStored": {"type": "boolean", "const": true},
+        "memoryAtoms": {"type": "boolean", "const": false},
+        "memoryBooks": {"type": "boolean", "const": false},
+        "retrievalVectors": {"type": "boolean", "const": false}
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payloadSha256", "recordKind", "sessionId", "idempotencyKey"],
+      "properties": {
+        "payloadSha256": {"type": "string", "minLength": 64, "maxLength": 64},
+        "recordKind": {"type": "string", "const": "memory_governance_proposal"},
+        "sessionId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 240}
+      }
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "expiresAtMs": {"type": "integer", "minimum": 0}
+  }
+}

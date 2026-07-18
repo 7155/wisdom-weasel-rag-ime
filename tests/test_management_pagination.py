@@ -203,6 +203,91 @@ class ManagementPaginationTests(unittest.TestCase):
         self.assertEqual(refreshed["items"][0]["note"], "只汇总这个文档中的输入")
         self.assertEqual(refreshed["items"][0]["color_token"], "teal")
 
+    def test_agent_project_scope_filters_memory_content_in_sql(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, source_event_ids_json,
+                    source_memory_ids_json, scope_project, privacy_level,
+                    status, created_at_ms, updated_at_ms
+                ) VALUES (?, 'fact', ?, ?, '[]', '[]', ?, 'private', 'active', 1, 1)
+                """,
+                (
+                    ("atom:project-a", "Project A public context", "Project A public context", "project-A"),
+                    ("atom:project-b", "Project B private roadmap", "Project B private roadmap", "project-B"),
+                ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, summary, project,
+                    memory_atom_ids_json, status, created_at_ms, updated_at_ms
+                ) VALUES (?, 'topic', ?, ?, ?, ?, ?, 'active', 1, 1)
+                """,
+                (
+                    (
+                        "book:project-a",
+                        "project-a",
+                        "Project A",
+                        "Project A context",
+                        "project-A",
+                        json.dumps(["atom:project-a"]),
+                    ),
+                    (
+                        "book:project-b",
+                        "project-b",
+                        "Project B",
+                        "Project B private roadmap",
+                        "project-B",
+                        json.dumps(["atom:project-b"]),
+                    ),
+                ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO memory_semantic_groups(
+                    group_id, title, description, project, source_event_ids_json,
+                    confidence, quality_score, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, '[]', 0.9, 0.9, 1, 1)
+                """,
+                (
+                    ("group:project-a", "Project A", "Project A group", "project-A"),
+                    ("group:project-b", "Project B", "Project B private group", "project-B"),
+                ),
+            )
+            for project, suffix in (("project-A", "A"), ("project-B", "B")):
+                conn.execute(
+                    """
+                    INSERT INTO memory_items(
+                        memory_id, kind, text, normalized_text, project,
+                        privacy_class, created_at_ms, updated_at_ms
+                    ) VALUES (?, 'phrase', ?, ?, ?, 'private', 1, 1)
+                    """,
+                    (
+                        f"phrase:project-{suffix.lower()}",
+                        f"Project {suffix} private phrase",
+                        f"project {suffix.lower()} private phrase",
+                        project,
+                    ),
+                )
+
+        scoped = page_request({"project": "project-A", "limit": 20})
+        atoms = self.service.management.memory_page("atoms", scoped)["items"]
+        books = self.service.management.memory_page("books", scoped)["items"]
+        groups = self.service.management.memory_page("groups", scoped)["items"]
+        phrases = self.service.management.memory_page("phrases", scoped)["items"]
+        negative = self.service.management.memory_page("negative", scoped)["items"]
+
+        self.assertEqual({item["id"] for item in atoms}, {"atom:project-a"})
+        self.assertEqual({item["id"] for item in books}, {"book:project-a"})
+        self.assertEqual({item["id"] for item in groups}, {"group:project-a"})
+        self.assertEqual(
+            {item["memoryId"] for item in phrases},
+            {"phrase:project-a"},
+        )
+        self.assertEqual(negative, [])
+
     def test_semantic_groups_can_be_merged_without_losing_members(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(

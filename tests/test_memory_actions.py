@@ -316,6 +316,7 @@ class MemoryActionMutationTests(unittest.TestCase):
                 tags=("phrase-memory", "连续"),
             )
         )
+        self.core.process_memory_projection_outbox()
         return f"phrase:{text.lower()}"
 
     def _query_texts(self, query: str) -> list[str]:

@@ -7,7 +7,6 @@ from .embeddings import EmbeddingProvider
 from .hybrid_rag_models import HybridRagCandidate, HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidate_objects
 from .local_sqlite_core import LocalSqliteCoreClient
-from .retrieval_docs import rebuild_retrieval_docs
 from .text_utils import compact_whitespace, token_terms
 
 
@@ -26,14 +25,17 @@ def retrieve_active_rag_evidence(
     lane_weights: tuple[tuple[str, float], ...] = (),
 ) -> tuple[ActiveRagEvidence, ...]:
     """Retrieve short evidence objects for explicit selected-text assistance."""
-    core.initialize()
     query = _query_from_frame(
         frame,
         enabled_lanes=enabled_lanes,
         lane_weights=lane_weights,
     )
     with core._connect() as conn:
-        candidates = _retrieve_candidates_with_rebuild(
+        # Projection maintenance belongs to the outbox workers. Enforce a
+        # read-only connection here so a future retriever change cannot sneak
+        # writes back into the latency-sensitive query path.
+        conn.execute("PRAGMA query_only = ON")
+        candidates = _retrieve_candidates_read_only(
             conn,
             query,
             embedding_provider=core.embedding_provider,
@@ -42,27 +44,12 @@ def retrieve_active_rag_evidence(
     return tuple(_evidence_from_candidate(candidate) for candidate in candidates)
 
 
-def _retrieve_candidates_with_rebuild(
+def _retrieve_candidates_read_only(
     conn: sqlite3.Connection,
     query: HybridRagQuery,
     *,
     embedding_provider: EmbeddingProvider | None = None,
 ) -> list[HybridRagCandidate]:
-    try:
-        candidates = retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
-    except sqlite3.OperationalError as exc:
-        if "memory_retrieval_docs" not in str(exc):
-            raise
-        rebuild_retrieval_docs(conn, project=query.project)
-        candidates = retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
-    if candidates:
-        return candidates
-    try:
-        report = rebuild_retrieval_docs(conn, project=query.project)
-    except sqlite3.OperationalError:
-        return []
-    if int(report.get("docCount") or 0) <= 0:
-        return []
     return retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
 
 

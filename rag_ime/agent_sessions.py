@@ -54,6 +54,7 @@ class AgentSessionStore:
         mode: str = "assistant",
         role_id: str = "zhiyou-v1",
         role_version: str = "1",
+        role_book_revision_id: str = "",
         model_profile: str = "deepseek-v4",
         thinking_level: str = "",
         tool_profile_version: str = "control-center-v1",
@@ -93,6 +94,9 @@ class AgentSessionStore:
             raise ValueError("unsupported Agent tool profile")
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         session_id = f"agent:{uuid.uuid4()}"
+        normalized_role_book_revision_id = str(role_book_revision_id or "").strip()
+        if len(normalized_role_book_revision_id) > 240:
+            raise ValueError("agent role book revision id is too long")
         shell_policy = shell_policy_version or (
             "coordinator-per-command-v1" if mode == "coordinator" else "assistant-no-shell-v1"
         )
@@ -100,11 +104,12 @@ class AgentSessionStore:
             conn.execute(
                 """
                 INSERT INTO agent_sessions(
-                    id, title, session_mode, role_id, role_version, model_profile, thinking_level,
+                    id, title, session_mode, role_id, role_version, role_book_revision_id,
+                    model_profile, thinking_level,
                     tool_profile_version, project_context_enabled, workspace_roots_json,
                     shell_policy_version, session_kind, created_at_ms, updated_at_ms,
                     last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -112,6 +117,7 @@ class AgentSessionStore:
                     mode,
                     role_id,
                     role_version,
+                    normalized_role_book_revision_id,
                     normalized_model_profile,
                     normalized_thinking,
                     tool_profile_version,
@@ -124,6 +130,47 @@ class AgentSessionStore:
                     timestamp,
                 ),
             )
+        return self.get(session_id)
+
+    def set_role_book_revision(
+        self,
+        session_id: str,
+        revision_id: str,
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized = str(revision_id or "").strip()
+        if not normalized:
+            raise ValueError("agent role book revision id must not be empty")
+        if len(normalized) > 240:
+            raise ValueError("agent role book revision id is too long")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT role_book_revision_id FROM agent_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise AgentSessionNotFound(session_id)
+            current = str(row["role_book_revision_id"] or "")
+            if current and current != normalized:
+                raise ValueError(
+                    "agent session role book revision is immutable after pinning"
+                )
+            if not current:
+                conn.execute(
+                    """
+                    UPDATE agent_sessions
+                    SET role_book_revision_id = ?, updated_at_ms = ?
+                    WHERE id = ? AND role_book_revision_id = ''
+                    """,
+                    (normalized, _timestamp(updated_at_ms), session_id),
+                )
+                selected = conn.execute(
+                    "SELECT role_book_revision_id FROM agent_sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+                if selected is None or str(selected[0]) != normalized:
+                    raise RuntimeError("agent session role book pin changed concurrently")
         return self.get(session_id)
 
     def get(self, session_id: str) -> dict[str, object]:
@@ -773,15 +820,27 @@ class AgentSessionStore:
         event_type: str,
         created_at_ms: int,
         redacted_summary: str = "",
+        metrics: Mapping[str, object] | None = None,
         retain_per_session: int = 1000,
     ) -> None:
+        try:
+            metrics_json = json.dumps(
+                dict(metrics or {}),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("runtime event metrics must be JSON serializable") from exc
+        if len(metrics_json.encode("utf-8")) > 8_192:
+            raise ValueError("runtime event metrics are too large")
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO agent_runtime_events(
                     event_id, session_id, turn_id, sequence, event_type,
-                    created_at_ms, redacted_summary
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    created_at_ms, redacted_summary, metrics_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event_id,
@@ -791,6 +850,7 @@ class AgentSessionStore:
                     event_type,
                     created_at_ms,
                     " ".join(redacted_summary.split())[:240],
+                    metrics_json,
                 ),
             )
             conn.execute(
@@ -1088,6 +1148,7 @@ def _session_payload(
         "sessionKind": str(row["session_kind"]),
         "roleId": str(row["role_id"]),
         "roleVersion": str(row["role_version"]),
+        "roleBookRevisionId": str(row["role_book_revision_id"] or ""),
         "modelProfile": model_profile,
         "thinkingLevel": str(row["thinking_level"] or ""),
         "toolProfileVersion": str(row["tool_profile_version"]),

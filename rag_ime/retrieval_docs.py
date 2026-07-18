@@ -34,9 +34,14 @@ def rebuild_retrieval_docs(
     type_placeholders = ", ".join("?" for _ in selected_doc_types)
     existing_rows = (
         conn.execute(
-            f"""SELECT doc_id, raw_text, tags_text, aliases_text, surface_hints_text,
-                       query_expansions_text, project, app, owner_kind, owner_id,
-                       metadata_json
+            f"""SELECT rowid, doc_id, doc_type, source_id, raw_text, tags_text,
+                       aliases_text, surface_hints_text, query_expansions_text,
+                       time_key, project, app, owner_kind, owner_id, metadata_json,
+                       updated_at_ms,
+                       EXISTS(
+                           SELECT 1 FROM memory_retrieval_docs_fts f
+                           WHERE f.rowid = memory_retrieval_docs.rowid
+                       ) AS fts_present
                 FROM memory_retrieval_docs
                 WHERE (? = '' OR project = ? OR project = '')
                   AND doc_type IN ({type_placeholders})""",
@@ -46,24 +51,18 @@ def rebuild_retrieval_docs(
         else []
     )
     existing = {
-        str(row["doc_id"]): tuple(str(row[key] or "") for key in (
-            "raw_text", "tags_text", "aliases_text", "surface_hints_text",
-            "query_expansions_text", "project", "app", "owner_kind", "owner_id",
-            "metadata_json",
-        ))
+        str(row["doc_id"]): {
+            "signature": tuple(str(row[key] or "") for key in (
+                "doc_type", "source_id", "raw_text", "tags_text", "aliases_text",
+                "surface_hints_text", "query_expansions_text", "time_key",
+                "project", "app", "owner_kind", "owner_id", "metadata_json",
+            )),
+            "rowid": int(row["rowid"]),
+            "updatedAtMs": int(row["updated_at_ms"] or 0),
+            "ftsPresent": bool(row["fts_present"]),
+        }
         for row in existing_rows
     }
-    if selected_doc_types:
-        conn.execute(
-            f"""DELETE FROM memory_retrieval_docs_fts
-                WHERE rowid IN (
-                    SELECT rowid
-                    FROM memory_retrieval_docs
-                    WHERE (? = '' OR project = ? OR project = '')
-                      AND doc_type IN ({type_placeholders})
-                )""",
-            (project, project, *selected_doc_types),
-        )
     docs: list[dict[str, object]] = []
     tombstones = _active_tombstone_sets(conn)
     if include_items:
@@ -75,17 +74,30 @@ def rebuild_retrieval_docs(
     timestamp = now_ms()
     counts = {"item": 0, "phrase": 0, "atom": 0, "book": 0}
     active_doc_ids: set[str] = set()
+    changed_doc_ids: set[str] = set()
     for doc in docs:
-        active_doc_ids.add(str(doc["doc_id"]))
+        doc_id = str(doc["doc_id"])
+        active_doc_ids.add(doc_id)
         doc_type = str(doc["doc_type"])
         counts[doc_type] = counts.get(doc_type, 0) + 1
         metadata_json = json.dumps(doc.get("metadata") or {}, ensure_ascii=False, sort_keys=True)
         signature = tuple(str(doc[key] or "") for key in (
-            "raw_text", "tags_text", "aliases_text", "surface_hints_text",
-            "query_expansions_text", "project", "app", "owner_kind", "owner_id",
+            "doc_type", "source_id", "raw_text", "tags_text", "aliases_text",
+            "surface_hints_text", "query_expansions_text", "time_key", "project", "app",
+            "owner_kind", "owner_id",
         )) + (metadata_json,)
-        if existing.get(str(doc["doc_id"])) not in {None, signature}:
-            conn.execute("DELETE FROM memory_retrieval_doc_vectors WHERE doc_id = ?", (doc["doc_id"],))
+        previous = existing.get(doc_id)
+        if (
+            previous is not None
+            and previous["signature"] == signature
+            and bool(previous["ftsPresent"])
+        ):
+            continue
+        changed_doc_ids.add(doc_id)
+        conn.execute(
+            "DELETE FROM memory_retrieval_doc_vectors WHERE doc_id = ?",
+            (doc["doc_id"],),
+        )
         conn.execute(
             """
             INSERT INTO memory_retrieval_docs(
@@ -122,6 +134,7 @@ def rebuild_retrieval_docs(
             ),
         )
         rowid = int(conn.execute("SELECT rowid FROM memory_retrieval_docs WHERE doc_id = ?", (doc["doc_id"],)).fetchone()[0])
+        conn.execute("DELETE FROM memory_retrieval_docs_fts WHERE rowid = ?", (rowid,))
         conn.execute(
             """
             INSERT INTO memory_retrieval_docs_fts(
@@ -145,6 +158,10 @@ def rebuild_retrieval_docs(
         )
     stale_ids = set(existing) - active_doc_ids
     if stale_ids:
+        conn.executemany(
+            "DELETE FROM memory_retrieval_docs_fts WHERE rowid = ?",
+            ((int(existing[doc_id]["rowid"]),) for doc_id in stale_ids),
+        )
         conn.executemany("DELETE FROM memory_retrieval_docs WHERE doc_id = ?", ((doc_id,) for doc_id in stale_ids))
     return {
         "schemaVersion": RETRIEVAL_DOCS_REBUILD_SCHEMA_VERSION,
@@ -154,6 +171,8 @@ def rebuild_retrieval_docs(
         "includeBooks": bool(include_books),
         "includeAtoms": bool(include_atoms),
         "includeItems": bool(include_items),
+        "changedDocIds": sorted(changed_doc_ids),
+        "removedDocIds": sorted(stale_ids),
         "updatedAtMs": timestamp,
     }
 
@@ -232,6 +251,7 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                updated_at_ms
         FROM memory_atoms
         WHERE status IN ('active', 'approved')
+          AND claim_state = 'current'
           AND privacy_level != 'sensitive'
           AND (? = '' OR scope_project = ? OR scope_project = '')
         ORDER BY updated_at_ms DESC

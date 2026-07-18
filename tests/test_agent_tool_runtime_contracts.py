@@ -86,7 +86,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             if item["enabled"] is True
         }
 
-        self.assertEqual(len(manifests), 20)
+        self.assertEqual(len(manifests), 21)
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
                 schema = manifest["parameters"]
@@ -117,7 +117,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             separators=(",", ":"),
         ).encode("utf-8")
 
-        self.assertLess(len(encoded), 27_000)
+        self.assertLess(len(encoded), 32_000)
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")

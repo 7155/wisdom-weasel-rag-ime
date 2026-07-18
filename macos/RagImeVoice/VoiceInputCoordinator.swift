@@ -280,6 +280,7 @@ final class VoiceInputCoordinator {
                 && partialText != providerFinalText
             let providerFinalLatencyMs = releasedAtMs.map { max(0, nowMs - $0) }
             let shouldRunThirdPass = credentials?.provider == .nativeStreaming
+                && VoiceThirdPassRefiner.isEnabled
                 && !partialText.isEmpty
                 && partialText == providerFinalText
             if shouldRunThirdPass {

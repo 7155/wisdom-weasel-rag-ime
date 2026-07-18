@@ -77,6 +77,11 @@ from .memory_generator import (
 )
 from .models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from .payloads import action_response_payload, suggestions_response_payload
+from .personal_context_maintenance import (
+    PersonalContextMaintenanceConfig,
+    PersonalContextMaintenanceRunner,
+    write_personal_context_maintenance_report,
+)
 from .predictor import (
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
@@ -148,6 +153,62 @@ def _add_model_matrix_eval_parser(subparsers: argparse._SubParsersAction, name: 
         help="Include full per-case evaluation details for every model.",
     )
     return parser
+
+
+def _add_personal_context_maintenance_parser(
+    subparsers: argparse._SubParsersAction,
+    name: str,
+    *,
+    help_text: str,
+    include_force: bool,
+) -> argparse.ArgumentParser:
+    defaults = PersonalContextMaintenanceConfig.from_environ()
+    command = subparsers.add_parser(name, help=help_text)
+    command.add_argument("--project", default=defaults.project)
+    command.add_argument("--role-id", default="")
+    command.add_argument("--role-version", default="")
+    command.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=defaults.min_interval_ms // 1_000,
+    )
+    command.add_argument("--batch-limit", type=int, default=defaults.batch_limit)
+    command.add_argument("--report-path", default="")
+    enabled = command.add_mutually_exclusive_group()
+    enabled.add_argument(
+        "--enabled",
+        dest="personal_context_enabled",
+        action="store_true",
+    )
+    enabled.add_argument(
+        "--disabled",
+        dest="personal_context_enabled",
+        action="store_false",
+    )
+    apply_policy = command.add_mutually_exclusive_group()
+    apply_policy.add_argument(
+        "--apply-safe-recent-work",
+        dest="apply_safe_recent_work",
+        action="store_true",
+        help="Explicitly allow the evidence-backed recentWork field to be applied.",
+    )
+    apply_policy.add_argument(
+        "--draft-only",
+        dest="apply_safe_recent_work",
+        action="store_false",
+        help="Generate digest and memory/role-book drafts without applying them.",
+    )
+    command.set_defaults(
+        personal_context_enabled=defaults.enabled,
+        apply_safe_recent_work=defaults.apply_safe_recent_work,
+    )
+    if include_force:
+        command.add_argument(
+            "--force",
+            action="store_true",
+            help="Ignore the daily interval; evidence cursors still make reruns idempotent.",
+        )
+    return command
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -443,6 +504,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     memory_book_rollback = subparsers.add_parser("memory-book-rollback", help="Rollback an applied Memory Book run")
     memory_book_rollback.add_argument("--run-id", required=True)
+
+    _add_personal_context_maintenance_parser(
+        subparsers,
+        "personal-context-maintenance-run",
+        help_text=(
+            "Run due daily digest, user-memory draft, and role-book draft "
+            "consolidation per project and role"
+        ),
+        include_force=True,
+    )
+    _add_personal_context_maintenance_parser(
+        subparsers,
+        "personal-context-maintenance-status",
+        help_text="Inspect due state, last run, and errors per project and role",
+        include_force=False,
+    )
 
     rebuild_retrieval_docs_parser = subparsers.add_parser(
         "rebuild-retrieval-docs",
@@ -1240,6 +1317,60 @@ def main(argv: Sequence[str] | None = None) -> int:
         core.initialize()
         print(json.dumps({"db_path": str(core.db_path), "initialized": True}, ensure_ascii=False, indent=2))
         return 0
+
+    if args.command in {
+        "personal-context-maintenance-run",
+        "personal-context-maintenance-status",
+    }:
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit(
+                f"{args.command} requires --core-mode local"
+            )
+        command_schema = (
+            "rag-ime.personal-context-maintenance-run.v1"
+            if args.command == "personal-context-maintenance-run"
+            else "rag-ime.personal-context-maintenance-status.v1"
+        )
+        try:
+            config = PersonalContextMaintenanceConfig(
+                enabled=bool(args.personal_context_enabled),
+                project=args.project,
+                role_id=args.role_id,
+                role_version=args.role_version,
+                min_interval_ms=max(0, int(args.interval_seconds)) * 1_000,
+                apply_safe_recent_work=bool(args.apply_safe_recent_work),
+                batch_limit=args.batch_limit,
+            ).normalized()
+            runner = PersonalContextMaintenanceRunner(
+                core.db_path,
+                config=config,
+            )
+            if args.command == "personal-context-maintenance-run":
+                report = runner.run_once(force=bool(args.force))
+            else:
+                report = runner.status()
+        except Exception as exc:
+            report = {
+                "schemaVersion": command_schema,
+                "ok": False,
+                "generatedAtMs": int(time.time() * 1_000),
+                "error": compact_whitespace(str(exc))[:800]
+                or exc.__class__.__name__,
+                "targets": [],
+            }
+        report_path = compact_whitespace(str(args.report_path or ""))
+        if report_path:
+            try:
+                write_personal_context_maintenance_report(report_path, report)
+            except Exception as exc:
+                report = {
+                    **report,
+                    "ok": False,
+                    "reportWriteError": compact_whitespace(str(exc))[:800]
+                    or exc.__class__.__name__,
+                }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if bool(report.get("ok")) else 1
 
     if args.command == "rime-rank-export-preview":
         if not isinstance(core, LocalSqliteCoreClient):
@@ -3194,6 +3325,7 @@ def seed_demo_memories(adapter: InputMethodAdapter, memories: list[CoreMemory]) 
                         "query": memory.text,
                     }
                 )
+    _materialize_seed_memory_projection(adapter, event_count=len(event_ids))
     return event_ids
 
 
@@ -3238,7 +3370,21 @@ def seed_eval_case_memories(adapter: InputMethodAdapter, cases: list[CodexEvalCa
                     "query": case.query,
                 }
             )
+    _materialize_seed_memory_projection(adapter, event_count=len(event_ids))
     return event_ids
+
+
+def _materialize_seed_memory_projection(
+    adapter: InputMethodAdapter,
+    *,
+    event_count: int,
+) -> None:
+    """Make explicit fixture/eval imports queryable before their CLI exits."""
+
+    processor = getattr(adapter.core, "process_memory_projection_outbox", None)
+    if not callable(processor) or event_count <= 0:
+        return
+    processor(max_events=max(32, event_count * 2 + 4))
 
 
 def _event_id_from_memory_id_for_seed(memory_id: str) -> int | None:

@@ -18,7 +18,8 @@ class ActiveRagRetrieverTests(unittest.TestCase):
             provider = HashingEmbeddingProvider(dimensions=16)
             core = LocalSqliteCoreClient(Path(tmp) / "active-rag.sqlite", embedding_provider=provider)
             frame = ActiveRagFrame.from_text("检查上下文构建与向量召回", intent="complete", max_candidates=1)
-            with patch("rag_ime.active_rag_retriever._retrieve_candidates_with_rebuild", return_value=[]) as mocked:
+            core.initialize()
+            with patch("rag_ime.active_rag_retriever._retrieve_candidates_read_only", return_value=[]) as mocked:
                 evidence = retrieve_active_rag_evidence(core, frame)
 
         self.assertEqual(evidence, ())
@@ -26,6 +27,25 @@ class ActiveRagRetrieverTests(unittest.TestCase):
         query = mocked.call_args.args[1]
         self.assertNotIn("complete", query.query_text)
         self.assertGreaterEqual(query.top_k, 6)
+
+    def test_active_rag_query_path_is_sqlite_read_only(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-active-read-only-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "active-rag.sqlite")
+            core.initialize()
+            frame = ActiveRagFrame.from_text("检查查询热路径", intent="debug", max_candidates=1)
+
+            def attempt_write(conn, query, embedding_provider=None):
+                with self.assertRaisesRegex(Exception, "readonly"):
+                    conn.execute("INSERT INTO memory_tombstones(created_at_ms, target_type, target_value) VALUES (1, 'id', 'x')")
+                return []
+
+            with patch(
+                "rag_ime.active_rag_retriever._retrieve_candidates_read_only",
+                side_effect=attempt_write,
+            ):
+                evidence = retrieve_active_rag_evidence(core, frame)
+
+        self.assertEqual(evidence, ())
 
     def test_generic_foreground_drops_unrelated_fixed_top_k_hits(self) -> None:
         frame = ActiveRagFrame.from_text("这里是前台上下文测试", intent="continue", max_candidates=1)

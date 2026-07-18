@@ -198,6 +198,35 @@ selects one visible speaker per user turn, while the existing coordinator and
 intercom path can delegate parallel research without turning every delegated
 worker into another public conversation.
 
+### Session-Scoped Agent Context
+
+**Status: implemented in the local Agent runtime; long-running policy and
+review UX validation remain in development.**
+
+Each Agent role has a versioned Role Book containing approved collaboration
+style, evidence-backed capabilities, recent work with expiry, lessons, limits,
+and commitments. A Session pins one approved revision, so the role cannot
+silently change halfway through a conversation. Identity, permissions, safety
+rules, tool allowlists, and approval levels remain outside the Role Book.
+
+A new Session receives one query-free, budgeted bootstrap that can contain
+stable preferences, current project tasks and goals, active Memory Books and
+Atoms, recent cross-application timeline Books, and a small One Ring
+conversation tail.
+One-shot context is reserved before Runtime dispatch and is not reinjected on a
+retry. Later turns use Pi's native Session history; long-term memory is read
+only when the Agent explicitly calls `ime_memory` in `current`, `historical`,
+or `change` mode.
+
+Chats, applied tool receipts, and accepted Room work are recorded as Evidence,
+not facts. Daily maintenance produces a conversation digest plus separate user
+memory and Role Book drafts. Explicit remember, correct, forget, and rollback
+operations are hash-bound, approval-gated, lineage-aware, and projected
+asynchronously through the durable outbox. Cross-application typing activity
+continues through the separate `input_events` to daily Memory Book timeline,
+so raw dialogue or typing history is never silently promoted into a system
+prompt.
+
 ### Diagnostics And Repair
 
 **Status: implemented; doctor output is necessary but not sufficient evidence.**

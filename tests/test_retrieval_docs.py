@@ -376,6 +376,7 @@ def sample_compile_output(event_id: int) -> dict[str, object]:
             {
                 "atomId": "atom:vcp-style-rag-core",
                 "kind": "project_fact",
+                "claimKey": "project:rag-ime.retrieval-architecture",
                 "canonicalText": "RAG core 应使用 BM25、向量、TagMemo 和 Time 多路召回。",
                 "summary": "用户希望底层 RAG core 成为通用上下文预测层。",
                 "tags": ["RAG core", "BM25", "TagMemo"],

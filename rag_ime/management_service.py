@@ -2561,13 +2561,16 @@ class ManagementService:
                        archived_at_ms, last_active_at_ms, archive_reason
                 FROM memory_books
                 WHERE (? = 0 OR rowid < ?)
+                  AND (? = '' OR project = ? OR project = '')
                   AND (? = '' OR title LIKE ? OR summary LIKE ? OR project LIKE ? OR app LIKE ? OR book_type LIKE ?)
                   AND (? = '' OR status = ?)
                   AND {owner_clause}
                 ORDER BY rowid DESC LIMIT ?
                 """,
                 (
-                    cursor, cursor, request.query, like, like, like, like, like,
+                    cursor, cursor,
+                    request.project, request.project,
+                    request.query, like, like, like, like, like,
                     request.status, request.status, *owner_params, limit + 1,
                 ),
             ).fetchall()
@@ -2591,9 +2594,16 @@ class ManagementService:
                         FROM memory_atoms
                         WHERE id IN ({atom_placeholders}) AND privacy_level != 'sensitive'
                           AND owner_kind = ? AND owner_id = ?
+                          AND (? = '' OR COALESCE(scope_project, '') IN ('', ?))
                         ORDER BY updated_at_ms DESC
                         """,
-                        (*atom_ids, str(row["owner_kind"]), str(row["owner_id"])),
+                        (
+                            *atom_ids,
+                            str(row["owner_kind"]),
+                            str(row["owner_id"]),
+                            request.project,
+                            request.project,
+                        ),
                     ).fetchall()
                     atoms_by_book[str(row["id"])] = [dict(atom) for atom in atom_rows]
         has_more = len(rows) > limit
@@ -2635,6 +2645,7 @@ class ManagementService:
                 FROM memory_atoms
                 WHERE privacy_level != 'sensitive'
                   AND (? = 0 OR rowid < ?)
+                  AND (? = '' OR COALESCE(scope_project, '') IN ('', ?))
                   AND (? = '' OR text LIKE ? OR canonical_text LIKE ? OR kind LIKE ? OR scope_project LIKE ? OR scope_app LIKE ?)
                   AND (
                     ? = ''
@@ -2646,7 +2657,9 @@ class ManagementService:
                 ORDER BY rowid DESC LIMIT ?
                 """,
                 (
-                    cursor, cursor, request.query, like, like, like, like, like,
+                    cursor, cursor,
+                    request.project, request.project,
+                    request.query, like, like, like, like, like,
                     request.status, request.status, request.status,
                     request.status, request.status, *owner_params, limit + 1,
                 ),
@@ -2821,6 +2834,27 @@ class ManagementService:
                 WHERE (? = 0 OR mt.id < ?)
                   AND mt.status = 'active'
                   AND mt.source IN ('dsv4', 'user')
+                  AND (
+                    ? = ''
+                    OR EXISTS (
+                      SELECT 1
+                      FROM memory_atom_tags scoped_mat
+                      JOIN memory_atoms scoped_ma
+                        ON scoped_ma.id = scoped_mat.memory_atom_id
+                      WHERE CAST(scoped_mat.tag_id AS TEXT) = CAST(mt.id AS TEXT)
+                        AND scoped_ma.privacy_level != 'sensitive'
+                        AND COALESCE(scoped_ma.scope_project, '') IN ('', ?)
+                    )
+                    OR EXISTS (
+                      SELECT 1
+                      FROM memory_item_tags scoped_mit
+                      JOIN memory_items scoped_mi
+                        ON scoped_mi.id = scoped_mit.memory_item_id
+                      WHERE CAST(scoped_mit.tag_id AS TEXT) = CAST(mt.id AS TEXT)
+                        AND scoped_mi.privacy_class != 'sensitive'
+                        AND COALESCE(scoped_mi.project, '') IN ('', ?)
+                    )
+                  )
                   AND (? = '' OR mt.tag LIKE ? OR mt.tag_type LIKE ?)
                   {visibility_sql}
                 ORDER BY mt.quality_score DESC, mt.id DESC LIMIT ?
@@ -2829,6 +2863,9 @@ class ManagementService:
                     *count_owner_params,
                     cursor,
                     cursor,
+                    request.project,
+                    request.project,
+                    request.project,
                     request.query,
                     like,
                     like,
@@ -2850,10 +2887,11 @@ class ManagementService:
                       AND ma.privacy_level != 'sensitive'
                       AND ma.status IN ('active', 'approved')
                       AND {atom_owner_clause}
+                      AND (? = '' OR COALESCE(ma.scope_project, '') IN ('', ?))
                     ORDER BY mat.weight DESC, ma.updated_at_ms DESC
                     LIMIT 30
                     """,
-                    (tag_id, *atom_owner_params),
+                    (tag_id, *atom_owner_params, request.project, request.project),
                 ).fetchall()
                 memories_by_tag[tag_id] = [dict(atom) for atom in atom_rows]
                 edge_rows = conn.execute(
@@ -2918,6 +2956,7 @@ class ManagementService:
                 WHERE mi.kind = 'phrase'
                   AND mi.privacy_class != 'sensitive'
                   AND (? = 0 OR mi.id < ?)
+                  AND (? = '' OR COALESCE(mi.project, '') IN ('', ?))
                   AND (? = '' OR mi.text LIKE ? OR mi.normalized_text LIKE ? OR mi.project LIKE ? OR mi.app LIKE ?)
                   AND (? = '' OR mi.status = ?)
                   AND {owner_clause}
@@ -2927,6 +2966,8 @@ class ManagementService:
                 (
                     cursor,
                     cursor,
+                    request.project,
+                    request.project,
                     request.query,
                     like,
                     like,
@@ -3109,12 +3150,24 @@ class ManagementService:
                 LEFT JOIN memory_group_overrides mgo ON mgo.context_group_id = msg.group_id
                 WHERE msg.status = 'active'
                   AND (? = 0 OR msg.rowid < ?)
+                  AND (? = '' OR COALESCE(msg.project, '') IN ('', ?))
                   AND (? = '' OR msg.group_id LIKE ? OR msg.title LIKE ? OR msg.description LIKE ? OR msg.project LIKE ?)
                 GROUP BY msg.group_id, msg.rowid, msg.project, msg.updated_at_ms,
                          msg.title, msg.description, mgo.title, mgo.note, mgo.color_token
                 ORDER BY msg.quality_score DESC, row_cursor DESC LIMIT ?
                 """,
-                (cursor, cursor, request.query, query, query, query, query, limit + 1),
+                (
+                    cursor,
+                    cursor,
+                    request.project,
+                    request.project,
+                    request.query,
+                    query,
+                    query,
+                    query,
+                    query,
+                    limit + 1,
+                ),
             ).fetchall()
         has_more = len(rows) > limit
         rows = rows[:limit]
@@ -3130,6 +3183,11 @@ class ManagementService:
         return items, str(rows[-1]["row_cursor"]) if has_more and rows else ""
 
     def _negative_memory(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
+        # Legacy tombstones do not carry a mandatory project column. A
+        # project-scoped Agent must therefore fail closed instead of exposing
+        # reasons or target ids that may belong to another project.
+        if request.project:
+            return [], ""
         return self._rowid_page(
             "memory_tombstones",
             request,
@@ -3960,6 +4018,7 @@ def page_request(payload: Mapping[str, object]) -> PageRequest:
         status=str(payload.get("status") or payload.get("filter") or "").strip(),
         kind=str(payload.get("kind") or "").strip(),
         visible_owners=tuple(visible_owners),
+        project=compact_whitespace(str(payload.get("project") or "")),
     )
 
 

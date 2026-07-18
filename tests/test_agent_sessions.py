@@ -144,6 +144,30 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(switched_back["mode"], "coordinator")
         self.assertEqual(switched_back["workspaceRoots"], [str(Path(self.tmp.name).resolve())])
 
+    def test_role_book_revision_can_only_be_pinned_once(self) -> None:
+        session = self.store.create(title="pinned role book", created_at_ms=100)
+        session_id = str(session["id"])
+
+        first = self.store.set_role_book_revision(
+            session_id,
+            "role-book:one",
+            updated_at_ms=200,
+        )
+        repeated = self.store.set_role_book_revision(
+            session_id,
+            "role-book:one",
+            updated_at_ms=300,
+        )
+
+        self.assertEqual(first["roleBookRevisionId"], "role-book:one")
+        self.assertEqual(repeated["roleBookRevisionId"], "role-book:one")
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.store.set_role_book_revision(
+                session_id,
+                "role-book:two",
+                updated_at_ms=400,
+            )
+
     def test_runtime_event_sequence_survives_store_recreation(self) -> None:
         session = self.store.create(title="sequence", created_at_ms=100)
         session_id = str(session["id"])

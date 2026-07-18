@@ -363,6 +363,7 @@ class AgentRoomStore:
         *,
         requested_participant_ids: Sequence[str] = (),
         profiles: Mapping[str, Mapping[str, object]] | None = None,
+        authoritative_participant_id: str = "",
     ) -> dict[str, object]:
         room = self.get(room_id)
         if room["status"] != "active":
@@ -372,6 +373,7 @@ class AgentRoomStore:
             text,
             requested_participant_ids=requested_participant_ids,
             profiles=profiles,
+            authoritative_participant_id=authoritative_participant_id,
         )
 
     def route_target(self, room_id: str, text: str) -> dict[str, object]:

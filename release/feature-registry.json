@@ -145,6 +145,28 @@
     "v1Status": "backend_only"
   },
   {
+    "featureId": "session-scoped-agent-context",
+    "userValue": "Start each Agent Session with bounded personal and project context, keep one approved role identity for the whole Session, and retrieve longer-term memory only when the Agent explicitly needs it.",
+    "currentStatus": "Pinned Role Book revisions, one-shot query-free bootstrap, governed current/historical/change memory reads, Evidence capture, daily draft-only consolidation, and durable projection are implemented and covered by backend tests; long-running policy and Control Center review UX still need user acceptance.",
+    "realImeTrigger": "none on the typing path; the user explicitly creates or opens an Agent Session",
+    "sidecarEndpoint": "local Agent gateway session, prompt, approval, ime_memory, and agent_role_book operations",
+    "candidateSourceType": "Agent runtime context and governed memory evidence, not an IME candidate source",
+    "keyPolicy": "no input-method keys are intercepted; memory mutations require an explicit hash-bound native approval",
+    "dataSource": "approved Role Book revision, current project plan, curated Atom and Memory Book state, recent daily timeline Books, One Ring Evidence tail, and applied tool or Room receipts",
+    "foregroundTraceEvents": [
+      "message_completed",
+      "memory_checkpointed",
+      "approval_resolved"
+    ],
+    "acceptanceCommand": "python3 -m unittest tests.test_agent_service tests.test_agent_role_book tests.test_agent_governed_memory_tools tests.test_personal_context tests.test_memory_projection_lifecycle -v",
+    "failureFallback": "Missing or corrupt Role Books fall back to Base Persona; bootstrap and maintenance failures do not block chat; private cross-project memory and unapproved facts fail closed.",
+    "userVisibleBehavior": "A new Agent conversation starts with relevant current context once, remains role-consistent, avoids repeated automatic RAG injection, and can explain or correct remembered facts through explicit tools.",
+    "tests": [
+      "python3 -m unittest tests.test_agent_service tests.test_agent_role_book tests.test_agent_governed_memory_tools tests.test_personal_context tests.test_memory_projection_lifecycle -v"
+    ],
+    "v1Status": "backend_only"
+  },
+  {
     "featureId": "streaming-voice-input",
     "userValue": "Dictate at the current cursor with live revisions while keeping microphone/network work outside Squirrel and outside typing history.",
     "currentStatus": "The headless native agent, mode-0600 credential file with Keychain fallback, protocol/revision tests, Release build, real PCM provider probe, content-free v3 telemetry, configurable hotkey, and explicit bounded request-level hotwords pass; partial replacement, finalization, Esc cancellation, and sensitive-field blocking still require one user-authorized foreground run.",

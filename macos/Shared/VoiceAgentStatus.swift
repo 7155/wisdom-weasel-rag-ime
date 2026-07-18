@@ -27,13 +27,15 @@ struct VoiceRecognitionContract: Codable, Equatable {
     let fullResultReplacement: Bool
     let providerResponseMetadata: Bool?
     let thirdPassRefinement: Bool?
+    let thirdPassRefinementEnabled: Bool?
 
     static let current = VoiceRecognitionContract(
         finalSecondPass: true,
         semanticSmoothing: true,
         fullResultReplacement: true,
         providerResponseMetadata: true,
-        thirdPassRefinement: true
+        thirdPassRefinement: true,
+        thirdPassRefinementEnabled: false
     )
 }
 

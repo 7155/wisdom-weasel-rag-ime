@@ -17,9 +17,14 @@ WORK_STATES = frozenset(
     {"queued", "active", "review", "blocked", "done", "failed", "cancelled"}
 )
 OPEN_WORK_STATES = frozenset({"queued", "active", "review", "blocked"})
+AUTHORITATIVE_WORK_STATES = frozenset({"active", "review"})
 MAX_ASSIGNMENTS_PER_ROOT = 6
 MAX_ASSIGNMENT_DEPTH = 3
 MAX_REVISIONS = 2
+
+
+class AgentRoomWorkAssignmentChanged(RuntimeError):
+    """Raised when a formal Room assignment changes during dispatch."""
 
 
 class AgentRoomWorkStore:
@@ -32,6 +37,158 @@ class AgentRoomWorkStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             apply_database_migrations(conn)
+
+    def create(
+        self,
+        *,
+        room_id: str,
+        objective: str,
+        expected_output: str,
+        current_owner_participant_id: str,
+        created_by_participant_id: str,
+        client_message_id: str,
+        accountable_participant_id: str = "",
+        topic_id: str = "",
+        root_turn_id: str = "",
+        parent_work_id: str = "",
+        acceptance_criteria: Sequence[object] = (),
+        state: str = "active",
+        depth: int = 1,
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Create a directly owned WorkItem from the Room control surface.
+
+        Agent-to-agent delegation continues to use ``assign`` and its queued
+        acceptance flow. This entry point is for an explicit human/Room owner
+        assignment and therefore starts active by default.
+        """
+
+        timestamp = _timestamp(created_at_ms)
+        normalized_room_id = _required_text(room_id, "room_id", maximum=320)
+        owner_id = _required_text(
+            current_owner_participant_id,
+            "current_owner_participant_id",
+            maximum=320,
+        )
+        creator_id = _required_text(
+            created_by_participant_id,
+            "created_by_participant_id",
+            maximum=320,
+        )
+        accountable_id = _optional_text(accountable_participant_id, maximum=320) or owner_id
+        normalized_client_id = _required_text(
+            client_message_id,
+            "client_message_id",
+            maximum=320,
+        )
+        normalized_state = str(state or "").strip()
+        if normalized_state not in WORK_STATES:
+            raise ValueError("unsupported agent room work item state")
+        normalized_depth = int(depth)
+        if not 1 <= normalized_depth <= MAX_ASSIGNMENT_DEPTH:
+            raise ValueError("agent room work item depth must be between 1 and 3")
+        criteria = [str(value) for value in acceptance_criteria]
+        if len(criteria) > 8 or any(len(value) > 500 for value in criteria):
+            raise ValueError("acceptance_criteria exceeds the Room work limits")
+        normalized_objective = _required_text(objective, "objective", maximum=8_000)
+        normalized_expected = _required_text(
+            expected_output,
+            "expected_output",
+            maximum=8_000,
+        )
+        normalized_parent_id = _optional_text(parent_work_id, maximum=320)
+        work_id = f"room-work:{uuid.uuid4()}"
+
+        with self._connect(immediate=True) as conn:
+            existing = conn.execute(
+                """
+                SELECT * FROM agent_room_work_items
+                WHERE room_id = ? AND created_by_participant_id = ?
+                  AND client_message_id = ?
+                """,
+                (normalized_room_id, creator_id, normalized_client_id),
+            ).fetchone()
+            if existing is not None:
+                payload = work_item_payload(existing)
+                if (
+                    payload["objective"] != normalized_objective
+                    or payload["expectedOutput"] != normalized_expected
+                    or payload["currentOwnerParticipantId"] != owner_id
+                    or payload["accountableParticipantId"] != accountable_id
+                    or payload["acceptanceCriteria"] != criteria
+                    or payload["state"] != normalized_state
+                    or payload["depth"] != normalized_depth
+                ):
+                    raise ValueError(
+                        "client_message_id was already used for a different room work item"
+                    )
+                return payload
+
+            rows = conn.execute(
+                """
+                SELECT id, participant_status FROM agent_room_participants
+                WHERE room_id = ? AND id IN (?, ?, ?)
+                """,
+                (normalized_room_id, owner_id, creator_id, accountable_id),
+            ).fetchall()
+            statuses = {str(row["id"]): str(row["participant_status"]) for row in rows}
+            if any(statuses.get(value) != "active" for value in {owner_id, creator_id, accountable_id}):
+                raise ValueError(
+                    "work item owner, creator, and accountable participant must be active members of the room"
+                )
+
+            if normalized_parent_id:
+                parent = self._row(conn, normalized_parent_id)
+                if str(parent["room_id"]) != normalized_room_id:
+                    raise ValueError("parent work item does not belong to this room")
+                root_work_id = str(parent["root_work_id"])
+            else:
+                root_work_id = work_id
+            assignment_key = f"{normalized_room_id}:{work_id}:assignment:{uuid.uuid4()}"
+            conn.execute(
+                """
+                INSERT INTO agent_room_work_items(
+                    id, room_id, topic_id, root_turn_id, root_work_id, parent_work_id,
+                    objective, expected_output, acceptance_criteria_json,
+                    accountable_participant_id, current_owner_participant_id,
+                    offered_to_participant_id, created_by_participant_id,
+                    client_message_id, assignment_key, state, depth, revision,
+                    result_summary, artifact_refs_json, evidence_refs_json,
+                    blocker_json, accepted_turn_id, created_at_ms, updated_at_ms,
+                    completed_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0,
+                          '', '[]', '[]', '{}', '', ?, ?, NULL)
+                """,
+                (
+                    work_id,
+                    normalized_room_id,
+                    str(topic_id or ""),
+                    str(root_turn_id or ""),
+                    root_work_id,
+                    normalized_parent_id or None,
+                    normalized_objective,
+                    normalized_expected,
+                    json.dumps(criteria, ensure_ascii=False, separators=(",", ":")),
+                    accountable_id,
+                    owner_id,
+                    creator_id,
+                    normalized_client_id,
+                    assignment_key,
+                    normalized_state,
+                    normalized_depth,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type="assigned",
+                actor_participant_id=creator_id,
+                created_at_ms=timestamp,
+            )
+        return work_item_payload(row)
 
     def assign(
         self,
@@ -486,6 +643,224 @@ class AgentRoomWorkStore:
             )
         return work_item_payload(row)
 
+    def list(
+        self,
+        *,
+        room_id: str,
+        states: Sequence[str] = (),
+        owner_participant_id: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        normalized_states = tuple(
+            dict.fromkeys(str(value or "").strip() for value in states if str(value or "").strip())
+        )
+        if any(value not in WORK_STATES for value in normalized_states):
+            raise ValueError("unsupported agent room work item state")
+        clauses = ["room_id = ?"]
+        parameters: list[object] = [_required_text(room_id, "room_id", maximum=320)]
+        if normalized_states:
+            clauses.append(f"state IN ({', '.join('?' for _ in normalized_states)})")
+            parameters.extend(normalized_states)
+        owner_id = _optional_text(owner_participant_id, maximum=320)
+        if owner_id:
+            clauses.append("current_owner_participant_id = ?")
+            parameters.append(owner_id)
+        parameters.append(max(1, min(int(limit), 200)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM agent_room_work_items
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at_ms DESC, id DESC LIMIT ?
+                """,  # noqa: S608 - clauses only contain fixed internal columns
+                parameters,
+            ).fetchall()
+        return [work_item_payload(row) for row in rows]
+
+    def authoritative_owner(
+        self,
+        work_id: str,
+        *,
+        room_id: str,
+    ) -> tuple[dict[str, object], str]:
+        item = self.get(work_id, room_id=room_id)
+        owner_id = ""
+        if str(item["state"]) in AUTHORITATIVE_WORK_STATES:
+            owner_id = str(item["currentOwnerParticipantId"])
+            with self._connect() as conn:
+                assignment = conn.execute(
+                    """
+                    SELECT payload_json FROM agent_room_work_events
+                    WHERE work_id = ? AND event_type = 'assigned'
+                    ORDER BY sequence DESC LIMIT 1
+                    """,
+                    (work_id,),
+                ).fetchone()
+            if assignment is None:
+                raise RuntimeError("active WorkItem owner has no formal assignment event")
+            payload = json.loads(str(assignment["payload_json"] or "{}"))
+            snapshot = payload.get("work") if isinstance(payload, Mapping) else None
+            recorded_owner = (
+                str(snapshot.get("currentOwnerParticipantId") or "")
+                if isinstance(snapshot, Mapping)
+                else str(payload.get("currentOwnerParticipantId") or "")
+            )
+            if recorded_owner != owner_id:
+                raise RuntimeError("WorkItem owner does not match its latest formal assignment event")
+        return item, owner_id
+
+    def reassign(
+        self,
+        work_id: str,
+        *,
+        actor_participant_id: str,
+        current_owner_participant_id: str,
+        reason: str = "",
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        actor_id = _required_text(actor_participant_id, "actor_participant_id", maximum=320)
+        owner_id = _required_text(
+            current_owner_participant_id,
+            "current_owner_participant_id",
+            maximum=320,
+        )
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect(immediate=True) as conn:
+            row = self._row(conn, work_id)
+            if str(row["state"]) not in AUTHORITATIVE_WORK_STATES:
+                raise ValueError("only active or review work items can be reassigned")
+            room_id = str(row["room_id"])
+            participant_rows = conn.execute(
+                """
+                SELECT id, participant_status FROM agent_room_participants
+                WHERE room_id = ? AND id IN (?, ?)
+                """,
+                (room_id, actor_id, owner_id),
+            ).fetchall()
+            statuses = {str(value["id"]): str(value["participant_status"]) for value in participant_rows}
+            if statuses.get(actor_id) != "active" or statuses.get(owner_id) != "active":
+                raise ValueError("reassignment actor and owner must be active room participants")
+            previous_owner_id = str(row["current_owner_participant_id"])
+            if actor_id not in {previous_owner_id, str(row["accountable_participant_id"])}:
+                raise ValueError("only the current owner or accountable participant may reassign work")
+            if previous_owner_id == owner_id:
+                return work_item_payload(row)
+            conn.execute(
+                """
+                UPDATE agent_room_work_items
+                SET current_owner_participant_id = ?, offered_to_participant_id = NULL,
+                    assignment_key = ?, accepted_turn_id = '', updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (
+                    owner_id,
+                    f"{room_id}:{work_id}:assignment:{uuid.uuid4()}",
+                    timestamp,
+                    work_id,
+                ),
+            )
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type="assigned",
+                actor_participant_id=actor_id,
+                created_at_ms=timestamp,
+                payload={
+                    "reason": _bounded(reason, 500) or "reassignment",
+                    "previousOwnerParticipantId": previous_owner_id,
+                    "currentOwnerParticipantId": owner_id,
+                },
+            )
+        return work_item_payload(row)
+
+    def claim_dispatch(
+        self,
+        work_id: str,
+        *,
+        room_id: str,
+        owner_participant_id: str,
+        assignment_key: str,
+        previous_accepted_turn_id: str,
+        room_turn_id: str,
+        claimed_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        timestamp = _timestamp(claimed_at_ms)
+        with self._connect(immediate=True) as conn:
+            row = self._row(conn, work_id)
+            if str(row["room_id"]) != str(room_id):
+                raise ValueError("work item does not belong to this room")
+            if str(row["state"]) not in AUTHORITATIVE_WORK_STATES:
+                raise ValueError("only active or review work items can be dispatched")
+            if (
+                str(row["current_owner_participant_id"]) != str(owner_participant_id)
+                or str(row["assignment_key"]) != str(assignment_key)
+                or str(row["accepted_turn_id"] or "") != str(previous_accepted_turn_id or "")
+            ):
+                raise AgentRoomWorkAssignmentChanged("WorkItem assignment changed before dispatch")
+            cursor = conn.execute(
+                """
+                UPDATE agent_room_work_items SET accepted_turn_id = ?, updated_at_ms = ?
+                WHERE id = ? AND room_id = ? AND current_owner_participant_id = ?
+                  AND assignment_key = ? AND accepted_turn_id = ?
+                """,
+                (
+                    str(room_turn_id),
+                    timestamp,
+                    work_id,
+                    room_id,
+                    owner_participant_id,
+                    assignment_key,
+                    str(previous_accepted_turn_id or ""),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRoomWorkAssignmentChanged("WorkItem assignment changed before dispatch")
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type="accepted",
+                actor_participant_id=str(owner_participant_id),
+                created_at_ms=timestamp,
+            )
+        return work_item_payload(row)
+
+    def fail_dispatch(
+        self,
+        work_id: str,
+        *,
+        room_id: str,
+        actor_participant_id: str,
+        room_turn_id: str,
+        previous_accepted_turn_id: str,
+        reason: str,
+        failed_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        timestamp = _timestamp(failed_at_ms)
+        with self._connect(immediate=True) as conn:
+            row = self._row(conn, work_id)
+            if str(row["room_id"]) != str(room_id):
+                raise ValueError("work item does not belong to this room")
+            claim_is_current = str(row["accepted_turn_id"] or "") == str(room_turn_id)
+            if claim_is_current:
+                conn.execute(
+                    """
+                    UPDATE agent_room_work_items SET accepted_turn_id = ?, updated_at_ms = ?
+                    WHERE id = ? AND accepted_turn_id = ?
+                    """,
+                    (str(previous_accepted_turn_id or ""), timestamp, work_id, room_turn_id),
+                )
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type="assignment_failed",
+                actor_participant_id=str(actor_participant_id),
+                created_at_ms=timestamp,
+            )
+        return work_item_payload(row)
+
     def list_for_session(
         self,
         session_id: str,
@@ -551,10 +926,37 @@ class AgentRoomWorkStore:
             ).fetchall()
         return [work_item_payload(row) for row in rows]
 
-    def get(self, work_id: str) -> dict[str, object]:
+    def get(self, work_id: str, *, room_id: str = "") -> dict[str, object]:
         with self._connect() as conn:
             row = self._row(conn, work_id)
-        return work_item_payload(row)
+        payload = work_item_payload(row)
+        if room_id and payload["roomId"] != room_id:
+            raise ValueError("work item does not belong to this room")
+        return payload
+
+    def list_events(self, work_id: str) -> list[dict[str, object]]:
+        self.get(work_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_room_work_events
+                WHERE work_id = ? ORDER BY sequence ASC
+                """,
+                (work_id,),
+            ).fetchall()
+        return [
+            {
+                "eventId": str(row["event_id"]),
+                "workId": str(row["work_id"]),
+                "roomId": str(row["room_id"]),
+                "sequence": int(row["sequence"]),
+                "eventType": str(row["event_type"]),
+                "actorParticipantId": str(row["actor_participant_id"]),
+                "payload": dict(json.loads(str(row["payload_json"] or "{}"))),
+                "createdAtMs": int(row["created_at_ms"]),
+            }
+            for row in rows
+        ]
 
     def reviewer_participant_id(self, work_id: str) -> str:
         with self._connect() as conn:
@@ -718,6 +1120,7 @@ class AgentRoomWorkStore:
         event_type: str,
         actor_participant_id: str,
         created_at_ms: int,
+        payload: Mapping[str, object] | None = None,
     ) -> None:
         sequence_row = conn.execute(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_room_work_events WHERE work_id = ?",
@@ -725,6 +1128,7 @@ class AgentRoomWorkStore:
         ).fetchone()
         sequence = int(sequence_row[0] if sequence_row else 1)
         snapshot = work_item_payload(row)
+        event_payload = {"work": snapshot, **dict(payload or {})}
         conn.execute(
             """
             INSERT INTO agent_room_work_events(
@@ -740,7 +1144,7 @@ class AgentRoomWorkStore:
                 event_type,
                 actor_participant_id,
                 json.dumps(
-                    {"work": snapshot},
+                    event_payload,
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -796,6 +1200,7 @@ def work_item_payload(row: sqlite3.Row) -> dict[str, object]:
         "offeredToParticipantId": str(row["offered_to_participant_id"] or ""),
         "createdByParticipantId": str(row["created_by_participant_id"]),
         "clientMessageId": str(row["client_message_id"]),
+        "assignmentKey": str(row["assignment_key"]),
         "state": str(row["state"]),
         "depth": int(row["depth"]),
         "revision": int(row["revision"]),

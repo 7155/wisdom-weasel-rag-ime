@@ -9,6 +9,11 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .agent_governed_memory_tools import (
+    AgentRoleBookToolAdapter,
+    MemoryGovernanceProposalStore,
+)
+from .agent_role_book import AgentRoleBookStore
 from .agent_tool_ids import CONTROL_TOOL_IDS, DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
@@ -98,8 +103,8 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "memory",
         "displayName": "记忆与工具书",
         "description": (
-            "查询 Memory Book；需要整理时调用 curation_prepare 生成 Atom-first 草案。"
-            "系统也会按新增数量、空闲或每日周期自动生成草案，但永不自动应用。"
+            "查询当前或历史记忆与 Memory Book；需要整理时生成可审阅草案。"
+            "增加、更正、遗忘和回滚均使用持久提议与原生审批，系统永不自动应用。"
         ),
         "operations": (
             "catalog",
@@ -114,12 +119,37 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "maintenance_rollback",
             "list",
             "search",
+            "get",
+            "explain",
+            "review",
+            "remember_preview",
+            "correct_preview",
+            "forget_preview",
+            "remember_apply",
+            "correct_apply",
+            "forget_apply",
+            "governance_rollback",
         ),
         "operationRisks": {
             "maintenance_apply": "R1",
             "maintenance_rollback": "R1",
+            "remember_apply": "R1",
+            "correct_apply": "R1",
+            "forget_apply": "R1",
+            "governance_rollback": "R1",
         },
         "resultPresentation": "citation",
+    },
+    {
+        "id": "agent_role_book",
+        "domain": "agents",
+        "displayName": "Agent 角色书",
+        "description": (
+            "读取固定角色书版本、审阅版本历史，并生成只等待人工审阅的角色书草案；"
+            "不能激活草案或修改身份、权限、安全策略与工具白名单"
+        ),
+        "operations": ("get", "history", "propose_revision", "review"),
+        "resultPresentation": "tool_result",
     },
     {
         "id": "ime_knowledge",
@@ -607,7 +637,84 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "bookId": {"type": "string", "minLength": 1, "maxLength": 240},
     "traceId": {"type": "string", "minLength": 1, "maxLength": 240},
     "runId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "proposalId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 240},
+    "claimKey": {"type": "string", "minLength": 1, "maxLength": 240},
+    "revisionId": {"type": "string", "minLength": 1, "maxLength": 240},
     "instruction": {"type": "string", "minLength": 1, "maxLength": 8_000},
+    "text": {"type": "string", "minLength": 1, "maxLength": 1_200},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 400},
+    "memoryKind": {
+        "type": "string",
+        "enum": ["fact", "preference", "decision", "commitment", "project_state"],
+    },
+    "evidenceIds": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "items": {"type": "string", "minLength": 1, "maxLength": 240},
+    },
+    "changeSummary": {"type": "string", "maxLength": 400},
+    "updates": {
+        "type": "object",
+        "additionalProperties": False,
+        "$defs": {
+            "item": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["text", "provenance", "evidenceIds"],
+                "properties": {
+                    "itemId": {"type": "string", "maxLength": 160},
+                    "text": {"type": "string", "minLength": 1, "maxLength": 280},
+                    "provenance": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["sourceType", "sourceId"],
+                        "properties": {
+                            "sourceType": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80,
+                            },
+                            "sourceId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 240,
+                            },
+                            "observedAtMs": {
+                                "type": ["integer", "null"],
+                                "minimum": 0,
+                            },
+                        },
+                    },
+                    "evidenceIds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240,
+                        },
+                    },
+                },
+            }
+        },
+        "properties": {
+            section: {
+                "type": "array",
+                "maxItems": limit,
+                "items": {"$ref": "#/properties/updates/$defs/item"},
+            }
+            for section, limit in {
+                "personality": 6,
+                "capabilities": 12,
+                "recentWork": 8,
+                "lessonsAndLimits": 8,
+                "activeCommitments": 8,
+            }.items()
+        },
+    },
     "kind": {
         "type": "string",
         "enum": ["books", "atoms", "tags", "phrases", "groups"],
@@ -734,6 +841,11 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
 _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]] = {
     ("workspace_list", "limit"): {"type": "integer", "minimum": 1, "maximum": 300},
     ("workspace_read", "limit"): {"type": "integer", "minimum": 1, "maximum": 65_536},
+    ("ime_memory", "mode"): {
+        "type": "string",
+        "enum": ["current", "historical", "change"],
+        "description": "默认 current；只有显式选择 historical/change 才读取历史或变更。",
+    },
     ("workspace_search", "query"): {
         "type": "string",
         "minLength": 1,
@@ -755,7 +867,14 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns",
         "status", "limit",
     ),
-    "ime_memory": ("query", "limit", "kind", "bookId", "traceId", "runId", "instruction"),
+    "ime_memory": (
+        "query", "limit", "kind", "bookId", "traceId", "runId", "instruction",
+        "targetId", "text", "reason", "memoryKind", "evidenceIds", "claimKey",
+        "idempotencyKey", "proposalId", "draftId", "mode",
+    ),
+    "agent_role_book": (
+        "revisionId", "draftId", "limit", "updates", "changeSummary",
+    ),
     "ime_models": ("slot", "provider", "endpoint", "model", "sourceApprovalId"),
     "ime_configuration": ("query", "limit", "action", "sourceApprovalId"),
     "ime_agents": (
@@ -798,6 +917,16 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("ime_memory", "maintenance_review"): ("runId",),
     ("ime_memory", "maintenance_apply"): ("runId",),
     ("ime_memory", "maintenance_rollback"): ("runId",),
+    ("ime_memory", "remember_preview"): ("text",),
+    ("ime_memory", "correct_preview"): ("targetId", "text"),
+    ("ime_memory", "forget_preview"): ("targetId", "reason"),
+    ("ime_memory", "remember_apply"): ("proposalId",),
+    ("ime_memory", "correct_apply"): ("proposalId",),
+    ("ime_memory", "forget_apply"): ("proposalId",),
+    ("ime_memory", "governance_rollback"): ("proposalId",),
+    ("ime_memory", "explain"): ("targetId",),
+    ("ime_memory", "review"): ("draftId",),
+    ("agent_role_book", "propose_revision"): ("updates",),
     ("ime_models", "profile_preview"): ("slot",),
     ("ime_models", "profile_apply"): ("slot",),
     ("ime_models", "profile_rollback"): ("sourceApprovalId",),
@@ -839,6 +968,8 @@ _RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
     ("ime_agents", "delegate"): (("tasks",), ("agent", "task")),
     ("ime_agents", "abort"): (("runId",), ("batchId",)),
     ("ime_agents", "room_submit"): (("artifactRefs",), ("evidenceRefs",)),
+    ("agent_role_book", "review"): (("revisionId",), ("draftId",)),
+    ("ime_memory", "get"): (("targetId",), ("draftId",)),
 }
 
 _RUNTIME_TOOL_USAGE: dict[str, str] = {
@@ -848,12 +979,16 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
     ),
     "ime_memory": (
         "当回答依赖跨会话偏好、决定、约束或持续计划时，先用 catalog 定位工具书，"
-        "再用 read 读取正文；recent 只返回当前角色可见且已治理的记忆证据。"
-        "不要把 pending、needs_review 或 not_for_memory 输入当作事实。"
+        "再用 read 或受治理 Atom 查询读取正文；写入先 preview，再用 proposalId apply。"
+        "recent 只返回当前角色可见且已治理的证据，不要把 pending、needs_review 或 not_for_memory 当作事实。"
     ),
     "ime_browser": (
         "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
         "页面变化后旧 refId 会失效；执行 navigate、click、type、scroll、wait 或 stop 前需要用户批准。"
+    ),
+    "agent_role_book": (
+        "get 默认读取当前 Session 固定的 revision；propose_revision 只保存 draft，"
+        "不能激活或改变身份、权限、安全策略和工具白名单。"
     ),
 }
 
@@ -947,6 +1082,7 @@ class ControlToolGateway:
         scheduling: object | None = None,
         browser_control: BrowserControlService | None = None,
         desktop_client: object | None = None,
+        role_books: object | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -961,6 +1097,9 @@ class ControlToolGateway:
         self.scheduling = scheduling
         self.browser_control = browser_control
         self.desktop_client = desktop_client or DesktopBridgeClient()
+        self.role_books = role_books
+        self._role_book_tool_adapter: AgentRoleBookToolAdapter | None = None
+        self._memory_governance_store: MemoryGovernanceProposalStore | None = None
         self._auto_approval_executor: (
             Callable[[Mapping[str, object]], Mapping[str, object]] | None
         ) = None
@@ -1109,6 +1248,7 @@ class ControlToolGateway:
             "ime_planning": self._planning,
             "agent_schedule": self._agent_schedule,
             "ime_memory": self._memory,
+            "agent_role_book": self._role_book,
             "ime_knowledge": self._knowledge,
             "ime_models": self._models,
             "ime_runtime": self._runtime,
@@ -1453,6 +1593,13 @@ class ControlToolGateway:
             return self._apply_agent_schedule(approval)
         if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
             return self._apply_memory_mutation(approval)
+        if tool == "ime_memory" and operation in {
+            "remember_apply",
+            "correct_apply",
+            "forget_apply",
+            "governance_rollback",
+        }:
+            return self._apply_governed_memory_mutation(approval)
         if tool == "ime_input" and operation in {"apply_settings", "rollback_settings"}:
             return self._apply_input_settings(approval)
         if tool == "ime_input" and operation in {"lexicon_apply", "lexicon_rollback"}:
@@ -1733,6 +1880,18 @@ class ControlToolGateway:
             )
         if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
             return self._prepare_memory_mutation(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "ime_memory" and operation in {
+            "remember_apply",
+            "correct_apply",
+            "forget_apply",
+            "governance_rollback",
+        }:
+            return self._prepare_governed_memory_mutation(
                 session_id=session_id,
                 operation=operation,
                 args=args,
@@ -2222,6 +2381,130 @@ class ControlToolGateway:
         else:
             receipt["revertedRunId"] = run_id
         return receipt
+
+    def _prepare_governed_memory_mutation(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        proposal_id = _bounded_text(args.get("proposalId"), maximum=240)
+        if not proposal_id:
+            raise ValueError(f"proposalId is required for ime_memory.{operation}")
+        store = self._governed_memory_store()
+        if operation == "governance_rollback":
+            prepared = store.prepare_rollback(
+                proposal_id=proposal_id,
+                session_id=session_id,
+            )
+        else:
+            prepared = store.prepare_apply(
+                operation,
+                proposal_id=proposal_id,
+                session_id=session_id,
+            )
+        action_payload = (
+            prepared.get("actionPayload")
+            if isinstance(prepared.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            prepared.get("baseState")
+            if isinstance(prepared.get("baseState"), Mapping)
+            else {}
+        )
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="ime_memory",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        preview = {
+            "title": _bounded_text(prepared.get("title"), maximum=160),
+            "summary": _bounded_text(prepared.get("summary"), maximum=400),
+            "operationLabel": _bounded_text(
+                prepared.get("operationLabel"),
+                maximum=80,
+            ),
+            "changes": _safe_payload(prepared.get("changes")),
+            "actionPayload": dict(action_payload),
+            "baseState": dict(base_state),
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="ime_memory",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_governed_memory_mutation(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        operation = str(approval.get("operation") or "")
+        preview = (
+            approval.get("preview")
+            if isinstance(approval.get("preview"), Mapping)
+            else {}
+        )
+        action_payload = (
+            preview.get("actionPayload")
+            if isinstance(preview.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            preview.get("baseState")
+            if isinstance(preview.get("baseState"), Mapping)
+            else {}
+        )
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="ime_memory",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        proposal_id = _bounded_text(action_payload.get("proposalId"), maximum=240)
+        payload_sha256 = _bounded_text(
+            action_payload.get("payloadSha256"),
+            maximum=64,
+        )
+        if not proposal_id or len(payload_sha256) != 64:
+            raise ValueError("approved memory proposal payload is invalid")
+        store = self._governed_memory_store()
+        if operation == "governance_rollback":
+            rollback_state_sha256 = _bounded_text(
+                base_state.get("rollbackStateSha256"),
+                maximum=64,
+            )
+            if len(rollback_state_sha256) != 64:
+                raise ValueError("approved memory rollback state is invalid")
+            return store.rollback(
+                proposal_id=proposal_id,
+                session_id=str(approval.get("sessionId") or ""),
+                approval_id=str(approval.get("approvalId") or ""),
+                expected_state_sha256=rollback_state_sha256,
+            )
+        return store.apply(
+            operation,
+            proposal_id=proposal_id,
+            session_id=str(approval.get("sessionId") or ""),
+            approval_id=str(approval.get("approvalId") or ""),
+        )
 
     def _prepare_input_settings(
         self,
@@ -4427,6 +4710,34 @@ class ControlToolGateway:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         visible_owners, mutable_owner = self._memory_owner_context(session_id)
         visible_owner_payload = _owner_payloads(visible_owners)
+        if operation in {"remember_preview", "correct_preview", "forget_preview"}:
+            return self._governed_memory_store().preview(
+                operation,
+                args,
+                session_id=session_id,
+            )
+        if operation in {"get", "review"} and _bounded_text(
+            args.get("draftId"),
+            maximum=240,
+        ):
+            return self._governed_memory_store().daily_user_memory_draft(
+                draft_id=_bounded_text(args.get("draftId"), maximum=240),
+                session_id=_bounded_text(args.get("_sessionId"), maximum=240),
+            )
+        if operation == "review":
+            raise ValueError("draftId is required for ime_memory.review")
+        if operation in {"search", "get", "explain"}:
+            kind = _bounded_text(args.get("kind"), maximum=40) or "atoms"
+            if kind == "atoms":
+                return self._governed_memory_store().read(operation, args)
+            if operation != "search":
+                raise ValueError(
+                    f"ime_memory.{operation} only supports governed Atom records"
+                )
+            if _bounded_text(args.get("mode"), maximum=24) not in {"", "current"}:
+                raise ValueError(
+                    "historical/change modes are only available for governed Atom records"
+                )
         if operation == "catalog":
             return self._catalog(args, visible_owners=visible_owners)
         if operation == "read":
@@ -4557,6 +4868,7 @@ class ControlToolGateway:
                     "query": query,
                     "limit": limit,
                     "visibleOwners": visible_owner_payload,
+                    "project": self.project,
                 }
             ),
         )
@@ -4568,6 +4880,49 @@ class ControlToolGateway:
             "items": _safe_payload(items),
             "nextCursor": _bounded_text(page.get("nextCursor"), maximum=80),
         }
+
+    def _governed_memory_store(self) -> MemoryGovernanceProposalStore:
+        if self._memory_governance_store is None:
+            db_path = getattr(self.sessions, "db_path", None)
+            if db_path is None:
+                raise ValueError("memory governance storage is unavailable")
+            store = MemoryGovernanceProposalStore(db_path, project=self.project)
+            store.initialize()
+            self._memory_governance_store = store
+        return self._memory_governance_store
+
+    def _role_book(
+        self,
+        operation: str,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        if not session_id:
+            raise ValueError("agent_role_book session is missing")
+        if self._role_book_tool_adapter is None:
+            store = self.role_books
+            if store is None:
+                db_path = getattr(self.sessions, "db_path", None)
+                if db_path is None:
+                    raise ValueError("Agent Role Book storage is unavailable")
+                store = AgentRoleBookStore(db_path)
+                store.initialize()
+                self.role_books = store
+            db_path = getattr(store, "db_path", None) or getattr(
+                self.sessions, "db_path", None
+            )
+            if db_path is None:
+                raise ValueError("Agent Role Book history storage is unavailable")
+            self._role_book_tool_adapter = AgentRoleBookToolAdapter(
+                store,
+                db_path=db_path,
+                project=self.project,
+            )
+        return self._role_book_tool_adapter.execute(
+            operation,
+            args,
+            session=self.sessions.get(session_id),
+        )
 
     def _knowledge(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation == "status" and self.knowledge_client is None:
@@ -5322,7 +5677,24 @@ def _tool_profile_allows(
         return not profile.startswith("subagent-")
     allowed: dict[str, frozenset[str]] = {
         "ime_overview": frozenset({"status", "capabilities", "recent_activity"}),
-        "ime_memory": frozenset({"catalog", "read", "recent", "trace", "maintenance_status", "list", "search"}),
+        "ime_memory": frozenset(
+            {
+                "catalog",
+                "read",
+                "recent",
+                "trace",
+                "maintenance_status",
+                "list",
+                "search",
+                "get",
+                "explain",
+                "review",
+                "remember_preview",
+                "correct_preview",
+                "forget_preview",
+            }
+        ),
+        "agent_role_book": frozenset({"get", "history", "review"}),
         "ime_knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),

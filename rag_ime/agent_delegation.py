@@ -940,6 +940,9 @@ class AgentDelegationCoordinator:
                         mode="assistant",
                         role_id=str(parent.get("roleId") or "zhiyou-v1"),
                         role_version=str(parent.get("roleVersion") or "1"),
+                        role_book_revision_id=str(
+                            parent.get("roleBookRevisionId") or ""
+                        ),
                         model_profile=str(parent.get("modelProfile") or "pi/default"),
                         tool_profile_version=child_profile,
                         session_kind="subagent_runtime",

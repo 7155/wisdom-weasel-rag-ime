@@ -420,7 +420,7 @@ export function VoiceFeature() {
         <ManagementSection title="定稿质量" description="检查语音输入能否把临时识别结果顺滑地整理成最终文本。">
           <MetricStrip items={[
             { label: '最终二次识别', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '服务端二遍识别是尽力而为，不等于通用文字校对', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
-            { label: '第三遍文字校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
+            { label: '第三遍文字校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(deployedRecognition, lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
             { label: '完整结果替换', value: replacementLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '最终稿替换临时稿，不继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
             { label: '最近一次定稿', value: booleanValue(lastRecognition.finalReceived) ? '已收到' : '暂无验证', detail: providerResponseSummary(lastRecognition), icon: Mic, tone: booleanValue(lastRecognition.finalReceived) ? 'success' : 'warning' },
           ]} />
@@ -641,6 +641,7 @@ function thirdPassLabel(
   last: Record<string, unknown>,
   state: string,
 ): string {
+  if (deployed.thirdPassRefinementEnabled === false) return '已关闭';
   if (booleanValue(last.thirdPassApplied)) {
     return booleanValue(last.thirdPassChanged) ? '本次已纠错' : '本次无需改动';
   }
@@ -651,7 +652,13 @@ function thirdPassLabel(
     : deployedLabel(deployed.thirdPassRefinement, state);
 }
 
-function thirdPassDetail(last: Record<string, unknown>): string {
+function thirdPassDetail(
+  deployed: Record<string, unknown>,
+  last: Record<string, unknown>,
+): string {
+  if (deployed.thirdPassRefinementEnabled === false) {
+    return '关闭后直接采用火山 Final，不再等待独立 Pi 校对';
+  }
   if (booleanValue(last.thirdPassApplied)) {
     const latency = durationLabel(last.thirdPassLatencyMs);
     const model = stringValue(last.thirdPassModel);
@@ -665,6 +672,7 @@ function thirdPassTone(
   deployed: Record<string, unknown>,
   last: Record<string, unknown>,
 ): VoiceStatusTone {
+  if (deployed.thirdPassRefinementEnabled === false) return 'neutral';
   if (booleanValue(last.thirdPassApplied)) return 'success';
   if (booleanValue(last.thirdPassRequested)) return 'warning';
   return deployedTone(deployed.thirdPassRefinement);

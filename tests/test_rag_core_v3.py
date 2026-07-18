@@ -8,6 +8,7 @@ from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
 from rag_ime.models import InputEvent
 from rag_ime.rag_core_v3 import memory_candidates_v2_to_input_suggestions
+from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.text_utils import now_ms
 
 
@@ -48,6 +49,7 @@ class RagCoreV3Tests(unittest.TestCase):
                     model="deepseek-v4-flash",
                 ),
             )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
 
         candidates = self.core.retrieve_candidates_v3(
             current_input="Daily Book",
@@ -90,6 +92,7 @@ class RagCoreV3Tests(unittest.TestCase):
                         model="deepseek-v4-flash",
                     ),
                 )
+                rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
         return event_id
 
 

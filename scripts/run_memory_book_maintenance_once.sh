@@ -13,6 +13,7 @@ SINCE_DAYS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS:-7}"
 RECENT_LIMIT="${RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT:-48}"
 APPLY="${RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY:-0}"
 LEGACY_MAINTENANCE="${RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE:-0}"
+PERSONAL_CONTEXT_ENABLED="${RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED:-1}"
 MODEL_ENV_PATH="${RAG_IME_DEEPSEEK_ENV:-${RAG_IME_MODEL_ENV:-}}"
 TRIGGER="${RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER:-manual}"
 
@@ -136,10 +137,70 @@ PREVIEW_LOG="$OUT_DIR/memory-book-$STAMP.preview.json"
 VALIDATE_LOG="$OUT_DIR/memory-book-$STAMP.validate.json"
 APPLY_LOG="$OUT_DIR/memory-book-$STAMP.apply.json"
 OWNER_CURATION_LOG="$OUT_DIR/owner-memory-$STAMP.json"
+PERSONAL_CONTEXT_LOG="$OUT_DIR/personal-context-$STAMP.json"
 
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export RAG_IME_DEEPSEEK_REASONING_EFFORT="${RAG_IME_DEEPSEEK_REASONING_EFFORT:-low}"
 export RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"
+
+# Personal Context is deterministic and role-scoped. It produces reviewable
+# User Memory, Role Book and Activity Timeline drafts independently of the
+# model-backed owner curator below.
+PERSONAL_CONTEXT_STATUS=0
+if [[ "$PERSONAL_CONTEXT_ENABLED" == "1" || "$PERSONAL_CONTEXT_ENABLED" == "true" || "$PERSONAL_CONTEXT_ENABLED" == "TRUE" || "$PERSONAL_CONTEXT_ENABLED" == "yes" ]]; then
+  set +e
+  "$PYTHON_EXECUTABLE" -m rag_ime.cli \
+    --core-mode local \
+    --db-path "$DB_PATH" \
+    personal-context-maintenance-run \
+    --project "$PROJECT" \
+    --report-path "$PERSONAL_CONTEXT_LOG" >/dev/null
+  PERSONAL_CONTEXT_STATUS=$?
+  set -e
+else
+  "$PYTHON_EXECUTABLE" - "$PERSONAL_CONTEXT_LOG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+            "ok": True,
+            "skipped": True,
+            "reason": "personal_context_maintenance_disabled",
+            "targets": [],
+        },
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n",
+    encoding="utf-8",
+)
+PY
+fi
+if [[ ! -s "$PERSONAL_CONTEXT_LOG" ]]; then
+  "$PYTHON_EXECUTABLE" - "$PERSONAL_CONTEXT_LOG" "$PERSONAL_CONTEXT_STATUS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+            "ok": False,
+            "error": "personal_context_maintenance_process_failed",
+            "exitCode": int(sys.argv[2]),
+            "targets": [],
+        },
+        ensure_ascii=False,
+        indent=2,
+    ) + "\n",
+    encoding="utf-8",
+)
+PY
+fi
 
 owner_cmd=(
   "$PYTHON_EXECUTABLE" -m rag_ime.owner_memory_maintenance
@@ -164,7 +225,7 @@ set -e
 # governance.
 if [[ "$LEGACY_MAINTENANCE" != "1" && "$LEGACY_MAINTENANCE" != "true" && "$LEGACY_MAINTENANCE" != "TRUE" && "$LEGACY_MAINTENANCE" != "yes" ]]; then
   set +e
-  "$PYTHON_EXECUTABLE" - "$OWNER_CURATION_LOG" "$OWNER_CURATION_STATUS" <<'PY'
+  "$PYTHON_EXECUTABLE" - "$OWNER_CURATION_LOG" "$OWNER_CURATION_STATUS" "$PERSONAL_CONTEXT_LOG" "$PERSONAL_CONTEXT_STATUS" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -172,10 +233,16 @@ from pathlib import Path
 
 owner_path = Path(sys.argv[1])
 owner_status = int(sys.argv[2])
+personal_context_path = Path(sys.argv[3])
+personal_context_status = int(sys.argv[4])
 try:
     owner_curation = json.loads(owner_path.read_text(encoding="utf-8"))
 except Exception as exc:
     owner_curation = {"ok": False, "error": str(exc)}
+try:
+    personal_context = json.loads(personal_context_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    personal_context = {"ok": False, "error": str(exc), "targets": []}
 results = [
     item
     for item in owner_curation.get("results", [])
@@ -213,6 +280,9 @@ payload = {
     ),
     "ownerCurationLog": str(owner_path),
     "ownerCuration": owner_curation,
+    "personalContextLog": str(personal_context_path),
+    "personalContextMaintenance": personal_context,
+    "personalContextMaintenanceExitCode": personal_context_status,
 }
 print(json.dumps(payload, ensure_ascii=False, indent=2))
 raise SystemExit(0 if payload["ok"] else 1)

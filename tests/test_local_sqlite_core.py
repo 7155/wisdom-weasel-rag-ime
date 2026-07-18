@@ -61,6 +61,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.core.initialize()
         self.adapter = InputMethodAdapter(self.core)
         seed_demo_memories(self.adapter, default_fixture_memories())
+        self.core.process_memory_projection_outbox()
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -75,11 +76,13 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
     def _commit_curated(self, text: str, **kwargs: object) -> str:
         """Insert governed retrieval material instead of an ordinary raw event."""
         tags = tuple(str(item) for item in kwargs.pop("tags", ()))
-        return self.adapter.commit_text(
+        memory_id = self.adapter.commit_text(
             text,
             tags=tuple(dict.fromkeys((*tags, "curated"))),
             **kwargs,
         )
+        self.core.process_memory_projection_outbox()
+        return memory_id
 
     def test_records_events_into_sqlite_and_retrieves_with_fts5(self) -> None:
         self.assertGreaterEqual(self.core.event_count(), 8)

@@ -47,6 +47,46 @@
 .template-list small { color: var(--color-text-tertiary); font-size: 13px; overflow-wrap: anywhere; }
 .template-inspector__title { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 18px; }
 .template-capabilities { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 12px; }
+.role-book-inspector { display: grid; gap: 16px; }
+.role-book-inspector .role-inspector__hero { padding-bottom: 2px; }
+.role-book-error { padding: 8px 10px; border-left: 3px solid var(--color-danger); background: var(--color-danger-soft); color: var(--color-danger) !important; }
+.role-book-active, .role-book-review, .role-book-history { display: grid; gap: 10px; border-top: 1px solid var(--color-border); padding-top: 14px; }
+.role-book-active > header, .role-book-review > header, .role-book-history > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.role-book-active > header > span, .role-book-review > header > span, .role-book-history > header > span { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.role-book-active > header small, .role-book-review > header small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); }
+.role-book-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-border); }
+.role-book-counts span { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 9px 10px; background: var(--color-surface); color: var(--color-text-tertiary); font-size: 13px; }
+.role-book-counts b { color: var(--color-text-primary); font: 700 15px var(--font-mono); }
+.role-book-draft-tabs { display: flex; min-width: 0; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
+.role-book-draft-tabs button { display: grid; flex: 0 0 auto; gap: 2px; border: 1px solid transparent; border-radius: var(--radius-2); padding: 6px 8px; background: transparent; color: var(--color-text-secondary); text-align: left; cursor: pointer; }
+.role-book-draft-tabs button[aria-current='true'] { border-color: var(--color-border-strong); background: var(--color-surface-subtle); color: var(--color-text-primary); }
+.role-book-draft-tabs small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); }
+.role-book-proposals { display: grid; gap: 12px; }
+.role-book-proposals fieldset { display: grid; min-width: 0; gap: 1px; margin: 0; padding: 0; border: 0; }
+.role-book-proposals legend { margin-bottom: 5px; color: var(--color-text-tertiary); font-size: 13px; font-weight: 700; }
+.role-book-proposals label { display: grid; min-width: 0; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 7px; padding: 8px 0; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 13px; cursor: pointer; }
+.role-book-proposals label span { overflow-wrap: anywhere; line-height: 1.4; }
+.role-book-proposals label small { color: var(--color-text-tertiary); font: 500 13px var(--font-mono); }
+.role-book-actions { display: flex; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+.role-book-history > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--color-border); }
+.role-book-history > div > span { display: grid; min-width: 0; gap: 2px; }
+.role-book-history > div b { font-size: 13px; }
+.role-book-history > div small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); overflow-wrap: anywhere; }
+.role-book-preview-items { display: grid; gap: 7px; margin: 0; padding-left: 20px; color: var(--color-text-secondary); font-size: 13px; }
+.role-book-preview-diff { display: grid; max-height: min(46vh, 420px); gap: 14px; overflow-y: auto; border-top: 1px solid var(--color-border); padding-top: 12px; }
+.role-book-preview-diff section { display: grid; gap: 6px; }
+.role-book-preview-diff header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.role-book-preview-diff header strong { font-size: 13px; }
+.role-book-preview-diff header small { color: var(--color-text-tertiary); font: 500 13px var(--font-mono); }
+.role-book-preview-diff p { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: start; gap: 7px; margin: 0; padding: 7px 0; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 13px; }
+.role-book-preview-diff p b { font-size: 12px; }
+.role-book-preview-diff p[data-change='added'] b { color: var(--color-success); }
+.role-book-preview-diff p[data-change='removed'] b { color: var(--color-danger); }
+.role-book-preview-diff p[data-change='changed'] b { color: var(--color-warning); }
+.role-book-preview-diff p span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.role-book-preview-diff p small { color: var(--color-text-tertiary); white-space: nowrap; }
+.role-book-preview-diff del { color: var(--color-text-tertiary); }
+.role-book-preview-diff ins { color: var(--color-text-primary); text-decoration: none; }
 .role-create-dialog { width: min(680px, calc(100vw - 32px)); }
 .role-create-form { display: grid; gap: 16px; }
 .role-create-error { margin: 0; padding: 8px 10px; border-radius: var(--radius-2); background: var(--color-danger-soft); color: var(--color-danger); font-size: 13px; }
@@ -76,4 +116,4 @@
 .role-mode-options label:has(input:disabled) { cursor: default; }
 @media (max-width: 820px) { .roles-layout { grid-template-columns: 1fr; } .role-inspector { border-top: 1px solid var(--color-border); border-left: 0; padding: 18px 0 0; } }
 @media (max-width: 560px) { .shell-route-stage > main.roles-feature { padding: 14px 12px; } .roles-header { flex-wrap: wrap; } .roles-header > span { flex-basis: 100%; } .roles-header > .ui-segmented { flex: 1 1 180px; } .persona-grid { grid-template-columns: 1fr; } .role-create-two-columns, .role-timeline-options { grid-template-columns: 1fr; } }
-@media (max-width: 420px) { .roles-header > .ui-segmented, .roles-header-actions { width: 100%; flex-basis: 100%; } .roles-header-actions > .ui-button:not(.ui-icon-button) { flex: 1; } .role-inspector dl > div { grid-template-columns: 92px minmax(0, 1fr); } .role-inspector__hero { align-items: flex-start; } .role-inspector__hero .agent-persona-avatar[data-size='hero'] { width: 88px; height: 88px; } .role-mode-options { grid-template-columns: 1fr; } }
+@media (max-width: 420px) { .roles-header > .ui-segmented, .roles-header-actions { width: 100%; flex-basis: 100%; } .roles-header-actions > .ui-button:not(.ui-icon-button) { flex: 1; } .role-inspector dl > div { grid-template-columns: 92px minmax(0, 1fr); } .role-inspector__hero { align-items: flex-start; } .role-inspector__hero .agent-persona-avatar[data-size='hero'] { width: 88px; height: 88px; } .role-mode-options, .role-book-counts { grid-template-columns: 1fr; } .role-book-actions > .ui-button { flex: 1; } }

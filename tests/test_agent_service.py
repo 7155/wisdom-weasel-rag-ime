@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -10,7 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_protocol import AgentEventEnvelope
+from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
+from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 
 
@@ -305,6 +308,200 @@ class AgentServiceTests(unittest.TestCase):
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
         )
 
+    def test_new_session_gets_one_query_free_bootstrap_and_chat_becomes_evidence(self) -> None:
+        created = self.service.create_session({"title": "个人上下文"})
+        session = created["session"]
+        session_id = str(session["id"])
+
+        self.assertTrue(session["roleBookRevisionId"])
+        self.assertTrue(created["memoryBootstrap"]["ok"])
+        pending = self.service.context_runtime.list_items(session_id)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["sourceKind"], "memory_bootstrap")
+
+        accepted_values = [
+            {
+                "accepted": True,
+                "turnId": "turn:bootstrap:1",
+                "piEntryId": "entry:bootstrap:1",
+                "response": {"success": True},
+            },
+            {
+                "accepted": True,
+                "turnId": "turn:bootstrap:2",
+                "piEntryId": "entry:bootstrap:2",
+                "response": {"success": True},
+            },
+        ]
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=accepted_values,
+        ) as runtime_prompt:
+            first = self.service.prompt(session_id, {"message": "第一轮"})
+            second = self.service.prompt(session_id, {"message": "第二轮"})
+
+        self.assertEqual(first["contextItemsDelivered"], 1)
+        self.assertEqual(second["contextItemsDelivered"], 0)
+        first_runtime_message = runtime_prompt.call_args_list[0].args[1]
+        first_envelope = json.loads(
+            first_runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
+        )
+        self.assertIn('"queryFree":true', first_envelope["transientContext"])
+        self.assertTrue(first["memoryEvidence"]["stored"])
+        self.assertTrue(second["memoryEvidence"]["stored"])
+        consumed = self.service.context_runtime.list_items(
+            session_id,
+            status="consumed",
+        )
+        self.assertEqual(len(consumed), 1)
+
+        self.service.events.publish(
+            session_id,
+            "message_completed",
+            {
+                "message": {
+                    "schemaVersion": "rag-ime.agent-message.v1",
+                    "id": "entry:assistant:1",
+                    "sessionId": session_id,
+                    "turnId": "turn:bootstrap:2",
+                    "role": "assistant",
+                    "status": "completed",
+                    "blocks": [
+                        {
+                            "id": "text:assistant:1",
+                            "type": "text",
+                            "status": "completed",
+                            "presentationKind": "markdown",
+                            "data": {"text": "这是最终回答"},
+                        }
+                    ],
+                    "attachments": [],
+                    "citations": [],
+                    "createdAtMs": 10,
+                    "completedAtMs": 11,
+                }
+            },
+            turn_id="turn:bootstrap:2",
+        )
+        evidence = self.service.memory_evidence.list(
+            role_id=str(session["roleId"]),
+            session_id=session_id,
+        )
+        self.assertEqual(
+            [item["sourceKind"] for item in evidence],
+            ["assistant_message", "user_message", "user_message"],
+        )
+        self.assertTrue(all(item["maySupportLongTermFact"] is False for item in evidence))
+
+    def test_session_use_repairs_create_time_bootstrap_enqueue_failure(self) -> None:
+        with patch.object(
+            self.service.memory_bootstrap,
+            "build",
+            side_effect=RuntimeError("temporary bootstrap failure"),
+        ):
+            created = self.service.create_session({"title": "可恢复启动上下文"})
+
+        session_id = str(created["session"]["id"])
+        self.assertEqual(created["memoryBootstrap"]["status"], "enqueue_failed")
+        self.assertEqual(self.service.context_runtime.list_items(session_id), [])
+
+        with self.assertRaises(PiRuntimeError):
+            self.service.ensure_runtime({"sessionId": session_id})
+
+        repaired = self.service.context_runtime.list_items(session_id)
+        self.assertEqual(len(repaired), 1)
+        self.assertEqual(repaired[0]["sourceKind"], "memory_bootstrap")
+        self.assertEqual(repaired[0]["status"], "pending")
+
+    def test_new_command_after_lost_runtime_response_does_not_reinject_bootstrap(self) -> None:
+        session = self.service.create_session({"title": "响应丢失"})["session"]
+        session_id = str(session["id"])
+        sent_messages: list[str] = []
+
+        def lose_response(
+            _session_id: str,
+            message: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            sent_messages.append(message)
+            raise RuntimeError("response lost after dispatch")
+
+        with patch.object(self.service.runtime, "prompt", side_effect=lose_response):
+            with self.assertRaisesRegex(RuntimeError, "response lost"):
+                self.service.prompt(
+                    session_id,
+                    {
+                        "message": "第一轮",
+                        "clientMessageId": "client-bootstrap-loss",
+                    },
+                )
+
+        consumed = self.service.context_runtime.list_items(
+            session_id,
+            status="consumed",
+        )
+        self.assertEqual(len(consumed), 1)
+        self.assertEqual(
+            consumed[0]["deliveredTurnId"],
+            "dispatch:client:client-bootstrap-loss",
+        )
+
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:bootstrap:retry",
+                "piEntryId": "entry:bootstrap:retry",
+                "response": {"success": True},
+            },
+        ) as retried:
+            accepted = self.service.prompt(
+                session_id,
+                {
+                    "message": "第一轮",
+                    "clientMessageId": "client-bootstrap-retry",
+                },
+            )
+
+        first_envelope = json.loads(
+            sent_messages[0].removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
+        )
+        self.assertIn('"queryFree":true', first_envelope["transientContext"])
+        self.assertNotIn('"queryFree":true', retried.call_args.args[1])
+        self.assertEqual(accepted["contextItemsDelivered"], 0)
+
+    def test_corrupt_role_book_falls_back_to_base_persona_without_blocking_chat(self) -> None:
+        with patch.object(
+            self.service.role_books,
+            "ensure_seeded",
+            side_effect=ValueError("corrupt role book revision"),
+        ):
+            created = self.service.create_session({"title": "降级对话"})
+            session = created["session"]
+            self.assertEqual(session["roleBookRevisionId"], "")
+            self.assertFalse(created["roleBook"]["ok"])
+            self.assertEqual(
+                created["roleBook"]["status"],
+                "base_persona_fallback",
+            )
+            with patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:fallback",
+                    "piEntryId": "entry:fallback",
+                    "response": {"success": True},
+                },
+            ):
+                accepted = self.service.prompt(
+                    str(session["id"]),
+                    {"message": "继续工作"},
+                )
+        self.assertTrue(accepted["ok"])
+        self.assertEqual(accepted["contextItemsDelivered"], 1)
     def test_conversation_fork_clones_identity_policy_and_returns_new_session(self) -> None:
         source = self.service.create_session(
             {
@@ -440,7 +637,11 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["sessionId"], session_id)
         self.assertEqual(response["entryId"], "entry-user-1")
         rewind.assert_called_once_with(session_id, entry_id="entry-user-1")
-        self.assertEqual(prompt.call_args.args[:2], (session_id, "修改后的问题"))
+        self.assertEqual(prompt.call_args.args[0], session_id)
+        rewrite_envelope = json.loads(
+            prompt.call_args.args[1].removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
+        )
+        self.assertEqual(rewrite_envelope["message"], "修改后的问题")
         replay, gap = self.service.events.replay(session_id)
         self.assertFalse(gap)
         self.assertNotIn(old_event.event_id, [event.event_id for event in replay])
@@ -1564,6 +1765,111 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertEqual(lookup["approval"]["receipt"]["auditId"], 42)
 
+    def test_governed_memory_approval_recovers_from_committed_store_journal(self) -> None:
+        session = self.service.create_session({"title": "记忆审批崩溃恢复"})["session"]
+        evidence = self.service.memory_evidence.record_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="message:memory-recovery",
+            text="用户明确决定验证审批崩溃恢复",
+            role_id=str(session["roleId"]),
+        )["evidence"]
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=object(),
+            core=object(),
+            project=self.service.project,
+            role_books=self.service.role_books,
+        )
+
+        preview = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session["id"],
+                "tool": "ime_memory",
+                "toolCallId": "tool:memory-recovery:preview",
+                "args": {
+                    "op": "remember_preview",
+                    "text": "当前要验证审批崩溃恢复",
+                    "memoryKind": "decision",
+                    "evidenceIds": [evidence["evidenceId"]],
+                },
+            }
+        )["result"]
+        prepared = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session["id"],
+                "tool": "ime_memory",
+                "toolCallId": "tool:memory-recovery:apply",
+                "args": {
+                    "op": "remember_apply",
+                    "proposalId": preview["proposalId"],
+                },
+            }
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.service.sessions.decide_approval(
+            str(approval["approvalId"]),
+            approved=True,
+            payload_sha256=str(approval["payloadSha256"]),
+        )
+
+        committed_receipt = gateway.apply_approval(decided)
+        self.assertTrue(committed_receipt["mutationApplied"])
+        self.assertEqual(
+            self.service.sessions.get_approval(str(approval["approvalId"]))["state"],
+            "approved",
+        )
+        self.service.bind_approval_executor(gateway.apply_approval)
+        with (
+            patch.object(self.service.runtime, "has_pending_approval", return_value=False),
+            self.assertRaisesRegex(ValueError, "payload is stale"),
+        ):
+            self.service.decide_approval(
+                str(approval["approvalId"]),
+                {"decision": "approve", "payloadSha256": "d" * 64},
+            )
+        self.assertEqual(
+            self.service.sessions.get_approval(str(approval["approvalId"]))["state"],
+            "approved",
+        )
+
+        with patch.object(
+            self.service.runtime,
+            "has_pending_approval",
+            return_value=False,
+        ):
+            recovered = self.service.decide_approval(
+                str(approval["approvalId"]),
+                {
+                    "decision": "approve",
+                    "payloadSha256": approval["payloadSha256"],
+                },
+            )
+
+        self.assertEqual(recovered["approval"]["state"], "applied")
+        self.assertTrue(recovered["approval"]["receipt"]["mutationApplied"])
+        self.assertTrue(recovered["approval"]["receipt"]["idempotentReplay"])
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_atoms WHERE text = ?",
+                    ("当前要验证审批崩溃恢复",),
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                conn.execute(
+                    """
+                    SELECT status
+                    FROM memory_governance_proposals
+                    WHERE proposal_id = ?
+                    """,
+                    (preview["proposalId"],),
+                ).fetchone()[0],
+                "applied",
+            )
+
     def test_memory_review_decision_resumes_the_active_pi_turn(self) -> None:
         session = self.service.create_session({"title": "记忆草案审阅"})["session"]
         session_id = str(session["id"])
@@ -1731,9 +2037,15 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(str(first["session"]["title"]).startswith("输入助手 "))
         self.assertEqual(first["evidenceCount"], 1)
         sent = prompt.call_args_list[0].args[1]
-        self.assertIn("<rag-ime-user-query>\n最近我在做什么？\n</rag-ime-user-query>", sent)
-        self.assertIn("控制中心使用连续 Pi Session", sent)
-        self.assertIn("任何写操作仍必须经过原生审批", sent)
+        self.assertTrue(sent.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+        sent_envelope = json.loads(sent.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+        self.assertIn(
+            "<rag-ime-user-query>\n最近我在做什么？\n</rag-ime-user-query>",
+            sent_envelope["message"],
+        )
+        self.assertIn("控制中心使用连续 Pi Session", sent_envelope["message"])
+        self.assertIn("任何写操作仍必须经过原生审批", sent_envelope["message"])
+        self.assertIn('"queryFree":true', sent_envelope["transientContext"])
         sources = self.service.list_memory_sources({"sessionId": first["sessionId"]})["items"]
         self.assertEqual(
             [item["canonicalTextSha256"] for item in sources],

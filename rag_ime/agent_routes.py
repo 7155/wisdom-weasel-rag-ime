@@ -134,6 +134,37 @@ def agent_room_route(path: str) -> tuple[str, str]:
     return room_id, action
 
 
+def agent_room_work_route(path: str) -> tuple[str, str, str]:
+    prefix = "/api/agent/rooms/"
+    if not path.startswith(prefix):
+        return "", "", ""
+    parts = path[len(prefix) :].strip("/").split("/")
+    if len(parts) == 2 and parts[1] == "work-items":
+        room_id = unquote(parts[0]).strip()
+        return (room_id, "", "collection") if room_id else ("", "", "")
+    if len(parts) == 3 and parts[1] == "work-items":
+        room_id = unquote(parts[0]).strip()
+        work_item_id = unquote(parts[2]).strip()
+        return (
+            (room_id, work_item_id, "get")
+            if room_id and work_item_id
+            else ("", "", "")
+        )
+    if (
+        len(parts) == 4
+        and parts[1] == "work-items"
+        and parts[3] == "reassign"
+    ):
+        room_id = unquote(parts[0]).strip()
+        work_item_id = unquote(parts[2]).strip()
+        return (
+            (room_id, work_item_id, "reassign")
+            if room_id and work_item_id
+            else ("", "", "")
+        )
+    return "", "", ""
+
+
 def agent_subagent_route(path: str) -> tuple[str, str]:
     prefix = "/api/agent/subagents/runs/"
     if not path.startswith(prefix):

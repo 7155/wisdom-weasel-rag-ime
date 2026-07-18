@@ -408,6 +408,7 @@ def _deployed_recognition_contract(
             "fullResultReplacement": False,
             "providerResponseMetadata": False,
             "thirdPassRefinement": False,
+            "thirdPassRefinementEnabled": False,
             "reportedByAgent": False,
             "state": "missing",
             "reason": "installed voice binary is missing",
@@ -422,6 +423,7 @@ def _deployed_recognition_contract(
             "fullResultReplacement": False,
             "providerResponseMetadata": False,
             "thirdPassRefinement": False,
+            "thirdPassRefinementEnabled": False,
             "reportedByAgent": False,
             "state": "unreadable",
             "reason": "installed voice binary is unreadable",
@@ -459,6 +461,7 @@ def _deployed_recognition_contract(
         or marker_capabilities.get("thirdPassRefinement") is True
         or b"thirdPassRequested" in binary
     )
+    third_pass_refinement_enabled = reported.get("thirdPassRefinementEnabled") is True
     all_capabilities = (
         second_pass
         and semantic_smoothing
@@ -486,6 +489,7 @@ def _deployed_recognition_contract(
         "fullResultReplacement": full_result_replacement,
         "providerResponseMetadata": provider_response_metadata,
         "thirdPassRefinement": third_pass_refinement,
+        "thirdPassRefinementEnabled": third_pass_refinement_enabled,
         "reportedByAgent": reported_by_agent,
         "state": state,
         "reason": reason,

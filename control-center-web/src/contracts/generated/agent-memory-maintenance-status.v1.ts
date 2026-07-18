@@ -38,6 +38,20 @@ export interface AgentMemoryMaintenanceStatusV1 {
     }[];
     [k: string]: unknown;
   };
+  projection?: {
+    schemaVersion: 'rag-ime.memory-projection-runtime.v1';
+    ok: boolean;
+    configured: boolean;
+    owner: string;
+    running: boolean;
+    lastRunAtMs: number;
+    lastError: string;
+    freshness: {
+      [k: string]: unknown;
+    };
+    disabledReason: string;
+    [k: string]: unknown;
+  };
   runs: {
     runId: string;
     createdAtMs: number;

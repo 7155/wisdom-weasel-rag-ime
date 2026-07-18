@@ -7,6 +7,11 @@ struct VoiceThirdPassResult: Equatable {
 }
 
 enum VoiceThirdPassRefiner {
+    static let enabledDefaultsKey = "thirdPassRefinementEnabled"
+    static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: enabledDefaultsKey) as? Bool ?? false
+    }
+
     private static let endpoint = URL(string: "http://127.0.0.1:8768/api/agent/surface/refine-voice")!
     private static let latencyBudgetMs = 12_000
 
