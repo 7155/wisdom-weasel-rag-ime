@@ -256,6 +256,23 @@ struct NativeRoutePolicyTests {
         )
         expect(memoryEntity.request.url?.path == "/api/memory/entities/group/group:input-method", "bounded memory entity route")
 
+        let memoryMaintenanceStatus = try policy.resolveRequest(
+            pathId: "agent.memoryMaintenance.run",
+            parameters: [:],
+            query: ["limit": "12", "project": "wisdom-weasel-rag-ime"],
+            body: nil
+        )
+        expect(memoryMaintenanceStatus.request.url?.path == "/api/agent/memory-maintenance", "memory maintenance status route")
+        expect(memoryMaintenanceStatus.request.url?.query?.contains("limit=12") == true, "memory maintenance status limit")
+
+        let memoryMaintenanceRun = try policy.resolveRequest(
+            pathId: "agent.memoryMaintenance.run",
+            parameters: [:],
+            query: ["runId": "memory_book_user_1", "project": "wisdom-weasel-rag-ime"],
+            body: nil
+        )
+        expect(memoryMaintenanceRun.request.url?.query?.contains("runId=memory_book_user_1") == true, "memory maintenance detail runId")
+
         let memoryEdit = try policy.resolveRequest(
             pathId: "memory.edit",
             parameters: [:],

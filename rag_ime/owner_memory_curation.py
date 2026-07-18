@@ -51,6 +51,10 @@ _RUNTIME_PROBE_RE = re.compile(
     r"wait for (?:llm|model)|只回复数字|不要调用工具)",
     re.IGNORECASE,
 )
+_TRANSIENT_TOOL_RECEIPT_RE = re.compile(
+    r"(?:已暂停|已恢复|已停止|已启动|已重启|暂停成功|恢复成功|停止成功|启动成功|重启成功)",
+    re.IGNORECASE,
+)
 
 
 class OwnerMemoryOrganizer(Protocol):
@@ -1476,9 +1480,12 @@ def _has_durable_memory(compile_output: Mapping[str, object]) -> bool:
 
 
 def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
-    if compact_whitespace(str(item.get("sourceKind") or "")) != "user_final":
-        return None
+    source_kind = compact_whitespace(str(item.get("sourceKind") or ""))
     text = compact_whitespace(str(item.get("text") or ""))
+    if source_kind == "tool_receipt" and _TRANSIENT_TOOL_RECEIPT_RE.search(text):
+        return "transient_runtime_receipt"
+    if source_kind != "user_final":
+        return None
     if not text:
         return "empty_input"
     if _FILLER_RE.fullmatch(text):

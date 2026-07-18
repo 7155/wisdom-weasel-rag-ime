@@ -18,10 +18,17 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rag_ime.embeddings import embedding_provider_from_env
+from rag_ime.deepseek_config import load_deepseek_config
+from rag_ime.deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from rag_ime.historical_memory_curation import curate_historical_memory_database
 from rag_ime.semantic_memory_migration import (
     migrate_semantic_memory_database,
     preview_semantic_memory_migration,
+    verify_semantic_memory_database,
 )
+
+
+HISTORY_CONFIRM_TEXT = "CURATE_ALL_HISTORICAL_MEMORY"
 
 
 def main() -> int:
@@ -42,6 +49,13 @@ def main() -> int:
         action="store_true",
         help="Rebuild retrieval vectors with the configured provider inside the candidate",
     )
+    parser.add_argument(
+        "--curate-history",
+        action="store_true",
+        help="Fully curate historical owner evidence and approve derived daily timelines inside the candidate",
+    )
+    parser.add_argument("--confirm-history-curation", default="")
+    parser.add_argument("--history-max-batches", type=int, default=512)
     args = parser.parse_args()
 
     try:
@@ -74,6 +88,19 @@ def main() -> int:
             "--embedding-from-env resolved to a disabled provider; set "
             "RAG_IME_EMBEDDING_PROVIDER before building a candidate"
         )
+    history_organizer = None
+    if args.curate_history:
+        if args.confirm_history_curation != HISTORY_CONFIRM_TEXT:
+            parser.error(
+                "--curate-history requires --confirm-history-curation "
+                f"{HISTORY_CONFIRM_TEXT}"
+            )
+        if args.history_max_batches < 1:
+            parser.error("--history-max-batches must be positive")
+        history_config = load_deepseek_config()
+        if not history_config.api_key:
+            parser.error("historical curation requires the configured DeepSeek API key")
+        history_organizer = DeepSeekMemoryOrganizer(history_config)
     raw_output = args.output.expanduser()
     if _lexists(raw_output):
         parser.error(f"output path already exists or is a symlink: {raw_output}")
@@ -117,6 +144,31 @@ def main() -> int:
             embedding_provider=provider,
             require_vector_freshness=True,
         )
+        if history_organizer is not None:
+            historical = curate_historical_memory_database(
+                output,
+                organizer=history_organizer,
+                project=str(args.project),
+                timezone_name=str(args.timezone),
+                embedding_provider=provider,
+                max_batches=int(args.history_max_batches),
+                approve_timelines=True,
+            )
+            with sqlite3.connect(output) as conn:
+                conn.row_factory = sqlite3.Row
+                verification = verify_semantic_memory_database(
+                    conn,
+                    project=str(args.project),
+                    provider_fingerprint=provider_fingerprint,
+                    require_vector_freshness=True,
+                )
+            if not bool(verification.get("ok")):
+                raise RuntimeError(
+                    "historical candidate verification failed: "
+                    + "; ".join(str(value) for value in verification.get("errors") or ())
+                )
+            report["historicalCuration"] = historical
+            report["verification"] = verification
         source_state_after = _source_state(source)
         if source_state_after != source_state_before:
             raise RuntimeError("source database changed while the candidate was being migrated")

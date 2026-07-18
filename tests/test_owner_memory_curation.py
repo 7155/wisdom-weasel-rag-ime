@@ -680,6 +680,46 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         scope = second["status"]["scopes"][0]
         self.assertEqual(scope["dueReason"], "draft_pending_review")
 
+    def test_transient_tool_receipts_are_not_promoted_to_long_term_memory(self) -> None:
+        source = self.sources.checkpoint_tool_receipt(
+            {
+                "approvalId": "approval:pause-ai",
+                "sessionId": str(self.user_session["id"]),
+                "state": "applied",
+                "receipt": {
+                    "mutationApplied": True,
+                    "summary": "AI 辅助已暂停，普通 Rime 拼音仍可使用。",
+                },
+            },
+            created_at_ms=100,
+        )
+        organizer = _FakeOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+        )
+        curator.initialize()
+
+        report = curator.run_due(
+            manual=True,
+            owner_kind="shared",
+            owner_id="wisdom-weasel-rag-ime",
+            current_ms=1_000,
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(organizer.calls, [])
+        result = report["results"][0]
+        self.assertEqual(result["modelSourceCount"], 0)
+        self.assertEqual(
+            result["deterministicDecisions"][0]["reasonCode"],
+            "transient_runtime_receipt",
+        )
+        stored = self.sources.get(str(source["source"]["sourceId"]))
+        self.assertEqual(stored["disposition"], "not_for_memory")
+
     def test_rejecting_every_semantic_write_resolves_review_without_forgetting_evidence(
         self,
     ) -> None:

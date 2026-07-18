@@ -391,8 +391,11 @@ installed generation before returning success.
 The semantic-memory migration is copy-first and fail-closed. Preview is
 read-only. A production candidate requires the configured embedding provider,
 complete document/vector parity, caught-up projection checkpoints, and an empty
-failed/dead Outbox before it can be activated. No Timeline or Role Book draft is
-auto-approved.
+failed/dead Outbox before it can be activated. By default no Timeline or Role
+Book draft is auto-approved. The explicit historical-curation mode below is the
+only exception: it reviews every owner-memory batch inside the offline candidate,
+rejects transient runtime receipts and ambiguous evidence, approves source-backed
+derived Timelines, and fails unless no historical source or draft remains pending.
 
 ```bash
 DB="$HOME/Library/Application Support/RagIme/rag-ime.sqlite"
@@ -406,7 +409,8 @@ scripts/stop_rag_ime_runtime.sh
 python3 scripts/migrate_semantic_memory_v2.py \
   --source "$DB" --output "$CANDIDATE" \
   --project wisdom-weasel-rag-ime --timezone Asia/Shanghai \
-  --embedding-from-env --apply
+  --embedding-from-env --curate-history \
+  --confirm-history-curation CURATE_ALL_HISTORICAL_MEMORY --apply
 python3 scripts/activate_semantic_memory_candidate.py \
   --target "$DB" --candidate "$CANDIDATE" --rollback "$ROLLBACK" \
   --confirm ACTIVATE_SEMANTIC_MEMORY_V2

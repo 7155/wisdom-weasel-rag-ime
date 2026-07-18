@@ -426,6 +426,9 @@ class _KnowledgeClient:
 class _Facade:
     def __init__(self):
         self.memory_run_status = "draft"
+        self.memory_prepare_no_run = False
+        self.memory_maintenance_requests = []
+        self.memory_run_owner = ("user", "default")
         self.settings_revision = 1
         self.settings_payload = {
             "interaction": {"postCommit": {"enabled": True, "idleTriggerMs": 420}},
@@ -512,6 +515,7 @@ class _Facade:
         return {"ok": True, "traceId": payload["traceId"], "decision": "keep"}
 
     def agent_memory_maintenance_status(self, payload):
+        self.memory_maintenance_requests.append(("status", dict(payload)))
         return {
             "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
             "ok": True,
@@ -524,6 +528,31 @@ class _Facade:
         }
 
     def agent_memory_maintenance_prepare(self, payload):
+        self.memory_maintenance_requests.append(("prepare", dict(payload)))
+        if self.memory_prepare_no_run:
+            return {
+                "ok": True,
+                "storedDraft": False,
+                "reusedDraft": False,
+                "source": {
+                    "ownerKind": payload["ownerKind"],
+                    "ownerId": payload["ownerId"],
+                    "pendingSourceCount": 0,
+                },
+                "validation": {"ok": True, "errors": []},
+                "storedRun": {},
+                "curation": {
+                    "results": [
+                        {
+                            "ownerKind": payload["ownerKind"],
+                            "ownerId": payload["ownerId"],
+                            "skipped": True,
+                            "reason": "no_sources",
+                        }
+                    ]
+                },
+            }
+        self.memory_run_owner = (payload["ownerKind"], payload["ownerId"])
         return {
             "ok": True,
             "storedDraft": True,
@@ -552,8 +581,8 @@ class _Facade:
                 "runId": payload["runId"],
                 "status": status,
                 "summary": "Pi 记忆整理草案",
-                "ownerKind": "agent",
-                "ownerId": "zhiyou-v1",
+                "ownerKind": self.memory_run_owner[0],
+                "ownerId": self.memory_run_owner[1],
                 "runKind": "manual_curation",
                 "bundleHash": "sha256:bundle",
                 "sourceCursor": {"fromEventId": 10, "toEventId": 16},
@@ -724,6 +753,11 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(result["maintenance"]["policy"], "review")
         self.assertFalse(result["maintenance"]["autoApply"])
         self.assertEqual(result["maintenance"]["runs"][0]["status"], "draft")
+        request = self.facade.memory_maintenance_requests[-1][1]
+        self.assertEqual(
+            (request["ownerKind"], request["ownerId"]),
+            ("user", "default"),
+        )
 
     def test_runtime_memory_tool_discloses_operation_specific_schema(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
@@ -1290,6 +1324,34 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertFalse(result["storedDraft"])
         self.assertNotIn("run", result)
         self.assertNotIn("changes", result)
+        request = next(
+            payload
+            for operation, payload in self.facade.memory_maintenance_requests
+            if operation == "prepare"
+        )
+        self.assertEqual(
+            (request["ownerKind"], request["ownerId"]),
+            ("user", "default"),
+        )
+
+    def test_memory_curation_prepare_treats_no_sources_as_success(self) -> None:
+        self.facade.memory_prepare_no_run = True
+
+        result = self.gateway.execute(
+            self._call(
+                "curation_prepare",
+                scope="incremental",
+                policy="conservative",
+            )
+        )["result"]
+
+        self.assertEqual(result["runId"], "")
+        self.assertEqual(result["diffCount"], 0)
+        self.assertFalse(result["needsReview"])
+        self.assertFalse(result["reviewRequired"])
+        self.assertFalse(result["storedDraft"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["reason"], "no_sources")
 
     def test_memory_apply_fails_closed_when_draft_changes_after_preview(self) -> None:
         prepared = self.gateway.execute(

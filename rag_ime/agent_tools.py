@@ -2191,7 +2191,12 @@ class ControlToolGateway:
             },
         )
         run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
-        _require_memory_run_owner(run, mutable_owner)
+        run_owner = _memory_run_owner(run)
+        if run_owner not in _memory_mutation_owners(
+            visible_owners,
+            mutable_owner=mutable_owner,
+        ):
+            raise ValueError("memory run is outside the current writable owner scope")
         applying = operation == "maintenance_apply"
         if applying and review.get("canApply") is not True:
             raise ValueError("memory draft is not currently applicable")
@@ -2203,8 +2208,8 @@ class ControlToolGateway:
         action_payload = {
             "runId": run_id,
             "project": self.project,
-            "expectedOwnerKind": mutable_owner[0],
-            "expectedOwnerId": mutable_owner[1],
+            "expectedOwnerKind": run_owner[0],
+            "expectedOwnerId": run_owner[1],
         }
         base_state = {
             "revisionHash": revision_hash,
@@ -2312,8 +2317,11 @@ class ControlToolGateway:
             raise ValueError("approved memory owner is invalid")
         session_id = _bounded_text(approval.get("sessionId"), maximum=240)
         visible_owners, mutable_owner = self._memory_owner_context(session_id)
-        if expected_owner != mutable_owner:
-            raise ValueError("approved memory owner no longer matches the session role")
+        if expected_owner not in _memory_mutation_owners(
+            visible_owners,
+            mutable_owner=mutable_owner,
+        ):
+            raise ValueError("approved memory owner is no longer writable by this session")
         current = self._facade_call(
             "agent_memory_maintenance_run",
             {
@@ -4724,6 +4732,10 @@ class ControlToolGateway:
     def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         visible_owners, mutable_owner = self._memory_owner_context(session_id)
+        curation_owner = _personal_memory_curation_owner(
+            visible_owners,
+            fallback=mutable_owner,
+        )
         visible_owner_payload = _owner_payloads(visible_owners)
         if operation in {"remember_preview", "correct_preview", "forget_preview"}:
             return self._governed_memory_store().preview(
@@ -4771,8 +4783,8 @@ class ControlToolGateway:
                 {
                     "project": self.project,
                     "limit": _bounded_int(args.get("limit"), default=10, minimum=1, maximum=30),
-                    "ownerKind": mutable_owner[0],
-                    "ownerId": mutable_owner[1],
+                    "ownerKind": curation_owner[0],
+                    "ownerId": curation_owner[1],
                     "scope": _bounded_text(args.get("scope"), maximum=24) or "incremental",
                     "policy": _bounded_text(args.get("policy"), maximum=24) or "conservative",
                 },
@@ -4791,19 +4803,33 @@ class ControlToolGateway:
                 {
                     "project": self.project,
                     "instruction": _bounded_text(args.get("instruction"), maximum=800),
-                    "ownerKind": mutable_owner[0],
-                    "ownerId": mutable_owner[1],
+                    "ownerKind": curation_owner[0],
+                    "ownerId": curation_owner[1],
                 },
             )
-            if payload.get("ok") is not True or payload.get("storedDraft") is not True:
-                raise ValueError(
-                    _bounded_text(_mapping_value(payload, "validation", "errors"), maximum=240)
-                    or "memory draft generation failed validation"
-                )
+            if payload.get("ok") is not True:
+                raise ValueError(_memory_curation_error(payload))
             stored = payload.get("storedRun") if isinstance(payload.get("storedRun"), Mapping) else {}
             run_id = _bounded_text(stored.get("runId"), maximum=240)
             if not run_id:
-                raise ValueError("memory draft generation returned no runId")
+                source = payload.get("source") if isinstance(payload.get("source"), Mapping) else {}
+                pending_count = _safe_int(source.get("pendingSourceCount"))
+                return {
+                    "summary": (
+                        "当前没有新增个人记忆证据需要整理"
+                        if pending_count <= 0
+                        else "本轮个人记忆证据没有形成可写入的长期记忆变更"
+                    ),
+                    "runId": "",
+                    "counts": {},
+                    "diffCount": 0,
+                    "needsReview": False,
+                    "reviewRequired": False,
+                    "storedDraft": False,
+                    "reusedDraft": payload.get("reusedDraft") is True,
+                    "skipped": True,
+                    "reason": _memory_curation_skip_reason(payload),
+                }
             review = self._facade_call(
                 "agent_memory_maintenance_run",
                 {
@@ -4813,7 +4839,7 @@ class ControlToolGateway:
                 },
             )
             run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
-            _require_memory_run_owner(run, mutable_owner)
+            _require_memory_run_owner(run, curation_owner)
             diff_count = _safe_int(run.get("diffCount"))
             reused = payload.get("reusedDraft") is True
             receipt = _compact_memory_run_for_agent(run)
@@ -4854,7 +4880,7 @@ class ControlToolGateway:
                 },
             )
             run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
-            _require_memory_run_owner(run, mutable_owner)
+            _require_memory_run_visible(run, visible_owners)
             receipt = _compact_memory_run_for_agent(run)
             needs_review = (
                 receipt["status"] == "draft"
@@ -5588,16 +5614,80 @@ def _owner_payloads(
     ]
 
 
+def _personal_memory_curation_owner(
+    visible_owners: tuple[tuple[str, str], ...],
+    *,
+    fallback: tuple[str, str],
+) -> tuple[str, str]:
+    personal_owner = ("user", "default")
+    return personal_owner if personal_owner in visible_owners else fallback
+
+
+def _memory_mutation_owners(
+    visible_owners: tuple[tuple[str, str], ...],
+    *,
+    mutable_owner: tuple[str, str],
+) -> frozenset[tuple[str, str]]:
+    owners = {mutable_owner}
+    personal_owner = ("user", "default")
+    if personal_owner in visible_owners:
+        owners.add(personal_owner)
+    return frozenset(owners)
+
+
+def _memory_run_owner(run: Mapping[str, object]) -> tuple[str, str]:
+    owner = (
+        _bounded_text(run.get("ownerKind"), maximum=40),
+        _bounded_text(run.get("ownerId"), maximum=160),
+    )
+    if not all(owner):
+        raise ValueError("memory run owner is unavailable")
+    return owner
+
+
 def _require_memory_run_owner(
     run: Mapping[str, object],
     expected_owner: tuple[str, str],
 ) -> None:
-    actual = (
-        _bounded_text(run.get("ownerKind"), maximum=40),
-        _bounded_text(run.get("ownerId"), maximum=160),
-    )
+    actual = _memory_run_owner(run)
     if actual != expected_owner:
         raise ValueError("memory run is outside the current role")
+
+
+def _require_memory_run_visible(
+    run: Mapping[str, object],
+    visible_owners: tuple[tuple[str, str], ...],
+) -> None:
+    if _memory_run_owner(run) not in visible_owners:
+        raise ValueError("memory run is outside the current visible owner scope")
+
+
+def _memory_curation_error(payload: Mapping[str, object]) -> str:
+    validation = payload.get("validation")
+    errors = validation.get("errors") if isinstance(validation, Mapping) else None
+    if isinstance(errors, (list, tuple)):
+        messages = [
+            _bounded_text(item, maximum=160)
+            for item in errors
+            if _bounded_text(item, maximum=160)
+        ]
+        if messages:
+            return "; ".join(messages)[:240]
+    message = _bounded_text(errors, maximum=240)
+    return message or _bounded_text(payload.get("error"), maximum=240) or "memory draft generation failed validation"
+
+
+def _memory_curation_skip_reason(payload: Mapping[str, object]) -> str:
+    curation = payload.get("curation")
+    results = curation.get("results") if isinstance(curation, Mapping) else None
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, Mapping):
+                continue
+            reason = _bounded_text(item.get("reason"), maximum=80)
+            if reason:
+                return reason
+    return "no_durable_changes"
 
 
 def _safe_lexicon_review_entry(item: Mapping[str, object]) -> dict[str, object]:

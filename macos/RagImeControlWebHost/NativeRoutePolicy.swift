@@ -181,7 +181,7 @@ final class NativeRoutePolicy {
             "agent.approvals.list": route("GET", "/api/agent/approvals", "/control/v1/agent/approvals", query: ["sessionId", "state", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.approval.get": route("GET", "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", remoteSafe: true),
             "agent.approval.decide": route("POST", "/api/agent/approvals/{approvalId}/decision", "/control/v1/agent/approvals/{approvalId}/decision", remoteSafe: true, bodyKeys: ["decision", "payloadSha256"], requiredBodyKeys: ["decision", "payloadSha256"]),
-            "agent.memoryMaintenance.run": route("GET", "/api/agent/memory-maintenance", "/control/v1/agent/memory-maintenance", query: ["runId", "project"], requiredQuery: ["runId"]),
+            "agent.memoryMaintenance.run": route("GET", "/api/agent/memory-maintenance", "/control/v1/agent/memory-maintenance", query: ["runId", "project", "limit"]),
             "agent.subagents.templates": route("GET", "/api/agent/subagents/templates", "/control/v1/agent/subagents/templates", remoteSafe: true),
             "agent.subagents.list": route("GET", "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.subagents.create": route("POST", "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", remoteSafe: true, bodyKeys: ["sessionId", "tasks", "agent", "version", "task", "contextMode", "wait"], requiredBodyKeys: ["sessionId"]),
