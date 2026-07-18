@@ -35,6 +35,8 @@ final class VoiceInputCoordinator {
     private var releasedAtMs: Int?
     private var committedVoiceTextRecorded = false
     private var interactionSource: InteractionSource = .hotkey
+    private var clipboardFallbackReason: VoiceInsertionError?
+    private var finalDeliveryUsedClipboard = false
 
     init() {
         credentials = VoiceKeychainStore.loadCredentials(allowLegacyFallback: true)
@@ -166,6 +168,8 @@ final class VoiceInputCoordinator {
         reconciler = VoiceTranscriptReconciler()
         releasedAtMs = nil
         committedVoiceTextRecorded = false
+        clipboardFallbackReason = nil
+        finalDeliveryUsedClipboard = false
         telemetry = VoiceSessionTelemetry(
             networkState: "starting",
             sessionActive: true,
@@ -319,10 +323,10 @@ final class VoiceInputCoordinator {
             if reconciler.currentText.isEmpty {
                 fail(message)
             } else {
-                // A partial transcript may stay visible for the user to recover,
-                // but it is never promoted into history/memory without a Final.
-                overlay.showError("网络中断，临时稿未记入历史")
-                finishSession()
+                preserveTranscriptToClipboard(
+                    reconciler.currentText,
+                    message: "网络中断，临时稿已保留"
+                )
             }
         case .transport(let networkState):
             telemetry = updatingTelemetry(networkState: networkState)
@@ -410,29 +414,68 @@ final class VoiceInputCoordinator {
             finalRevisedPartial: !partialText.isEmpty && partialText != finalText,
             localSmoothingApplied: providerFinalText != VoiceFinalTextNormalizer.normalize(providerFinalText)
         )
-        if interactionSource == .hotkey {
+        if interactionSource == .hotkey, !finalDeliveryUsedClipboard {
             recordCommittedVoiceTextIfNeeded(finalText)
         }
-        overlay.showDone(finalText)
+        if finalDeliveryUsedClipboard {
+            overlay.showClipboardDone(finalText)
+        } else {
+            overlay.showDone(finalText)
+        }
         finishSession()
     }
 
     @discardableResult
     private func apply(text: String, isFinal: Bool) -> Bool {
+        let target: VoiceTextInsertionSession
         do {
-            _ = try requireSafeInsertionTarget()
+            target = try requireSafeInsertionTarget()
         } catch {
             abortForUnsafeTarget(error)
             return false
         }
         guard let revision = reconciler.revise(to: text, isFinal: isFinal) else { return true }
+        if clipboardFallbackReason != nil {
+            overlay.showClipboardPending(text)
+            return isFinal ? deliverFinalToClipboard(text) : true
+        }
         do {
-            try insertion?.apply(revision)
+            try target.apply(revision)
             overlay.updateTranscript(text)
+            return true
+        } catch let insertionError as VoiceInsertionError
+            where insertionError.supportsClipboardRecovery {
+            clipboardFallbackReason = insertionError
+            overlay.showClipboardPending(text)
+            return isFinal ? deliverFinalToClipboard(text) : true
+        } catch {
+            abortForUnsafeTarget(error)
+            return false
+        }
+    }
+
+    private func deliverFinalToClipboard(_ text: String) -> Bool {
+        do {
+            try VoiceTextInsertionSession.copyToClipboardForRecovery(text)
+            finalDeliveryUsedClipboard = true
             return true
         } catch {
             abortForUnsafeTarget(error)
             return false
+        }
+    }
+
+    private func preserveTranscriptToClipboard(_ text: String, message: String) {
+        do {
+            try VoiceTextInsertionSession.copyToClipboardForRecovery(text)
+            finalTimeout?.cancel()
+            finalTimeout = nil
+            recorder.stop()
+            asr?.cancel()
+            overlay.showClipboardDone(text, message: message)
+            finishSession()
+        } catch {
+            fail(error.localizedDescription)
         }
     }
 
@@ -499,6 +542,8 @@ final class VoiceInputCoordinator {
         asr = nil
         insertion = nil
         reconciler = VoiceTranscriptReconciler()
+        clipboardFallbackReason = nil
+        finalDeliveryUsedClipboard = false
         state = .idle
         interactionSource = .hotkey
         telemetry = updatingTelemetry(sessionActive: false)
@@ -518,8 +563,10 @@ final class VoiceInputCoordinator {
             if self.reconciler.currentText.isEmpty {
                 self.fail("语音定稿超时")
             } else {
-                self.overlay.showError("定稿超时，临时稿未记入历史")
-                self.finishSession()
+                self.preserveTranscriptToClipboard(
+                    self.reconciler.currentText,
+                    message: "定稿超时，临时稿已保留"
+                )
             }
         }
         finalTimeout = work

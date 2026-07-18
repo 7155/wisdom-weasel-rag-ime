@@ -140,10 +140,19 @@ final class VoiceTextInsertionSession {
     }
 
     private static func focusedElement() -> AXUIElement? {
-        let system = AXUIElementCreateSystemWide()
+        if let frontmostApplication = NSWorkspace.shared.frontmostApplication {
+            let application = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+            if let focused = focusedElement(from: application) {
+                return focused
+            }
+        }
+        return focusedElement(from: AXUIElementCreateSystemWide())
+    }
+
+    private static func focusedElement(from root: AXUIElement) -> AXUIElement? {
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(
-            system,
+            root,
             kAXFocusedUIElementAttribute as CFString,
             &value
         ) == .success,
@@ -356,6 +365,15 @@ final class VoiceTextInsertionSession {
         }
     }
 
+    static func copyToClipboardForRecovery(_ text: String) throws {
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else {
+            throw VoiceInsertionError.writeFailed
+        }
+    }
+
     private static func caretPoint(_ element: AXUIElement, range: CFRange) -> NSPoint? {
         var range = CFRange(location: range.location, length: 0)
         guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
@@ -390,9 +408,18 @@ enum VoiceInsertionError: LocalizedError {
         case .accessibilityUnavailable: return "需要辅助功能权限才能写入当前光标"
         case .privacyStateUnknown: return "语音输入会话状态异常，请重试"
         case .selectionUnavailable: return "当前输入框不支持流式替换"
-        case .focusChanged: return "输入焦点已改变，本次语音已停止"
-        case .cursorMoved: return "检测到光标移动，本次语音已停止"
+        case .focusChanged: return "输入焦点已改变，定稿将保留到剪贴板"
+        case .cursorMoved: return "检测到光标移动，定稿将保留到剪贴板"
         case .writeFailed: return "当前应用拒绝了流式写入"
+        }
+    }
+
+    var supportsClipboardRecovery: Bool {
+        switch self {
+        case .selectionUnavailable, .focusChanged, .cursorMoved, .writeFailed:
+            return true
+        case .sensitiveField, .accessibilityUnavailable, .privacyStateUnknown:
+            return false
         }
     }
 }

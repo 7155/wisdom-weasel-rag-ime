@@ -854,21 +854,6 @@ private struct RagImeAssistantContextInspectorDocument {
     }
     appendSection("AX 文本上下文", windowLines.joined(separator: "\n"))
 
-    let recentInputs = array(contextView["recentCompleteInputs"])
-    var recentLines: [String] = []
-    for (index, value) in recentInputs.enumerated() {
-      let item = object(value)
-      let text = firstNonEmptyString(item, keys: ["textPreview", "text", "summary", "title"])
-      if !text.isEmpty { recentLines.append("\(index + 1). \(text)") }
-    }
-    if recentLines.isEmpty {
-      let reportedCount = integer(transaction["timelineRecentInputRecordCount"])
-      recentLines.append(reportedCount > 0
-        ? "Pi 报告使用了 \(reportedCount) 条历史补充，但本轮未返回可显示文本"
-        : "本轮没有追加历史输入")
-    }
-    appendSection("历史补充", recentLines.joined(separator: "\n"))
-
     let planning = object(contextView["planning"])
     let planningItems = array(planning["items"])
     var planningLines: [String] = []
@@ -877,33 +862,88 @@ private struct RagImeAssistantContextInspectorDocument {
       let title = firstNonEmptyString(item, keys: ["title", "detail", "notes"])
       if !title.isEmpty { planningLines.append("\(index + 1). \(title)") }
     }
-    if !planningLines.isEmpty { appendSection("计划与任务", planningLines.joined(separator: "\n")) }
+    if !planningLines.isEmpty { appendSection("当前规划与任务", planningLines.joined(separator: "\n")) }
 
-    var evidenceLines: [String] = []
-    var seenEvidence = Set<String>()
-    for value in array(contextView["evidenceHints"]) {
+    let activityTimeline = object(contextView["activityTimeline"])
+    let timelineFallback = object(contextView["timeline"])
+    let timelineItems = firstNonEmptyArray(
+      activityTimeline.isEmpty ? timelineFallback : activityTimeline,
+      keys: ["recentActivities", "semanticTasks", "items", "recentDecisions"]
+    )
+    var timelineLines: [String] = []
+    for (index, value) in timelineItems.enumerated() {
       let item = object(value)
-      let text = item.isEmpty ? string(value) : firstNonEmptyString(item, keys: ["text", "preview", "title"])
+      let text = evidenceDisplayText(item)
+      if !text.isEmpty { timelineLines.append("\(index + 1). \(text)") }
+    }
+    if !timelineLines.isEmpty {
+      appendSection("最近批准时间线", timelineLines.joined(separator: "\n"))
+    }
+
+    let groundingEvidence = array(contextView["groundingEvidence"])
+    var factLines: [String] = []
+    var bookLines: [String] = []
+    var otherEvidenceLines: [String] = []
+    var seenEvidence = Set<String>()
+    for value in groundingEvidence {
+      let item = object(value)
+      let text = evidenceDisplayText(item)
       let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !normalized.isEmpty, seenEvidence.insert(normalized).inserted {
-        evidenceLines.append("\(evidenceLines.count + 1). \(normalized)")
+      guard !normalized.isEmpty, seenEvidence.insert(normalized).inserted else { continue }
+      let sourceType = firstNonEmptyString(item, keys: ["documentType", "docType", "sourceType", "sourceLane"]).lowercased()
+      if sourceType.contains("atom") || sourceType.contains("fact") {
+        factLines.append("\(factLines.count + 1). \(normalized)")
+      } else if sourceType.contains("book") {
+        bookLines.append("\(bookLines.count + 1). \(normalized)")
+      } else {
+        otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(normalized)")
       }
     }
-    if evidenceLines.isEmpty {
-      for card in payload.sourceCards {
-        let text = [card.title, card.evidencePreview].filter { !$0.isEmpty }.joined(separator: "：")
-        if !text.isEmpty, seenEvidence.insert(text).inserted {
-          evidenceLines.append("\(evidenceLines.count + 1). \(text)")
+    if !factLines.isEmpty { appendSection("当前事实 · Atom", factLines.joined(separator: "\n")) }
+    if !bookLines.isEmpty { appendSection("主题书 · Book", bookLines.joined(separator: "\n")) }
+
+    if groundingEvidence.isEmpty {
+      for value in array(contextView["evidenceHints"]) {
+        let item = object(value)
+        let text = item.isEmpty ? string(value) : evidenceDisplayText(item)
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalized.isEmpty, seenEvidence.insert(normalized).inserted {
+          otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(normalized)")
         }
       }
     }
-    if evidenceLines.isEmpty {
+    if factLines.isEmpty && bookLines.isEmpty && otherEvidenceLines.isEmpty {
+      for card in payload.sourceCards {
+        let text = [card.title, card.evidencePreview].filter { !$0.isEmpty }.joined(separator: "：")
+        if !text.isEmpty, seenEvidence.insert(text).inserted {
+          otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(text)")
+        }
+      }
+    }
+    if otherEvidenceLines.isEmpty && factLines.isEmpty && bookLines.isEmpty {
       let evidenceCount = integer(transaction["evidenceCount"])
-      evidenceLines.append(evidenceCount > 0
+      otherEvidenceLines.append(evidenceCount > 0
         ? "已召回 \(evidenceCount) 条依据，但本轮未返回可显示片段"
         : "本轮没有注入 RAG 依据")
     }
-    appendSection("RAG 依据", evidenceLines.joined(separator: "\n"))
+    if !otherEvidenceLines.isEmpty {
+      appendSection("其他 RAG 依据", otherEvidenceLines.joined(separator: "\n"))
+    }
+
+    let recentInputs = array(contextView["recentCompleteInputs"])
+    var recentLines: [String] = []
+    for (index, value) in recentInputs.prefix(4).enumerated() {
+      let item = object(value)
+      let text = firstNonEmptyString(item, keys: ["textPreview", "text", "summary", "title"])
+      if !text.isEmpty { recentLines.append("\(index + 1). \(text)") }
+    }
+    if recentLines.isEmpty {
+      let reportedCount = integer(transaction["timelineRecentInputRecordCount"])
+      recentLines.append(reportedCount > 0
+        ? "存在最近完整输入，但本轮模型请求未注入可显示原文"
+        : "本轮没有追加最近完整输入")
+    }
+    appendSection("最近完整输入 · 仅用于承接", recentLines.joined(separator: "\n"))
 
     let contextBudget = object(contextView["contextBudget"])
     if !contextBudget.isEmpty {
@@ -977,6 +1017,26 @@ private struct RagImeAssistantContextInspectorDocument {
       if !value.isEmpty { return value }
     }
     return ""
+  }
+
+  private static func firstNonEmptyArray(
+    _ object: [String: RagImeJSONValue],
+    keys: [String]
+  ) -> [RagImeJSONValue] {
+    for key in keys {
+      let values = array(object[key])
+      if !values.isEmpty { return values }
+    }
+    return []
+  }
+
+  private static func evidenceDisplayText(_ item: [String: RagImeJSONValue]) -> String {
+    let title = firstNonEmptyString(item, keys: ["title", "label"])
+    let detail = firstNonEmptyString(item, keys: ["preview", "text", "summary", "detail"])
+    if title.isEmpty { return detail }
+    if detail.isEmpty || detail == title || detail.contains(title) { return detail.isEmpty ? title : detail }
+    if title.contains(detail) { return title }
+    return "\(title)：\(detail)"
   }
 }
 
