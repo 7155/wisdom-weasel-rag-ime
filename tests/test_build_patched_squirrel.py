@@ -389,6 +389,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('reason: "privacy_unknown_focused_element_missing"', patch_text)
         self.assertIn('reason: "privacy_unknown_metadata_read_failed"', patch_text)
         self.assertIn('reason: "privacy_unknown_text_field_metadata_missing"', patch_text)
+        self.assertNotIn("metadataReads.contains(where: { $0.failed })", patch_text)
+        self.assertIn('secureRole.contains("text")', patch_text)
         self.assertIn('reason: "sensitive_application_bundle"', patch_text)
         self.assertIn('"com.apple.passwords"', patch_text)
         self.assertIn('"org.torproject.torbrowser"', patch_text)
@@ -879,7 +881,19 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             self.assertNotIn(ax_token, fast_status)
         self.assertIn("IsSecureEventInputEnabled()", fast_status)
         self.assertIn("sensitiveApplicationReason", fast_status)
+        deterministic_guard = section(
+            "func enforceRagImeDeterministicPrivacyGuard(",
+            "func enforceRagImeFastPrivacyGuard() -> Bool",
+        )
+        self.assertIn("fastSensitiveFieldStatus(", deterministic_guard)
+        self.assertNotIn("ragImePrivacyDisposition !=", deterministic_guard)
         self.assertIn("func enforceRagImeFastPrivacyGuard() -> Bool", patch_text)
+        cached_guard = section(
+            "func enforceRagImeFastPrivacyGuard() -> Bool",
+            "func applyRagImePrivacyStatus(",
+        )
+        self.assertIn("enforceRagImeDeterministicPrivacyGuard()", cached_guard)
+        self.assertIn('ragImePrivacyDisposition != "allowed"', cached_guard)
         status_model = section("struct RagImeSensitiveFieldStatus", "final class RagImeForegroundContextResolver")
         self.assertLess(
             status_model.index('reason.hasPrefix("privacy_unknown_")'),
@@ -923,6 +937,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "func removeLastRagImeCommittedContextCharacterIfNoComposition(",
         )
         self.assertIn("ragImeForegroundContextQueue.async", finalized_input)
+        self.assertIn(
+            "enforceRagImeDeterministicPrivacyGuard(sourceAppBundleId: app)",
+            finalized_input,
+        )
+        finalizer_before_queue = finalized_input[: finalized_input.index("ragImeForegroundContextQueue.async")]
+        self.assertNotIn("enforceRagImeFastPrivacyGuard()", finalizer_before_queue)
+        self.assertNotIn('ragImePrivacyDisposition == "allowed"', finalizer_before_queue)
         self.assertLess(
             finalized_input.index("ragImeFinalizedFieldContextFromInputClient()"),
             finalized_input.index("ragImeForegroundContextQueue.async"),
@@ -930,6 +951,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImeSelectedTextProvider.sensitiveFieldStatus(", finalized_input)
         self.assertIn("ragImeForegroundContextResolver.captureFromAccessibility(", finalized_input)
         self.assertIn("DispatchQueue.main.async", finalized_input)
+        self.assertIn('source: "input_segment_finalize"', finalized_input)
+        self.assertIn('privacyStatus.privacyDisposition == "allowed"', finalized_input)
         self.assertLess(
             finalized_input.index("ragImeForegroundContextQueue.async"),
             finalized_input.index("ragImeSelectedTextProvider.sensitiveFieldStatus("),

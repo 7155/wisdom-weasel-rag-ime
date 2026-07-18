@@ -1561,9 +1561,6 @@ index 0000000..ac51054
 +    let metadataReads = metadataAttributes.map {
 +      privacyStringAttribute($0, element: focused)
 +    }
-+    guard !metadataReads.contains(where: { $0.failed }) else {
-+      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_metadata_read_failed")
-+    }
 +    let windowTitleRead = privacyWindowTitle(element: focused)
 +    guard !windowTitleRead.failed else {
 +      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_metadata_read_failed")
@@ -1582,7 +1579,11 @@ index 0000000..ac51054
 +    if sensitiveTokens.contains(where: metadata.contains) {
 +      return RagImeSensitiveFieldStatus(isSensitive: true, reason: "sensitive_field_metadata")
 +    }
-+    if (secureRole.contains("textfield") || secureRole.contains("combobox"))
++    // AppKit text areas commonly report a generic failure for one optional
++    // metadata attribute while still exposing role, identifier and window
++    // title. Treat individual optional failures as absence, but keep the
++    // decision fail-closed when no inspectable metadata remains.
++    if (secureRole.contains("text") || secureRole.contains("combobox"))
 +      && metadata.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 +      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_text_field_metadata_missing")
 +    }
@@ -6146,11 +6147,19 @@ index c2adf74..2995b7e 100644
 +private extension SquirrelInputController {
 +
 +  @discardableResult
-+  func enforceRagImeFastPrivacyGuard() -> Bool {
-+    let fastStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(sourceAppBundleId: currentApp)
++  func enforceRagImeDeterministicPrivacyGuard(sourceAppBundleId: String? = nil) -> Bool {
++    let fastStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(
++      sourceAppBundleId: sourceAppBundleId ?? currentApp
++    )
 +    if fastStatus.privacyDisposition != "allowed" {
 +      return applyRagImePrivacyStatus(fastStatus, source: "fast_guard")
 +    }
++    return false
++  }
++
++  @discardableResult
++  func enforceRagImeFastPrivacyGuard() -> Bool {
++    if enforceRagImeDeterministicPrivacyGuard() { return true }
 +    // Field-level Accessibility classification is asynchronous. Until a live
 +    // full probe has allowed this field, local insertion continues but no text
 +    // may enter feedback, context, or sidecar lanes.
@@ -10941,8 +10950,10 @@ index c2adf74..2995b7e 100644
 +    let imeText = ragImeCompactWhitespace(ragImeActiveInputBuffer)
 +    ragImeActiveInputBuffer = ""
 +    ragImeActiveInputBufferUpdatedAt = .distantPast
-+    guard !enforceRagImeFastPrivacyGuard(),
-+      ragImePrivacyDisposition == "allowed",
++    // This path performs its own authoritative field probe below. Only the
++    // synchronous deterministic guards run here; a stale cached `unknown`
++    // must not discard the user's first Return before that probe completes.
++    guard !enforceRagImeDeterministicPrivacyGuard(sourceAppBundleId: app),
 +      let sidecarClient = ragImeSidecarClient else {
 +      traceRagImeFrontendEvent("input_segment_finalize_suppressed", fields: [
 +        "reason": reason,
@@ -11002,7 +11013,13 @@ index c2adf74..2995b7e 100644
 +      )
 +      DispatchQueue.main.async { [weak self] in
 +        guard let self else { return }
-+        guard privacyStatus.privacyDisposition == "allowed", let capture else {
++        let privacyRejected = self.applyRagImePrivacyStatus(
++          privacyStatus,
++          source: "input_segment_finalize"
++        )
++        guard !privacyRejected,
++          privacyStatus.privacyDisposition == "allowed",
++          let capture else {
 +          self.traceRagImeFrontendEvent("input_segment_finalize_suppressed", fields: [
 +            "reason": reason,
 +            "privacyDisposition": privacyStatus.privacyDisposition,
