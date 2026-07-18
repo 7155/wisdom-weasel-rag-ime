@@ -106,6 +106,7 @@ class LocalMlxMemoryOrganizerTests(unittest.TestCase):
                     "memoryAtoms": [
                         {
                             "canonicalText": "Session 开始时只召回一次记忆。",
+                            "claimKey": "agent:session:memory-recall",
                             "summary": "Session 记忆策略",
                             "kind": "project_decision",
                             "sourceEventIds": [9],
@@ -173,6 +174,7 @@ class LocalMlxMemoryOrganizerTests(unittest.TestCase):
                     "memoryAtoms": [
                         {
                             "canonicalText": "历史记忆整理必须只在本机运行。",
+                            "claimKey": "memory:history:privacy-boundary",
                             "summary": "本地隐私约束",
                             "kind": "project_requirement",
                             "sourceEventIds": [17],

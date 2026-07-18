@@ -1154,7 +1154,9 @@ def _owner_memory_system_prompt() -> str:
         - session_compaction 是角色自己的高密度证据，不能仅因它是摘要而丢弃
 
         对 remember 证据，输出少量 memoryAtoms。每个 Atom 必须包含 canonicalText、summary、
-        kind、tags、sourceEventIds、confidence、qualityScore、directCandidateAllowed(false)。
+        kind、tags、sourceEventIds、confidence、qualityScore、directCandidateAllowed(false)，以及稳定的
+        claimKey。claimKey 描述事实槽位而不是本次具体取值，例如 ime:hot-path:model；同一事实更新时必须
+        复用原 claimKey，禁止使用 atomId、哈希、时间戳、事件 ID 或具体取值充当 claimKey。
         kind 使用 project_fact、project_requirement、durable_preference、project_decision、
         project_plan 或 project_question。问题、愿望、条件和计划不能改写成已经完成的事实。
         只引用 bundle.inputs 中真实的 sourceEventIds，不得创造事实。

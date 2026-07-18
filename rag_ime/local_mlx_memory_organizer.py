@@ -13,6 +13,7 @@ from .deepseek_memory_organizer import (
     _owner_memory_system_prompt,
 )
 from .memory_generator import _extract_json_object
+from .memory_book_compiler import _normalized_claim_key
 from .text_utils import compact_whitespace
 
 
@@ -81,6 +82,7 @@ class LocalMlxMemoryOrganizer:
             raw_payload,
             model_bundle=model_bundle,
         )
+        payload = _discard_atoms_without_stable_claim_keys(payload)
         repair_count = 0
         uncovered = _uncovered_remember_refs(payload, model_bundle=model_bundle)
         if uncovered:
@@ -166,7 +168,9 @@ class LocalMlxMemoryOrganizer:
                 "role": "system",
                 "content": _owner_memory_system_prompt()
                 + " 这是契约修复轮：只要仍判定 remember，就必须生成至少一个引用该证据 "
-                "sourceEventIds 的 memoryAtom；若它其实不值得长期保存，应改判 not_for_memory。",
+                "sourceEventIds 的 memoryAtom；若它其实不值得长期保存，应改判 not_for_memory。"
+                " memoryAtom 还必须包含语义化稳定 claimKey，例如 ime:hot-path:model；禁止使用哈希、"
+                "atomId、事件 ID、时间戳或本次具体值。",
             },
             {
                 "role": "user",
@@ -193,6 +197,7 @@ class LocalMlxMemoryOrganizer:
             repaired_raw,
             model_bundle=repair_bundle,
         )
+        repaired = _discard_atoms_without_stable_claim_keys(repaired)
         decision_by_ref = {
             str(item.get("sourceRef") or ""): dict(item)
             for item in payload.get("sourceDecisions") or []
@@ -303,3 +308,30 @@ def _uncovered_remember_refs(
         and (source_ref := str(decision.get("sourceRef") or ""))
         and not (event_ids_by_ref.get(source_ref, set()) & covered_event_ids)
     ]
+
+
+def _discard_atoms_without_stable_claim_keys(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    result = dict(payload)
+    atoms = [
+        dict(atom)
+        for atom in payload.get("memoryAtoms") or []
+        if isinstance(atom, Mapping)
+    ]
+    accepted: list[dict[str, object]] = []
+    rejected = 0
+    for atom in atoms:
+        claim_key = _normalized_claim_key(atom.get("claimKey"))
+        atom_id = compact_whitespace(str(atom.get("atomId") or atom.get("id") or ""))
+        if not claim_key or claim_key == _normalized_claim_key(atom_id):
+            rejected += 1
+            continue
+        atom["claimKey"] = claim_key
+        accepted.append(atom)
+    result["memoryAtoms"] = accepted
+    if rejected:
+        warnings = [str(item) for item in result.get("warnings") or []]
+        warnings.append(f"local_invalid_claim_key_atoms_removed:{rejected}")
+        result["warnings"] = warnings
+    return result
