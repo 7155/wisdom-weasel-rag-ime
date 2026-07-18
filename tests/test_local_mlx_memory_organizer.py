@@ -140,6 +140,73 @@ class LocalMlxMemoryOrganizerTests(unittest.TestCase):
         self.assertEqual(result["modelDiagnostics"]["repairCount"], 1)
         self.assertEqual(result["memoryAtoms"][0]["sourceEventIds"], [9])
 
+    def test_isolates_a_source_when_the_batch_repair_still_omits_it(self) -> None:
+        calls = 0
+
+        def complete(_messages):
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                return json.dumps(
+                    {
+                        "sourceDecisions": [
+                            {
+                                "sourceRef": "input:17",
+                                "disposition": "remember",
+                                "reasonCode": "durable_requirement",
+                                "confidence": 0.9,
+                            }
+                        ],
+                        "memoryAtoms": [],
+                    }
+                )
+            return json.dumps(
+                {
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": "input:17",
+                            "disposition": "remember",
+                            "reasonCode": "durable_requirement",
+                            "confidence": 0.95,
+                        }
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": "历史记忆整理必须只在本机运行。",
+                            "summary": "本地隐私约束",
+                            "kind": "project_requirement",
+                            "sourceEventIds": [17],
+                            "confidence": 0.95,
+                            "qualityScore": 0.92,
+                            "directCandidateAllowed": False,
+                        }
+                    ],
+                }
+            )
+
+        organizer = LocalMlxMemoryOrganizer("/missing", completion=complete)
+        result = organizer.curate_owner_memory(
+            bundle={
+                "inputs": [
+                    {
+                        "sourceRef": "input:17",
+                        "sourceKind": "user_final",
+                        "trustClass": "user_direct",
+                        "createdAtMs": 17,
+                        "sourceEventIds": [17],
+                        "text": "历史记忆整理必须只在本机运行。",
+                    }
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            owner_kind="user",
+            owner_id="default",
+        )
+
+        self.assertEqual(calls, 3)
+        self.assertEqual(result["modelDiagnostics"]["repairCount"], 2)
+        self.assertEqual(result["memoryAtoms"][0]["sourceEventIds"], [17])
+
 
 if __name__ == "__main__":
     unittest.main()

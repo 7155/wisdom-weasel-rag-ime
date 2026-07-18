@@ -95,6 +95,21 @@ class LocalMlxMemoryOrganizer:
                 uncovered=uncovered,
             )
             remaining = _uncovered_remember_refs(payload, model_bundle=model_bundle)
+            # A compact multi-source repair can still omit one difficult item.
+            # Give each remaining source one isolated contract-repair turn so
+            # the migration never silently discards a durable classification.
+            for source_ref in remaining[:16]:
+                repair_count += 1
+                payload = self._repair_uncovered_memory(
+                    payload,
+                    model_bundle=model_bundle,
+                    project=project,
+                    owner_kind=owner_kind,
+                    owner_id=owner_id,
+                    instruction=effective_instruction,
+                    uncovered=[source_ref],
+                )
+            remaining = _uncovered_remember_refs(payload, model_bundle=model_bundle)
             if remaining:
                 raise LocalMlxMemoryOrganizerError(
                     "local MLX organizer left remember evidence without an Atom: "
