@@ -9,7 +9,16 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -191,11 +200,21 @@ function ContextPipelineDialog({
   const transport = useControlTransport();
   const [open, setOpen] = useState(false);
   const [selectedTraceId, setSelectedTraceId] = useState(traces[0]?.traceId ?? '');
+  const [drawerWidth, setDrawerWidth] = useState(() => initialContextDrawerWidth());
+  const [resizing, setResizing] = useState(false);
+  const resizeCleanup = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!traces.some((trace) => trace.traceId === selectedTraceId)) {
       setSelectedTraceId(traces[0]?.traceId ?? '');
     }
   }, [selectedTraceId, traces]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const clampToViewport = () => setDrawerWidth((width) => clampContextDrawerWidth(width));
+    window.addEventListener('resize', clampToViewport);
+    return () => window.removeEventListener('resize', clampToViewport);
+  }, [open]);
+  useEffect(() => () => resizeCleanup.current?.(), []);
   const traceQuery = useQuery({
     queryKey: ['agent', 'context-runtime', 'trace', sessionId, selectedTraceId],
     queryFn: ({ signal }) => transport.request<AgentContextTraceV1>({
@@ -206,10 +225,57 @@ function ContextPipelineDialog({
     enabled: open && Boolean(selectedTraceId),
     retry: false,
   });
+
+  function beginResize(event: ReactMouseEvent<HTMLDivElement>): void {
+    const dialog = event.currentTarget.closest<HTMLElement>('.agent-context-pipeline-dialog');
+    if (!dialog) return;
+    const startX = event.clientX;
+    const startWidth = dialog.getBoundingClientRect().width;
+    const move = (moveEvent: globalThis.MouseEvent) => {
+      setDrawerWidth(clampContextDrawerWidth(startWidth + startX - moveEvent.clientX));
+    };
+    const finish = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', finish);
+      resizeCleanup.current = null;
+      setResizing(false);
+    };
+    resizeCleanup.current?.();
+    resizeCleanup.current = finish;
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', finish);
+    setResizing(true);
+    event.preventDefault();
+  }
+
+  function resizeWithKeyboard(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    const delta = event.key === 'ArrowLeft' ? 32 : -32;
+    setDrawerWidth((width) => clampContextDrawerWidth(width + delta));
+    event.preventDefault();
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent className="agent-context-pipeline-dialog">
+      <DialogContent
+        className="agent-context-pipeline-dialog"
+        data-resizing={resizing || undefined}
+        style={{ '--agent-context-drawer-width': `${drawerWidth}px` } as CSSProperties}
+      >
+        <div
+          aria-label="调整上下文面板宽度"
+          aria-orientation="vertical"
+          aria-valuemax={contextDrawerMaximumWidth()}
+          aria-valuemin={contextDrawerMinimumWidth()}
+          aria-valuenow={Math.round(drawerWidth)}
+          className="agent-context-pipeline-resizer"
+          onDoubleClick={() => setDrawerWidth(initialContextDrawerWidth())}
+          onKeyDown={resizeWithKeyboard}
+          onMouseDown={beginResize}
+          role="separator"
+          tabIndex={0}
+        />
         <DialogHeader>
           <DialogTitle>上下文管线</DialogTitle>
           <DialogDescription>查看每个阶段如何形成当前 Pi Runtime 请求；本机 Debug 模式下可继续核对原始输入与最终 Provider Payload。</DialogDescription>
@@ -242,6 +308,22 @@ function ContextPipelineDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function contextDrawerMaximumWidth(): number {
+  return Math.max(360, window.innerWidth - 12);
+}
+
+function contextDrawerMinimumWidth(): number {
+  return Math.min(720, contextDrawerMaximumWidth());
+}
+
+function initialContextDrawerWidth(): number {
+  return Math.min(1180, contextDrawerMaximumWidth());
+}
+
+function clampContextDrawerWidth(width: number): number {
+  return Math.min(contextDrawerMaximumWidth(), Math.max(contextDrawerMinimumWidth(), width));
 }
 
 function ContextTraceGraph({ trace }: { trace: AgentContextTraceV1 }) {

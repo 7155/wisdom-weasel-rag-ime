@@ -71,6 +71,13 @@ describe('Agent context runtime panel', () => {
 
     await user.click(trigger);
     const dialog = await screen.findByRole('dialog', { name: '上下文管线' });
+    const resizer = within(dialog).getByRole('separator', { name: '调整上下文面板宽度' });
+    const initialWidth = Number(resizer.getAttribute('aria-valuenow'));
+    resizer.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(Number(resizer.getAttribute('aria-valuenow'))).toBeLessThan(initialWidth);
+    await user.keyboard('{ArrowLeft}');
+    expect(Number(resizer.getAttribute('aria-valuenow'))).toBe(initialWidth);
     expect(await within(dialog).findByText('动态工具目录')).toBeVisible();
     await user.click(within(dialog).getByRole('button', { name: /动态工具目录/ }));
     expect(within(dialog).getByText('Token 估算')).toBeVisible();

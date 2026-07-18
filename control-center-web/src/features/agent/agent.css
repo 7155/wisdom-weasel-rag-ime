@@ -604,7 +604,13 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-context-trace-trigger > span { display: grid; min-width: 0; gap: 2px; }
 .agent-context-trace-trigger strong { color: var(--color-text); font-size: 13px; }
 .agent-context-trace-trigger small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.ui-dialog.agent-context-pipeline-dialog { top: 0; right: 0; bottom: 0; left: auto; display: grid; width: min(1180px, calc(100vw - 56px)); height: 100dvh; max-height: none; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border-block: 0; border-right: 0; border-radius: var(--radius-3) 0 0 var(--radius-3); transform: none; animation: agent-context-drawer-in var(--duration-panel) var(--ease-standard) both; }
+.ui-dialog.agent-context-pipeline-dialog { top: 0; right: 0; bottom: 0; left: auto; display: grid; width: min(var(--agent-context-drawer-width, 1180px), calc(100vw - 12px)); height: 100dvh; max-height: none; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border-block: 0; border-right: 0; border-radius: var(--radius-3) 0 0 var(--radius-3); transform: none; animation: agent-context-drawer-in var(--duration-panel) var(--ease-standard) both; }
+.agent-context-pipeline-dialog[data-resizing='true'] { user-select: none; transition: none; }
+.agent-context-pipeline-resizer { position: absolute; z-index: 4; top: 0; bottom: 0; left: 0; width: 12px; outline: 0; cursor: col-resize; touch-action: none; transform: translateX(-50%); }
+.agent-context-pipeline-resizer::before { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: transparent; content: ''; transition: background var(--duration-fast) var(--ease-standard); transform: translateX(-50%); }
+.agent-context-pipeline-resizer:hover::before,
+.agent-context-pipeline-resizer:focus-visible::before,
+.agent-context-pipeline-dialog[data-resizing='true'] .agent-context-pipeline-resizer::before { background: var(--color-accent); }
 .agent-context-pipeline-dialog .ui-dialog__header { padding-right: 38px; }
 .agent-context-pipeline-dialog .ui-dialog__title { font-size: 20px; }
 .agent-context-pipeline-dialog .ui-dialog__description { max-width: 760px; font-size: 13px; line-height: 1.5; }
@@ -891,6 +897,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-review-dialog__actions { display: grid; grid-template-columns: 1fr; }
   .agent-review-dialog__actions .ui-button { width: 100%; justify-content: center; }
   .ui-dialog.agent-context-pipeline-dialog { width: calc(100vw - 12px); height: 100dvh; max-height: none; }
+  .agent-context-pipeline-resizer { display: none; }
   .agent-context-pipeline-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .agent-context-pipeline-layout > nav { display: flex; max-height: 86px; gap: 5px; border-right: 0; border-bottom: 1px solid var(--color-border); overflow: auto; }
   .agent-context-pipeline-layout > nav button { width: 184px; min-width: 184px; }
