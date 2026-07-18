@@ -5350,9 +5350,14 @@ def _event_ids_visible(
 ) -> bool:
     if not event_ids:
         return True
+    # Reference payloads intentionally expose at most 80 previews, but a
+    # timeline can legitimately contain more sources.  Check every source in
+    # bounded batches so the presentation cap never hides an otherwise valid
+    # timeline or weakens the forgotten/tombstoned fail-closed rule.
     visible_ids = {
         int(reference["id"])
-        for reference in _event_reference_refs(conn, event_ids)
+        for offset in range(0, len(event_ids), 80)
+        for reference in _event_reference_refs(conn, event_ids[offset : offset + 80])
     }
     return visible_ids == set(event_ids)
 

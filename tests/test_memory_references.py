@@ -144,6 +144,61 @@ class MemoryReferenceTests(unittest.TestCase):
             json.dumps(timeline, ensure_ascii=False),
         )
 
+    def test_timeline_visibility_checks_all_sources_beyond_reference_preview_cap(self) -> None:
+        event_ids = [self.safe_event_id]
+        with sqlite3.connect(self.db_path) as conn, conn:
+            conn.executemany(
+                """
+                INSERT INTO input_events(
+                    created_at_ms, source, committed_text, app, project
+                ) VALUES (?, 'manual', ?, 'com.openai.codex', ?)
+                """,
+                [
+                    (
+                        1_784_250_240_000 + index,
+                        f"可见时间线来源 {index}",
+                        self.project,
+                    )
+                    for index in range(81)
+                ],
+            )
+            event_ids.extend(
+                int(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT id FROM input_events
+                    WHERE created_at_ms BETWEEN ? AND ?
+                    ORDER BY id
+                    """,
+                    (1_784_250_240_000, 1_784_250_240_080),
+                )
+            )
+            source_json = json.dumps(event_ids, separators=(",", ":"))
+            conn.execute(
+                """
+                UPDATE daily_activity_timelines
+                SET source_event_ids_json = ?,
+                    source_event_hash = ?,
+                    event_count = ?
+                WHERE timeline_id = ?
+                """,
+                (
+                    source_json,
+                    hashlib.sha256(source_json.encode("utf-8")).hexdigest(),
+                    len(event_ids),
+                    self.timeline_id,
+                ),
+            )
+
+        timelines = self.service.management.memory_page(
+            "timelines",
+            page_request({"project": self.project, "status": "draft", "limit": 20}),
+        )["items"]
+
+        timeline = next(item for item in timelines if item["id"] == self.timeline_id)
+        self.assertEqual(timeline["eventCount"], len(event_ids))
+        self.assertEqual(len(timeline["evidenceRefs"]), 80)
+
     def test_reference_resolvers_preserve_provenance_and_redact_sensitive_text(self) -> None:
         for event_reference in (
             str(self.safe_event_id),
