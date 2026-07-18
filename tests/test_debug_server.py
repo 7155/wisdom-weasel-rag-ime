@@ -1537,6 +1537,37 @@ class DebugImeServiceTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(source, "squirrel_rime_sidecar")
 
+    def test_commit_sanitizes_final_input_capture_metadata(self) -> None:
+        digest = "b" * 64
+        committed = self.service.commit(
+            {
+                "text": "输入框里的最终几百字正文",
+                "privacyDisposition": "allowed",
+                "source": "squirrel_input_segment",
+                "captureMetadata": {
+                    "captureSource": "accessibility",
+                    "fallbackReason": "",
+                    "fieldContextChars": 312,
+                    "imeBufferChars": 2,
+                    "selectedTextSha256": f"sha256:{digest}",
+                    "selectionRule": "field_context_if_not_shorter_else_ime_buffer",
+                    "rawText": "不允许复制到元数据",
+                },
+            }
+        )
+
+        self.assertTrue(committed["ok"])
+        with closing(sqlite3.connect(self.service.config.db_path)) as conn, conn:
+            raw = conn.execute(
+                "SELECT capture_metadata_json FROM input_events WHERE committed_text = ?",
+                ("输入框里的最终几百字正文",),
+            ).fetchone()[0]
+        metadata = json.loads(raw)
+        self.assertEqual(metadata["captureSource"], "accessibility")
+        self.assertEqual(metadata["selectedTextSha256"], digest)
+        self.assertNotIn("rawText", metadata)
+        self.assertNotIn("不允许", raw)
+
     def test_foreground_write_apis_return_no_store_receipts_without_explicit_allowed(self) -> None:
         before_events = self.service.core.event_count()
         before_actions = self.service.core.action_count()

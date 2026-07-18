@@ -15,7 +15,94 @@ afterEach(() => {
 });
 
 describe('MemoryFeature relations', () => {
-  it('keeps Agent memory curation under the third memory tab instead of knowledge tasks', async () => {
+  it('reviews and approves a daily activity timeline without promoting it silently', async () => {
+    const user = userEvent.setup();
+    let status = 'draft';
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': {
+          ok: true,
+          memoryBookCount: 3,
+          memoryAtomCount: 8,
+          activityTimelineCounts: { draft: 1 },
+          roleBookRevisionCounts: { active: 1 },
+          projection: { fresh: true, retrievalDocuments: 12, backlog: 0 },
+        },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'memory.activityTimeline.get': () => ({ ok: true, timeline: activityTimeline(status) }),
+        'memory.activityTimeline.approve': (request: ControlRequest) => {
+          expect(request.body).toEqual({
+            timelineId: 'timeline:2026-07-18',
+            expectedSourceEventHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            confirmText: 'approve',
+          });
+          status = 'approved';
+          return { ok: true, decision: 'accepted', timeline: activityTimeline(status) };
+        },
+        'memory.activityTimeline.build': (request: ControlRequest) => {
+          expect(request.body).toEqual({ date: '2026-07-18' });
+          status = 'draft';
+          return { ok: true, timeline: activityTimeline(status) };
+        },
+        'memory.activityTimeline.reject': (request: ControlRequest) => {
+          expect(request.body).toEqual({
+            timelineId: 'timeline:2026-07-18',
+            reason: '时段划分需要调整',
+            confirmText: 'reject',
+          });
+          status = 'rejected';
+          return { ok: true, decision: 'rejected', timeline: activityTimeline(status) };
+        },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '时间线' }));
+    expect(await screen.findByText('实现最终输入框捕获并核对三条记忆消费路径。')).toBeInTheDocument();
+    expect(screen.getByText('2 个时段')).toBeInTheDocument();
+    expect(screen.getByText('批准前只是一份派生草案，不参与事实召回')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '批准整理' }));
+    const dialog = await screen.findByRole('dialog', { name: /批准/ });
+    await user.click(within(dialog).getByRole('button', { name: '批准并写入' }));
+
+    expect(await screen.findByText('已批准')).toBeInTheDocument();
+    expect(screen.getByText('已写入每日主题书')).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.approve')).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: '重新整理' }));
+    expect(await screen.findByText('待审核')).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.build')).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: '驳回' }));
+    const rejectDialog = await screen.findByRole('dialog', { name: '驳回当天整理' });
+    await user.type(within(rejectDialog).getByLabelText('原因'), '时段划分需要调整');
+    await user.click(within(rejectDialog).getByRole('button', { name: '确认驳回' }));
+
+    expect(await screen.findByText('已驳回')).toBeInTheDocument();
+    expect(screen.getByText('本次整理未进入长期上下文')).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.reject')).toHaveLength(1);
+  });
+
+  it('fails closed without the activity timeline read capability', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      capabilities: { routeIds: ['memory.summary', 'memory.pages'] },
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 2 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '时间线' }));
+    expect(await screen.findByText('当前服务未开放每日活动读取')).toBeInTheDocument();
+    expect(screen.queryByText('正在读取当天活动')).not.toBeInTheDocument();
+    expect(screen.queryByText('尚未生成时间线')).not.toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'memory.activityTimeline.get')).toBe(false);
+  });
+
+  it('keeps Agent memory curation under the 整理 tab instead of knowledge tasks', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
@@ -751,6 +838,52 @@ function renderMemory(transport: MockControlTransport) {
       </TooltipProvider>
     </MemoryRouter>,
   );
+}
+
+function activityTimeline(status: string): Record<string, unknown> {
+  const start = new Date(2026, 6, 18, 9, 0).getTime();
+  const segment = (position: number, app: string, summary: string) => ({
+    segmentId: `segment:${position}`,
+    position,
+    app,
+    sourceKinds: ['squirrel_input_segment', 'pi_agent'],
+    contextGroupIds: ['group:personal-context'],
+    startMs: start + position * 3_600_000,
+    endMs: start + (position + 1) * 3_600_000,
+    eventCount: 4,
+    sourceEventIds: [position + 1],
+    sourceEventHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    summary,
+    redactedEventCount: 0,
+  });
+  return {
+    schemaVersion: 'rag-ime.daily-activity-timeline.v1',
+    timelineId: 'timeline:2026-07-18',
+    project: 'wisdom-weasel-rag-ime',
+    date: '2026-07-18',
+    timezone: 'Asia/Shanghai',
+    status,
+    sourceEventIds: [1, 2],
+    sourceEventHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    segments: [
+      segment(0, 'com.openai.codex', '实现最终输入框捕获并核对三条记忆消费路径。'),
+      segment(1, 'com.mitchellh.ghostty', '运行后端、Web 与输入法验证。'),
+    ],
+    summary: '当天完成个人上下文主链改造与验证。',
+    eventCount: 8,
+    segmentCount: 2,
+    approvedBookId: status === 'approved' ? 'book:daily:2026-07-18' : '',
+    approvedBy: status === 'approved' ? 'control-center-user' : '',
+    approvedAtMs: status === 'approved' ? start + 10_000 : 0,
+    createdAtMs: start,
+    updatedAtMs: start + 20_000,
+    policy: {
+      derivedFromInputEvents: true,
+      longTermFact: false,
+      automaticPromotion: false,
+      explicitApprovalRequired: true,
+    },
+  };
 }
 
 function memoryCurationStatus(): Record<string, unknown> {

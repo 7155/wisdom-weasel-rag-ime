@@ -23,6 +23,7 @@ class InputEvent:
     tags: tuple[str, ...] = ()
     context_group_id: str = ""
     context_group_level: str = "app"
+    capture_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.privacy_disposition not in {"allowed", "sensitive", "unknown"}:

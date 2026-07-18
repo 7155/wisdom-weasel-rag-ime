@@ -58,6 +58,7 @@ function createPreviewTransport(): MockControlTransport {
   let nextWakeScheduleId = 1;
   let previewEvidenceDisposition = 'not_for_memory';
   let previewMemoryRunStatus = 'draft';
+  const previewTimelineStatuses = new Map<string, string>();
   const previewMemorySelections = new Map<number, boolean>([[1, true], [2, false], [3, true]]);
   const sessions: Record<string, unknown>[] = [
     previewSession('session-preview', '控制中心迁移', 'zhiyou-v1', Date.now()),
@@ -69,7 +70,46 @@ function createPreviewTransport(): MockControlTransport {
       .filter((pathId) => !controlRoute(pathId).subscription)
       .map((pathId) => [pathId, previewResponse(pathId)]),
   ) as Partial<Record<ControlPathId, MockRouteHandler>>;
-  routes['memory.summary'] = () => previewMemorySummary();
+  routes['memory.summary'] = () => previewMemorySummary(previewTimelineStatuses);
+  routes['memory.activityTimeline.get'] = (request: ControlRequest) => {
+    const date = stringValue(record(request.query).date) || new Date().toISOString().slice(0, 10);
+    return {
+      ok: true,
+      timeline: previewActivityTimeline(date, previewTimelineStatuses.get(date) || 'draft'),
+    };
+  };
+  routes['memory.activityTimeline.build'] = (request: ControlRequest) => {
+    const date = stringValue(record(request.body).date) || new Date().toISOString().slice(0, 10);
+    previewTimelineStatuses.set(date, 'draft');
+    return {
+      schemaVersion: 'rag-ime.daily-activity-timeline-build.v1',
+      ok: true,
+      created: true,
+      timeline: previewActivityTimeline(date, 'draft'),
+    };
+  };
+  routes['memory.activityTimeline.approve'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const date = previewTimelineDate(stringValue(body.timelineId));
+    previewTimelineStatuses.set(date, 'approved');
+    return {
+      schemaVersion: 'rag-ime.daily-activity-timeline-decision.v1',
+      ok: true,
+      decision: 'accepted',
+      timeline: previewActivityTimeline(date, 'approved'),
+    };
+  };
+  routes['memory.activityTimeline.reject'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const date = previewTimelineDate(stringValue(body.timelineId));
+    previewTimelineStatuses.set(date, 'rejected');
+    return {
+      schemaVersion: 'rag-ime.daily-activity-timeline-decision.v1',
+      ok: true,
+      decision: 'rejected',
+      timeline: previewActivityTimeline(date, 'rejected'),
+    };
+  };
   routes['memory.graph.get'] = (request: ControlRequest) =>
     previewMemoryGraph(stringValue(record(request.query).plane) === 'tags' ? 'tags' : 'groups');
   routes['memory.entity.get'] = (request: ControlRequest) => previewMemoryEntity(
@@ -791,7 +831,11 @@ function previewObservationSnapshot(filters: Record<string, unknown> = {}) {
   };
 }
 
-function previewMemorySummary(): Record<string, unknown> {
+function previewMemorySummary(timelineStatuses = new Map<string, string>()): Record<string, unknown> {
+  const today = new Date().toISOString().slice(0, 10);
+  const currentTimelineStatus = timelineStatuses.get(today) || 'draft';
+  const activityTimelineCounts: Record<string, number> = { approved: 11 };
+  activityTimelineCounts[currentTimelineStatus] = (activityTimelineCounts[currentTimelineStatus] ?? 0) + 1;
   return {
     ok: true,
     runtimeRevision: 7,
@@ -800,16 +844,112 @@ function previewMemorySummary(): Record<string, unknown> {
     blockedFragmentCount: 4_887,
     memoryBookCount: 15,
     memoryAtomCount: 123,
+    memoryAtomArchivedCount: 21,
+    memoryAtomSourceArchiveCount: 44,
     memoryTagCount: 93,
     pendingCompileEvents: 0,
     evidenceSourceCount: 2,
     forgottenSourceCount: 1,
     needsReviewSourceCount: 0,
+    currentAtomCount: 123,
+    historicalAtomCount: 21,
+    agentEvidenceCount: 142,
+    agentEvidenceTombstonedCount: 4,
+    roleBookRevisionCounts: { active: 3, draft: 1, superseded: 8 },
+    activityTimelineCounts,
+    governanceProposalCounts: { preview: 2, applied: 14, rolled_back: 1 },
+    latestActivityTimeline: {
+      date: today,
+      status: currentTimelineStatus,
+      updatedAtMs: Date.now() - 90_000,
+    },
+    projection: {
+      fresh: true,
+      backlog: 0,
+      dead: 0,
+      retrievalDocuments: 151,
+      checkpointCaughtUp: true,
+      vectorCoverage: 1,
+    },
     owners: [
       { ownerKind: 'user', ownerId: 'default', itemCount: 124 },
       { ownerKind: 'agent', ownerId: 'zhiyou-v1', itemCount: 16 },
     ],
   };
+}
+
+function previewActivityTimeline(date: string, status: string): Record<string, unknown> {
+  const dayStart = localPreviewDayStart(date);
+  const hash = '8d4a2d9c1fc84d408f8fe9a314f34c767b28e32e5b6461d73cc8e22d2209dc11';
+  const segments = [
+    previewActivitySegment('planning', 0, 'com.openai.codex', dayStart + 8.5 * 3_600_000, dayStart + 10.1 * 3_600_000, 18, '梳理个人上下文核心的治理边界，并核对 Atom、Book 与 Role Book 的职责。', ['pi_agent'], ['group:personal-context']),
+    previewActivitySegment('research', 1, 'com.google.Chrome', dayStart + 10.2 * 3_600_000, dayStart + 11.3 * 3_600_000, 12, '查阅记忆评测与长期记忆更新资料，补充验证条件。', ['browser_extension', 'squirrel_input_segment'], ['group:memory-evaluation']),
+    previewActivitySegment('implementation', 2, 'com.microsoft.VSCode', dayStart + 13.2 * 3_600_000, dayStart + 15.8 * 3_600_000, 31, '实现最终输入框捕获、投影状态和每日时间线管理界面。', ['squirrel_input_segment', 'pi_agent'], ['group:input-method', 'group:personal-context']),
+    previewActivitySegment('verification', 3, 'com.mitchellh.ghostty', dayStart + 16 * 3_600_000, dayStart + 17.1 * 3_600_000, 14, '运行后端、Web 与输入法集成测试，核对三条记忆消费路径。', ['squirrel_input_segment'], ['group:verification']),
+  ];
+  return {
+    schemaVersion: 'rag-ime.daily-activity-timeline.v1',
+    timelineId: `timeline:${date}`,
+    project: 'wisdom-weasel-rag-ime',
+    date,
+    timezone: 'Asia/Shanghai',
+    status,
+    sourceEventIds: segments.flatMap((segment) => segment.sourceEventIds as number[]),
+    sourceEventHash: hash,
+    segments,
+    summary: '当天围绕个人上下文架构完成了资料核对、输入链改造、时间线前端和端到端验证。',
+    eventCount: segments.reduce((sum, segment) => sum + Number(segment.eventCount), 0),
+    segmentCount: segments.length,
+    approvedBookId: status === 'approved' ? `book:daily:${date}` : '',
+    approvedBy: status === 'approved' ? 'control-center-user' : '',
+    approvedAtMs: status === 'approved' ? Date.now() - 30_000 : 0,
+    createdAtMs: dayStart + 18 * 3_600_000,
+    updatedAtMs: Date.now() - 30_000,
+    policy: {
+      derivedFromInputEvents: true,
+      longTermFact: false,
+      automaticPromotion: false,
+      explicitApprovalRequired: true,
+    },
+  };
+}
+
+function previewActivitySegment(
+  id: string,
+  position: number,
+  app: string,
+  startMs: number,
+  endMs: number,
+  eventCount: number,
+  summary: string,
+  sourceKinds: string[],
+  contextGroupIds: string[],
+): Record<string, unknown> {
+  const firstEventId = 10_001 + position * 100;
+  return {
+    segmentId: `segment:${id}`,
+    position,
+    app,
+    sourceKinds,
+    contextGroupIds,
+    startMs: Math.round(startMs),
+    endMs: Math.round(endMs),
+    eventCount,
+    sourceEventIds: [firstEventId, firstEventId + 1],
+    sourceEventHash: '24d18e6ea9f1d8dd36b957d3948dc6948c00c86173691104be5b3e24358da8bb',
+    summary,
+    redactedEventCount: position === 1 ? 2 : 0,
+  };
+}
+
+function previewTimelineDate(timelineId: string): string {
+  const value = timelineId.startsWith('timeline:') ? timelineId.slice('timeline:'.length) : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : new Date().toISOString().slice(0, 10);
+}
+
+function localPreviewDayStart(date: string): number {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day).getTime();
 }
 
 function previewMemoryCatalogPage(kind: string): Record<string, unknown> {

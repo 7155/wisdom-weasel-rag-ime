@@ -198,6 +198,53 @@ class ControlRoutePolicyTests(unittest.TestCase):
                     ControlAccessContext.native(),
                 )
 
+    def test_role_book_review_allows_all_four_governed_proposal_groups(self) -> None:
+        selection = {
+            "roleId": "zhiyou-v1",
+            "roleVersion": "1",
+            "revisionId": "",
+            "draftId": "role-book-draft:1",
+            "traitIndexes": [0],
+            "capabilityIndexes": [1],
+            "lessonIndexes": [2],
+            "commitmentIndexes": [3],
+        }
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        for path_id, body in (
+            (ControlPathId.AGENT_ROLE_BOOK_ACTIVATION_PREVIEW.value, selection),
+            (
+                ControlPathId.AGENT_ROLE_BOOK_ACTIVATION_APPLY.value,
+                {
+                    **selection,
+                    "previewToken": "preview-token",
+                    "payloadSha256": "sha256:payload",
+                    "confirmText": "apply",
+                },
+            ),
+        ):
+            with self.subTest(path_id=path_id):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id=f"request-{path_id}",
+                        path_id=path_id,
+                        body=body,
+                    ),
+                    context,
+                )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-role-book-injected",
+                    path_id=ControlPathId.AGENT_ROLE_BOOK_ACTIVATION_PREVIEW.value,
+                    body={**selection, "proposalText": "client-owned"},
+                ),
+                context,
+            )
+
     def test_configuration_file_migration_routes_are_strict_and_local_only(self) -> None:
         requests = (
             ControlRequest(

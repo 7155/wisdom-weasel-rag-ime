@@ -67,6 +67,27 @@ class AgentRoleBookControlTests(unittest.TestCase):
             catalog["dailyDrafts"][0]["draftId"],
             self.daily_draft["draftId"],
         )
+        self.assertEqual(
+            catalog["activationPolicy"]["mutableSections"],
+            [
+                "personality",
+                "capabilities",
+                "lessonsAndLimits",
+                "activeCommitments",
+            ],
+        )
+        self.assertEqual(
+            catalog["dailyDrafts"][0]["lessonProposals"][0]["text"],
+            "不要把未经验证的推断写成事实",
+        )
+        self.assertEqual(
+            catalog["dailyDrafts"][0]["commitmentProposals"][0]["text"],
+            "下一轮先运行聚焦回归测试",
+        )
+        self.assertEqual(
+            catalog["dailyDrafts"][0]["proposalDiagnostics"]["status"],
+            "completed",
+        )
 
         selection = {
             "roleId": "zhiyou-v1",
@@ -75,10 +96,14 @@ class AgentRoleBookControlTests(unittest.TestCase):
             "draftId": self.daily_draft["draftId"],
             "traitIndexes": [0],
             "capabilityIndexes": [0],
+            "lessonIndexes": [0],
+            "commitmentIndexes": [0],
         }
         preview = self.control.activation_preview(selection)
         self.assertTrue(preview["ok"])
         self.assertEqual(preview["summary"]["risk"], "R1")
+        self.assertIn("采用 1 条经验与边界", preview["summary"]["items"])
+        self.assertIn("采用 1 条当前承诺", preview["summary"]["items"])
 
         applied = self.control.activation_apply(
             {
@@ -98,6 +123,14 @@ class AgentRoleBookControlTests(unittest.TestCase):
         self.assertEqual(
             revision["sections"]["capabilities"][0]["text"],
             "能修复 SQLite 事务恢复问题",
+        )
+        self.assertEqual(
+            revision["sections"]["lessonsAndLimits"][0]["text"],
+            "不要把未经验证的推断写成事实",
+        )
+        self.assertEqual(
+            revision["sections"]["activeCommitments"][0]["text"],
+            "下一轮先运行聚焦回归测试",
         )
 
         old_after = self.sessions.get(str(self.old_session["id"]))
@@ -153,6 +186,8 @@ class AgentRoleBookControlTests(unittest.TestCase):
                 "draftId": self.daily_draft["draftId"],
                 "traitIndexes": [0],
                 "capabilityIndexes": [],
+                "lessonIndexes": [],
+                "commitmentIndexes": [],
                 "permissions": ["admin"],
             }
         )
@@ -166,6 +201,8 @@ class AgentRoleBookControlTests(unittest.TestCase):
             "draftId": self.daily_draft["draftId"],
             "traitIndexes": [],
             "capabilityIndexes": [0],
+            "lessonIndexes": [],
+            "commitmentIndexes": [],
         }
         preview = self.control.activation_preview(selection)
         applied = self.control.activation_apply(
@@ -180,8 +217,31 @@ class AgentRoleBookControlTests(unittest.TestCase):
         sections = applied["result"]["revision"]["sections"]
         self.assertEqual(sections["personality"], [])
         self.assertEqual(len(sections["capabilities"]), 1)
+        self.assertEqual(sections["lessonsAndLimits"], [])
+        self.assertEqual(sections["activeCommitments"], [])
         encoded = json.dumps(applied, ensure_ascii=False)
         self.assertNotIn("不应被采用的另一条特征", encoded)
+        self.assertNotIn("不要把未经验证的推断写成事实", encoded)
+        self.assertNotIn("下一轮先运行聚焦回归测试", encoded)
+
+    def test_daily_lesson_and_commitment_indexes_are_range_checked(self) -> None:
+        for field in ("lessonIndexes", "commitmentIndexes"):
+            with self.subTest(field=field):
+                selection = {
+                    "roleId": "zhiyou-v1",
+                    "roleVersion": "1",
+                    "revisionId": "",
+                    "draftId": self.daily_draft["draftId"],
+                    "traitIndexes": [],
+                    "capabilityIndexes": [],
+                    "lessonIndexes": [99] if field == "lessonIndexes" else [],
+                    "commitmentIndexes": (
+                        [99] if field == "commitmentIndexes" else []
+                    ),
+                }
+                preview = self.control.activation_preview(selection)
+                self.assertFalse(preview["ok"])
+                self.assertEqual(preview["errorCode"], "invalid_request")
 
     def test_daily_draft_can_be_deferred_without_changing_active_revision(self) -> None:
         result = self.control.decide_daily_draft(
@@ -394,11 +454,39 @@ class AgentRoleBookControlTests(unittest.TestCase):
                         "reviewRequired": True,
                     }
                 ],
+                "lessonProposals": [
+                    {
+                        "text": "不要把未经验证的推断写成事实",
+                        "confidence": 0.92,
+                        "sourceEvidenceIds": [evidence_id],
+                        "reviewRequired": True,
+                    }
+                ],
+                "commitmentProposals": [
+                    {
+                        "text": "下一轮先运行聚焦回归测试",
+                        "confidence": 0.88,
+                        "sourceEvidenceIds": [evidence_id],
+                        "reviewRequired": True,
+                    }
+                ],
             },
             "policy": {
                 "defaultApply": False,
                 "safeAutoApplyFields": ["recentWork"],
-                "reviewRequiredFields": ["traits", "capabilities"],
+                "reviewRequiredFields": [
+                    "traits",
+                    "capabilities",
+                    "lessonsAndLimits",
+                    "activeCommitments",
+                ],
+            },
+            "proposalDiagnostics": {
+                "status": "completed",
+                "provider": "fixture",
+                "inputChars": 128,
+                "acceptedProposalCount": 4,
+                "rejectedProposalCount": 0,
             },
             "createdAtMs": 130,
         }

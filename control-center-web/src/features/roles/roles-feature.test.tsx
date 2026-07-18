@@ -91,6 +91,8 @@ describe('Roles experience', () => {
         createdAtMs: 1_800_000_000_000,
         traitProposals: [{ text: '沟通时先给出具体例子', confidence: 0.9, sourceEvidenceIds: ['evidence:1'] }],
         capabilityProposals: [{ text: '能修复 SQLite 事务恢复问题', confidence: 0.95, sourceEvidenceIds: ['evidence:1'] }],
+        lessonProposals: [{ text: '工具返回缺失字段时先验证边界契约', confidence: 0.88, sourceEvidenceIds: ['evidence:1'] }],
+        commitmentProposals: [{ text: '下一轮发布前完成端到端回归', confidence: 0.92, sourceEvidenceIds: ['evidence:1'] }],
         decision: null,
       }],
     };
@@ -130,9 +132,20 @@ describe('Roles experience', () => {
 
     await screen.findByText(persona.tagline);
     await user.click(screen.getByRole('radio', { name: '角色书' }));
-    await user.click(await screen.findByRole('checkbox', { name: /沟通时先给出具体例子/ }));
+    const lesson = await screen.findByRole('checkbox', { name: /工具返回缺失字段时先验证边界契约/ });
+    const previewButton = screen.getByRole('button', { name: '预览启用' });
+    expect(previewButton).toBeDisabled();
+    expect(screen.getByRole('group', { name: '经验与边界' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '当前承诺' })).toBeInTheDocument();
+    await user.click(lesson);
+    expect(previewButton).toBeEnabled();
+    await user.click(lesson);
+    expect(previewButton).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /沟通时先给出具体例子/ }));
     await user.click(screen.getByRole('checkbox', { name: /能修复 SQLite 事务恢复问题/ }));
-    await user.click(screen.getByRole('button', { name: '预览启用' }));
+    await user.click(lesson);
+    await user.click(screen.getByRole('checkbox', { name: /下一轮发布前完成端到端回归/ }));
+    await user.click(previewButton);
 
     const dialog = await screen.findByRole('dialog', { name: '启用角色书修订' });
     expect(dialog).toHaveTextContent('R1 确认');
@@ -149,8 +162,14 @@ describe('Roles experience', () => {
       draftId: 'role-book-draft:1',
       traitIndexes: [0],
       capabilityIndexes: [0],
+      lessonIndexes: [0],
+      commitmentIndexes: [0],
     });
     expect(transport.requests.find((call) => call.request.pathId === 'agent.roleBook.activation.apply')?.request.body).toMatchObject({
+      traitIndexes: [0],
+      capabilityIndexes: [0],
+      lessonIndexes: [0],
+      commitmentIndexes: [0],
       previewToken: 'preview-role-book',
       payloadSha256: 'sha256:role-book',
       confirmText: 'apply',

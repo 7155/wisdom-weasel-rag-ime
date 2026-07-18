@@ -101,7 +101,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("rememberRagImeActiveInputFragment(string)", patch_text)
         self.assertIn("removeLastRagImeActiveInputCharacter()", patch_text)
         self.assertIn('source: "squirrel_input_segment"', patch_text)
-        self.assertIn('tags: ["input-segment", "finalized", "complete-input"]', patch_text)
+        self.assertIn('"input-segment",', patch_text)
+        self.assertIn('"finalized",', patch_text)
+        self.assertIn('"complete-input",', patch_text)
+        self.assertIn('"capture:\\(captureMetadata.captureSource)"', patch_text)
         self.assertIn('contextSource: activeInput.isEmpty', patch_text)
         self.assertIn('"active_input_buffer"', patch_text)
         refresh_start = patch_text.index("func refreshRagImeSidecar(")
@@ -397,6 +400,30 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertNotIn('"username", "user name"', patch_text)
         self.assertNotIn('"one-time", "one time", "otp"', patch_text)
         self.assertIn("func enforceRagImeFastPrivacyGuard() -> Bool", patch_text)
+        self.assertIn("func ragImeFullTextSHA256(_ text: String) -> String", patch_text)
+        self.assertIn("selectedTextSha256: ragImeFullTextSHA256(selectedText)", patch_text)
+        self.assertIn("let documentLength = client.length()", patch_text)
+        self.assertIn(
+            "let length = min(documentLength, ragImeFinalizedFieldContextLimit)",
+            patch_text,
+        )
+        self.assertIn(
+            "afterLimit: self.ragImeFinalizedFieldContextLimit",
+            patch_text,
+        )
+        self.assertIn(
+            "else if !compactImeText.isEmpty && compactFieldText.count < compactImeText.count",
+            patch_text,
+        )
+        self.assertIn('fallbackReason = "field_context_shorter_than_ime"', patch_text)
+        self.assertIn("selectedText = compactFieldText", patch_text)
+        self.assertIn(
+            "ragImeCommittedContext = boundedRagImeCommittedContext(text)",
+            patch_text,
+        )
+        self.assertIn("func boundedRagImeFinalizedAccessibilityContext(", patch_text)
+        self.assertIn("String(before.suffix(beforeBudget))", patch_text)
+        self.assertIn("String(after.prefix(afterBudget))", patch_text)
         self.assertIn(
             'RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_ax_not_trusted")',
             patch_text,
@@ -891,6 +918,26 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             active_context.index("ragImeForegroundContextResolver.captureWindowContext("),
             active_context.index("DispatchQueue.main.async"),
         )
+        finalized_input = section(
+            "func finalizeRagImeActiveInputBuffer(",
+            "func removeLastRagImeCommittedContextCharacterIfNoComposition(",
+        )
+        self.assertIn("ragImeForegroundContextQueue.async", finalized_input)
+        self.assertLess(
+            finalized_input.index("ragImeFinalizedFieldContextFromInputClient()"),
+            finalized_input.index("ragImeForegroundContextQueue.async"),
+        )
+        self.assertIn("ragImeSelectedTextProvider.sensitiveFieldStatus(", finalized_input)
+        self.assertIn("ragImeForegroundContextResolver.captureFromAccessibility(", finalized_input)
+        self.assertIn("DispatchQueue.main.async", finalized_input)
+        self.assertLess(
+            finalized_input.index("ragImeForegroundContextQueue.async"),
+            finalized_input.index("ragImeSelectedTextProvider.sensitiveFieldStatus("),
+        )
+        self.assertLess(
+            finalized_input.index("ragImeForegroundContextResolver.captureFromAccessibility("),
+            finalized_input.index("DispatchQueue.main.async"),
+        )
 
         controller_start = patch_text.index("diff --git a/sources/SquirrelInputController.swift")
         controller_text = patch_text[controller_start:]
@@ -901,7 +948,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         ]
         self.assertEqual(
             full_status_calls,
-            [next(line for line in probe.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line)],
+            [
+                next(line for line in probe.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
+                next(line for line in finalized_input.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
+            ],
         )
         for full_ax_entrypoint in (
             "ragImeSelectedTextProvider.captureForegroundTextForSidecar(",
@@ -915,9 +965,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             active_context_calls = [
                 line for line in active_context.splitlines() if full_ax_entrypoint in line
             ]
+            finalized_input_calls = [
+                line for line in finalized_input.splitlines() if full_ax_entrypoint in line
+            ]
             self.assertCountEqual(
                 controller_calls,
-                [*probe_calls, *active_context_calls],
+                [*probe_calls, *active_context_calls, *finalized_input_calls],
                 f"{full_ax_entrypoint} must only be invoked by a dedicated background AX queue",
             )
 

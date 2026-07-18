@@ -8,7 +8,7 @@ from unittest.mock import patch
 from rag_ime.active_rag_models import ActiveRagFrame
 from rag_ime.active_rag_retriever import _relevant_active_rag_candidates, retrieve_active_rag_evidence
 from rag_ime.embeddings import HashingEmbeddingProvider
-from rag_ime.hybrid_rag_models import HybridRagCandidate
+from rag_ime.hybrid_rag_models import HybridRagCandidate, MemoryHit
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 
 
@@ -71,6 +71,41 @@ class ActiveRagRetrieverTests(unittest.TestCase):
         )
 
         self.assertEqual(_relevant_active_rag_candidates([lexical, semantic], frame=frame), [lexical, semantic])
+
+    def test_active_rag_keeps_atom_body_even_without_ime_surface_hint(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-active-atom-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "active-rag.sqlite")
+            core.initialize()
+            frame = ActiveRagFrame.from_text("输入法现在使用什么模型", intent="answer", max_candidates=1)
+            hit = MemoryHit(
+                hit_id="hit:atom:model",
+                doc_id="atom:current-model",
+                doc_type="atom",
+                source_id="atom:current-model",
+                text="输入法当前使用 100M 自训练模型，旧 0.8B 配置已经停用。",
+                surface_hints=(),
+                source_type="memory",
+                source_lane="bm25_raw",
+                score=0.91,
+                confidence=0.93,
+                tags=("输入法", "模型"),
+                memory_ids=("atom:current-model",),
+                atom_ids=("atom:current-model",),
+                book_ids=(),
+                evidence_event_ids=(7,),
+                evidence_preview="当前模型事实",
+                metadata={"lanes": ["bm25_raw"], "rawScores": {"bm25_raw": -3.2}},
+            )
+
+            with patch(
+                "rag_ime.active_rag_retriever._retrieve_candidates_read_only",
+                return_value=[hit],
+            ):
+                evidence = retrieve_active_rag_evidence(core, frame)
+
+        self.assertEqual(len(evidence), 1)
+        self.assertIn("100M 自训练模型", evidence[0].text)
+        self.assertEqual(evidence[0].atom_ids, ("atom:current-model",))
 
 
 def _candidate(*, text: str, lanes: list[str], raw_scores: dict[str, float]) -> HybridRagCandidate:

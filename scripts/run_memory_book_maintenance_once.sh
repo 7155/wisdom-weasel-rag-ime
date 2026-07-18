@@ -143,9 +143,9 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export RAG_IME_DEEPSEEK_REASONING_EFFORT="${RAG_IME_DEEPSEEK_REASONING_EFFORT:-low}"
 export RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"
 
-# Personal Context is deterministic and role-scoped. It produces reviewable
-# User Memory, Role Book and Activity Timeline drafts independently of the
-# model-backed owner curator below.
+# Personal Context is role-scoped. Timeline/digest construction is
+# deterministic; when DeepSeek is configured it can also create review-only
+# Role Book proposals. This path remains independent of owner curation below.
 PERSONAL_CONTEXT_STATUS=0
 if [[ "$PERSONAL_CONTEXT_ENABLED" == "1" || "$PERSONAL_CONTEXT_ENABLED" == "true" || "$PERSONAL_CONTEXT_ENABLED" == "TRUE" || "$PERSONAL_CONTEXT_ENABLED" == "yes" ]]; then
   set +e

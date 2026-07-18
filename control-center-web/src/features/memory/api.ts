@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import type { MutationAvailability } from '@/features/overview/management-mutation';
@@ -37,6 +37,7 @@ export const memoryQueryKeys = {
   curationStatus: () => [...memoryQueryKeys.root, 'curation-status'] as const,
   curationRun: (runId: string) => [...memoryQueryKeys.root, 'curation-run', runId] as const,
   capabilities: () => [...memoryQueryKeys.root, 'capabilities'] as const,
+  activityTimeline: (date: string) => [...memoryQueryKeys.root, 'activity-timeline', date] as const,
 };
 
 export const memoryBookArchivePathIds = {
@@ -82,6 +83,75 @@ export function useMemoryQueries(
     getNextPageParam: (lastPage) => stringValue(asRecord(lastPage).nextCursor) || undefined,
   });
   return { pages, summary, transportKind: transport.kind };
+}
+
+export function useActivityTimeline(date: string, enabled: boolean) {
+  const transport = useControlTransport();
+  const queryClient = useQueryClient();
+  const queryKey = memoryQueryKeys.activityTimeline(date);
+  const capabilities = useQuery({
+    queryKey: memoryQueryKeys.capabilities(),
+    queryFn: () => transport.capabilities(),
+    staleTime: 30_000,
+  });
+  const routeIds = new Set((capabilities.data?.routeIds ?? []) as readonly string[]);
+  const canRead = routeIds.has('memory.activityTimeline.get');
+  const canWrite = [
+    'memory.activityTimeline.build',
+    'memory.activityTimeline.approve',
+    'memory.activityTimeline.reject',
+  ].every((pathId) => routeIds.has(pathId));
+  const timeline = useQuery({
+    enabled: enabled && Boolean(date) && canRead,
+    queryKey,
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'memory.activityTimeline.get',
+      query: { date },
+      signal,
+    }),
+  });
+  const settle = async (payload: unknown) => {
+    const response = asRecord(payload);
+    const nextTimeline = asRecord(response.timeline);
+    if (Object.keys(nextTimeline).length) {
+      const responseDate = stringValue(nextTimeline.date) || date;
+      queryClient.setQueryData(
+        memoryQueryKeys.activityTimeline(responseDate),
+        { ok: true, timeline: nextTimeline },
+      );
+    } else {
+      await queryClient.invalidateQueries({ queryKey });
+    }
+    await queryClient.invalidateQueries({ queryKey: memoryQueryKeys.summary() });
+  };
+  const build = useMutation({
+    mutationFn: (targetDate: string) => transport.request({
+      pathId: 'memory.activityTimeline.build',
+      body: { date: targetDate },
+    }),
+    onSuccess: settle,
+  });
+  const approve = useMutation({
+    mutationFn: ({ timelineId, sourceEventHash }: { timelineId: string; sourceEventHash: string }) =>
+      transport.request({
+        pathId: 'memory.activityTimeline.approve',
+        body: {
+          timelineId,
+          expectedSourceEventHash: sourceEventHash,
+          confirmText: 'approve',
+        },
+      }),
+    onSuccess: settle,
+  });
+  const reject = useMutation({
+    mutationFn: ({ timelineId, reason }: { timelineId: string; reason: string }) =>
+      transport.request({
+        pathId: 'memory.activityTimeline.reject',
+        body: { timelineId, reason, confirmText: 'reject' },
+      }),
+    onSuccess: settle,
+  });
+  return { approve, build, canRead, canWrite, capabilities, reject, timeline };
 }
 
 export function useMemoryGraphQueries(

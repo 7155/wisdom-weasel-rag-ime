@@ -7,6 +7,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
+from rag_ime.activity_timeline import DailyActivityTimelineStore
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -18,6 +19,10 @@ from rag_ime.memory_book_compiler import (
 )
 from rag_ime.models import InputEvent
 from rag_ime.owner_memory_curation import OwnerMemoryCurator
+from rag_ime.personal_context import (
+    AgentMemoryEvidenceStore,
+    local_date_for_timestamp,
+)
 
 
 class _FakeOrganizer:
@@ -179,6 +184,53 @@ class _OmittingOrganizer:
             ],
             "topicBooks": [],
             "memoryAtoms": [],
+        }
+
+
+class _TimelineOnlyFactOrganizer:
+    provider_name = "fixture"
+
+    def __init__(self, timeline_event_id: int) -> None:
+        self.timeline_event_id = timeline_event_id
+        self.calls: list[dict[str, object]] = []
+
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        del project, owner_kind, owner_id, instruction
+        self.calls.append(bundle)
+        inputs = [dict(item) for item in bundle.get("inputs") or []]
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": "fixture",
+            "model": "fixture-memory",
+            "sourceDecisions": [
+                {
+                    "sourceRef": item["sourceRef"],
+                    "disposition": "remember",
+                    "reasonCode": "durable_user_intent",
+                    "confidence": 0.9,
+                }
+                for item in inputs
+            ],
+            "topicBooks": [],
+            "memoryAtoms": [
+                {
+                    "canonicalText": "仅由活动时间线猜测出的完成事实",
+                    "summary": "不应通过治理",
+                    "kind": "project_fact",
+                    "sourceEventIds": [self.timeline_event_id],
+                    "confidence": 0.9,
+                    "qualityScore": 0.9,
+                    "directCandidateAllowed": False,
+                }
+            ],
         }
 
 
@@ -419,6 +471,96 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             created_at_ms=1_100,
         )
         self.assertEqual(restored["source"]["disposition"], "pending")
+
+    def test_daily_model_sees_dialogue_and_timeline_but_timeline_cannot_prove_fact(
+        self,
+    ) -> None:
+        timestamp = 1_784_318_400_000
+        checkpoint = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:joint-context",
+            turn_id="turn:joint-context",
+            text="继续整理输入法个人记忆",
+            created_at_ms=timestamp,
+        )
+        evidence = AgentMemoryEvidenceStore(
+            self.db_path,
+            project="wisdom-weasel-rag-ime",
+        )
+        evidence.record_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="evidence:user:joint-context",
+            turn_id="turn:joint-context",
+            role_id="zhiyou-v1",
+            text="继续整理输入法个人记忆",
+            occurred_at_ms=timestamp,
+        )
+        evidence.record_assistant_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="evidence:assistant:joint-context",
+            turn_id="turn:joint-context",
+            role_id="zhiyou-v1",
+            text="我会先验证联合上下文，再生成待审草案。",
+            occurred_at_ms=timestamp + 1_000,
+        )
+        core = LocalSqliteCoreClient(self.db_path)
+        timeline_event_id = int(
+            core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=timestamp + 2_000,
+                    source="squirrel_commit",
+                    committed_text="在 TextEdit 实现时间线过滤",
+                    privacy_disposition="allowed",
+                    app="com.apple.TextEdit",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        timeline_date = local_date_for_timestamp(timestamp)
+        DailyActivityTimelineStore(
+            self.db_path,
+            project="wisdom-weasel-rag-ime",
+        ).build_draft(timeline_date, generated_at_ms=timestamp + 3_000)
+        organizer = _TimelineOnlyFactOrganizer(timeline_event_id)
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            clock_ms=lambda: timestamp + 10_000,
+            initial_settle_ms=0,
+        )
+
+        result = curator.run_due(current_ms=timestamp + 10_000)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["ranScopeCount"], 1)
+        self.assertEqual(result["results"][0]["runStatus"], "idle")
+        self.assertEqual(result["results"][0]["diffCount"], 0)
+        bundle = organizer.calls[0]
+        self.assertIn("在 TextEdit 实现时间线过滤", bundle["activityContext"]["summary"])
+        messages = bundle["agentConversationContext"]["messages"]
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertIn("联合上下文", messages[1]["text"])
+        serialized_activity = json.dumps(bundle["activityContext"], ensure_ascii=False)
+        serialized_conversation = json.dumps(
+            bundle["agentConversationContext"], ensure_ascii=False
+        )
+        self.assertNotIn("sourceEventIds", serialized_activity)
+        self.assertNotIn("evidenceId", serialized_conversation)
+        legal_ids = bundle["legalSourceEventIds"]
+        self.assertEqual(
+            legal_ids,
+            [int(checkpoint["source"]["inputEventId"])],
+        )
+        self.assertNotIn(timeline_event_id, legal_ids)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_cleanup_diffs"
+                ).fetchone()[0],
+                0,
+            )
 
     def test_needs_review_source_stays_ahead_of_cursor_for_next_daily_pass(self) -> None:
         first = self.sources.checkpoint_user_message(

@@ -5120,6 +5120,7 @@ class DebugImeService:
             source=_string(payload.get("source")) or "debug_page_commit",
             context_group_id=_string(payload.get("contextGroupId")),
             context_group_level=_string(payload.get("contextGroupLevel")) or "app",
+            capture_metadata=_input_capture_metadata(payload.get("captureMetadata")),
         )
         self._clear_rime_cache()
         stored = bool(event_id) and not event_id.startswith("skipped:")
@@ -8773,6 +8774,47 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _input_capture_metadata(value: object) -> dict[str, object]:
+    """Keep only bounded, text-free provenance for a finalized input."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    source = compact_whitespace(_string(value.get("captureSource")))
+    if source not in {"text_input_client", "accessibility", "ime_active_buffer"}:
+        source = "unknown"
+    fallback_reason = compact_whitespace(
+        _string(value.get("fallbackReason"))
+    )[:120]
+    selection_rule = compact_whitespace(
+        _string(value.get("selectionRule"))
+    )[:120]
+    digest = compact_whitespace(
+        _string(value.get("selectedTextSha256"))
+    ).lower()
+    if digest.startswith("sha256:"):
+        digest = digest.removeprefix("sha256:")
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        digest = ""
+    return {
+        "captureSource": source,
+        "fallbackReason": fallback_reason,
+        "fieldContextChars": _bounded_int(
+            value.get("fieldContextChars"),
+            default=0,
+            minimum=0,
+            maximum=100_000,
+        ),
+        "imeBufferChars": _bounded_int(
+            value.get("imeBufferChars"),
+            default=0,
+            minimum=0,
+            maximum=100_000,
+        ),
+        "selectedTextSha256": digest,
+        "selectionRule": selection_rule,
+    }
 
 
 def _int_list(value: object) -> list[int]:

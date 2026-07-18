@@ -236,6 +236,73 @@ class AgentRoleBookStore:
                 created_at_ms=created_at_ms,
             )
 
+    def propose_revision_idempotent(
+        self,
+        role_id: object,
+        role_version: object,
+        updates: Mapping[str, object],
+        *,
+        idempotency_key: object,
+        change_summary: object = "",
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Persist one review draft without activating it or moving session pins."""
+
+        role = _identifier(role_id, field="roleId", maximum=120)
+        version = _identifier(role_version, field="roleVersion", maximum=80)
+        key = _identifier(
+            idempotency_key,
+            field="idempotencyKey",
+            maximum=280,
+        )
+        if not isinstance(updates, Mapping):
+            raise ValueError("role book updates must be an object")
+        unexpected = sorted(str(item) for item in updates if item not in _SECTION_LIMITS)
+        if unexpected:
+            raise ValueError(
+                "role book revisions may only change "
+                f"{', '.join(_SECTION_LIMITS)}; unsupported fields: {', '.join(unexpected)}"
+            )
+        if not updates:
+            raise ValueError("role book revision must change at least one allowed section")
+        normalized_updates = {
+            section: _normalize_items(updates[section], section=section)
+            for section in updates
+        }
+        proposed_by = (
+            "personal-context:"
+            f"{hashlib.sha256(key.encode()).hexdigest()[:32]}"
+        )
+        with self._connect(immediate=True) as conn:
+            existing = conn.execute(
+                """
+                SELECT * FROM agent_role_book_revisions
+                WHERE role_id = ? AND role_version = ? AND proposed_by = ?
+                LIMIT 1
+                """,
+                (role, version, proposed_by),
+            ).fetchone()
+            if existing is not None:
+                stored_sections = _stored_sections(existing["content_json"])
+                if any(
+                    stored_sections[section] != items
+                    for section, items in normalized_updates.items()
+                ):
+                    raise ValueError(
+                        "role book revision idempotencyKey already belongs to different content"
+                    )
+                book = self._book_row(conn, role, version)
+                return _revision_payload(book, existing)
+            return self.propose_revision_in_connection(
+                conn,
+                role,
+                version,
+                normalized_updates,
+                proposed_by=proposed_by,
+                change_summary=change_summary,
+                created_at_ms=created_at_ms,
+            )
+
     def propose_revision_in_connection(
         self,
         conn: sqlite3.Connection,
@@ -1222,6 +1289,18 @@ def _normalize_items(value: object, *, section: str) -> list[dict[str, object]]:
     return normalized
 
 
+def normalize_role_book_review_item(
+    value: Mapping[str, object],
+    *,
+    section: str,
+) -> dict[str, object]:
+    """Validate one generated review item at the same boundary as a revision."""
+
+    if section not in _SECTION_LIMITS or section == "recentWork":
+        raise ValueError("review proposals require a non-recentWork Role Book section")
+    return _normalize_items([value], section=section)[0]
+
+
 def _visible_sections(
     sections: Mapping[str, Sequence[Mapping[str, object]]],
     *,
@@ -1619,4 +1698,5 @@ __all__ = [
     "ROLE_BOOK_SCHEMA_VERSION",
     "ROLE_ROUTING_PROFILE_SCHEMA_VERSION",
     "compile_role_book_prompt",
+    "normalize_role_book_review_item",
 ]

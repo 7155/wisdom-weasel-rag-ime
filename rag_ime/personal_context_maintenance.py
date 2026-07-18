@@ -14,6 +14,8 @@ from typing import Any
 from .activity_timeline import DailyActivityTimelineStore
 from .agent_role_book import AgentRoleBookStore
 from .db import apply_database_migrations
+from .deepseek_config import load_deepseek_config
+from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
 from .personal_context import (
     DEFAULT_CONSOLIDATION_INTERVAL_MS,
     PersonalContextConsolidator,
@@ -109,12 +111,16 @@ class PersonalContextMaintenanceRunner:
         *,
         config: PersonalContextMaintenanceConfig | None = None,
         role_book_applier: object | None = None,
+        role_book_organizer: object | None = None,
         consolidator_factory: ConsolidatorFactory = PersonalContextConsolidator,
     ) -> None:
         self.db_path = Path(db_path)
         self.config = (config or PersonalContextMaintenanceConfig()).normalized()
         self._provided_role_book_applier = role_book_applier
+        self._provided_role_book_organizer = role_book_organizer
         self._default_role_book_applier: AgentRoleBookStore | None = None
+        self._default_role_book_organizer: object | None = None
+        self._default_role_book_organizer_resolved = False
         self._consolidator_factory = consolidator_factory
 
     def initialize(self) -> None:
@@ -177,6 +183,12 @@ class PersonalContextMaintenanceRunner:
                 targets.append(entry)
                 continue
             try:
+                target_timeline_id = self._timeline_id_for_target(
+                    project,
+                    role_id,
+                    generated_at_ms=timestamp,
+                    fallback_timeline_id=timeline_ids.get(project, ""),
+                )
                 result = self._consolidator(project).run(
                     role_id,
                     role_version,
@@ -185,7 +197,7 @@ class PersonalContextMaintenanceRunner:
                     force=bool(force),
                     apply_safe_recent_work=self.config.apply_safe_recent_work,
                     batch_limit=self.config.batch_limit,
-                    activity_timeline_id=timeline_ids.get(project, ""),
+                    activity_timeline_id=target_timeline_id,
                 )
                 entry["runStatus"] = str(result.get("status") or "unknown")
                 entry["runId"] = str(result.get("runId") or "")
@@ -307,6 +319,56 @@ class PersonalContextMaintenanceRunner:
                     }
                 )
         return results
+
+    def _timeline_id_for_target(
+        self,
+        project: str,
+        role_id: str,
+        *,
+        generated_at_ms: int,
+        fallback_timeline_id: str,
+    ) -> str:
+        """Build/load the timeline for the next evidence day, not wall-clock day."""
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT last_evidence_at_ms, last_evidence_id
+                FROM personal_context_consolidation_cursors
+                WHERE project = ? AND role_id = ?
+                """,
+                (project, role_id),
+            ).fetchone()
+            cursor_at_ms = int(cursor["last_evidence_at_ms"] or 0) if cursor else 0
+            cursor_id = str(cursor["last_evidence_id"] or "") if cursor else ""
+            evidence = conn.execute(
+                """
+                SELECT occurred_at_ms
+                FROM agent_memory_evidence
+                WHERE project = ? AND role_id = ? AND status = 'active'
+                  AND (
+                    occurred_at_ms > ?
+                    OR (occurred_at_ms = ? AND evidence_id > ?)
+                  )
+                ORDER BY occurred_at_ms ASC, evidence_id ASC
+                LIMIT 1
+                """,
+                (project, role_id, cursor_at_ms, cursor_at_ms, cursor_id),
+            ).fetchone()
+        if evidence is None:
+            return fallback_timeline_id
+        timeline_date = _local_date(int(evidence["occurred_at_ms"] or 0))
+        result = DailyActivityTimelineStore(
+            self.db_path,
+            project=project,
+        ).build_draft(
+            timeline_date,
+            generated_at_ms=generated_at_ms,
+        )
+        timeline = result.get("timeline")
+        if isinstance(timeline, Mapping):
+            return str(timeline.get("timelineId") or "")
+        return ""
 
     def _status_report(
         self,
@@ -554,11 +616,14 @@ class PersonalContextMaintenanceRunner:
         return fields
 
     def _consolidator(self, project: str) -> PersonalContextConsolidator:
-        return self._consolidator_factory(
-            self.db_path,
-            project=project,
-            role_book_applier=self._role_book_applier(),
-        )
+        kwargs: dict[str, object] = {
+            "project": project,
+            "role_book_applier": self._role_book_applier(),
+        }
+        organizer = self._role_book_organizer()
+        if organizer is not None:
+            kwargs["role_book_organizer"] = organizer
+        return self._consolidator_factory(self.db_path, **kwargs)
 
     def _role_book_applier(self) -> object | None:
         if not self.config.apply_safe_recent_work:
@@ -570,6 +635,20 @@ class PersonalContextMaintenanceRunner:
             store.initialize()
             self._default_role_book_applier = store
         return self._default_role_book_applier
+
+    def _role_book_organizer(self) -> object | None:
+        if self._provided_role_book_organizer is not None:
+            return self._provided_role_book_organizer
+        if self._default_role_book_organizer_resolved:
+            return self._default_role_book_organizer
+        self._default_role_book_organizer_resolved = True
+        try:
+            config = load_deepseek_config()
+        except (OSError, ValueError):
+            return None
+        if config.api_key:
+            self._default_role_book_organizer = DeepSeekMemoryOrganizer(config)
+        return self._default_role_book_organizer
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -642,6 +721,9 @@ def _artifact_refs(payload: Mapping[str, object]) -> dict[str, str]:
         "roleBookDraftId": str(role_draft.get("draftId") or ""),
         "appliedRoleBookRevisionId": str(
             payload.get("appliedRoleBookRevisionId") or ""
+        ),
+        "proposedRoleBookRevisionId": str(
+            payload.get("proposedRoleBookRevisionId") or ""
         ),
     }
 

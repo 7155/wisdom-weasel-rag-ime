@@ -303,6 +303,8 @@ type RoleBookDailyDraft = {
   createdAtMs: number;
   traitProposals: RoleBookProposal[];
   capabilityProposals: RoleBookProposal[];
+  lessonProposals: RoleBookProposal[];
+  commitmentProposals: RoleBookProposal[];
   decision: { decision?: string } | null;
 };
 
@@ -313,6 +315,8 @@ type RoleBookActivationSelection = {
   draftId: string;
   traitIndexes: number[];
   capabilityIndexes: number[];
+  lessonIndexes: number[];
+  commitmentIndexes: number[];
 };
 
 type RoleBookDiffItem = {
@@ -342,6 +346,8 @@ function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
   const [selectedDraftId, setSelectedDraftId] = useState('');
   const [traitIndexes, setTraitIndexes] = useState<number[]>([]);
   const [capabilityIndexes, setCapabilityIndexes] = useState<number[]>([]);
+  const [lessonIndexes, setLessonIndexes] = useState<number[]>([]);
+  const [commitmentIndexes, setCommitmentIndexes] = useState<number[]>([]);
   const [pendingPreview, setPendingPreview] = useState<Record<string, unknown> | null>(null);
   const [pendingSelection, setPendingSelection] = useState<RoleBookActivationSelection | null>(null);
   const [mutationPending, setMutationPending] = useState(false);
@@ -373,6 +379,8 @@ function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
   useEffect(() => {
     setTraitIndexes([]);
     setCapabilityIndexes([]);
+    setLessonIndexes([]);
+    setCommitmentIndexes([]);
     setPendingPreview(null);
     setPendingSelection(null);
   }, [selectedDraftId, persona.roleId, persona.version]);
@@ -471,7 +479,10 @@ function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
     }
   }
 
-  const selectedCount = traitIndexes.length + capabilityIndexes.length;
+  const selectedCount = traitIndexes.length
+    + capabilityIndexes.length
+    + lessonIndexes.length
+    + commitmentIndexes.length;
   const previewSummary = record(pendingPreview?.summary);
   const previewDiff = roleBookDiffSections(previewSummary.diff);
   return <aside className="role-inspector role-book-inspector" data-accent={persona.visualProfile.accentToken}>
@@ -494,11 +505,13 @@ function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
           {selectedDraft ? <div className="role-book-proposals">
             {selectedDraft.traitProposals.length ? <fieldset><legend>协作特征</legend>{selectedDraft.traitProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={traitIndexes.includes(index)} onChange={() => setTraitIndexes(toggleIndex(traitIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
             {selectedDraft.capabilityProposals.length ? <fieldset><legend>能力画像</legend>{selectedDraft.capabilityProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={capabilityIndexes.includes(index)} onChange={() => setCapabilityIndexes(toggleIndex(capabilityIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
-            <div className="role-book-actions"><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('deferred')}>稍后</Button><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('rejected')}>忽略</Button><Button variant="primary" size="small" leadingIcon={<Check size={14} />} loading={mutationPending} disabled={!selectedCount} onClick={() => void previewActivation({ roleId: persona.roleId, roleVersion: persona.version, revisionId: '', draftId: selectedDraft.draftId, traitIndexes, capabilityIndexes })}>预览启用</Button></div>
+            {selectedDraft.lessonProposals.length ? <fieldset><legend>经验与边界</legend>{selectedDraft.lessonProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={lessonIndexes.includes(index)} onChange={() => setLessonIndexes(toggleIndex(lessonIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
+            {selectedDraft.commitmentProposals.length ? <fieldset><legend>当前承诺</legend>{selectedDraft.commitmentProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={commitmentIndexes.includes(index)} onChange={() => setCommitmentIndexes(toggleIndex(commitmentIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
+            <div className="role-book-actions"><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('deferred')}>稍后</Button><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('rejected')}>忽略</Button><Button variant="primary" size="small" leadingIcon={<Check size={14} />} loading={mutationPending} disabled={!selectedCount} onClick={() => void previewActivation({ roleId: persona.roleId, roleVersion: persona.version, revisionId: '', draftId: selectedDraft.draftId, traitIndexes, capabilityIndexes, lessonIndexes, commitmentIndexes })}>预览启用</Button></div>
           </div> : null}
         </> : <p className="roles-empty">当前没有待审草案。</p>}
       </section>
-      {history.some((revision) => revision.status === 'draft') ? <section className="role-book-history" aria-label="Agent 提出的角色书版本"><header><span><BrainCircuit size={15} /><strong>Agent 草案</strong></span></header>{history.filter((revision) => revision.status === 'draft').map((revision) => <div key={revision.revisionId}><span><b>Revision {revision.revisionNumber}</b><small>{revision.changeSummary || '待审修订'}</small></span><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void previewActivation({ roleId: persona.roleId, roleVersion: persona.version, revisionId: revision.revisionId, draftId: '', traitIndexes: [], capabilityIndexes: [] })}>预览</Button></div>)}</section> : null}
+      {history.some((revision) => revision.status === 'draft') ? <section className="role-book-history" aria-label="Agent 提出的角色书版本"><header><span><BrainCircuit size={15} /><strong>Agent 草案</strong></span></header>{history.filter((revision) => revision.status === 'draft').map((revision) => <div key={revision.revisionId}><span><b>Revision {revision.revisionNumber}</b><small>{revision.changeSummary || '待审修订'}</small></span><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void previewActivation({ roleId: persona.roleId, roleVersion: persona.version, revisionId: revision.revisionId, draftId: '', traitIndexes: [], capabilityIndexes: [], lessonIndexes: [], commitmentIndexes: [] })}>预览</Button></div>)}</section> : null}
       {receipt && Boolean(receipt.rollbackAvailable) ? <Button variant="quiet" size="small" leadingIcon={<RotateCcw size={14} />} loading={mutationPending} onClick={() => void rollbackActivation()}>撤销本次启用</Button> : null}
     </> : null}
     <Dialog open={Boolean(pendingPreview)} onOpenChange={(open) => { if (!open && !mutationPending) { setPendingPreview(null); setPendingSelection(null); } }}>
@@ -562,6 +575,8 @@ function roleBookDailyDrafts(value: unknown): RoleBookDailyDraft[] {
       createdAtMs: numberValue(draft.createdAtMs),
       traitProposals: roleBookProposals(draft.traitProposals),
       capabilityProposals: roleBookProposals(draft.capabilityProposals),
+      lessonProposals: roleBookProposals(draft.lessonProposals),
+      commitmentProposals: roleBookProposals(draft.commitmentProposals),
       decision: Object.keys(decision).length ? { decision: textValue(decision.decision) } : null,
     }];
   });

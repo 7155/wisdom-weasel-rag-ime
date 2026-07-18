@@ -26,6 +26,7 @@ from .core_client import CoreClient
 from .deepseek_completion import DeepSeekCompletionRequest
 from .embeddings import NullEmbeddingProvider
 from .foreground_privacy import assess_foreground_write, storage_receipt
+from .generation_memory import generation_memory_evidence_pack, retrieve_generation_memory_hits
 from .history_context import build_prediction_context, model_prediction_context_limits, prediction_context_metadata
 from .local_sqlite_core import LocalSqliteCoreClient
 from .memory_optimizer import MemoryOptimizerConfig, optimize_suggestions_if_enabled
@@ -64,7 +65,11 @@ from .predictor import (
     PredictionProvider,
     predict_with_optional_request_context,
 )
-from .runtime_flags import assert_deepseek_not_called, assert_deepseek_scene_allowed
+from .runtime_flags import (
+    assert_deepseek_not_called,
+    assert_deepseek_scene_allowed,
+    deepseek_scene_enabled,
+)
 from .runtime_config import RuntimeConfigSnapshot
 from .rag_core_v3 import memory_candidates_v2_to_input_suggestions
 from .side_lane_scheduler import LaneRequestToken, LatestWinsLaneScheduler
@@ -2181,6 +2186,13 @@ def run_side_lanes_with_latency_budget(
     if post_commit_async:
         request_type = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
     model_candidate_limit = realtime_model_candidate_limit(max_candidates)
+    local_model_candidate_limit = (
+        max(0, model_candidate_limit - 1)
+        if post_commit_prediction
+        and deepseek_completion_provider is not None
+        and deepseek_scene_enabled("post_commit")
+        else model_candidate_limit
+    )
     rime_candidate_count = len(
         [
             item
@@ -2228,7 +2240,7 @@ def run_side_lanes_with_latency_budget(
             snapshot=snapshot,
             explicit_recent_context=model_recent_context,
             project=project,
-            max_candidates=model_candidate_limit,
+            max_candidates=local_model_candidate_limit,
             runtime_config=runtime_config,
         )
         model_lane["contextPacket"] = online_context_packet
@@ -2339,9 +2351,29 @@ def run_side_lanes_with_latency_budget(
                 snapshot=snapshot,
                 explicit_recent_context=model_recent_context,
                 project=project,
-                max_candidates=model_candidate_limit,
+                max_candidates=local_model_candidate_limit,
                 runtime_config=runtime_config,
             )
+            # Keep T0 local-model latency unchanged. On the progressive
+            # follow-up, Flash can spend the larger budget on governed Atom
+            # and Book evidence before producing its candidate.
+            if snapshot.progressive_follow_up and deepseek_completion_provider is not None:
+                deepseek_predictions, deepseek_lane = _predict_deepseek_post_commit_candidates(
+                    provider=deepseek_completion_provider,
+                    core=core,
+                    snapshot=snapshot,
+                    current_context=model_recent_context,
+                    existing_predictions=predictions,
+                    project=project,
+                    max_candidates=model_candidate_limit,
+                    started=started,
+                    budget_ms=model_budget_ms,
+                    rime_candidates=rime_candidate_texts,
+                    context_group_id=context_group_id,
+                )
+                lane["deepseekProgressive"] = True
+                lane.update(deepseek_lane)
+                predictions = [*predictions, *deepseek_predictions]
             model_result["predictions"] = predictions
             model_result["lane"] = lane
             return
@@ -2427,6 +2459,7 @@ def run_side_lanes_with_latency_budget(
             max_candidates=model_candidate_limit,
             latency_budget_ms=model_budget_ms,
             memory_enabled=runtime_config.memory.enabled if runtime_config is not None else True,
+            context_group_id=context_group_id,
         )
         if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
             predictions = []
@@ -4273,6 +4306,7 @@ def predict_model_with_latency_budget(
     max_candidates: int,
     latency_budget_ms: int,
     memory_enabled: bool = True,
+    context_group_id: str = "",
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
     budget_ms = max(0, int(latency_budget_ms))
     request_type = model_request_type_for_snapshot(snapshot)
@@ -4353,6 +4387,13 @@ def predict_model_with_latency_budget(
     def run_prediction() -> None:
         started = time.perf_counter()
         try:
+            local_max_candidates = (
+                max(0, max_candidates - 1)
+                if _is_post_commit_prediction_snapshot(snapshot)
+                and deepseek_completion_provider is not None
+                and deepseek_scene_enabled("post_commit")
+                else max_candidates
+            )
             if request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED:
                 # Small local IME models follow short prefix-constrained prompts
                 # more reliably when the context is the clean on-screen text,
@@ -4392,7 +4433,7 @@ def predict_model_with_latency_budget(
                 predictor,
                 current_input=current_input,
                 recent_context=recent_context,
-                max_candidates=max_candidates,
+                max_candidates=local_max_candidates,
                 request_type=request_type,
                 rime_candidates=rime_candidate_texts,
             )
@@ -4416,6 +4457,7 @@ def predict_model_with_latency_budget(
                     started=started,
                     budget_ms=budget_ms,
                     rime_candidates=rime_candidate_texts,
+                    context_group_id=context_group_id,
                 )
                 result["deepseekLane"] = deepseek_lane
                 predictions = [*predictions, *deepseek_predictions]
@@ -4486,6 +4528,7 @@ def _predict_deepseek_post_commit_candidates(
     started: float,
     budget_ms: int,
     rime_candidates: tuple[str, ...],
+    context_group_id: str = "",
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
     if not _is_post_commit_prediction_snapshot(snapshot):
         return [], {
@@ -4510,6 +4553,37 @@ def _predict_deepseek_post_commit_candidates(
         }
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     remaining_budget_ms = max(1, int(budget_ms) - elapsed_ms)
+    app = snapshot.app or snapshot.frontend_transaction.front_app_bundle_id
+    memory_hits = retrieve_generation_memory_hits(
+        core,
+        current_context=current_context,
+        project=project,
+        app=app,
+        context_group_id=context_group_id,
+        top_k=6,
+    )
+    memory_evidence = generation_memory_evidence_pack(memory_hits, max_items=6)
+    context_packet = build_post_commit_context_packet(
+        current_input=current_context,
+        context_group_id=context_group_id,
+        app=app,
+        project=project,
+        memory_books=[
+            {
+                "bookId": hit.book_ids[0] if hit.book_ids else hit.source_id,
+                "title": str(hit.metadata.get("title") or ""),
+                "summary": hit.text,
+                "surfaceHints": list(hit.surface_hints),
+                "tags": list(hit.tags),
+                "sourceEventIds": list(hit.evidence_event_ids),
+            }
+            for hit in memory_hits
+            if hit.doc_type == "book"
+        ],
+        tag_hints=[tag for hit in memory_hits for tag in hit.tags],
+        surface_hints=[hint for hit in memory_hits for hint in hit.surface_hints],
+        negative_signals=("根据上述", "接下来我们", "可以继续", "候选如下"),
+    )
     request = DeepSeekCompletionRequest(
         scene="post_commit",
         current_context=current_context,
@@ -4519,14 +4593,16 @@ def _predict_deepseek_post_commit_candidates(
                 current_context=current_context,
                 rime_candidates=rime_candidates,
             ),
+            *memory_evidence,
             *timeline_evidence_pack_from_core(
                 core,
                 project=project,
-                app=snapshot.app or snapshot.frontend_transaction.front_app_bundle_id,
+                app=app,
                 current_context=current_context,
                 max_items=4,
             ),
         ),
+        context_packet=context_packet,
         max_candidates=remaining,
         latency_budget_ms=remaining_budget_ms,
     )
@@ -4570,6 +4646,8 @@ def _predict_deepseek_post_commit_candidates(
         "deepseekSkippedReason": "" if predictions else "empty",
         "deepseekAppendOnly": True,
         "deepseekLatencyBudgetMs": remaining_budget_ms,
+        "generationMemoryHitCount": len(memory_hits),
+        "generationMemoryEvidenceCount": len(memory_evidence),
     }
 
 

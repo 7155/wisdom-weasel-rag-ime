@@ -167,6 +167,41 @@ class GovernedMemoryToolTests(unittest.TestCase):
                 0,
             )
 
+    def test_memory_preview_keeps_stored_evidence_hash_for_fullwidth_punctuation(self) -> None:
+        evidence = self.evidence_store.record_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="message:fullwidth-punctuation",
+            text="用户确认：模型已经切换，今天继续验收。",
+            role_id=str(self.session["roleId"]),
+            occurred_at_ms=30,
+        )["evidence"]
+
+        preview = self._execute(
+            "ime_memory",
+            "remember_preview",
+            text="模型切换已经完成",
+            memoryKind="fact",
+            reason="用户在当前会话中明确确认",
+            evidenceIds=[str(evidence["evidenceId"])],
+        )["result"]
+
+        self.assertEqual(preview["status"], "ready")
+        with sqlite3.connect(self.db_path) as conn:
+            snapshot = json.loads(
+                conn.execute(
+                    """
+                    SELECT evidence_snapshot_json
+                    FROM memory_governance_proposals
+                    WHERE proposal_id = ?
+                    """,
+                    (preview["proposalId"],),
+                ).fetchone()[0]
+            )
+        self.assertEqual(
+            snapshot[0]["contentSha256"],
+            evidence["textSha256"],
+        )
+
     def test_memory_preview_rejects_sensitive_injection_and_apply_shapes(self) -> None:
         rejected = (
             {

@@ -531,6 +531,72 @@ class AgentRoleBookTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "another project/role"):
             self.store.apply_safe_recent_work(cross_role, applied_at_ms=3_000)
 
+    def test_review_draft_persistence_is_idempotent_without_activation(self) -> None:
+        seed = self._seed()
+        updates = {
+            "lessonsAndLimits": [
+                _item(
+                    "lesson:timeline-boundary",
+                    "活动时间线不能单独证明角色能力",
+                    source_id="role-book-draft:daily",
+                    evidence_ids=["evidence:assistant:1"],
+                )
+            ]
+        }
+
+        first = self.store.propose_revision_idempotent(
+            "zhiyou-v1",
+            "1",
+            updates,
+            idempotency_key="role-book-draft:daily",
+            change_summary="Daily review-only proposal",
+            created_at_ms=1_000,
+        )
+        repeated = self.store.propose_revision_idempotent(
+            "zhiyou-v1",
+            "1",
+            updates,
+            idempotency_key="role-book-draft:daily",
+            change_summary="Daily review-only proposal",
+            created_at_ms=2_000,
+        )
+
+        self.assertEqual(first["revisionId"], repeated["revisionId"])
+        self.assertEqual(first["status"], "draft")
+        self.assertEqual(first["sourceRevisionId"], seed["revisionId"])
+        with self.assertRaisesRegex(ValueError, "different content"):
+            self.store.propose_revision_idempotent(
+                "zhiyou-v1",
+                "1",
+                {
+                    "lessonsAndLimits": [
+                        _item(
+                            "lesson:timeline-boundary-changed",
+                            "同一个幂等键不能改成另一条教训",
+                            source_id="role-book-draft:daily",
+                            evidence_ids=["evidence:assistant:1"],
+                        )
+                    ]
+                },
+                idempotency_key="role-book-draft:daily",
+                change_summary="Conflicting daily review-only proposal",
+                created_at_ms=2_500,
+            )
+        self.assertEqual(
+            self.store.active("zhiyou-v1", "1")["revisionId"],
+            seed["revisionId"],
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) FROM agent_role_book_revisions
+                    WHERE role_id = 'zhiyou-v1' AND role_version = '1'
+                    """
+                ).fetchone()[0],
+                2,
+            )
+
     def _seed(self) -> dict[str, object]:
         return self.store.ensure_seeded(
             "zhiyou-v1",

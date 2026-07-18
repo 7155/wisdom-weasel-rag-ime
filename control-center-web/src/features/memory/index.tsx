@@ -1,15 +1,12 @@
 import {
-  AppWindow,
-  Archive,
   BookOpen,
-  Database,
   EyeOff,
   Network,
   RefreshCw,
   RotateCcw,
   Search,
-  Tags,
 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Button,
@@ -34,17 +31,19 @@ import {
 import { useControlTransport } from '@/app/control-transport';
 import {
   memoryBookArchivePathIds,
+  memoryQueryKeys,
   useMemoryBookArchiveBoundary,
   useMemoryQueries,
   type MemoryKind,
 } from './api';
 import { MemoryRelations } from './MemoryRelations';
 import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
+import { ActivityTimeline } from './ActivityTimeline';
+import { MemorySystemOverview } from './MemorySystemOverview';
 import {
   InlineNotice,
   ManagementPage,
   ManagementSection,
-  MetricStrip,
   OperationalList,
   PaginationBar,
   QueryState,
@@ -80,7 +79,8 @@ function defaultMemoryStatus(kind: MemoryKind): string {
 }
 
 export function MemoryFeature() {
-  const [view, setView] = useState<'catalog' | 'relations' | 'organize'>('catalog');
+  const queryClient = useQueryClient();
+  const [view, setView] = useState<'catalog' | 'relations' | 'timeline' | 'organize'>('catalog');
   const [kind, setKind] = useState<MemoryKind>('books');
   const [draftQuery, setDraftQuery] = useState('');
   const [query, setQuery] = useState('');
@@ -124,42 +124,38 @@ export function MemoryFeature() {
   const runtimeRevision = numberValue(summaryPayload.runtimeRevision);
   const error = (pages.error ?? summary.error) as Error | null;
   const pending = pages.isPending || summary.isPending;
-  const refresh = () => Promise.all([pages.refetch(), summary.refetch()]);
+  const refresh = () => queryClient.refetchQueries({
+    queryKey: memoryQueryKeys.root,
+    type: 'active',
+  });
 
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={pages.isRefetching} onClick={refresh} size="small">刷新</Button>}
-      description="搜索本地记忆，查看已记录的关系，并管理主题记忆的生命周期。"
-      eyebrow="知识与记录"
+      description="查看个人上下文的证据、当前事实、主题关系、每日活动和治理状态。"
+      eyebrow="Personal Context"
       routeId="memory"
       title="记忆"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
-        <ManagementSection title="记忆概览">
-          <MetricStrip items={[
-            { label: '应用', value: numberValue(summaryPayload.appCount), detail: '独立上下文边界', icon: AppWindow },
-            { label: '完整输入', value: numberValue(summaryPayload.completeInputCount, numberValue(summaryPayload.eventCount)), detail: `${numberValue(summaryPayload.blockedFragmentCount)} 条碎片已隔离`, icon: Database },
-            { label: '主题书', value: numberValue(summaryPayload.memoryBookCount), detail: '长期主题', icon: BookOpen },
-            {
-              label: '原子',
-              value: numberValue(summaryPayload.memoryAtomCount),
-              detail: `共 ${numberValue(summaryPayload.memoryAtomTotalCount, numberValue(summaryPayload.memoryAtomCount))} 条 · 历史 ${numberValue(summaryPayload.memoryAtomArchivedCount)} · 碎片证据 ${numberValue(summaryPayload.memoryAtomSourceArchiveCount)}`,
-              icon: Tags,
-            },
-            { label: '整理证据', value: numberValue(summaryPayload.evidenceSourceCount), detail: '可追溯', icon: Archive },
-            { label: '已遗忘', value: numberValue(summaryPayload.forgottenSourceCount), detail: '不参与整理', icon: EyeOff },
-            { label: '待判断', value: numberValue(summaryPayload.needsReviewSourceCount), detail: '每日复查', icon: RefreshCw, tone: numberValue(summaryPayload.needsReviewSourceCount) ? 'warning' : 'success' },
-          ]} />
-        </ManagementSection>
+        <MemorySystemOverview
+          onOpenCatalog={() => { setKind('atoms'); setStatus('active'); setView('catalog'); }}
+          onOpenOrganize={() => setView('organize')}
+          onOpenTimeline={() => setView('timeline')}
+          summary={summaryPayload}
+        />
 
         <ViewTabs
           className="memory-view-tabs"
-          onValueChange={(next) => setView(next === 'relations' || next === 'organize' ? next : 'catalog')}
+          onValueChange={(next) => setView(
+            next === 'relations' || next === 'timeline' || next === 'organize' ? next : 'catalog',
+          )}
           value={view}
         >
           <TabsList aria-label="记忆视图">
             <TabsTrigger value="catalog">目录</TabsTrigger>
             <TabsTrigger value="relations">关系图</TabsTrigger>
+            <TabsTrigger value="timeline">时间线</TabsTrigger>
             <TabsTrigger value="organize">整理</TabsTrigger>
           </TabsList>
           <TabsContent value="catalog">
@@ -339,6 +335,9 @@ export function MemoryFeature() {
           </TabsContent>
           <TabsContent value="relations">
             <MemoryRelations enabled={view === 'relations'} />
+          </TabsContent>
+          <TabsContent value="timeline">
+            {view === 'timeline' ? <ActivityTimeline /> : null}
           </TabsContent>
           <TabsContent value="organize">
             <MemoryCurationWorkbench enabled={view === 'organize'} />

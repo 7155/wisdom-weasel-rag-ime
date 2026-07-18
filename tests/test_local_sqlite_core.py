@@ -1729,6 +1729,34 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(source, "squirrel_rime_sidecar")
 
+    def test_finalized_field_capture_provenance_is_stored_without_raw_duplicate_text(self) -> None:
+        event_ref = self.adapter.commit_text(
+            "语音粘贴后又手动修改的最终完整正文",
+            source="squirrel_input_segment",
+            provider_name="squirrel:text_input_client",
+            tags=("input-segment", "finalized", "complete-input"),
+            privacy_disposition="allowed",
+            capture_metadata={
+                "captureSource": "text_input_client",
+                "fallbackReason": "",
+                "fieldContextChars": 18,
+                "imeBufferChars": 2,
+                "selectedTextSha256": "a" * 64,
+                "selectionRule": "field_context_if_not_shorter_else_ime_buffer",
+            },
+        )
+
+        self.assertTrue(event_ref.startswith("event:"))
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            raw = conn.execute(
+                "SELECT capture_metadata_json FROM input_events WHERE id = ?",
+                (int(event_ref.split(":", 1)[1]),),
+            ).fetchone()[0]
+        metadata = json.loads(raw)
+        self.assertEqual(metadata["captureSource"], "text_input_client")
+        self.assertEqual(metadata["fieldContextChars"], 18)
+        self.assertNotIn("语音粘贴", raw)
+
     def test_agent_hook_reads_from_local_memory_db(self) -> None:
         injection = build_first_run_injection(
             self.adapter,

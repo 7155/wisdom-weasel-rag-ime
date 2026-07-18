@@ -2532,13 +2532,23 @@ index 0000000..d769b14
 +    recentContext: String,
 +    app: String,
 +    contextGroupId: String,
-+    privacyDisposition: String
++    privacyDisposition: String,
++    captureMetadata: RagImeFinalizedInputCaptureMetadata
 +  ) throws {
 +    guard privacyDisposition == "allowed" else {
 +      throw RagImeSidecarError.transport("foreground privacy disposition is not allowed")
 +    }
 +    guard let sidecarURL else {
 +      throw RagImeSidecarError.transport("sidecar_url missing; finalized input requires the local sidecar")
++    }
++    var captureTags = [
++      "input-segment",
++      "finalized",
++      "complete-input",
++      "capture:\(captureMetadata.captureSource)",
++    ]
++    if !captureMetadata.fallbackReason.isEmpty {
++      captureTags.append("capture-fallback:\(captureMetadata.fallbackReason)")
 +    }
 +    let payload = RagImeCommitPayload(
 +      text: text,
@@ -2547,10 +2557,12 @@ index 0000000..d769b14
 +      app: app,
 +      project: project,
 +      source: "squirrel_input_segment",
-+      tags: ["input-segment", "finalized", "complete-input"],
++      tags: captureTags,
 +      contextGroupId: contextGroupId,
 +      contextGroupLevel: "app",
-+      privacyDisposition: privacyDisposition
++      privacyDisposition: privacyDisposition,
++      providerName: "squirrel:\(captureMetadata.captureSource)",
++      captureMetadata: captureMetadata
 +    )
 +    _ = try postJSON(payload, to: endpoint("commit", base: sidecarURL))
 +  }
@@ -2578,7 +2590,9 @@ index 0000000..d769b14
 +      tags: ["squirrel", "rime-sidecar"],
 +      contextGroupId: contextGroupId,
 +      contextGroupLevel: contextGroupLevel,
-+      privacyDisposition: privacyDisposition
++      privacyDisposition: privacyDisposition,
++      providerName: nil,
++      captureMetadata: nil
 +    )
 +    if let sidecarURL {
 +      _ = try postJSON(commitPayload, to: endpoint("commit", base: sidecarURL))
@@ -2692,6 +2706,20 @@ index 0000000..d769b14
 +  let privacyDisposition: String
 +}
 +
++struct RagImeFinalizedInputCaptureMetadata: Encodable {
++  let captureSource: String
++  let fallbackReason: String
++  let fieldContextChars: Int
++  let imeBufferChars: Int
++  let selectedTextSha256: String
++  let selectionRule: String
++}
++
++struct RagImeFinalizedInputCapture {
++  let text: String
++  let metadata: RagImeFinalizedInputCaptureMetadata
++}
++
 +struct RagImeCommitPayload: Encodable {
 +  let text: String
 +  let recentContext: String
@@ -2703,6 +2731,8 @@ index 0000000..d769b14
 +  let contextGroupId: String
 +  let contextGroupLevel: String
 +  let privacyDisposition: String
++  let providerName: String?
++  let captureMetadata: RagImeFinalizedInputCaptureMetadata?
 +}
 +
 +struct RagImeActionPayload: Encodable {
@@ -3679,6 +3709,12 @@ index 0000000..dcf3ace
 +  let digest = SHA256.hash(data: Data(normalized.utf8))
 +  let hex = digest.map { String(format: "%02x", $0) }.joined()
 +  return "sha256:" + String(hex.prefix(16))
++}
++
++func ragImeFullTextSHA256(_ text: String) -> String {
++  let normalized = ragImeCompactWhitespace(text)
++  let digest = SHA256.hash(data: Data(normalized.utf8))
++  return "sha256:" + digest.map { String(format: "%02x", $0) }.joined()
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
@@ -5278,6 +5314,7 @@ index c2adf74..2995b7e 100644
 +  private var ragImeActiveInputBuffer: String = ""
 +  private var ragImeActiveInputBufferUpdatedAt: Date = .distantPast
 +  private let ragImeActiveInputBufferLimit: Int = 2000
++  private let ragImeFinalizedFieldContextLimit: Int = 4000
 +  private var ragImeInputGeneration: Int = 0
 +  private var ragImeFrontendRevision: Int = 0
 +  private var ragImeSelectionEpoch: Int = 0
@@ -10901,25 +10938,171 @@ index c2adf74..2995b7e 100644
 -  @objc func openWiki() {
 -    NSApp.squirrelAppDelegate.openWiki()
 +  func finalizeRagImeActiveInputBuffer(reason: String, app: String) {
-+    let text = ragImeCompactWhitespace(ragImeActiveInputBuffer)
++    let imeText = ragImeCompactWhitespace(ragImeActiveInputBuffer)
 +    ragImeActiveInputBuffer = ""
 +    ragImeActiveInputBufferUpdatedAt = .distantPast
-+    guard !text.isEmpty else { return }
-+    guard ragImePrivacyDisposition == "allowed", let sidecarClient = ragImeSidecarClient else {
++    guard !enforceRagImeFastPrivacyGuard(),
++      ragImePrivacyDisposition == "allowed",
++      let sidecarClient = ragImeSidecarClient else {
 +      traceRagImeFrontendEvent("input_segment_finalize_suppressed", fields: [
 +        "reason": reason,
 +        "privacyDisposition": ragImePrivacyDisposition,
-+        "textChars": text.count,
++        "textChars": imeText.count,
 +        "frontAppBundleId": app,
 +      ])
 +      return
 +    }
++    // Capture IMK text before Return reaches the host app and clears the field.
++    // Full privacy inspection and AX fallback stay on the dedicated queue.
++    let imkResult = ragImeFinalizedFieldContextFromInputClient()
++    let compactImkText = ragImeCompactWhitespace(imkResult.text)
++    let captureEpoch = ragImeSelectionEpoch
++    let inputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
++    traceRagImeFrontendEvent("input_segment_capture_scheduled", fields: [
++      "reason": reason,
++      "imeBufferChars": imeText.count,
++      "imkFieldChars": compactImkText.count,
++      "frontAppBundleId": app,
++      "traceIncludesText": false,
++    ])
++    ragImeForegroundContextQueue.async { [weak self] in
++      guard let self else { return }
++      let privacyStatus = self.ragImeSelectedTextProvider.sensitiveFieldStatus(
++        sourceAppBundleId: app
++      )
++      var fieldText = compactImkText
++      var fieldSource = compactImkText.isEmpty ? "" : "text_input_client"
++      var fieldFailureReason = imkResult.failureReason
++      if privacyStatus.privacyDisposition == "allowed"
++        && (fieldText.isEmpty || (!imeText.isEmpty && fieldText.count < imeText.count)) {
++        let axResult = self.ragImeForegroundContextResolver.captureFromAccessibility(
++          captureEpoch: captureEpoch,
++          sourceAppBundleId: app,
++          inputSourceId: inputSourceId,
++          beforeLimit: self.ragImeFinalizedFieldContextLimit,
++          afterLimit: self.ragImeFinalizedFieldContextLimit,
++          privacyPrevalidated: true
++        )
++        let axText = self.boundedRagImeFinalizedAccessibilityContext(
++          axResult.snapshot
++        )
++        if axText.count > fieldText.count {
++          fieldText = axText
++          fieldSource = "accessibility"
++          fieldFailureReason = ""
++        } else if fieldFailureReason.isEmpty {
++          fieldFailureReason = axResult.failureReason
++        }
++      }
++      let capture = self.resolveRagImeFinalizedInputCapture(
++        imeText: imeText,
++        fieldText: fieldText,
++        fieldSource: fieldSource,
++        fieldFailureReason: fieldFailureReason
++      )
++      DispatchQueue.main.async { [weak self] in
++        guard let self else { return }
++        guard privacyStatus.privacyDisposition == "allowed", let capture else {
++          self.traceRagImeFrontendEvent("input_segment_finalize_suppressed", fields: [
++            "reason": reason,
++            "privacyDisposition": privacyStatus.privacyDisposition,
++            "privacyReason": privacyStatus.reason,
++            "textChars": imeText.count,
++            "frontAppBundleId": app,
++          ])
++          return
++        }
++        self.finishRagImeFinalizedInputCapture(
++          capture,
++          reason: reason,
++          app: app,
++          sidecarClient: sidecarClient
++        )
++      }
++    }
++  }
++
++  func boundedRagImeFinalizedAccessibilityContext(
++    _ snapshot: RagImeForegroundTextSnapshot?
++  ) -> String {
++    guard let snapshot else { return "" }
++    let before = ragImeCompactWhitespace(snapshot.surroundingBefore)
++    let selected = String(
++      ragImeCompactWhitespace(snapshot.selectedTextPreview)
++        .prefix(ragImeFinalizedFieldContextLimit)
++    )
++    let after = ragImeCompactWhitespace(snapshot.surroundingAfter)
++    let remaining = max(0, ragImeFinalizedFieldContextLimit - selected.count)
++    var beforeBudget = min(before.count, remaining / 2)
++    var afterBudget = min(after.count, remaining - beforeBudget)
++    // Give whichever side still has text the budget unused by the other side.
++    beforeBudget = min(before.count, remaining - afterBudget)
++    afterBudget = min(after.count, remaining - beforeBudget)
++    return ragImeCompactWhitespace([
++      String(before.suffix(beforeBudget)),
++      selected,
++      String(after.prefix(afterBudget)),
++    ].joined())
++  }
++
++  func resolveRagImeFinalizedInputCapture(
++    imeText: String,
++    fieldText: String,
++    fieldSource: String,
++    fieldFailureReason: String
++  ) -> RagImeFinalizedInputCapture? {
++    let compactImeText = ragImeCompactWhitespace(imeText)
++    let compactFieldText = ragImeCompactWhitespace(fieldText)
++    let selectedText: String
++    let captureSource: String
++    let fallbackReason: String
++    if compactFieldText.isEmpty {
++      selectedText = compactImeText
++      captureSource = "ime_active_buffer"
++      fallbackReason = fieldFailureReason.isEmpty
++        ? "field_context_empty"
++        : fieldFailureReason
++    } else if !compactImeText.isEmpty && compactFieldText.count < compactImeText.count {
++      selectedText = compactImeText
++      captureSource = "ime_active_buffer"
++      fallbackReason = "field_context_shorter_than_ime"
++    } else {
++      selectedText = compactFieldText
++      captureSource = fieldSource
++      fallbackReason = ""
++    }
++    guard !selectedText.isEmpty else { return nil }
++    let metadata = RagImeFinalizedInputCaptureMetadata(
++      captureSource: captureSource,
++      fallbackReason: fallbackReason,
++      fieldContextChars: compactFieldText.count,
++      imeBufferChars: compactImeText.count,
++      selectedTextSha256: ragImeFullTextSHA256(selectedText),
++      selectionRule: "field_context_if_not_shorter_else_ime_buffer"
++    )
++    return RagImeFinalizedInputCapture(text: selectedText, metadata: metadata)
++  }
++
++  func finishRagImeFinalizedInputCapture(
++    _ capture: RagImeFinalizedInputCapture,
++    reason: String,
++    app: String,
++    sidecarClient: RagImeSidecarClient
++  ) {
++    let text = capture.text
 +    let recentContext = boundedRagImeCommittedContext(ragImeCommittedContext)
++    // The submitted field value becomes the next generation's authoritative
++    // context, including paste or voice text that never crossed Rime.
++    ragImeCommittedContext = boundedRagImeCommittedContext(text)
++    ragImeCommittedContextUpdatedAt = Date()
 +    let groupId = ragImeContextGroupId(prefix: "app", values: [app])
-+    let privacyDisposition = ragImePrivacyDisposition
 +    traceRagImeFrontendEvent("input_segment_finalized", fields: [
 +      "reason": reason,
 +      "textChars": text.count,
++      "captureSource": capture.metadata.captureSource,
++      "fallbackReason": capture.metadata.fallbackReason,
++      "fieldContextChars": capture.metadata.fieldContextChars,
++      "imeBufferChars": capture.metadata.imeBufferChars,
 +      "frontAppBundleId": app,
 +      "contextGroupId": groupId,
 +      "traceIncludesText": false,
@@ -10931,12 +11114,15 @@ index c2adf74..2995b7e 100644
 +          recentContext: recentContext,
 +          app: app,
 +          contextGroupId: groupId,
-+          privacyDisposition: privacyDisposition
++          privacyDisposition: "allowed",
++          captureMetadata: capture.metadata
 +        )
 +        DispatchQueue.main.async {
 +          self?.traceRagImeFrontendEvent("input_segment_recorded", fields: [
 +            "reason": reason,
 +            "textChars": text.count,
++            "captureSource": capture.metadata.captureSource,
++            "fallbackReason": capture.metadata.fallbackReason,
 +            "frontAppBundleId": app,
 +            "contextGroupId": groupId,
 +          ])
@@ -10953,6 +11139,31 @@ index c2adf74..2995b7e 100644
 +      }
 +    }
    }
++
++  func ragImeFinalizedFieldContextFromInputClient() -> (text: String, failureReason: String) {
++    guard let client else { return ("", "text_input_client_missing") }
++    let selectedRange = client.selectedRange()
++    guard selectedRange.location != NSNotFound, selectedRange.location >= 0 else {
++      return ("", "selected_range_unavailable")
++    }
++    let documentLength = client.length()
++    guard documentLength != NSNotFound, documentLength > 0 else {
++      return ("", "document_length_unavailable")
++    }
++    // Finalization is intentionally different from next-token generation:
++    // persist the complete editable field when it fits, not only text before
++    // the caret. For very large editors keep a bounded window around the
++    // current selection so the input-method thread never copies a whole file.
++    let length = min(documentLength, ragImeFinalizedFieldContextLimit)
++    let maximumStart = max(0, documentLength - length)
++    let preferredStart = max(0, selectedRange.location - (length / 2))
++    let range = NSRange(location: min(preferredStart, maximumStart), length: length)
++    guard let attributed = client.attributedSubstring(from: range) else {
++      return ("", "attributed_substring_unavailable")
++    }
++    let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
++    return text.isEmpty ? ("", "field_context_empty") : (text, "")
++  }
  
 -  private(set) var specialCommentIndices: [ReservedPropertyKey: Set<Int>] = [:]
 +  func removeLastRagImeCommittedContextCharacterIfNoComposition() {

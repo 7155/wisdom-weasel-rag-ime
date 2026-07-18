@@ -1144,13 +1144,19 @@ class MemoryGovernanceProposalStore:
             evidence_role = str(row["role_id"] or "")
             if evidence_role and session_role_id and evidence_role != session_role_id:
                 raise ValueError("evidence belongs to another Agent role")
-            content = _safe_text(
-                str(row["content_text"] or ""),
+            stored_content = str(row["content_text"] or "")
+            _safe_text(
+                stored_content,
                 field=f"evidence[{evidence_id}]",
                 maximum=32_000,
                 prompt_guard=True,
             )
-            content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            # The evidence digest is an identity for the exact canonical text
+            # persisted by AgentMemoryEvidenceStore.  Validation may normalize
+            # Unicode for safety checks, but must not silently change the bytes
+            # whose provenance hash we verify (for example Chinese full-width
+            # punctuation under NFKC).
+            content_sha256 = hashlib.sha256(stored_content.encode("utf-8")).hexdigest()
             if content_sha256 != str(row["content_sha256"]):
                 raise ValueError("evidence content hash does not match its stored provenance")
             provenance = _json_object(row["provenance_json"])

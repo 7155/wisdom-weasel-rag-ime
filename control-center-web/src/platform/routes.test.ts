@@ -336,6 +336,50 @@ describe('control route policy', () => {
     ).toThrow(/body field/);
   });
 
+  it('allows the per-session project context switch', () => {
+    expect(() => assertControlRequest({
+      pathId: 'agent.session.mode.update',
+      params: { sessionId: 'agent:session-a' },
+      body: {
+        mode: 'coordinator',
+        workspaceRoots: ['/tmp/project'],
+        toolProfileVersion: 'control-center-v1',
+        toolAllowlistMode: 'profile',
+        projectContextEnabled: false,
+      },
+    })).not.toThrow();
+  });
+
+  it('allowlists all four reviewed Role Book proposal selections', () => {
+    const selection = {
+      roleId: 'zhiyou-v1',
+      roleVersion: '1',
+      revisionId: '',
+      draftId: 'role-book-draft:1',
+      traitIndexes: [0],
+      capabilityIndexes: [1],
+      lessonIndexes: [2],
+      commitmentIndexes: [3],
+    };
+    expect(() => assertControlRequest({
+      pathId: 'agent.roleBook.activation.preview',
+      body: selection,
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'agent.roleBook.activation.apply',
+      body: {
+        ...selection,
+        previewToken: 'preview-token',
+        payloadSha256: 'sha256:payload',
+        confirmText: 'apply',
+      },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'agent.roleBook.activation.preview',
+      body: { ...selection, proposalText: 'client-owned' },
+    } as never)).toThrow(/body field/);
+  });
+
   it('allowlists reversible evidence dispositions and owner filters', () => {
     expect(() =>
       assertControlRequest({

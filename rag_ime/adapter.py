@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .core_client import CoreClient
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
@@ -44,6 +45,7 @@ class InputMethodAdapter:
         tags: tuple[str, ...] = (),
         context_group_id: str = "",
         context_group_level: str = "app",
+        capture_metadata: dict[str, Any] | None = None,
     ) -> str:
         if not recording_enabled:
             return "skipped:recording_disabled"
@@ -74,6 +76,7 @@ class InputMethodAdapter:
             tags=tags,
             context_group_id=context_group_id,
             context_group_level=context_group_level,
+            capture_metadata=dict(capture_metadata or {}),
         )
         return self.core.record_event(event)
 

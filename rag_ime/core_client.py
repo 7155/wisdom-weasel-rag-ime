@@ -273,6 +273,7 @@ class FixtureCoreClient:
             tags=event.tags,
             context_group_id=event.context_group_id,
             context_group_level=event.context_group_level,
+            capture_metadata=dict(event.capture_metadata),
         )
         self.events.append(stored)
         return f"event:{event_id}"

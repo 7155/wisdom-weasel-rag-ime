@@ -274,6 +274,12 @@ class LocalSqliteCoreClient:
             raise ValueError("committed_text must not be empty")
         created_at = event.created_at_ms or now_ms()
         tags_json = json.dumps(list(event.tags), ensure_ascii=False)
+        capture_metadata_json = json.dumps(
+            dict(event.capture_metadata),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         context_enabled = source_context_enabled(event.source, tags=event.tags)
         with self._connect() as conn:
             cur = conn.execute(
@@ -281,9 +287,9 @@ class LocalSqliteCoreClient:
                 INSERT INTO input_events (
                     created_at_ms, source, committed_text, recent_context, preedit,
                     schema_id, app, project, candidate_rank, provider_name, tags_json,
-                    context_group_id, context_group_level
+                    context_group_id, context_group_level, capture_metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     created_at,
@@ -299,6 +305,7 @@ class LocalSqliteCoreClient:
                     tags_json,
                     compact_whitespace(event.context_group_id),
                     compact_whitespace(event.context_group_level) or "app",
+                    capture_metadata_json,
                 ),
             )
             event_id = int(cur.lastrowid)

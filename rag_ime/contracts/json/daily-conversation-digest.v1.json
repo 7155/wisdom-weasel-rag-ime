@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "required": [
     "schemaVersion", "digestId", "project", "roleId", "window",
-    "sourceEvidenceIds", "activityTimelineId", "sourceCounts", "summary", "highlights",
+    "sourceEvidenceIds", "activityTimelineId", "activityContext", "sourceCounts", "summary", "highlights",
     "recentWork", "caveats", "generatedAtMs"
   ],
   "properties": {
@@ -23,6 +23,7 @@
     },
     "sourceEvidenceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "activityTimelineId": {"type": "string"},
+    "activityContext": {"$ref": "#/$defs/activityContext"},
     "sourceCounts": {"type": "object"},
     "summary": {"type": "string", "minLength": 1},
     "highlights": {"type": "array", "items": {"$ref": "#/$defs/digestItem"}},
@@ -31,6 +32,34 @@
     "generatedAtMs": {"type": "integer", "minimum": 0}
   },
   "$defs": {
+    "activityContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "available", "date", "timelineId", "status",
+        "sourceEventHash", "summary", "segments", "eventCount",
+        "retainedEventCount", "filteredInternalEventCount",
+        "deduplicatedEventCount", "redactedEventCount",
+        "corroborationOnly", "maySupportFacts"
+      ],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.activity-timeline-context.v1"},
+        "available": {"type": "boolean"},
+        "date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+        "timelineId": {"type": "string"},
+        "status": {"type": "string", "enum": ["unavailable", "draft", "approved"]},
+        "sourceEventHash": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+        "summary": {"type": "string", "maxLength": 2400},
+        "segments": {"type": "array", "maxItems": 12, "items": {"type": "object"}},
+        "eventCount": {"type": "integer", "minimum": 0},
+        "retainedEventCount": {"type": "integer", "minimum": 0},
+        "filteredInternalEventCount": {"type": "integer", "minimum": 0},
+        "deduplicatedEventCount": {"type": "integer", "minimum": 0},
+        "redactedEventCount": {"type": "integer", "minimum": 0},
+        "corroborationOnly": {"type": "boolean", "const": true},
+        "maySupportFacts": {"type": "boolean", "const": false}
+      }
+    },
     "digestItem": {
       "type": "object",
       "required": ["evidenceId", "sourceKind", "text", "occurredAtMs"],

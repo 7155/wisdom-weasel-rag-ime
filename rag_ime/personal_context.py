@@ -7,11 +7,18 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import date, datetime, time as datetime_time, timedelta
 from pathlib import Path
+from typing import Protocol
 
+from .agent_role_book import (
+    AgentRoleBookStore,
+    normalize_role_book_review_item,
+)
 from .contracts.json_schema import validate_contract
 from .daily_planner import planning_context
 from .db import apply_database_migrations
+from .memory_ingest import normalize_text
 from .sensitive_content import (
     contains_sensitive_content,
     is_sensitive_mapping_key,
@@ -35,6 +42,14 @@ DEFAULT_CONSOLIDATION_INTERVAL_MS = 24 * 60 * 60 * 1_000
 _MAX_EVIDENCE_CHARS = 32_000
 _MAX_JSON_BYTES = 64 * 1024
 _RUN_STALE_AFTER_MS = 5 * 60 * 1_000
+_ACTIVITY_CONTEXT_INTERNAL_SOURCES = frozenset(
+    {
+        "pi_agent_compaction",
+        "pi_agent_tool_receipt",
+    }
+)
+_ACTIVITY_CONTEXT_MAX_EVENT_IDS = 2_000
+_ACTIVITY_CONTEXT_DEDUPE_WINDOW_MS = 5 * 60 * 1_000
 _STABLE_ATOM_KINDS = frozenset(
     {
         "durable_preference",
@@ -43,11 +58,281 @@ _STABLE_ATOM_KINDS = frozenset(
         "user_preference",
     }
 )
+_ROLE_BOOK_MODEL_MAX_CHARS = 12_000
+_ROLE_BOOK_MODEL_MAX_MESSAGES = 24
+_ROLE_BOOK_PROPOSAL_MAX_CHARS = 3_200
+_ROLE_PROPOSAL_FIELDS = (
+    "traitProposals",
+    "capabilityProposals",
+    "lessonProposals",
+    "commitmentProposals",
+)
+_ROLE_PROPOSAL_SECTIONS = {
+    "traitProposals": "personality",
+    "capabilityProposals": "capabilities",
+    "lessonProposals": "lessonsAndLimits",
+    "commitmentProposals": "activeCommitments",
+}
+_ROLE_PROPOSAL_LIMITS = {
+    "traitProposals": 6,
+    "capabilityProposals": 12,
+    "lessonProposals": 8,
+    "commitmentProposals": 8,
+}
+
+
 class EvidenceConflictError(ValueError):
     """The same idempotency key was reused for different evidence."""
 
 
 RoleBookApplier = Callable[[Mapping[str, object]], object]
+
+
+class RoleBookOrganizer(Protocol):
+    @property
+    def provider_name(self) -> str: ...
+
+    def curate_role_book(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        role_id: str,
+        role_version: str,
+    ) -> dict[str, object]: ...
+
+
+def local_date_for_timestamp(timestamp_ms: int) -> str:
+    """Return the machine-local calendar date used by the timeline builder."""
+
+    return datetime.fromtimestamp(max(0, int(timestamp_ms)) / 1_000).astimezone().date().isoformat()
+
+
+def local_day_bounds_ms(timeline_date: str) -> tuple[int, int]:
+    day = date.fromisoformat(compact_whitespace(timeline_date))
+    local_zone = datetime.now().astimezone().tzinfo
+    start = datetime.combine(day, datetime_time.min, tzinfo=local_zone)
+    end = datetime.combine(day + timedelta(days=1), datetime_time.min, tzinfo=local_zone)
+    return int(start.timestamp() * 1_000), int(end.timestamp() * 1_000)
+
+
+def load_activity_timeline_context(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    timeline_date: str,
+    timeline_id: str = "",
+    max_segments: int = 8,
+    max_chars: int = 2_400,
+) -> dict[str, object]:
+    """Load a bounded timeline view that can corroborate, but never prove, facts.
+
+    Source event ids are deliberately absent from this contract. The owner-memory
+    governor therefore cannot accidentally treat timeline activity as legal fact
+    evidence. Internal Agent summaries/receipts and near-duplicate final-input
+    checkpoints are also removed before any text reaches a model-facing bundle.
+    """
+
+    day = date.fromisoformat(compact_whitespace(timeline_date)).isoformat()
+    bounded_segments = max(1, min(int(max_segments), 12))
+    char_budget = max(400, min(int(max_chars), 2_400))
+    identifier = compact_whitespace(timeline_id)
+    row = None
+    if identifier:
+        row = conn.execute(
+            """
+            SELECT * FROM daily_activity_timelines
+            WHERE timeline_id = ? AND project = ? AND timeline_date = ?
+              AND status IN ('draft', 'approved')
+            """,
+            (identifier, project, day),
+        ).fetchone()
+    if row is None:
+        row = conn.execute(
+            """
+            SELECT * FROM daily_activity_timelines
+            WHERE project = ? AND timeline_date = ?
+              AND status IN ('draft', 'approved')
+            ORDER BY CASE status WHEN 'draft' THEN 0 ELSE 1 END,
+                     updated_at_ms DESC, timeline_id DESC
+            LIMIT 1
+            """,
+            (project, day),
+        ).fetchone()
+
+    if row is None:
+        payload = _empty_activity_context(day)
+        validate_contract(payload, "activity-timeline-context.v1.json")
+        return payload
+
+    raw_segments = [
+        dict(value)
+        for value in _json_list(row["segments_json"])
+        if isinstance(value, Mapping)
+    ]
+    ordered_ids = list(
+        dict.fromkeys(
+            int(value)
+            for segment in raw_segments
+            for value in list(segment.get("sourceEventIds") or [])
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        )
+    )
+    sampled_ids = _sample_int_ids(
+        ordered_ids,
+        limit=_ACTIVITY_CONTEXT_MAX_EVENT_IDS,
+    )
+    event_rows: list[sqlite3.Row] = []
+    if sampled_ids:
+        placeholders = ",".join("?" for _ in sampled_ids)
+        event_rows = conn.execute(
+            f"""
+            SELECT e.id, e.created_at_ms, e.source, e.committed_text,
+                   e.app, e.context_group_id
+            FROM input_events e
+            LEFT JOIN memory_state state ON state.event_id = e.id
+            WHERE e.id IN ({placeholders}) AND e.project = ?
+              AND COALESCE(state.deleted, 0) = 0
+            ORDER BY e.created_at_ms ASC, e.id ASC
+            """,  # noqa: S608 - placeholders are generated, never values
+            (*sampled_ids, project),
+        ).fetchall()
+
+    retained: dict[int, dict[str, object]] = {}
+    filtered_internal = 0
+    deduplicated = 0
+    redacted = 0
+    last_seen: dict[tuple[str, str], int] = {}
+    for event in event_rows:
+        source = compact_whitespace(str(event["source"] or ""))
+        if source in _ACTIVITY_CONTEXT_INTERNAL_SOURCES:
+            filtered_internal += 1
+            continue
+        text = compact_whitespace(str(event["committed_text"] or ""))
+        if not text:
+            continue
+        if _contains_sensitive_content(text):
+            redacted += 1
+            continue
+        app = _bounded_text(event["app"], 240) or "unknown-app"
+        occurred_at_ms = int(event["created_at_ms"] or 0)
+        dedupe_key = (normalize_text(text), app.casefold())
+        previous = last_seen.get(dedupe_key)
+        if previous is not None and occurred_at_ms - previous <= _ACTIVITY_CONTEXT_DEDUPE_WINDOW_MS:
+            deduplicated += 1
+            continue
+        last_seen[dedupe_key] = occurred_at_ms
+        retained[int(event["id"])] = {
+            "source": source or "unknown-source",
+            "text": _truncate(text, 180),
+            "app": app,
+            "createdAtMs": occurred_at_ms,
+            "contextGroupId": _bounded_text(event["context_group_id"], 240),
+        }
+
+    segments: list[dict[str, object]] = []
+    remaining_chars = char_budget
+    for raw in raw_segments:
+        if len(segments) >= bounded_segments or remaining_chars <= 0:
+            break
+        segment_events = [
+            retained[event_id]
+            for event_id in list(raw.get("sourceEventIds") or [])
+            if isinstance(event_id, int) and event_id in retained
+        ]
+        if not segment_events:
+            continue
+        snippets = list(
+            dict.fromkeys(str(item["text"]) for item in segment_events if item.get("text"))
+        )[:4]
+        app = _bounded_text(raw.get("app"), 240) or str(segment_events[0]["app"])
+        summary = _truncate(f"{app}：{'；'.join(snippets)}", min(760, remaining_chars))
+        if not summary:
+            continue
+        source_kinds = list(
+            dict.fromkeys(str(item["source"]) for item in segment_events)
+        )[:12]
+        context_groups = list(
+            dict.fromkeys(
+                str(item["contextGroupId"])
+                for item in segment_events
+                if item.get("contextGroupId")
+            )
+        )[:12]
+        segment = {
+            "segmentId": _bounded_text(raw.get("segmentId"), 160)
+            or f"activity-context-segment:{len(segments)}",
+            "position": len(segments),
+            "app": app,
+            "sourceKinds": source_kinds,
+            "contextGroupIds": context_groups,
+            "startMs": min(int(item["createdAtMs"]) for item in segment_events),
+            "endMs": max(int(item["createdAtMs"]) for item in segment_events),
+            "eventCount": len(segment_events),
+            "summary": summary,
+            "redactedEventCount": 0,
+        }
+        segments.append(segment)
+        remaining_chars -= len(summary)
+
+    summary = _truncate("；".join(str(item["summary"]) for item in segments), char_budget)
+    if not summary:
+        summary = "该时间线仅包含已过滤、重复或敏感事件。"
+    payload = {
+        "schemaVersion": "rag-ime.activity-timeline-context.v1",
+        "available": True,
+        "date": day,
+        "timelineId": str(row["timeline_id"]),
+        "status": str(row["status"]),
+        "sourceEventHash": str(row["source_event_hash"]),
+        "summary": summary,
+        "segments": segments,
+        "eventCount": int(row["event_count"] or 0),
+        "retainedEventCount": len(retained),
+        "filteredInternalEventCount": filtered_internal,
+        "deduplicatedEventCount": deduplicated,
+        "redactedEventCount": redacted,
+        "corroborationOnly": True,
+        "maySupportFacts": False,
+    }
+    validate_contract(payload, "activity-timeline-context.v1.json")
+    return payload
+
+
+def _empty_activity_context(timeline_date: str) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.activity-timeline-context.v1",
+        "available": False,
+        "date": timeline_date,
+        "timelineId": "",
+        "status": "unavailable",
+        "sourceEventHash": "",
+        "summary": "",
+        "segments": [],
+        "eventCount": 0,
+        "retainedEventCount": 0,
+        "filteredInternalEventCount": 0,
+        "deduplicatedEventCount": 0,
+        "redactedEventCount": 0,
+        "corroborationOnly": True,
+        "maySupportFacts": False,
+    }
+
+
+def _sample_int_ids(values: Sequence[int], *, limit: int) -> list[int]:
+    ordered = list(dict.fromkeys(int(value) for value in values if int(value) > 0))
+    bounded = max(1, int(limit))
+    if len(ordered) <= bounded:
+        return ordered
+    if bounded == 1:
+        return [ordered[-1]]
+    final_index = len(ordered) - 1
+    return list(
+        dict.fromkeys(
+            ordered[round(position * final_index / (bounded - 1))]
+            for position in range(bounded)
+        )
+    )
 
 
 class AgentMemoryEvidenceStore:
@@ -512,7 +797,7 @@ class MemoryBootstrapBuilder:
         rows = conn.execute(
             f"""
             SELECT * FROM memory_atoms
-            WHERE status = 'active'
+            WHERE status IN ('active', 'approved')
               AND claim_state = 'current'
               AND privacy_level != 'sensitive'
               AND kind IN ({placeholders})
@@ -538,7 +823,7 @@ class MemoryBootstrapBuilder:
         rows = conn.execute(
             f"""
             SELECT * FROM memory_atoms
-            WHERE status = 'active'
+            WHERE status IN ('active', 'approved')
               AND claim_state = 'current'
               AND privacy_level != 'sensitive'
               AND kind NOT IN ({placeholders})
@@ -952,10 +1237,12 @@ class PersonalContextConsolidator:
         *,
         project: str = "",
         role_book_applier: RoleBookApplier | object | None = None,
+        role_book_organizer: RoleBookOrganizer | object | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = compact_whitespace(project)
         self.role_book_applier = role_book_applier
+        self.role_book_organizer = role_book_organizer
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1052,6 +1339,7 @@ class PersonalContextConsolidator:
                 "userMemoryDraft": {},
                 "roleBookDraft": {},
                 "appliedRoleBookRevisionId": "",
+                "proposedRoleBookRevisionId": "",
                 "cursor": dict(claim["cursor"]),
             }
 
@@ -1060,18 +1348,31 @@ class PersonalContextConsolidator:
         window_start_ms = int(claim["windowStartMs"])
         window_end_ms = int(claim["windowEndMs"])
         try:
+            timeline_date = local_date_for_timestamp(window_start_ms)
+            with self._connect() as conn:
+                activity_context = load_activity_timeline_context(
+                    conn,
+                    project=self.project,
+                    timeline_date=timeline_date,
+                    timeline_id=_bounded_text(activity_timeline_id, 320),
+                )
             digest = _build_daily_digest(
                 run_id=run_id,
                 project=self.project,
                 role_id=role,
                 evidence=evidence,
-                activity_timeline_id=_bounded_text(
-                    activity_timeline_id,
-                    320,
-                ),
+                activity_context=activity_context,
                 window_start_ms=window_start_ms,
                 window_end_ms=window_end_ms,
                 generated_at_ms=now,
+            )
+            active_role_book = AgentRoleBookStore(self.db_path).active(role, version)
+            model_proposals, proposal_diagnostics = self._curate_role_book_proposals(
+                role_id=role,
+                role_version=version,
+                evidence=evidence,
+                activity_context=activity_context,
+                active_role_book=active_role_book,
             )
             user_memory_draft = _build_user_memory_draft(
                 run_id=run_id,
@@ -1088,6 +1389,8 @@ class PersonalContextConsolidator:
                 role_version=version,
                 digest=digest,
                 evidence=evidence,
+                model_proposals=model_proposals,
+                proposal_diagnostics=proposal_diagnostics,
                 created_at_ms=now,
             )
             applied_revision_id = ""
@@ -1096,6 +1399,10 @@ class PersonalContextConsolidator:
                     run_id=run_id,
                     role_book_draft=role_book_draft,
                 )
+            proposed_revision_id = self._persist_role_book_review_draft(
+                role_book_draft=role_book_draft,
+                created_at_ms=now,
+            )
             output = {
                 "schemaVersion": "rag-ime.personal-context-consolidation-result.v1",
                 "runId": run_id,
@@ -1105,6 +1412,7 @@ class PersonalContextConsolidator:
                 "userMemoryDraft": user_memory_draft,
                 "roleBookDraft": role_book_draft,
                 "appliedRoleBookRevisionId": applied_revision_id,
+                "proposedRoleBookRevisionId": proposed_revision_id,
             }
             cursor = self._complete_success(
                 claim=claim,
@@ -1126,6 +1434,7 @@ class PersonalContextConsolidator:
                 "userMemoryDraft": {},
                 "roleBookDraft": {},
                 "appliedRoleBookRevisionId": "",
+                "proposedRoleBookRevisionId": "",
                 "cursor": dict(claim["cursor"]),
             }
 
@@ -1206,6 +1515,9 @@ class PersonalContextConsolidator:
                     "runId": "",
                     "cursor": _cursor_payload(cursor),
                 }
+            _, evidence_day_end_ms = local_day_bounds_ms(
+                local_date_for_timestamp(int(next_row["occurred_at_ms"]))
+            )
             last_succeeded = int(cursor["last_succeeded_at_ms"])
             if (
                 not force
@@ -1227,6 +1539,7 @@ class PersonalContextConsolidator:
                     OR (occurred_at_ms = ? AND evidence_id > ?)
                   )
                   AND occurred_at_ms <= ?
+                  AND occurred_at_ms < ?
                 ORDER BY occurred_at_ms ASC, evidence_id ASC
                 LIMIT ?
                 """,
@@ -1237,6 +1550,7 @@ class PersonalContextConsolidator:
                     cursor["last_evidence_at_ms"],
                     cursor["last_evidence_id"],
                     now_ms,
+                    evidence_day_end_ms,
                     batch_limit,
                 ),
             ).fetchall()
@@ -1332,6 +1646,168 @@ class PersonalContextConsolidator:
                 "endCursorAtMs": int(last["occurred_at_ms"]),
                 "endCursorEvidenceId": str(last["evidence_id"]),
             }
+
+    def _curate_role_book_proposals(
+        self,
+        *,
+        role_id: str,
+        role_version: str,
+        evidence: Sequence[Mapping[str, object]],
+        activity_context: Mapping[str, object],
+        active_role_book: Mapping[str, object] | None,
+    ) -> tuple[dict[str, list[dict[str, object]]], dict[str, object]]:
+        empty = {field: [] for field in _ROLE_PROPOSAL_FIELDS}
+        organizer = self.role_book_organizer
+        if organizer is None:
+            return empty, {
+                "status": "not_configured",
+                "provider": "",
+                "inputChars": 0,
+                "acceptedProposalCount": 0,
+                "rejectedProposalCount": 0,
+            }
+        bundle = _build_role_book_model_bundle(
+            role_id=role_id,
+            role_version=role_version,
+            evidence=evidence,
+            activity_context=activity_context,
+            active_role_book=active_role_book,
+        )
+        conversation = list(bundle.get("conversationEvidence") or [])
+        provider = _bounded_text(getattr(organizer, "provider_name", ""), 80)
+        if not conversation:
+            return empty, {
+                "status": "no_conversation_evidence",
+                "provider": provider,
+                "inputChars": _serialized_chars(bundle),
+                "acceptedProposalCount": 0,
+                "rejectedProposalCount": 0,
+            }
+        method = getattr(organizer, "curate_role_book", None)
+        if not callable(method):
+            return empty, {
+                "status": "unsupported",
+                "provider": provider,
+                "inputChars": _serialized_chars(bundle),
+                "acceptedProposalCount": 0,
+                "rejectedProposalCount": 0,
+            }
+        try:
+            raw = method(
+                bundle=bundle,
+                project=self.project,
+                role_id=role_id,
+                role_version=role_version,
+            )
+            normalized, rejected = _normalize_model_role_proposals(
+                raw,
+                allowed_evidence_ids={
+                    str(item["evidenceId"])
+                    for item in conversation
+                    if isinstance(item, Mapping)
+                },
+                active_role_book=active_role_book,
+            )
+        except Exception as exc:
+            return empty, {
+                "status": "failed",
+                "provider": provider,
+                "inputChars": _serialized_chars(bundle),
+                "acceptedProposalCount": 0,
+                "rejectedProposalCount": 0,
+                "error": _truncate(
+                    compact_whitespace(str(exc)) or exc.__class__.__name__,
+                    400,
+                ),
+            }
+        return normalized, {
+            "status": "completed",
+            "provider": provider,
+            "inputChars": _serialized_chars(bundle),
+            "acceptedProposalCount": sum(len(value) for value in normalized.values()),
+            "rejectedProposalCount": rejected,
+        }
+
+    def _persist_role_book_review_draft(
+        self,
+        *,
+        role_book_draft: Mapping[str, object],
+        created_at_ms: int,
+    ) -> str:
+        patch = role_book_draft.get("patch")
+        patch = patch if isinstance(patch, Mapping) else {}
+        source_ids = {
+            str(value)
+            for value in list(role_book_draft.get("sourceEvidenceIds") or [])
+            if str(value)
+        }
+        store = AgentRoleBookStore(self.db_path)
+        active = store.active(
+            role_book_draft.get("roleId"),
+            role_book_draft.get("baseRoleVersion"),
+        )
+        if active is None:
+            return ""
+        sections = active.get("sections")
+        sections = sections if isinstance(sections, Mapping) else {}
+        updates: dict[str, object] = {}
+        for field in _ROLE_PROPOSAL_FIELDS:
+            section = _ROLE_PROPOSAL_SECTIONS[field]
+            incoming: list[dict[str, object]] = []
+            values = patch.get(field)
+            if not isinstance(values, Sequence) or isinstance(
+                values, (str, bytes, bytearray)
+            ):
+                continue
+            for value in values:
+                if not isinstance(value, Mapping):
+                    continue
+                evidence_ids = [
+                    str(item)
+                    for item in list(value.get("sourceEvidenceIds") or [])
+                    if str(item)
+                ]
+                if not evidence_ids or not set(evidence_ids).issubset(source_ids):
+                    continue
+                try:
+                    incoming.append(
+                        _role_book_review_item(
+                            value,
+                            section=section,
+                            draft_id=str(role_book_draft["draftId"]),
+                            observed_at_ms=created_at_ms,
+                        )
+                    )
+                except (TypeError, ValueError):
+                    continue
+            merged = _merge_role_book_review_items(
+                sections.get(section),
+                incoming,
+                limit=_ROLE_PROPOSAL_LIMITS[field],
+            )
+            existing = [
+                dict(item)
+                for item in list(sections.get(section) or [])
+                if isinstance(item, Mapping)
+            ]
+            if incoming and merged != existing:
+                updates[section] = merged
+        if not updates:
+            return ""
+        revision = store.propose_revision_idempotent(
+            role_book_draft.get("roleId"),
+            role_book_draft.get("baseRoleVersion"),
+            updates,
+            idempotency_key=f"review:{role_book_draft.get('draftId') or ''}",
+            change_summary=(
+                "Daily review-only Role Book proposals backed by active Agent evidence; "
+                f"digest={role_book_draft.get('sourceDigestId') or ''}"
+            ),
+            created_at_ms=created_at_ms,
+        )
+        if str(revision.get("status") or "") != "draft":
+            raise ValueError("daily Role Book review revision must remain a draft")
+        return str(revision.get("revisionId") or "")
 
     def _apply_safe_recent_work(
         self,
@@ -1501,7 +1977,7 @@ def _build_daily_digest(
     project: str,
     role_id: str,
     evidence: Sequence[Mapping[str, object]],
-    activity_timeline_id: str,
+    activity_context: Mapping[str, object],
     window_start_ms: int,
     window_end_ms: int,
     generated_at_ms: int,
@@ -1517,10 +1993,15 @@ def _build_daily_digest(
     count_text = "、".join(
         f"{kind} {count} 条" for kind, count in sorted(counts.items())
     )
+    timeline_segment_count = len(list(activity_context.get("segments") or []))
     summary = (
         f"本次按增量游标整理 {len(evidence)} 条证据（{count_text}）。"
         f"其中 {len(recent_work)} 条是带回执或验收来源的近期工作；"
-        "原始对话仅作为待判断证据，没有升级为长期事实。"
+        f"同日活动时间线提供 {timeline_segment_count} 个辅助片段；"
+        "原始对话和时间线仅作为待判断证据，没有升级为长期事实。"
+    )
+    activity_timeline_id = compact_whitespace(
+        str(activity_context.get("timelineId") or "")
     )
     payload = {
         "schemaVersion": "rag-ime.daily-conversation-digest.v1",
@@ -1530,14 +2011,16 @@ def _build_daily_digest(
         "window": {"startMs": window_start_ms, "endMs": window_end_ms},
         "sourceEvidenceIds": [str(item["evidenceId"]) for item in evidence],
         # The digest keeps only the governed artifact identity. Raw input-event
-        # segments remain inside the independent timeline review boundary.
+        # ids never cross this corroboration-only timeline context boundary.
         "activityTimelineId": activity_timeline_id,
+        "activityContext": dict(activity_context),
         "sourceCounts": dict(sorted(counts.items())),
         "summary": summary,
         "highlights": highlights,
         "recentWork": recent_work,
         "caveats": [
             "原始 user/assistant 对话不是长期事实。",
+            "活动时间线只能帮助理解上下文，不能单独支撑长期事实。",
             "用户记忆与角色性格、能力变化必须经过草案和审核。",
         ],
         "generatedAtMs": generated_at_ms,
@@ -1604,6 +2087,8 @@ def _build_role_book_draft(
     role_version: str,
     digest: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
+    model_proposals: Mapping[str, object],
+    proposal_diagnostics: Mapping[str, object],
     created_at_ms: int,
 ) -> dict[str, object]:
     recent_work = [
@@ -1611,10 +2096,26 @@ def _build_role_book_draft(
         for item in list(digest.get("recentWork") or [])
         if isinstance(item, Mapping)
     ]
-    trait_proposals = _explicit_role_proposals(evidence, "roleTraitProposal")
-    capability_proposals = _explicit_role_proposals(
-        evidence, "roleCapabilityProposal"
-    )
+    explicit = {
+        "traitProposals": _explicit_role_proposals(evidence, "roleTraitProposal"),
+        "capabilityProposals": _explicit_role_proposals(
+            evidence, "roleCapabilityProposal"
+        ),
+        "lessonProposals": _explicit_role_proposals(
+            evidence, "roleLessonProposal"
+        ),
+        "commitmentProposals": _explicit_role_proposals(
+            evidence, "roleCommitmentProposal"
+        ),
+    }
+    proposals = {
+        field: _merge_role_proposals(
+            explicit[field],
+            model_proposals.get(field),
+            limit=_ROLE_PROPOSAL_LIMITS[field],
+        )
+        for field in _ROLE_PROPOSAL_FIELDS
+    }
     payload = {
         "schemaVersion": "rag-ime.role-book-revision-draft.v1",
         "draftId": f"role-book-draft:{_stable_digest(run_id, role_version)[:24]}",
@@ -1626,14 +2127,19 @@ def _build_role_book_draft(
         "sourceEvidenceIds": [str(item["evidenceId"]) for item in evidence],
         "patch": {
             "recentWork": recent_work,
-            "traitProposals": trait_proposals,
-            "capabilityProposals": capability_proposals,
+            **proposals,
         },
         "policy": {
             "defaultApply": False,
             "safeAutoApplyFields": ["recentWork"],
-            "reviewRequiredFields": ["traits", "capabilities"],
+            "reviewRequiredFields": [
+                "traits",
+                "capabilities",
+                "lessonsAndLimits",
+                "activeCommitments",
+            ],
         },
+        "proposalDiagnostics": dict(proposal_diagnostics),
         "createdAtMs": created_at_ms,
     }
     validate_contract(payload, "role-book-revision-draft.v1.json")
@@ -1677,13 +2183,320 @@ def _explicit_role_proposals(
                 continue
             proposals.append(
                 {
-                    "text": _truncate(text, 400),
+                    "text": _truncate(text, 280),
                     "confidence": confidence,
                     "sourceEvidenceIds": [str(item["evidenceId"])],
                     "reviewRequired": True,
                 }
             )
     return proposals
+
+
+def _build_role_book_model_bundle(
+    *,
+    role_id: str,
+    role_version: str,
+    evidence: Sequence[Mapping[str, object]],
+    activity_context: Mapping[str, object],
+    active_role_book: Mapping[str, object] | None,
+) -> dict[str, object]:
+    conversation: list[dict[str, object]] = []
+    for item in evidence:
+        source_kind = str(item.get("sourceKind") or "")
+        if source_kind not in {"user_message", "assistant_message"}:
+            continue
+        text = compact_whitespace(str(item.get("text") or ""))
+        evidence_id = compact_whitespace(str(item.get("evidenceId") or ""))
+        if not text or not evidence_id or _contains_sensitive_content(text):
+            continue
+        conversation.append(
+            {
+                "evidenceId": evidence_id,
+                "role": "user" if source_kind == "user_message" else "assistant",
+                "text": _truncate(text, 600),
+                "occurredAtMs": max(0, int(item.get("occurredAtMs") or 0)),
+                "reviewEvidenceOnly": True,
+            }
+        )
+    conversation = conversation[-_ROLE_BOOK_MODEL_MAX_MESSAGES:]
+
+    segments: list[dict[str, object]] = []
+    for item in list(activity_context.get("segments") or []):
+        if not isinstance(item, Mapping):
+            continue
+        summary = compact_whitespace(str(item.get("summary") or ""))
+        if not summary:
+            continue
+        segments.append(
+            {
+                "segmentId": _bounded_text(item.get("segmentId"), 160),
+                "app": _bounded_text(item.get("app"), 120),
+                "startMs": max(0, int(item.get("startMs") or 0)),
+                "endMs": max(0, int(item.get("endMs") or 0)),
+                "summary": _truncate(summary, 420),
+            }
+        )
+        if len(segments) >= 6:
+            break
+    activity = {
+        "available": activity_context.get("available") is True and bool(segments),
+        "date": _bounded_text(activity_context.get("date"), 10),
+        "summary": _truncate(
+            compact_whitespace(str(activity_context.get("summary") or "")),
+            1_200,
+        ),
+        "segments": segments,
+        # No timeline source/event ids cross this model boundary.
+        "corroborationOnly": True,
+        "maySupportFacts": False,
+        "maySupportRoleProposals": False,
+    }
+
+    active_sections: dict[str, list[str]] = {}
+    sections = (
+        active_role_book.get("sections")
+        if isinstance(active_role_book, Mapping)
+        else None
+    )
+    sections = sections if isinstance(sections, Mapping) else {}
+    for section in _ROLE_PROPOSAL_SECTIONS.values():
+        texts: list[str] = []
+        for item in list(sections.get(section) or [])[-4:]:
+            if not isinstance(item, Mapping):
+                continue
+            text = compact_whitespace(str(item.get("text") or ""))
+            if text:
+                texts.append(_truncate(text, 280))
+        active_sections[section] = texts
+
+    payload: dict[str, object] = {
+        "schemaVersion": "rag-ime.role-book-curation-input.v1",
+        "roleId": role_id,
+        "roleVersion": role_version,
+        "conversationEvidence": conversation,
+        "activityContext": activity,
+        "activeRoleBook": {
+            "sections": active_sections,
+            "corroborationOnly": True,
+            "maySupportNewProposals": False,
+        },
+        "policy": {
+            "reviewOnly": True,
+            "allowedEvidenceIds": [
+                str(item["evidenceId"]) for item in conversation
+            ],
+            "timelineMaySupplyEvidence": False,
+            "autoActivation": False,
+        },
+    }
+    while (
+        _serialized_chars(payload) > _ROLE_BOOK_MODEL_MAX_CHARS
+        and len(conversation) > 1
+    ):
+        conversation.pop(0)
+        payload["policy"]["allowedEvidenceIds"] = [  # type: ignore[index]
+            str(item["evidenceId"]) for item in conversation
+        ]
+    if _serialized_chars(payload) > _ROLE_BOOK_MODEL_MAX_CHARS:
+        raise ValueError("Role Book organizer input exceeded its strict character budget")
+    return payload
+
+
+def _normalize_model_role_proposals(
+    value: object,
+    *,
+    allowed_evidence_ids: set[str],
+    active_role_book: Mapping[str, object] | None,
+) -> tuple[dict[str, list[dict[str, object]]], int]:
+    source = value if isinstance(value, Mapping) else {}
+    active_sections = (
+        active_role_book.get("sections")
+        if isinstance(active_role_book, Mapping)
+        else None
+    )
+    active_sections = active_sections if isinstance(active_sections, Mapping) else {}
+    normalized: dict[str, list[dict[str, object]]] = {}
+    rejected = 0
+    accepted_chars = 0
+    for field in _ROLE_PROPOSAL_FIELDS:
+        section = _ROLE_PROPOSAL_SECTIONS[field]
+        seen = {
+            _role_proposal_text_key(item.get("text"))
+            for item in list(active_sections.get(section) or [])
+            if isinstance(item, Mapping)
+        }
+        output: list[dict[str, object]] = []
+        raw_values = source.get(field)
+        values = (
+            raw_values
+            if isinstance(raw_values, Sequence)
+            and not isinstance(raw_values, (str, bytes, bytearray))
+            else []
+        )
+        for raw in values:
+            if len(output) >= _ROLE_PROPOSAL_LIMITS[field]:
+                rejected += 1
+                continue
+            if not isinstance(raw, Mapping):
+                rejected += 1
+                continue
+            text_value = raw.get("text")
+            if not isinstance(text_value, str):
+                rejected += 1
+                continue
+            text = compact_whitespace(text_value)
+            evidence_values = raw.get("sourceEvidenceIds")
+            if (
+                not text
+                or len(text) > 280
+                or not isinstance(evidence_values, Sequence)
+                or isinstance(evidence_values, (str, bytes, bytearray))
+                or not 1 <= len(evidence_values) <= 8
+                or any(not isinstance(item, str) for item in evidence_values)
+            ):
+                rejected += 1
+                continue
+            evidence_ids = [
+                compact_whitespace(str(item or "")) for item in evidence_values
+            ]
+            if (
+                any(not item for item in evidence_ids)
+                or len(set(evidence_ids)) != len(evidence_ids)
+                or not set(evidence_ids).issubset(allowed_evidence_ids)
+            ):
+                rejected += 1
+                continue
+            confidence_raw = raw.get("confidence")
+            if isinstance(confidence_raw, bool):
+                rejected += 1
+                continue
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                rejected += 1
+                continue
+            if not 0.0 <= confidence <= 1.0:
+                rejected += 1
+                continue
+            try:
+                normalize_role_book_review_item(
+                    {
+                        "text": text,
+                        "provenance": {
+                            "sourceType": "daily_role_model",
+                            "sourceId": "role-curation:model",
+                            "observedAtMs": 0,
+                        },
+                        "evidenceIds": evidence_ids,
+                    },
+                    section=section,
+                )
+            except (TypeError, ValueError):
+                rejected += 1
+                continue
+            text_key = _role_proposal_text_key(text)
+            if (
+                not text_key
+                or text_key in seen
+                or accepted_chars + len(text) > _ROLE_BOOK_PROPOSAL_MAX_CHARS
+            ):
+                rejected += 1
+                continue
+            seen.add(text_key)
+            accepted_chars += len(text)
+            output.append(
+                {
+                    "text": text,
+                    "confidence": confidence,
+                    "sourceEvidenceIds": evidence_ids,
+                    "reviewRequired": True,
+                }
+            )
+        normalized[field] = output
+    contract_payload = {
+        "schemaVersion": "rag-ime.role-book-curation.v1",
+        **normalized,
+        "warnings": [],
+    }
+    validate_contract(contract_payload, "role-book-curation.v1.json")
+    return normalized, rejected
+
+
+def _merge_role_proposals(
+    first: object,
+    second: object,
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for values in (first, second):
+        if not isinstance(values, Sequence) or isinstance(
+            values, (str, bytes, bytearray)
+        ):
+            continue
+        for item in values:
+            if not isinstance(item, Mapping):
+                continue
+            key = _role_proposal_text_key(item.get("text"))
+            if not key or key in seen:
+                continue
+            result.append(dict(item))
+            seen.add(key)
+            if len(result) >= limit:
+                return result
+    return result
+
+
+def _role_book_review_item(
+    proposal: Mapping[str, object],
+    *,
+    section: str,
+    draft_id: str,
+    observed_at_ms: int,
+) -> dict[str, object]:
+    text = compact_whitespace(str(proposal.get("text") or ""))
+    evidence_ids = [
+        compact_whitespace(str(value or ""))
+        for value in list(proposal.get("sourceEvidenceIds") or [])
+    ]
+    item = {
+        "itemId": (
+            f"role-review:{_stable_digest(draft_id, section, text, *evidence_ids)[:24]}"
+        ),
+        "text": text,
+        "provenance": {
+            "sourceType": "daily_role_review",
+            "sourceId": draft_id,
+            "observedAtMs": max(0, int(observed_at_ms)),
+        },
+        "evidenceIds": evidence_ids,
+    }
+    return normalize_role_book_review_item(item, section=section)
+
+
+def _merge_role_book_review_items(
+    existing: object,
+    incoming: Sequence[Mapping[str, object]],
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    values = [
+        dict(item)
+        for item in list(existing or [])
+        if isinstance(item, Mapping)
+    ]
+    seen = {_role_proposal_text_key(item.get("text")) for item in values}
+    for item in incoming:
+        key = _role_proposal_text_key(item.get("text"))
+        if key and key not in seen:
+            values.append(dict(item))
+            seen.add(key)
+    return values[-max(1, int(limit)) :]
+
+
+def _role_proposal_text_key(value: object) -> str:
+    return compact_whitespace(str(value or "")).casefold()
 
 
 def _is_verified_recent_work(item: Mapping[str, object]) -> bool:

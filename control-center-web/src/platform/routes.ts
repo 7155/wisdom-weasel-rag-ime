@@ -165,7 +165,7 @@ export const CONTROL_ROUTES = {
     method: 'PATCH',
     path: '/api/agent/sessions/:sessionId',
     params: { sessionId: null },
-    body: ['mode', 'workspaceRoots', 'toolProfileVersion', 'toolAllowlistMode', 'allowedTools', 'dangerousModeConfirmation'],
+    body: ['mode', 'workspaceRoots', 'toolProfileVersion', 'toolAllowlistMode', 'allowedTools', 'dangerousModeConfirmation', 'projectContextEnabled'],
     requiredBody: ['mode'],
   },
   'agent.session.delete': {
@@ -468,13 +468,13 @@ export const CONTROL_ROUTES = {
   'agent.roleBook.activation.preview': {
     method: 'POST',
     path: '/api/agent/role-book/activation/preview',
-    body: ['roleId', 'roleVersion', 'revisionId', 'draftId', 'traitIndexes', 'capabilityIndexes'],
+    body: ['roleId', 'roleVersion', 'revisionId', 'draftId', 'traitIndexes', 'capabilityIndexes', 'lessonIndexes', 'commitmentIndexes'],
     requiredBody: ['roleId', 'roleVersion'],
   },
   'agent.roleBook.activation.apply': {
     method: 'POST',
     path: '/api/agent/role-book/activation/apply',
-    body: ['roleId', 'roleVersion', 'revisionId', 'draftId', 'traitIndexes', 'capabilityIndexes', 'previewToken', 'payloadSha256', 'confirmText'],
+    body: ['roleId', 'roleVersion', 'revisionId', 'draftId', 'traitIndexes', 'capabilityIndexes', 'lessonIndexes', 'commitmentIndexes', 'previewToken', 'payloadSha256', 'confirmText'],
     requiredBody: ['roleId', 'roleVersion', 'previewToken', 'payloadSha256', 'confirmText'],
   },
   'agent.roleBook.activation.rollback': {

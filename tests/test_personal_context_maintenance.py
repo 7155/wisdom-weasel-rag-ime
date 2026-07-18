@@ -142,6 +142,67 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
             ["已验收工作项 work:receipt:apply"],
         )
 
+    def test_periodic_runner_persists_model_role_review_without_activation(
+        self,
+    ) -> None:
+        seed = self._seed_role("architect", "role-v1", created_at_ms=10)
+        evidence = AgentMemoryEvidenceStore(self.db_path, project="project-a")
+        user = evidence.record_user_message(
+            session_id="session:periodic",
+            pi_entry_id="user:periodic",
+            role_id="architect",
+            text="后续继续维护角色书中的当前承诺。",
+            occurred_at_ms=100,
+        )["evidence"]
+        assistant = evidence.record_assistant_message(
+            session_id="session:periodic",
+            pi_entry_id="assistant:periodic",
+            role_id="architect",
+            text="今天已经发现并修正时间线证据边界问题。",
+            occurred_at_ms=110,
+        )["evidence"]
+        self._record_work(
+            "project-a",
+            "architect",
+            "receipt:periodic",
+            "完成周期性角色书整理",
+            occurred_at_ms=120,
+        )
+        organizer = _MaintenanceRoleBookOrganizer(
+            [user["evidenceId"], assistant["evidenceId"]]
+        )
+
+        report = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project="project-a",
+                min_interval_ms=0,
+                apply_safe_recent_work=True,
+            ),
+            role_book_organizer=organizer,
+        ).run_once(now_ms=1_000, force=True)
+
+        self.assertTrue(report["ok"])
+        artifact = report["targets"][0]["artifacts"]
+        self.assertTrue(artifact["proposedRoleBookRevisionId"])
+        self.assertTrue(artifact["appliedRoleBookRevisionId"])
+        proposed = self.role_books.get_revision(
+            artifact["proposedRoleBookRevisionId"]
+        )
+        self.assertEqual(proposed["status"], "draft")
+        self.assertEqual(
+            proposed["sourceRevisionId"],
+            artifact["appliedRoleBookRevisionId"],
+        )
+        self.assertTrue(proposed["sections"]["lessonsAndLimits"])
+        self.assertTrue(proposed["sections"]["activeCommitments"])
+        self.assertEqual(
+            self.role_books.active("architect", "role-v1")["revisionId"],
+            artifact["appliedRoleBookRevisionId"],
+        )
+        self.assertNotEqual(artifact["appliedRoleBookRevisionId"], seed["revisionId"])
+        self.assertEqual(len(organizer.calls), 1)
+
     def test_one_target_failure_is_reported_without_stopping_other_targets(
         self,
     ) -> None:
@@ -352,8 +413,8 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
         role_version: str,
         *,
         created_at_ms: int,
-    ) -> None:
-        self.role_books.ensure_seeded(
+    ) -> dict[str, object]:
+        return self.role_books.ensure_seeded(
             role_id,
             role_version,
             display_name=role_id,
@@ -400,6 +461,50 @@ class _ExplodingConsolidator:
     def run(self, *args: object, **kwargs: object) -> dict[str, object]:
         del args, kwargs
         raise RuntimeError("synthetic background failure")
+
+
+class _MaintenanceRoleBookOrganizer:
+    provider_name = "fake-maintenance-role-organizer"
+
+    def __init__(self, evidence_ids: list[str]) -> None:
+        self.evidence_ids = evidence_ids
+        self.calls: list[dict[str, object]] = []
+
+    def curate_role_book(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        role_id: str,
+        role_version: str,
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "bundle": bundle,
+                "project": project,
+                "roleId": role_id,
+                "roleVersion": role_version,
+            }
+        )
+        user_id, assistant_id = self.evidence_ids
+        return {
+            "traitProposals": [],
+            "capabilityProposals": [],
+            "lessonProposals": [
+                {
+                    "text": "时间线只能辅助判断，角色经验必须引用对话证据",
+                    "confidence": 0.95,
+                    "sourceEvidenceIds": [assistant_id],
+                }
+            ],
+            "commitmentProposals": [
+                {
+                    "text": "继续维护角色书中的当前承诺",
+                    "confidence": 0.85,
+                    "sourceEvidenceIds": [user_id],
+                }
+            ],
+        }
 
 
 if __name__ == "__main__":

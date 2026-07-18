@@ -16,7 +16,11 @@ from rag_ime.activity_timeline import (
 from rag_ime.agent_role_book import AgentRoleBookStore
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent
-from rag_ime.personal_context import AgentMemoryEvidenceStore, MemoryBootstrapBuilder
+from rag_ime.personal_context import (
+    AgentMemoryEvidenceStore,
+    MemoryBootstrapBuilder,
+    load_activity_timeline_context,
+)
 from rag_ime.personal_context_maintenance import (
     PersonalContextMaintenanceConfig,
     PersonalContextMaintenanceRunner,
@@ -308,6 +312,122 @@ class DailyActivityTimelineTests(unittest.TestCase):
             generated_at_ms=self._ms(13, 17),
         )
         self.assertEqual(bootstrap["payload"]["sections"]["recentTimeline"], [])
+
+    def test_daily_digest_uses_evidence_day_timeline_after_midnight(self) -> None:
+        self._record(
+            22,
+            0,
+            app="com.apple.TextEdit",
+            source="squirrel_commit",
+            text="实现输入法每日联合上下文",
+        )
+        AgentMemoryEvidenceStore(self.db_path, project=self.project).record_user_message(
+            session_id="session:late",
+            pi_entry_id="entry:late",
+            role_id="architect",
+            text="今晚继续验证记忆整理",
+            occurred_at_ms=self._ms(22, 5),
+        )
+
+        next_day = int(
+            datetime(2026, 7, 18, 0, 10, tzinfo=self.zone).timestamp() * 1_000
+        )
+        report = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project=self.project,
+                min_interval_ms=0,
+            ),
+        ).run_once(now_ms=next_day, force=True)
+
+        self.assertTrue(report["ok"])
+        with sqlite3.connect(self.db_path) as conn:
+            output = json.loads(
+                conn.execute(
+                    """
+                    SELECT output_json FROM personal_context_consolidation_runs
+                    WHERE project = ? AND role_id = 'architect'
+                    ORDER BY completed_at_ms DESC LIMIT 1
+                    """,
+                    (self.project,),
+                ).fetchone()[0]
+            )
+        digest = output["digest"]
+        self.assertEqual(digest["activityContext"]["date"], "2026-07-17")
+        self.assertIn("实现输入法每日联合上下文", digest["activityContext"]["summary"])
+        self.assertIn(
+            "今晚继续验证记忆整理",
+            [item["text"] for item in digest["highlights"]],
+        )
+        self.assertTrue(digest["activityContext"]["corroborationOnly"])
+        self.assertFalse(digest["activityContext"]["maySupportFacts"])
+
+    def test_model_timeline_context_filters_internal_duplicates_and_sensitive_text(
+        self,
+    ) -> None:
+        self._record(
+            18,
+            0,
+            app="RagImeControl",
+            source="squirrel_commit",
+            text="完成联合上下文测试",
+        )
+        self._record(
+            18,
+            1,
+            app="RagImeControl",
+            source="pi_agent_user",
+            text="完成联合上下文测试",
+        )
+        self._record(
+            18,
+            2,
+            app="RagImeControl",
+            source="pi_agent_compaction",
+            text="内部压缩摘要不应进入模型",
+        )
+        self._record(
+            18,
+            3,
+            app="RagImeControl",
+            source="pi_agent_tool_receipt",
+            text="内部工具回执不应进入模型",
+        )
+        self._record(
+            18,
+            4,
+            app="RagImeControl",
+            source="squirrel_commit",
+            text="token=secret-value",
+        )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        timeline = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(18, 5),
+        )["timeline"]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            context = load_activity_timeline_context(
+                conn,
+                project=self.project,
+                timeline_date="2026-07-17",
+                timeline_id=timeline["timelineId"],
+            )
+
+        serialized = json.dumps(context, ensure_ascii=False)
+        self.assertIn("完成联合上下文测试", serialized)
+        self.assertNotIn("内部压缩摘要", serialized)
+        self.assertNotIn("内部工具回执", serialized)
+        self.assertNotIn("secret-value", serialized)
+        self.assertNotIn("sourceEventIds", serialized)
+        self.assertEqual(context["filteredInternalEventCount"], 2)
+        self.assertEqual(context["deduplicatedEventCount"], 1)
+        self.assertEqual(context["redactedEventCount"], 1)
+        self.assertEqual(context["retainedEventCount"], 1)
 
     def test_approval_and_projection_outbox_share_one_transaction(self) -> None:
         self._record(

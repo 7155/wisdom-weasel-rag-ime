@@ -15,6 +15,155 @@ from rag_ime.deepseek_memory_organizer import (
 
 
 class DeepSeekMemoryOrganizerTests(unittest.TestCase):
+    def test_role_book_curation_is_review_only_and_preserves_allowed_ids(self) -> None:
+        config = load_deepseek_config(
+            env={
+                "DEEPSEEK_API_KEY": "secret",
+                "RAG_IME_DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+                "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+            }
+        )
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                del exc_type, exc, tb
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "traitProposals": [],
+                                            "capabilityProposals": [],
+                                            "lessonProposals": [],
+                                            "commitmentProposals": [],
+                                            "warnings": [],
+                                        },
+                                        ensure_ascii=False,
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        bundle = {
+            "schemaVersion": "rag-ime.role-book-curation-input.v1",
+            "conversationEvidence": [
+                {
+                    "evidenceId": "evidence:user:1",
+                    "role": "user",
+                    "text": "继续维护角色书",
+                }
+            ],
+            "activityContext": {
+                "corroborationOnly": True,
+                "maySupportRoleProposals": False,
+            },
+            "policy": {
+                "allowedEvidenceIds": ["evidence:user:1"],
+                "autoActivation": False,
+            },
+        }
+        result = DeepSeekMemoryOrganizer(
+            config,
+            urlopen=fake_urlopen,
+        ).curate_role_book(
+            bundle=bundle,
+            project="rag-ime",
+            role_id="architect",
+            role_version="role-v1",
+        )
+
+        self.assertEqual(result["schemaVersion"], "rag-ime.role-book-curation.v1")
+        self.assertEqual(result["provider"], "deepseek")
+        request_payload = captured["payload"]
+        system_prompt = request_payload["messages"][0]["content"]
+        self.assertIn("review-only", system_prompt)
+        self.assertIn("不能单独", system_prompt)
+        model_input = json.loads(request_payload["messages"][1]["content"])
+        self.assertEqual(
+            model_input["bundle"]["policy"]["allowedEvidenceIds"],
+            ["evidence:user:1"],
+        )
+        self.assertFalse(model_input["bundle"]["policy"]["autoActivation"])
+
+    def test_owner_model_bundle_keeps_joint_context_without_evidence_ids(self) -> None:
+        projected = _owner_memory_model_bundle(
+            {
+                "inputs": [
+                    {
+                        "sourceRef": "S1",
+                        "sourceKind": "user_final",
+                        "trustClass": "user_claim",
+                        "createdAtMs": 1,
+                        "sourceEventIds": [11],
+                        "text": "继续整理个人记忆",
+                    }
+                ],
+                "activityContext": {
+                    "available": True,
+                    "date": "2026-07-17",
+                    "status": "draft",
+                    "summary": "当天主要在 TextEdit 实现时间线",
+                    "sourceEventIds": [999],
+                    "segments": [
+                        {
+                            "segmentId": "segment:1",
+                            "app": "TextEdit",
+                            "startMs": 2,
+                            "endMs": 3,
+                            "summary": "实现时间线联合上下文",
+                            "sourceEventIds": [999],
+                        }
+                    ],
+                },
+                "agentConversationContext": {
+                    "available": True,
+                    "date": "2026-07-17",
+                    "evidenceIds": ["evidence:secret"],
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "text": "已完成有界上下文审计",
+                            "occurredAtMs": 4,
+                            "evidenceId": "evidence:secret",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertIn("TextEdit", projected["activityContext"]["summary"])
+        self.assertEqual(
+            projected["agentConversationContext"]["messages"][0]["text"],
+            "已完成有界上下文审计",
+        )
+        context_json = json.dumps(
+            {
+                "activity": projected["activityContext"],
+                "conversation": projected["agentConversationContext"],
+            },
+            ensure_ascii=False,
+        )
+        self.assertNotIn("sourceEventIds", context_json)
+        self.assertNotIn("evidenceId", context_json)
+        self.assertTrue(projected["activityContext"]["corroborationOnly"])
+        self.assertFalse(projected["activityContext"]["maySupportFacts"])
+
     def test_owner_bundle_samples_long_fragment_provenance_across_full_range(self) -> None:
         projected = _owner_memory_model_bundle(
             {

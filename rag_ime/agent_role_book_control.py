@@ -29,6 +29,8 @@ _SELECTION_FIELDS = frozenset(
         "draftId",
         "traitIndexes",
         "capabilityIndexes",
+        "lessonIndexes",
+        "commitmentIndexes",
     }
 )
 _ROLE_BOOK_SECTION_ORDER = (
@@ -105,7 +107,12 @@ class AgentRoleBookControlService:
             "activationPolicy": {
                 "agentCanActivate": False,
                 "controlCenterConfirmation": "R1",
-                "mutableSections": ["personality", "capabilities"],
+                "mutableSections": [
+                    "personality",
+                    "capabilities",
+                    "lessonsAndLimits",
+                    "activeCommitments",
+                ],
                 "immutableSections": [
                     "identity",
                     "permissions",
@@ -379,6 +386,8 @@ class AgentRoleBookControlService:
                     "draftId": draft_id,
                     "traitIndexes": [],
                     "capabilityIndexes": [],
+                    "lessonIndexes": [],
+                    "commitmentIndexes": [],
                 },
                 allow_empty_selection=True,
             )
@@ -429,15 +438,23 @@ class AgentRoleBookControlService:
             )
         trait_indexes = _indexes(payload.get("traitIndexes"))
         capability_indexes = _indexes(payload.get("capabilityIndexes"))
-        if revision_id and (trait_indexes or capability_indexes):
+        lesson_indexes = _indexes(payload.get("lessonIndexes"))
+        commitment_indexes = _indexes(payload.get("commitmentIndexes"))
+        proposal_indexes = (
+            trait_indexes,
+            capability_indexes,
+            lesson_indexes,
+            commitment_indexes,
+        )
+        if revision_id and any(proposal_indexes):
             raise ManagementWorkError(
                 "invalid_request",
                 "Stored revisions cannot carry daily-draft selection indexes.",
             )
-        if draft_id and not (trait_indexes or capability_indexes):
+        if draft_id and not any(proposal_indexes):
             raise ManagementWorkError(
                 "domain_not_applicable",
-                "Select at least one trait or capability proposal.",
+                "Select at least one Role Book proposal.",
             )
         return {
             "roleId": role,
@@ -446,6 +463,8 @@ class AgentRoleBookControlService:
             "draftId": draft_id,
             "traitIndexes": trait_indexes,
             "capabilityIndexes": capability_indexes,
+            "lessonIndexes": lesson_indexes,
+            "commitmentIndexes": commitment_indexes,
         }
 
     def _prepare(
@@ -562,14 +581,28 @@ class AgentRoleBookControlService:
         assert isinstance(patch, Mapping)
         traits = _mapping_list(patch.get("traitProposals"))
         capabilities = _mapping_list(patch.get("capabilityProposals"))
+        lessons = _mapping_list(patch.get("lessonProposals"))
+        commitments = _mapping_list(patch.get("commitmentProposals"))
         trait_indexes = list(selection.get("traitIndexes") or [])
         capability_indexes = list(selection.get("capabilityIndexes") or [])
+        lesson_indexes = list(selection.get("lessonIndexes") or [])
+        commitment_indexes = list(selection.get("commitmentIndexes") or [])
         if not allow_empty_selection:
             _validate_selected_indexes(trait_indexes, traits, field="traitIndexes")
             _validate_selected_indexes(
                 capability_indexes,
                 capabilities,
                 field="capabilityIndexes",
+            )
+            _validate_selected_indexes(
+                lesson_indexes,
+                lessons,
+                field="lessonIndexes",
+            )
+            _validate_selected_indexes(
+                commitment_indexes,
+                commitments,
+                field="commitmentIndexes",
             )
         prepared = {
             **base,
@@ -580,6 +613,10 @@ class AgentRoleBookControlService:
             "selectedTraits": [traits[index] for index in trait_indexes],
             "selectedCapabilities": [
                 capabilities[index] for index in capability_indexes
+            ],
+            "selectedLessons": [lessons[index] for index in lesson_indexes],
+            "selectedCommitments": [
+                commitments[index] for index in commitment_indexes
             ],
             "sourceHash": _sha256(
                 {
@@ -613,6 +650,8 @@ class AgentRoleBookControlService:
                     "summaryItems": [
                         f"采用 {len(trait_indexes)} 条协作特征",
                         f"采用 {len(capability_indexes)} 条能力证据",
+                        f"采用 {len(lesson_indexes)} 条经验与边界",
+                        f"采用 {len(commitment_indexes)} 条当前承诺",
                         "不会修改身份、权限、工具或安全规则",
                     ],
                 }
@@ -682,6 +721,38 @@ class AgentRoleBookControlService:
                 ],
                 limit=12,
             )
+        selected_lessons = _mapping_list(prepared.get("selectedLessons"))
+        if selected_lessons:
+            updates["lessonsAndLimits"] = _merge_items(
+                active_sections.get("lessonsAndLimits"),
+                [
+                    _proposal_item(
+                        item,
+                        section="lessonsAndLimits",
+                        draft_id=draft_id,
+                        observed_at_ms=observed_at_ms,
+                    )
+                    for item in selected_lessons
+                ],
+                limit=8,
+            )
+        selected_commitments = _mapping_list(
+            prepared.get("selectedCommitments")
+        )
+        if selected_commitments:
+            updates["activeCommitments"] = _merge_items(
+                active_sections.get("activeCommitments"),
+                [
+                    _proposal_item(
+                        item,
+                        section="activeCommitments",
+                        draft_id=draft_id,
+                        observed_at_ms=observed_at_ms,
+                    )
+                    for item in selected_commitments
+                ],
+                limit=8,
+            )
         if not updates:
             raise ManagementWorkError(
                 "domain_not_applicable",
@@ -727,6 +798,15 @@ class AgentRoleBookControlService:
                     ),
                     "capabilityProposals": _mapping_list(
                         patch.get("capabilityProposals")
+                    ),
+                    "lessonProposals": _mapping_list(
+                        patch.get("lessonProposals")
+                    ),
+                    "commitmentProposals": _mapping_list(
+                        patch.get("commitmentProposals")
+                    ),
+                    "proposalDiagnostics": _json_object(
+                        draft.get("proposalDiagnostics")
                     ),
                     "sourceEvidenceCount": len(
                         list(draft.get("sourceEvidenceIds") or [])
@@ -1025,7 +1105,12 @@ def _draft_proposal_evidence_ids(
     if not isinstance(patch, Mapping):
         return []
     evidence_ids: list[str] = []
-    for field in ("traitProposals", "capabilityProposals"):
+    for field in (
+        "traitProposals",
+        "capabilityProposals",
+        "lessonProposals",
+        "commitmentProposals",
+    ):
         for proposal in _mapping_list(patch.get(field)):
             values = proposal.get("sourceEvidenceIds")
             if not isinstance(values, Sequence) or isinstance(

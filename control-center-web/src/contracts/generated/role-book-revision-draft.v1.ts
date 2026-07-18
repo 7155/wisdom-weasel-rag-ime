@@ -17,19 +17,127 @@ export interface RoleBookRevisionDraftV1 {
     recentWork: {
       [k: string]: unknown;
     }[];
-    traitProposals: {
-      [k: string]: unknown;
-    }[];
-    capabilityProposals: {
-      [k: string]: unknown;
-    }[];
-    [k: string]: unknown;
+    /**
+     * @maxItems 6
+     */
+    traitProposals:
+      | []
+      | [Proposal]
+      | [Proposal, Proposal]
+      | [Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal];
+    /**
+     * @maxItems 12
+     */
+    capabilityProposals:
+      | []
+      | [Proposal]
+      | [Proposal, Proposal]
+      | [Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+        ]
+      | [
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+        ]
+      | [
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+          Proposal,
+        ];
+    /**
+     * @maxItems 8
+     */
+    lessonProposals:
+      | []
+      | [Proposal]
+      | [Proposal, Proposal]
+      | [Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal];
+    /**
+     * @maxItems 8
+     */
+    commitmentProposals:
+      | []
+      | [Proposal]
+      | [Proposal, Proposal]
+      | [Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal]
+      | [Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal, Proposal];
   };
   policy: {
     defaultApply: false;
     safeAutoApplyFields: 'recentWork'[];
-    reviewRequiredFields: ('traits' | 'capabilities')[];
-    [k: string]: unknown;
+    reviewRequiredFields: ('traits' | 'capabilities' | 'lessonsAndLimits' | 'activeCommitments')[];
+  };
+  proposalDiagnostics: {
+    status: 'not_configured' | 'no_conversation_evidence' | 'unsupported' | 'completed' | 'failed';
+    provider: string;
+    inputChars: number;
+    acceptedProposalCount: number;
+    rejectedProposalCount: number;
+    error?: string;
   };
   createdAtMs: number;
+}
+export interface Proposal {
+  text: string;
+  confidence: number;
+  /**
+   * @minItems 1
+   * @maxItems 8
+   */
+  sourceEvidenceIds:
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
+  reviewRequired: true;
 }

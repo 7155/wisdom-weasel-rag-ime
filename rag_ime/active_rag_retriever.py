@@ -4,8 +4,8 @@ import sqlite3
 
 from .active_rag_models import ActiveRagEvidence, ActiveRagFrame
 from .embeddings import EmbeddingProvider
-from .hybrid_rag_models import HybridRagCandidate, HybridRagQuery
-from .hybrid_rag_retriever import retrieve_hybrid_rag_candidate_objects
+from .hybrid_rag_models import HybridRagCandidate, HybridRagQuery, MemoryHit
+from .hybrid_rag_retriever import retrieve_hybrid_rag_memory_hit_objects
 from .local_sqlite_core import LocalSqliteCoreClient
 from .text_utils import compact_whitespace, token_terms
 
@@ -49,8 +49,8 @@ def _retrieve_candidates_read_only(
     query: HybridRagQuery,
     *,
     embedding_provider: EmbeddingProvider | None = None,
-) -> list[HybridRagCandidate]:
-    return retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
+) -> list[MemoryHit]:
+    return retrieve_hybrid_rag_memory_hit_objects(conn, query, embedding_provider)
 
 
 def _query_from_frame(
@@ -87,14 +87,18 @@ def _query_from_frame(
     )
 
 
-def _evidence_from_candidate(candidate: HybridRagCandidate) -> ActiveRagEvidence:
+def _evidence_from_candidate(candidate: MemoryHit | HybridRagCandidate) -> ActiveRagEvidence:
     text = candidate.text
     preview_prefix = compact_whitespace(candidate.evidence_preview).split("：", 1)[0].split(":", 1)[0]
     if candidate.source_type not in {"phrase", "surface_phrase"} and len(compact_whitespace(text)) < 4:
         if 4 <= len(preview_prefix) <= 40:
             text = preview_prefix
     return ActiveRagEvidence(
-        evidence_id=candidate.candidate_id,
+        evidence_id=(
+            candidate.hit_id
+            if isinstance(candidate, MemoryHit)
+            else candidate.candidate_id
+        ),
         text=text,
         source_type=candidate.source_type,
         source_lane=candidate.source_lane,
@@ -111,10 +115,10 @@ def _evidence_from_candidate(candidate: HybridRagCandidate) -> ActiveRagEvidence
 
 
 def _relevant_active_rag_candidates(
-    candidates: list[HybridRagCandidate],
+    candidates: list[MemoryHit | HybridRagCandidate],
     *,
     frame: ActiveRagFrame,
-) -> list[HybridRagCandidate]:
+) -> list[MemoryHit | HybridRagCandidate]:
     """Drop retrieval hits that have rank support but no semantic evidence for this field.
 
     Project/app/group priors help order relevant documents, but they must never
@@ -134,7 +138,7 @@ def _relevant_active_rag_candidates(
     )
     terms = [term for term in token_terms(basis, max_terms=64) if len(term) >= 2 and term not in _GENERIC_CONTEXT_TERMS]
     temporal_recall = any(term in basis for term in _TEMPORAL_RECALL_TERMS)
-    accepted: list[HybridRagCandidate] = []
+    accepted: list[MemoryHit | HybridRagCandidate] = []
     for candidate in candidates:
         metadata = dict(candidate.metadata)
         lanes = {str(value) for value in metadata.get("lanes") or []}

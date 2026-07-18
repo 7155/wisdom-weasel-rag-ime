@@ -6,7 +6,7 @@
   "required": [
     "schemaVersion", "draftId", "status", "project", "roleId",
     "baseRoleVersion", "sourceDigestId", "sourceEvidenceIds", "patch",
-    "policy", "createdAtMs"
+    "policy", "proposalDiagnostics", "createdAtMs"
   ],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.role-book-revision-draft.v1"},
@@ -19,15 +19,22 @@
     "sourceEvidenceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "patch": {
       "type": "object",
-      "required": ["recentWork", "traitProposals", "capabilityProposals"],
+      "additionalProperties": false,
+      "required": [
+        "recentWork", "traitProposals", "capabilityProposals",
+        "lessonProposals", "commitmentProposals"
+      ],
       "properties": {
         "recentWork": {"type": "array", "items": {"type": "object"}},
-        "traitProposals": {"type": "array", "items": {"type": "object"}},
-        "capabilityProposals": {"type": "array", "items": {"type": "object"}}
+        "traitProposals": {"type": "array", "maxItems": 6, "items": {"$ref": "#/$defs/proposal"}},
+        "capabilityProposals": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/proposal"}},
+        "lessonProposals": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/proposal"}},
+        "commitmentProposals": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/proposal"}}
       }
     },
     "policy": {
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "defaultApply", "safeAutoApplyFields", "reviewRequiredFields"
       ],
@@ -39,10 +46,58 @@
         },
         "reviewRequiredFields": {
           "type": "array",
-          "items": {"type": "string", "enum": ["traits", "capabilities"]}
+          "items": {
+            "type": "string",
+            "enum": [
+              "traits", "capabilities", "lessonsAndLimits", "activeCommitments"
+            ]
+          }
         }
       }
     },
+    "proposalDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "provider", "inputChars", "acceptedProposalCount",
+        "rejectedProposalCount"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_configured", "no_conversation_evidence", "unsupported",
+            "completed", "failed"
+          ]
+        },
+        "provider": {"type": "string", "maxLength": 80},
+        "inputChars": {"type": "integer", "minimum": 0, "maximum": 12000},
+        "acceptedProposalCount": {"type": "integer", "minimum": 0},
+        "rejectedProposalCount": {"type": "integer", "minimum": 0},
+        "error": {"type": "string", "maxLength": 400}
+      }
+    },
     "createdAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text", "confidence", "sourceEvidenceIds", "reviewRequired"
+      ],
+      "properties": {
+        "text": {"type": "string", "minLength": 1, "maxLength": 280},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "sourceEvidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 240}
+        },
+        "reviewRequired": {"type": "boolean", "const": true}
+      }
+    }
   }
 }

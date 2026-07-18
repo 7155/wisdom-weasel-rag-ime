@@ -6,6 +6,7 @@
 
 import type { ActiveRagStartV1 } from './generated/active-rag-start.v1';
 import type { ActiveRagStatusV1 } from './generated/active-rag-status.v1';
+import type { ActivityTimelineContextV1 } from './generated/activity-timeline-context.v1';
 import type { AgentApprovalV1 } from './generated/agent-approval.v1';
 import type { AgentArtifactInspectionV1 } from './generated/agent-artifact-inspection.v1';
 import type { AgentArtifactRefV1 } from './generated/agent-artifact-ref.v1';
@@ -14,6 +15,7 @@ import type { AgentContextItemV1 } from './generated/agent-context-item.v1';
 import type { AgentContextTraceV1 } from './generated/agent-context-trace.v1';
 import type { AgentControlBootstrapV1 } from './generated/agent-control-bootstrap.v1';
 import type { AgentControlEventV1 } from './generated/agent-control-event.v1';
+import type { AgentConversationContextV1 } from './generated/agent-conversation-context.v1';
 import type { AgentEventV1 } from './generated/agent-event.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
 import type { AgentMemoryEvidenceV1 } from './generated/agent-memory-evidence.v1';
@@ -77,12 +79,14 @@ import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
 import type { RimeSelectV1 } from './generated/rime-select.v1';
 import type { RimeSuggestRequestV1 } from './generated/rime-suggest-request.v1';
 import type { RimeSuggestResponseV1 } from './generated/rime-suggest-response.v1';
+import type { RoleBookCurationV1 } from './generated/role-book-curation.v1';
 import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-draft.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
 export type {
   ActiveRagStartV1,
   ActiveRagStatusV1,
+  ActivityTimelineContextV1,
   AgentApprovalV1,
   AgentArtifactInspectionV1,
   AgentArtifactRefV1,
@@ -91,6 +95,7 @@ export type {
   AgentContextTraceV1,
   AgentControlBootstrapV1,
   AgentControlEventV1,
+  AgentConversationContextV1,
   AgentEventV1,
   AgentMediaV1,
   AgentMemoryEvidenceV1,
@@ -154,6 +159,7 @@ export type {
   RimeSelectV1,
   RimeSuggestRequestV1,
   RimeSuggestResponseV1,
+  RoleBookCurationV1,
   RoleBookRevisionDraftV1,
   UserMemoryDraftV1,
 };
@@ -161,6 +167,7 @@ export type {
 export interface ContractTypeMap {
   'active-rag-start.v1': ActiveRagStartV1;
   'active-rag-status.v1': ActiveRagStatusV1;
+  'activity-timeline-context.v1': ActivityTimelineContextV1;
   'agent-approval.v1': AgentApprovalV1;
   'agent-artifact-inspection.v1': AgentArtifactInspectionV1;
   'agent-artifact-ref.v1': AgentArtifactRefV1;
@@ -169,6 +176,7 @@ export interface ContractTypeMap {
   'agent-context-trace.v1': AgentContextTraceV1;
   'agent-control-bootstrap.v1': AgentControlBootstrapV1;
   'agent-control-event.v1': AgentControlEventV1;
+  'agent-conversation-context.v1': AgentConversationContextV1;
   'agent-event.v1': AgentEventV1;
   'agent-media.v1': AgentMediaV1;
   'agent-memory-evidence.v1': AgentMemoryEvidenceV1;
@@ -232,6 +240,7 @@ export interface ContractTypeMap {
   'rime-select.v1': RimeSelectV1;
   'rime-suggest-request.v1': RimeSuggestRequestV1;
   'rime-suggest-response.v1': RimeSuggestResponseV1;
+  'role-book-curation.v1': RoleBookCurationV1;
   'role-book-revision-draft.v1': RoleBookRevisionDraftV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
 }

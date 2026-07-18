@@ -38,6 +38,7 @@ from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_boo
 from .memory_graph_read import read_memory_entity, read_memory_graph
 from .memory_ingest import looks_sensitive, normalize_text
 from .memory_ownership import normalize_memory_owner, sql_memory_owner_predicate
+from .memory_projection import memory_projection_freshness
 from .input_quality import FINALIZED_INPUT_SOURCE, RIME_FRAGMENT_SOURCE, assess_input_text
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
@@ -2375,6 +2376,111 @@ class ManagementService:
                 result["evidenceSourceCount"] = 0
                 result["forgottenSourceCount"] = 0
                 result["needsReviewSourceCount"] = 0
+            if "agent_memory_evidence" in tables:
+                evidence_rows = conn.execute(
+                    """
+                    SELECT status, COUNT(*) AS item_count
+                    FROM agent_memory_evidence
+                    WHERE project = ?
+                    GROUP BY status
+                    """,
+                    (self.project,),
+                ).fetchall()
+                evidence_counts = {
+                    str(row["status"]): int(row["item_count"] or 0)
+                    for row in evidence_rows
+                }
+                result["agentEvidenceCount"] = evidence_counts.get("active", 0)
+                result["agentEvidenceTombstonedCount"] = evidence_counts.get(
+                    "tombstoned", 0
+                )
+            else:
+                result["agentEvidenceCount"] = 0
+                result["agentEvidenceTombstonedCount"] = 0
+            if "agent_role_book_revisions" in tables:
+                role_rows = conn.execute(
+                    """
+                    SELECT status, COUNT(*) AS item_count
+                    FROM agent_role_book_revisions
+                    GROUP BY status
+                    """
+                ).fetchall()
+                result["roleBookRevisionCounts"] = {
+                    str(row["status"]): int(row["item_count"] or 0)
+                    for row in role_rows
+                }
+            else:
+                result["roleBookRevisionCounts"] = {}
+            if "daily_activity_timelines" in tables:
+                timeline_rows = conn.execute(
+                    """
+                    SELECT status, COUNT(*) AS item_count
+                    FROM daily_activity_timelines
+                    WHERE project = ?
+                    GROUP BY status
+                    """,
+                    (self.project,),
+                ).fetchall()
+                result["activityTimelineCounts"] = {
+                    str(row["status"]): int(row["item_count"] or 0)
+                    for row in timeline_rows
+                }
+                latest_timeline = conn.execute(
+                    """
+                    SELECT timeline_date, status, updated_at_ms
+                    FROM daily_activity_timelines
+                    WHERE project = ?
+                    ORDER BY timeline_date DESC, updated_at_ms DESC
+                    LIMIT 1
+                    """,
+                    (self.project,),
+                ).fetchone()
+                result["latestActivityTimeline"] = (
+                    {
+                        "date": str(latest_timeline["timeline_date"]),
+                        "status": str(latest_timeline["status"]),
+                        "updatedAtMs": int(latest_timeline["updated_at_ms"] or 0),
+                    }
+                    if latest_timeline is not None
+                    else {}
+                )
+            else:
+                result["activityTimelineCounts"] = {}
+                result["latestActivityTimeline"] = {}
+            if "memory_governance_proposals" in tables:
+                governance_rows = conn.execute(
+                    """
+                    SELECT status, COUNT(*) AS item_count
+                    FROM memory_governance_proposals
+                    WHERE project = ?
+                    GROUP BY status
+                    """,
+                    (self.project,),
+                ).fetchall()
+                result["governanceProposalCounts"] = {
+                    str(row["status"]): int(row["item_count"] or 0)
+                    for row in governance_rows
+                }
+            else:
+                result["governanceProposalCounts"] = {}
+            projection_tables = {
+                "memory_projection_outbox",
+                "memory_projection_checkpoints",
+                "memory_retrieval_docs",
+                "memory_items",
+                "memory_atoms",
+                "memory_books",
+            }
+            if projection_tables.issubset(tables):
+                result["projection"] = memory_projection_freshness(conn)
+            else:
+                result["projection"] = {
+                    "fresh": False,
+                    "backlog": 0,
+                    "dead": 0,
+                    "retrievalDocuments": int(result["retrievalDocCount"]),
+                    "projectionInitialized": False,
+                }
             if {
                 "memory_items",
                 "memory_atoms",
@@ -2420,6 +2526,8 @@ class ManagementService:
         apps, _ = self._memory_apps(PageRequest(limit=100))
         result["appCount"] = len(apps)
         result["completeInputCount"] = sum(int(item.get("eventCount") or 0) for item in apps)
+        result["currentAtomCount"] = int(result["memoryAtomCount"])
+        result["historicalAtomCount"] = int(result["memoryAtomArchivedCount"])
         return result
 
     def _memory_apps(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:

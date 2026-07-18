@@ -524,6 +524,7 @@ struct NativeRoutePolicyTests {
                 "toolAllowlistMode": "profile",
                 "workspaceRoots": ["/tmp/project"],
                 "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+                "projectContextEnabled": false,
             ]
         )
         expectThrows("persona prompt remains server owned") {

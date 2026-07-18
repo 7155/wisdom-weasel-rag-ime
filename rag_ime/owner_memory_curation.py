@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .agent_memory_sources import AgentMemorySourceStore
+from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_book_compiler import (
     collapse_rime_fragment_run,
@@ -22,6 +23,12 @@ from .memory_book_compiler import (
 )
 from .memory_evidence_ledger import backfill_input_event_evidence
 from .memory_ingest import normalize_text
+from .personal_context import (
+    load_activity_timeline_context,
+    local_date_for_timestamp,
+    local_day_bounds_ms,
+)
+from .sensitive_content import contains_sensitive_content
 from .text_utils import compact_whitespace, stable_text_hash
 
 
@@ -744,7 +751,8 @@ def owner_memory_curation_status(
                 "tool_receipt",
                 "session_compaction",
             ],
-            "assistantTurnsRead": False,
+            "assistantTurnsRead": True,
+            "assistantTurnsAreContextOnly": True,
             "rawScreenshotsRead": False,
             "semanticWritesRequireReview": True,
             "sourceForgettingReversible": True,
@@ -876,6 +884,121 @@ def _owner_scope_statuses(
     return result
 
 
+def _agent_conversation_context(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    owner_kind: str,
+    owner_id: str,
+    session_ids: list[str],
+    timeline_date: str,
+    max_messages: int = 24,
+    max_chars: int = 4_000,
+) -> dict[str, object]:
+    """Return bounded dialogue context without exposing evidence identifiers."""
+
+    bounded_messages = max(1, min(int(max_messages), 24))
+    char_budget = max(600, min(int(max_chars), 4_000))
+    start_ms, end_ms = local_day_bounds_ms(timeline_date)
+    clauses = [
+        "project = ?",
+        "status = 'active'",
+        "occurred_at_ms >= ?",
+        "occurred_at_ms < ?",
+        "source_kind IN ('user_message', 'assistant_message', 'room_event')",
+    ]
+    params: list[object] = [project, start_ms, end_ms]
+    if owner_kind == "agent":
+        clauses.append("role_id = ?")
+        params.append(owner_id)
+    elif session_ids:
+        scoped_sessions = session_ids[:64]
+        clauses.append(
+            f"session_id IN ({','.join('?' for _ in scoped_sessions)})"
+        )
+        params.extend(scoped_sessions)
+    else:
+        payload = _empty_agent_conversation_context(timeline_date)
+        validate_contract(payload, "agent-conversation-context.v1.json")
+        return payload
+    params.append(80)
+    rows = conn.execute(
+        f"""
+        SELECT source_kind, content_text, occurred_at_ms
+        FROM agent_memory_evidence
+        WHERE {' AND '.join(clauses)}
+        ORDER BY occurred_at_ms DESC, evidence_id DESC
+        LIMIT ?
+        """,  # noqa: S608 - placeholders are generated, never values
+        tuple(params),
+    ).fetchall()
+    rows = list(reversed(rows))
+
+    messages: list[dict[str, object]] = []
+    deduplicated = 0
+    redacted = 0
+    remaining_chars = char_budget
+    last_seen: dict[tuple[str, str], int] = {}
+    for row in rows:
+        if len(messages) >= bounded_messages or remaining_chars <= 0:
+            break
+        text = compact_whitespace(str(row["content_text"] or ""))
+        if not text:
+            continue
+        if contains_sensitive_content(text):
+            redacted += 1
+            continue
+        source_kind = str(row["source_kind"])
+        role = "assistant" if source_kind == "assistant_message" else "user"
+        occurred_at_ms = int(row["occurred_at_ms"] or 0)
+        key = (role, normalize_text(text))
+        previous = last_seen.get(key)
+        if previous is not None and occurred_at_ms - previous <= 5 * 60 * 1_000:
+            deduplicated += 1
+            continue
+        last_seen[key] = occurred_at_ms
+        bounded_text = text[: min(600, remaining_chars)]
+        if not bounded_text:
+            continue
+        messages.append(
+            {
+                "role": role,
+                "sourceKind": source_kind,
+                "text": bounded_text,
+                "occurredAtMs": occurred_at_ms,
+            }
+        )
+        remaining_chars -= len(bounded_text)
+
+    payload = {
+        "schemaVersion": "rag-ime.agent-conversation-context.v1",
+        "available": bool(messages),
+        "date": timeline_date,
+        "messages": messages,
+        "messageCount": len(messages),
+        "deduplicatedMessageCount": deduplicated,
+        "redactedMessageCount": redacted,
+        "corroborationOnly": True,
+        "maySupportFacts": False,
+    }
+    validate_contract(payload, "agent-conversation-context.v1.json")
+    return payload
+
+
+def _empty_agent_conversation_context(timeline_date: str) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.agent-conversation-context.v1",
+        "available": False,
+        "date": timeline_date,
+        "messages": [],
+        "messageCount": 0,
+        "deduplicatedMessageCount": 0,
+        "redactedMessageCount": 0,
+        "corroborationOnly": True,
+        "maySupportFacts": False,
+    }
+
+
 def _build_owner_source_bundle(
     conn: sqlite3.Connection,
     *,
@@ -946,9 +1069,40 @@ def _build_owner_source_bundle(
                 "contextGroupId": str(row["context_group_id"] or ""),
                 "contextGroupLevel": str(row["context_group_level"] or "app"),
                 "sourceMetadataTags": _json_strings(row["tags_json"]),
+                "sessionId": str(row["session_id"] or ""),
             }
         )
+    curation_date = (
+        local_date_for_timestamp(int(raw_inputs[0]["createdAtMs"]))
+        if raw_inputs
+        else local_date_for_timestamp(0)
+    )
+    raw_inputs = [
+        item
+        for item in raw_inputs
+        if local_date_for_timestamp(int(item["createdAtMs"])) == curation_date
+    ]
     inputs = _coalesce_owner_inputs(raw_inputs)[:logical_limit]
+    session_ids = list(
+        dict.fromkeys(
+            str(item.get("sessionId") or "")
+            for item in raw_inputs
+            if str(item.get("sessionId") or "")
+        )
+    )
+    activity_context = load_activity_timeline_context(
+        conn,
+        project=project,
+        timeline_date=curation_date,
+    )
+    conversation_context = _agent_conversation_context(
+        conn,
+        project=project,
+        owner_kind=owner_kind,
+        owner_id=owner_id,
+        session_ids=session_ids,
+        timeline_date=curation_date,
+    )
 
     books = [
         {
@@ -1040,7 +1194,11 @@ def _build_owner_source_bundle(
         ],
         "existingMemoryBooks": books,
         "existingMemoryAtoms": atoms,
+        "activityContext": activity_context,
+        "agentConversationContext": conversation_context,
         "legalContextGroupIds": [],
+        # Only immutable owner inputs are legal fact evidence. Timeline and
+        # conversation context intentionally expose no event/evidence ids.
         "legalSourceEventIds": event_ids,
         "cursor": {
             "fromSourceCreatedAtMs": cursor_ms,
