@@ -18,6 +18,7 @@ afterEach(() => {
 describe('MemoryFeature relations', () => {
   it('reviews and approves a daily activity timeline without promoting it silently', async () => {
     const user = userEvent.setup();
+    const date = localCalendarDate();
     let status = 'draft';
     const transport = new MockControlTransport({
       routes: {
@@ -30,29 +31,29 @@ describe('MemoryFeature relations', () => {
           projection: { fresh: true, retrievalDocuments: 12, backlog: 0 },
         },
         'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
-        'memory.activityTimeline.get': () => ({ ok: true, timeline: activityTimeline(status) }),
+        'memory.activityTimeline.get': () => ({ ok: true, timeline: activityTimeline(status, date) }),
         'memory.activityTimeline.approve': (request: ControlRequest) => {
           expect(request.body).toEqual({
-            timelineId: 'timeline:2026-07-18',
+            timelineId: `timeline:${date}`,
             expectedSourceEventHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
             confirmText: 'approve',
           });
           status = 'approved';
-          return { ok: true, decision: 'accepted', timeline: activityTimeline(status) };
+          return { ok: true, decision: 'accepted', timeline: activityTimeline(status, date) };
         },
         'memory.activityTimeline.build': (request: ControlRequest) => {
-          expect(request.body).toEqual({ date: '2026-07-18' });
+          expect(request.body).toEqual({ date });
           status = 'draft';
-          return { ok: true, timeline: activityTimeline(status) };
+          return { ok: true, timeline: activityTimeline(status, date) };
         },
         'memory.activityTimeline.reject': (request: ControlRequest) => {
           expect(request.body).toEqual({
-            timelineId: 'timeline:2026-07-18',
+            timelineId: `timeline:${date}`,
             reason: '时段划分需要调整',
             confirmText: 'reject',
           });
           status = 'rejected';
-          return { ok: true, decision: 'rejected', timeline: activityTimeline(status) };
+          return { ok: true, decision: 'rejected', timeline: activityTimeline(status, date) };
         },
       },
     });
@@ -1017,8 +1018,9 @@ function renderMemory(transport: MockControlTransport, initialEntry = '/') {
   );
 }
 
-function activityTimeline(status: string): Record<string, unknown> {
-  const start = new Date(2026, 6, 18, 9, 0).getTime();
+function activityTimeline(status: string, date: string): Record<string, unknown> {
+  const [year, month, day] = date.split('-').map(Number);
+  const start = new Date(year, month - 1, day, 9, 0).getTime();
   const segment = (position: number, app: string, summary: string) => ({
     segmentId: `segment:${position}`,
     position,
@@ -1035,9 +1037,9 @@ function activityTimeline(status: string): Record<string, unknown> {
   });
   return {
     schemaVersion: 'rag-ime.daily-activity-timeline.v1',
-    timelineId: 'timeline:2026-07-18',
+    timelineId: `timeline:${date}`,
     project: 'wisdom-weasel-rag-ime',
-    date: '2026-07-18',
+    date,
     timezone: 'Asia/Shanghai',
     status,
     sourceEventIds: [1, 2],
@@ -1049,7 +1051,7 @@ function activityTimeline(status: string): Record<string, unknown> {
     summary: '当天完成个人上下文主链改造与验证。',
     eventCount: 8,
     segmentCount: 2,
-    approvedBookId: status === 'approved' ? 'book:daily:2026-07-18' : '',
+    approvedBookId: status === 'approved' ? `book:daily:${date}` : '',
     approvedBy: status === 'approved' ? 'control-center-user' : '',
     approvedAtMs: status === 'approved' ? start + 10_000 : 0,
     createdAtMs: start,
@@ -1061,6 +1063,12 @@ function activityTimeline(status: string): Record<string, unknown> {
       explicitApprovalRequired: true,
     },
   };
+}
+
+function localCalendarDate(): string {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 function memoryCurationStatus(): Record<string, unknown> {
