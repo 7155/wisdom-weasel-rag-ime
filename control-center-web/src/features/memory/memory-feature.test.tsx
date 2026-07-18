@@ -192,6 +192,32 @@ describe('MemoryFeature relations', () => {
     expect(await screen.findByRole('button', { name: /Agent Runtime，11 条记忆/ })).toBeInTheDocument();
   });
 
+  it('labels active Agent evidence as audit-only instead of active memory', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
+        'memory.pages': (request: ControlRequest) => ({
+          ok: true,
+          items: request.params?.kind === 'evidence' ? [{
+            id: 'evidence:workflow-noise',
+            title: 'curation_prepare 流程回执',
+            detail: 'user_message',
+            status: 'active',
+            source: { kind: 'agent_memory_evidence', id: 'evidence:workflow-noise' },
+            ownerKind: 'agent',
+            ownerId: 'zhiyou-v1',
+          }] : [],
+          nextCursor: '',
+          limit: 50,
+        }),
+      },
+    });
+    renderMemory(transport, '/memory?layer=evidence');
+
+    expect(await screen.findByText('审计保留')).toBeInTheDocument();
+    expect(screen.queryByText('使用中')).not.toBeInTheDocument();
+  });
+
   it('starts from active memory and keeps preserved history inspectable', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({

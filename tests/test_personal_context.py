@@ -290,10 +290,7 @@ class MemoryBootstrapBuilderTests(unittest.TestCase):
         self.assertNotIn("atom:stale", all_source_ids)
         self.assertNotIn("atom:old-claim", all_source_ids)
         self.assertNotIn("book:stale", all_source_ids)
-        self.assertTrue(sections["oneRing"])
-        self.assertTrue(
-            all(item["maySupportFacts"] is False for item in sections["oneRing"])
-        )
+        self.assertEqual(sections["oneRing"], [])
         preference = sections["stablePreferences"][0]
         self.assertEqual(preference["ref"]["type"], "atom")
         self.assertEqual(preference["ref"]["kind"], "atom")
@@ -314,12 +311,6 @@ class MemoryBootstrapBuilderTests(unittest.TestCase):
         self.assertEqual(timeline["ref"]["type"], "book")
         self.assertEqual(timeline["ref"]["kind"], "book")
         self.assertEqual(timeline["ref"]["id"], timeline["sourceId"])
-        self.assertTrue(
-            all(
-                str(item["sourceId"]).startswith("evidence:")
-                for item in sections["oneRing"]
-            )
-        )
 
         runtime = AgentContextRuntime(self.db_path)
         runtime.initialize()
@@ -406,7 +397,7 @@ class MemoryBootstrapBuilderTests(unittest.TestCase):
             [item["sourceId"] for item in sections["activeAtoms"]],
         )
 
-    def test_one_ring_shares_user_tail_but_not_another_roles_private_output(self) -> None:
+    def test_one_ring_never_reinjects_raw_user_or_assistant_chat(self) -> None:
         other_user = self.store.record_user_message(
             session_id="reviewer-session",
             pi_entry_id="reviewer:user",
@@ -420,6 +411,21 @@ class MemoryBootstrapBuilderTests(unittest.TestCase):
             role_id="reviewer",
             text="这是另一个角色自己的最终回复",
             occurred_at_ms=930,
+        )
+        verified_receipt = self.store.record_tool_receipt(
+            {
+                "approvalId": "approval:verified-work",
+                "sessionId": "reviewer-session",
+                "state": "applied",
+                "toolName": "task_update",
+                "operation": "complete",
+                "receipt": {
+                    "mutationApplied": True,
+                    "summary": "完成个人上下文召回验收",
+                },
+            },
+            role_id="architect",
+            occurred_at_ms=940,
         )
 
         payload = MemoryBootstrapBuilder(
@@ -436,8 +442,9 @@ class MemoryBootstrapBuilderTests(unittest.TestCase):
             for item in payload["sections"]["oneRing"]
         }
 
-        self.assertIn(other_user["evidence"]["evidenceId"], source_ids)
+        self.assertNotIn(other_user["evidence"]["evidenceId"], source_ids)
         self.assertNotIn(other_assistant["evidence"]["evidenceId"], source_ids)
+        self.assertIn(verified_receipt["evidence"]["evidenceId"], source_ids)
 
     def test_bootstrap_filters_legacy_evidence_with_private_key_or_local_path(self) -> None:
         leaked = (

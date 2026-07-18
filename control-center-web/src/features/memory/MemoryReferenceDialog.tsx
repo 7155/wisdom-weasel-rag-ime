@@ -114,8 +114,8 @@ export function MemoryReferenceDialog({
               <span><Fingerprint size={16} /></span>
               <div><small>稳定引用</small><strong>{current.referenceId}</strong></div>
               <StatusBadge
-                label={referenceStatusLabel(disposition)}
-                tone={referenceStatusTone(disposition)}
+                label={referenceStatusLabel(disposition, current.kind)}
+                tone={referenceStatusTone(disposition, current.kind)}
               />
             </div>
 
@@ -319,7 +319,8 @@ function referenceKindLabel(kind: MemoryReferenceKind): string {
   } as const)[kind];
 }
 
-function referenceStatusLabel(status: string): string {
+function referenceStatusLabel(status: string, kind: MemoryReferenceKind): string {
+  if (kind === 'evidence' && status === 'active') return '审计保留';
   return ({
     active: '使用中',
     approved: '已确认',
@@ -332,7 +333,8 @@ function referenceStatusLabel(status: string): string {
   } as Record<string, string>)[status] ?? '可追溯';
 }
 
-function referenceStatusTone(status: string): 'success' | 'info' | 'danger' | 'neutral' {
+function referenceStatusTone(status: string, kind: MemoryReferenceKind): 'success' | 'info' | 'danger' | 'neutral' {
+  if (kind === 'evidence' && status === 'active') return 'info';
   if (status === 'active' || status === 'approved') return 'success';
   if (status === 'archived' || status === 'superseded' || status === 'not_for_memory' || status === 'forgotten' || status === 'expired') return 'info';
   if (status === 'tombstoned') return 'danger';

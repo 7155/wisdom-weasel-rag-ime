@@ -1149,12 +1149,23 @@ class MemoryBootstrapBuilder:
             text = compact_whitespace(str(row["content_text"]))
             if not text or _contains_sensitive_content(text):
                 continue
+            source_kind = str(row["source_kind"])
+            metadata = _json_object(row["metadata_json"])
+            if source_kind in {"user_message", "assistant_message"}:
+                # Pi already carries the current conversation history. Raw chat
+                # Evidence remains auditable, but must not become a second,
+                # query-free memory channel in a future Session.
+                continue
+            if source_kind == "tool_receipt" and metadata.get("applied") is not True:
+                continue
+            if source_kind in {"room_event", "work_receipt"} and metadata.get("accepted") is not True:
+                continue
             items.append(
                 {
                     "sourceType": "memory_evidence",
                     "sourceId": str(row["evidence_id"]),
                     "text": _truncate(text, 420),
-                    "kind": str(row["source_kind"]),
+                    "kind": source_kind,
                     "occurredAtMs": int(row["occurred_at_ms"]),
                     "maySupportFacts": False,
                     "provenance": {

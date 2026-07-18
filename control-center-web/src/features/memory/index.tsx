@@ -249,7 +249,7 @@ export function MemoryFeature() {
                             sourceLabel(stringValue(row.source)),
                             ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId)),
                           ].filter(Boolean).join(' · '),
-                          status: <StatusBadge label={statusLabel(rowStatus)} tone={statusTone(rowStatus)} />,
+                          status: <StatusBadge label={catalogStatusLabel(kind, rowStatus)} tone={catalogStatusTone(kind, rowStatus)} />,
                           onClick: () => {
                             setSelectedId(id);
                             setEditOpen(false);
@@ -599,7 +599,7 @@ function MemoryCatalogDetail({
         <p>{redacted ? '正文因为隐私策略已隐藏，只保留可审计的来源和状态。' : stringValue(row.detail, '暂无摘要')}</p>
       </div>
       <dl>
-        <div><dt>状态</dt><dd>{statusLabel(status)}</dd></div>
+        <div><dt>状态</dt><dd>{catalogStatusLabel(kind, status)}</dd></div>
         <div><dt>来源</dt><dd>{sourceLabel(stringValue(row.source))}</dd></div>
         {stringValue(row.ownerKind) ? (
           <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
@@ -1128,6 +1128,16 @@ function statusLabel(status: string): string {
     consolidated: '已归档入书',
     expired: '已过期',
   }[status] ?? '状态未知';
+}
+
+function catalogStatusLabel(kind: MemoryKind, status: string): string {
+  if (kind === 'evidence' && status === 'active') return '审计保留';
+  return statusLabel(status);
+}
+
+function catalogStatusTone(kind: MemoryKind, status: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
+  if (kind === 'evidence' && status === 'active') return 'info';
+  return statusTone(status);
 }
 
 function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
