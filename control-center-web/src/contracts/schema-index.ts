@@ -11190,6 +11190,290 @@ export const contractSchemas = {
       }
     }
   },
+  "session-memory-recall.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.session-memory-recall.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "recallId",
+      "sessionId",
+      "project",
+      "roleId",
+      "generatedAtMs",
+      "trigger",
+      "query",
+      "retrieval",
+      "items",
+      "sourceIds",
+      "budget",
+      "policy"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.session-memory-recall.v1"
+      },
+      "recallId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "project": {
+        "type": "string"
+      },
+      "roleId": {
+        "type": "string"
+      },
+      "generatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "trigger": {
+        "const": "first_user_prompt"
+      },
+      "query": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "preview",
+          "sha256",
+          "recentCompleteInputCount",
+          "recentCompleteInputUsedForRetrieval"
+        ],
+        "properties": {
+          "preview": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "recentCompleteInputCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recentCompleteInputUsedForRetrieval": {
+            "type": "boolean"
+          }
+        }
+      },
+      "retrieval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "strategy",
+          "primaryQuery",
+          "matchedAliases",
+          "activatedTags",
+          "visibleOwners",
+          "requestedEmbeddingProvider",
+          "embeddingProvider",
+          "embeddingFallback"
+        ],
+        "properties": {
+          "strategy": {
+            "const": "vcp_hybrid_book_atom"
+          },
+          "primaryQuery": {
+            "type": "string"
+          },
+          "matchedAliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "activatedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "visibleOwners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "ownerKind",
+                "ownerId"
+              ],
+              "properties": {
+                "ownerKind": {
+                  "type": "string"
+                },
+                "ownerId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "requestedEmbeddingProvider": {
+            "type": "string"
+          },
+          "embeddingProvider": {
+            "type": "string"
+          },
+          "embeddingFallback": {
+            "type": "boolean"
+          }
+        }
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 12,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rank",
+            "sourceType",
+            "sourceId",
+            "title",
+            "text",
+            "score",
+            "confidence",
+            "lanes",
+            "rawScores",
+            "tags",
+            "ownerKind",
+            "ownerId",
+            "evidenceEventIds"
+          ],
+          "properties": {
+            "rank": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sourceType": {
+              "enum": [
+                "memory_book",
+                "memory_atom"
+              ]
+            },
+            "sourceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "title": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "score": {
+              "type": "number"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "lanes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "rawScores": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "ownerKind": {
+              "type": "string"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "evidenceEventIds": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      },
+      "sourceIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "maxItems",
+          "maxChars",
+          "usedChars",
+          "omittedCount"
+        ],
+        "properties": {
+          "maxItems": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maxChars": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "usedChars": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "omittedCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "priority",
+          "lifecycle",
+          "evidenceOnly",
+          "currentUserMessageWins",
+          "rawRecentInputInjected"
+        ],
+        "properties": {
+          "priority": {
+            "const": "developer"
+          },
+          "lifecycle": {
+            "const": "session"
+          },
+          "evidenceOnly": {
+            "const": true
+          },
+          "currentUserMessageWins": {
+            "const": true
+          },
+          "rawRecentInputInjected": {
+            "const": false
+          }
+        }
+      }
+    }
+  },
   "user-memory-draft.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.user-memory-draft.v1",

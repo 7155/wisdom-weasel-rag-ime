@@ -82,6 +82,7 @@ import type { RimeSuggestRequestV1 } from './generated/rime-suggest-request.v1';
 import type { RimeSuggestResponseV1 } from './generated/rime-suggest-response.v1';
 import type { RoleBookCurationV1 } from './generated/role-book-curation.v1';
 import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-draft.v1';
+import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
 export type {
@@ -163,6 +164,7 @@ export type {
   RimeSuggestResponseV1,
   RoleBookCurationV1,
   RoleBookRevisionDraftV1,
+  SessionMemoryRecallV1,
   UserMemoryDraftV1,
 };
 
@@ -245,6 +247,7 @@ export interface ContractTypeMap {
   'rime-suggest-response.v1': RimeSuggestResponseV1;
   'role-book-curation.v1': RoleBookCurationV1;
   'role-book-revision-draft.v1': RoleBookRevisionDraftV1;
+  'session-memory-recall.v1': SessionMemoryRecallV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
 }
 

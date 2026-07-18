@@ -384,6 +384,7 @@ class DebugImeService:
             config.db_path,
             self.settings_store.get_settings(include_sensitive=True),
             project=config.project,
+            memory_embedding_provider=getattr(self.core, "embedding_provider", None),
             # Only the dedicated 8768 Agent Gateway owns the durable scheduler.
             # The 8766 Sidecar and local preview servers share the same SQLite
             # database but must never race to claim the same wake schedule.

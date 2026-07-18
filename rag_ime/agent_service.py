@@ -54,6 +54,7 @@ from .agent_tool_ids import (
 )
 from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .contracts.json_schema import validate_contract
+from .embeddings import EmbeddingProvider
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
     load_external_action_result,
@@ -63,9 +64,9 @@ from .observability import ObservationHub
 from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory
 from .personal_context import (
     AgentMemoryEvidenceStore,
-    MemoryBootstrapBuilder,
     PersonalContextConsolidator,
 )
+from .session_memory_recall import SessionMemoryRecallBuilder
 
 _RECOVERABLE_GOVERNED_MEMORY_OPERATIONS = frozenset(
     {
@@ -89,6 +90,7 @@ class AgentService:
         process_id_provider: Callable[[], int] = os.getpid,
         tool_gateway_url: str = "http://127.0.0.1:8766/api/agent/tool/execute",
         tool_gateway_token: str = "",
+        memory_embedding_provider: EmbeddingProvider | None = None,
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
     ) -> None:
@@ -146,7 +148,11 @@ class AgentService:
         self.memory_sources.initialize()
         self.memory_evidence = AgentMemoryEvidenceStore(db_path, project=self.project)
         self.memory_evidence.initialize()
-        self.memory_bootstrap = MemoryBootstrapBuilder(db_path, project=self.project)
+        self.memory_bootstrap = SessionMemoryRecallBuilder(
+            db_path,
+            project=self.project,
+            embedding_provider=memory_embedding_provider,
+        )
         self.memory_bootstrap.initialize()
         self.personal_context = PersonalContextConsolidator(
             db_path,
@@ -543,7 +549,7 @@ class AgentService:
             tool_profile_version=requested_tool_profile,
             workspace_roots=workspace_roots,
         )
-        memory_bootstrap = self._enqueue_memory_bootstrap(session)
+        memory_bootstrap = self._pending_memory_bootstrap(session)
         return {
             "schemaVersion": "rag-ime.agent-session-create.v1",
             "ok": True,
@@ -2605,7 +2611,6 @@ class AgentService:
         return self.media.read(media_id, session_id=session_id)
 
     def prompt(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
-        self._ensure_session_role_book(session_id)
         message = _required_text(payload, "message")
         client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
         delivery = _prompt_delivery(payload.get("delivery"))
@@ -2754,6 +2759,11 @@ class AgentService:
         context_source: str = "user",
         delivery: str = "prompt",
     ) -> dict[str, object]:
+        session = self._ensure_session_role_book(session_id)
+        memory_bootstrap = self._ensure_memory_bootstrap(
+            session,
+            query_text=checkpoint_text,
+        )
         if attachment_ids:
             selected = self.runtime.model_catalog(session_id).get("selected")
             if not isinstance(selected, Mapping) or selected.get("supportsImages") is not True:
@@ -2839,6 +2849,7 @@ class AgentService:
             "sessionId": session_id,
             "memoryCheckpoint": memory_checkpoint,
             "memoryEvidence": memory_evidence,
+            "memoryBootstrap": memory_bootstrap,
             "attachments": attachment_receipts,
             "contextTraceId": context_trace_id,
             "contextItemsDelivered": delivered_context,
@@ -2902,9 +2913,49 @@ class AgentService:
             if client_message_id
             else f"dispatch:trace:{trace_id}"
         )
-        materialized = self.context_runtime.materialize_for_delivery(
-            session_id,
-            delivery_id=context_delivery_id,
+        materialized = (
+            self.context_runtime.materialize_for_delivery(
+                session_id,
+                delivery_id=context_delivery_id,
+            )
+            if delivery == "prompt"
+            else {"itemIds": [], "items": [], "prompt": "", "charCount": 0}
+        )
+        memory_items = [
+            item
+            for item in materialized["items"]
+            if isinstance(item, Mapping)
+            and item.get("sourceKind") == "memory_bootstrap"
+        ]
+        async_items = [
+            item
+            for item in materialized["items"]
+            if isinstance(item, Mapping)
+            and item.get("sourceKind") != "memory_bootstrap"
+        ]
+        memory_node = self.context_runtime.add_trace_node(
+            trace_id,
+            stage="memory_recall",
+            label="新 Session 个人记忆召回",
+            source_kind="memory_bootstrap",
+            parents=[session_node],
+            disposition="included" if memory_items else "omitted",
+            summary=(
+                "已加入首问与最近完整输入召回的角色可见 Book/Atom 记忆包"
+                if memory_items
+                else "本 Session 尚无可投递的首问记忆包"
+            ),
+            char_count=(
+                int(materialized["charCount"])
+                if memory_items and not async_items
+                else 0
+            ),
+            reason="" if memory_items else "memory pack unavailable or active turn delivery",
+            metadata={
+                "itemCount": len(memory_items),
+                "priority": "developer",
+                "lifecycle": "session",
+            },
         )
         inbox_node = self.context_runtime.add_trace_node(
             trace_id,
@@ -2912,15 +2963,19 @@ class AgentService:
             label="异步上下文收件箱",
             source_kind="gateway",
             parents=[session_node],
-            disposition="included" if materialized["itemIds"] else "omitted",
+            disposition="included" if async_items else "omitted",
             summary=(
-                f"本回合加入 {len(materialized['itemIds'])} 条分流上下文"
-                if materialized["itemIds"]
-                else "本回合没有待投递的异步上下文"
+                f"本回合加入 {len(async_items)} 条分流上下文"
+                if async_items
+                else (
+                    "排队消息沿用活动回合上下文，不在消息正文中重复注入"
+                    if delivery != "prompt"
+                    else "本回合没有待投递的异步上下文"
+                )
             ),
-            char_count=int(materialized["charCount"]),
-            reason="" if materialized["itemIds"] else "inbox empty",
-            metadata={"itemCount": len(materialized["itemIds"])},
+            char_count=0,
+            reason="" if async_items else "inbox empty",
+            metadata={"itemCount": len(async_items)},
         )
         runtime_message = compose_runtime_prompt(message, str(materialized["prompt"]))
         request_node = self.context_runtime.add_trace_node(
@@ -2928,7 +2983,7 @@ class AgentService:
             stage="runtime_request",
             label="Pi Runtime 请求",
             source_kind="gateway",
-            parents=[input_node, tool_node, inbox_node],
+            parents=[input_node, tool_node, memory_node, inbox_node],
             summary="完成预算化组装并交给 Pi Runtime",
             content=runtime_message,
             metadata={
@@ -3014,21 +3069,36 @@ class AgentService:
                 pass
             else:
                 session = self.sessions.get(session_id)
-        # Session persistence and bootstrap construction cannot share one
-        # transaction. Re-running this idempotent ensure repairs a transient
-        # create-time failure while the retained dedupe row prevents a
-        # consumed bootstrap from being rebuilt later.
-        self._enqueue_memory_bootstrap(session)
         return session
 
-    def _enqueue_memory_bootstrap(
+    def _pending_memory_bootstrap(
         self,
         session: Mapping[str, object],
     ) -> dict[str, object]:
         session_id = str(session.get("id") or "")
+        return {
+            "schemaVersion": "rag-ime.memory-bootstrap-enqueue-result.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "status": "awaiting_first_prompt",
+            "queryAware": True,
+            "priority": "developer",
+            "lifecycle": "session",
+        }
+
+    def _ensure_memory_bootstrap(
+        self,
+        session: Mapping[str, object],
+        *,
+        query_text: str,
+    ) -> dict[str, object]:
+        session_id = str(session.get("id") or "")
         role_id = str(session.get("roleId") or "")
-        dedupe_key = f"memory-bootstrap:{session_id}:v1"
+        dedupe_key = self.memory_bootstrap.dedupe_key(session_id)
         try:
+            expired_legacy = self.context_runtime.expire_legacy_memory_bootstrap(
+                session_id
+            )
             existing = self.context_runtime.item_by_dedupe_key(
                 session_id,
                 dedupe_key,
@@ -3038,35 +3108,61 @@ class AgentService:
                     "schemaVersion": "rag-ime.memory-bootstrap-enqueue-result.v1",
                     "ok": True,
                     "sessionId": session_id,
-                    "status": (
-                        "pending_once"
-                        if existing.get("status") == "pending"
-                        else "already_enqueued"
-                    ),
+                    "status": "ready",
                     "itemId": str(existing.get("itemId") or ""),
                     "dedupeKey": dedupe_key,
+                    "queryAware": True,
+                    "priority": "developer",
+                    "lifecycle": "session",
+                    "expiredLegacyItems": expired_legacy,
                 }
+            room_ids: tuple[str, ...] = ()
+            participant = self.rooms.participant_for_session(
+                session_id,
+                active_only=False,
+            )
+            if isinstance(participant, Mapping):
+                room_id = str(participant.get("roomId") or "").strip()
+                if room_id:
+                    room_ids = (room_id,)
+            specification = self.memory_bootstrap.build(
+                session_id,
+                role_id=role_id,
+                query_text=query_text,
+                room_ids=room_ids,
+            )
             item = self.context_runtime.enqueue(
-                **self.memory_bootstrap.build(
-                    session_id,
-                    role_id=role_id,
-                )
+                **specification
             )
         except Exception as exc:
             return {
                 "schemaVersion": "rag-ime.memory-bootstrap-enqueue-result.v1",
                 "ok": False,
                 "sessionId": session_id,
-                "status": "enqueue_failed",
+                "status": "recall_failed",
+                "queryAware": True,
+                "priority": "developer",
+                "lifecycle": "session",
                 "error": _public_error(exc),
             }
+        payload = specification.get("payload")
+        source_count = (
+            len(payload.get("items") or [])
+            if isinstance(payload, Mapping)
+            else 0
+        )
         return {
             "schemaVersion": "rag-ime.memory-bootstrap-enqueue-result.v1",
             "ok": True,
             "sessionId": session_id,
-            "status": "pending_once",
+            "status": "ready",
             "itemId": str(item.get("itemId") or ""),
-            "dedupeKey": str(item.get("dedupeKey") or ""),
+            "dedupeKey": dedupe_key,
+            "sourceCount": source_count,
+            "queryAware": True,
+            "priority": "developer",
+            "lifecycle": "session",
+            "expiredLegacyItems": expired_legacy,
         }
 
     def _record_user_evidence_safely(
@@ -4251,6 +4347,7 @@ def agent_service_from_environment(
     db_path: str | Path,
     *,
     project: str = "",
+    memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
 ) -> AgentService:
     return AgentService(
@@ -4261,6 +4358,7 @@ def agent_service_from_environment(
             "RAG_IME_AGENT_TOOL_URL",
             "http://127.0.0.1:8766/api/agent/tool/execute",
         ),
+        memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
     )
 
@@ -4284,6 +4382,7 @@ def agent_service_from_settings(
     settings: Mapping[str, object],
     *,
     project: str = "",
+    memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
 ) -> AgentService:
     runtime_config = pi_runtime_config_from_settings(settings)
@@ -4312,6 +4411,7 @@ def agent_service_from_settings(
             "RAG_IME_AGENT_TOOL_URL",
             "http://127.0.0.1:8766/api/agent/tool/execute",
         ),
+        memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
     )
 

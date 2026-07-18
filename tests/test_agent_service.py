@@ -308,16 +308,19 @@ class AgentServiceTests(unittest.TestCase):
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
         )
 
-    def test_new_session_gets_one_query_free_bootstrap_and_chat_becomes_evidence(self) -> None:
+    def test_new_session_builds_one_query_aware_bootstrap_once_and_chat_becomes_evidence(self) -> None:
         created = self.service.create_session({"title": "个人上下文"})
         session = created["session"]
         session_id = str(session["id"])
 
         self.assertTrue(session["roleBookRevisionId"])
         self.assertTrue(created["memoryBootstrap"]["ok"])
+        self.assertEqual(
+            created["memoryBootstrap"]["status"],
+            "awaiting_first_prompt",
+        )
         pending = self.service.context_runtime.list_items(session_id)
-        self.assertEqual(len(pending), 1)
-        self.assertEqual(pending[0]["sourceKind"], "memory_bootstrap")
+        self.assertEqual(pending, [])
 
         accepted_values = [
             {
@@ -342,12 +345,20 @@ class AgentServiceTests(unittest.TestCase):
             second = self.service.prompt(session_id, {"message": "第二轮"})
 
         self.assertEqual(first["contextItemsDelivered"], 1)
+        self.assertEqual(
+            first["memoryBootstrap"]["dedupeKey"],
+            f"memory-bootstrap:{session_id}:v2",
+        )
         self.assertEqual(second["contextItemsDelivered"], 0)
         first_runtime_message = runtime_prompt.call_args_list[0].args[1]
         first_envelope = json.loads(
             first_runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
         )
-        self.assertIn('"queryFree":true', first_envelope["transientContext"])
+        self.assertEqual(first_envelope["message"], "第一轮")
+        self.assertIn("## 新 Session 个人记忆召回", first_envelope["transientContext"])
+        self.assertIn("首问“第一轮”", first_envelope["transientContext"])
+        self.assertNotIn('"queryFree":true', first_envelope["transientContext"])
+        self.assertEqual(runtime_prompt.call_args_list[1].args[1], "第二轮")
         self.assertTrue(first["memoryEvidence"]["stored"])
         self.assertTrue(second["memoryEvidence"]["stored"])
         consumed = self.service.context_runtime.list_items(
@@ -355,6 +366,7 @@ class AgentServiceTests(unittest.TestCase):
             status="consumed",
         )
         self.assertEqual(len(consumed), 1)
+        self.assertEqual(consumed[0]["lifecycle"], "once")
 
         self.service.events.publish(
             session_id,
@@ -394,27 +406,52 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertTrue(all(item["maySupportLongTermFact"] is False for item in evidence))
 
-    def test_session_use_repairs_create_time_bootstrap_enqueue_failure(self) -> None:
+    def test_next_prompt_repairs_first_query_bootstrap_failure(self) -> None:
+        created = self.service.create_session({"title": "可恢复启动上下文"})
+        session_id = str(created["session"]["id"])
+        self.assertEqual(
+            created["memoryBootstrap"]["status"],
+            "awaiting_first_prompt",
+        )
         with patch.object(
             self.service.memory_bootstrap,
             "build",
             side_effect=RuntimeError("temporary bootstrap failure"),
+        ), patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:bootstrap:failed",
+                "piEntryId": "entry:bootstrap:failed",
+                "response": {"success": True},
+            },
         ):
-            created = self.service.create_session({"title": "可恢复启动上下文"})
+            failed = self.service.prompt(session_id, {"message": "第一轮"})
 
-        session_id = str(created["session"]["id"])
-        self.assertEqual(created["memoryBootstrap"]["status"], "enqueue_failed")
+        self.assertEqual(failed["memoryBootstrap"]["status"], "recall_failed")
+        self.assertEqual(failed["contextItemsDelivered"], 0)
         self.assertEqual(self.service.context_runtime.list_items(session_id), [])
 
-        with self.assertRaises(PiRuntimeError):
-            self.service.ensure_runtime({"sessionId": session_id})
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:bootstrap:repaired",
+                "piEntryId": "entry:bootstrap:repaired",
+                "response": {"success": True},
+            },
+        ):
+            repaired_prompt = self.service.prompt(session_id, {"message": "第二轮"})
 
         repaired = self.service.context_runtime.list_items(session_id)
         self.assertEqual(len(repaired), 1)
         self.assertEqual(repaired[0]["sourceKind"], "memory_bootstrap")
-        self.assertEqual(repaired[0]["status"], "pending")
+        self.assertEqual(repaired[0]["status"], "consumed")
+        self.assertEqual(repaired_prompt["memoryBootstrap"]["status"], "ready")
 
-    def test_new_command_after_lost_runtime_response_does_not_reinject_bootstrap(self) -> None:
+    def test_new_command_after_lost_runtime_response_does_not_duplicate_bootstrap(self) -> None:
         session = self.service.create_session({"title": "响应丢失"})["session"]
         session_id = str(session["id"])
         sent_messages: list[str] = []
@@ -468,8 +505,8 @@ class AgentServiceTests(unittest.TestCase):
         first_envelope = json.loads(
             sent_messages[0].removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
         )
-        self.assertIn('"queryFree":true', first_envelope["transientContext"])
-        self.assertNotIn('"queryFree":true', retried.call_args.args[1])
+        self.assertIn("## 新 Session 个人记忆召回", first_envelope["transientContext"])
+        self.assertEqual(retried.call_args.args[1], "第一轮")
         self.assertEqual(accepted["contextItemsDelivered"], 0)
 
     def test_corrupt_role_book_falls_back_to_base_persona_without_blocking_chat(self) -> None:
@@ -2045,7 +2082,9 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertIn("控制中心使用连续 Pi Session", sent_envelope["message"])
         self.assertIn("任何写操作仍必须经过原生审批", sent_envelope["message"])
-        self.assertIn('"queryFree":true', sent_envelope["transientContext"])
+        self.assertIn("## 新 Session 个人记忆召回", sent_envelope["transientContext"])
+        self.assertIn("首问“最近我在做什么？”", sent_envelope["transientContext"])
+        self.assertNotIn('"queryFree":true', sent_envelope["transientContext"])
         sources = self.service.list_memory_sources({"sessionId": first["sessionId"]})["items"]
         self.assertEqual(
             [item["canonicalTextSha256"] for item in sources],

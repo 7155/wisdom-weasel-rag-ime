@@ -55,7 +55,8 @@ class AgentContextRuntimeTests(unittest.TestCase):
         materialized = self.runtime.materialize(self.session_id)
         self.assertEqual(materialized["itemIds"], [first["itemId"]])
         self.assertIn("结论正文", str(materialized["prompt"]))
-        self.assertIn("<rag_ime_context_items", str(materialized["prompt"]))
+        self.assertIn("## 产品层独立上下文", str(materialized["prompt"]))
+        self.assertIn("## 上下文 1: 协作消息", str(materialized["prompt"]))
 
         self.runtime.mark_delivered(
             list(materialized["itemIds"]),
@@ -128,6 +129,24 @@ class AgentContextRuntimeTests(unittest.TestCase):
                 f"memory-bootstrap:{self.session_id}:v1",
             )
         )
+
+    def test_query_free_legacy_bootstrap_is_expired_before_new_recall(self) -> None:
+        legacy = self.runtime.enqueue(
+            session_id=self.session_id,
+            source_kind="memory_bootstrap",
+            lane="fact",
+            lifecycle="once",
+            dedupe_key=f"memory-bootstrap:{self.session_id}:v1",
+            title="旧启动快照",
+            payload={"queryFree": True},
+        )
+
+        expired = self.runtime.expire_legacy_memory_bootstrap(self.session_id)
+
+        self.assertEqual(expired, 1)
+        items = self.runtime.list_items(self.session_id, status="expired")
+        self.assertEqual([item["itemId"] for item in items], [legacy["itemId"]])
+        self.assertEqual(self.runtime.materialize(self.session_id)["itemIds"], [])
 
     def test_trace_is_a_public_dag_without_raw_prompt_or_paths(self) -> None:
         trace_id = self.runtime.begin_trace(self.session_id, source_kind="user")

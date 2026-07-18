@@ -112,11 +112,12 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertNotIn(NEW_FACT, ime_blob)
         self.assertNotIn(BOOK_SUMMARY, ime_blob)
 
-    def test_session_bootstrap_injects_atom_and_book_once_with_pinned_role_book(
+    def test_session_bootstrap_retrieves_relevant_atom_and_book_for_the_session(
         self,
     ) -> None:
         self._seed_superseded_model_pair()
         self._seed_model_book(memory_atom_id=NEW_ATOM_ID)
+        self._rebuild_retrieval_docs()
         created = self.service.create_session({"title": "记忆首次注入验收"})
         session = created["session"]
         session_id = str(session["id"])
@@ -140,8 +141,8 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
             "prompt",
             side_effect=accepted,
         ) as runtime_prompt:
-            first = self.service.prompt(session_id, {"message": "第一轮"})
-            second = self.service.prompt(session_id, {"message": "第二轮"})
+            first = self.service.prompt(session_id, {"message": "输入法模型架构现在是什么？"})
+            second = self.service.prompt(session_id, {"message": "继续展开测试"})
 
         first_runtime_message = runtime_prompt.call_args_list[0].args[1]
         self.assertTrue(first_runtime_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
@@ -153,14 +154,15 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
 
         self.assertEqual(first["contextItemsDelivered"], 1)
         self.assertEqual(second["contextItemsDelivered"], 0)
+        self.assertEqual(first_envelope["message"], "输入法模型架构现在是什么？")
+        self.assertIn("## 新 Session 个人记忆召回", transient_context)
         self.assertIn(NEW_ATOM_ID, transient_context)
         self.assertIn(NEW_FACT, transient_context)
         self.assertIn(BOOK_ID, transient_context)
         self.assertIn(BOOK_SUMMARY, transient_context)
-        self.assertNotIn(f'"sourceId":"{OLD_ATOM_ID}"', transient_context)
+        self.assertNotIn(f"来源: `{OLD_ATOM_ID}`", transient_context)
         self.assertNotIn(OLD_FACT, transient_context)
-        self.assertNotIn(NEW_ATOM_ID, second_runtime_message)
-        self.assertNotIn(BOOK_ID, second_runtime_message)
+        self.assertEqual(second_runtime_message, "继续展开测试")
         self.assertEqual(
             len(self.service.context_runtime.list_items(session_id, status="consumed")),
             1,
@@ -302,7 +304,10 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
                 "response": {"success": True},
             },
         ) as runtime_prompt:
-            result = self.service.prompt(new_session_id, {"message": "读取最新记忆"})
+            result = self.service.prompt(
+                new_session_id,
+                {"message": "当前输入法使用哪个模型？"},
+            )
 
         runtime_message = runtime_prompt.call_args.args[1]
         envelope = json.loads(
@@ -312,7 +317,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["contextItemsDelivered"], 1)
         self.assertIn(new_atom_id, transient_context)
         self.assertIn(NEW_FACT, transient_context)
-        self.assertNotIn(f'"sourceId":"{OLD_ATOM_ID}"', transient_context)
+        self.assertNotIn(f"来源: `{OLD_ATOM_ID}`", transient_context)
         self.assertNotIn(OLD_FACT, transient_context)
 
     def _activate_role_book_marker(self) -> dict[str, object]:
