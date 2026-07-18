@@ -12,6 +12,7 @@ import {
   MessageSquareText,
   PackageOpen,
   Wrench,
+  X,
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
@@ -58,6 +59,8 @@ export function DebugContextInspector({
   const stages = useMemo(() => debugStages(response.context), [response.context]);
   const [copiedId, setCopiedId] = useState('');
   const [view, setView] = useState<DebugView>('semantic');
+  const [selectedStageId, setSelectedStageId] = useState('');
+  const selectedStage = stages.find((stage) => stage.id === selectedStageId);
 
   async function copyStage(stage: DebugStage): Promise<void> {
     const rendered = renderDebugValue(stage, view);
@@ -95,11 +98,15 @@ export function DebugContextInspector({
       {!query.isPending && !query.error && !response.available ? <p className="debug-context-inspector__empty">这轮尚未生成上下文快照</p> : null}
       {response.available ? <DebugTelemetryStrip telemetry={response.telemetry} /> : null}
       {stages.length ? (
-        <ol className="debug-context-inspector__pipeline" data-view={view} aria-label="模型上下文注入顺序">
-          {stages.map((stage, index) => (
-            <li key={stage.id} data-channel={stage.channel}>
-              <details>
-                <summary>
+        <div className="debug-context-inspector__workspace" data-detail-open={Boolean(selectedStage) || undefined}>
+          <ol className="debug-context-inspector__pipeline" data-view={view} aria-label="模型上下文注入顺序">
+            {stages.map((stage, index) => (
+              <li key={stage.id} data-channel={stage.channel}>
+                <button
+                  aria-pressed={selectedStage?.id === stage.id}
+                  onClick={() => setSelectedStageId(stage.id)}
+                  type="button"
+                >
                   <span className="debug-context-inspector__ordinal">{index + 1}</span>
                   <DebugStageIcon channel={stage.channel} />
                   <span className="debug-context-inspector__stage-copy">
@@ -108,22 +115,40 @@ export function DebugContextInspector({
                   </span>
                   <em>{view === 'semantic' ? '模型语义' : stage.channel === 'wire' ? '传输 JSON' : '原始数据'}</em>
                   <ChevronRight size={14} />
-                </summary>
-                <section className="debug-context-inspector__stage-value">
-                  {stage.note ? <p>{stage.note}</p> : null}
+                </button>
+              </li>
+            ))}
+          </ol>
+          {selectedStage ? (
+            <aside className="debug-context-inspector__stage-detail" data-view={view} aria-label={`${selectedStage.label}详情`}>
+              <header>
+                <span>
+                  <small>{selectedStage.channel === 'wire' ? 'Provider 传输' : '本步上下文增量'}</small>
+                  <strong>{selectedStage.label}</strong>
+                  <p>{selectedStage.detail}</p>
+                </span>
+                <div>
                   <IconButton
-                    icon={copiedId === stage.id ? <Check size={14} /> : <Clipboard size={14} />}
-                    label={copiedId === stage.id ? '已复制' : `复制${stage.label}`}
-                    onClick={() => void copyStage(stage)}
+                    icon={copiedId === selectedStage.id ? <Check size={14} /> : <Clipboard size={14} />}
+                    label={copiedId === selectedStage.id ? '已复制' : `复制${selectedStage.label}`}
+                    onClick={() => void copyStage(selectedStage)}
                     size="small"
                     tooltip
                   />
-                  <pre>{renderDebugValue(stage, view)}</pre>
-                </section>
-              </details>
-            </li>
-          ))}
-        </ol>
+                  <IconButton
+                    icon={<X size={15} />}
+                    label="关闭上下文详情"
+                    onClick={() => setSelectedStageId('')}
+                    size="small"
+                    tooltip
+                  />
+                </div>
+              </header>
+              {selectedStage.note ? <p className="debug-context-inspector__stage-note">{selectedStage.note}</p> : null}
+              <pre>{renderDebugValue(selectedStage, view)}</pre>
+            </aside>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

@@ -59,8 +59,8 @@ describe('DebugContextInspector', () => {
     expect(screen.getByLabelText('本轮上下文与缓存指标')).toHaveTextContent('75%');
     expect(screen.getByText('/Volumes/undo 4t/Archives/RagIme/debug-context')).toBeVisible();
     const pipeline = screen.getByRole('list', { name: '模型上下文注入顺序' });
-    const summaries = within(pipeline).getAllByRole('group').map((item) => item.querySelector('summary')?.textContent ?? '');
-    expect(summaries).toEqual(expect.arrayContaining([
+    const stages = within(pipeline).getAllByRole('button').map((item) => item.textContent ?? '');
+    expect(stages).toEqual(expect.arrayContaining([
       expect.stringContaining('System 基础指令'),
       expect.stringContaining('AGENTS.md'),
       expect.stringContaining('Skills 目录'),
@@ -72,13 +72,17 @@ describe('DebugContextInspector', () => {
     expect(screen.getByText('BASE_SYSTEM')).toBeVisible();
     await user.click(within(pipeline).getByText('AGENTS.md'));
     expect(screen.getByText('PROJECT_RULES')).toBeVisible();
+    expect(screen.queryByText('BASE_SYSTEM')).not.toBeInTheDocument();
     await user.click(within(pipeline).getByText('Provider 请求 1'));
+    expect(screen.getByLabelText('Provider 请求 1详情')).toBeVisible();
     expect(screen.getByText(/RAW_PROVIDER_PAYLOAD/)).toBeVisible();
     expect(screen.getByText(/API 线上的 JSON 信封/)).toBeVisible();
     expect(screen.getByRole('radiogroup', { name: '上下文展示形式' })).toHaveTextContent('模型语义');
     await user.click(screen.getByRole('radio', { name: '原始 JSON' }));
     expect(within(pipeline).getByText('传输 JSON')).toBeVisible();
     expect(screen.getByText(/"messages":/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '关闭上下文详情' }));
+    expect(screen.queryByLabelText('Provider 请求 1详情')).not.toBeInTheDocument();
     expect(transport.requests[0]).toEqual(expect.objectContaining({
       pathId: 'agent.session.debugContext.get',
       params: { sessionId: 'session-1' },

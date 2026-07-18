@@ -23,29 +23,37 @@
 .debug-context-inspector__metrics small { overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .debug-context-inspector__metrics strong { overflow: hidden; font: 600 12px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 
-.debug-context-inspector__pipeline { display: grid; max-height: min(54vh, 560px); margin: 0; padding: 0; overflow: auto; list-style: none; background: var(--color-surface); }
+.debug-context-inspector__workspace { position: relative; display: grid; min-width: 0; min-height: 0; height: min(54vh, 560px); grid-template-columns: minmax(0, 1fr); overflow: hidden; background: var(--color-surface); }
+.debug-context-inspector__workspace[data-detail-open='true'] { grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.18fr); }
+.debug-context-inspector__pipeline { display: grid; min-width: 0; height: 100%; margin: 0; padding: 0; align-content: start; overflow: auto; list-style: none; background: var(--color-surface); }
 .debug-context-inspector__pipeline > li { position: relative; min-width: 0; border-bottom: 1px solid var(--color-border); }
 .debug-context-inspector__pipeline > li::before { position: absolute; top: 0; bottom: 0; left: 20px; width: 1px; background: var(--color-border); content: ''; }
 .debug-context-inspector__pipeline > li:last-child { border-bottom: 0; }
 .debug-context-inspector__pipeline > li:last-child::before { bottom: 50%; }
-.debug-context-inspector__pipeline details { min-width: 0; }
-.debug-context-inspector__pipeline summary { position: relative; z-index: 1; display: grid; min-width: 0; min-height: 54px; grid-template-columns: 28px 18px minmax(0, 1fr) auto 14px; align-items: center; gap: 7px; padding: 6px 10px 6px 7px; cursor: pointer; list-style: none; }
-.debug-context-inspector__pipeline summary::-webkit-details-marker { display: none; }
-.debug-context-inspector__pipeline summary:hover { background: var(--color-surface-hover); }
-.debug-context-inspector__pipeline summary > svg { color: var(--color-text-tertiary); }
-.debug-context-inspector__pipeline summary > svg:last-child { transition: transform var(--duration-fast) var(--ease-standard); }
-.debug-context-inspector__pipeline details[open] summary > svg:last-child { transform: rotate(90deg); }
+.debug-context-inspector__pipeline > li > button { position: relative; z-index: 1; display: grid; width: 100%; min-width: 0; height: 54px; grid-template-columns: 28px 18px minmax(0, 1fr) auto 14px; align-items: center; gap: 7px; padding: 6px 10px 6px 7px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.debug-context-inspector__pipeline > li > button:hover { background: var(--color-surface-hover); }
+.debug-context-inspector__pipeline > li > button[aria-pressed='true'] { background: color-mix(in srgb, var(--color-accent-soft) 45%, var(--color-surface)); box-shadow: inset 3px 0 0 var(--color-accent); }
+.debug-context-inspector__pipeline > li > button > svg { color: var(--color-text-tertiary); }
 .debug-context-inspector__ordinal { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: var(--color-surface); color: var(--color-text-secondary); font: 600 11px var(--font-mono); }
 .debug-context-inspector__stage-copy { display: grid; min-width: 0; gap: 1px; }
 .debug-context-inspector__stage-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .debug-context-inspector__stage-copy small { overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.debug-context-inspector__pipeline summary em { color: var(--color-success); font-size: 11px; font-style: normal; white-space: nowrap; }
-.debug-context-inspector__pipeline > li[data-channel='wire'] summary em { color: var(--color-info); }
-.debug-context-inspector__stage-value { position: relative; min-width: 0; margin-left: 42px; border-top: 1px solid color-mix(in srgb, var(--color-border) 68%, transparent); background: color-mix(in srgb, var(--color-surface-subtle) 52%, var(--color-surface)); }
-.debug-context-inspector__stage-value > p { margin: 0; padding: 9px 42px 0 12px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.45; }
-.debug-context-inspector__stage-value > .ui-icon-button { position: absolute; z-index: 1; top: 6px; right: 7px; }
-.debug-context-inspector__stage-value pre { min-width: 0; max-height: 340px; margin: 0; padding: 10px 42px 13px 12px; overflow: auto; color: var(--color-text); font: 12px/1.55 var(--font-mono); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
-.debug-context-inspector__pipeline[data-view='semantic'] .debug-context-inspector__stage-value pre { font-family: var(--font-sans); font-size: 13px; line-height: 1.65; }
+.debug-context-inspector__pipeline button em { color: var(--color-success); font-size: 11px; font-style: normal; white-space: nowrap; }
+.debug-context-inspector__pipeline > li[data-channel='wire'] button em { color: var(--color-info); }
+.debug-context-inspector__stage-detail { display: grid; min-width: 0; min-height: 0; height: 100%; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-subtle) 52%, var(--color-surface)); animation: debug-context-detail-in var(--duration-fast) var(--ease-standard) both; }
+.debug-context-inspector__stage-detail > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+.debug-context-inspector__stage-detail > header > span { display: grid; min-width: 0; gap: 2px; }
+.debug-context-inspector__stage-detail > header small { color: var(--color-accent-strong); font-size: 11px; }
+.debug-context-inspector__stage-detail > header strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.debug-context-inspector__stage-detail > header p { margin: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.debug-context-inspector__stage-detail > header > div { display: flex; flex: 0 0 auto; gap: 4px; }
+.debug-context-inspector__stage-note { margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; line-height: 1.45; }
+.debug-context-inspector__stage-detail pre { min-width: 0; min-height: 0; margin: 0; padding: 12px; overflow: auto; color: var(--color-text); font: 12px/1.55 var(--font-mono); tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.debug-context-inspector__stage-detail[data-view='semantic'] pre { font-family: var(--font-sans); font-size: 13px; line-height: 1.65; }
+@keyframes debug-context-detail-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 
 @media (max-width: 760px) {
   .debug-context-inspector__header { align-items: stretch; flex-direction: column; }
@@ -56,7 +64,10 @@
   .debug-context-inspector__metrics > span:nth-child(4) { border-top: 1px solid var(--color-border); }
   .debug-context-inspector__storage { grid-template-columns: 18px minmax(0, 1fr); }
   .debug-context-inspector__storage b { grid-column: 2; }
-  .debug-context-inspector__pipeline { max-height: min(58vh, 620px); }
-  .debug-context-inspector__pipeline summary { grid-template-columns: 28px 18px minmax(0, 1fr) 14px; }
-  .debug-context-inspector__pipeline summary em { display: none; }
+  .debug-context-inspector__workspace[data-detail-open='true'] { grid-template-columns: minmax(0, 1fr); }
+  .debug-context-inspector__workspace { height: min(58vh, 620px); }
+  .debug-context-inspector__workspace[data-detail-open='true'] .debug-context-inspector__pipeline { visibility: hidden; }
+  .debug-context-inspector__pipeline > li > button { grid-template-columns: 28px 18px minmax(0, 1fr) 14px; }
+  .debug-context-inspector__pipeline button em { display: none; }
+  .debug-context-inspector__stage-detail { position: absolute; inset: 0; z-index: 2; border-left: 0; }
 }
