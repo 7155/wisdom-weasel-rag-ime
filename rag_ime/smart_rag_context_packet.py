@@ -7,6 +7,7 @@ from .active_rag_models import ActiveRagEvidence
 from .daily_planner import estimate_tokens
 from .input_event_assembly import tail_for_token_budget
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
+from .window_context import project_window_context_for_generation
 
 
 SMART_RAG_CONTEXT_PACKET_SCHEMA_VERSION = "rag-ime.smart-context-packet.v1"
@@ -108,30 +109,17 @@ def _take_budgeted_window_context(
     remaining_tokens: int,
     maximum_tokens: int,
 ) -> tuple[dict[str, object], int]:
-    if not context or remaining_tokens <= 0:
+    projected = project_window_context_for_generation(context)
+    if not projected or remaining_tokens <= 0:
         return {}, max(0, remaining_tokens)
     budget = max(0, min(int(remaining_tokens), int(maximum_tokens)))
-    application = context.get("application") if isinstance(context.get("application"), Mapping) else {}
     compact: dict[str, object] = {
-        "schemaVersion": str(context.get("schemaVersion") or ""),
+        "schemaVersion": str(projected.get("schemaVersion") or ""),
         "captureMode": "accessibility_semantics",
-        "snapshotId": truncate_text(compact_whitespace(str(context.get("snapshotId") or "")), 200),
-        "revision": max(1, int(context.get("revision") or 1)),
-        "application": {
-            "bundleId": truncate_text(compact_whitespace(str(application.get("bundleId") or "")), 300),
-            "name": truncate_text(compact_whitespace(str(application.get("name") or "")), 160),
-            "windowTitle": truncate_text(
-                compact_whitespace(str(application.get("windowTitle") or "")),
-                240,
-            ),
-        },
-        "focusedNodeRef": truncate_text(
-            compact_whitespace(str(context.get("focusedNodeRef") or "")),
-            200,
-        ),
+        "projection": str(projected.get("projection") or ""),
+        "sourceNodeCount": max(0, int(projected.get("sourceNodeCount") or 0)),
         "nodes": [],
-        "truncated": bool(context.get("truncated")),
-        "semanticText": "",
+        "truncated": bool(projected.get("truncated")),
         "trust": {
             "maySupportIntent": True,
             "maySupportFacts": False,
@@ -139,32 +127,22 @@ def _take_budgeted_window_context(
         },
     }
     header_tokens = _window_context_estimated_tokens(compact)
-    if header_tokens >= budget:
-        compact["application"] = {
-            "bundleId": compact["application"].get("bundleId", ""),  # type: ignore[union-attr]
-            "windowTitle": compact["application"].get("windowTitle", ""),  # type: ignore[union-attr]
-        }
-        header_tokens = min(budget, _window_context_estimated_tokens(compact))
+    header_tokens = min(budget, header_tokens)
     consumed = header_tokens
-    raw_nodes = context.get("nodes") if isinstance(context.get("nodes"), list) else []
+    raw_nodes = projected.get("nodes") if isinstance(projected.get("nodes"), list) else []
     selected_nodes: list[dict[str, object]] = []
-    for raw in raw_nodes[:160]:
+    for raw in raw_nodes[:48]:
         if not isinstance(raw, Mapping):
             continue
         node: dict[str, object] = {
             key: raw[key]
             for key in (
-                "nodeRef",
-                "parentRef",
-                "depth",
                 "role",
                 "subrole",
                 "label",
                 "value",
-                "enabled",
                 "focused",
                 "selected",
-                "actions",
             )
             if key in raw and raw[key] not in ("", None, [], False)
         }
@@ -173,7 +151,7 @@ def _take_budgeted_window_context(
             estimate_tokens(
                 " ".join(
                     str(node.get(key) or "")
-                    for key in ("role", "subrole", "label", "value", "actions")
+                    for key in ("role", "subrole", "label", "value")
                 )
             ),
         )
@@ -183,32 +161,28 @@ def _take_budgeted_window_context(
         selected_nodes.append(node)
         consumed += node_tokens
     compact["nodes"] = selected_nodes
-    if not selected_nodes:
-        semantic_text = compact_whitespace(str(context.get("semanticText") or ""))
-        remaining_for_text = max(0, budget - consumed)
-        if semantic_text and remaining_for_text > 0:
-            compact["semanticText"] = tail_for_token_budget(semantic_text, remaining_for_text)
-            consumed += estimate_tokens(str(compact["semanticText"]))
+    compact["nodeCount"] = len(selected_nodes)
     return compact, max(0, remaining_tokens - consumed)
 
 
 def _window_context_estimated_tokens(context: Mapping[str, object]) -> int:
     if not context:
         return 0
-    application = context.get("application") if isinstance(context.get("application"), Mapping) else {}
-    text_parts = [
-        str(application.get("bundleId") or ""),
-        str(application.get("name") or ""),
-        str(application.get("windowTitle") or ""),
-        str(context.get("semanticText") or ""),
-    ]
-    nodes = context.get("nodes") if isinstance(context.get("nodes"), list) else []
-    for node in nodes[:160]:
+    projected = (
+        context
+        if context.get("projection") == "generation_text"
+        else project_window_context_for_generation(context)
+    )
+    if not projected:
+        return 0
+    text_parts: list[str] = []
+    nodes = projected.get("nodes") if isinstance(projected.get("nodes"), list) else []
+    for node in nodes[:48]:
         if not isinstance(node, Mapping):
             continue
         text_parts.extend(
             str(node.get(key) or "")
-            for key in ("role", "subrole", "label", "value", "actions")
+            for key in ("role", "subrole", "label", "value")
         )
     return estimate_tokens(" ".join(text_parts))
 

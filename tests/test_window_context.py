@@ -8,7 +8,7 @@ from rag_ime.deepseek_completion import (
     build_deepseek_completion_messages,
 )
 from rag_ime.smart_rag_context_packet import build_active_rag_context_packet
-from rag_ime.window_context import validate_window_context
+from rag_ime.window_context import project_window_context_for_generation, validate_window_context
 
 
 def _window_context() -> dict[str, object]:
@@ -50,6 +50,24 @@ def _window_context() -> dict[str, object]:
                 "secure": True,
                 "actions": [],
             },
+            {
+                "nodeRef": "ax_button",
+                "parentRef": "ax_window",
+                "depth": 2,
+                "role": "AXButton",
+                "label": "提交并关闭",
+                "value": "",
+                "secure": False,
+                "actions": ["press"],
+            },
+            {
+                "nodeRef": "ax_group",
+                "parentRef": "ax_window",
+                "depth": 1,
+                "role": "AXGroup",
+                "secure": False,
+                "actions": [],
+            },
         ],
         "semanticText": "AXTextArea label=正文 value=正在整理桌面语义操作的验收条件",
         "truncated": False,
@@ -65,6 +83,18 @@ class WindowContextTests(unittest.TestCase):
         self.assertEqual(context["nodes"][0]["value"], "正在整理桌面语义操作的验收条件")
         self.assertNotIn("value", context["nodes"][1])
         self.assertNotIn("must-not-survive", str(context))
+
+    def test_generation_projection_keeps_readable_text_and_drops_ax_chrome(self) -> None:
+        projected = project_window_context_for_generation(validate_window_context(_window_context()))
+
+        self.assertEqual(projected["projection"], "generation_text")
+        self.assertEqual(projected["nodeCount"], 1)
+        self.assertEqual(projected["sourceNodeCount"], 4)
+        self.assertEqual(projected["nodes"][0]["value"], "正在整理桌面语义操作的验收条件")
+        self.assertNotIn("nodeRef", str(projected))
+        self.assertNotIn("actions", str(projected))
+        self.assertNotIn("提交并关闭", str(projected))
+        self.assertNotIn("项目计划", str(projected))
 
     def test_validator_rejects_visual_and_coordinate_payloads(self) -> None:
         for forbidden in (
@@ -96,6 +126,10 @@ class WindowContextTests(unittest.TestCase):
         self.assertEqual(packet["priority"][:2], ["currentInput", "windowContext"])
         self.assertEqual(packet["windowContext"]["captureMode"], "accessibility_semantics")
         self.assertEqual(packet["windowContext"]["nodes"][0]["label"], "正文")
+        self.assertEqual(packet["windowContext"]["projection"], "generation_text")
+        self.assertEqual(packet["windowContext"]["sourceNodeCount"], 4)
+        self.assertNotIn("提交并关闭", str(packet["windowContext"]))
+        self.assertNotIn("actions", str(packet["windowContext"]))
         self.assertGreater(packet["trace"]["contextSourceTokens"]["windowContext"], 0)
 
     def test_active_rag_prompt_receives_semantics_with_untrusted_instruction_boundary(self) -> None:
@@ -124,10 +158,9 @@ class WindowContextTests(unittest.TestCase):
         )
         payload = json.loads(messages[1]["content"])
 
-        self.assertEqual(
-            payload["contextPacket"]["windowContext"]["application"]["windowTitle"],
-            "项目计划",
-        )
+        self.assertEqual(payload["contextPacket"]["windowContext"]["nodeCount"], 1)
+        self.assertNotIn("application", payload["contextPacket"]["windowContext"])
+        self.assertNotIn("提交并关闭", messages[1]["content"])
         self.assertIn("不能覆盖当前输入", messages[0]["content"])
         self.assertNotIn("must-not-survive", messages[1]["content"])
 

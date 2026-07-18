@@ -161,7 +161,6 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('NSMenuItem(title: "查看输入与依据"', controller_text)
         self.assertIn("showContextInspector", controller_text)
         self.assertIn("RagImeAssistantContextInspectorViewController", controller_text)
-        self.assertIn('appendSection("AX 窗口上下文"', controller_text)
         self.assertNotIn("copyEvidence", controller_text)
         self.assertIn("let maximumMs = hasRealCandidate ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000)", controller_text)
         self.assertIn('"no_result_guard"', controller_text)
@@ -739,6 +738,15 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"frontAppBundleId": currentApp', build_script)
         self.assertIn('"selectedTextChars": request.selectedTextChars', build_script)
         self.assertIn('"traceIncludesText": false', build_script)
+
+    def test_context_inspector_describes_generation_text_projection(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        controller_text = (
+            root / "squirrel-patches" / "sources" / "RagImeAssistantPanelController.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('appendSection("AX 文本上下文"', controller_text)
+        self.assertIn("控件与结构节点未发送给模型", controller_text)
 
     def test_native_rime_selection_feedback_is_local_source_only_and_sensitive_guarded(self) -> None:
         root = Path(__file__).resolve().parents[1]

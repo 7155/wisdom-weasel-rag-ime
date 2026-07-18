@@ -169,6 +169,9 @@ class ActiveRagServiceTests(unittest.TestCase):
             context_view["windowContext"]["nodes"][0]["value"],
             "这是 AX 树实际捕获的编辑区内容",
         )
+        self.assertEqual(context_view["windowContext"]["projection"], "generation_text")
+        self.assertNotIn("nodeRef", str(context_view["windowContext"]))
+        self.assertNotIn("actions", str(context_view["windowContext"]))
         self.assertNotIn("你是 macOS 输入法", str(context_view))
         self.assertEqual(ready["diagnostics"]["progress"]["stage"], "ready")
 

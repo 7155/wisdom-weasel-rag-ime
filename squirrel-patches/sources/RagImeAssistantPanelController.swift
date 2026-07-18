@@ -807,6 +807,7 @@ private struct RagImeAssistantContextInspectorDocument {
 
     let windowContext = object(contextView["windowContext"])
     let windowNodes = array(windowContext["nodes"])
+    let sourceNodeCount = integer(windowContext["sourceNodeCount"])
     let windowApplication = object(windowContext["application"])
     var windowLines: [String] = []
     let appName = string(windowApplication["name"])
@@ -835,6 +836,12 @@ private struct RagImeAssistantContextInspectorDocument {
       let actions = array(node["actions"]).map { string($0) }.filter { !$0.isEmpty }
       if !actions.isEmpty { windowLines.append("   动作：\(actions.joined(separator: ", "))") }
     }
+    if sourceNodeCount > windowNodes.count {
+      windowLines.insert(
+        "已从 \(sourceNodeCount) 个 AX 元素中提取 \(windowNodes.count) 个可读文本节点；控件与结构节点未发送给模型。",
+        at: 0
+      )
+    }
     if windowNodes.isEmpty {
       let semanticText = string(windowContext["semanticText"])
       if !semanticText.isEmpty { windowLines.append(semanticText) }
@@ -845,7 +852,7 @@ private struct RagImeAssistantContextInspectorDocument {
       let detail = captureMode.isEmpty ? "AX 未返回可读节点" : "AX 未返回可读节点（\(captureMode)，\(nodeCount) 个节点）"
       windowLines.append(detail)
     }
-    appendSection("AX 窗口上下文", windowLines.joined(separator: "\n"))
+    appendSection("AX 文本上下文", windowLines.joined(separator: "\n"))
 
     let recentInputs = array(contextView["recentCompleteInputs"])
     var recentLines: [String] = []

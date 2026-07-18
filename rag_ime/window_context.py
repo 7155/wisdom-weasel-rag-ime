@@ -6,6 +6,7 @@ from .text_utils import compact_whitespace, truncate_text
 
 
 WINDOW_CONTEXT_SCHEMA_VERSION = "rag-ime.window-context.v1"
+GENERATION_WINDOW_CONTEXT_PROJECTION = "generation_text"
 _FORBIDDEN_VISUAL_KEYS = frozenset(
     {
         "dataBase64",
@@ -18,6 +19,44 @@ _FORBIDDEN_VISUAL_KEYS = frozenset(
         "bounds",
         "x",
         "y",
+    }
+)
+_NON_TEXT_ROLES = frozenset(
+    {
+        "AXApplication",
+        "AXButton",
+        "AXCheckBox",
+        "AXDisclosureTriangle",
+        "AXGroup",
+        "AXImage",
+        "AXMenu",
+        "AXMenuBar",
+        "AXMenuButton",
+        "AXMenuItem",
+        "AXRadioButton",
+        "AXScrollArea",
+        "AXScrollBar",
+        "AXSheet",
+        "AXSplitter",
+        "AXTabGroup",
+        "AXToolbar",
+        "AXWindow",
+    }
+)
+_LABEL_TEXT_ROLES = frozenset(
+    {
+        "AXCell",
+        "AXColumn",
+        "AXHeading",
+        "AXLink",
+        "AXListItem",
+        "AXOutlineRow",
+        "AXParagraph",
+        "AXRow",
+        "AXStaticText",
+        "AXTextArea",
+        "AXTextField",
+        "AXWebArea",
     }
 )
 
@@ -90,6 +129,70 @@ def validate_window_context(value: object) -> dict[str, object]:
         "nodeCount": len(nodes),
         "truncated": value.get("truncated") is True or len(raw_nodes) > len(nodes),
         "semanticText": semantic_text,
+    }
+
+
+def project_window_context_for_generation(value: object) -> dict[str, object]:
+    """Keep readable AX text for generation without leaking the control tree.
+
+    Desktop operation consumes the full validated tree. The stateless generation
+    path only needs the text the user is reading or editing, so structural
+    groups, buttons, actions, node references, app chrome, and window metadata
+    are intentionally excluded here.
+    """
+
+    if not isinstance(value, Mapping):
+        return {}
+    raw_nodes = value.get("nodes") if isinstance(value.get("nodes"), list) else []
+    candidates: list[dict[str, object]] = []
+    seen_text: set[str] = set()
+    for raw in raw_nodes[:160]:
+        if not isinstance(raw, Mapping) or raw.get("secure") is True:
+            continue
+        role = _text(raw.get("role"), 80)
+        if role in _NON_TEXT_ROLES:
+            continue
+        node_value = _text(raw.get("value"), 800)
+        label = _text(raw.get("label"), 240)
+        readable_text = node_value or (label if role in _LABEL_TEXT_ROLES else "")
+        if not readable_text:
+            continue
+        normalized = readable_text.casefold()
+        if normalized in seen_text:
+            continue
+        seen_text.add(normalized)
+        node: dict[str, object] = {
+            "role": role or "AXText",
+            "value": readable_text,
+        }
+        subrole = _text(raw.get("subrole"), 80)
+        if subrole:
+            node["subrole"] = subrole
+        if label and label.casefold() != normalized:
+            node["label"] = label
+        if raw.get("focused") is True:
+            node["focused"] = True
+        if raw.get("selected") is True:
+            node["selected"] = True
+        candidates.append(node)
+        if len(candidates) >= 48:
+            break
+
+    if not candidates:
+        return {}
+    return {
+        "schemaVersion": WINDOW_CONTEXT_SCHEMA_VERSION,
+        "captureMode": "accessibility_semantics",
+        "projection": GENERATION_WINDOW_CONTEXT_PROJECTION,
+        "nodes": candidates,
+        "nodeCount": len(candidates),
+        "sourceNodeCount": len(raw_nodes),
+        "truncated": value.get("truncated") is True or len(candidates) < len(raw_nodes),
+        "trust": {
+            "maySupportIntent": True,
+            "maySupportFacts": False,
+            "mustNotOverrideCurrentInput": True,
+        },
     }
 
 

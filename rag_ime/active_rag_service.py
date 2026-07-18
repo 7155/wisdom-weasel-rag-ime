@@ -36,6 +36,7 @@ from .runtime_flags import assert_deepseek_scene_allowed
 from .smart_rag_context_packet import build_active_rag_context_packet
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
 from .timeline_context import timeline_context_preferences, timeline_evidence_pack_from_core
+from .window_context import project_window_context_for_generation
 
 
 ACTIVE_RAG_SERVICE_SCHEMA_VERSION = "rag-ime.active-rag-service.v1"
@@ -1900,7 +1901,7 @@ def _active_rag_request_context_view(request: ActiveRagStartRequest) -> dict[str
         "selectedText": compact_whitespace(request.selected_text),
         "taskMode": compact_whitespace(request.intent),
         "groundingMode": "pending",
-        "windowContext": dict(request.window_context) if isinstance(request.window_context, dict) else {},
+        "windowContext": project_window_context_for_generation(request.window_context),
         "recentCompleteInputs": [],
         "planning": {},
         "evidenceHints": [],
