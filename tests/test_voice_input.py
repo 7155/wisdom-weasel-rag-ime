@@ -137,7 +137,8 @@ class VoiceInputTests(unittest.TestCase):
         timeout_start = coordinator.index("private func scheduleFinalTimeout()")
         self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[failure_start:failure_end])
         self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[timeout_start:])
-        self.assertIn("临时稿未记入历史", coordinator)
+        self.assertIn("临时稿已保留", coordinator)
+        self.assertIn("copyToClipboardForRecovery", coordinator)
 
         delegate = (ROOT / "macos/RagImeVoice/VoiceApplicationDelegate.swift").read_text(encoding="utf-8")
         page = (ROOT / "control-center-web/src/features/agent/index.tsx").read_text(encoding="utf-8")
@@ -365,12 +366,23 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("applicationIdentity(for: focused)", insertion)
         self.assertIn("resolveApplication", insertion)
         self.assertIn("guard let focused = focusedElement() else", insertion)
+        self.assertIn("AXUIElementCreateApplication(frontmostApplication.processIdentifier)", insertion)
         self.assertIn("guard revision.isFinal, !revision.text.isEmpty else", insertion)
         self.assertIn("pasteFinalText", insertion)
+        self.assertIn("copyToClipboardForRecovery", insertion)
         self.assertIn("keyDown.post(tap: .cghidEventTap)", insertion)
         self.assertIn("pasteboard.changeCount == writtenChangeCount", insertion)
+        self.assertIn("var supportsClipboardRecovery: Bool", insertion)
+        self.assertNotIn("本次语音已停止", insertion)
         self.assertNotIn("无法读取当前输入框", insertion)
         self.assertIn("guard !bundle.isEmpty else { return false }", policy)
+
+        self.assertIn("clipboardFallbackReason", coordinator)
+        self.assertIn("insertionError.supportsClipboardRecovery", coordinator)
+        self.assertIn("deliverFinalToClipboard", coordinator)
+        self.assertIn("preserveTranscriptToClipboard", coordinator)
+        self.assertIn("overlay.showClipboardPending(text)", coordinator)
+        self.assertIn("!finalDeliveryUsedClipboard", coordinator)
 
         for marker in ("com.1password", "com.icbc", "org.torproject.torbrowser", "incognito", "无痕"):
             self.assertIn(marker, policy.lower())
@@ -533,6 +545,14 @@ enum Harness {
             frontmost: transientFrontmost
         )
         precondition(resolved == codex)
+        let ghostty = VoiceInsertionApplicationIdentity(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            name: "Ghostty"
+        )
+        precondition(VoiceInsertionTargetPolicy.resolveApplication(
+            focused: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.apple.TextEdit", name: "TextEdit"),
+            frontmost: ghostty
+        ) == ghostty)
         precondition(VoiceInsertionTargetPolicy.mode(for: resolved, accessibilityWritable: true) == .finalPaste)
         precondition(VoiceInsertionTargetPolicy.mode(
             for: VoiceInsertionApplicationIdentity(bundleIdentifier: "com.mitchellh.ghostty", name: "Ghostty"),

@@ -26,6 +26,16 @@ enum VoiceInsertionTargetPolicy {
               !focused.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return frontmost
         }
+        let focusedBundle = normalizedBundle(focused.bundleIdentifier)
+        let frontmostBundle = normalizedBundle(frontmost.bundleIdentifier)
+        if !frontmostBundle.isEmpty,
+           !isTransientVoiceHelper(frontmostBundle),
+           !sameBundleFamily(focusedBundle, frontmostBundle) {
+            // System-wide AX focus can lag behind an actual app switch. Prefer
+            // the real foreground app so stale editors cannot select the wrong
+            // streaming insertion strategy.
+            return frontmost
+        }
         return focused
     }
 

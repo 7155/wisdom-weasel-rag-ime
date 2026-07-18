@@ -215,6 +215,21 @@ final class VoiceOverlayController {
         scheduleDismiss(after: 1.4)
     }
 
+    func showClipboardPending(_ text: String) {
+        model.phase = .listening
+        model.message = "焦点已变化，继续听写"
+        model.transcript = String(text.suffix(240))
+        ensureVisible()
+    }
+
+    func showClipboardDone(_ text: String, message: String = "已保留到剪贴板") {
+        model.phase = .done
+        model.message = message
+        model.transcript = String(text.suffix(240))
+        ensureVisible()
+        scheduleDismiss(after: 2.4)
+    }
+
     func showError(_ message: String, anchor: NSPoint? = nil) {
         model.phase = .error
         let permissionNeeded = message.contains("辅助功能") || message.contains("麦克风权限")

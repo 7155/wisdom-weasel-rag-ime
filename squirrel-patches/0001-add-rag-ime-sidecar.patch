@@ -1,5 +1,5 @@
 diff --git a/Squirrel.xcodeproj/project.pbxproj b/Squirrel.xcodeproj/project.pbxproj
-index 813deae..bd1032b 100644
+index 813deaeb0b6fe9bb147f6e7c9327271ab40a5a3a..bd1032bb06d9b794374421d3c5759bd60c36d8e9 100644
 --- a/Squirrel.xcodeproj/project.pbxproj
 +++ b/Squirrel.xcodeproj/project.pbxproj
 @@ -86,6 +86,14 @@
@@ -64,7 +64,7 @@ index 813deae..bd1032b 100644
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000..7a5399c
+index 0000000000000000000000000000000000000000..7a5399c16db4bc78f4cc01e0484900857ca7183e
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,15 @@
@@ -84,7 +84,7 @@ index 0000000..7a5399c
 +  timeout_ms: 1200
 +  frontend_trace: false
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
-index 89c1214..a240173 100644
+index 89c1214de346037260da112802e22bc1af71e94f..a240173ab54846e5e35bb3198d77f057a45f6b56 100644
 --- a/sources/InputSource.swift
 +++ b/sources/InputSource.swift
 @@ -9,10 +9,45 @@ import Foundation
@@ -137,7 +137,7 @@ index 89c1214..a240173 100644
    private lazy var inputSources: [String: TISInputSource] = {
      var inputSources = [String: TISInputSource]()
 diff --git a/sources/Main.swift b/sources/Main.swift
-index f998248..a56500e 100644
+index f998248d94a4ce09ada9850edbff104a9ef9611f..a56500e18f044ce567db38c66da0cd7f539a5aeb 100644
 --- a/sources/Main.swift
 +++ b/sources/Main.swift
 @@ -15,11 +15,42 @@ struct SquirrelApp {
@@ -212,7 +212,7 @@ index f998248..a56500e 100644
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..ab58a1372ea4bfb88f4dd4862c4d730a99c309f6
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
 @@ -0,0 +1,1124 @@
@@ -1342,7 +1342,7 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeAssistantSurfaceState.swift b/sources/RagImeAssistantSurfaceState.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..2133b47b1d5e81e7fbf439b7db8faa11d5776734
 --- /dev/null
 +++ b/sources/RagImeAssistantSurfaceState.swift
 @@ -0,0 +1,47 @@
@@ -1395,7 +1395,7 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeNonActivatingPanel.swift b/sources/RagImeNonActivatingPanel.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..1d811116c4275314dd07a1a1e0576b49e55ffbb1
 --- /dev/null
 +++ b/sources/RagImeNonActivatingPanel.swift
 @@ -0,0 +1,6 @@
@@ -1407,10 +1407,10 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
 new file mode 100644
-index 0000000..ac51054
+index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd89ab24c66
 --- /dev/null
 +++ b/sources/RagImeSelectedTextProvider.swift
-@@ -0,0 +1,892 @@
+@@ -0,0 +1,1122 @@
 +//
 +//  RagImeSelectedTextProvider.swift
 +//  Squirrel
@@ -1443,10 +1443,100 @@ index 0000000..ac51054
 +struct RagImeSensitiveFieldStatus {
 +  let isSensitive: Bool
 +  let reason: String
++  let resolverPath: String
++  let axErrorCode: Int
++  let focusedElementIdentity: String
++  let appPid: Int
++
++  init(
++    isSensitive: Bool,
++    reason: String,
++    resolverPath: String = "",
++    axErrorCode: Int = 0,
++    focusedElementIdentity: String = "",
++    appPid: Int = 0
++  ) {
++    self.isSensitive = isSensitive
++    self.reason = reason
++    self.resolverPath = resolverPath
++    self.axErrorCode = axErrorCode
++    self.focusedElementIdentity = focusedElementIdentity
++    self.appPid = appPid
++  }
 +
 +  var privacyDisposition: String {
 +    if reason.hasPrefix("privacy_unknown_") { return "unknown" }
 +    return isSensitive ? "sensitive" : "allowed"
++  }
++
++  var isTransientUnknown: Bool {
++    guard privacyDisposition == "unknown" else { return false }
++    return [
++      "privacy_unknown_focused_element_missing",
++      "privacy_unknown_metadata_read_failed",
++      "privacy_unknown_probe_timeout",
++    ].contains(reason)
++  }
++}
++
++struct RagImePrivacyLease {
++  let id: String
++  let epoch: Int
++  let focusEpoch: Int
++  let panelSessionId: String
++  let frontAppBundleId: String
++  let appPid: Int
++  let inputSourceId: String
++  let inputGeneration: Int
++  let frontendRevision: Int
++  let selectionEpoch: Int
++  let focusedElementIdentity: String
++  let issuedAtMs: Int
++  let expiresAtMs: Int
++
++  func matches(
++    request: RagImeSidecarRequest,
++    currentAppBundleId: String,
++    currentAppPid: Int,
++    currentInputSourceId: String,
++    currentFocusEpoch: Int,
++    currentInputGeneration: Int,
++    currentFrontendRevision: Int,
++    currentSelectionEpoch: Int,
++    nowMs: Int
++  ) -> Bool {
++    id == request.privacyLeaseId
++      && epoch == request.privacyLeaseEpoch
++      && focusEpoch == request.privacyFocusEpoch
++      && focusEpoch == currentFocusEpoch
++      && panelSessionId == request.panelSessionId
++      && frontAppBundleId == request.frontAppBundleId
++      && frontAppBundleId == currentAppBundleId
++      && appPid > 0
++      && appPid == currentAppPid
++      && inputSourceId == request.inputSourceId
++      && inputSourceId == currentInputSourceId
++      && inputGeneration == request.inputGeneration
++      && inputGeneration == currentInputGeneration
++      && frontendRevision == request.frontendRevision
++      && frontendRevision == currentFrontendRevision
++      && selectionEpoch == request.selectionEpoch
++      && selectionEpoch == currentSelectionEpoch
++      && nowMs >= issuedAtMs
++      && nowMs <= expiresAtMs
++  }
++}
++
++private struct RagImeFocusedElementResolution {
++  let element: AXUIElement?
++  let resolverPath: String
++  let errorCode: Int
++  let appPid: Int
++  let reason: String
++
++  var focusedElementIdentity: String {
++    guard let element else { return "" }
++    return "ax:\(appPid):\(CFHash(element))"
 +  }
 +}
 +
@@ -1631,21 +1721,50 @@ index 0000000..ac51054
 +    guard AXIsProcessTrusted() else {
 +      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_ax_not_trusted")
 +    }
-+    guard let focused = focusedTextElement() else {
-+      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_focused_element_missing")
++    let focusedResolution = resolveFocusedTextElement(sourceAppBundleId: sourceAppBundleId)
++    guard let focused = focusedResolution.element else {
++      return RagImeSensitiveFieldStatus(
++        isSensitive: false,
++        reason: focusedResolution.reason.isEmpty
++          ? "privacy_unknown_focused_element_missing"
++          : focusedResolution.reason,
++        resolverPath: focusedResolution.resolverPath,
++        axErrorCode: focusedResolution.errorCode,
++        appPid: focusedResolution.appPid
++      )
 +    }
 +    let roleRead = privacyStringAttribute(kAXRoleAttribute as CFString, element: focused, required: true)
 +    guard !roleRead.failed, let role = roleRead.value else {
-+      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_metadata_read_failed")
++      return RagImeSensitiveFieldStatus(
++        isSensitive: false,
++        reason: "privacy_unknown_metadata_read_failed",
++        resolverPath: focusedResolution.resolverPath,
++        axErrorCode: focusedResolution.errorCode,
++        focusedElementIdentity: focusedResolution.focusedElementIdentity,
++        appPid: focusedResolution.appPid
++      )
 +    }
 +    let subroleRead = privacyStringAttribute(kAXSubroleAttribute as CFString, element: focused)
 +    guard !subroleRead.failed else {
-+      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_metadata_read_failed")
++      return RagImeSensitiveFieldStatus(
++        isSensitive: false,
++        reason: "privacy_unknown_metadata_read_failed",
++        resolverPath: focusedResolution.resolverPath,
++        axErrorCode: focusedResolution.errorCode,
++        focusedElementIdentity: focusedResolution.focusedElementIdentity,
++        appPid: focusedResolution.appPid
++      )
 +    }
 +    let subrole = subroleRead.value ?? ""
 +    let secureRole = "\(role) \(subrole)".lowercased()
 +    if secureRole.contains("securetextfield") || secureRole.contains("secure text") {
-+      return RagImeSensitiveFieldStatus(isSensitive: true, reason: "ax_secure_text_field")
++      return RagImeSensitiveFieldStatus(
++        isSensitive: true,
++        reason: "ax_secure_text_field",
++        resolverPath: focusedResolution.resolverPath,
++        focusedElementIdentity: focusedResolution.focusedElementIdentity,
++        appPid: focusedResolution.appPid
++      )
 +    }
 +    let metadataAttributes = [
 +      kAXTitleAttribute as CFString,
@@ -1659,7 +1778,14 @@ index 0000000..ac51054
 +    }
 +    let windowTitleRead = privacyWindowTitle(element: focused)
 +    guard !windowTitleRead.failed else {
-+      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_metadata_read_failed")
++      return RagImeSensitiveFieldStatus(
++        isSensitive: false,
++        reason: "privacy_unknown_metadata_read_failed",
++        resolverPath: focusedResolution.resolverPath,
++        axErrorCode: focusedResolution.errorCode,
++        focusedElementIdentity: focusedResolution.focusedElementIdentity,
++        appPid: focusedResolution.appPid
++      )
 +    }
 +    let metadataValues = metadataReads.compactMap { $0.value } + [windowTitleRead.value ?? ""]
 +    let metadata = metadataValues.joined(separator: " ").lowercased()
@@ -1667,13 +1793,25 @@ index 0000000..ac51054
 +      "private browsing", "private window", "incognito", "inprivate", "隐私浏览", "私密浏览", "无痕",
 +    ]
 +    if privateBrowsingTokens.contains(where: metadata.contains) {
-+      return RagImeSensitiveFieldStatus(isSensitive: true, reason: "private_browsing_window")
++      return RagImeSensitiveFieldStatus(
++        isSensitive: true,
++        reason: "private_browsing_window",
++        resolverPath: focusedResolution.resolverPath,
++        focusedElementIdentity: focusedResolution.focusedElementIdentity,
++        appPid: focusedResolution.appPid
++      )
 +    }
 +    let sensitiveTokens = [
 +      "password", "passcode", "密码", "口令",
 +    ]
 +    if sensitiveTokens.contains(where: metadata.contains) {
-+      return RagImeSensitiveFieldStatus(isSensitive: true, reason: "sensitive_field_metadata")
++      return RagImeSensitiveFieldStatus(
++        isSensitive: true,
++        reason: "sensitive_field_metadata",
++        resolverPath: focusedResolution.resolverPath,
++        focusedElementIdentity: focusedResolution.focusedElementIdentity,
++        appPid: focusedResolution.appPid
++      )
 +    }
 +    // AppKit text areas commonly report a generic failure for one optional
 +    // metadata attribute while still exposing role, identifier and window
@@ -1681,9 +1819,21 @@ index 0000000..ac51054
 +    // decision fail-closed when no inspectable metadata remains.
 +    if (secureRole.contains("text") || secureRole.contains("combobox"))
 +      && metadata.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-+      return RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_text_field_metadata_missing")
++      return RagImeSensitiveFieldStatus(
++        isSensitive: false,
++        reason: "privacy_unknown_text_field_metadata_missing",
++        resolverPath: focusedResolution.resolverPath,
++        focusedElementIdentity: focusedResolution.focusedElementIdentity,
++        appPid: focusedResolution.appPid
++      )
 +    }
-+    return RagImeSensitiveFieldStatus(isSensitive: false, reason: "")
++    return RagImeSensitiveFieldStatus(
++      isSensitive: false,
++      reason: "",
++      resolverPath: focusedResolution.resolverPath,
++      focusedElementIdentity: focusedResolution.focusedElementIdentity,
++      appPid: focusedResolution.appPid
++    )
 +  }
 +
 +  func captureForegroundTextForSidecar(
@@ -1725,7 +1875,7 @@ index 0000000..ac51054
 +    guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId else {
 +      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "front_app_changed")
 +    }
-+    guard let focused = focusedTextElement() else {
++    guard let focused = focusedTextElement(sourceAppBundleId: sourceAppBundleId) else {
 +      let reason = AXIsProcessTrusted() ? "ax_focused_element_missing" : "ax_not_trusted"
 +      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: reason)
 +    }
@@ -1772,15 +1922,21 @@ index 0000000..ac51054
 +    guard sensitiveFieldStatus(sourceAppBundleId: sourceAppBundleId).privacyDisposition == "allowed" else {
 +      return nil
 +    }
-+    if allowAccessibility, let axCapture = captureSelectedTextViaAccessibility(captureEpoch: captureEpoch) {
++    if allowAccessibility, let axCapture = captureSelectedTextViaAccessibility(
++      captureEpoch: captureEpoch,
++      sourceAppBundleId: sourceAppBundleId
++    ) {
 +      return axCapture
 +    }
 +    guard allowClipboardFallback else { return nil }
 +    return captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: captureEpoch)
 +  }
 +
-+  private func captureSelectedTextViaAccessibility(captureEpoch: Int) -> RagImeSelectedTextCapture? {
-+    guard let focused = focusedTextElement() else { return nil }
++  private func captureSelectedTextViaAccessibility(
++    captureEpoch: Int,
++    sourceAppBundleId: String
++  ) -> RagImeSelectedTextCapture? {
++    guard let focused = focusedTextElement(sourceAppBundleId: sourceAppBundleId) else { return nil }
 +    var selectedObject: AnyObject?
 +    let selectedResult = AXUIElementCopyAttributeValue(
 +      focused,
@@ -1800,23 +1956,87 @@ index 0000000..ac51054
 +    )
 +  }
 +
-+  private func focusedTextElement() -> AXUIElement? {
-+    let systemWide = AXUIElementCreateSystemWide()
-+    // AX requests are cross-process IPC. Bound each message so a wedged target
-+    // cannot monopolize the serial privacy/capture queue indefinitely.
-+    _ = AXUIElementSetMessagingTimeout(systemWide, 0.05)
-+    var focusedObject: AnyObject?
-+    let focusedResult = AXUIElementCopyAttributeValue(
-+      systemWide,
-+      kAXFocusedUIElementAttribute as CFString,
-+      &focusedObject
-+    )
-+    guard focusedResult == .success, let focused = focusedObject else {
-+      return nil
++  private func focusedTextElement(sourceAppBundleId: String = "") -> AXUIElement? {
++    resolveFocusedTextElement(sourceAppBundleId: sourceAppBundleId).element
++  }
++
++  private func resolveFocusedTextElement(sourceAppBundleId: String) -> RagImeFocusedElementResolution {
++    let expectedBundleId = resolvedSourceAppBundleId(sourceAppBundleId)
++    guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
++      return RagImeFocusedElementResolution(
++        element: nil,
++        resolverPath: "frontmost_application",
++        errorCode: Int(AXError.cannotComplete.rawValue),
++        appPid: 0,
++        reason: "privacy_unknown_focused_element_missing"
++      )
 +    }
-+    let focusedElement = focused as! AXUIElement
-+    _ = AXUIElementSetMessagingTimeout(focusedElement, 0.05)
-+    return focusedElement
++    let liveBundleId = frontmostApp.bundleIdentifier?
++      .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
++    guard expectedBundleId.isEmpty || liveBundleId == expectedBundleId else {
++      return RagImeFocusedElementResolution(
++        element: nil,
++        resolverPath: "frontmost_application",
++        errorCode: Int(AXError.cannotComplete.rawValue),
++        appPid: Int(frontmostApp.processIdentifier),
++        reason: "privacy_unknown_front_app_mismatch"
++      )
++    }
++
++    func copyFocusedElement(
++      from root: AXUIElement,
++      path: String,
++      appPid: Int
++    ) -> RagImeFocusedElementResolution {
++      _ = AXUIElementSetMessagingTimeout(root, 0.06)
++      var focusedObject: AnyObject?
++      let result = AXUIElementCopyAttributeValue(
++        root,
++        kAXFocusedUIElementAttribute as CFString,
++        &focusedObject
++      )
++      guard result == .success,
++        let focusedObject,
++        CFGetTypeID(focusedObject) == AXUIElementGetTypeID() else {
++        return RagImeFocusedElementResolution(
++          element: nil,
++          resolverPath: path,
++          errorCode: Int(result.rawValue),
++          appPid: appPid,
++          reason: "privacy_unknown_focused_element_missing"
++        )
++      }
++      let focusedElement = unsafeBitCast(focusedObject, to: AXUIElement.self)
++      _ = AXUIElementSetMessagingTimeout(focusedElement, 0.06)
++      return RagImeFocusedElementResolution(
++        element: focusedElement,
++        resolverPath: path,
++        errorCode: Int(AXError.success.rawValue),
++        appPid: appPid,
++        reason: ""
++      )
++    }
++
++    let appPid = Int(frontmostApp.processIdentifier)
++    let appRoot = AXUIElementCreateApplication(frontmostApp.processIdentifier)
++    let appScoped = copyFocusedElement(from: appRoot, path: "application", appPid: appPid)
++    if appScoped.element != nil { return appScoped }
++
++    // Electron can briefly omit the application-scoped focus while handing the
++    // editor between renderer processes. Keep the system-wide lookup only as a
++    // compatibility fallback, never as the primary privacy authority.
++    let systemWide = AXUIElementCreateSystemWide()
++    let fallback = copyFocusedElement(from: systemWide, path: "system_wide_fallback", appPid: appPid)
++    if fallback.element != nil { return fallback }
++    return RagImeFocusedElementResolution(
++      element: nil,
++      resolverPath: "application_then_system_wide",
++      errorCode: fallback.errorCode == Int(AXError.success.rawValue)
++        ? appScoped.errorCode
++        : fallback.errorCode,
++      appPid: appPid,
++      reason: "privacy_unknown_focused_element_missing"
++    )
 +  }
 +
 +  private func selectedTextRange(in focused: AXUIElement) -> CFRange? {
@@ -2155,7 +2375,7 @@ index 0000000..ac51054
 +  }
 +
 +  func resolveContextGroupIdentity(sourceAppBundleId: String) -> (id: String, level: String, confidence: Double) {
-+    guard let focused = focusedTextElement() else {
++    guard let focused = focusedTextElement(sourceAppBundleId: sourceAppBundleId) else {
 +      return (ragImeContextGroupId(prefix: "app", values: [sourceAppBundleId]), "app", 0.5)
 +    }
 +    if let document = accessibilityStringAttribute(kAXDocumentAttribute as CFString, element: focused), !document.isEmpty {
@@ -2315,10 +2535,10 @@ index 0000000..ac51054
 +}
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..d769b14
+index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2409b1b9f
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,688 @@
+@@ -0,0 +1,718 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -3039,10 +3259,10 @@ index 0000000..d769b14
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000..dcf3ace
+index 0000000000000000000000000000000000000000..c73c7d0c8942f477eefcd01407d413a8de4d82a4
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,773 @@
+@@ -0,0 +1,788 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -3071,6 +3291,9 @@ index 0000000..dcf3ace
 +  let captureEpoch: Int
 +  let captureFailureReason: String
 +  let privacyDisposition: String
++  let privacyLeaseId: String
++  let privacyLeaseEpoch: Int
++  let privacyFocusEpoch: Int
 +  let rawInput: String
 +  let preedit: String
 +  let commitTextPreview: String
@@ -3179,7 +3402,10 @@ index 0000000..dcf3ace
 +    committedContext: String,
 +    committedContextHash: String,
 +    captureFailureReason: String = "",
-+    privacyDisposition: String? = nil
++    privacyDisposition: String? = nil,
++    privacyLeaseId: String? = nil,
++    privacyLeaseEpoch: Int? = nil,
++    privacyFocusEpoch: Int? = nil
 +  ) -> RagImeSidecarRequest {
 +    RagImeSidecarRequest(
 +      frontendBuild: frontendBuild,
@@ -3201,6 +3427,9 @@ index 0000000..dcf3ace
 +      captureEpoch: foregroundText.captureEpoch,
 +      captureFailureReason: captureFailureReason,
 +      privacyDisposition: privacyDisposition ?? self.privacyDisposition,
++      privacyLeaseId: privacyLeaseId ?? self.privacyLeaseId,
++      privacyLeaseEpoch: privacyLeaseEpoch ?? self.privacyLeaseEpoch,
++      privacyFocusEpoch: privacyFocusEpoch ?? self.privacyFocusEpoch,
 +      rawInput: rawInput,
 +      preedit: preedit,
 +      commitTextPreview: commitTextPreview,
@@ -3824,7 +4053,7 @@ index 0000000..dcf3ace
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..c04427992c73eac48f110dc4b19e91c1eb68a8b3
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
 @@ -0,0 +1,1264 @@
@@ -5094,7 +5323,7 @@ index 0000000..1111111
 +}
 diff --git a/sources/RagImeSuggestionRowView.swift b/sources/RagImeSuggestionRowView.swift
 new file mode 100644
-index 0000000..1111111
+index 0000000000000000000000000000000000000000..8d958e988d31f254664e122da3643ed5e1708b2c
 --- /dev/null
 +++ b/sources/RagImeSuggestionRowView.swift
 @@ -0,0 +1,227 @@
@@ -5326,7 +5555,7 @@ index 0000000..1111111
 +  }
 +}
 diff --git a/sources/SquirrelApplicationDelegate.swift b/sources/SquirrelApplicationDelegate.swift
-index 124ef7b..52c6983 100644
+index 124ef7b2ec9a7c2e7bb898295704682f5131b314..52c6983d9ff6adeba2589879c679ae1366e02882 100644
 --- a/sources/SquirrelApplicationDelegate.swift
 +++ b/sources/SquirrelApplicationDelegate.swift
 @@ -364,7 +364,7 @@ private extension SquirrelApplicationDelegate {
@@ -5348,7 +5577,7 @@ index 124ef7b..52c6983 100644
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..2995b7e 100644
+index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6d1b33344 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
 @@ -6,6 +6,7 @@
@@ -5359,7 +5588,7 @@ index c2adf74..2995b7e 100644
  
  final class SquirrelInputController: IMKInputController {
    private static let keyRollOver = 50
-@@ -27,6 +28,102 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +28,109 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
@@ -5384,7 +5613,11 @@ index c2adf74..2995b7e 100644
 +  private let ragImeForegroundContextResolver = RagImeForegroundContextResolver()
 +  private let ragImeForegroundContextQueue = DispatchQueue(label: "im.rime.inputmethod.Squirrel.rag-ime-foreground-context")
 +  private var ragImeForegroundCaptureToken: UUID?
-+  private let ragImeForegroundCaptureTimeoutMs: Int = 140
++  private let ragImeForegroundCaptureTimeoutMs: Int = 220
++  private let ragImePrivacyProbeMaximumAttempts: Int = 5
++  private let ragImePrivacyProbeRetryDelaysMs: [Int] = [30, 90, 240, 600]
++  private var ragImePrivacyPrewarmLastScheduledAt: Date = .distantPast
++  private let ragImePrivacyPrewarmMinimumIntervalMs: Int = 700
 +  private var ragImeRequestSeq: Int = 0
 +  private var ragImeDisplayCandidates: [RagImeDisplayCandidate] = []
 +  private let ragImeAssistantOverlayController = RagImeAssistantPanelController()
@@ -5459,10 +5692,13 @@ index c2adf74..2995b7e 100644
 +  private var ragImeSensitiveFieldActive = false
 +  private var ragImeSensitiveFieldReason = ""
 +  private var ragImePrivacyDisposition = "unknown"
++  private var ragImePrivacyLease: RagImePrivacyLease?
++  private var ragImePrivacyLeaseEpoch = 0
++  private var ragImePrivacyFocusEpoch = 0
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -44,11 +137,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -44,11 +148,10 @@ final class SquirrelInputController: IMKInputController {
        }
      }
  
@@ -5474,16 +5710,35 @@ index c2adf74..2995b7e 100644
 +    // Keep the IMK key path Rime-only. Accessibility, privacy classification,
 +    // network work, and assistant rendering must never delay a physical key.
 +    refreshRagImeInputClient(sender, reason: "key_event")
++    scheduleRagImePrivacyPrewarm(reason: "key_event")
  
      switch event.type {
      case .flagsChanged:
-@@ -85,221 +176,5851 @@ final class SquirrelInputController: IMKInputController {
-           buffer.insert((keycode: rimeKeycode, modifier: rimeModifiers | kReleaseMask.rawValue), at: 0)
-         }
+@@ -76,230 +179,6184 @@ final class SquirrelInputController: IMKInputController {
+         _ = processKey(rimeKeycode, modifiers: rimeModifiers)
        }
+ 
+-      // Process releases first because some modifier releases arrive with the next keydown.
+-      var buffer = [(keycode: UInt32, modifier: UInt32)]()
+-      for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] where changes.contains(flag) {
+-        if modifiers.contains(flag) {
+-          buffer.append((keycode: rimeKeycode, modifier: rimeModifiers))
+-        } else {
+-          buffer.insert((keycode: rimeKeycode, modifier: rimeModifiers | kReleaseMask.rawValue), at: 0)
+-        }
+-      }
 -      for (keycode, modifier) in buffer {
 -        _ = processKey(keycode, modifiers: modifier)
 -      }
++      // Process releases first because some modifier releases arrive with the next keydown.
++      var buffer = [(keycode: UInt32, modifier: UInt32)]()
++      for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] where changes.contains(flag) {
++        if modifiers.contains(flag) {
++          buffer.append((keycode: rimeKeycode, modifier: rimeModifiers))
++        } else {
++          buffer.insert((keycode: rimeKeycode, modifier: rimeModifiers | kReleaseMask.rawValue), at: 0)
++        }
++      }
 +      for (keycode, modifier) in buffer {
 +        _ = processKey(keycode, modifiers: modifier)
 +      }
@@ -6053,6 +6308,7 @@ index c2adf74..2995b7e 100644
 +    ragImeDeferredDeactivateWorkItem = nil
 +    ragImeDeferredDeactivateApp = ""
 +    let activatedApp = refreshRagImeInputClient(sender, reason: "activate_server")
++    scheduleRagImePrivacyPrewarm(reason: "activate_server")
 +    if hadDeferredDeactivate {
 +      traceRagImeFrontendEvent("deactivate_server_recovered", fields: [
 +        "deferredAppBundleId": deferredApp,
@@ -6312,13 +6568,102 @@ index c2adf74..2995b7e 100644
 +    return ragImePrivacyDisposition != "allowed"
 +  }
 +
++  func currentRagImeFrontAppPid() -> Int {
++    guard let application = NSWorkspace.shared.frontmostApplication,
++      application.bundleIdentifier == currentApp else { return 0 }
++    return Int(application.processIdentifier)
++  }
++
++  func traceRagImePrivacyDiagnostic(_ event: String, fields: [String: Any] = [:]) {
++    let allowedKeys: Set<String> = [
++      "requestSeq", "attempt", "nextAttempt", "delayMs", "durationMs",
++      "resolverPath", "axErrorCode", "decision", "reason", "leaseEpoch",
++      "focusEpoch", "appPid", "queued", "sent", "dropped",
++    ]
++    var safeFields = fields.filter { allowedKeys.contains($0.key) }
++    safeFields["event"] = event
++    safeFields["traceIncludesText"] = false
++    if JSONSerialization.isValidJSONObject(safeFields),
++      let data = try? JSONSerialization.data(withJSONObject: safeFields, options: [.sortedKeys]),
++      let json = String(data: data, encoding: .utf8) {
++      NSLog("RAG-IME privacy %@", json)
++    }
++  }
++
++  func invalidateRagImePrivacyLease(reason: String) {
++    guard let lease = ragImePrivacyLease else { return }
++    ragImePrivacyLease = nil
++    ragImePrivacyLeaseEpoch += 1
++    traceRagImePrivacyDiagnostic("privacy_lease_invalidated", fields: [
++      "reason": reason,
++      "leaseEpoch": lease.epoch,
++      "focusEpoch": ragImePrivacyFocusEpoch,
++      "appPid": lease.appPid,
++    ])
++  }
++
++  func issueRagImePrivacyLease(
++    for request: RagImeSidecarRequest,
++    status: RagImeSensitiveFieldStatus
++  ) -> RagImePrivacyLease? {
++    guard status.privacyDisposition == "allowed",
++      request.frontAppBundleId == currentApp,
++      request.privacyFocusEpoch == ragImePrivacyFocusEpoch else { return nil }
++    let appPid = status.appPid > 0 ? status.appPid : currentRagImeFrontAppPid()
++    guard appPid > 0 else { return nil }
++    ragImePrivacyLeaseEpoch += 1
++    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++    let lease = RagImePrivacyLease(
++      id: "privacy:\(UUID().uuidString)",
++      epoch: ragImePrivacyLeaseEpoch,
++      focusEpoch: ragImePrivacyFocusEpoch,
++      panelSessionId: request.panelSessionId,
++      frontAppBundleId: request.frontAppBundleId,
++      appPid: appPid,
++      inputSourceId: request.inputSourceId,
++      inputGeneration: request.inputGeneration,
++      frontendRevision: request.frontendRevision,
++      selectionEpoch: request.selectionEpoch,
++      focusedElementIdentity: status.focusedElementIdentity,
++      issuedAtMs: nowMs,
++      expiresAtMs: nowMs + max(ragImePostCommitResponseApplyWindowMs, ragImeActiveResponseApplyWindowMs) + 3_000
++    )
++    ragImePrivacyLease = lease
++    traceRagImePrivacyDiagnostic("privacy_lease_issued", fields: [
++      "requestSeq": request.requestSeq,
++      "leaseEpoch": lease.epoch,
++      "focusEpoch": lease.focusEpoch,
++      "appPid": lease.appPid,
++      "resolverPath": status.resolverPath,
++      "axErrorCode": status.axErrorCode,
++      "decision": "allowed",
++    ])
++    return lease
++  }
++
++  func hasValidRagImePrivacyLease(for request: RagImeSidecarRequest) -> Bool {
++    guard let lease = ragImePrivacyLease else { return false }
++    return lease.matches(
++      request: request,
++      currentAppBundleId: currentApp,
++      currentAppPid: currentRagImeFrontAppPid(),
++      currentInputSourceId: SquirrelInstaller.currentInputSourceID() ?? "",
++      currentFocusEpoch: ragImePrivacyFocusEpoch,
++      currentInputGeneration: ragImeInputGeneration,
++      currentFrontendRevision: ragImeFrontendRevision,
++      currentSelectionEpoch: ragImeSelectionEpoch,
++      nowMs: Int(Date().timeIntervalSince1970 * 1000)
++    )
++  }
++
 +  @discardableResult
 +  func applyRagImePrivacyStatus(_ status: RagImeSensitiveFieldStatus, source: String) -> Bool {
 +    let disposition = status.privacyDisposition
-+    if disposition != "allowed" {
++    if disposition == "sensitive" {
 +      let changed = !ragImeSensitiveFieldActive || ragImeSensitiveFieldReason != status.reason
 +      ragImeSensitiveFieldActive = true
 +      ragImeSensitiveFieldReason = status.reason
++      invalidateRagImePrivacyLease(reason: status.reason)
 +      if changed {
 +        clearRagImeSensitiveRuntimeState()
 +        ragImePrivacyDisposition = disposition
@@ -6332,6 +6677,19 @@ index c2adf74..2995b7e 100644
 +      } else {
 +        ragImePrivacyDisposition = disposition
 +      }
++      return true
++    }
++    if disposition == "unknown" {
++      ragImePrivacyDisposition = "unknown"
++      ragImeSensitiveFieldReason = status.reason
++      invalidateRagImePrivacyLease(reason: status.reason)
++      traceRagImePrivacyDiagnostic("privacy_probe_deferred", fields: [
++        "decision": "transient_unknown",
++        "reason": status.reason,
++        "resolverPath": status.resolverPath,
++        "axErrorCode": status.axErrorCode,
++        "appPid": status.appPid,
++      ])
 +      return true
 +    }
 +    if ragImeSensitiveFieldActive {
@@ -6350,6 +6708,7 @@ index c2adf74..2995b7e 100644
 +  }
 +
 +  func clearRagImeSensitiveRuntimeState() {
++    invalidateRagImePrivacyLease(reason: "confirmed_sensitive")
 +    ragImePrivacyDisposition = "unknown"
 +    ragImeInputGeneration += 1
 +    ragImeFrontendRevision += 1
@@ -6805,7 +7164,12 @@ index c2adf74..2995b7e 100644
 +  }
 +
 +  func showRagImeImmediatePostCommitPending(committedText: String, generation: Int) {
-+    guard ragImePostCommitPendingOverlayEnabled(), ragImePrivacyDisposition == "allowed" else { return }
++    guard ragImePostCommitPendingOverlayEnabled() else { return }
++    let fastStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(sourceAppBundleId: currentApp)
++    guard fastStatus.privacyDisposition == "allowed", ragImePrivacyDisposition != "sensitive" else {
++      _ = applyRagImePrivacyStatus(fastStatus, source: "pending_overlay_fast_guard")
++      return
++    }
 +    let context = ragImeCompactWhitespace(
 +      ragImeCommittedContext.isEmpty ? committedText : ragImeCommittedContext
 +    )
@@ -8529,6 +8893,9 @@ index c2adf74..2995b7e 100644
 +      captureEpoch: foregroundText.captureEpoch,
 +      captureFailureReason: foregroundText.captureFailureReason,
 +      privacyDisposition: ragImePrivacyDisposition,
++      privacyLeaseId: "",
++      privacyLeaseEpoch: 0,
++      privacyFocusEpoch: ragImePrivacyFocusEpoch,
 +      rawInput: rawInput,
 +      preedit: preedit,
 +      commitTextPreview: commitTextPreview,
@@ -8880,12 +9247,50 @@ index c2adf74..2995b7e 100644
 +    ragImePendingContinuationSelectionEpoch = 0
 +  }
 +
++  func scheduleRagImePrivacyPrewarm(reason: String) {
++    let now = Date()
++    let elapsedMs = Int(now.timeIntervalSince(ragImePrivacyPrewarmLastScheduledAt) * 1_000)
++    guard elapsedMs >= ragImePrivacyPrewarmMinimumIntervalMs else { return }
++    let sourceAppBundleId = currentApp
++    guard !sourceAppBundleId.isEmpty else { return }
++    ragImePrivacyPrewarmLastScheduledAt = now
++    let focusEpoch = ragImePrivacyFocusEpoch
++    traceRagImePrivacyDiagnostic("privacy_prewarm_scheduled", fields: [
++      "reason": reason,
++      "focusEpoch": focusEpoch,
++      "queued": true,
++    ])
++    ragImeForegroundContextQueue.async { [weak self] in
++      guard let self else { return }
++      // Electron enables its Accessibility tree lazily. This metadata-only
++      // probe starts that handshake before a post-commit model request, but it
++      // never reads field values, issues a lease, or changes UI state.
++      let status = self.ragImeSelectedTextProvider.sensitiveFieldStatus(
++        sourceAppBundleId: sourceAppBundleId
++      )
++      DispatchQueue.main.async { [weak self] in
++        guard let self,
++          self.currentApp == sourceAppBundleId,
++          self.ragImePrivacyFocusEpoch == focusEpoch else { return }
++        self.traceRagImePrivacyDiagnostic("privacy_prewarm_completed", fields: [
++          "reason": reason,
++          "focusEpoch": focusEpoch,
++          "decision": status.privacyDisposition,
++          "resolverPath": status.resolverPath,
++          "axErrorCode": status.axErrorCode,
++          "imkReason": status.reason,
++        ])
++      }
++    }
++  }
++
 +  func resolveRagImeForegroundContextAndSend(
 +    _ request: RagImeSidecarRequest,
 +    preliminaryFingerprint: String,
 +    inputGeneration: Int,
 +    sidecarClient: RagImeSidecarClient,
-+    captureAttempt: Int = 0
++    captureAttempt: Int = 0,
++    privacyAttempt: Int = 0
 +  ) {
 +    traceRagImeFrontendEvent("foreground_context_capture_started", fields: [
 +      "requestSeq": request.requestSeq,
@@ -8906,6 +9311,7 @@ index c2adf74..2995b7e 100644
 +          inputGeneration == ragImeInputGeneration,
 +          request.frontendRevision == ragImeFrontendRevision,
 +          request.selectionEpoch == ragImeSelectionEpoch,
++          request.privacyFocusEpoch == ragImePrivacyFocusEpoch,
 +          currentApp == request.frontAppBundleId,
 +          liveInputSourceId == request.inputSourceId else {
 +      failRagImeForegroundContextCapture(
@@ -8946,7 +9352,8 @@ index c2adf74..2995b7e 100644
 +      preliminaryFingerprint: preliminaryFingerprint,
 +      inputGeneration: inputGeneration,
 +      sidecarClient: sidecarClient,
-+      captureAttempt: captureAttempt
++      captureAttempt: captureAttempt,
++      privacyAttempt: privacyAttempt
 +    )
 +  }
 +
@@ -8955,10 +9362,18 @@ index c2adf74..2995b7e 100644
 +    preliminaryFingerprint: String,
 +    inputGeneration: Int,
 +    sidecarClient: RagImeSidecarClient,
-+    captureAttempt: Int
++    captureAttempt: Int,
++    privacyAttempt: Int
 +  ) {
 +    let captureToken = UUID()
++    let probeStartedAtMs = Int(Date().timeIntervalSince1970 * 1000)
 +    ragImeForegroundCaptureToken = captureToken
++    traceRagImePrivacyDiagnostic("privacy_probe_started", fields: [
++      "requestSeq": request.requestSeq,
++      "attempt": privacyAttempt,
++      "focusEpoch": ragImePrivacyFocusEpoch,
++      "queued": true,
++    ])
 +    ragImeForegroundContextQueue.async { [weak self] in
 +      guard let self else { return }
 +      let privacyStatus = self.ragImeSelectedTextProvider.sensitiveFieldStatus(
@@ -8985,9 +9400,11 @@ index c2adf74..2995b7e 100644
 +          inputGeneration: inputGeneration,
 +          sidecarClient: sidecarClient,
 +          captureAttempt: captureAttempt,
++          privacyAttempt: privacyAttempt,
 +          captureToken: captureToken,
 +          privacyStatus: privacyStatus,
-+          accessibilityResult: axResult
++          accessibilityResult: axResult,
++          probeStartedAtMs: probeStartedAtMs
 +        )
 +      }
 +    }
@@ -8999,13 +9416,36 @@ index c2adf74..2995b7e 100644
 +        && inputGeneration == self.ragImeInputGeneration
 +        && request.frontendRevision == self.ragImeFrontendRevision
 +        && request.selectionEpoch == self.ragImeSelectionEpoch
++        && request.privacyFocusEpoch == self.ragImePrivacyFocusEpoch
 +        && request.frontAppBundleId == self.currentApp
 +        && request.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? "")
 +      guard anchorsAreLive else { return }
++      let timeoutStatus = RagImeSensitiveFieldStatus(
++        isSensitive: false,
++        reason: "privacy_unknown_probe_timeout",
++        resolverPath: "privacy_probe_timeout"
++      )
 +      _ = self.applyRagImePrivacyStatus(
-+        RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_probe_timeout"),
++        timeoutStatus,
 +        source: "privacy_probe_timeout"
 +      )
++      self.traceRagImePrivacyDiagnostic("privacy_probe_timeout", fields: [
++        "requestSeq": request.requestSeq,
++        "attempt": privacyAttempt,
++        "durationMs": self.ragImeForegroundCaptureTimeoutMs,
++        "reason": timeoutStatus.reason,
++      ])
++      if self.scheduleRagImeForegroundPrivacyRetry(
++        request,
++        preliminaryFingerprint: preliminaryFingerprint,
++        inputGeneration: inputGeneration,
++        sidecarClient: sidecarClient,
++        captureAttempt: captureAttempt,
++        privacyAttempt: privacyAttempt,
++        reason: timeoutStatus.reason
++      ) {
++        return
++      }
 +      self.failRagImeForegroundContextCapture(
 +        request,
 +        fingerprint: preliminaryFingerprint,
@@ -9016,15 +9456,57 @@ index c2adf74..2995b7e 100644
 +    }
 +  }
 +
++  @discardableResult
++  func scheduleRagImeForegroundPrivacyRetry(
++    _ request: RagImeSidecarRequest,
++    preliminaryFingerprint: String,
++    inputGeneration: Int,
++    sidecarClient: RagImeSidecarClient,
++    captureAttempt: Int,
++    privacyAttempt: Int,
++    reason: String
++  ) -> Bool {
++    let nextAttempt = privacyAttempt + 1
++    guard nextAttempt < ragImePrivacyProbeMaximumAttempts else { return false }
++    let delayIndex = min(privacyAttempt, ragImePrivacyProbeRetryDelaysMs.count - 1)
++    let delayMs = ragImePrivacyProbeRetryDelaysMs[max(0, delayIndex)]
++    traceRagImePrivacyDiagnostic("privacy_probe_retry_scheduled", fields: [
++      "requestSeq": request.requestSeq,
++      "attempt": privacyAttempt,
++      "nextAttempt": nextAttempt,
++      "delayMs": delayMs,
++      "reason": reason,
++      "queued": true,
++    ])
++    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
++      guard let self,
++        preliminaryFingerprint == self.ragImeLastRequestFingerprint,
++        request.frontendRevision == self.ragImeFrontendRevision,
++        request.selectionEpoch == self.ragImeSelectionEpoch,
++        request.privacyFocusEpoch == self.ragImePrivacyFocusEpoch else { return }
++      self.probeRagImeForegroundPrivacyAndContext(
++        request,
++        preliminaryFingerprint: preliminaryFingerprint,
++        inputGeneration: inputGeneration,
++        sidecarClient: sidecarClient,
++        captureAttempt: captureAttempt,
++        privacyAttempt: nextAttempt
++      )
++    }
++    return true
++  }
++
 +  func applyRagImeForegroundPrivacyProbe(
 +    _ request: RagImeSidecarRequest,
 +    preliminaryFingerprint: String,
 +    inputGeneration: Int,
 +    sidecarClient: RagImeSidecarClient,
 +    captureAttempt: Int,
++    privacyAttempt: Int,
 +    captureToken: UUID,
 +    privacyStatus: RagImeSensitiveFieldStatus,
-+    accessibilityResult: RagImeForegroundTextCaptureResult
++    accessibilityResult: RagImeForegroundTextCaptureResult,
++    probeStartedAtMs: Int
 +  ) {
 +    guard ragImeForegroundCaptureToken == captureToken else { return }
 +    ragImeForegroundCaptureToken = nil
@@ -9033,6 +9515,7 @@ index c2adf74..2995b7e 100644
 +      && inputGeneration == ragImeInputGeneration
 +      && request.frontendRevision == ragImeFrontendRevision
 +      && request.selectionEpoch == ragImeSelectionEpoch
++      && request.privacyFocusEpoch == ragImePrivacyFocusEpoch
 +      && request.frontAppBundleId == currentApp
 +      && request.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? "")
 +    guard anchorsAreLive else {
@@ -9045,8 +9528,31 @@ index c2adf74..2995b7e 100644
 +      )
 +      return
 +    }
++    let probeDurationMs = max(0, Int(Date().timeIntervalSince1970 * 1000) - probeStartedAtMs)
++    traceRagImePrivacyDiagnostic("privacy_probe_completed", fields: [
++      "requestSeq": request.requestSeq,
++      "attempt": privacyAttempt,
++      "durationMs": probeDurationMs,
++      "resolverPath": privacyStatus.resolverPath,
++      "axErrorCode": privacyStatus.axErrorCode,
++      "decision": privacyStatus.privacyDisposition,
++      "reason": privacyStatus.reason,
++      "appPid": privacyStatus.appPid,
++    ])
 +    guard privacyStatus.reason.isEmpty, !privacyStatus.isSensitive else {
 +      _ = applyRagImePrivacyStatus(privacyStatus, source: "privacy_probe")
++      if privacyStatus.isTransientUnknown,
++        scheduleRagImeForegroundPrivacyRetry(
++          request,
++          preliminaryFingerprint: preliminaryFingerprint,
++          inputGeneration: inputGeneration,
++          sidecarClient: sidecarClient,
++          captureAttempt: captureAttempt,
++          privacyAttempt: privacyAttempt,
++          reason: privacyStatus.reason
++        ) {
++        return
++      }
 +      failRagImeForegroundContextCapture(
 +        request,
 +        fingerprint: preliminaryFingerprint,
@@ -9068,12 +9574,36 @@ index c2adf74..2995b7e 100644
 +      return
 +    }
 +
++    guard let privacyLease = issueRagImePrivacyLease(for: request, status: privacyStatus) else {
++      _ = applyRagImePrivacyStatus(
++        RagImeSensitiveFieldStatus(
++          isSensitive: false,
++          reason: "privacy_unknown_lease_issue_failed",
++          resolverPath: privacyStatus.resolverPath,
++          axErrorCode: privacyStatus.axErrorCode,
++          appPid: privacyStatus.appPid
++        ),
++        source: "privacy_lease"
++      )
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "privacy_lease_issue_failed",
++        imkReason: "privacy_unknown_lease_issue_failed",
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++
 +    let allowedRequest = request.withForegroundTransaction(
 +      foregroundText: request.foregroundText,
 +      committedContext: request.committedContext,
 +      committedContextHash: request.committedContextHash,
-+      captureFailureReason: request.captureFailureReason,
-+      privacyDisposition: "allowed"
++      captureFailureReason: accessibilityResult.failureReason,
++      privacyDisposition: "allowed",
++      privacyLeaseId: privacyLease.id,
++      privacyLeaseEpoch: privacyLease.epoch,
++      privacyFocusEpoch: privacyLease.focusEpoch
 +    )
 +    if let snapshot = accessibilityResult.snapshot {
 +      finishRagImeForegroundContextCapture(
@@ -9122,11 +9652,22 @@ index c2adf74..2995b7e 100644
 +  ) {
 +    guard preliminaryFingerprint == ragImeLastRequestFingerprint,
 +          request.frontendRevision == ragImeFrontendRevision,
-+          request.selectionEpoch == ragImeSelectionEpoch else {
++          request.selectionEpoch == ragImeSelectionEpoch,
++          request.privacyFocusEpoch == ragImePrivacyFocusEpoch else {
 +      failRagImeForegroundContextCapture(
 +        request,
 +        fingerprint: preliminaryFingerprint,
 +        reason: "capture_stale",
++        imkReason: captureReason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    guard hasValidRagImePrivacyLease(for: request) else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "privacy_lease_invalid_before_context_apply",
 +        imkReason: captureReason,
 +        inputGeneration: inputGeneration
 +      )
@@ -9282,7 +9823,7 @@ index c2adf74..2995b7e 100644
 +
 +  func liveRagImeCommitLedgerFallback(
 +    for request: RagImeSidecarRequest,
-+    maximumAgeMs: Int = 700
++    maximumAgeMs: Int = 2_000
 +  ) -> RagImeForegroundTextSnapshot? {
 +    let snapshot = request.foregroundText
 +    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
@@ -9323,10 +9864,26 @@ index c2adf74..2995b7e 100644
 +      "reason": reason,
 +      "imkReason": imkReason,
 +    ])
-+    ragImeAssistantOverlayController.dismissPendingPrediction(
-+      snapshotId: request.panelSessionId,
-+      reason: "foreground_context_\(reason)"
-+    )
++    let privacyUnavailable = reason.hasPrefix("privacy_") && !ragImeSensitiveFieldActive
++    if privacyUnavailable {
++      showRagImeAssistantOverlayFeedback(
++        statusText: "当前输入框暂时无法安全读取",
++        snapshotId: request.panelSessionId,
++        semanticQuery: "",
++        expiresAfterMs: 1_600,
++        animated: false
++      )
++    } else {
++      ragImeAssistantOverlayController.dismissPendingPrediction(
++        snapshotId: request.panelSessionId,
++        reason: "foreground_context_\(reason)"
++      )
++    }
++    traceRagImePrivacyDiagnostic("privacy_transaction_terminal", fields: [
++      "requestSeq": request.requestSeq,
++      "reason": reason,
++      "dropped": true,
++    ])
 +    completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: true)
 +  }
 +
@@ -9341,10 +9898,16 @@ index c2adf74..2995b7e 100644
 +    guard !privacyBlocked,
 +      ragImePrivacyDisposition == "allowed",
 +      request.privacyDisposition == "allowed",
++      hasValidRagImePrivacyLease(for: request),
 +      request.frontAppBundleId == currentApp else {
 +      traceRagImeFrontendEvent("sidecar_request_not_sent", fields: [
 +        "requestSeq": request.requestSeq,
 +        "reason": "send_guard_rejected",
++      ])
++      traceRagImePrivacyDiagnostic("privacy_sidecar_send_rejected", fields: [
++        "requestSeq": request.requestSeq,
++        "reason": "send_guard_rejected",
++        "dropped": true,
 +      ])
 +      ragImeAssistantOverlayController.dismissPendingPrediction(
 +        snapshotId: request.panelSessionId,
@@ -9367,6 +9930,12 @@ index c2adf74..2995b7e 100644
 +      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +      return
 +    }
++    traceRagImePrivacyDiagnostic("privacy_sidecar_send_allowed", fields: [
++      "requestSeq": request.requestSeq,
++      "leaseEpoch": request.privacyLeaseEpoch,
++      "focusEpoch": request.privacyFocusEpoch,
++      "sent": true,
++    ])
 +    DispatchQueue.global(qos: .utility).async { [weak self] in
 +      do {
 +        let response = try sidecarClient.request(request)
@@ -9409,7 +9978,12 @@ index c2adf74..2995b7e 100644
 +    inputGeneration: Int,
 +    sentAt: Date
 +  ) {
-+    guard !enforceRagImeFastPrivacyGuard() else {
++    guard !enforceRagImeFastPrivacyGuard(), hasValidRagImePrivacyLease(for: request) else {
++      traceRagImePrivacyDiagnostic("privacy_response_rejected", fields: [
++        "requestSeq": request.requestSeq,
++        "reason": "privacy_lease_invalid",
++        "dropped": true,
++      ])
 +      ragImeAssistantOverlayController.dismissPendingPrediction(
 +        snapshotId: request.panelSessionId,
 +        reason: "sidecar_response_privacy_rejected"
@@ -9852,6 +10426,9 @@ index c2adf74..2995b7e 100644
 +        captureEpoch: request.captureEpoch,
 +        captureFailureReason: request.captureFailureReason,
 +        privacyDisposition: request.privacyDisposition,
++        privacyLeaseId: request.privacyLeaseId,
++        privacyLeaseEpoch: request.privacyLeaseEpoch,
++        privacyFocusEpoch: request.privacyFocusEpoch,
 +        rawInput: request.rawInput,
 +        preedit: request.preedit,
 +        commitTextPreview: request.commitTextPreview,
@@ -10261,6 +10838,8 @@ index c2adf74..2995b7e 100644
 +  }
 +
 +  func invalidateRagImeForegroundTransaction(reason: String, keyCode: UInt16 = 0) {
++    ragImePrivacyFocusEpoch += 1
++    invalidateRagImePrivacyLease(reason: reason)
 +    ragImePrivacyDisposition = "unknown"
 +    ragImeInputGeneration += 1
 +    ragImeFrontendRevision += 1
@@ -10473,9 +11052,7 @@ index c2adf74..2995b7e 100644
 +    }
 +    return value
 +  }
- 
--      lastModifiers = modifiers
--      rimeUpdate()
++
 +  func ragImeBoolEnvEnabled(_ key: String, default defaultValue: Bool) -> Bool {
 +    let rawValue = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 +    guard let rawValue, !rawValue.isEmpty else {
@@ -10483,33 +11060,11 @@ index c2adf74..2995b7e 100644
 +    }
 +    return !["0", "false", "no", "off"].contains(rawValue)
 +  }
- 
--    case .keyDown:
--      // Let client apps handle Command shortcuts.
--      if modifiers.contains(.command) {
--        break
--      }
++
 +  func ragImePostCommitPendingOverlayEnabled() -> Bool {
 +    ragImeBoolEnvEnabled("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", default: true)
 +  }
- 
--      let keyCode = event.keyCode
--      var keyChars = event.charactersIgnoringModifiers
--      let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
--      if let code = keyChars?.first,
--         (capitalModifiers && !code.isLetter) || (!capitalModifiers && !code.isASCII) {
--        keyChars = event.characters
--      }
--      if let char = keyChars?.first {
--        let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
--                                                           shift: modifiers.contains(.shift),
--                                                           caps: modifiers.contains(.capsLock))
--        if rimeKeycode != 0 {
--          let rimeModifiers = SquirrelKeycode.osxModifiersToRime(modifiers: modifiers)
--          handled = processKey(rimeKeycode, modifiers: rimeModifiers)
--          rimeUpdate()
--        }
--      }
++
 +  func ragImeAssistantOverlayContainsResult(_ payload: RagImeAssistantOverlayPayload) -> Bool {
 +    payload.candidates.contains { candidate in
 +      ["model", "rag", "memory"].contains(candidate.sourceType)
@@ -10558,6 +11113,8 @@ index c2adf74..2995b7e 100644
 +    ragImeBoolEnvEnabled("RAG_IME_CANDIDATE_DIAGNOSTICS", default: false)
 +  }
  
+-      lastModifiers = modifiers
+-      rimeUpdate()
 +  func ragImeDisplayBadge(for candidate: RagImeDisplayCandidate) -> String {
 +    guard ragImeCandidateSourceBadgesEnabled() else {
 +      return ""
@@ -10578,21 +11135,37 @@ index c2adf74..2995b7e 100644
 +      return "input"
 +    case "action":
 +      return "生成"
-     default:
--      break
++    default:
 +      return candidate.sourceType
-     }
++    }
 +  }
  
--    return handled
+-    case .keyDown:
+-      // Let client apps handle Command shortcuts.
+-      if modifiers.contains(.command) {
+-        break
+-      }
 +  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
 +    return ""
-   }
++  }
  
--  func selectCandidate(_ index: Int) -> Bool {
--    let success = rimeAPI.select_candidate_on_current_page(session, index)
--    if success {
--      rimeUpdate()
+-      let keyCode = event.keyCode
+-      var keyChars = event.charactersIgnoringModifiers
+-      let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
+-      if let code = keyChars?.first,
+-         (capitalModifiers && !code.isLetter) || (!capitalModifiers && !code.isASCII) {
+-        keyChars = event.characters
+-      }
+-      if let char = keyChars?.first {
+-        let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
+-                                                           shift: modifiers.contains(.shift),
+-                                                           caps: modifiers.contains(.capsLock))
+-        if rimeKeycode != 0 {
+-          let rimeModifiers = SquirrelKeycode.osxModifiersToRime(modifiers: modifiers)
+-          handled = processKey(rimeKeycode, modifiers: rimeModifiers)
+-          rimeUpdate()
+-        }
+-      }
 +  func ragImeDisplayIsPostCommitPrediction() -> Bool {
 +    return ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty && !ragImeDisplayCandidates.isEmpty
 +  }
@@ -10600,9 +11173,52 @@ index c2adf74..2995b7e 100644
 +  func ragImeSelectionKey(for candidate: RagImeDisplayCandidate) -> String {
 +    if let key = candidate.selectionKey, !key.isEmpty {
 +      return key
++    }
++    return candidate.label
++  }
++
++  func ragImeFallbackLabel(index: Int, fallbackLabels: [String]) -> String {
++    if index < fallbackLabels.count && !fallbackLabels[index].isEmpty {
++      return fallbackLabels[index]
++    }
++    if index == 9 {
++      return "0"
++    }
++    return "\(index + 1)"
++  }
+ 
++  func ragImeJSONValueString(_ value: RagImeJSONValue?) -> String? {
++    guard let value else { return nil }
++    switch value {
++    case .string(let text):
++      return text
++    case .number(let number):
++      return String(Int(number))
+     default:
+-      break
++      return nil
+     }
++  }
+ 
+-    return handled
++  func traceRagImePredictionEvents(_ events: [RagImePredictionTraceEvent]?) {
++    guard let events else { return }
++    for item in events {
++      traceRagImeFrontendEvent(item.event, fields: ragImeJSONValueDictionary(item.fields))
++    }
+   }
+ 
+-  func selectCandidate(_ index: Int) -> Bool {
+-    let success = rimeAPI.select_candidate_on_current_page(session, index)
+-    if success {
+-      rimeUpdate()
++  func ragImeJSONValueDictionary(_ dictionary: [String: RagImeJSONValue]) -> [String: Any] {
++    var result: [String: Any] = [:]
++    for (key, value) in dictionary {
++      result[key] = ragImeJSONValueToAny(value)
      }
 -    return success
-+    return candidate.label
++    return result
    }
  
 -  // swiftlint:disable:next identifier_name
@@ -10611,73 +11227,6 @@ index c2adf74..2995b7e 100644
 -    handled = rimeAPI.change_page(session, up)
 -    if handled {
 -      rimeUpdate()
-+  func ragImeFallbackLabel(index: Int, fallbackLabels: [String]) -> String {
-+    if index < fallbackLabels.count && !fallbackLabels[index].isEmpty {
-+      return fallbackLabels[index]
-     }
--    return handled
-+    if index == 9 {
-+      return "0"
-+    }
-+    return "\(index + 1)"
-   }
- 
--  func moveCaret(forward: Bool) -> Bool {
--    let currentCaretPos = rimeAPI.get_caret_pos(session)
--    guard let input = rimeAPI.get_input(session) else { return false }
--    if forward {
--      if currentCaretPos <= 0 {
--        return false
--      }
--      rimeAPI.set_caret_pos(session, currentCaretPos - 1)
--    } else {
--      let inputStr = String(cString: input)
--      if currentCaretPos >= inputStr.utf8.count {
--        return false
--      }
--      rimeAPI.set_caret_pos(session, currentCaretPos + 1)
-+  func ragImeJSONValueString(_ value: RagImeJSONValue?) -> String? {
-+    guard let value else { return nil }
-+    switch value {
-+    case .string(let text):
-+      return text
-+    case .number(let number):
-+      return String(Int(number))
-+    default:
-+      return nil
-     }
--    rimeUpdate()
--    return true
-   }
- 
--  override func recognizedEvents(_ sender: Any!) -> Int {
--    return Int(NSEvent.EventTypeMask.Element(arrayLiteral: .keyDown, .flagsChanged).rawValue)
-+  func traceRagImePredictionEvents(_ events: [RagImePredictionTraceEvent]?) {
-+    guard let events else { return }
-+    for item in events {
-+      traceRagImeFrontendEvent(item.event, fields: ragImeJSONValueDictionary(item.fields))
-+    }
-   }
- 
--  override func activateServer(_ sender: Any!) {
--    self.client ?= sender as? IMKTextInput
--    var keyboardLayout = NSApp.squirrelAppDelegate.config?.getString("keyboard_layout") ?? ""
--    if keyboardLayout == "last" || keyboardLayout == "" {
--      keyboardLayout = ""
--    } else if keyboardLayout == "default" {
--      keyboardLayout = "com.apple.keylayout.ABC"
--    } else if !keyboardLayout.hasPrefix("com.apple.keylayout.") {
--      keyboardLayout = "com.apple.keylayout.\(keyboardLayout)"
-+  func ragImeJSONValueDictionary(_ dictionary: [String: RagImeJSONValue]) -> [String: Any] {
-+    var result: [String: Any] = [:]
-+    for (key, value) in dictionary {
-+      result[key] = ragImeJSONValueToAny(value)
-     }
--    if keyboardLayout != "" {
--      client?.overrideKeyboard(withKeyboardNamed: keyboardLayout)
-+    return result
-+  }
-+
 +  func ragImeJSONValueToAny(_ value: RagImeJSONValue) -> Any {
 +    switch value {
 +    case .string(let text):
@@ -10693,13 +11242,15 @@ index c2adf74..2995b7e 100644
 +    case .null:
 +      return NSNull()
      }
--    preedit = ""
--    if session != 0 {
--      let state = rimeAPI.get_option(session, "ascii_mode")
--      let label = rimeAPI.get_state_label_abbreviated(session, "ascii_mode", state, true).asString
--      NSApp.squirrelAppDelegate.updateStatusIcon(asciiMode: state, schemaLabel: label)
-+  }
-+
+-    return handled
+   }
+ 
+-  func moveCaret(forward: Bool) -> Bool {
+-    let currentCaretPos = rimeAPI.get_caret_pos(session)
+-    guard let input = rimeAPI.get_input(session) else { return false }
+-    if forward {
+-      if currentCaretPos <= 0 {
+-        return false
 +  func traceRagImeFrontendEvent(_ event: String, fields: [String: Any]) {
 +    guard ragImeSidecarClient?.frontendTrace == true else { return }
 +    let sensitiveSafeEvents: Set<String> = [
@@ -10719,7 +11270,12 @@ index c2adf74..2995b7e 100644
 +    if event == "panel_display_candidates" {
 +      for (key, value) in ragImeDisplayTraceTransactionFields() {
 +        payload[key] = payload[key] ?? value
-+      }
+       }
+-      rimeAPI.set_caret_pos(session, currentCaretPos - 1)
+-    } else {
+-      let inputStr = String(cString: input)
+-      if currentCaretPos >= inputStr.utf8.count {
+-        return false
 +    }
 +    payload["frontendRevision"] = payload["frontendRevision"] ?? ragImeFrontendRevision
 +    payload["selectionEpoch"] = payload["selectionEpoch"] ?? ragImeSelectionEpoch
@@ -10742,13 +11298,9 @@ index c2adf74..2995b7e 100644
 +      handle.write(data)
 +    } catch {
 +      print("RAG IME frontend trace failed: \(error)")
-     }
-   }
- 
--  override init!(server: IMKServer!, delegate: Any!, client: Any!) {
--    self.client = client as? IMKTextInput
--    super.init(server: server, delegate: delegate, client: client)
--    createSession()
++    }
++  }
++
 +  func ragImePrepareFrontendTraceLog(_ logFile: URL, maxBytes: UInt64) throws {
 +    let manager = FileManager.default
 +    if manager.fileExists(atPath: logFile.path) {
@@ -10761,40 +11313,44 @@ index c2adf74..2995b7e 100644
 +        }
 +        try manager.moveItem(at: logFile, to: rotatedFile)
 +        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rotatedFile.path)
-+      }
-+    }
+       }
+-      rimeAPI.set_caret_pos(session, currentCaretPos + 1)
+     }
+-    rimeUpdate()
+-    return true
 +    if !manager.fileExists(atPath: logFile.path) {
 +      guard manager.createFile(atPath: logFile.path, contents: nil) else {
 +        throw NSError(domain: "RagImeFrontendTrace", code: 1)
 +      }
 +    }
 +    try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logFile.path)
-+  }
+   }
  
--    NotificationCenter.default.addObserver(
--      forName: .init("SquirrelSetASCIIModeNotification"),
--      object: nil,
--      queue: nil
--    ) { [weak self] notification in
--      self?.handleASCIIModeToggle(notification)
+-  override func recognizedEvents(_ sender: Any!) -> Int {
+-    return Int(NSEvent.EventTypeMask.Element(arrayLiteral: .keyDown, .flagsChanged).rawValue)
 +  func ragImeSanitizedTraceFields(_ fields: [String: Any], includeText: Bool) -> [String: Any] {
 +    var sanitized: [String: Any] = [:]
 +    for (key, value) in fields {
 +      sanitized[key] = ragImeSanitizedTraceValue(value, key: key, includeText: includeText)
-     }
++    }
 +    return sanitized
-+  }
+   }
  
--    NotificationCenter.default.addObserver(
--      forName: .init("SquirrelReportASCIIModeNotification"),
--      object: nil,
--      queue: nil
--    ) { [weak self] notification in
--      self?.reportASCIIMode(notification)
+-  override func activateServer(_ sender: Any!) {
+-    self.client ?= sender as? IMKTextInput
+-    var keyboardLayout = NSApp.squirrelAppDelegate.config?.getString("keyboard_layout") ?? ""
+-    if keyboardLayout == "last" || keyboardLayout == "" {
+-      keyboardLayout = ""
+-    } else if keyboardLayout == "default" {
+-      keyboardLayout = "com.apple.keylayout.ABC"
+-    } else if !keyboardLayout.hasPrefix("com.apple.keylayout.") {
+-      keyboardLayout = "com.apple.keylayout.\(keyboardLayout)"
 +  func ragImeSanitizedTraceValue(_ value: Any, key: String, includeText: Bool) -> Any {
 +    if includeText {
 +      return value
      }
+-    if keyboardLayout != "" {
+-      client?.overrideKeyboard(withKeyboardNamed: keyboardLayout)
 +    if let text = value as? String {
 +      guard ragImeTraceKeyCarriesUserText(key), !text.isEmpty else { return text }
 +      if ragImeTraceKeyIsOpaqueTextIdentity(key), text.hasPrefix("sha256:") {
@@ -10804,7 +11360,12 @@ index c2adf74..2995b7e 100644
 +        "chars": ragImeCompactWhitespace(text).count,
 +        "hash": ragImeStableTextHash(text),
 +      ] as [String: Any]
-+    }
+     }
+-    preedit = ""
+-    if session != 0 {
+-      let state = rimeAPI.get_option(session, "ascii_mode")
+-      let label = rimeAPI.get_state_label_abbreviated(session, "ascii_mode", state, true).asString
+-      NSApp.squirrelAppDelegate.updateStatusIcon(asciiMode: state, schemaLabel: label)
 +    if let dictionary = value as? [String: Any] {
 +      var sanitized: [String: Any] = [:]
 +      for (childKey, childValue) in dictionary {
@@ -10814,14 +11375,14 @@ index c2adf74..2995b7e 100644
 +    }
 +    if let array = value as? [Any] {
 +      return array.map { item in ragImeSanitizedTraceValue(item, key: key, includeText: includeText) }
-+    }
+     }
 +    return value
    }
  
--  override func deactivateServer(_ sender: Any!) {
--    hidePalettes()
--    commitComposition(sender)
--    client = nil
+-  override init!(server: IMKServer!, delegate: Any!, client: Any!) {
+-    self.client = client as? IMKTextInput
+-    super.init(server: server, delegate: delegate, client: client)
+-    createSession()
 +  func ragImeTraceKeyCarriesUserText(_ key: String) -> Bool {
 +    return [
 +      "rawInput",
@@ -10843,22 +11404,18 @@ index c2adf74..2995b7e 100644
 +      "comment",
 +      "evidencePreview",
 +    ].contains(key)
-   }
++  }
  
--  override func hidePalettes() {
--    NSApp.squirrelAppDelegate.panel?.hide()
--    super.hidePalettes()
+-    NotificationCenter.default.addObserver(
+-      forName: .init("SquirrelSetASCIIModeNotification"),
+-      object: nil,
+-      queue: nil
+-    ) { [weak self] notification in
+-      self?.handleASCIIModeToggle(notification)
 +  func ragImeTraceKeyIsOpaqueTextIdentity(_ key: String) -> Bool {
 +    return ["hardContextAnchor", "queryAnchor", "displayAnchor"].contains(key)
-   }
- 
--  override func commitComposition(_ sender: Any!) {
--    self.client ?= sender as? IMKTextInput
--    if session != 0 {
--      if let input = rimeAPI.get_input(session) {
--        commit(string: String(cString: input))
--        rimeAPI.clear_composition(session)
--      }
++  }
++
 +  func ragImeTraceCandidateCounts() -> [String: Any] {
 +    let modelInlineCount = ragImeDisplayCandidates.filter {
 +      $0.sourceType == "model" && ($0.displayLayout ?? "") == "inline" && ($0.displayLane ?? "") == "model"
@@ -10892,35 +11449,24 @@ index c2adf74..2995b7e 100644
 +      "firstResponseBudgetMs": progressive.firstResponseBudgetMs,
 +      "retryAfterMs": progressive.retryAfterMs,
 +    ]
-   }
++  }
  
--  override func menu() -> NSMenu! {
--    let deploy = NSMenuItem(title: NSLocalizedString("Deploy", comment: "Menu item"), action: #selector(deploy), keyEquivalent: "`")
--    deploy.target = self
--    deploy.keyEquivalentModifierMask = [.control, .option]
--    let sync = NSMenuItem(title: NSLocalizedString("Sync user data", comment: "Menu item"), action: #selector(syncUserData), keyEquivalent: "")
--    sync.target = self
--    let logDir = NSMenuItem(title: NSLocalizedString("Logs...", comment: "Menu item"), action: #selector(openLogFolder), keyEquivalent: "")
--    logDir.target = self
--    let setting = NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu item"), action: #selector(openRimeFolder), keyEquivalent: "")
--    setting.target = self
--    let wiki = NSMenuItem(title: NSLocalizedString("Rime Wiki...", comment: "Menu item"), action: #selector(openWiki), keyEquivalent: "")
--    wiki.target = self
--    let update = NSMenuItem(title: NSLocalizedString("Check for updates...", comment: "Menu item"), action: #selector(checkForUpdates), keyEquivalent: "")
--    update.target = self
+-    NotificationCenter.default.addObserver(
+-      forName: .init("SquirrelReportASCIIModeNotification"),
+-      object: nil,
+-      queue: nil
+-    ) { [weak self] notification in
+-      self?.reportASCIIMode(notification)
 +  func ragImeTraceCandidateSummaries() -> [[String: Any]] {
 +    ragImeDisplayCandidates.enumerated().map { index, candidate in
 +      ragImeTraceCandidateSummary(candidate, index: index)
-+    }
-+  }
+     }
+   }
  
--    let menu = NSMenu()
--    menu.addItem(deploy)
--    menu.addItem(sync)
--    menu.addItem(logDir)
--    menu.addItem(setting)
--    menu.addItem(wiki)
--    menu.addItem(update)
+-  override func deactivateServer(_ sender: Any!) {
+-    hidePalettes()
+-    commitComposition(sender)
+-    client = nil
 +  func ragImeTraceCandidateSummary(_ candidate: RagImeDisplayCandidate, index: Int) -> [String: Any] {
 +    [
 +      "index": index,
@@ -10951,9 +11497,11 @@ index c2adf74..2995b7e 100644
 +      "compositionHash": ragImeDisplayCandidateStringMetadata(candidate, "compositionHash"),
 +      "committedContextHash": ragImeDisplayCandidateStringMetadata(candidate, "committedContextHash"),
 +    ]
-+  }
+   }
  
--    return menu
+-  override func hidePalettes() {
+-    NSApp.squirrelAppDelegate.panel?.hide()
+-    super.hidePalettes()
 +  func ragImeOverlayTraceCandidateSummary(_ candidate: RagImeDisplayCandidate, index: Int) -> [String: Any] {
 +    let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
 +    return [
@@ -10971,8 +11519,12 @@ index c2adf74..2995b7e 100644
 +    ]
    }
  
--  @objc func deploy() {
--    NSApp.squirrelAppDelegate.deploy()
+-  override func commitComposition(_ sender: Any!) {
+-    self.client ?= sender as? IMKTextInput
+-    if session != 0 {
+-      if let input = rimeAPI.get_input(session) {
+-        commit(string: String(cString: input))
+-        rimeAPI.clear_composition(session)
 +  func clearRagImeDisplayCandidates() {
 +    dismissRagImeAssistantOverlay(reason: "clear_display_candidates")
 +    ragImeForegroundCaptureToken = nil
@@ -11001,10 +11553,8 @@ index c2adf74..2995b7e 100644
 +    ragImeDisplayExpiryWorkItem?.cancel()
 +    ragImeDisplayExpiryWorkItem = nil
 +    resetRagImePendingContinuationState()
-   }
- 
--  @objc func syncUserData() {
--    NSApp.squirrelAppDelegate.syncUserData()
++  }
++
 +  func recordRagImeSideCandidateCommit(
 +    _ candidate: RagImeDisplayCandidate,
 +    shownCandidates: [RagImeDisplayCandidate],
@@ -11056,12 +11606,24 @@ index c2adf74..2995b7e 100644
 +          ])
 +          completion(false)
 +        }
-+      }
-+    }
+       }
+     }
    }
  
--  @objc func openLogFolder() {
--    NSApp.squirrelAppDelegate.openLogFolder()
+-  override func menu() -> NSMenu! {
+-    let deploy = NSMenuItem(title: NSLocalizedString("Deploy", comment: "Menu item"), action: #selector(deploy), keyEquivalent: "`")
+-    deploy.target = self
+-    deploy.keyEquivalentModifierMask = [.control, .option]
+-    let sync = NSMenuItem(title: NSLocalizedString("Sync user data", comment: "Menu item"), action: #selector(syncUserData), keyEquivalent: "")
+-    sync.target = self
+-    let logDir = NSMenuItem(title: NSLocalizedString("Logs...", comment: "Menu item"), action: #selector(openLogFolder), keyEquivalent: "")
+-    logDir.target = self
+-    let setting = NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu item"), action: #selector(openRimeFolder), keyEquivalent: "")
+-    setting.target = self
+-    let wiki = NSMenuItem(title: NSLocalizedString("Rime Wiki...", comment: "Menu item"), action: #selector(openWiki), keyEquivalent: "")
+-    wiki.target = self
+-    let update = NSMenuItem(title: NSLocalizedString("Check for updates...", comment: "Menu item"), action: #selector(checkForUpdates), keyEquivalent: "")
+-    update.target = self
 +  func rememberRagImeCommittedContext(_ text: String) {
 +    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
 +    guard !normalized.isEmpty else { return }
@@ -11069,10 +11631,15 @@ index c2adf74..2995b7e 100644
 +    let combined = [ragImeCommittedContext, normalized].filter { !$0.isEmpty }.joined(separator: " ")
 +    ragImeCommittedContext = boundedRagImeCommittedContext(combined)
 +    ragImeCommittedContextUpdatedAt = Date()
-   }
++  }
  
--  @objc func openRimeFolder() {
--    NSApp.squirrelAppDelegate.openRimeFolder()
+-    let menu = NSMenu()
+-    menu.addItem(deploy)
+-    menu.addItem(sync)
+-    menu.addItem(logDir)
+-    menu.addItem(setting)
+-    menu.addItem(wiki)
+-    menu.addItem(update)
 +  func rememberRagImeActiveInputFragment(_ text: String) {
 +    guard !text.isEmpty else { return }
 +    let combined = ragImeActiveInputBuffer + text
@@ -11081,10 +11648,9 @@ index c2adf74..2995b7e 100644
 +      ? String(normalized.suffix(ragImeActiveInputBufferLimit))
 +      : normalized
 +    ragImeActiveInputBufferUpdatedAt = Date()
-   }
++  }
  
--  @objc func checkForUpdates() {
--    NSApp.squirrelAppDelegate.checkForUpdates()
+-    return menu
 +  func removeLastRagImeActiveInputCharacter() {
 +    var value = ragImeActiveInputBuffer
 +    guard !value.isEmpty else { return }
@@ -11093,8 +11659,8 @@ index c2adf74..2995b7e 100644
 +    ragImeActiveInputBufferUpdatedAt = value.isEmpty ? .distantPast : Date()
    }
  
--  @objc func openWiki() {
--    NSApp.squirrelAppDelegate.openWiki()
+-  @objc func deploy() {
+-    NSApp.squirrelAppDelegate.deploy()
 +  func finalizeRagImeActiveInputBuffer(reason: String, app: String) {
 +    let imeText = ragImeCompactWhitespace(ragImeActiveInputBuffer)
 +    ragImeActiveInputBuffer = ""
@@ -11205,8 +11771,10 @@ index c2adf74..2995b7e 100644
 +        )
 +      }
 +    }
-+  }
-+
+   }
+ 
+-  @objc func syncUserData() {
+-    NSApp.squirrelAppDelegate.syncUserData()
 +  func boundedRagImeFinalizedAccessibilityContext(
 +    _ snapshot: RagImeForegroundTextSnapshot?
 +  ) -> String {
@@ -11228,8 +11796,10 @@ index c2adf74..2995b7e 100644
 +      selected,
 +      String(after.prefix(afterBudget)),
 +    ].joined())
-+  }
-+
+   }
+ 
+-  @objc func openLogFolder() {
+-    NSApp.squirrelAppDelegate.openLogFolder()
 +  func resolveRagImeFinalizedInputCapture(
 +    imeText: String,
 +    fieldText: String,
@@ -11274,8 +11844,10 @@ index c2adf74..2995b7e 100644
 +      selectionRule: "field_context_if_not_shorter_else_ime_buffer"
 +    )
 +    return RagImeFinalizedInputCapture(text: selectedText, metadata: metadata)
-+  }
-+
+  }
+
+-  @objc func openRimeFolder() {
+-    NSApp.squirrelAppDelegate.openRimeFolder()
 +  func ragImeAccessibilityCanRepresentFinalizedInput(
 +    fieldText: String,
 +    imeText: String,
@@ -11299,8 +11871,10 @@ index c2adf74..2995b7e 100644
 +      of: normalizedIme,
 +      options: [.backwards, .literal]
 +    ) != nil
-+  }
-+
+   }
+ 
+-  @objc func checkForUpdates() {
+-    NSApp.squirrelAppDelegate.checkForUpdates()
 +  func finishRagImeFinalizedInputCapture(
 +    _ capture: RagImeFinalizedInputCapture,
 +    reason: String,
@@ -11357,7 +11931,9 @@ index c2adf74..2995b7e 100644
 +      }
 +    }
    }
-+
+ 
+-  @objc func openWiki() {
+-    NSApp.squirrelAppDelegate.openWiki()
 +  func ragImeFinalizedFieldContextFromInputClient() -> (text: String, failureReason: String) {
 +    guard let client else { return ("", "text_input_client_missing") }
 +    let selectedRange = client.selectedRange()
@@ -11381,7 +11957,7 @@ index c2adf74..2995b7e 100644
 +    }
 +    let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
 +    return text.isEmpty ? ("", "field_context_empty") : (text, "")
-+  }
+   }
  
 -  private(set) var specialCommentIndices: [ReservedPropertyKey: Set<Int>] = [:]
 +  func removeLastRagImeCommittedContextCharacterIfNoComposition() {
@@ -11484,7 +12060,7 @@ index c2adf74..2995b7e 100644
  
    func onChordTimer(_: Timer) {
      var processedKeys = false
-@@ -359,7 +5797,12 @@ private extension SquirrelInputController {
+@@ -359,7 +6416,12 @@ private extension SquirrelInputController {
      schemaId = ""
  
      if session != 0 {
@@ -11497,7 +12073,7 @@ index c2adf74..2995b7e 100644
      }
    }
  
-@@ -426,15 +5869,39 @@ private extension SquirrelInputController {
+@@ -426,15 +6488,39 @@ private extension SquirrelInputController {
    func rimeConsumeCommittedText() {
      var commitText = RimeCommit.rimeStructInit()
      if rimeAPI.get_commit(session, &commitText) {
@@ -11539,7 +12115,7 @@ index c2adf74..2995b7e 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +5913,7 @@ private extension SquirrelInputController {
+@@ -446,6 +6532,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -11547,7 +12123,7 @@ index c2adf74..2995b7e 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +5926,14 @@ private extension SquirrelInputController {
+@@ -458,13 +6545,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -11563,7 +12139,7 @@ index c2adf74..2995b7e 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -525,11 +5994,11 @@ private extension SquirrelInputController {
+@@ -525,11 +6613,11 @@ private extension SquirrelInputController {
          comments.append(candidate.comment.map { String(cString: $0) } ?? "")
        }
        var labels = [String]()
@@ -11576,7 +12152,7 @@ index c2adf74..2995b7e 100644
          for i in 0..<pageSize {
            labels.append(select_labels[i].map { String(cString: $0) } ?? "")
          }
-@@ -537,22 +6006,79 @@ private extension SquirrelInputController {
+@@ -537,22 +6625,79 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -11661,7 +12237,7 @@ index c2adf74..2995b7e 100644
    }
  
    func show(preedit: String, selRange: NSRange, caretPos: Int) {
-@@ -578,15 +6104,35 @@ private extension SquirrelInputController {
+@@ -578,15 +6723,35 @@ private extension SquirrelInputController {
    }
  
    // swiftlint:disable:next function_parameter_count
@@ -11707,7 +12283,7 @@ index c2adf74..2995b7e 100644
    }
  
 diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
-index a9e2dae..5c3a32c 100644
+index a9e2dae29a1029bb1659f89ba97b888fc34f7183..5c3a32c6fc0307b7346b9a7718bc0a2eb9fb3779 100644
 --- a/sources/SquirrelPanel.swift
 +++ b/sources/SquirrelPanel.swift
 @@ -57,6 +57,21 @@ final class SquirrelPanel: NSPanel {

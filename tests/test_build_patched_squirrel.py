@@ -447,8 +447,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             'RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_ax_not_trusted")',
             patch_text,
         )
+        self.assertIn('"privacy_unknown_focused_element_missing"', patch_text)
         self.assertIn(
-            'RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_focused_element_missing")',
+            "AXUIElementCreateApplication(frontmostApp.processIdentifier)",
             patch_text,
         )
         self.assertIn(
@@ -701,9 +702,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("if !stripped.isEmpty", patch_text)
         self.assertIn("func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String", patch_text)
         self.assertIn(
-            "+  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {\n"
-            '+    return ""\n'
-            "   }",
+            '+    return ""\n+  }',
             patch_text,
         )
         self.assertNotIn('return "\\(badge)·\\(candidate.comment)"', patch_text)
@@ -992,6 +991,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             finalized_input.index("DispatchQueue.main.async"),
         )
 
+        prewarm = section(
+            "func scheduleRagImePrivacyPrewarm(",
+            "func resolveRagImeForegroundContextAndSend(",
+        )
+        self.assertIn("ragImeForegroundContextQueue.async", prewarm)
+        self.assertIn("ragImeSelectedTextProvider.sensitiveFieldStatus(", prewarm)
+
         controller_start = patch_text.index("diff --git a/sources/SquirrelInputController.swift")
         controller_text = patch_text[controller_start:]
         full_status_calls = [
@@ -999,9 +1005,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             for line in controller_text.splitlines()
             if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line
         ]
-        self.assertEqual(
+        self.assertCountEqual(
             full_status_calls,
             [
+                next(line for line in prewarm.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
                 next(line for line in probe.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
                 next(line for line in finalized_input.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
             ],
@@ -1041,9 +1048,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         )
         self.assertIn("ragImeForegroundCaptureTimeoutMs", timeout)
         self.assertIn("privacy_probe_timeout", timeout)
-        timeout_branch = timeout[timeout.index("privacy_probe_timeout") - 600 : timeout.index("privacy_probe_timeout") + 600]
-        self.assertIn("failRagImeForegroundContextCapture(", timeout_branch)
-        self.assertNotIn("sendRagImeSidecarRequest(", timeout_branch)
+        self.assertIn("scheduleRagImeForegroundPrivacyRetry(", timeout)
+        self.assertIn("failRagImeForegroundContextCapture(", timeout)
+        self.assertNotIn("sendRagImeSidecarRequest(", timeout)
 
     def test_stale_accessibility_snapshot_falls_back_to_fresh_commit_ledger(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1079,7 +1086,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "ageMs <= maximumAgeMs",
         ):
             self.assertIn(guard, fallback)
-        self.assertIn("maximumAgeMs: Int = 700", fallback)
+        self.assertIn("maximumAgeMs: Int = 2_000", fallback)
 
         resolve_start = patch_text.index("func resolveRagImeForegroundContextAndSend(")
         resolve_end = patch_text.index("func probeRagImeForegroundPrivacyAndContext(", resolve_start)
@@ -1111,6 +1118,78 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("pendingUpdate?.cancel()", panel_text)
         self.assertIn("guard currentState == .pendingPrediction", panel_text)
         self.assertIn("currentPayload?.snapshotId == snapshotId", panel_text)
+
+    def test_privacy_probe_uses_lease_and_retries_transient_ax_focus_gaps(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+        schema_text = (root / "rag_ime" / "contracts" / "json" / "rime-suggest-request.v1.json").read_text(
+            encoding="utf-8"
+        )
+
+        provider_start = patch_text.index("struct RagImeSensitiveFieldStatus")
+        provider_end = patch_text.index("diff --git a/sources/RagImeSidecarClient.swift", provider_start)
+        provider = patch_text[provider_start:provider_end]
+        self.assertIn("var isTransientUnknown: Bool", provider)
+        self.assertIn('"privacy_unknown_focused_element_missing"', provider)
+        self.assertIn("AXUIElementCreateApplication(frontmostApp.processIdentifier)", provider)
+        self.assertIn('path: "application"', provider)
+        self.assertIn('path: "system_wide_fallback"', provider)
+        self.assertLess(
+            provider.index("AXUIElementCreateApplication(frontmostApp.processIdentifier)"),
+            provider.index("AXUIElementCreateSystemWide()"),
+        )
+
+        controller_start = patch_text.index("diff --git a/sources/SquirrelInputController.swift")
+        controller = patch_text[controller_start:]
+        self.assertIn("ragImePrivacyProbeMaximumAttempts: Int = 5", controller)
+        self.assertIn("ragImePrivacyProbeRetryDelaysMs: [Int] = [30, 90, 240, 600]", controller)
+        self.assertIn("scheduleRagImeForegroundPrivacyRetry(", controller)
+        self.assertIn("privacyStatus.isTransientUnknown", controller)
+        self.assertIn('traceRagImePrivacyDiagnostic("privacy_probe_retry_scheduled"', controller)
+
+        prewarm_start = controller.index("func scheduleRagImePrivacyPrewarm(")
+        prewarm_end = controller.index("func resolveRagImeForegroundContextAndSend(", prewarm_start)
+        prewarm = controller[prewarm_start:prewarm_end]
+        self.assertIn("ragImeForegroundContextQueue.async", prewarm)
+        self.assertIn("sensitiveFieldStatus(", prewarm)
+        self.assertIn('traceRagImePrivacyDiagnostic("privacy_prewarm_completed"', prewarm)
+        self.assertNotIn("issueRagImePrivacyLease", prewarm)
+        self.assertNotIn("sendRagImeSidecarRequest", prewarm)
+        self.assertNotIn("applyRagImePrivacyStatus", prewarm)
+        self.assertGreaterEqual(controller.count('scheduleRagImePrivacyPrewarm(reason:'), 2)
+
+        apply_status_start = controller.index("func applyRagImePrivacyStatus(")
+        apply_status_end = controller.index("func clearRagImeSensitiveRuntimeState()", apply_status_start)
+        apply_status = controller[apply_status_start:apply_status_end]
+        unknown_start = apply_status.index('if disposition == "unknown"')
+        unknown_body = apply_status[unknown_start:]
+        self.assertIn('ragImePrivacyDisposition = "unknown"', unknown_body)
+        self.assertNotIn("clearRagImeSensitiveRuntimeState()", unknown_body)
+
+        pending_start = controller.index("func showRagImeImmediatePostCommitPending(")
+        pending_end = controller.index("func showRagImeAssistantOverlayFeedback(", pending_start)
+        pending = controller[pending_start:pending_end]
+        self.assertIn("fastSensitiveFieldStatus", pending)
+        self.assertIn('ragImePrivacyDisposition != "sensitive"', pending)
+        self.assertNotIn('ragImePrivacyDisposition == "allowed"', pending)
+
+        for field in ("privacyLeaseId", "privacyLeaseEpoch", "privacyFocusEpoch"):
+            self.assertIn(field, controller)
+            self.assertIn(f'"{field}"', schema_text)
+        self.assertIn("issueRagImePrivacyLease(for: request", controller)
+        self.assertGreaterEqual(controller.count("hasValidRagImePrivacyLease(for: request)"), 3)
+        self.assertIn('statusText: "当前输入框暂时无法安全读取"', controller)
+
+    def test_privacy_diagnostics_are_always_text_free(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+        start = patch_text.index("func traceRagImePrivacyDiagnostic(")
+        end = patch_text.index("func invalidateRagImePrivacyLease(", start)
+        body = patch_text[start:end]
+        self.assertIn('safeFields["traceIncludesText"] = false', body)
+        self.assertIn('NSLog("RAG-IME privacy %@", json)', body)
+        for forbidden in ("rawInput", "preedit", "committedContext", "selectedText", "semanticQuery"):
+            self.assertNotIn(f'"{forbidden}"', body)
 
     def test_transaction_invalidation_cancels_commit_burst_for_every_reason(self) -> None:
         root = Path(__file__).resolve().parents[1]
