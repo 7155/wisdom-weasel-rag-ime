@@ -209,6 +209,38 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         self.assertEqual(current, 59)
         self.assertEqual(previous, 58)
 
+    def test_copy_cli_accepts_sidecars_materialized_by_read_only_wal_backup(self) -> None:
+        candidate = self.root / "wal-candidate.sqlite"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            mode = str(conn.execute("PRAGMA journal_mode = WAL").fetchone()[0])
+        self.assertEqual(mode.lower(), "wal")
+
+        migrate = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "migrate_semantic_memory_v2.py"),
+                "--source",
+                str(self.db_path),
+                "--output",
+                str(candidate),
+                "--project",
+                PROJECT,
+                "--embedding-from-env",
+                "--apply",
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self._embedding_environment(),
+        )
+
+        self.assertEqual(migrate.returncode, 0, migrate.stderr)
+        report_path = candidate.with_suffix(candidate.suffix + ".semantic-v2-report.json")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertIsNotNone(report["sourceState"]["database"])
+        self.assertTrue(report["verification"]["activationEligible"])
+
     def test_apply_rejects_disabled_embedding_provider(self) -> None:
         candidate = self.root / "disabled-provider.sqlite"
         environment = self._embedding_environment()

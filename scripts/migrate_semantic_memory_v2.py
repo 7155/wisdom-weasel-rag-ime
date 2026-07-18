@@ -101,8 +101,13 @@ def main() -> int:
             "before building the production candidate: "
             + "; ".join(str(value) for value in runtime_stop_verification["errors"])
         )
-    source_state_before = _source_state(source)
     _online_backup(source, output)
+    # Opening a stopped WAL database read-only can materialize empty -wal/-shm
+    # sidecars.  _online_backup already proves the source stayed stable while
+    # copying, so bind the long-running migration guard to the settled state
+    # after that copy rather than treating SQLite's own sidecar creation as a
+    # writer restart.
+    source_state_before = _source_state(source)
     os.chmod(output, 0o600)
     try:
         report = migrate_semantic_memory_database(
