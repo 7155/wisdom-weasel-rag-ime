@@ -54,7 +54,6 @@ def curate_historical_memory_database(
     timezone_name: str = "Asia/Shanghai",
     embedding_provider: EmbeddingProvider | None = None,
     max_batches: int = 512,
-    batch_size: int = 32,
     approve_timelines: bool = True,
     instruction: str = DEFAULT_HISTORICAL_CURATION_INSTRUCTION,
 ) -> dict[str, object]:
@@ -70,8 +69,6 @@ def curate_historical_memory_database(
         raise FileNotFoundError(path)
     if max_batches < 1:
         raise ValueError("max_batches must be positive")
-    if batch_size < 1 or batch_size > 64:
-        raise ValueError("batch_size must be between 1 and 64")
     normalized_project = compact_whitespace(project)
     started_at_ms = now_ms()
     with _connect(path) as conn:
@@ -85,7 +82,7 @@ def curate_historical_memory_database(
         project=normalized_project,
         initial_settle_ms=0,
         daily_interval_ms=60_000,
-        max_sources=batch_size,
+        max_sources=64,
     )
     curator.initialize()
 
@@ -273,7 +270,6 @@ def curate_historical_memory_database(
             "transientRuntimeReceiptsRejected": True,
             "ambiguousEvidenceRetainedButNotPromoted": True,
             "automaticTimelineApproval": bool(approve_timelines),
-            "batchSize": int(batch_size),
         },
     }
 
