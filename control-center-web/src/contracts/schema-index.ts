@@ -10720,6 +10720,17 @@ export const contractSchemas = {
           "unknown"
         ]
       },
+      "privacyLeaseId": {
+        "type": "string"
+      },
+      "privacyLeaseEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "privacyFocusEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
       "sensitiveField": {
         "type": "boolean"
       },

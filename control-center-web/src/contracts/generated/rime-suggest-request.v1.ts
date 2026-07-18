@@ -15,6 +15,9 @@ export interface RimeSuggestRequestV1 {
   project?: string;
   app?: string;
   privacyDisposition?: 'allowed' | 'sensitive' | 'unknown';
+  privacyLeaseId?: string;
+  privacyLeaseEpoch?: number;
+  privacyFocusEpoch?: number;
   sensitiveField?: boolean;
   secureInput?: boolean;
   progressiveFollowUp?: boolean;
