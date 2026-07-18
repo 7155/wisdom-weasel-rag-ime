@@ -410,6 +410,8 @@ python3 scripts/migrate_semantic_memory_v2.py \
   --source "$DB" --output "$CANDIDATE" \
   --project wisdom-weasel-rag-ime --timezone Asia/Shanghai \
   --embedding-from-env --curate-history \
+  --history-organizer local-mlx \
+  --local-memory-model /absolute/path/to/Qwen3-4B-4bit \
   --confirm-history-curation CURATE_ALL_HISTORICAL_MEMORY --apply
 python3 scripts/activate_semantic_memory_candidate.py \
   --target "$DB" --candidate "$CANDIDATE" --rollback "$ROLLBACK" \

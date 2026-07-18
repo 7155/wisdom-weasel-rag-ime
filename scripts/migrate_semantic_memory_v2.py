@@ -21,6 +21,7 @@ from rag_ime.embeddings import embedding_provider_from_env
 from rag_ime.deepseek_config import load_deepseek_config
 from rag_ime.deepseek_memory_organizer import DeepSeekMemoryOrganizer
 from rag_ime.historical_memory_curation import curate_historical_memory_database
+from rag_ime.local_mlx_memory_organizer import LocalMlxMemoryOrganizer
 from rag_ime.semantic_memory_migration import (
     migrate_semantic_memory_database,
     preview_semantic_memory_migration,
@@ -56,6 +57,14 @@ def main() -> int:
     )
     parser.add_argument("--confirm-history-curation", default="")
     parser.add_argument("--history-max-batches", type=int, default=512)
+    parser.add_argument("--history-batch-size", type=int, default=32)
+    parser.add_argument(
+        "--history-organizer",
+        choices=("local-mlx", "deepseek"),
+        default="local-mlx",
+    )
+    parser.add_argument("--local-memory-model", type=Path)
+    parser.add_argument("--local-memory-max-tokens", type=int, default=8192)
     args = parser.parse_args()
 
     try:
@@ -97,10 +106,25 @@ def main() -> int:
             )
         if args.history_max_batches < 1:
             parser.error("--history-max-batches must be positive")
-        history_config = load_deepseek_config()
-        if not history_config.api_key:
-            parser.error("historical curation requires the configured DeepSeek API key")
-        history_organizer = DeepSeekMemoryOrganizer(history_config)
+        if args.history_batch_size < 1 or args.history_batch_size > 64:
+            parser.error("--history-batch-size must be between 1 and 64")
+        if args.history_organizer == "local-mlx":
+            if args.local_memory_model is None:
+                parser.error(
+                    "local historical curation requires --local-memory-model"
+                )
+            try:
+                history_organizer = LocalMlxMemoryOrganizer(
+                    args.local_memory_model,
+                    max_tokens=int(args.local_memory_max_tokens),
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                parser.error(str(exc))
+        else:
+            history_config = load_deepseek_config()
+            if not history_config.api_key:
+                parser.error("DeepSeek historical curation requires its configured API key")
+            history_organizer = DeepSeekMemoryOrganizer(history_config)
     raw_output = args.output.expanduser()
     if _lexists(raw_output):
         parser.error(f"output path already exists or is a symlink: {raw_output}")
@@ -152,8 +176,18 @@ def main() -> int:
                 timezone_name=str(args.timezone),
                 embedding_provider=provider,
                 max_batches=int(args.history_max_batches),
+                batch_size=int(args.history_batch_size),
                 approve_timelines=True,
             )
+            historical["organizer"] = {
+                "provider": str(getattr(history_organizer, "provider_name", "")),
+                "model": (
+                    str(getattr(history_organizer, "model_path", ""))
+                    if args.history_organizer == "local-mlx"
+                    else str(getattr(getattr(history_organizer, "config", None), "model", ""))
+                ),
+                "localOnly": args.history_organizer == "local-mlx",
+            }
             with sqlite3.connect(output) as conn:
                 conn.row_factory = sqlite3.Row
                 verification = verify_semantic_memory_database(
