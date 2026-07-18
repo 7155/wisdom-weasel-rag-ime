@@ -5,10 +5,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.local_mlx_memory_organizer import LocalMlxMemoryOrganizer
+from rag_ime.local_mlx_memory_organizer import (
+    LocalMlxMemoryOrganizer,
+    _complete_json_object,
+)
 
 
 class LocalMlxMemoryOrganizerTests(unittest.TestCase):
+    def test_detects_complete_json_before_model_eos(self) -> None:
+        self.assertEqual(
+            _complete_json_object('前缀 {"text":"括号 } 仍在字符串", "ok":true} 后缀'),
+            '{"text":"括号 } 仍在字符串", "ok":true}',
+        )
+        self.assertIsNone(_complete_json_object('{"unfinished": true'))
+
     def test_normalizes_local_json_without_loading_mlx_or_using_network(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-local-organizer-") as tmp:
             captured: list[list[dict[str, str]]] = []

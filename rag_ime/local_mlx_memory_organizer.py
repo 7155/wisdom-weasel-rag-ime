@@ -50,12 +50,17 @@ class LocalMlxMemoryOrganizer:
         owner_id: str,
         instruction: str = "",
     ) -> dict[str, object]:
-        model_bundle = _owner_memory_model_bundle(bundle)
+        model_bundle = _compact_local_model_bundle(_owner_memory_model_bundle(bundle))
         effective_instruction = compact_whitespace(instruction)[:600] or (
             "只保留跨会话仍有价值的事实、偏好、决定、约束和持续计划；噪声进入 not_for_memory。"
         )
         messages = [
-            {"role": "system", "content": _owner_memory_system_prompt()},
+            {
+                "role": "system",
+                "content": _owner_memory_system_prompt()
+                + " 本地迁移请保持 JSON 紧凑：只输出必要的 sourceDecisions、memoryAtoms、"
+                "topicBooks 和 warnings；空数组字段可以省略；同一稳定 claim 只输出一个 Atom。",
+            },
             {
                 "role": "user",
                 "content": json.dumps(
@@ -188,7 +193,12 @@ class LocalMlxMemoryOrganizer:
             },
         ]
         try:
-            repaired_raw = _extract_json_object(self._generate(repair_messages))
+            repaired_raw = _extract_json_object(
+                self._generate(
+                    repair_messages,
+                    max_tokens=min(self.max_tokens, 2_048),
+                )
+            )
         except Exception as exc:
             raise LocalMlxMemoryOrganizerError(
                 "local MLX memory contract repair did not return JSON"
@@ -237,12 +247,17 @@ class LocalMlxMemoryOrganizer:
             ]
         return result
 
-    def _generate(self, messages: Sequence[Mapping[str, str]]) -> str:
+    def _generate(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        max_tokens: int | None = None,
+    ) -> str:
         if self._completion is not None:
             return str(self._completion(messages))
         self._ensure_loaded()
         try:
-            from mlx_lm import generate  # type: ignore
+            from mlx_lm import stream_generate  # type: ignore
             from mlx_lm.sample_utils import make_sampler  # type: ignore
 
             prompt = self._tokenizer.apply_chat_template(
@@ -251,16 +266,23 @@ class LocalMlxMemoryOrganizer:
                 add_generation_prompt=True,
                 enable_thinking=False,
             )
-            return str(
-                generate(
-                    self._model,
-                    self._tokenizer,
-                    prompt,
-                    max_tokens=self.max_tokens,
-                    sampler=make_sampler(temp=0.0),
-                    verbose=False,
-                )
-            )
+            text = ""
+            for response in stream_generate(
+                self._model,
+                self._tokenizer,
+                prompt,
+                max_tokens=(
+                    self.max_tokens
+                    if max_tokens is None
+                    else max(256, min(int(max_tokens), self.max_tokens))
+                ),
+                sampler=make_sampler(temp=0.0),
+            ):
+                text += str(response.text)
+                complete = _complete_json_object(text)
+                if complete is not None:
+                    return complete
+            return text
         except Exception as exc:
             raise LocalMlxMemoryOrganizerError(
                 f"local MLX memory generation failed: {type(exc).__name__}: {exc}"
@@ -335,3 +357,76 @@ def _discard_atoms_without_stable_claim_keys(
         warnings.append(f"local_invalid_claim_key_atoms_removed:{rejected}")
         result["warnings"] = warnings
     return result
+
+
+def _compact_local_model_bundle(
+    model_bundle: Mapping[str, object],
+) -> dict[str, object]:
+    result = dict(model_bundle)
+    result["inputs"] = [
+        {
+            **dict(item),
+            "text": compact_whitespace(str(item.get("text") or ""))[:800],
+        }
+        for item in model_bundle.get("inputs") or []
+        if isinstance(item, Mapping)
+    ]
+    result["existingMemoryAtoms"] = [
+        dict(item)
+        for item in model_bundle.get("existingMemoryAtoms") or []
+        if isinstance(item, Mapping)
+    ][:32]
+    activity = dict(model_bundle.get("activityContext") or {})
+    activity["summary"] = compact_whitespace(str(activity.get("summary") or ""))[:1_200]
+    activity["segments"] = [
+        {
+            **dict(item),
+            "summary": compact_whitespace(str(item.get("summary") or ""))[:400],
+        }
+        for item in activity.get("segments") or []
+        if isinstance(item, Mapping)
+    ][:6]
+    result["activityContext"] = activity
+    conversation = dict(model_bundle.get("agentConversationContext") or {})
+    conversation["messages"] = [
+        {
+            **dict(item),
+            "text": compact_whitespace(str(item.get("text") or ""))[:320],
+        }
+        for item in conversation.get("messages") or []
+        if isinstance(item, Mapping)
+    ][-12:]
+    result["agentConversationContext"] = conversation
+    return result
+
+
+def _complete_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text[start:], start=start):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start : index + 1]
+                try:
+                    parsed = json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+                return candidate if isinstance(parsed, dict) else None
+    return None
