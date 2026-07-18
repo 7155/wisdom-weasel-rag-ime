@@ -16,12 +16,13 @@ def retrieve_generation_memory_hits(
     context_group_id: str = "",
     top_k: int = 6,
 ) -> tuple[MemoryHit, ...]:
-    """Read current Atom/Book evidence plus one raw item for generation.
+    """Read current governed Atom/Book evidence for generation.
 
     The IME projector deliberately drops Atom/Book bodies that are unsafe to
     insert verbatim. Generation needs the opposite contract: bounded evidence
-    with provenance, never a ready-to-commit candidate. Raw history is capped
-    at one item so it cannot crowd current facts and Books out of the prompt.
+    with provenance, never a ready-to-commit candidate. Legacy ``item``
+    projections are deliberately rejected because they have no governed fact
+    lifecycle and can contradict current Atoms or Books.
     """
 
     connect = getattr(core, "_connect", None)
@@ -58,7 +59,7 @@ def retrieve_generation_memory_hits(
     eligible = [
         hit
         for hit in hits
-        if hit.doc_type in {"atom", "book", "item"}
+        if hit.doc_type in {"atom", "book"}
         and compact_whitespace(hit.text)
     ]
     return _diversify_generation_hits(eligible, top_k=requested_top_k)
@@ -70,13 +71,13 @@ def _diversify_generation_hits(
     top_k: int,
 ) -> tuple[MemoryHit, ...]:
     limit = max(1, min(12, int(top_k)))
-    type_caps = {"atom": 3, "book": 2, "item": 1}
+    type_caps = {"atom": 3, "book": 2}
     selected_indexes: set[int] = set()
     counts = {doc_type: 0 for doc_type in type_caps}
 
     # Current facts and Books are the primary generation contract. Keep one of
-    # each when retrieval found them, then retain at most one raw-history item.
-    for doc_type in ("atom", "book", "item"):
+    # each when retrieval found them, then fill the remaining governed budget.
+    for doc_type in ("atom", "book"):
         if len(selected_indexes) >= limit:
             break
         for index, hit in enumerate(hits):
@@ -110,6 +111,27 @@ def generation_memory_evidence_pack(
         text = truncate_text(compact_whitespace(hit.text), max(80, int(max_text_chars)))
         if not text:
             continue
+        metadata = dict(hit.metadata or {})
+        timeline_id = compact_whitespace(str(metadata.get("timelineId") or ""))
+        is_timeline = (
+            hit.doc_type == "book"
+            and str(metadata.get("derivedArtifactType") or "")
+            == "daily_activity_timeline"
+            and bool(timeline_id)
+        )
+        source = {
+            "type": f"memory_{hit.doc_type}",
+            "id": hit.source_id or hit.hit_id,
+        }
+        ref = (
+            {
+                "type": "timeline",
+                "id": timeline_id,
+                "bookId": hit.source_id,
+            }
+            if is_timeline
+            else dict(source)
+        )
         result.append(
             {
                 "evidenceId": hit.hit_id,
@@ -125,9 +147,12 @@ def generation_memory_evidence_pack(
                 "atomIds": list(hit.atom_ids[:8]),
                 "bookIds": list(hit.book_ids[:8]),
                 "sourceEventIds": list(hit.evidence_event_ids[:12]),
+                "source": source,
+                "ref": ref,
                 "score": round(float(hit.score), 6),
                 "confidence": round(float(hit.confidence), 6),
-                "maySupportFacts": True,
+                "maySupportFacts": not is_timeline,
+                "corroborationOnly": is_timeline,
                 "instructional": False,
             }
         )

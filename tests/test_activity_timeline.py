@@ -146,15 +146,21 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertEqual(timeline["status"], "draft")
         self.assertEqual(timeline["sourceEventIds"], own_event_ids)
         self.assertEqual(timeline["eventCount"], 5)
-        self.assertEqual(timeline["segmentCount"], 3)
+        self.assertEqual(timeline["segmentCount"], 2)
         self.assertEqual(
-            [segment["app"] for segment in timeline["segments"]],
+            [segment["apps"] for segment in timeline["segments"]],
             [
-                "com.openai.chat",
-                "com.google.Chrome",
-                "com.apple.TextEdit",
+                ["com.openai.chat", "com.google.Chrome"],
+                ["com.apple.TextEdit"],
             ],
         )
+        flattened_ids = [
+            event_id
+            for segment in timeline["segments"]
+            for event_id in segment["sourceEventIds"]
+        ]
+        self.assertEqual(sorted(flattened_ids), sorted(own_event_ids))
+        self.assertEqual(len(flattened_ids), len(set(flattened_ids)))
         self.assertEqual(timeline["segments"][-1]["redactedEventCount"], 1)
         self.assertNotIn("secret-value", json.dumps(timeline, ensure_ascii=False))
         self.assertFalse(timeline["policy"]["longTermFact"])
@@ -259,6 +265,328 @@ class DailyActivityTimelineTests(unittest.TestCase):
             ),
         )
 
+    def test_cas_terminal_and_codex_events_form_one_cross_app_task_without_loss(
+        self,
+    ) -> None:
+        event_ids = [
+            self._record(
+                8,
+                20,
+                app="com.mitchellh.ghostty",
+                source="squirrel_input_segment",
+                text="在终端执行 cas codex switch，切换到工作账号",
+                context_group_id="app:ghostty",
+            ),
+            self._record(
+                8,
+                31,
+                app="com.openai.codex",
+                source="codex_history",
+                text="验证 Codex 已完成账号切换，可以继续开发",
+                context_group_id="app:codex",
+            ),
+        ]
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+
+        timeline = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(8, 40),
+        )["timeline"]
+
+        self.assertEqual(timeline["segmentCount"], 1)
+        segment = timeline["segments"][0]
+        self.assertEqual(segment["title"], "CAS 切换 Codex 账号")
+        self.assertEqual(
+            segment["apps"],
+            ["com.mitchellh.ghostty", "com.openai.codex"],
+        )
+        self.assertEqual(segment["sourceEventIds"], event_ids)
+        self.assertEqual(
+            [reference["eventId"] for reference in segment["evidenceRefs"]],
+            event_ids,
+        )
+
+    def test_short_cas_burst_and_large_followup_have_distinct_task_titles(
+        self,
+    ) -> None:
+        event_ids = [
+            self._record(
+                6,
+                59,
+                app="com.mitchellh.ghostty",
+                source="squirrel_input_segment",
+                text=text,
+                context_group_id="app:ghostty:cas",
+            )
+            for text in ("ex", "cas", "o", "codex", "/", "re")
+        ]
+        event_ids.extend(
+            (
+                self._record(
+                    7,
+                    minute,
+                    app="com.openai.codex",
+                    source="codex_history",
+                    text=text,
+                    context_group_id="app:codex:merge",
+                )
+                for minute, text in (
+                    (1, "合并分支"),
+                    (5, "记录 git 合并"),
+                    (10, "说明合并了哪些分支和功能"),
+                )
+            )
+        )
+        followup_texts = [
+            "账号切换验证已结束，后续进入记忆系统工作",
+            *("优化记忆系统多路召回和 BM25 检索" for _ in range(4)),
+            *("优化记忆系统的输入框上下文捕获" for _ in range(4)),
+            *("优化记忆系统前端界面和时间线" for _ in range(4)),
+        ]
+        event_ids.extend(
+            self._record(
+                8,
+                index,
+                app="com.openai.codex",
+                source="codex_history",
+                text=text,
+                context_group_id="app:codex:memory-work",
+            )
+            for index, text in enumerate(followup_texts)
+        )
+        timeline = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        ).build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(9, 0),
+        )["timeline"]
+
+        self.assertEqual(timeline["segmentCount"], 3)
+        self.assertEqual(
+            timeline["segments"][0]["title"],
+            "CAS 切换 Codex 账号",
+        )
+        self.assertEqual(timeline["segments"][1]["title"], "合并分支并记录改动")
+        self.assertEqual(
+            timeline["segments"][2]["title"],
+            "记忆系统、上下文捕获与前端界面协同优化",
+        )
+        self.assertNotEqual(
+            timeline["segments"][2]["title"],
+            "CAS 切换 Codex 账号",
+        )
+        flattened_ids = [
+            event_id
+            for segment in timeline["segments"]
+            for event_id in segment["sourceEventIds"]
+        ]
+        self.assertEqual(sorted(flattened_ids), sorted(event_ids))
+        self.assertEqual(len(flattened_ids), len(set(flattened_ids)))
+
+    def test_same_semantic_task_crossing_noon_is_classified_as_all_day(self) -> None:
+        event_ids = [
+            self._record(
+                9,
+                0,
+                app="com.openai.codex",
+                source="codex_history",
+                text="继续修复输入法记忆召回和 BM25 混合检索",
+                context_group_id="app:codex:morning",
+            ),
+            self._record(
+                15,
+                0,
+                app="com.mitchellh.ghostty",
+                source="squirrel_input_segment",
+                text="继续修复输入法记忆召回和 BM25 混合检索",
+                context_group_id="app:ghostty:afternoon",
+            ),
+        ]
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+
+        timeline = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(15, 5),
+        )["timeline"]
+
+        self.assertEqual(timeline["segmentCount"], 1)
+        segment = timeline["segments"][0]
+        self.assertEqual(segment["sourceEventIds"], event_ids)
+        self.assertEqual(segment["startMs"], self._ms(9, 0))
+        self.assertEqual(segment["endMs"], self._ms(15, 0))
+        self.assertEqual(segment["period"], "day")
+
+    def test_draft_excludes_both_forgotten_event_tombstone_shapes(self) -> None:
+        source_tombstoned_id = self._record(
+            10,
+            0,
+            app="com.openai.codex",
+            source="squirrel_input_segment",
+            text="不应进入时间线的 source_event_id 内容",
+        )
+        memory_tombstoned_id = self._record(
+            10,
+            5,
+            app="com.openai.codex",
+            source="squirrel_input_segment",
+            text="不应进入时间线的 memory_id 内容",
+        )
+        visible_id = self._record(
+            10,
+            10,
+            app="com.openai.codex",
+            source="squirrel_input_segment",
+            text="仍可进入时间线的可见内容",
+        )
+        with sqlite3.connect(self.db_path) as conn, conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_tombstones(
+                    created_at_ms, target_type, target_value, reason,
+                    active, metadata_json
+                ) VALUES (?, ?, ?, 'test-forget-source', 1, '{}')
+                """,
+                (
+                    (
+                        self._ms(10, 15),
+                        "source_event_id",
+                        str(source_tombstoned_id),
+                    ),
+                    (
+                        self._ms(10, 15),
+                        "memory_id",
+                        f"event:{memory_tombstoned_id}",
+                    ),
+                ),
+            )
+
+        timeline = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        ).build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(10, 20),
+        )["timeline"]
+
+        self.assertEqual(timeline["sourceEventIds"], [visible_id])
+        serialized = json.dumps(timeline, ensure_ascii=False)
+        self.assertNotIn("source_event_id 内容", serialized)
+        self.assertNotIn("memory_id 内容", serialized)
+        self.assertIn("仍可进入时间线的可见内容", serialized)
+
+    def test_legacy_draft_is_rebuilt_with_semantic_task_v2(self) -> None:
+        self._record(
+            8,
+            20,
+            app="com.mitchellh.ghostty",
+            source="squirrel_input_segment",
+            text="在终端执行 cas codex switch，切换到工作账号",
+            context_group_id="app:ghostty",
+        )
+        self._record(
+            8,
+            31,
+            app="com.openai.codex",
+            source="codex_history",
+            text="验证 Codex 已完成账号切换，可以继续开发",
+            context_group_id="app:codex",
+        )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        first = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(8, 40),
+        )["timeline"]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE daily_activity_timelines
+                SET summary_text = 'legacy app intervals', segment_count = 99,
+                    metadata_json = ?
+                WHERE timeline_id = ?
+                """,
+                (
+                    json.dumps({"segmentationMode": "app_interval_v1"}),
+                    first["timelineId"],
+                ),
+            )
+
+        legacy = store.review(first["timelineId"])
+        self.assertEqual(legacy["segmentationMode"], "legacy_app_interval_v1")
+
+        rebuilt = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(8, 41),
+        )
+
+        self.assertTrue(rebuilt["created"])
+        self.assertEqual(rebuilt["timeline"]["timelineId"], first["timelineId"])
+        self.assertEqual(rebuilt["timeline"]["segmentCount"], 1)
+        self.assertNotEqual(rebuilt["timeline"]["summary"], "legacy app intervals")
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT metadata_json FROM daily_activity_timelines WHERE timeline_id = ?",
+                (first["timelineId"],),
+            ).fetchone()
+        self.assertEqual(
+            json.loads(str(row[0]))["segmentationMode"],
+            "semantic_task_v2",
+        )
+
+    def test_runtime_context_group_never_forces_unrelated_tasks_together(self) -> None:
+        shared_scope = "app:com.openai.codex:window:main"
+        event_ids = [
+            self._record(
+                9,
+                0,
+                app="com.openai.codex",
+                source="codex_history",
+                text="修复输入法记忆召回和 BM25 混合检索",
+                context_group_id=shared_scope,
+            ),
+            self._record(
+                9,
+                8,
+                app="com.openai.codex",
+                source="codex_history",
+                text="整理毕业论文实验图表和参考文献格式",
+                context_group_id=shared_scope,
+            ),
+        ]
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+
+        timeline = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(9, 15),
+        )["timeline"]
+
+        self.assertEqual(timeline["segmentCount"], 2)
+        flattened_ids = [
+            event_id
+            for segment in timeline["segments"]
+            for event_id in segment["sourceEventIds"]
+        ]
+        self.assertEqual(sorted(flattened_ids), sorted(event_ids))
+        self.assertEqual(len(flattened_ids), len(set(flattened_ids)))
+
     def test_changed_input_events_make_reviewed_draft_stale(self) -> None:
         self._record(
             13,
@@ -312,6 +640,87 @@ class DailyActivityTimelineTests(unittest.TestCase):
             generated_at_ms=self._ms(13, 17),
         )
         self.assertEqual(bootstrap["payload"]["sections"]["recentTimeline"], [])
+
+    def test_reviewed_or_superseded_exact_hash_is_never_reopened_as_draft(self) -> None:
+        first_event_id = self._record(
+            13,
+            30,
+            app="com.apple.TextEdit",
+            source="squirrel_commit",
+            text="第一版活动证据",
+        )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        first = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(13, 31),
+        )["timeline"]
+        store.reject(
+            first["timelineId"],
+            reason="用户明确拒绝该证据状态",
+            rejected_by="user:test",
+            rejected_at_ms=self._ms(13, 32),
+        )
+
+        rejected = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(13, 33),
+        )
+
+        self.assertFalse(rejected["created"])
+        self.assertEqual(rejected["status"], "rejected")
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT status, rejection_reason, approved_by, approved_at_ms
+                FROM daily_activity_timelines WHERE timeline_id = ?
+                """,
+                (first["timelineId"],),
+            ).fetchone()
+        self.assertEqual(row, ("rejected", "用户明确拒绝该证据状态", "", None))
+
+        # Build a realistic superseded hash: add an event so the first row is
+        # superseded, then forget that extra event so the visible set reverts.
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE daily_activity_timelines
+                SET status = 'draft', rejection_reason = '', approved_by = '',
+                    approved_at_ms = NULL
+                WHERE timeline_id = ?
+                """,
+                (first["timelineId"],),
+            )
+        second_event_id = self._record(
+            13,
+            34,
+            app="com.google.Chrome",
+            source="browser_extension",
+            text="第二版新增活动证据",
+        )
+        store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(13, 35),
+        )
+        self.assertEqual(store.review(first["timelineId"])["status"], "superseded")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE memory_state SET deleted = 1 WHERE event_id = ?",
+                (second_event_id,),
+            )
+
+        superseded = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(13, 36),
+        )
+
+        self.assertFalse(superseded["created"])
+        self.assertEqual(superseded["status"], "superseded")
+        self.assertEqual(superseded["timeline"]["sourceEventIds"], [first_event_id])
+        self.assertEqual(store.review(first["timelineId"])["status"], "superseded")
 
     def test_daily_digest_uses_evidence_day_timeline_after_midnight(self) -> None:
         self._record(
@@ -428,6 +837,55 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertEqual(context["deduplicatedEventCount"], 1)
         self.assertEqual(context["redactedEventCount"], 1)
         self.assertEqual(context["retainedEventCount"], 1)
+
+    def test_model_timeline_context_filters_both_event_tombstone_shapes(self) -> None:
+        source_event_id = self._record(
+            19,
+            0,
+            app="com.apple.TextEdit",
+            source="squirrel_commit",
+            text="source_event_id tombstone 不得进入模型上下文",
+        )
+        memory_id_event_id = self._record(
+            19,
+            1,
+            app="com.google.Chrome",
+            source="browser_extension",
+            text="memory_id tombstone 不得进入模型上下文",
+        )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        timeline = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(19, 2),
+        )["timeline"]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_tombstones(
+                    created_at_ms, target_type, target_value, reason, active
+                ) VALUES (?, ?, ?, 'user_forget', 1)
+                """,
+                (
+                    (self._ms(19, 3), "source_event_id", str(source_event_id)),
+                    (self._ms(19, 3), "memory_id", f"event:{memory_id_event_id}"),
+                ),
+            )
+            conn.row_factory = sqlite3.Row
+            context = load_activity_timeline_context(
+                conn,
+                project=self.project,
+                timeline_date="2026-07-17",
+                timeline_id=timeline["timelineId"],
+            )
+
+        serialized = json.dumps(context, ensure_ascii=False)
+        self.assertNotIn("不得进入模型上下文", serialized)
+        self.assertEqual(context["retainedEventCount"], 0)
+        self.assertEqual(context["segments"], [])
 
     def test_approval_and_projection_outbox_share_one_transaction(self) -> None:
         self._record(

@@ -36,6 +36,8 @@
     "redactedEventCount": {"type": "integer", "minimum": 0},
     "corroborationOnly": {"type": "boolean", "const": true},
     "maySupportFacts": {"type": "boolean", "const": false}
+    ,"source": {"$ref": "#/$defs/source"}
+    ,"ref": {"$ref": "#/$defs/ref"}
   },
   "$defs": {
     "segment": {
@@ -66,6 +68,31 @@
         "eventCount": {"type": "integer", "minimum": 1},
         "summary": {"type": "string", "minLength": 1, "maxLength": 760},
         "redactedEventCount": {"type": "integer", "minimum": 0}
+        ,"title": {"type": "string", "minLength": 1, "maxLength": 160}
+        ,"apps": {
+          "type": "array", "maxItems": 12,
+          "items": {"type": "string", "minLength": 1, "maxLength": 240},
+          "uniqueItems": true
+        }
+        ,"source": {"$ref": "#/$defs/source"}
+        ,"ref": {"$ref": "#/$defs/ref"}
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"type": "string", "const": "activity_timeline"},
+        "id": {"type": "string", "minLength": 1}
+      }
+    },
+    "ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"type": "string", "const": "timeline"},
+        "id": {"type": "string", "minLength": 1},
+        "segmentId": {"type": "string", "minLength": 1}
       }
     }
   }

@@ -71,6 +71,7 @@ import type { MemoryEntityV1 } from './generated/memory-entity.v1';
 import type { MemoryGovernancePreviewV1 } from './generated/memory-governance-preview.v1';
 import type { MemoryGraphV1 } from './generated/memory-graph.v1';
 import type { MemoryReadErrorV1 } from './generated/memory-read-error.v1';
+import type { MemoryReferenceV1 } from './generated/memory-reference.v1';
 import type { ObservationEventV1 } from './generated/observation-event.v1';
 import type { ObservationSnapshotV1 } from './generated/observation-snapshot.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
@@ -151,6 +152,7 @@ export type {
   MemoryGovernancePreviewV1,
   MemoryGraphV1,
   MemoryReadErrorV1,
+  MemoryReferenceV1,
   ObservationEventV1,
   ObservationSnapshotV1,
   OverlayConfigV1,
@@ -232,6 +234,7 @@ export interface ContractTypeMap {
   'memory-governance-preview.v1': MemoryGovernancePreviewV1;
   'memory-graph.v1': MemoryGraphV1;
   'memory-read-error.v1': MemoryReadErrorV1;
+  'memory-reference.v1': MemoryReferenceV1;
   'observation-event.v1': ObservationEventV1;
   'observation-snapshot.v1': ObservationSnapshotV1;
   'overlay-config.v1': OverlayConfigV1;

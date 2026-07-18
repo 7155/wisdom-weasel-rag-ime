@@ -294,6 +294,32 @@ class MemoryBootstrapBuilderTests(unittest.TestCase):
         self.assertTrue(
             all(item["maySupportFacts"] is False for item in sections["oneRing"])
         )
+        preference = sections["stablePreferences"][0]
+        self.assertEqual(preference["ref"]["type"], "atom")
+        self.assertEqual(preference["ref"]["kind"], "atom")
+        topic_book = next(
+            item
+            for item in sections["topicBooks"]
+            if item["sourceId"] == "book:topic:memory"
+        )
+        self.assertEqual(topic_book["ref"]["kind"], "book")
+        timeline = next(
+            item
+            for item in sections["recentTimeline"]
+            if item["sourceId"] == "book:daily:memory-rebuild"
+        )
+        # A legacy daily Book remains a Book reference. Approved activity
+        # timelines switch to kind=timeline when their provenance carries a
+        # timelineId.
+        self.assertEqual(timeline["ref"]["type"], "book")
+        self.assertEqual(timeline["ref"]["kind"], "book")
+        self.assertEqual(timeline["ref"]["id"], timeline["sourceId"])
+        self.assertTrue(
+            all(
+                str(item["sourceId"]).startswith("evidence:")
+                for item in sections["oneRing"]
+            )
+        )
 
         runtime = AgentContextRuntime(self.db_path)
         runtime.initialize()

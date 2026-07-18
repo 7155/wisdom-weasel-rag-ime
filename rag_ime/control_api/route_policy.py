@@ -137,6 +137,7 @@ class ControlPathId(str, Enum):
     PLANNING_MUTATION_ROLLBACK = "planning.mutation.rollback"
     MEMORY_SUMMARY = "memory.summary"
     MEMORY_PAGES = "memory.pages"
+    MEMORY_REFERENCE_GET = "memory.reference.get"
     MEMORY_GRAPH_GET = "memory.graph.get"
     MEMORY_ENTITY_GET = "memory.entity.get"
     MEMORY_EDIT = "memory.edit"
@@ -604,6 +605,7 @@ _RUN = {"runId"}
 _ARTIFACT = {"artifactId"}
 _CONTEXT_ITEM = {"sessionId", "itemId"}
 _CONTEXT_TRACE = {"sessionId", "traceId"}
+_MEMORY_REFERENCE = {"kind", "referenceId"}
 _WAKE_SCHEDULE = {"scheduleId"}
 _BROWSER_SNAPSHOT = {"snapshotId"}
 _BROWSER_PERMISSION = {"promptId"}
@@ -755,7 +757,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.PLANNING_TASK_EVENT_UNDO, ControlMethod.POST, "/api/planning/task-event/undo", "/control/v1/planning/task-event/undo", body={"eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.PLANNING_MUTATION_ROLLBACK, ControlMethod.POST, "/api/planning/mutation/rollback", "/control/v1/planning/mutation/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_SUMMARY, ControlMethod.GET, "/api/memory/summary", "/control/v1/memory/summary", scopes=[ControlScope.MEMORY_READ], remote_safe=True),
-        _route(ControlPathId.MEMORY_PAGES, ControlMethod.GET, "/api/memory/{kind}", "/control/v1/memory/{kind}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind"}, param_values={"kind": {"books", "atoms", "tags", "phrases", "evidence", "groups", "negative"}}, query=_PAGE_QUERY),
+        _route(ControlPathId.MEMORY_PAGES, ControlMethod.GET, "/api/memory/{kind}", "/control/v1/memory/{kind}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind"}, param_values={"kind": {"apps", "books", "atoms", "timelines", "tags", "phrases", "evidence", "groups", "negative"}}, query=_PAGE_QUERY),
+        _route(ControlPathId.MEMORY_REFERENCE_GET, ControlMethod.GET, "/api/memory/references/{kind}/{referenceId}", "/control/v1/memory/references/{kind}/{referenceId}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params=_MEMORY_REFERENCE, param_values={"kind": {"event", "evidence", "atom", "book", "timeline", "role_book_revision"}}),
         _route(ControlPathId.MEMORY_GRAPH_GET, ControlMethod.GET, "/api/memory/graph", "/control/v1/memory/graph", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"plane", "project", "status", "query", "focusId", "depth", "nodeLimit", "edgeLimit", "minWeight"}, required_query={"plane"}),
         _route(ControlPathId.MEMORY_ENTITY_GET, ControlMethod.GET, "/api/memory/entities/{kind}/{entityId}", "/control/v1/memory/entities/{kind}/{entityId}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind", "entityId"}, param_values={"kind": {"tag", "group", "book"}}, query={"project", "connectionsLimit", "connectionsCursor", "membersLimit", "membersCursor"}),
         _route(ControlPathId.MEMORY_EDIT, ControlMethod.POST, "/api/memory/edit", "/control/v1/memory/edit", body={"kind", "id", "title", "text", "summary", "note", "description", "tags", "aliases", "type", "color", "reason", "active"}, required_body={"kind", "id"}),

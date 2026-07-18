@@ -107,7 +107,7 @@ class WindowContextTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "must not contain"):
                     validate_window_context(value)
 
-    def test_context_packet_prioritizes_window_after_current_input(self) -> None:
+    def test_context_packet_keeps_current_then_planning_then_window_priority(self) -> None:
         context = validate_window_context(_window_context())
         packet = build_active_rag_context_packet(
             scene="active_rag",
@@ -123,7 +123,10 @@ class WindowContextTests(unittest.TestCase):
             window_context=context,
         )
 
-        self.assertEqual(packet["priority"][:2], ["currentInput", "windowContext"])
+        self.assertEqual(
+            packet["priority"][:3],
+            ["currentInput", "planning", "windowContext"],
+        )
         self.assertEqual(packet["windowContext"]["captureMode"], "accessibility_semantics")
         self.assertEqual(packet["windowContext"]["nodes"][0]["label"], "正文")
         self.assertEqual(packet["windowContext"]["projection"], "generation_text")

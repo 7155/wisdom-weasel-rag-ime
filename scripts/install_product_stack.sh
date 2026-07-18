@@ -8,6 +8,7 @@ INCLUDE_DESKTOP=1
 INCLUDE_VOICE=1
 INCLUDE_MAINTENANCE=1
 INCLUDE_MLX="auto"
+INCLUDE_PI="auto"
 
 usage() {
   cat <<'EOF'
@@ -18,6 +19,8 @@ Options:
   --skip-desktop        Do not install the Accessibility-only desktop bridge.
   --skip-voice          Do not install the optional voice agent.
   --skip-maintenance    Do not install the Memory Book maintenance job.
+  --skip-pi             Do not rebuild Pi; reuse an existing verified Runtime if present.
+  --include-pi          Require rebuilding and installing the managed Pi Runtime.
   --skip-mlx            Do not reinstall the MLX predictor.
   --include-mlx         Require and reinstall the MLX predictor.
   -h, --help            Show this help.
@@ -33,6 +36,8 @@ while (($#)); do
     --skip-desktop) INCLUDE_DESKTOP=0 ;;
     --skip-voice) INCLUDE_VOICE=0 ;;
     --skip-maintenance) INCLUDE_MAINTENANCE=0 ;;
+    --skip-pi) INCLUDE_PI=0 ;;
+    --include-pi) INCLUDE_PI=1 ;;
     --skip-mlx) INCLUDE_MLX=0 ;;
     --include-mlx) INCLUDE_MLX=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -62,6 +67,31 @@ ditto "$EXTENSION_SOURCE" "$EXTENSION_DEST"
 echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
 
 required=(--require control --require sidecar --require squirrel)
+
+if [[ "$INCLUDE_PI" == "auto" ]]; then
+  if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]] \
+    || [[ -d "$ROOT/../pi-rag-ime-runtime/packages/rag-ime-runtime-host" ]]; then
+    INCLUDE_PI=1
+  else
+    INCLUDE_PI=0
+  fi
+fi
+if [[ "$INCLUDE_PI" == "1" ]]; then
+  PI_BUILD_DIR="$ROOT/build/managed-pi-runtime/install-stack-current"
+  PI_PYTHON="${RAG_IME_PYTHON:-$(command -v python3)}"
+  if [[ -z "$PI_PYTHON" || ! -x "$PI_PYTHON" ]]; then
+    echo "python executable not found for managed Pi Runtime packaging" >&2
+    exit 1
+  fi
+  "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" \
+    --output "$PI_BUILD_DIR" \
+    --force
+  "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
+    --payload "$PI_BUILD_DIR" \
+    --app-support "$APP_SUPPORT_DIR"
+  required+=(--require piRuntime --require piSkills)
+fi
+
 if [[ "$INCLUDE_DESKTOP" == "1" ]]; then
   "$ROOT/scripts/install_desktop_bridge_launch_agent.sh"
   required+=(--require desktopBridge)
@@ -76,6 +106,10 @@ if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]]; then
   "$ROOT/scripts/install_agent_gateway_launch_agent.sh"
   required+=(--require piRuntime)
 else
+  if [[ "$INCLUDE_PI" == "1" ]]; then
+    echo "Managed Pi Runtime packaging completed without an active pointer" >&2
+    exit 1
+  fi
   echo "Managed Pi Runtime is not installed; Agent gateway installation was skipped."
 fi
 

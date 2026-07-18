@@ -723,7 +723,10 @@ class ActiveRagService:
             panel_session_id=surface_request_id,
             project=request.project,
             app=request.app or request.front_app_bundle_id,
-            evidence=grounding_evidence,
+            # The packet owns the separation between context-only lanes
+            # (planning, approved activity, recent input) and factual hybrid
+            # retrieval. Passing the typed set preserves that boundary.
+            evidence=evidence,
             recent_input_history=recent_input_history,
             intent=request.intent,
             placement=request.placement,
@@ -733,8 +736,8 @@ class ActiveRagService:
             remote_model_allowed=True,
             context_token_budget=int(context_preferences.get("tokenBudget") or 4096),
             reserved_output_tokens=int(context_preferences.get("reservedOutputTokens") or 1024),
-            recent_input_baseline=int(context_preferences.get("recentInputBaseline") or 20),
-            recent_input_maximum=int(context_preferences.get("recentInputMaximum") or 80),
+            recent_input_baseline=int(context_preferences.get("recentInputBaseline") or 4),
+            recent_input_maximum=int(context_preferences.get("recentInputMaximum") or 4),
             window_context=request.window_context,
         )
         packet_current_input = context_packet.get("currentInput") if isinstance(context_packet.get("currentInput"), dict) else {}
@@ -866,6 +869,11 @@ class ActiveRagService:
             else ""
         )
         recovery_context_packet = dict(context_packet)
+        # The quality retry is intentionally context-only: preserve bounded
+        # continuity lanes, but do not let rejected factual grounding survive
+        # through the context packet after ``evidence_pack`` is cleared.
+        recovery_context_packet.pop("groundingEvidence", None)
+        recovery_context_packet.pop("ragEvidenceHints", None)
         recovery_current_input = (
             dict(recovery_context_packet.get("currentInput"))
             if isinstance(recovery_context_packet.get("currentInput"), dict)
@@ -1426,7 +1434,18 @@ def _timeline_item_relevant(item: dict[str, object], query: str) -> bool:
 
 
 def _is_context_only_evidence(item: ActiveRagEvidence) -> bool:
-    return item.source_type == "recent_input_context" or item.source_lane == "timeline_recent_input"
+    return (
+        item.source_type in {
+            "recent_input_context",
+            "daily_plan",
+            "todo",
+            "goal",
+            "activity_timeline",
+        }
+        or item.source_lane == "timeline_recent_input"
+        or item.source_lane.startswith("planning_")
+        or item.source_lane == "timeline_approved_activity"
+    )
 
 
 def _grounding_evidence(evidence: tuple[ActiveRagEvidence, ...]) -> tuple[ActiveRagEvidence, ...]:
@@ -1471,7 +1490,18 @@ def _filter_primary_active_rag_evidence(
 def _evidence_pack_item_is_context_only(item: dict[str, object]) -> bool:
     source_type = compact_whitespace(str(item.get("sourceType") or ""))
     source_lane = compact_whitespace(str(item.get("sourceLane") or ""))
-    return source_type == "recent_input_context" or source_lane == "timeline_recent_input"
+    return (
+        source_type in {
+            "recent_input_context",
+            "daily_plan",
+            "todo",
+            "goal",
+            "activity_timeline",
+        }
+        or source_lane == "timeline_recent_input"
+        or source_lane.startswith("planning_")
+        or source_lane == "timeline_approved_activity"
+    )
 
 
 def _evidence_pack_item_echoes_request(item: dict[str, object], request_text: str) -> bool:
@@ -1515,7 +1545,6 @@ def _no_suitable_generation_error(error: BaseException, *, diagnostics: dict[str
 
 
 def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRagStartRequest) -> tuple[ActiveRagEvidence, ...]:
-    resolved_query = _resolved_active_rag_request_text(request)
     items = timeline_evidence_pack_from_core(
         core,
         project=request.project,
@@ -1528,12 +1557,18 @@ def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRag
     for index, item in enumerate(items, start=1):
         source_type = compact_whitespace(str(item.get("sourceType") or "timeline"))
         source_lane = compact_whitespace(str(item.get("sourceLane") or "timeline_context"))
+        if source_type not in {
+            "recent_input_context",
+            "daily_plan",
+            "todo",
+            "goal",
+            "activity_timeline",
+        }:
+            # Atom and Book facts must come through the normal hybrid
+            # retriever. Timeline context only carries continuity and intent.
+            continue
         title = compact_whitespace(str(item.get("title") or ""))
         summary = compact_whitespace(str(item.get("summary") or item.get("evidencePreview") or ""))
-        if source_type not in {"recent_input_context", "daily_plan", "todo", "goal"} and not _timeline_item_relevant(
-            item, resolved_query
-        ):
-            continue
         if source_type == "recent_input_context":
             text = _timeline_recent_input_text(summary)
         else:
@@ -1543,9 +1578,16 @@ def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRag
             continue
         result.append(
             ActiveRagEvidence(
-                evidence_id=compact_whitespace(str(item.get("bookId") or f"timeline:{index}")),
+                evidence_id=compact_whitespace(
+                    str(
+                        item.get("activityId")
+                        or item.get("timelineId")
+                        or item.get("bookId")
+                        or f"timeline:{index}"
+                    )
+                ),
                 text=text,
-                source_type="memory" if source_type in {"daily_book", "memory_book"} else source_type,
+                source_type=source_type,
                 source_lane=source_lane,
                 score=0.55,
                 confidence=0.6,
@@ -1564,6 +1606,9 @@ def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRag
                     "surfaceHints": item.get("surfaceHints") if isinstance(item.get("surfaceHints"), list) else [],
                     "timelineContext": True,
                     "sourceType": source_type,
+                    "contextOnly": True,
+                    "maySupportIntent": True,
+                    "maySupportFacts": False,
                 },
             )
         )
@@ -1678,7 +1723,7 @@ def _recent_input_history_evidence(
             continue
         seen.add(key)
         result.append(item)
-    return tuple(result[-80:])
+    return tuple(result[-4:])
 
 
 def _recent_context_overlap(recent: str, foreground: str) -> int:
@@ -1904,6 +1949,8 @@ def _active_rag_request_context_view(request: ActiveRagStartRequest) -> dict[str
         "windowContext": project_window_context_for_generation(request.window_context),
         "recentCompleteInputs": [],
         "planning": {},
+        "activityTimeline": {},
+        "groundingEvidence": [],
         "evidenceHints": [],
         "contextBudget": {},
     }
@@ -1945,6 +1992,20 @@ def _active_rag_context_view_from_messages(messages: list[dict[str, str]]) -> di
         "planning": dict(context_packet.get("planning") or {})
         if isinstance(context_packet.get("planning"), dict)
         else {},
+        "activityTimeline": dict(context_packet.get("activityTimeline") or {})
+        if isinstance(context_packet.get("activityTimeline"), dict)
+        else {},
+        "groundingEvidence": list(
+            payload.get("groundingEvidence")
+            or context_packet.get("groundingEvidence")
+            or []
+        )
+        if isinstance(
+            payload.get("groundingEvidence")
+            or context_packet.get("groundingEvidence"),
+            list,
+        )
+        else [],
         "evidenceHints": list(payload.get("evidenceHints") or [])
         if isinstance(payload.get("evidenceHints"), list)
         else [],
@@ -2760,26 +2821,79 @@ def _evidence_from_pack(pack: tuple[dict[str, object], ...]) -> tuple[ActiveRagE
         if not text:
             continue
         tags = item.get("tags") if isinstance(item, dict) else ()
+        source_type = compact_whitespace(str(item.get("sourceType") or "rag"))
+        source_lane = compact_whitespace(str(item.get("sourceLane") or "evidence_pack"))
+        evidence_id = compact_whitespace(
+            str(item.get("evidenceId") or item.get("id") or f"pack:{index}")
+        )
+        atom_ids = _pack_string_ids(item.get("atomIds"))
+        book_ids = _pack_string_ids(item.get("bookIds"))
+        metadata = dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}
+        for key in (
+            "title",
+            "summary",
+            "ref",
+            "maySupportFacts",
+            "maySupportIntent",
+            "contextOnly",
+        ):
+            if key in item and key not in metadata:
+                metadata[key] = item[key]
+        metadata.update(
+            {
+                "source": "evidence_pack",
+                "sourceType": source_type,
+                "surfaceHints": [
+                    str(value)
+                    for value in hints
+                    if compact_whitespace(str(value))
+                ]
+                if isinstance(hints, list)
+                else [],
+                "title": compact_whitespace(str(item.get("title") or metadata.get("title") or "")),
+                "summary": compact_whitespace(
+                    str(
+                        item.get("summary")
+                        or item.get("evidencePreview")
+                        or metadata.get("summary")
+                        or ""
+                    )
+                ),
+            }
+        )
         result.append(
             ActiveRagEvidence(
-                evidence_id=f"pack:{index}",
+                evidence_id=evidence_id,
                 text=text,
-                source_type="rag",
-                source_lane="evidence_pack",
+                source_type=source_type,
+                source_lane=source_lane,
                 tags=tuple(str(tag) for tag in tags) if isinstance(tags, list) else (),
-                metadata={
-                    "source": "evidence_pack",
-                    "surfaceHints": [str(value) for value in hints if compact_whitespace(str(value))]
-                    if isinstance(hints, list)
-                    else [],
-                    "title": compact_whitespace(str(item.get("title") or "")) if isinstance(item, dict) else "",
-                    "summary": compact_whitespace(str(item.get("summary") or item.get("evidencePreview") or ""))
-                    if isinstance(item, dict)
-                    else "",
-                },
+                atom_ids=atom_ids,
+                book_ids=book_ids,
+                evidence_event_ids=tuple(
+                    int(value)
+                    for value in item.get("sourceEventIds", [])
+                    if isinstance(value, int) and not isinstance(value, bool)
+                )
+                if isinstance(item.get("sourceEventIds"), list)
+                else (),
+                preview=compact_whitespace(
+                    str(item.get("evidencePreview") or item.get("preview") or metadata.get("summary") or "")
+                ),
+                metadata=metadata,
             )
         )
     return tuple(result)
+
+
+def _pack_string_ids(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(
+        text
+        for item in value
+        if (text := compact_whitespace(str(item or "")))
+    )
 
 
 def _evidence_payload(evidence: ActiveRagEvidence) -> dict[str, object]:

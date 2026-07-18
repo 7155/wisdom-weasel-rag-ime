@@ -89,7 +89,7 @@ class GenerationMemoryTests(unittest.TestCase):
         self.assertTrue(any("Personal Context Core" in text for text in texts))
         self.assertFalse(any("旧 0.8B" in text for text in texts))
 
-    def test_raw_history_cannot_crow_atom_and_book_out_of_generation_context(self) -> None:
+    def test_generation_context_rejects_legacy_items_and_keeps_atom_and_book(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-generation-diversity-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
             core.initialize()
@@ -125,7 +125,7 @@ class GenerationMemoryTests(unittest.TestCase):
 
         self.assertIn(current, hits)
         self.assertIn(book, hits)
-        self.assertEqual(sum(hit.doc_type == "item" for hit in hits), 1)
+        self.assertFalse(any(hit.doc_type == "item" for hit in hits))
         self.assertLessEqual(len(hits), 6)
 
     def test_flash_request_receives_full_field_context_and_governed_memory(self) -> None:

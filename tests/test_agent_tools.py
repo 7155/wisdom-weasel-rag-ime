@@ -243,7 +243,26 @@ class _Management:
                         "sourceStartMs": 10,
                         "sourceEndMs": 20,
                         "memories": [
-                            {"type": "decision", "text": "普通生成不经过 Pi", "updatedAtMs": 20}
+                            {
+                                "id": "atom:decision:1",
+                                "type": "decision",
+                                "text": "普通生成不经过 Pi",
+                                "updatedAtMs": 20,
+                            }
+                        ],
+                        "ref": {
+                            "kind": "book",
+                            "id": "book:1",
+                            "referenceKind": "book",
+                            "referenceId": "book:1",
+                        },
+                        "evidenceRefs": [
+                            {
+                                "kind": "event",
+                                "id": "7",
+                                "referenceKind": "event",
+                                "referenceId": "7",
+                            }
                         ],
                     }
                 ]
@@ -279,7 +298,22 @@ class _Management:
                     {
                         "id": "memory-source:7",
                         "type": "user_final",
-                        "source": "rime",
+                        "transportSource": "rime",
+                        "source": {"kind": "input_event", "id": "7"},
+                        "ref": {
+                            "kind": "evidence",
+                            "id": "memory-source:7",
+                            "referenceKind": "evidence",
+                            "referenceId": "memory-source:7",
+                        },
+                        "evidenceRefs": [
+                            {
+                                "kind": "event",
+                                "id": "7",
+                                "referenceKind": "event",
+                                "referenceId": "7",
+                            }
+                        ],
                         "text": "把普通生成和深度检索分开",
                         "app": "Codex",
                         "project": "wisdom-weasel-rag-ime",
@@ -608,6 +642,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"books": 1, "groups": 1, "tags": 1})
         self.assertIn("1 本工具书", result["summary"])
         self.assertEqual([item["kind"] for item in result["items"]], ["book", "group", "tag"])
+        self.assertEqual(result["items"][0]["ref"]["referenceKind"], "book")
+        self.assertEqual(result["items"][0]["ref"]["type"], "book")
+        self.assertEqual(result["items"][0]["evidenceRefs"][0]["kind"], "event")
         self.assertNotIn("sourceEventIds", str(response))
 
     def test_read_and_recent_return_bounded_evidence(self) -> None:
@@ -616,9 +653,16 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         self.assertEqual(read["book"]["title"], "输入法项目")
         self.assertEqual(read["book"]["memories"][0]["text"], "普通生成不经过 Pi")
+        self.assertEqual(read["book"]["ref"]["referenceKind"], "book")
+        self.assertEqual(read["book"]["memories"][0]["ref"]["referenceKind"], "atom")
+        self.assertEqual(read["book"]["evidenceRefs"][0]["referenceKind"], "event")
         self.assertEqual(recent["count"], 1)
         self.assertEqual(recent["items"][0]["text"], "把普通生成和深度检索分开")
         self.assertEqual(recent["items"][0]["disposition"], "remember")
+        self.assertEqual(recent["items"][0]["source"], "rime")
+        self.assertEqual(recent["items"][0]["sourceRef"]["kind"], "input_event")
+        self.assertEqual(recent["items"][0]["ref"]["referenceKind"], "evidence")
+        self.assertEqual(recent["items"][0]["evidenceRefs"][0]["referenceKind"], "event")
         self.assertNotIn("嗯嗯那个这个", str(recent))
         evidence_requests = [
             request
@@ -704,7 +748,48 @@ class ControlToolGatewayTests(unittest.TestCase):
             by_operation["maintenance_review"]["required"],
             ["op", "runId"],
         )
+        self.assertEqual(
+            by_operation["remember_preview"]["required"],
+            ["op", "text"],
+        )
+        self.assertEqual(
+            by_operation["correct_preview"]["required"],
+            ["op", "targetId", "text"],
+        )
+        self.assertEqual(
+            by_operation["forget_preview"]["required"],
+            ["op", "targetId", "reason"],
+        )
+        self.assertEqual(
+            by_operation["remember_apply"]["required"],
+            ["op", "proposalId"],
+        )
+        self.assertCountEqual(
+            by_operation["get"]["anyOf"],
+            [{"required": ["targetId"]}, {"required": ["draftId"]}],
+        )
+        for field in (
+            "targetId",
+            "text",
+            "reason",
+            "memoryKind",
+            "evidenceIds",
+            "claimKey",
+            "idempotencyKey",
+            "proposalId",
+            "draftId",
+            "mode",
+        ):
+            self.assertIn(field, parameters["properties"])
+        self.assertIn("Session 启动快照只在首轮注入一次", memory["description"])
+        self.assertIn("Timeline 不能单独证明稳定事实", memory["description"])
         self.assertNotIn("changes", str(parameters))
+
+        role_book = next(
+            item for item in manifests if item["name"] == "agent_role_book"
+        )
+        self.assertIn("随 Session 固定版本注入系统提示词", role_book["description"])
+        self.assertIn("propose_revision 只保存 draft", role_book["description"])
 
     def test_runtime_knowledge_and_plan_tools_keep_static_and_backend_schemas_aligned(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
@@ -1841,6 +1926,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "ime_planning",
             "agent_schedule",
             "ime_memory",
+            "agent_role_book",
             "ime_knowledge",
             "ime_models",
             "ime_runtime",
@@ -1862,6 +1948,21 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("const memoryParameterSchema", extension)
         self.assertIn('"curation_prepare"', extension)
         self.assertIn("parameterSchema: memoryParameterSchema", extension)
+        self.assertIn("parameterSchema: roleBookParameterSchema", extension)
+        for operation in (
+            "remember_preview",
+            "correct_preview",
+            "forget_preview",
+            "remember_apply",
+            "correct_apply",
+            "forget_apply",
+            "governance_rollback",
+            "propose_revision",
+        ):
+            self.assertIn(f'"{operation}"', extension)
+        self.assertIn('"timelines"', extension)
+        self.assertIn('"evidence"', extension)
+        self.assertNotIn('enum: ["apps", "books", "atoms", "tags", "phrases", "groups", "negative"]', extension)
         self.assertIn("result.reviewRequired === true", extension)
         self.assertIn("resolvedReviewRunIds.has(runId)", extension)
 

@@ -103,6 +103,55 @@ class InstalledProductAuditTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["components"]["desktopBridge"]["code"], "incomplete_capabilities")
 
+    def test_product_agent_skills_are_verified_independently_from_pi_executable(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-product-audit-skills-") as tmp:
+            root, home, support = self._layout(Path(tmp))
+            commit = "f" * 40
+            self._write_control(home, commit)
+            self._write_component(support / "app", "sidecar-runtime", commit)
+            self._write_squirrel(root, home)
+            source = (
+                root
+                / "integrations"
+                / "pi"
+                / "skills"
+                / "rag-ime-memory-curator"
+                / "SKILL.md"
+            )
+            installed = (
+                support
+                / "Agent"
+                / "config"
+                / "skills"
+                / "rag-ime-memory-curator"
+                / "SKILL.md"
+            )
+            source.parent.mkdir(parents=True)
+            installed.parent.mkdir(parents=True)
+            source.write_text("remember_preview and native approval\n", encoding="utf-8")
+            installed.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+            report = audit_installed_product(
+                repo_root=root,
+                home=home,
+                app_support=support,
+                required_components=("control", "sidecar", "squirrel", "piSkills"),
+                verify_pi_files=False,
+            )
+            self.assertTrue(report["components"]["piSkills"]["ok"])
+
+            installed.write_text("stale skill\n", encoding="utf-8")
+            report = audit_installed_product(
+                repo_root=root,
+                home=home,
+                app_support=support,
+                required_components=("control", "sidecar", "squirrel", "piSkills"),
+                verify_pi_files=False,
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["components"]["piSkills"]["code"], "source_mismatch")
+
     def _layout(self, base: Path) -> tuple[Path, Path, Path]:
         root = base / "repo"
         home = base / "home"

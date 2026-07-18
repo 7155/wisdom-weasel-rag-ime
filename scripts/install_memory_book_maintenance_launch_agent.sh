@@ -165,7 +165,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 launchctl bootout "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
 launchctl enable "gui/$(id -u)/$LABEL"
+launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
 echo "$PLIST_PATH"
 echo "Logs: $LOG_DIR/memory-book-maintenance.out.log and $LOG_DIR/memory-book-maintenance.err.log"

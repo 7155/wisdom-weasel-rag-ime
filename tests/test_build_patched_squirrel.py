@@ -105,6 +105,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"finalized",', patch_text)
         self.assertIn('"complete-input",', patch_text)
         self.assertIn('"capture:\\(captureMetadata.captureSource)"', patch_text)
+        self.assertIn('"ime_input_transaction_empty"', patch_text)
+        self.assertIn('"field_context_not_bound_to_ime_transaction"', patch_text)
+        self.assertIn('NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId', patch_text)
+        self.assertIn('"front_app_changed_during_capture"', patch_text)
+        self.assertIn('"com.mitchellh.ghostty",', patch_text)
+        self.assertIn("if terminalBundleIds.contains(sourceAppBundleId) { return false }", patch_text)
         self.assertIn('contextSource: activeInput.isEmpty', patch_text)
         self.assertIn('"active_input_buffer"', patch_text)
         refresh_start = patch_text.index("func refreshRagImeSidecar(")
@@ -131,9 +137,20 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImePanelUpdateGeneration &+= 1", patch_text)
         self.assertIn("DispatchQueue.main.async { [weak self] in", patch_text)
         self.assertIn("generation == ragImePanelUpdateGeneration", patch_text)
+        self.assertIn("private var ragImeDeferredDeactivateWorkItem: DispatchWorkItem?", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("deactivate_server_deferred"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("deactivate_server_recovered"', patch_text)
+        self.assertIn("sameAppClientRotation", patch_text)
+        deactivate_start = patch_text.index("override func deactivateServer(")
+        deactivate_end = patch_text.index("override func hidePalettes()", deactivate_start)
+        deactivate_text = patch_text[deactivate_start:deactivate_end]
+        self.assertIn("DispatchQueue.main.asyncAfter", deactivate_text)
+        self.assertIn(".milliseconds(450)", deactivate_text)
+        self.assertLess(deactivate_text.index("let workItem = DispatchWorkItem"), deactivate_text.index("self.hidePalettes()"))
         self.assertIn('currentApp == "com.google.Chrome"', patch_text)
         self.assertIn('currentApp == "com.microsoft.edgemac"', patch_text)
         self.assertIn('currentApp == "com.openai.codex"', patch_text)
+        self.assertIn('currentApp == "com.microsoft.VSCode"', patch_text)
         self.assertIn("ragImeReuseChromiumPanelPosition", patch_text)
         self.assertIn("ragImeChromiumAssistantAnchor", patch_text)
         self.assertIn('ragImeBoolEnvEnabled("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", default: true)', patch_text)
@@ -776,6 +793,19 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
 
         self.assertIn('appendSection("AX 文本上下文"', controller_text)
         self.assertIn("控件与结构节点未发送给模型", controller_text)
+        self.assertIn('appendSection("当前规划与任务"', controller_text)
+        self.assertIn('appendSection("最近批准时间线"', controller_text)
+        self.assertIn('appendSection("当前事实 · Atom"', controller_text)
+        self.assertIn('appendSection("主题书 · Book"', controller_text)
+        grounding_start = controller_text.index('let groundingEvidence = array(contextView["groundingEvidence"])')
+        grounding_body = controller_text[grounding_start : grounding_start + 2600]
+        self.assertIn("if groundingEvidence.isEmpty {", grounding_body)
+        self.assertLess(
+            grounding_body.index("if groundingEvidence.isEmpty {"),
+            grounding_body.index('array(contextView["evidenceHints"])'),
+        )
+        self.assertIn("recentInputs.prefix(4)", controller_text)
+        self.assertIn('appendSection("最近完整输入 · 仅用于承接"', controller_text)
 
     def test_native_rime_selection_feedback_is_local_source_only_and_sensitive_guarded(self) -> None:
         root = Path(__file__).resolve().parents[1]

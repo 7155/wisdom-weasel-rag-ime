@@ -16,6 +16,8 @@ PI_INTEGRATION_DIR="$APP_CODE_DIR/integrations/pi"
 PI_EXTENSION_SOURCE="$PI_INTEGRATION_SOURCE_DIR/rag-ime-control.ts"
 PI_NATIVE_SESSION_SOURCE="$PI_INTEGRATION_SOURCE_DIR/pi-native-session.ts"
 PI_EXTENSION_TARGET="$PI_INTEGRATION_DIR/rag-ime-control.ts"
+PI_SKILLS_SOURCE_DIR="$PI_INTEGRATION_SOURCE_DIR/skills"
+MANAGED_PI_SKILLS_DIR="$APP_SUPPORT_DIR/Agent/config/skills"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
@@ -201,6 +203,14 @@ for source_file in "$PI_EXTENSION_SOURCE" "$PI_NATIVE_SESSION_SOURCE"; do
     exit 1
   fi
 done
+if [[ ! -d "$PI_SKILLS_SOURCE_DIR" || -L "$PI_SKILLS_SOURCE_DIR" ]]; then
+  echo "controlled Pi skills source not found or is a symlink: $PI_SKILLS_SOURCE_DIR" >&2
+  exit 1
+fi
+if [[ -n "$(find "$PI_SKILLS_SOURCE_DIR" -type l -print -quit)" ]]; then
+  echo "controlled Pi skills source must not contain symlinks: $PI_SKILLS_SOURCE_DIR" >&2
+  exit 1
+fi
 
 SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
 
@@ -215,6 +225,20 @@ mkdir -p "$PI_INTEGRATION_DIR"
 cp "$PI_EXTENSION_SOURCE" "$PI_EXTENSION_TARGET"
 cp "$PI_NATIVE_SESSION_SOURCE" "$PI_INTEGRATION_DIR/pi-native-session.ts"
 chmod 644 "$PI_EXTENSION_TARGET" "$PI_INTEGRATION_DIR/pi-native-session.ts"
+
+# Protocol v2 loads Agent-dir skills before payload-bundled copies. Refreshing
+# these product-owned directories makes skill updates part of the normal stack
+# install even when the verified Pi executable payload itself is reused.
+mkdir -p "$MANAGED_PI_SKILLS_DIR"
+for skill_source in "$PI_SKILLS_SOURCE_DIR"/*; do
+  if [[ ! -d "$skill_source" || -L "$skill_source" ]]; then
+    continue
+  fi
+  skill_name="$(basename "$skill_source")"
+  skill_target="$MANAGED_PI_SKILLS_DIR/$skill_name"
+  rm -rf "$skill_target"
+  cp -R "$skill_source" "$skill_target"
+done
 
 "$PYTHON_EXECUTABLE" - "$INSTALL_MARKER" "$ROOT" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$PYTHON_EXECUTABLE" <<'PY'
 import json

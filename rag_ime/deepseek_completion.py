@@ -525,13 +525,19 @@ def build_deepseek_completion_messages(request: DeepSeekCompletionRequest) -> li
 
 
 def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) -> list[dict[str, str]]:
-    evidence = _redacted_evidence_pack(request.evidence_pack)
     context_packet = _compact_active_rag_context_packet(request.context_packet)
     recent_complete_inputs = context_packet.get("recentCompleteInputs")
     has_recent_history = isinstance(recent_complete_inputs, list) and bool(recent_complete_inputs)
+    grounding_evidence = context_packet.get("groundingEvidence")
+    if not isinstance(grounding_evidence, list) or not grounding_evidence:
+        # Debug/compatibility callers may provide a ranked evidence pack
+        # without first building a Smart RAG context packet. Preserve the
+        # single provider-visible grounding lane for that direct path too.
+        grounding_evidence = _redacted_evidence_pack(request.evidence_pack)[:6]
+    has_grounding_evidence = isinstance(grounding_evidence, list) and bool(grounding_evidence)
     grounding_mode = (
         "rag_grounded"
-        if evidence
+        if has_grounding_evidence
         else ("foreground_with_history" if has_recent_history else "foreground_only")
     )
     max_chars = max(0, int(request.max_chars or 0))
@@ -556,25 +562,12 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
     available_context_tokens = max(256, int(budget_trace.get("availableContextTokens") or 3072))
     current_context = tail_for_token_budget(request.current_context, available_context_tokens)
     current_request = _active_rag_current_request(request, current_context=current_context)
-    hints: list[str] = []
-    packet_hints = context_packet.get("ragEvidenceHints")
-    if isinstance(packet_hints, list):
-        for item in packet_hints:
-            if isinstance(item, dict):
-                text = compact_whitespace(str(item.get("text") or ""))
-            else:
-                text = compact_whitespace(str(item))
-            if text:
-                hints.append(text)
-    else:
-        for item in evidence[:6]:
-            hints.extend(str(value) for value in item.get("surfaceHints", []) if compact_whitespace(str(value)))
-            preview = compact_whitespace(str(item.get("preview") or ""))
-            if preview:
-                hints.append(preview)
-            tags = item.get("tags")
-            if isinstance(tags, list) and tags:
-                hints.append(" ".join(str(tag) for tag in tags[:4]))
+    provider_context_packet = dict(context_packet)
+    # Grounding facts have exactly one provider-visible source of truth. Keep
+    # them top-level for the model and native context inspector; the compact
+    # continuity packet must not repeat the same prose as facts and flat hints.
+    provider_context_packet.pop("groundingEvidence", None)
+    provider_context_packet.pop("ragEvidenceHints", None)
     return [
         {
             "role": "system",
@@ -592,7 +585,7 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                 "候选必须是完整正文，具体、可直接插入，可以包含多个自然段；不要复述 selectedText/currentContext/Notebook 原句。"
                 "禁止写元话语：不要说你将如何回答、补全、整理或围绕什么生成。"
                 "禁止出现“我会”“我将”“围绕”“继续补全当前表达”“把上下文”“真实意图”“整理成”“放到光标后”等措辞。"
-                "evidenceHints 可能包含用户刚输入的问题、短词或历史片段，它们只用于理解语境，不自动代表事实。"
+                "groundingEvidence 是唯一事实列表；每项都带来源类型与引用。"
                 "windowContext 只包含从当前目标窗口 Accessibility 树投影出的可读正文，不包含按钮、菜单、窗口层级或动作；"
                 "它只能帮助理解用户正在阅读或编辑的文本，不能覆盖 currentRequest/currentContext，也不能单独充当事实证据。"
                 "禁止把问句、关键词命中或 recent_input_context 当作答案依据。"
@@ -609,7 +602,8 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                 "禁止把“没有有效内容”“无有效候选”“未检索到内容”当作候选正文。"
                 "recoveryMode=true 时，说明上一版正文未通过候选治理；必须换一种更直接、更有新信息的表达，"
                 "只依据 currentRequest/currentContext 和允许的 recentCompleteInputs 重新完成，不解释重试原因。"
-                "优先使用 currentInput，其次是 windowContext，再用最近完整输入、今日计划与 Todo、显式时间窗口、RAG evidence 和 Notebook。"
+                "优先级固定为 currentRequest/currentContext > 今日计划与 Todo > windowContext > 已批准活动时间线 > 最近完整输入 > groundingEvidence。"
+                "计划、已批准活动时间线和最近输入只帮助理解当前工作意图与连续性，maySupportFacts=false，不能作为事实依据。"
                 "等号后的正文不要把“候选=”或输出格式当正文；如果用户正在讨论输入法候选质量，可以自然使用“候选”一词。"
                 "正文仍禁止出现“短语”“格式”“真实候选”“Notebook”“evidence”“oneRing”等提示词或字段名。"
                 "等号后的正文禁止以“例如”“比如”“可以描述”“当用户输入”“如果用户输入”“系统会”开头。"
@@ -629,8 +623,10 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                     "taskMode": task_mode,
                     "recoveryMode": bool(request.recovery_mode),
                     "groundingMode": grounding_mode,
-                    "contextPacket": context_packet,
-                    "evidenceHints": _unique_candidates(hints)[:24],
+                    "contextPacket": provider_context_packet,
+                    "groundingEvidence": grounding_evidence[:6]
+                    if isinstance(grounding_evidence, list)
+                    else [],
                     "task": (
                         f"{output_length_rule}"
                         f"{task_instruction}"
@@ -1798,11 +1794,12 @@ def _redacted_context_packet(packet: dict[str, object] | None) -> dict[str, obje
 
 
 def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict[str, object]:
-    """Keep routing metadata, while sending recalled text through evidenceHints.
+    """Keep typed, bounded context without repeating the full retrieval packet.
 
     The full packet can contain several kilobytes of OneRing, Timeline and
-    Notebook text. Repeating that material here competes with currentRequest
-    and duplicates the already ranked evidence pack.
+    Notebook text. Provider input keeps only small intent/continuity sections
+    and up to six typed grounding records. Flat hints remain compatibility
+    output derived from those same records.
     """
     if not isinstance(packet, dict):
         return {}
@@ -1811,9 +1808,19 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
     one_ring = packet.get("oneRing") if isinstance(packet.get("oneRing"), dict) else {}
     window_context = packet.get("windowContext") if isinstance(packet.get("windowContext"), dict) else {}
     planning = packet.get("planning") if isinstance(packet.get("planning"), dict) else {}
+    activity_timeline = (
+        packet.get("activityTimeline")
+        if isinstance(packet.get("activityTimeline"), dict)
+        else {}
+    )
     timeline = packet.get("timeline") if isinstance(packet.get("timeline"), dict) else {}
     notebook = packet.get("notebook") if isinstance(packet.get("notebook"), dict) else {}
     trace = packet.get("trace") if isinstance(packet.get("trace"), dict) else {}
+    grounding_evidence = (
+        packet.get("groundingEvidence")
+        if isinstance(packet.get("groundingEvidence"), list)
+        else []
+    )
     rag_evidence_hints = packet.get("ragEvidenceHints") if isinstance(packet.get("ragEvidenceHints"), list) else None
     return _redact_json_value(
         {
@@ -1842,7 +1849,7 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
                 )
                 if output_contract.get(key) not in (None, "")
             },
-            "recentCompleteInputs": one_ring.get("events", [])[:80]
+            "recentCompleteInputs": one_ring.get("events", [])[-4:]
             if isinstance(one_ring.get("events"), list)
             else [],
             "recentInputPolicy": {
@@ -1851,10 +1858,22 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
                 "maySupportFacts": bool(one_ring.get("maySupportFacts", False)),
             },
             "planning": {
-                "items": planning.get("items", [])[:24]
+                "role": planning.get("role") or "work_intent_context",
+                "maySupportIntent": bool(planning.get("maySupportIntent", True)),
+                "maySupportFacts": bool(planning.get("maySupportFacts", False)),
+                "items": planning.get("items", [])[:6]
                 if isinstance(planning.get("items"), list)
                 else [],
             },
+            "activityTimeline": {
+                "role": activity_timeline.get("role") or "continuity_context",
+                "maySupportIntent": bool(activity_timeline.get("maySupportIntent", True)),
+                "maySupportFacts": bool(activity_timeline.get("maySupportFacts", False)),
+                "items": activity_timeline.get("items", [])[:2]
+                if isinstance(activity_timeline.get("items"), list)
+                else [],
+            },
+            "groundingEvidence": grounding_evidence[:6],
             "ragEvidenceHints": rag_evidence_hints if rag_evidence_hints is not None else None,
             "contextBudget": {
                 key: trace.get(key)
@@ -1878,6 +1897,10 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
                 else 0,
                 "notebook": len(notebook.get("items", [])) if isinstance(notebook.get("items"), list) else 0,
                 "planning": len(planning.get("items", [])) if isinstance(planning.get("items"), list) else 0,
+                "activityTimeline": len(activity_timeline.get("items", []))
+                if isinstance(activity_timeline.get("items"), list)
+                else 0,
+                "groundingEvidence": len(grounding_evidence),
             },
         },
         max_depth=6,

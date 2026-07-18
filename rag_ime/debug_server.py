@@ -3554,7 +3554,11 @@ class DebugImeService:
                 project=_string(payload.get("project")) or self.config.project,
                 include_books=not _bool(payload.get("noBooks"), default=False),
                 include_atoms=not _bool(payload.get("noAtoms"), default=False),
-                include_items=not _bool(payload.get("noItems"), default=False),
+                include_phrases=not _bool(payload.get("noPhrases"), default=False),
+                include_legacy_items=(
+                    _bool(payload.get("includeLegacyItems"), default=False)
+                    and not _bool(payload.get("noItems"), default=False)
+                ),
             )
         self._clear_rime_cache()
         return {"ok": True, **report}
@@ -5771,6 +5775,7 @@ class DebugImeService:
 
 
 _MEMORY_ENTITY_PATH_PREFIX = "/api/memory/entities/"
+_MEMORY_REFERENCE_PATH_PREFIX = "/api/memory/references/"
 _KNOWLEDGE_BASES_PATH = "/api/knowledge-bases"
 _MAX_KNOWLEDGE_IMPORT_BYTES = 200 * 1024 * 1024
 _MEMORY_GRAPH_QUERY_FIELDS = frozenset(
@@ -6537,6 +6542,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, response)
             return
+        if parsed.path.startswith(_MEMORY_REFERENCE_PATH_PREFIX):
+            try:
+                kind, reference_id = _memory_reference_path(parsed.path)
+                response = self.service.management.memory_reference(
+                    kind,
+                    reference_id,
+                )
+                validate_contract(response, "memory-reference.v1.json")
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
         if parsed.path.startswith(_MEMORY_ENTITY_PATH_PREFIX):
             try:
                 kind, entity_id = _memory_entity_path(parsed.path)
@@ -6582,6 +6600,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             "/api/memory/apps",
             "/api/memory/books",
             "/api/memory/atoms",
+            "/api/memory/timelines",
             "/api/memory/tags",
             "/api/memory/phrases",
             "/api/memory/evidence",
@@ -8752,6 +8771,24 @@ def _memory_entity_path(path: str) -> tuple[str, str]:
     if len(parts) != 2 or not all(parts):
         raise ValueError("memory entity path must contain kind and id")
     return unquote(parts[0]), unquote(parts[1])
+
+
+def _memory_reference_path(path: str) -> tuple[str, str]:
+    suffix = path.removeprefix(_MEMORY_REFERENCE_PATH_PREFIX)
+    parts = suffix.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise ValueError("memory reference path must contain kind and id")
+    kind, reference_id = unquote(parts[0]), unquote(parts[1])
+    if kind not in {
+        "event",
+        "evidence",
+        "atom",
+        "book",
+        "timeline",
+        "role_book_revision",
+    }:
+        raise ValueError("unsupported memory reference kind")
+    return kind, reference_id
 
 
 def _memory_read_error(message: str) -> dict[str, object]:

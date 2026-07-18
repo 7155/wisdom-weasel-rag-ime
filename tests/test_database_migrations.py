@@ -8,6 +8,7 @@ from contextlib import closing
 from pathlib import Path
 
 from rag_ime.db.migration_runner import (
+    DEFAULT_MIGRATIONS_DIR,
     MigrationChecksumError,
     apply_database_migrations,
     migration_status,
@@ -29,11 +30,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 58)
+            self.assertEqual(status["currentVersion"], 59)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -100,6 +101,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("personal_context_consolidation_cursors", tables)
             self.assertIn("memory_governance_proposals", tables)
             self.assertIn("memory_atom_evidence_links", tables)
+            self.assertIn("memory_legacy_atom_migration_audit", tables)
             room_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_rooms)")
             }
@@ -144,6 +146,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                         row[1] for row in conn.execute(f"PRAGMA table_info({table})")
                     }
                     self.assertIn(primary_key, columns)
+
                     self.assertIn("owner_kind", columns)
                     self.assertIn("owner_id", columns)
             command_receipt_sql = conn.execute(
@@ -167,6 +170,168 @@ class DatabaseMigrationTests(unittest.TestCase):
                     "tool_profile_version",
                 }.issubset(persona_columns)
             )
+
+    def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
+            migrations_0058 = Path(temporary) / "migrations"
+            migrations_0058.mkdir()
+            for source in DEFAULT_MIGRATIONS_DIR.glob("*.sql"):
+                if source.name < "0059_":
+                    shutil.copy2(source, migrations_0058 / source.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                apply_database_migrations(conn, migrations_dir=migrations_0058)
+                conn.executemany(
+                    """
+                    INSERT INTO input_events(
+                        id, created_at_ms, source, committed_text, project
+                    ) VALUES (?, ?, 'test', ?, 'wisdom-weasel-rag-ime')
+                    """,
+                    (
+                        (1, 100, "旧事实证据"),
+                        (2, 200, "新事实证据"),
+                        (3, 300, "已遗忘证据"),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO memory_tombstones(
+                        created_at_ms, target_type, target_value, reason, active
+                    ) VALUES (350, 'source_event_id', '3', '测试遗忘', 1)
+                    """
+                )
+                for atom_id, status, updated_at_ms, event_ids in (
+                    ("atom:legacy-old", "active", 200, "[1]"),
+                    ("atom:legacy-successor", "active", 300, "[2]"),
+                    ("atom:legacy-tombstoned", "active", 400, "[3]"),
+                    ("atom:legacy-unsupported", "active", 500, "[]"),
+                    ("atom:legacy-hidden", "hidden", 600, "[]"),
+                ):
+                    conn.execute(
+                        """
+                        INSERT INTO memory_atoms(
+                            id, kind, text, source_event_ids_json,
+                            source_memory_ids_json, confidence, quality_score,
+                            echo_risk, privacy_level, status,
+                            created_at_ms, updated_at_ms
+                        ) VALUES (?, 'project_fact', ?, ?, '[]', 0.8, 0.8,
+                                  0.0, 'local', ?, 100, ?)
+                        """,
+                        (atom_id, atom_id, event_ids, status, updated_at_ms),
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO memory_supersessions(
+                        supersession_id, old_memory_id, new_memory_id, reason,
+                        status, created_at_ms
+                    ) VALUES (
+                        'supersession:test', 'atom:legacy-old',
+                        'atom:legacy-successor', '事实更新', 'active', 250
+                    )
+                    """
+                )
+
+                result = apply_database_migrations(conn)
+                rows = {
+                    str(row[0]): tuple(row[1:])
+                    for row in conn.execute(
+                        """
+                        SELECT id, status, claim_key, lineage_id, claim_state,
+                               valid_from_ms, valid_to_ms, supersedes_id
+                        FROM memory_atoms
+                        ORDER BY id
+                        """
+                    )
+                }
+                audit_rows = {
+                    str(row[0]): tuple(row[1:])
+                    for row in conn.execute(
+                        """
+                        SELECT atom_id, previous_status, previous_claim_state,
+                               disposition, representation_status,
+                               representation_claim_state, reason, created_at_ms
+                        FROM memory_legacy_atom_migration_audit
+                        WHERE migration_version = 59
+                        ORDER BY atom_id
+                        """
+                    )
+                }
+
+            self.assertEqual(result.applied_versions, (59,))
+            self.assertEqual(
+                rows["atom:legacy-old"],
+                (
+                    "superseded",
+                    "legacy:atom:legacy-successor",
+                    "lineage:legacy:atom:legacy-successor",
+                    "superseded",
+                    100,
+                    250,
+                    None,
+                ),
+            )
+            self.assertEqual(
+                rows["atom:legacy-successor"],
+                (
+                    "active",
+                    "legacy:atom:legacy-successor",
+                    "lineage:legacy:atom:legacy-successor",
+                    "current",
+                    100,
+                    None,
+                    "atom:legacy-old",
+                ),
+            )
+            self.assertEqual(rows["atom:legacy-tombstoned"][0], "hidden")
+            self.assertEqual(rows["atom:legacy-tombstoned"][3], "retracted")
+            self.assertEqual(rows["atom:legacy-unsupported"][0], "hidden")
+            self.assertEqual(rows["atom:legacy-unsupported"][3], "retracted")
+            self.assertEqual(rows["atom:legacy-hidden"][3:6], ("retracted", 100, 600))
+            self.assertEqual(set(audit_rows), set(rows))
+            self.assertEqual(
+                {
+                    value[2]
+                    for value in audit_rows.values()
+                },
+                {
+                    "quarantined_missing_visible_evidence",
+                    "current_evidence_backed",
+                    "superseded_history",
+                },
+            )
+            self.assertEqual(
+                audit_rows["atom:legacy-old"][:5],
+                (
+                    "active",
+                    "current",
+                    "superseded_history",
+                    "superseded",
+                    "superseded",
+                ),
+            )
+            self.assertEqual(
+                audit_rows["atom:legacy-successor"][:5],
+                (
+                    "active",
+                    "current",
+                    "current_evidence_backed",
+                    "active",
+                    "current",
+                ),
+            )
+            quarantined = audit_rows["atom:legacy-unsupported"]
+            self.assertEqual(
+                quarantined[:5],
+                (
+                    "active",
+                    "current",
+                    "quarantined_missing_visible_evidence",
+                    "hidden",
+                    "retracted",
+                ),
+            )
+            self.assertIn("not a user withdrawal", str(quarantined[5]))
+            self.assertGreater(int(quarantined[6]), 0)
 
     def test_atom_first_migration_supersedes_preexisting_memory_book_draft(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-v38-") as tmp, closing(
@@ -217,7 +382,10 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (39, 40, 41, 42, 43, 44, 45, 46, 47, 51, 52, 53, 54, 55, 56, 57, 58),
+                (
+                    39, 40, 41, 42, 43, 44, 45, 46, 47,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59,
+                ),
             )
             self.assertEqual(
                 conn.execute(

@@ -18,38 +18,39 @@ def rebuild_retrieval_docs(
     project: str = "",
     include_books: bool = True,
     include_atoms: bool = True,
-    include_items: bool = True,
+    include_phrases: bool = True,
+    include_legacy_items: bool = False,
+    include_items: bool | None = None,
 ) -> dict[str, object]:
+    """Rebuild governed retrieval projections and retire legacy item docs.
+
+    ``include_items`` is a compatibility alias for callers of the old API. It
+    now controls legacy ``item`` documents only; phrases have their own flag so
+    disabling raw legacy projections can never remove IME phrase candidates.
+    """
+
     ensure_memory_v2_schema(conn)
-    selected_doc_types = tuple(
-        doc_type
-        for enabled, values in (
-            (include_items, ("item", "phrase")),
-            (include_atoms, ("atom",)),
-            (include_books, ("book",)),
-        )
-        if enabled
-        for doc_type in values
-    )
-    type_placeholders = ", ".join("?" for _ in selected_doc_types)
-    existing_rows = (
-        conn.execute(
-            f"""SELECT rowid, doc_id, doc_type, source_id, raw_text, tags_text,
-                       aliases_text, surface_hints_text, query_expansions_text,
-                       time_key, project, app, owner_kind, owner_id, metadata_json,
-                       updated_at_ms,
-                       EXISTS(
-                           SELECT 1 FROM memory_retrieval_docs_fts f
-                           WHERE f.rowid = memory_retrieval_docs.rowid
-                       ) AS fts_present
-                FROM memory_retrieval_docs
-                WHERE (? = '' OR project = ? OR project = '')
-                  AND doc_type IN ({type_placeholders})""",
-            (project, project, *selected_doc_types),
-        ).fetchall()
-        if selected_doc_types
-        else []
-    )
+    if include_items is not None:
+        include_legacy_items = bool(include_items)
+    # Read every projection type owned by this rebuild, not only enabled types.
+    # Otherwise a default rebuild would leave old ``item`` rows (and their FTS
+    # and vector projections) alive forever.
+    managed_doc_types = ("item", "phrase", "atom", "book")
+    type_placeholders = ", ".join("?" for _ in managed_doc_types)
+    existing_rows = conn.execute(
+        f"""SELECT rowid, doc_id, doc_type, source_id, raw_text, tags_text,
+                   aliases_text, surface_hints_text, query_expansions_text,
+                   time_key, project, app, owner_kind, owner_id, metadata_json,
+                   updated_at_ms,
+                   EXISTS(
+                       SELECT 1 FROM memory_retrieval_docs_fts f
+                       WHERE f.rowid = memory_retrieval_docs.rowid
+                   ) AS fts_present
+            FROM memory_retrieval_docs
+            WHERE (? = '' OR project = ? OR project = '')
+              AND doc_type IN ({type_placeholders})""",
+        (project, project, *managed_doc_types),
+    ).fetchall()
     existing = {
         str(row["doc_id"]): {
             "signature": tuple(str(row[key] or "") for key in (
@@ -63,14 +64,14 @@ def rebuild_retrieval_docs(
         }
         for row in existing_rows
     }
-    docs: list[dict[str, object]] = []
-    tombstones = _active_tombstone_sets(conn)
-    if include_items:
-        docs.extend(_memory_item_docs(conn, project=project, tombstones=tombstones))
-    if include_atoms:
-        docs.extend(_memory_atom_docs(conn, project=project, tombstones=tombstones))
-    if include_books:
-        docs.extend(_memory_book_docs(conn, project=project, tombstones=tombstones))
+    docs = expected_retrieval_docs(
+        conn,
+        project=project,
+        include_books=include_books,
+        include_atoms=include_atoms,
+        include_phrases=include_phrases,
+        include_legacy_items=include_legacy_items,
+    )
     timestamp = now_ms()
     counts = {"item": 0, "phrase": 0, "atom": 0, "book": 0}
     active_doc_ids: set[str] = set()
@@ -162,6 +163,10 @@ def rebuild_retrieval_docs(
             "DELETE FROM memory_retrieval_docs_fts WHERE rowid = ?",
             ((int(existing[doc_id]["rowid"]),) for doc_id in stale_ids),
         )
+        conn.executemany(
+            "DELETE FROM memory_retrieval_doc_vectors WHERE doc_id = ?",
+            ((doc_id,) for doc_id in stale_ids),
+        )
         conn.executemany("DELETE FROM memory_retrieval_docs WHERE doc_id = ?", ((doc_id,) for doc_id in stale_ids))
     return {
         "schemaVersion": RETRIEVAL_DOCS_REBUILD_SCHEMA_VERSION,
@@ -170,14 +175,54 @@ def rebuild_retrieval_docs(
         "counts": counts,
         "includeBooks": bool(include_books),
         "includeAtoms": bool(include_atoms),
-        "includeItems": bool(include_items),
+        "includePhrases": bool(include_phrases),
+        "includeLegacyItems": bool(include_legacy_items),
+        # Retain the old result field while callers migrate to the precise name.
+        "includeItems": bool(include_legacy_items),
         "changedDocIds": sorted(changed_doc_ids),
         "removedDocIds": sorted(stale_ids),
         "updatedAtMs": timestamp,
     }
 
 
-def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dict[str, set[str]]) -> list[dict[str, object]]:
+def expected_retrieval_docs(
+    conn: sqlite3.Connection,
+    *,
+    project: str = "",
+    include_books: bool = True,
+    include_atoms: bool = True,
+    include_phrases: bool = True,
+    include_legacy_items: bool = False,
+) -> list[dict[str, object]]:
+    """Build the exact governed document set without mutating projections."""
+
+    docs: list[dict[str, object]] = []
+    tombstones = _active_tombstone_sets(conn)
+    if include_phrases or include_legacy_items:
+        docs.extend(
+            _memory_item_docs(
+                conn,
+                project=project,
+                tombstones=tombstones,
+                include_phrases=include_phrases,
+                include_legacy_items=include_legacy_items,
+            )
+        )
+    if include_atoms:
+        docs.extend(_memory_atom_docs(conn, project=project, tombstones=tombstones))
+    if include_books:
+        docs.extend(_memory_book_docs(conn, project=project, tombstones=tombstones))
+    return docs
+
+
+def _memory_item_docs(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    tombstones: dict[str, set[str]],
+    include_phrases: bool,
+    include_legacy_items: bool,
+) -> list[dict[str, object]]:
     rows = conn.execute(
         """
         SELECT id, memory_id, kind, text, normalized_text, summary, source_event_id,
@@ -204,10 +249,20 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         memory_id = str(row["memory_id"])
         text = compact_whitespace(str(row["text"] or ""))
         normalized = compact_whitespace(str(row["normalized_text"] or ""))
-        if not text or _is_tombstoned(memory_id=memory_id, text=text, normalized_text=normalized, tombstones=tombstones):
+        if not text or _is_tombstoned(
+            memory_id=memory_id,
+            text=text,
+            normalized_text=normalized,
+            source_event_ids=[row["source_event_id"]],
+            tombstones=tombstones,
+        ):
             continue
         tags = _memory_item_tags(conn, memory_item_pk=int(row["id"]))
         doc_type = "phrase" if str(row["kind"]) == "phrase" else "item"
+        if doc_type == "phrase" and not include_phrases:
+            continue
+        if doc_type == "item" and not include_legacy_items:
+            continue
         metadata = _json_object(row["metadata_json"])
         context_group_id = compact_whitespace(str(metadata.get("contextGroupId") or ""))
         if not context_group_id and int(row["source_event_id"] or 0) > 0:
@@ -262,10 +317,16 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
     for row in rows:
         atom_id = str(row["id"])
         raw_text = compact_whitespace(str(row["canonical_text"] or row["text"] or ""))
-        if not raw_text or _is_tombstoned(memory_id=atom_id, text=raw_text, normalized_text="", tombstones=tombstones):
+        source_event_ids = _json_list(row["source_event_ids_json"])
+        if not raw_text or _is_tombstoned(
+            memory_id=atom_id,
+            text=raw_text,
+            normalized_text="",
+            source_event_ids=source_event_ids,
+            tombstones=tombstones,
+        ):
             continue
         aliases = _atom_aliases(conn, atom_id=atom_id)
-        source_event_ids = _json_list(row["source_event_ids_json"])
         docs.append(
             {
                 "doc_id": f"atom:{atom_id}",
@@ -320,11 +381,17 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
     for row in rows:
         book_id = str(row["book_id"])
         raw_text = compact_whitespace(" ".join(item for item in (str(row["title"] or ""), str(row["summary"] or "")) if item))
-        if not raw_text or _is_tombstoned(memory_id=book_id, text=raw_text, normalized_text="", tombstones=tombstones):
+        source_event_ids = _json_list(row["source_event_ids_json"])
+        if not raw_text or _is_tombstoned(
+            memory_id=book_id,
+            text=raw_text,
+            normalized_text="",
+            source_event_ids=source_event_ids,
+            tombstones=tombstones,
+        ):
             continue
         book_type = str(row["book_type"] or "")
         book_key = str(row["book_key"] or "")
-        source_event_ids = _json_list(row["source_event_ids_json"])
         stored_metadata = _json_object(row["metadata_json"])
         docs.append(
             {
@@ -450,7 +517,13 @@ def _json_object(raw: object) -> dict[str, object]:
 
 
 def _active_tombstone_sets(conn: sqlite3.Connection) -> dict[str, set[str]]:
-    result = {"memory_id": set(), "normalized_text": set(), "text": set(), "phrase": set()}
+    result = {
+        "memory_id": set(),
+        "source_event_id": set(),
+        "normalized_text": set(),
+        "text": set(),
+        "phrase": set(),
+    }
     for row in conn.execute(
         "SELECT target_type, target_value FROM memory_tombstones WHERE active = 1"
     ).fetchall():
@@ -461,7 +534,14 @@ def _active_tombstone_sets(conn: sqlite3.Connection) -> dict[str, set[str]]:
     return result
 
 
-def _is_tombstoned(*, memory_id: str, text: str, normalized_text: str, tombstones: dict[str, set[str]]) -> bool:
+def _is_tombstoned(
+    *,
+    memory_id: str,
+    text: str,
+    normalized_text: str,
+    source_event_ids: list[object] | tuple[object, ...] = (),
+    tombstones: dict[str, set[str]],
+) -> bool:
     normalized = normalized_text or compact_whitespace(text)
     return (
         memory_id in tombstones["memory_id"]
@@ -470,7 +550,28 @@ def _is_tombstoned(*, memory_id: str, text: str, normalized_text: str, tombstone
         or text in tombstones["phrase"]
         or normalized in tombstones["normalized_text"]
         or normalized in tombstones["phrase"]
+        or _source_event_tombstoned(source_event_ids, tombstones=tombstones)
     )
+
+
+def _source_event_tombstoned(
+    event_ids: list[object] | tuple[object, ...],
+    *,
+    tombstones: dict[str, set[str]],
+) -> bool:
+    for value in event_ids:
+        try:
+            event_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if event_id <= 0:
+            continue
+        if (
+            str(event_id) in tombstones["source_event_id"]
+            or f"event:{event_id}" in tombstones["memory_id"]
+        ):
+            return True
+    return False
 
 
 def _json_list(raw: Any) -> list[str]:

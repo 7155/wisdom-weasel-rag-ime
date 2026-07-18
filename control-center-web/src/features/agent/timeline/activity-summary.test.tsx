@@ -294,7 +294,11 @@ describe('Agent tool activity details', () => {
           summary: '输入缓冲与长期记忆之间的边界。',
           tags: ['输入法', '上下文'],
           memories: [
-            { type: 'principle', text: '单个词不得进入长期上下文。' },
+            {
+              type: 'principle',
+              text: '单个词不得进入长期上下文。',
+              ref: { type: 'memory_atom', id: 'atom:input-boundary' },
+            },
             { type: 'decision', text: '闪电联想只读取临时缓冲。' },
           ],
         },
@@ -310,9 +314,169 @@ describe('Agent tool activity details', () => {
     expect(within(row).getByLabelText('《输入法与 Agent 上下文》内容')).toHaveTextContent('输入缓冲与长期记忆之间的边界。');
     expect(row).toHaveTextContent('原则');
     expect(row).toHaveTextContent('单个词不得进入长期上下文。');
+    expect(within(row).getByRole('link', { name: /单个词不得进入长期上下文/ })).toHaveAttribute(
+      'href',
+      '#/memory?layer=atoms&id=atom%3Ainput-boundary',
+    );
     expect(row).not.toHaveTextContent('结果摘要');
     expect(row).not.toHaveTextContent('读取内容');
     expect(row).not.toHaveTextContent('"memories"');
+  });
+
+  it('uses the stable ref kind before an Atom semantic kind when building memory links', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-memory-atom-ref',
+      toolName: 'ime_memory',
+      operation: 'search',
+      result: {
+        summary: '命中 1 条当前事实',
+        items: [{
+          memoryId: 'atom:completion-latency',
+          kind: 'preference',
+          text: '输入法首候选延迟需要保持在 50ms 内。',
+          ref: {
+            referenceKind: 'atom',
+            referenceId: 'atom:completion-latency',
+          },
+        }],
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(within(row).getByRole('link', { name: /输入法首候选延迟/ })).toHaveAttribute(
+      'href',
+      '#/memory?layer=atoms&id=atom%3Acompletion-latency',
+    );
+  });
+
+  it('deep-links memory catalog entries through their stable Book reference', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-memory-catalog-ref',
+      toolName: 'ime_memory',
+      operation: 'catalog',
+      result: {
+        summary: '查询到 1 本主题书',
+        items: [{
+          kind: 'book',
+          bookId: 'book:input-method',
+          title: '输入法产品与上下文边界',
+          ref: {
+            kind: 'book',
+            id: 'book:input-method',
+            referenceKind: 'book',
+            referenceId: 'book:input-method',
+          },
+        }],
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(within(row).getByRole('link', { name: /输入法产品与上下文边界/ })).toHaveAttribute(
+      'href',
+      '#/memory?layer=books&id=book%3Ainput-method',
+    );
+  });
+
+  it('renders governed timeline recall as a deep-linked semantic result', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-memory-timeline',
+      toolName: 'ime_memory',
+      operation: 'search',
+      result: {
+        summary: '命中 1 条时间线记忆',
+        items: [{
+          id: 'activity-timeline:2026-07-18',
+          kind: 'daily_timeline',
+          text: 'CAS 切换 Codex 账号，然后继续验证记忆界面。',
+          ref: { type: 'timeline', id: 'activity-timeline:2026-07-18' },
+        }],
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(within(row).getByLabelText('记忆召回结果内容')).toHaveTextContent('CAS 切换 Codex 账号');
+    expect(within(row).getByRole('link', { name: /CAS 切换 Codex 账号/ })).toHaveAttribute(
+      'href',
+      '#/memory?layer=timelines&id=activity-timeline%3A2026-07-18',
+    );
+  });
+
+  it('deep-links a governed memory preview to its target Atom and Evidence', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-memory-correct-preview',
+      toolName: 'ime_memory',
+      operation: 'correct_preview',
+      result: {
+        summary: '已生成事实更正预览',
+        proposalId: 'memory-proposal:1',
+        targetId: 'atom:model-size',
+        proposedText: '当前使用 100M 自训练输入法模型。',
+        evidenceIds: ['message:evidence-1'],
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(within(row).getByRole('link', { name: /当前使用 100M/ })).toHaveAttribute(
+      'href',
+      '#/memory?layer=atoms&id=atom%3Amodel-size',
+    );
+    expect(within(row).getByRole('link', { name: '来源证据 1' })).toHaveAttribute(
+      'href',
+      '#/memory?layer=evidence&id=message%3Aevidence-1',
+    );
+    expect(row).toHaveTextContent('尚未应用');
+  });
+
+  it('labels and deep-links the pinned Agent Role Book revision', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-role-book-get',
+      toolName: 'agent_role_book',
+      operation: 'get',
+      result: {
+        summary: '已读取角色书 revision 3',
+        result: {
+          revision: {
+            revisionId: 'role-book-revision:3',
+            revisionNumber: 3,
+            status: 'active',
+            changeSummary: '补充最近完成的记忆迁移工作。',
+          },
+          pinned: true,
+        },
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(row).toHaveTextContent('Agent 角色书');
+    expect(within(row).getByRole('link', { name: /补充最近完成的记忆迁移工作/ })).toHaveAttribute(
+      'href',
+      '#/memory?layer=role-books&id=role-book-revision%3A3',
+    );
   });
 
   it('summarizes a Pi write_file result as a safe file name and added line count', () => {

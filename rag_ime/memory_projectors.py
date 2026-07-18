@@ -70,7 +70,9 @@ class AgentMemoryProjector:
         ]
         source_event_ids: list[int] = []
         selected_count = 0
-        for hit in hits[: max(1, int(top_k))]:
+        for hit in hits:
+            if hit.doc_type == "item":
+                continue
             source_ids = (*hit.book_ids, *hit.atom_ids, *hit.memory_ids)
             source_label = ",".join(source_ids[:3]) or hit.source_id or hit.doc_id
             body = truncate_text(compact_whitespace(hit.text), 520)
@@ -90,6 +92,8 @@ class AgentMemoryProjector:
             for event_id in hit.evidence_event_ids:
                 if event_id > 0 and event_id not in source_event_ids:
                     source_event_ids.append(event_id)
+            if selected_count >= max(1, int(top_k)):
+                break
         if selected_count == 0:
             lines.append("  (no local memories matched)")
         return AgentContextInjection(
@@ -102,6 +106,8 @@ class AgentMemoryProjector:
 
 
 def _ime_candidate_text(hit: MemoryHit) -> str:
+    if hit.doc_type == "item":
+        return ""
     surface = next(
         (compact_whitespace(item) for item in hit.surface_hints if compact_whitespace(item)),
         "",
@@ -112,11 +118,6 @@ def _ime_candidate_text(hit: MemoryHit) -> str:
         return ""
     if hit.doc_type == "phrase":
         return compact_whitespace(hit.text)
-    if hit.doc_type == "item":
-        if str(hit.metadata.get("kind") or "") == "raw_event":
-            return ""
-        text = compact_whitespace(hit.text)
-        return text if len(text) <= 24 else ""
     return ""
 
 

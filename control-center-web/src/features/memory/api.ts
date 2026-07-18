@@ -15,6 +15,13 @@ export type MemoryKind =
   | 'groups'
   | 'negative';
 export type MemoryEntityKind = 'tag' | 'group' | 'book';
+export type MemoryReferenceKind =
+  | 'event'
+  | 'evidence'
+  | 'atom'
+  | 'book'
+  | 'timeline'
+  | 'role_book_revision';
 
 export const memoryQueryKeys = {
   root: ['memory'] as const,
@@ -38,6 +45,19 @@ export const memoryQueryKeys = {
   curationRun: (runId: string) => [...memoryQueryKeys.root, 'curation-run', runId] as const,
   capabilities: () => [...memoryQueryKeys.root, 'capabilities'] as const,
   activityTimeline: (date: string) => [...memoryQueryKeys.root, 'activity-timeline', date] as const,
+  roleCatalog: () => [...memoryQueryKeys.root, 'role-catalog'] as const,
+  roleBook: (roleId: string, roleVersion: string) => [
+    ...memoryQueryKeys.root,
+    'role-book',
+    roleId,
+    roleVersion,
+  ] as const,
+  reference: (kind: MemoryReferenceKind, referenceId: string) => [
+    ...memoryQueryKeys.root,
+    'reference',
+    kind,
+    referenceId,
+  ] as const,
 };
 
 export const memoryBookArchivePathIds = {
@@ -59,6 +79,7 @@ export function useMemoryQueries(
   status: string,
   ownerKind = '',
   ownerId = '',
+  enabled = true,
 ) {
   const transport = useControlTransport();
   const summary = useQuery({
@@ -66,6 +87,7 @@ export function useMemoryQueries(
     queryFn: ({ signal }) => transport.request({ pathId: 'memory.summary', signal }),
   });
   const pages = useInfiniteQuery({
+    enabled,
     queryKey: memoryQueryKeys.page(kind, query, status, ownerKind, ownerId),
     queryFn: ({ pageParam, signal }) => transport.request({
       pathId: 'memory.pages',
@@ -83,6 +105,46 @@ export function useMemoryQueries(
     getNextPageParam: (lastPage) => stringValue(asRecord(lastPage).nextCursor) || undefined,
   });
   return { pages, summary, transportKind: transport.kind };
+}
+
+export function useRoleBookLayerQueries(
+  roleId: string,
+  roleVersion: string,
+  enabled: boolean,
+) {
+  const transport = useControlTransport();
+  const roles = useQuery({
+    enabled,
+    queryKey: memoryQueryKeys.roleCatalog(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'agent.roles.list', signal }),
+  });
+  const roleBook = useQuery({
+    enabled: enabled && Boolean(roleId) && Boolean(roleVersion),
+    queryKey: memoryQueryKeys.roleBook(roleId, roleVersion),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.roleBook.get',
+      query: { roleId, roleVersion, limit: 30 },
+      signal,
+    }),
+  });
+  return { roleBook, roles };
+}
+
+export function useMemoryReference(
+  kind: MemoryReferenceKind,
+  referenceId: string,
+  enabled: boolean,
+) {
+  const transport = useControlTransport();
+  return useQuery({
+    enabled: enabled && Boolean(referenceId),
+    queryKey: memoryQueryKeys.reference(kind, referenceId),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'memory.reference.get',
+      params: { kind, referenceId },
+      signal,
+    }),
+  });
 }
 
 export function useActivityTimeline(date: string, enabled: boolean) {

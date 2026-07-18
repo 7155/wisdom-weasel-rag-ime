@@ -54,6 +54,9 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("install_desktop_bridge_launch_agent.sh", installer)
         self.assertIn("--require desktopBridge", installer)
         self.assertIn("install_agent_gateway_launch_agent.sh", installer)
+        self.assertIn("build_managed_pi_runtime_v2.py", installer)
+        self.assertIn("install_managed_pi_runtime.py", installer)
+        self.assertIn("--require piSkills", installer)
         self.assertIn(
             'RAG_IME_INSTALL_AGENT_GATEWAY=0 "$ROOT/scripts/install_sidecar_launch_agent.sh"',
             installer,
@@ -81,6 +84,23 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertNotIn('if launchctl print "$DOMAIN/$LABEL"', desktop_installer)
         self.assertIn('launchctl kickstart "$DOMAIN/$LABEL"', desktop_installer)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', desktop_installer)
+
+    def test_database_maintenance_stop_and_reinstall_cover_voice_and_maintenance_jobs(self) -> None:
+        stop = (ROOT / "scripts" / "stop_rag_ime_runtime.sh").read_text(encoding="utf-8")
+        installer = (ROOT / "scripts" / "install_product_stack.sh").read_text(encoding="utf-8")
+        voice = (ROOT / "scripts" / "install_voice_input_launch_agent.sh").read_text(encoding="utf-8")
+        maintenance = (
+            ROOT / "scripts" / "install_memory_book_maintenance_launch_agent.sh"
+        ).read_text(encoding="utf-8")
+
+        for label in ("com.rag-ime.voice", "com.rag-ime.memory-book-maintenance"):
+            self.assertIn(label, stop)
+        self.assertIn("[R]agImeVoice", stop)
+        self.assertIn("[m]emory_book_maintenance_launch.py", stop)
+        self.assertIn("install_voice_input_launch_agent.sh", installer)
+        self.assertIn("install_memory_book_maintenance_launch_agent.sh", installer)
+        self.assertLess(voice.index("launchctl enable"), voice.index("launchctl bootstrap"))
+        self.assertLess(maintenance.index("launchctl enable"), maintenance.index("launchctl bootstrap"))
 
     def test_remote_gateway_uses_tailnet_only_serve_and_loopback_backend(self) -> None:
         script = (

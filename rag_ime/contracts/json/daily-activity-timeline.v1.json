@@ -43,6 +43,12 @@
     "approvedAtMs": {"type": "integer", "minimum": 0},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "updatedAtMs": {"type": "integer", "minimum": 0},
+    "segmentationMode": {
+      "type": "string",
+      "enum": ["semantic_task_v2", "legacy_app_interval_v1"]
+    },
+    "source": {"$ref": "#/$defs/source"},
+    "ref": {"$ref": "#/$defs/ref"},
     "policy": {
       "type": "object",
       "additionalProperties": false,
@@ -64,7 +70,7 @@
       "additionalProperties": false,
       "required": [
         "segmentId", "position", "app", "sourceKinds", "contextGroupIds",
-        "startMs", "endMs", "eventCount", "sourceEventIds",
+        "startMs", "endMs", "period", "eventCount", "sourceEventIds",
         "sourceEventHash", "summary", "redactedEventCount"
       ],
       "properties": {
@@ -83,6 +89,10 @@
         },
         "startMs": {"type": "integer", "minimum": 0},
         "endMs": {"type": "integer", "minimum": 0},
+        "period": {
+          "type": "string",
+          "enum": ["day", "morning", "afternoon", "evening"]
+        },
         "eventCount": {"type": "integer", "minimum": 1},
         "sourceEventIds": {
           "type": "array",
@@ -95,6 +105,39 @@
         },
         "summary": {"type": "string", "minLength": 1},
         "redactedEventCount": {"type": "integer", "minimum": 0}
+        ,"title": {"type": "string", "minLength": 1, "maxLength": 160}
+        ,"apps": {
+          "type": "array", "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+        ,"evidenceRefs": {
+          "type": "array", "items": {"$ref": "#/$defs/evidenceRef"}
+        }
+        ,"source": {"$ref": "#/$defs/source"}
+        ,"ref": {"$ref": "#/$defs/ref"}
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {"type": {"type": "string"}, "id": {"type": "string"}}
+    },
+    "ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {"type": {"type": "string"}, "id": {"type": "string"}}
+    },
+    "evidenceRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceType", "sourceId", "eventId", "app", "sourceKind", "occurredAtMs", "preview"],
+      "properties": {
+        "sourceType": {"type": "string", "const": "input_event"},
+        "sourceId": {"type": "string", "minLength": 1},
+        "eventId": {"type": "integer", "minimum": 1},
+        "app": {"type": "string", "minLength": 1},
+        "sourceKind": {"type": "string", "minLength": 1},
+        "occurredAtMs": {"type": "integer", "minimum": 0},
+        "preview": {"type": "string", "minLength": 1, "maxLength": 180}
       }
     }
   }

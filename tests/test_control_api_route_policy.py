@@ -36,6 +36,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "planning.mutation.rollback",
                 "memory.summary",
                 "memory.pages",
+                "memory.reference.get",
                 "memory.graph.get",
                 "memory.entity.get",
                 "memory.edit",
@@ -618,12 +619,13 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 self.policy.authorize(request, ControlAccessContext.native())
 
     def test_memory_page_kind_is_an_enum_not_an_arbitrary_path(self) -> None:
-        allowed = ControlRequest(
-            request_id="request-1",
-            path_id=ControlPathId.MEMORY_PAGES.value,
-            params={"kind": "books"},
-        )
-        self.policy.authorize(allowed, ControlAccessContext.native())
+        for kind in ("apps", "books", "timelines"):
+            allowed = ControlRequest(
+                request_id=f"request-{kind}",
+                path_id=ControlPathId.MEMORY_PAGES.value,
+                params={"kind": kind},
+            )
+            self.policy.authorize(allowed, ControlAccessContext.native())
         self.policy.authorize(
             ControlRequest(
                 request_id="request-evidence",
@@ -645,6 +647,43 @@ class ControlRoutePolicyTests(unittest.TestCase):
         )
         with self.assertRaises(ControlApiError):
             self.policy.authorize(rejected, ControlAccessContext.native())
+
+    def test_memory_reference_kind_is_bounded_and_remote_read_only(self) -> None:
+        for kind in (
+            "event",
+            "evidence",
+            "atom",
+            "book",
+            "timeline",
+            "role_book_revision",
+        ):
+            request = ControlRequest(
+                request_id=f"request-reference-{kind}",
+                path_id=ControlPathId.MEMORY_REFERENCE_GET.value,
+                params={"kind": kind, "referenceId": f"{kind}:1"},
+            )
+            self.policy.authorize(request, ControlAccessContext.native())
+            self.policy.authorize(
+                request,
+                ControlAccessContext.remote(
+                    device_id="phone-1",
+                    scopes={ControlScope.MEMORY_READ.value},
+                ),
+            )
+
+        for kind, reference_id in (
+            ("segment", "segment:1"),
+            ("event", "../event:1"),
+        ):
+            with self.assertRaises(ControlApiError):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-reference-invalid",
+                        path_id=ControlPathId.MEMORY_REFERENCE_GET.value,
+                        params={"kind": kind, "referenceId": reference_id},
+                    ),
+                    ControlAccessContext.native(),
+                )
 
     def test_memory_edit_is_local_only_and_requires_a_stable_identity(self) -> None:
         route = self.policy.resolve(ControlPathId.MEMORY_EDIT)

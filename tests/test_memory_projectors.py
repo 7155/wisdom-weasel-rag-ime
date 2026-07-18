@@ -48,6 +48,32 @@ class MemoryProjectorTests(unittest.TestCase):
         self.assertIn("evidenceEventIds=41,42", agent.block)
         self.assertEqual(agent.source_event_ids, (41, 42))
 
+    def test_agent_and_ime_projectors_reject_legacy_item_but_keep_phrase(self) -> None:
+        legacy = _projection_hit(
+            doc_type="item",
+            source_id="stable:legacy",
+            text="遗留原文不应进入任何消费者",
+            surface_hints=("遗留候选",),
+        )
+        phrase = _projection_hit(
+            doc_type="phrase",
+            source_id="phrase:保留短语",
+            text="保留短语",
+            surface_hints=("保留短语",),
+        )
+
+        ime = ImeMemoryProjector().project([legacy, phrase], top_k=1)
+        agent = AgentMemoryProjector().project(
+            [legacy, phrase],
+            project="wisdom-weasel-rag-ime",
+            query="当前记忆",
+            top_k=1,
+        )
+
+        self.assertEqual([candidate.text for candidate in ime], ["保留短语"])
+        self.assertNotIn("遗留原文", agent.block)
+        self.assertIn("[phrase:phrase:保留短语] 保留短语", agent.block)
+
     def test_local_agent_context_uses_shared_hits_not_legacy_retrieval(self) -> None:
         hit = _memory_hit()
         with tempfile.TemporaryDirectory(prefix="rag-ime-agent-projector-") as tmp:
@@ -178,6 +204,34 @@ def _memory_hit() -> MemoryHit:
         book_ids=("model",),
         evidence_event_ids=(88,),
         evidence_preview="当前使用 100M 自训练模型",
+        metadata={"lanes": ["bm25_raw"]},
+    )
+
+
+def _projection_hit(
+    *,
+    doc_type: str,
+    source_id: str,
+    text: str,
+    surface_hints: tuple[str, ...],
+) -> MemoryHit:
+    return MemoryHit(
+        hit_id=f"hybrid:{doc_type}:{source_id}",
+        doc_id=f"{doc_type}:{source_id}",
+        doc_type=doc_type,
+        source_id=source_id,
+        text=text,
+        surface_hints=surface_hints,
+        source_type="memory",
+        source_lane="bm25_raw",
+        score=0.8,
+        confidence=0.9,
+        tags=("输入法",),
+        memory_ids=(source_id,),
+        atom_ids=(),
+        book_ids=(),
+        evidence_event_ids=(88,),
+        evidence_preview=text,
         metadata={"lanes": ["bm25_raw"]},
     )
 

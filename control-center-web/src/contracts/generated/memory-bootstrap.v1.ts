@@ -35,6 +35,14 @@ export interface MemoryBootstrapV1 {
     lifecycle: 'once';
     oneRingMaySupportFacts: false;
     rawDialogueIsLongTermFact: false;
+    layerBoundaries?: {
+      evidence: string;
+      atom: string;
+      topicBook: string;
+      roleBook: string;
+      timeline: string;
+      [k: string]: unknown;
+    };
     [k: string]: unknown;
   };
 }
@@ -48,5 +56,13 @@ export interface ContextSource {
   provenance: {
     [k: string]: unknown;
   };
+  source?: SourceRef;
+  ref?: SourceRef;
+  [k: string]: unknown;
+}
+export interface SourceRef {
+  type: string;
+  id: string;
+  bookId?: string;
   [k: string]: unknown;
 }

@@ -996,8 +996,8 @@ class DebugManagementApiTests(unittest.TestCase):
             )
         )
         self._upsert_item(
-            memory_id="stable:knowledge-workbench",
-            kind="stable_memory",
+            memory_id="phrase:knowledge-workbench",
+            kind="phrase",
             text="个人知识工作台使用本地 RAG 证据",
             status="approved",
         )
@@ -1041,8 +1041,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
     def test_knowledge_workbench_retrieves_memories_from_other_apps(self) -> None:
         self._upsert_item(
-            memory_id="stable:cross-app-bge",
-            kind="stable_memory",
+            memory_id="phrase:cross-app-bge",
+            kind="phrase",
             text="BGE 向量索引需要在 provider 指纹变化后重新构建",
             status="approved",
             app="com.openai.codex",
@@ -1057,8 +1057,8 @@ class DebugManagementApiTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("stable:cross-app-bge", [item["sourceId"] for item in evidence])
-        matched = next(item for item in evidence if item["sourceId"] == "stable:cross-app-bge")
+        self.assertIn("phrase:cross-app-bge", [item["sourceId"] for item in evidence])
+        matched = next(item for item in evidence if item["sourceId"] == "phrase:cross-app-bge")
         self.assertIn("BGE 向量索引", matched["text"])
         self.assertGreater(matched["score"], 0.0)
 

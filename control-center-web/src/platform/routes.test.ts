@@ -129,6 +129,7 @@ const canonicalPathIds = [
   'planning.mutation.rollback',
   'memory.summary',
   'memory.pages',
+  'memory.reference.get',
   'memory.graph.get',
   'memory.entity.get',
   'memory.edit',
@@ -497,6 +498,14 @@ describe('control route policy', () => {
     expect(resolveControlPath('memory.pages', { kind: 'evidence' })).toBe(
       '/api/memory/evidence',
     );
+    expect(resolveControlPath('memory.reference.get', {
+      kind: 'evidence',
+      referenceId: 'evidence:agent:42',
+    })).toBe('/api/memory/references/evidence/evidence%3Aagent%3A42');
+    expect(() => resolveControlPath('memory.reference.get', {
+      kind: 'raw_sql',
+      referenceId: '42',
+    } as never)).toThrow(/not allowlisted/);
     expect(resolveControlPath('memory.entity.get', { kind: 'group', entityId: 'group:input-method' })).toBe(
       '/api/memory/entities/group/group%3Ainput-method',
     );

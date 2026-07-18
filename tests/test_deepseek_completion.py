@@ -6,6 +6,7 @@ import unittest
 from urllib.error import HTTPError
 
 import rag_ime.deepseek_completion as deepseek_completion_module
+from rag_ime.active_rag_models import ActiveRagEvidence
 from rag_ime.deepseek_completion import (
     DeepSeekCompletionError,
     DeepSeekCompletionRequest,
@@ -13,6 +14,7 @@ from rag_ime.deepseek_completion import (
     build_deepseek_completion_messages,
 )
 from rag_ime.deepseek_config import DeepSeekConfig
+from rag_ime.smart_rag_context_packet import build_active_rag_context_packet
 
 
 class DeepSeekCompletionTests(unittest.TestCase):
@@ -486,7 +488,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(user_payload["contextPacket"]["schemaVersion"], "rag-ime.smart-context-packet.v1")
         self.assertIn("CurrentInput > OneRing > Timeline > Notebook", messages[0]["content"])
 
-    def test_active_rag_prompt_uses_compact_evidence_hints(self) -> None:
+    def test_active_rag_prompt_uses_one_typed_grounding_source(self) -> None:
         messages = build_deepseek_completion_messages(
             DeepSeekCompletionRequest(
                 scene="active_rag",
@@ -495,16 +497,42 @@ class DeepSeekCompletionTests(unittest.TestCase):
                 context_packet={
                     "schemaVersion": "rag-ime.smart-context-packet.v1",
                     "notebook": {"items": [{"summary": "很长的 Notebook"}]},
+                    "groundingEvidence": [
+                        {
+                            "evidenceId": "atom:button",
+                            "sourceType": "memory_atom",
+                            "sourceLane": "vector_raw",
+                            "title": "生成按钮",
+                            "preview": "生成按钮稳定显示",
+                            "ref": {"kind": "atom", "id": "atom:button"},
+                            "maySupportFacts": True,
+                        }
+                    ],
+                    "ragEvidenceHints": [
+                        {
+                            "evidenceId": "atom:button",
+                            "sourceType": "memory_atom",
+                            "sourceLane": "vector_raw",
+                            "text": "生成按钮稳定显示",
+                        }
+                    ],
                 },
             )
         )
         user_payload = json.loads(messages[1]["content"])
 
         self.assertEqual(user_payload["contextPacket"]["schemaVersion"], "rag-ime.smart-context-packet.v1")
-        self.assertIn("生成按钮稳定显示", user_payload["evidenceHints"])
+        self.assertEqual(
+            user_payload["groundingEvidence"][0]["preview"],
+            "生成按钮稳定显示",
+        )
+        self.assertNotIn("groundingEvidence", user_payload["contextPacket"])
+        self.assertNotIn("ragEvidenceHints", user_payload["contextPacket"])
+        self.assertNotIn("evidenceHints", user_payload)
+        self.assertEqual(messages[1]["content"].count("生成按钮稳定显示"), 1)
         self.assertNotIn("候选是“短候选”", messages[0]["content"])
         self.assertIn("以“候选=”开头", messages[0]["content"])
-        self.assertIn("currentInput", messages[0]["content"])
+        self.assertIn("currentRequest/currentContext", messages[0]["content"])
         self.assertIn("selectedText 在 insert_after_selection/append_at_cursor 场景只是光标前文本锚点", messages[0]["content"])
         self.assertIn("禁止以“例如”“比如”“可以描述”", messages[0]["content"])
         self.assertIn("问句、关键词命中或 recent_input_context", messages[0]["content"])
@@ -514,6 +542,152 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertIn("RAG 为空不妨碍完成非事实型请求", user_payload["task"])
         self.assertIn("给出具体核验动作", user_payload["task"])
         self.assertEqual(user_payload["placement"], "insert_after_selection")
+
+    def test_active_rag_direct_evidence_pack_uses_single_grounding_fallback(self) -> None:
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="输入法如何使用混合检索？",
+                evidence_pack=(
+                    {
+                        "sourceType": "memory",
+                        "sourceLane": "bm25_raw",
+                        "title": "混合检索",
+                        "summary": "输入法并行使用 BM25 与向量召回。",
+                    },
+                ),
+            )
+        )
+        user_payload = json.loads(messages[1]["content"])
+
+        self.assertEqual(user_payload["groundingMode"], "rag_grounded")
+        self.assertEqual(len(user_payload["groundingEvidence"]), 1)
+        self.assertEqual(
+            user_payload["groundingEvidence"][0]["preview"],
+            "输入法并行使用 BM25 与向量召回。",
+        )
+        self.assertNotIn("groundingEvidence", user_payload["contextPacket"])
+        self.assertNotIn("evidenceHints", user_payload)
+        self.assertEqual(messages[1]["content"].count("输入法并行使用 BM25 与向量召回。"), 1)
+
+    def test_active_rag_packet_caps_context_lanes_and_deduplicates_grounding(self) -> None:
+        history = tuple(
+            ActiveRagEvidence(
+                evidence_id=f"recent:{index}",
+                text=f"最近完整输入 {index}",
+                source_type="recent_input_context",
+                source_lane="timeline_recent_input",
+            )
+            for index in range(1, 7)
+        )
+        evidence = (
+            ActiveRagEvidence(
+                evidence_id="todo:context",
+                text="修复生成上下文链路",
+                source_type="todo",
+                source_lane="planning_open_task",
+                metadata={"title": "修复生成上下文链路", "maySupportFacts": False},
+            ),
+            ActiveRagEvidence(
+                evidence_id="activity:memory",
+                text="整理记忆召回",
+                source_type="activity_timeline",
+                source_lane="timeline_approved_activity",
+                metadata={
+                    "title": "整理记忆召回",
+                    "summary": "梳理个人记忆与主题书边界。",
+                    "ref": {"kind": "timeline", "id": "timeline:today"},
+                    "maySupportFacts": False,
+                },
+            ),
+            ActiveRagEvidence(
+                evidence_id="hit:atom",
+                text="输入法使用混合检索提供事实依据。",
+                source_type="memory",
+                source_lane="vector_raw",
+                atom_ids=("atom:hybrid",),
+                preview="输入法使用混合检索提供事实依据。",
+                metadata={"title": "当前事实"},
+            ),
+            ActiveRagEvidence(
+                evidence_id="hit:duplicate",
+                text="输入法使用混合检索提供事实依据。",
+                source_type="rag",
+                source_lane="bm25_raw",
+                preview="输入法使用混合检索提供事实依据。",
+            ),
+            ActiveRagEvidence(
+                evidence_id="hit:book",
+                text="主题书记录输入法长期架构。",
+                source_type="memory",
+                source_lane="bm25_tags",
+                book_ids=("book:ime",),
+                preview="主题书记录输入法长期架构。",
+                metadata={"title": "输入法主题书"},
+            ),
+            ActiveRagEvidence(
+                evidence_id="hit:rag",
+                text="普通 RAG 文档说明候选生成接口。 普通 RAG 文档说明候选生成接口。",
+                source_type="rag",
+                source_lane="vector_raw",
+                preview="普通 RAG 文档说明候选生成接口。 普通 RAG 文档说明候选生成接口。",
+            ),
+        )
+        packet = build_active_rag_context_packet(
+            scene="active_rag",
+            current_context="继续完成显式生成上下文注入",
+            selected_text="上下文注入",
+            selected_text_hash="sha256:test",
+            frontend_revision=1,
+            selection_epoch=1,
+            panel_session_id="panel:test",
+            project="wisdom-weasel-rag-ime",
+            app="com.openai.codex",
+            evidence=evidence,
+            recent_input_history=history,
+            max_chars=120,
+        )
+
+        self.assertEqual(
+            packet["priority"][:5],
+            ["currentInput", "planning", "windowContext", "activityTimeline", "recentCompleteInputs"],
+        )
+        self.assertEqual(len(packet["oneRing"]["events"]), 4)
+        self.assertEqual(
+            [item["textPreview"] for item in packet["oneRing"]["events"]],
+            ["最近完整输入 3", "最近完整输入 4", "最近完整输入 5", "最近完整输入 6"],
+        )
+        self.assertFalse(packet["planning"]["maySupportFacts"])
+        self.assertFalse(packet["activityTimeline"]["maySupportFacts"])
+        grounding = packet["groundingEvidence"]
+        self.assertEqual(
+            [item["sourceType"] for item in grounding],
+            ["memory_atom", "memory_book", "rag"],
+        )
+        self.assertEqual(
+            [item["preview"] for item in grounding].count("输入法使用混合检索提供事实依据。"),
+            1,
+        )
+        self.assertTrue(all(item["maySupportFacts"] is True for item in grounding))
+        self.assertNotIn("activity_timeline", [item["sourceType"] for item in grounding])
+        self.assertEqual(grounding[-1]["preview"], "普通 RAG 文档说明候选生成接口。")
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="继续完成显式生成上下文注入",
+                selected_text="上下文注入",
+                context_packet=packet,
+                max_chars=120,
+            )
+        )
+        payload = json.loads(messages[1]["content"])
+        self.assertEqual(len(payload["contextPacket"]["recentCompleteInputs"]), 4)
+        self.assertEqual(len(payload["groundingEvidence"]), 3)
+        self.assertNotIn("groundingEvidence", payload["contextPacket"])
+        self.assertNotIn("ragEvidenceHints", payload["contextPacket"])
+        self.assertNotIn("evidenceHints", payload)
+        self.assertEqual(messages[1]["content"].count("输入法使用混合检索提供事实依据。"), 1)
+        self.assertEqual(messages[1]["content"].count("普通 RAG 文档说明候选生成接口。"), 1)
 
     def test_active_rag_prompt_keeps_recent_inputs_as_secondary_context(self) -> None:
         messages = build_deepseek_completion_messages(
@@ -831,7 +1005,14 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertNotIn(old_memory, messages[1]["content"])
         self.assertEqual(
             payload["contextPacket"]["memoryCounts"],
-            {"oneRing": 1, "timeline": 1, "notebook": 1, "planning": 0},
+            {
+                "oneRing": 1,
+                "timeline": 1,
+                "notebook": 1,
+                "planning": 0,
+                "activityTimeline": 0,
+                "groundingEvidence": 0,
+            },
         )
 
     def test_deepseek_completion_filters_generic_filler(self) -> None:

@@ -11,6 +11,52 @@ from pathlib import Path
 
 
 class LaunchAgentScriptTests(unittest.TestCase):
+    def test_stop_runtime_proves_all_launch_agents_ports_and_processes_absent(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-stop-proof-") as tmp:
+            home = Path(tmp) / "home"
+            fake_bin = Path(tmp) / "bin"
+            home.mkdir()
+            fake_bin.mkdir()
+            helpers = {
+                "launchctl": "#!/bin/sh\n[ \"$1\" = print ] && exit 1\nexit 0\n",
+                "lsof": "#!/bin/sh\nexit 1\n",
+                "pgrep": "#!/bin/sh\nexit 1\n",
+                "pkill": "#!/bin/sh\nexit 0\n",
+                "sleep": "#!/bin/sh\nexit 0\n",
+            }
+            for name, source in helpers.items():
+                path = fake_bin / name
+                path.write_text(source, encoding="utf-8")
+                path.chmod(0o755)
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+                "RAG_IME_DISABLE_FRONTEND_ON_STOP": "0",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "stop_rag_ime_runtime.sh")],
+                cwd=root,
+                env=env,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("runtime stopped and LaunchAgents disabled", result.stdout)
+        source = (root / "scripts" / "stop_rag_ime_runtime.sh").read_text(
+            encoding="utf-8"
+        )
+        for process_name in (
+            "RagImeDesktopBridge",
+            "RagImeVoice",
+            "RagImeControl",
+            "Squirrel",
+        ):
+            self.assertIn(process_name, source)
+
     def test_sidecar_installer_auto_wires_stable_deepseek_env(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-dsv4-") as tmp:
@@ -617,6 +663,18 @@ class LaunchAgentScriptTests(unittest.TestCase):
             managed_native_session = managed_extension.with_name("pi-native-session.ts")
             managed_extension_text = managed_extension.read_text(encoding="utf-8")
             managed_native_session_text = managed_native_session.read_text(encoding="utf-8")
+            managed_memory_skill = (
+                home
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "Agent"
+                / "config"
+                / "skills"
+                / "rag-ime-memory-curator"
+                / "SKILL.md"
+            )
+            managed_memory_skill_text = managed_memory_skill.read_text(encoding="utf-8")
 
         env_vars = payload["EnvironmentVariables"]
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_PROVIDER"], "mlx")
@@ -649,6 +707,19 @@ class LaunchAgentScriptTests(unittest.TestCase):
             (root / "integrations" / "pi" / "pi-native-session.ts").read_text(encoding="utf-8"),
         )
         self.assertNotIn("must-not-be-installed", managed_extension_text)
+        self.assertIn("remember_preview", managed_memory_skill_text)
+        self.assertIn("agent_role_book", managed_memory_skill_text)
+        self.assertEqual(
+            managed_memory_skill_text,
+            (
+                root
+                / "integrations"
+                / "pi"
+                / "skills"
+                / "rag-ime-memory-curator"
+                / "SKILL.md"
+            ).read_text(encoding="utf-8"),
+        )
         self.assertNotIn("RAG_IME_PI_VERSION", env_vars)
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_THINKING"], "disabled")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")

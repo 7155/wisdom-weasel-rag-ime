@@ -51,6 +51,15 @@
         "lifecycle": {"type": "string", "const": "once"},
         "oneRingMaySupportFacts": {"type": "boolean", "const": false},
         "rawDialogueIsLongTermFact": {"type": "boolean", "const": false}
+        ,"layerBoundaries": {
+          "type": "object",
+          "required": ["evidence", "atom", "topicBook", "roleBook", "timeline"],
+          "properties": {
+            "evidence": {"type": "string"}, "atom": {"type": "string"},
+            "topicBook": {"type": "string"}, "roleBook": {"type": "string"},
+            "timeline": {"type": "string"}
+          }
+        }
       }
     }
   },
@@ -72,6 +81,16 @@
         "occurredAtMs": {"type": "integer", "minimum": 0},
         "maySupportFacts": {"type": "boolean"},
         "provenance": {"type": "object"}
+        ,"source": {"$ref": "#/$defs/sourceRef"}
+        ,"ref": {"$ref": "#/$defs/sourceRef"}
+      }
+    },
+    "sourceRef": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"type": "string"}, "id": {"type": "string"},
+        "bookId": {"type": "string"}
       }
     }
   }

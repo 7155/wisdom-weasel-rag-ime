@@ -15,6 +15,8 @@ _GENERIC_CONTEXT_TERMS = {
     "目前", "应该", "需要", "没有", "可以", "进行", "一个", "一下", "问题", "功能",
 }
 _TEMPORAL_RECALL_TERMS = {"今天", "昨天", "最近", "本周", "上周", "上午", "下午", "晚上", "回忆"}
+_ACTIVE_RAG_RETRIEVAL_POOL = 64
+_ACTIVE_RAG_EVIDENCE_LIMIT = 12
 
 
 def retrieve_active_rag_evidence(
@@ -41,6 +43,10 @@ def retrieve_active_rag_evidence(
             embedding_provider=core.embedding_provider,
         )
     candidates = _relevant_active_rag_candidates(candidates, frame=frame)
+    candidates = _diversify_active_rag_evidence(
+        candidates,
+        limit=_ACTIVE_RAG_EVIDENCE_LIMIT,
+    )
     return tuple(_evidence_from_candidate(candidate) for candidate in candidates)
 
 
@@ -80,7 +86,11 @@ def _query_from_frame(
         input_mode="active_rag_assist",
         # Explicit knowledge generation needs enough evidence to rerank even
         # when only one final text candidate is requested.
-        top_k=12,
+        # Retrieve a wider pool before the Active RAG evidence selector keeps
+        # the best facts and at least one relevant Topic Book. Asking the
+        # hybrid core for only the final 12 let dense Atom rows crowd every
+        # Book out even when the Book directly matched the query.
+        top_k=_ACTIVE_RAG_RETRIEVAL_POOL,
         latency_budget_ms=2500,
         enabled_lanes=enabled_lanes,
         lane_weights=lane_weights,
@@ -140,6 +150,11 @@ def _relevant_active_rag_candidates(
     temporal_recall = any(term in basis for term in _TEMPORAL_RECALL_TERMS)
     accepted: list[MemoryHit | HybridRagCandidate] = []
     for candidate in candidates:
+        if isinstance(candidate, MemoryHit) and compact_whitespace(candidate.doc_type).lower() == "item":
+            # ``item`` is the legacy memory_items projection. It has no Atom or
+            # Book lifecycle contract and may contain an exact text+summary
+            # duplicate, so it must not occupy explicit-generation grounding.
+            continue
         metadata = dict(candidate.metadata)
         lanes = {str(value) for value in metadata.get("lanes") or []}
         haystack = compact_whitespace(
@@ -157,3 +172,50 @@ def _relevant_active_rag_candidates(
         if lexical_support or strong_vector_support or temporal_support:
             accepted.append(candidate)
     return accepted
+
+
+def _diversify_active_rag_evidence(
+    candidates: list[MemoryHit | HybridRagCandidate],
+    *,
+    limit: int,
+) -> list[MemoryHit | HybridRagCandidate]:
+    """Keep rank quality while preventing one document layer from monopolizing context."""
+
+    bounded_limit = max(0, int(limit))
+    if bounded_limit == 0 or not candidates:
+        return []
+    selected = list(candidates[:bounded_limit])
+    for required_kind in ("atom", "book"):
+        if any(_active_rag_document_kind(item) == required_kind for item in selected):
+            continue
+        required = next(
+            (
+                item
+                for item in candidates[bounded_limit:]
+                if _active_rag_document_kind(item) == required_kind
+            ),
+            None,
+        )
+        if required is None:
+            continue
+        replacement_index = next(
+            (
+                index
+                for index in range(len(selected) - 1, -1, -1)
+                if _active_rag_document_kind(selected[index]) != required_kind
+            ),
+            -1,
+        )
+        if replacement_index >= 0:
+            selected[replacement_index] = required
+    return selected
+
+
+def _active_rag_document_kind(candidate: MemoryHit | HybridRagCandidate) -> str:
+    if isinstance(candidate, MemoryHit):
+        return compact_whitespace(candidate.doc_type).lower()
+    if candidate.book_ids and not candidate.atom_ids:
+        return "book"
+    if candidate.atom_ids:
+        return "atom"
+    return "other"

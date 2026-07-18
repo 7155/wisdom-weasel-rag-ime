@@ -21,6 +21,7 @@ mkdir -p "$HOME/Library/LaunchAgents"
 /usr/libexec/PlistBuddy -c "Add :ProcessType string Interactive" "$PLIST"
 
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 while IFS= read -r pid; do
   [[ -n "$pid" ]] || continue
   kill "$pid" >/dev/null 2>&1 || true

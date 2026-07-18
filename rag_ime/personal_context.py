@@ -193,6 +193,18 @@ def load_activity_timeline_context(
             LEFT JOIN memory_state state ON state.event_id = e.id
             WHERE e.id IN ({placeholders}) AND e.project = ?
               AND COALESCE(state.deleted, 0) = 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM memory_tombstones tombstone
+                  WHERE tombstone.active = 1
+                    AND (
+                        (tombstone.target_type = 'source_event_id'
+                         AND tombstone.target_value = CAST(e.id AS TEXT))
+                        OR
+                        (tombstone.target_type = 'memory_id'
+                         AND tombstone.target_value = ('event:' || e.id))
+                    )
+              )
             ORDER BY e.created_at_ms ASC, e.id ASC
             """,  # noqa: S608 - placeholders are generated, never values
             (*sampled_ids, project),
@@ -245,8 +257,18 @@ def load_activity_timeline_context(
         snippets = list(
             dict.fromkeys(str(item["text"]) for item in segment_events if item.get("text"))
         )[:4]
-        app = _bounded_text(raw.get("app"), 240) or str(segment_events[0]["app"])
-        summary = _truncate(f"{app}：{'；'.join(snippets)}", min(760, remaining_chars))
+        # Never reuse display fields derived before internal/sensitive evidence
+        # was filtered. Rebuild the model-facing task solely from retained rows.
+        apps = list(
+            dict.fromkeys(str(item["app"]) for item in segment_events)
+        )[:12]
+        app = "multiple" if len(apps) > 1 else apps[0]
+        title = max(snippets, key=lambda value: (len(value), value))
+        detail = [value for value in snippets if value != title]
+        summary = _truncate(
+            title + (f"：{'；'.join(detail)}" if detail else ""),
+            min(760, remaining_chars),
+        )
         if not summary:
             continue
         source_kinds = list(
@@ -264,6 +286,8 @@ def load_activity_timeline_context(
             or f"activity-context-segment:{len(segments)}",
             "position": len(segments),
             "app": app,
+            "title": title,
+            "apps": apps,
             "sourceKinds": source_kinds,
             "contextGroupIds": context_groups,
             "startMs": min(int(item["createdAtMs"]) for item in segment_events),
@@ -271,6 +295,16 @@ def load_activity_timeline_context(
             "eventCount": len(segment_events),
             "summary": summary,
             "redactedEventCount": 0,
+            "source": {
+                "type": "activity_timeline",
+                "id": str(row["timeline_id"]),
+            },
+            "ref": {
+                "type": "timeline",
+                "id": str(row["timeline_id"]),
+                "segmentId": _bounded_text(raw.get("segmentId"), 160)
+                or f"activity-context-segment:{len(segments)}",
+            },
         }
         segments.append(segment)
         remaining_chars -= len(summary)
@@ -294,6 +328,14 @@ def load_activity_timeline_context(
         "redactedEventCount": redacted,
         "corroborationOnly": True,
         "maySupportFacts": False,
+        "source": {
+            "type": "activity_timeline",
+            "id": str(row["timeline_id"]),
+        },
+        "ref": {
+            "type": "timeline",
+            "id": str(row["timeline_id"]),
+        },
     }
     validate_contract(payload, "activity-timeline-context.v1.json")
     return payload
@@ -1174,6 +1216,13 @@ class MemoryBootstrapBuilder:
                 "lifecycle": "once",
                 "oneRingMaySupportFacts": False,
                 "rawDialogueIsLongTermFact": False,
+                "layerBoundaries": {
+                    "evidence": "原始来源，不等于当前事实。",
+                    "atom": "仅使用经治理且仍为 current 的事实。",
+                    "topicBook": "主题聚合用于找背景，不替代证据。",
+                    "roleBook": "Agent 自身画像，不是用户事实。",
+                    "timeline": "已批准活动只说明做过什么。",
+                },
             },
         }
         base_fingerprint = _stable_digest(
@@ -1196,7 +1245,7 @@ class MemoryBootstrapBuilder:
                 values = candidates.get(section, ())
                 if index >= min(caps[section], len(values)):
                     continue
-                item = dict(values[index])
+                item = _with_stable_source_ref(values[index])
                 selected[section].append(item)
                 source_ids.append(str(item["sourceId"]))
                 omitted[section] -= 1
@@ -2575,6 +2624,43 @@ def _atom_bootstrap_item(row: sqlite3.Row) -> dict[str, object] | None:
             }
         ),
     }
+
+
+def _with_stable_source_ref(value: Mapping[str, object]) -> dict[str, object]:
+    item = dict(value)
+    source_type = compact_whitespace(str(item.get("sourceType") or ""))
+    source_id = compact_whitespace(str(item.get("sourceId") or ""))
+    provenance = item.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    ref_type = {
+        "memory_atom": "atom",
+        "memory_book": "book",
+    }.get(source_type, "")
+    ref_id = source_id
+    ref: dict[str, object] | None = (
+        {
+            "type": ref_type,
+            "kind": ref_type,
+            "id": ref_id,
+        }
+        if ref_type and ref_id
+        else None
+    )
+    if str(item.get("kind") or "") == "daily_timeline":
+        timeline_id = compact_whitespace(str(provenance.get("timelineId") or ""))
+        if timeline_id:
+            ref = {
+                "type": "timeline",
+                "kind": "timeline",
+                "id": timeline_id,
+                "bookId": source_id,
+            }
+    # sourceType/sourceId already identify the bootstrap source. Keep only the
+    # actionable canonical reference instead of duplicating both objects inside
+    # a tightly budgeted Session-start payload.
+    if ref is not None:
+        item["ref"] = ref
+    return item
 
 
 def _cursor_row(

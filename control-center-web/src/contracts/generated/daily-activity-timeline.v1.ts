@@ -22,6 +22,9 @@ export interface DailyActivityTimelineV1 {
   approvedAtMs: number;
   createdAtMs: number;
   updatedAtMs: number;
+  segmentationMode?: 'semantic_task_v2' | 'legacy_app_interval_v1';
+  source?: Source;
+  ref?: Ref;
   policy: {
     derivedFromInputEvents: true;
     longTermFact: false;
@@ -37,9 +40,32 @@ export interface Segment {
   contextGroupIds: string[];
   startMs: number;
   endMs: number;
+  period: 'day' | 'morning' | 'afternoon' | 'evening';
   eventCount: number;
   sourceEventIds: number[];
   sourceEventHash: string;
   summary: string;
   redactedEventCount: number;
+  title?: string;
+  apps?: string[];
+  evidenceRefs?: EvidenceRef[];
+  source?: Source;
+  ref?: Ref;
+}
+export interface EvidenceRef {
+  sourceType: 'input_event';
+  sourceId: string;
+  eventId: number;
+  app: string;
+  sourceKind: string;
+  occurredAtMs: number;
+  preview: string;
+}
+export interface Source {
+  type: string;
+  id: string;
+}
+export interface Ref {
+  type: string;
+  id: string;
 }

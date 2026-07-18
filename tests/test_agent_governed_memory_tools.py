@@ -7,11 +7,14 @@ import time
 import unittest
 from pathlib import Path
 
+from rag_ime.activity_timeline import DailyActivityTimelineStore
 from rag_ime.agent_governed_memory_tools import MemoryGovernanceProposalStore
 from rag_ime.agent_role_book import AgentRoleBookStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.contracts.json_schema import validate_contract
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.models import InputEvent
 from rag_ime.personal_context import (
     AgentMemoryEvidenceStore,
     PersonalContextConsolidator,
@@ -335,6 +338,105 @@ class GovernedMemoryToolTests(unittest.TestCase):
                 created_at_ms=now,
             )
 
+    def test_governance_revalidates_forgotten_event_evidence_at_preview_and_apply(
+        self,
+    ) -> None:
+        core = LocalSqliteCoreClient(self.db_path)
+        core.initialize()
+
+        def event_evidence(label: str) -> tuple[int, str]:
+            event_id = int(
+                core.record_event(
+                    InputEvent(
+                        event_id=None,
+                        created_at_ms=100,
+                        source="pi_agent_user",
+                        committed_text=f"用户确认 {label}",
+                        privacy_disposition="allowed",
+                        project="wisdom-weasel-rag-ime",
+                    )
+                ).split(":", 1)[1]
+            )
+            evidence = self.evidence_store.record(
+                source_kind="user_message",
+                source_id=f"message:{label}",
+                idempotency_key=f"message:{label}",
+                session_id=str(self.session["id"]),
+                role_id=str(self.session["roleId"]),
+                text=f"用户确认 {label}",
+                occurred_at_ms=100,
+                provenance={"inputEventId": event_id},
+            )["evidence"]
+            return event_id, str(evidence["evidenceId"])
+
+        preview_event_id, preview_evidence_id = event_evidence("不应从已排除事件写记忆")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_memory_sources(
+                    source_id, session_id, pi_entry_id, input_event_id,
+                    source_role, canonical_text_sha256, status, created_at_ms,
+                    disposition, disposition_reason
+                ) VALUES (?, ?, ?, ?, 'user', ?, 'active', ?, 'not_for_memory', ?)
+                """,
+                (
+                    "source:not-for-memory",
+                    str(self.session["id"]),
+                    "entry:not-for-memory",
+                    preview_event_id,
+                    "0" * 64,
+                    100,
+                    "user_forget",
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "not for memory"):
+            self._execute(
+                "ime_memory",
+                "remember_preview",
+                text="这条记忆不得写入",
+                evidenceIds=[preview_evidence_id],
+            )
+
+        apply_event_id, apply_evidence_id = event_evidence("应用前仍需重新验明来源")
+        preview = self._execute(
+            "ime_memory",
+            "remember_preview",
+            text="应用时必须重新校验来源事件",
+            evidenceIds=[apply_evidence_id],
+        )["result"]
+        prepared = self._execute(
+            "ime_memory",
+            "remember_apply",
+            proposalId=preview["proposalId"],
+        )["result"]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_tombstones(
+                    target_type, target_value, reason, active, created_at_ms
+                ) VALUES ('memory_id', ?, 'user_forget', 1, ?)
+                """,
+                (
+                    f"event:{apply_event_id}",
+                    101,
+                ),
+            )
+        decided = self.sessions.decide_approval(
+            prepared["approvalId"],
+            approved=True,
+            payload_sha256=prepared["approval"]["payloadSha256"],
+        )
+        with self.assertRaisesRegex(ValueError, "deleted, tombstoned"):
+            self.gateway.apply_approval(decided)
+        with sqlite3.connect(self.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_atoms WHERE text = ?",
+                    ("应用时必须重新校验来源事件",),
+                ).fetchone()[0],
+                0,
+            )
+
     def test_remember_apply_requires_native_r1_and_writes_source_with_outbox_atomically(
         self,
     ) -> None:
@@ -429,6 +531,14 @@ class GovernedMemoryToolTests(unittest.TestCase):
             receipt["memoryId"],
             {item["memoryId"] for item in current["items"]},
         )
+        current_item = next(
+            item
+            for item in current["items"]
+            if item["memoryId"] == receipt["memoryId"]
+        )
+        self.assertEqual(current_item["ref"]["type"], "memory_atom")
+        self.assertEqual(current_item["ref"]["referenceKind"], "atom")
+        self.assertEqual(current_item["ref"]["referenceId"], receipt["memoryId"])
         hidden = self._execute(
             "ime_memory",
             "get",
@@ -457,6 +567,92 @@ class GovernedMemoryToolTests(unittest.TestCase):
         )["result"]
         self.assertTrue(explanation["excluded"])
         self.assertEqual(explanation["exclusionReason"], "not_current")
+
+    def test_search_exposes_only_approved_timelines_with_event_references(self) -> None:
+        core = LocalSqliteCoreClient(self.db_path)
+        core.initialize()
+        for timestamp, app, source, text in (
+            (
+                1_784_250_000_000,
+                "com.mitchellh.ghostty",
+                "squirrel_input_segment",
+                "在终端执行 cas codex switch 切换账号",
+            ),
+            (
+                1_784_250_060_000,
+                "com.openai.codex",
+                "codex_history",
+                "验证 Codex 账号切换完成",
+            ),
+        ):
+            core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=timestamp,
+                    source=source,
+                    committed_text=text,
+                    privacy_disposition="allowed",
+                    app=app,
+                    project="wisdom-weasel-rag-ime",
+                    context_group_id=f"app:{app}",
+                    context_group_level="app",
+                )
+            )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project="wisdom-weasel-rag-ime",
+            timezone_name="Asia/Shanghai",
+        )
+        draft = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=1_784_250_120_000,
+        )["timeline"]
+        self.assertEqual(
+            self._execute(
+                "ime_memory",
+                "search",
+                kind="timelines",
+                query="CAS",
+            )["result"]["count"],
+            0,
+        )
+        store.approve(
+            str(draft["timelineId"]),
+            expected_source_event_hash=str(draft["sourceEventHash"]),
+            approved_by="test-user",
+            confirm_text="approve",
+            approved_at_ms=1_784_250_180_000,
+        )
+
+        result = self._execute(
+            "ime_memory",
+            "search",
+            kind="timelines",
+            query="CAS",
+        )["result"]
+
+        self.assertEqual(result["count"], 1)
+        item = result["items"][0]
+        self.assertEqual(item["ref"]["type"], "timeline")
+        self.assertEqual(item["ref"]["referenceKind"], "timeline")
+        self.assertEqual(item["ref"]["referenceId"], item["timelineId"])
+        self.assertEqual(item["bookRef"]["referenceKind"], "book")
+        self.assertEqual(item["bookRef"]["referenceId"], item["bookId"])
+        self.assertEqual(item["segments"][0]["title"], "CAS 切换 Codex 账号")
+        self.assertEqual(
+            item["segments"][0]["ref"]["referenceKind"],
+            "timeline",
+        )
+        self.assertTrue(item["segments"][0]["evidenceRefs"])
+        self.assertTrue(
+            all(
+                reference["kind"] == "event"
+                and reference["type"] == "event"
+                and reference["referenceKind"] == "event"
+                for reference in item["segments"][0]["evidenceRefs"]
+            )
+        )
+        self.assertFalse(item["maySupportFacts"])
 
     def test_memory_reads_hide_sensitive_and_cross_project_change_rows(self) -> None:
         self._insert_atom(

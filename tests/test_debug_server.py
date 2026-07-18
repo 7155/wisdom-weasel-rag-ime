@@ -290,6 +290,29 @@ class DebugImeServiceTests(unittest.TestCase):
             tags=("curated",),
             privacy_disposition="allowed",
         )
+        timestamp = int(time.time() * 1_000)
+        with plain_core._connect() as conn:
+            event_id = int(
+                conn.execute("SELECT id FROM input_events ORDER BY id DESC LIMIT 1").fetchone()[0]
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, source_event_ids_json,
+                    source_memory_ids_json, scope_project, confidence,
+                    quality_score, privacy_level, status, created_at_ms,
+                    updated_at_ms
+                ) VALUES ('atom:mars-plan', 'fact', ?, ?, ?, '[]', '', 0.9,
+                          0.9, 'local', 'active', ?, ?)
+                """,
+                (
+                    "赤色星球探索计划",
+                    "赤色星球探索计划",
+                    json.dumps([event_id]),
+                    timestamp,
+                    timestamp,
+                ),
+            )
 
         vector_core = LocalSqliteCoreClient(db_path, embedding_provider=MarsEmbeddingProvider(), vector_weight=2.0)
         service = DebugImeService(
@@ -317,6 +340,29 @@ class DebugImeServiceTests(unittest.TestCase):
             tags=("curated",),
             privacy_disposition="allowed",
         )
+        timestamp = int(time.time() * 1_000)
+        with plain_core._connect() as conn:
+            event_id = int(
+                conn.execute("SELECT id FROM input_events ORDER BY id DESC LIMIT 1").fetchone()[0]
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, source_event_ids_json,
+                    source_memory_ids_json, scope_project, confidence,
+                    quality_score, privacy_level, status, created_at_ms,
+                    updated_at_ms
+                ) VALUES ('atom:mars-plan', 'fact', ?, ?, ?, '[]', '', 0.9,
+                          0.9, 'local', 'active', ?, ?)
+                """,
+                (
+                    "赤色星球探索计划",
+                    "赤色星球探索计划",
+                    json.dumps([event_id]),
+                    timestamp,
+                    timestamp,
+                ),
+            )
         vector_core = LocalSqliteCoreClient(
             db_path,
             embedding_provider=MarsEmbeddingProvider(),
@@ -1567,6 +1613,26 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(metadata["selectedTextSha256"], digest)
         self.assertNotIn("rawText", metadata)
         self.assertNotIn("不允许", raw)
+
+    def test_commit_rejects_terminal_accessibility_scrollback_as_input(self) -> None:
+        before = self.service.core.event_count()
+        committed = self.service.commit(
+            {
+                "text": "终端 AXValue 返回的整屏滚动缓冲区",
+                "privacyDisposition": "allowed",
+                "source": "squirrel_input_segment",
+                "app": "com.mitchellh.ghostty",
+                "captureMetadata": {
+                    "captureSource": "accessibility",
+                    "fieldContextChars": 3123,
+                    "imeBufferChars": 24,
+                },
+            }
+        )
+
+        self.assertFalse(committed["stored"])
+        self.assertEqual(committed["eventId"], "skipped:accessibility_context_not_input")
+        self.assertEqual(self.service.core.event_count(), before)
 
     def test_foreground_write_apis_return_no_store_receipts_without_explicit_allowed(self) -> None:
         before_events = self.service.core.event_count()

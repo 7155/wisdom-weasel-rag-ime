@@ -212,10 +212,10 @@ index f998248..a56500e 100644
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000..4a71c5f
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,1028 @@
+@@ -0,0 +1,1124 @@
 +import AppKit
 +import QuartzCore
 +
@@ -1025,6 +1025,7 @@ index 0000000..4a71c5f
 +
 +    let windowContext = object(contextView["windowContext"])
 +    let windowNodes = array(windowContext["nodes"])
++    let sourceNodeCount = integer(windowContext["sourceNodeCount"])
 +    let windowApplication = object(windowContext["application"])
 +    var windowLines: [String] = []
 +    let appName = string(windowApplication["name"])
@@ -1053,6 +1054,12 @@ index 0000000..4a71c5f
 +      let actions = array(node["actions"]).map { string($0) }.filter { !$0.isEmpty }
 +      if !actions.isEmpty { windowLines.append("   动作：\(actions.joined(separator: ", "))") }
 +    }
++    if sourceNodeCount > windowNodes.count {
++      windowLines.insert(
++        "已从 \(sourceNodeCount) 个 AX 元素中提取 \(windowNodes.count) 个可读文本节点；控件与结构节点未发送给模型。",
++        at: 0
++      )
++    }
 +    if windowNodes.isEmpty {
 +      let semanticText = string(windowContext["semanticText"])
 +      if !semanticText.isEmpty { windowLines.append(semanticText) }
@@ -1063,22 +1070,7 @@ index 0000000..4a71c5f
 +      let detail = captureMode.isEmpty ? "AX 未返回可读节点" : "AX 未返回可读节点（\(captureMode)，\(nodeCount) 个节点）"
 +      windowLines.append(detail)
 +    }
-+    appendSection("AX 窗口上下文", windowLines.joined(separator: "\n"))
-+
-+    let recentInputs = array(contextView["recentCompleteInputs"])
-+    var recentLines: [String] = []
-+    for (index, value) in recentInputs.enumerated() {
-+      let item = object(value)
-+      let text = firstNonEmptyString(item, keys: ["textPreview", "text", "summary", "title"])
-+      if !text.isEmpty { recentLines.append("\(index + 1). \(text)") }
-+    }
-+    if recentLines.isEmpty {
-+      let reportedCount = integer(transaction["timelineRecentInputRecordCount"])
-+      recentLines.append(reportedCount > 0
-+        ? "Pi 报告使用了 \(reportedCount) 条历史补充，但本轮未返回可显示文本"
-+        : "本轮没有追加历史输入")
-+    }
-+    appendSection("历史补充", recentLines.joined(separator: "\n"))
++    appendSection("AX 文本上下文", windowLines.joined(separator: "\n"))
 +
 +    let planning = object(contextView["planning"])
 +    let planningItems = array(planning["items"])
@@ -1088,33 +1080,117 @@ index 0000000..4a71c5f
 +      let title = firstNonEmptyString(item, keys: ["title", "detail", "notes"])
 +      if !title.isEmpty { planningLines.append("\(index + 1). \(title)") }
 +    }
-+    if !planningLines.isEmpty { appendSection("计划与任务", planningLines.joined(separator: "\n")) }
++    if !planningLines.isEmpty { appendSection("当前规划与任务", planningLines.joined(separator: "\n")) }
 +
-+    var evidenceLines: [String] = []
-+    var seenEvidence = Set<String>()
-+    for value in array(contextView["evidenceHints"]) {
++    let activityTimeline = object(contextView["activityTimeline"])
++    let timelineFallback = object(contextView["timeline"])
++    let timelineItems = firstNonEmptyArray(
++      activityTimeline.isEmpty ? timelineFallback : activityTimeline,
++      keys: ["recentActivities", "semanticTasks", "items", "recentDecisions"]
++    )
++    var timelineLines: [String] = []
++    for (index, value) in timelineItems.enumerated() {
 +      let item = object(value)
-+      let text = item.isEmpty ? string(value) : firstNonEmptyString(item, keys: ["text", "preview", "title"])
++      let text = evidenceDisplayText(item)
++      if !text.isEmpty { timelineLines.append("\(index + 1). \(text)") }
++    }
++    if !timelineLines.isEmpty {
++      appendSection("最近批准时间线", timelineLines.joined(separator: "\n"))
++    }
++
++    let groundingEvidence = array(contextView["groundingEvidence"])
++    var factLines: [String] = []
++    var bookLines: [String] = []
++    var otherEvidenceLines: [String] = []
++    var seenEvidence = Set<String>()
++    for value in groundingEvidence {
++      let item = object(value)
++      let text = evidenceDisplayText(item)
 +      let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-+      if !normalized.isEmpty, seenEvidence.insert(normalized).inserted {
-+        evidenceLines.append("\(evidenceLines.count + 1). \(normalized)")
++      guard !normalized.isEmpty, seenEvidence.insert(normalized).inserted else { continue }
++      let sourceType = firstNonEmptyString(item, keys: ["documentType", "docType", "sourceType", "sourceLane"]).lowercased()
++      if sourceType.contains("atom") || sourceType.contains("fact") {
++        factLines.append("\(factLines.count + 1). \(normalized)")
++      } else if sourceType.contains("book") {
++        bookLines.append("\(bookLines.count + 1). \(normalized)")
++      } else {
++        otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(normalized)")
 +      }
 +    }
-+    if evidenceLines.isEmpty {
-+      for card in payload.sourceCards {
-+        let text = [card.title, card.evidencePreview].filter { !$0.isEmpty }.joined(separator: "：")
-+        if !text.isEmpty, seenEvidence.insert(text).inserted {
-+          evidenceLines.append("\(evidenceLines.count + 1). \(text)")
++    if !factLines.isEmpty { appendSection("当前事实 · Atom", factLines.joined(separator: "\n")) }
++    if !bookLines.isEmpty { appendSection("主题书 · Book", bookLines.joined(separator: "\n")) }
++
++    if groundingEvidence.isEmpty {
++      for value in array(contextView["evidenceHints"]) {
++        let item = object(value)
++        let text = item.isEmpty ? string(value) : evidenceDisplayText(item)
++        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
++        if !normalized.isEmpty, seenEvidence.insert(normalized).inserted {
++          otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(normalized)")
 +        }
 +      }
 +    }
-+    if evidenceLines.isEmpty {
++    if factLines.isEmpty && bookLines.isEmpty && otherEvidenceLines.isEmpty {
++      for card in payload.sourceCards {
++        let text = [card.title, card.evidencePreview].filter { !$0.isEmpty }.joined(separator: "：")
++        if !text.isEmpty, seenEvidence.insert(text).inserted {
++          otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(text)")
++        }
++      }
++    }
++    if otherEvidenceLines.isEmpty && factLines.isEmpty && bookLines.isEmpty {
 +      let evidenceCount = integer(transaction["evidenceCount"])
-+      evidenceLines.append(evidenceCount > 0
++      otherEvidenceLines.append(evidenceCount > 0
 +        ? "已召回 \(evidenceCount) 条依据，但本轮未返回可显示片段"
 +        : "本轮没有注入 RAG 依据")
 +    }
-+    appendSection("RAG 依据", evidenceLines.joined(separator: "\n"))
++    if !otherEvidenceLines.isEmpty {
++      appendSection("其他 RAG 依据", otherEvidenceLines.joined(separator: "\n"))
++    }
++
++    let recentInputs = array(contextView["recentCompleteInputs"])
++    var recentLines: [String] = []
++    for (index, value) in recentInputs.prefix(4).enumerated() {
++      let item = object(value)
++      let text = firstNonEmptyString(item, keys: ["textPreview", "text", "summary", "title"])
++      if !text.isEmpty { recentLines.append("\(index + 1). \(text)") }
++    }
++    if recentLines.isEmpty {
++      let reportedCount = integer(transaction["timelineRecentInputRecordCount"])
++      recentLines.append(reportedCount > 0
++        ? "存在最近完整输入，但本轮模型请求未注入可显示原文"
++        : "本轮没有追加最近完整输入")
++    }
++    appendSection("最近完整输入 · 仅用于承接", recentLines.joined(separator: "\n"))
++
++    let contextBudget = object(contextView["contextBudget"])
++    if !contextBudget.isEmpty {
++      var budgetLines: [String] = []
++      let budgetLabels = [
++        ("tokenBudget", "总预算"),
++        ("reservedOutputTokens", "预留输出"),
++        ("availableContextTokens", "可用上下文"),
++        ("estimatedContextTokens", "已估算使用"),
++        ("remainingContextTokens", "剩余"),
++      ]
++      for (key, label) in budgetLabels {
++        if case .number(let value)? = contextBudget[key] {
++          budgetLines.append("\(label)：\(Int(value)) tokens")
++        }
++      }
++      if case .bool(let withinBudget)? = contextBudget["withinSoftBudget"] {
++        budgetLines.append("软预算：\(withinBudget ? "未超出" : "已超出")")
++      }
++      let sourceTokens = object(contextBudget["contextSourceTokens"])
++      if !sourceTokens.isEmpty {
++        let details = sourceTokens.keys.sorted().compactMap { key -> String? in
++          guard case .number(let value)? = sourceTokens[key] else { return nil }
++          return "\(key) \(Int(value))"
++        }
++        if !details.isEmpty { budgetLines.append("来源：\(details.joined(separator: " · "))") }
++      }
++      if !budgetLines.isEmpty { appendSection("上下文预算", budgetLines.joined(separator: "\n")) }
++    }
 +
 +    if sectionCount == 0 { appendSection("上下文", "本轮上下文不可用") }
 +    return RagImeAssistantContextInspectorDocument(
@@ -1159,6 +1235,26 @@ index 0000000..4a71c5f
 +      if !value.isEmpty { return value }
 +    }
 +    return ""
++  }
++
++  private static func firstNonEmptyArray(
++    _ object: [String: RagImeJSONValue],
++    keys: [String]
++  ) -> [RagImeJSONValue] {
++    for key in keys {
++      let values = array(object[key])
++      if !values.isEmpty { return values }
++    }
++    return []
++  }
++
++  private static func evidenceDisplayText(_ item: [String: RagImeJSONValue]) -> String {
++    let title = firstNonEmptyString(item, keys: ["title", "label"])
++    let detail = firstNonEmptyString(item, keys: ["preview", "text", "summary", "detail"])
++    if title.isEmpty { return detail }
++    if detail.isEmpty || detail == title || detail.contains(title) { return detail.isEmpty ? title : detail }
++    if title.contains(detail) { return title }
++    return "\(title)：\(detail)"
 +  }
 +}
 +
@@ -1246,7 +1342,7 @@ index 0000000..4a71c5f
 +}
 diff --git a/sources/RagImeAssistantSurfaceState.swift b/sources/RagImeAssistantSurfaceState.swift
 new file mode 100644
-index 0000000..2133b47
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeAssistantSurfaceState.swift
 @@ -0,0 +1,47 @@
@@ -1299,7 +1395,7 @@ index 0000000..2133b47
 +}
 diff --git a/sources/RagImeNonActivatingPanel.swift b/sources/RagImeNonActivatingPanel.swift
 new file mode 100644
-index 0000000..1d81111
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeNonActivatingPanel.swift
 @@ -0,0 +1,6 @@
@@ -1626,6 +1722,9 @@ index 0000000..ac51054
 +    guard allowAccessibility else {
 +      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "accessibility_disabled")
 +    }
++    guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId else {
++      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "front_app_changed")
++    }
 +    guard let focused = focusedTextElement() else {
 +      let reason = AXIsProcessTrusted() ? "ax_focused_element_missing" : "ax_not_trusted"
 +      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: reason)
@@ -1641,6 +1740,9 @@ index 0000000..ac51054
 +        beforeLimit: beforeLimit,
 +        afterLimit: afterLimit
 +       ) {
++      guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId else {
++        return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "front_app_changed_during_capture")
++      }
 +      return RagImeForegroundTextCaptureResult(snapshot: snapshot, failureReason: "")
 +    }
 +    if let snapshot = foregroundSnapshotFromWholeValue(
@@ -1652,6 +1754,9 @@ index 0000000..ac51054
 +      beforeLimit: beforeLimit,
 +      afterLimit: afterLimit
 +    ) {
++      guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId else {
++        return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "front_app_changed_during_capture")
++      }
 +      return RagImeForegroundTextCaptureResult(snapshot: snapshot, failureReason: "")
 +    }
 +    let reason = selectedRange == nil ? "ax_selected_range_unavailable" : "ax_string_for_range_failed"
@@ -3719,7 +3824,7 @@ index 0000000..dcf3ace
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
-index 0000000..c044279
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
 @@ -0,0 +1,1264 @@
@@ -4989,7 +5094,7 @@ index 0000000..c044279
 +}
 diff --git a/sources/RagImeSuggestionRowView.swift b/sources/RagImeSuggestionRowView.swift
 new file mode 100644
-index 0000000..8d958e9
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeSuggestionRowView.swift
 @@ -0,0 +1,227 @@
@@ -5254,13 +5359,16 @@ index c2adf74..2995b7e 100644
  
  final class SquirrelInputController: IMKInputController {
    private static let keyRollOver = 50
-@@ -27,6 +28,98 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +28,102 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
 +  private var ragImePanelUpdateGeneration: UInt = 0
 +  private var ragImeReuseChromiumPanelPosition = false
 +  private var ragImeChromiumAssistantAnchor: NSPoint?
++  private var ragImeDeferredDeactivateWorkItem: DispatchWorkItem?
++  private var ragImeDeferredDeactivateGeneration: UInt = 0
++  private var ragImeDeferredDeactivateApp: String = ""
 +  private var ragImeSidecarClient: RagImeSidecarClient?
 +  private var ragImeLatestNativeRawInput: String = ""
 +  private var ragImeLatestNativeCandidates: [String] = []
@@ -5369,7 +5477,7 @@ index c2adf74..2995b7e 100644
  
      switch event.type {
      case .flagsChanged:
-@@ -85,221 +176,5568 @@ final class SquirrelInputController: IMKInputController {
+@@ -85,221 +176,5851 @@ final class SquirrelInputController: IMKInputController {
            buffer.insert((keycode: rimeKeycode, modifier: rimeModifiers | kReleaseMask.rawValue), at: 0)
          }
        }
@@ -5910,6 +6018,7 @@ index c2adf74..2995b7e 100644
 +      finalizeRagImeActiveInputBuffer(reason: "front_app_changed", app: previousApp)
 +      invalidateRagImeForegroundTransaction(reason: "front_app_changed")
 +      dismissRagImeAssistantOverlay(reason: "front_app_changed")
++      ragImeChromiumAssistantAnchor = nil
 +      currentApp = resolvedBundleId
 +      if session != 0 {
 +        updateAppOptions()
@@ -5937,7 +6046,20 @@ index c2adf74..2995b7e 100644
 +  }
 +
 +  override func activateServer(_ sender: Any!) {
-+    refreshRagImeInputClient(sender, reason: "activate_server")
++    let deferredApp = ragImeDeferredDeactivateApp
++    let hadDeferredDeactivate = ragImeDeferredDeactivateWorkItem != nil
++    ragImeDeferredDeactivateGeneration &+= 1
++    ragImeDeferredDeactivateWorkItem?.cancel()
++    ragImeDeferredDeactivateWorkItem = nil
++    ragImeDeferredDeactivateApp = ""
++    let activatedApp = refreshRagImeInputClient(sender, reason: "activate_server")
++    if hadDeferredDeactivate {
++      traceRagImeFrontendEvent("deactivate_server_recovered", fields: [
++        "deferredAppBundleId": deferredApp,
++        "activatedAppBundleId": activatedApp,
++        "sameAppClientRotation": !deferredApp.isEmpty && deferredApp == activatedApp,
++      ])
++    }
 +    var keyboardLayout = NSApp.squirrelAppDelegate.config?.getString("keyboard_layout") ?? ""
 +    if keyboardLayout == "last" || keyboardLayout == "" {
 +      keyboardLayout = ""
@@ -5980,17 +6102,41 @@ index c2adf74..2995b7e 100644
 +  }
 +
 +  override func deactivateServer(_ sender: Any!) {
-+    hidePalettes()
 +    commitComposition(sender)
-+    finalizeRagImeActiveInputBuffer(reason: "deactivate_server", app: currentApp)
-+    invalidateRagImeForegroundTransaction(reason: "deactivate_server")
-+    client = nil
++    // Chromium/Electron regularly rotates IMK clients inside the same editor.
++    // Treat deactivate+activate as a short handoff instead of immediately
++    // destroying the model request and overlay. A real deactivation still
++    // performs the full cleanup after the grace window.
++    ragImeDeferredDeactivateWorkItem?.cancel()
++    ragImeDeferredDeactivateGeneration &+= 1
++    let generation = ragImeDeferredDeactivateGeneration
++    let deactivatedApp = currentApp
++    ragImeDeferredDeactivateApp = deactivatedApp
++    let workItem = DispatchWorkItem { [weak self] in
++      guard let self, generation == self.ragImeDeferredDeactivateGeneration else { return }
++      self.ragImeDeferredDeactivateWorkItem = nil
++      self.ragImeDeferredDeactivateApp = ""
++      self.hidePalettes()
++      self.finalizeRagImeActiveInputBuffer(reason: "deactivate_server", app: deactivatedApp)
++      self.invalidateRagImeForegroundTransaction(reason: "deactivate_server")
++      self.ragImeChromiumAssistantAnchor = nil
++      self.client = nil
++      self.traceRagImeFrontendEvent("deactivate_server_applied", fields: [
++        "frontAppBundleId": deactivatedApp,
++        "graceMs": 450,
++      ])
++    }
++    ragImeDeferredDeactivateWorkItem = workItem
++    traceRagImeFrontendEvent("deactivate_server_deferred", fields: [
++      "frontAppBundleId": deactivatedApp,
++      "graceMs": 450,
++    ])
++    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(450), execute: workItem)
 +  }
 +
 +  override func hidePalettes() {
 +    ragImePanelUpdateGeneration &+= 1
 +    ragImeReuseChromiumPanelPosition = false
-+    ragImeChromiumAssistantAnchor = nil
 +    NSApp.squirrelAppDelegate.panel?.hide()
 +    super.hidePalettes()
 +  }
@@ -10395,6 +10541,9 @@ index c2adf74..2995b7e 100644
 +    currentApp == "com.google.Chrome"
 +      || currentApp == "com.microsoft.edgemac"
 +      || currentApp == "com.openai.codex"
++      || currentApp == "com.microsoft.VSCode"
++      || currentApp == "com.todesktop.230313mzl4w4u92"
++      || currentApp == "com.exafunction.windsurf"
 +  }
 +
 +  func ragImeCandidateSourceBadgesEnabled() -> Bool {
@@ -10950,6 +11099,20 @@ index c2adf74..2995b7e 100644
 +    let imeText = ragImeCompactWhitespace(ragImeActiveInputBuffer)
 +    ragImeActiveInputBuffer = ""
 +    ragImeActiveInputBufferUpdatedAt = .distantPast
++    // Return, app activation and server shutdown can all reach this method.
++    // AX text is context evidence, not proof that the user submitted text.
++    // Without a fragment committed by this input method there is no input
++    // transaction to persist.
++    guard !imeText.isEmpty else {
++      traceRagImeFrontendEvent("input_segment_finalize_suppressed", fields: [
++        "reason": reason,
++        "privacyDisposition": ragImePrivacyDisposition,
++        "textChars": 0,
++        "frontAppBundleId": app,
++        "suppressionReason": "ime_input_transaction_empty",
++      ])
++      return
++    }
 +    // This path performs its own authoritative field probe below. Only the
 +    // synchronous deterministic guards run here; a stale cached `unknown`
 +    // must not discard the user's first Return before that probe completes.
@@ -10997,7 +11160,12 @@ index c2adf74..2995b7e 100644
 +        let axText = self.boundedRagImeFinalizedAccessibilityContext(
 +          axResult.snapshot
 +        )
-+        if axText.count > fieldText.count {
++        if axText.count > fieldText.count
++          && self.ragImeAccessibilityCanRepresentFinalizedInput(
++            fieldText: axText,
++            imeText: imeText,
++            sourceAppBundleId: app
++          ) {
 +          fieldText = axText
 +          fieldSource = "accessibility"
 +          fieldFailureReason = ""
@@ -11079,6 +11247,14 @@ index c2adf74..2995b7e 100644
 +      fallbackReason = fieldFailureReason.isEmpty
 +        ? "field_context_empty"
 +        : fieldFailureReason
++    } else if !ragImeAccessibilityCanRepresentFinalizedInput(
++      fieldText: compactFieldText,
++      imeText: compactImeText,
++      sourceAppBundleId: ""
++    ) {
++      selectedText = compactImeText
++      captureSource = "ime_active_buffer"
++      fallbackReason = "field_context_not_bound_to_ime_transaction"
 +    } else if !compactImeText.isEmpty && compactFieldText.count < compactImeText.count {
 +      selectedText = compactImeText
 +      captureSource = "ime_active_buffer"
@@ -11098,6 +11274,31 @@ index c2adf74..2995b7e 100644
 +      selectionRule: "field_context_if_not_shorter_else_ime_buffer"
 +    )
 +    return RagImeFinalizedInputCapture(text: selectedText, metadata: metadata)
++  }
++
++  func ragImeAccessibilityCanRepresentFinalizedInput(
++    fieldText: String,
++    imeText: String,
++    sourceAppBundleId: String
++  ) -> Bool {
++    let normalizedField = ragImeCompactWhitespace(fieldText)
++    let normalizedIme = ragImeCompactWhitespace(imeText)
++    guard !normalizedField.isEmpty, !normalizedIme.isEmpty else { return false }
++    // Terminal AXValue is the scrollback buffer, not an editable text field.
++    // It must remain transient context and must never become input history.
++    let terminalBundleIds: Set<String> = [
++      "com.mitchellh.ghostty",
++      "com.apple.Terminal",
++      "com.googlecode.iterm2",
++      "dev.warp.Warp-Stable",
++    ]
++    if terminalBundleIds.contains(sourceAppBundleId) { return false }
++    // A full-field capture is authoritative only when it is tied to the same
++    // IME transaction. This rejects stale AX focus and unrelated page text.
++    return normalizedField.range(
++      of: normalizedIme,
++      options: [.backwards, .literal]
++    ) != nil
 +  }
 +
 +  func finishRagImeFinalizedInputCapture(

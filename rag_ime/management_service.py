@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .activity_timeline import activity_timeline_period
 from .agent_memory_sources import AgentMemorySourceStore
 from .config_portability import (
     apply_user_configuration,
@@ -51,6 +52,7 @@ from .management_work_contract import (
 )
 from .retrieval_docs import rebuild_retrieval_docs
 from .runtime_config import RuntimeConfigSnapshot
+from .sensitive_content import contains_sensitive_content, is_sensitive_mapping_key
 from .settings_store import ManagementSettingsStore, record_management_audit
 from .text_utils import compact_whitespace
 from .voice_control import read_voice_control_status, resolve_voice_support_directory
@@ -608,6 +610,7 @@ class ManagementService:
             "apps": self._memory_apps,
             "books": self._memory_books,
             "atoms": self._memory_atoms,
+            "timelines": self._memory_timelines,
             "tags": self._memory_tags,
             "phrases": self._memory_phrases,
             "evidence": self._memory_evidence,
@@ -629,12 +632,54 @@ class ManagementService:
             in {
                 "books",
                 "atoms",
+                "timelines",
                 "phrases",
                 "evidence",
                 "tags",
                 "groups",
                 "negative",
             },
+        }
+
+    def memory_reference(self, kind: str, reference_id: str) -> dict[str, object]:
+        """Resolve one stable memory reference without exposing unsafe raw text."""
+
+        normalized_kind = compact_whitespace(kind).lower()
+        allowed_kinds = {
+            "event",
+            "evidence",
+            "atom",
+            "book",
+            "timeline",
+            "role_book_revision",
+        }
+        if normalized_kind not in allowed_kinds:
+            raise ValueError(f"unsupported memory reference kind: {normalized_kind}")
+        identifier = compact_whitespace(reference_id)
+        if not identifier or len(identifier) > 240:
+            raise ValueError("memory reference id must contain 1 to 240 characters")
+        if "/" in identifier or "\\" in identifier or identifier in {".", ".."}:
+            raise ValueError("memory reference id is not a safe path component")
+
+        with self._connect() as conn:
+            resolver = {
+                "event": self._memory_reference_event,
+                "evidence": self._memory_reference_evidence,
+                "atom": self._memory_reference_atom,
+                "book": self._memory_reference_book,
+                "timeline": self._memory_reference_timeline,
+                "role_book_revision": self._memory_reference_role_book_revision,
+            }[normalized_kind]
+            resolved = resolver(conn, identifier)
+        if resolved is None:
+            raise ValueError("memory reference was not found or is not visible")
+        return {
+            **self.revision().payload(),
+            "schemaVersion": "rag-ime.memory-reference.v1",
+            "ok": True,
+            "kind": normalized_kind,
+            "referenceId": identifier,
+            **resolved,
         }
 
     def history_page(self, request: PageRequest) -> dict[str, object]:
@@ -645,18 +690,22 @@ class ManagementService:
                 """
                 SELECT id, created_at_ms, source, committed_text, recent_context, app,
                        project, provider_name, context_group_id, context_group_level
-                FROM input_events
-                WHERE (? = 0 OR id < ?)
-                  AND (? = '' OR source = ?)
-                  AND (? = '' OR committed_text LIKE ? OR app LIKE ? OR project LIKE ?)
+                FROM input_events AS event
+                WHERE (? = 0 OR event.id < ?)
+                  AND (? = '' OR event.source = ?)
+                  AND (? = '' OR event.committed_text LIKE ? OR event.app LIKE ? OR event.project LIKE ?)
                   AND NOT EXISTS (
                     SELECT 1
                     FROM memory_tombstones tombstone
-                    WHERE tombstone.target_type = 'memory_id'
-                      AND tombstone.target_value = ('event:' || input_events.id)
-                      AND tombstone.active = 1
+                    WHERE tombstone.active = 1
+                      AND (
+                           (tombstone.target_type = 'source_event_id'
+                            AND tombstone.target_value = CAST(event.id AS TEXT))
+                        OR (tombstone.target_type = 'memory_id'
+                            AND tombstone.target_value = ('event:' || event.id))
+                      )
                   )
-                ORDER BY id DESC LIMIT ?
+                ORDER BY event.id DESC LIMIT ?
                 """,
                 (cursor, cursor, request.status, request.status, request.query, query, query, query, request.limit + 1),
             ).fetchall()
@@ -708,13 +757,28 @@ class ManagementService:
                        EXISTS (
                            SELECT 1
                            FROM memory_tombstones tombstone
-                           WHERE tombstone.target_type = 'memory_id'
-                             AND tombstone.target_value = ('event:' || event.id)
-                             AND tombstone.active = 1
+                           WHERE tombstone.active = 1
+                             AND (
+                                  (tombstone.target_type = 'source_event_id'
+                                   AND tombstone.target_value = CAST(event.id AS TEXT))
+                               OR (tombstone.target_type = 'memory_id'
+                                   AND tombstone.target_value = ('event:' || event.id))
+                             )
                        ) AS hidden
                 FROM input_events event
                 LEFT JOIN memory_state state ON state.event_id = event.id
                 WHERE event.id = ?
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM memory_tombstones tombstone
+                      WHERE tombstone.active = 1
+                        AND (
+                             (tombstone.target_type = 'source_event_id'
+                              AND tombstone.target_value = CAST(event.id AS TEXT))
+                          OR (tombstone.target_type = 'memory_id'
+                              AND tombstone.target_value = ('event:' || event.id))
+                        )
+                  )
                 LIMIT 1
                 """,
                 (parsed_event_id,),
@@ -2657,6 +2721,7 @@ class ManagementService:
         like = f"%{request.query}%"
         event_ranges: dict[str, tuple[int, int]] = {}
         atoms_by_book: dict[str, list[dict[str, object]]] = {}
+        evidence_refs_by_book: dict[str, list[dict[str, object]]] = {}
         owner_clause, owner_params = _page_owner_filter(request, table_alias="memory_books")
         with self._connect() as conn:
             rows = conn.execute(
@@ -2692,6 +2757,10 @@ class ManagementService:
                     ).fetchone()
                     if range_row is not None and range_row[0] is not None:
                         event_ranges[str(row["id"])] = (int(range_row[0]), int(range_row[1]))
+                    evidence_refs_by_book[str(row["id"])] = _event_reference_refs(
+                        conn,
+                        event_ids,
+                    )
                 atom_ids = [str(value) for value in _json_list(row["memory_atom_ids_json"]) if str(value)]
                 if atom_ids:
                     atom_placeholders = ",".join("?" for _ in atom_ids)
@@ -2714,6 +2783,14 @@ class ManagementService:
                         ),
                     ).fetchall()
                     atoms_by_book[str(row["id"])] = [dict(atom) for atom in atom_rows]
+                    evidence_refs_by_book.setdefault(str(row["id"]), []).extend(
+                        _canonical_reference(
+                            "atom",
+                            str(atom["id"]),
+                            label=_safe_reference_preview(str(atom["text"] or "")),
+                        )
+                        for atom in atom_rows
+                    )
         has_more = len(rows) > limit
         rows = rows[:limit]
         items: list[dict[str, object]] = []
@@ -2732,6 +2809,13 @@ class ManagementService:
             item["archivedAtMs"] = int(item.pop("archived_at_ms", 0) or 0)
             item["lastActiveAtMs"] = int(item.pop("last_active_at_ms", 0) or 0)
             item["archiveReason"] = str(item.pop("archive_reason", "") or "")
+            book_id = str(item["id"])
+            item["source"] = {
+                "kind": "memory_book",
+                "id": book_id,
+            }
+            item["ref"] = _canonical_reference("book", book_id)
+            item["evidenceRefs"] = evidence_refs_by_book.get(book_id, [])[:80]
             items.append(item)
         next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
         return items, next_cursor
@@ -2741,6 +2825,7 @@ class ManagementService:
         cursor = _cursor_int(request.cursor)
         like = f"%{request.query}%"
         owner_clause, owner_params = _page_owner_filter(request, table_alias="memory_atoms")
+        evidence_refs_by_atom: dict[str, list[dict[str, object]]] = {}
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -2780,6 +2865,32 @@ class ManagementService:
                 WHERE mt.status = 'active' AND mt.source IN ('dsv4', 'user')
                 """
             ).fetchall()
+            for row in rows:
+                atom_id = str(row["id"])
+                event_ids = _positive_ints(_json_list(row["source_event_ids_json"]))
+                evidence_refs_by_atom[atom_id] = _event_reference_refs(conn, event_ids)
+                linked_evidence = conn.execute(
+                    """
+                    SELECT evidence.evidence_id, evidence.content_text
+                    FROM memory_atom_evidence_links AS link
+                    JOIN agent_memory_evidence AS evidence
+                      ON evidence.evidence_id = link.evidence_id
+                    WHERE link.memory_atom_id = ?
+                      AND evidence.project = ?
+                      AND evidence.status = 'active'
+                    ORDER BY evidence.occurred_at_ms DESC, evidence.evidence_id DESC
+                    LIMIT 40
+                    """,
+                    (atom_id, self.project),
+                ).fetchall()
+                evidence_refs_by_atom[atom_id].extend(
+                    _canonical_reference(
+                        "evidence",
+                        str(evidence["evidence_id"]),
+                        label=_safe_reference_preview(str(evidence["content_text"] or "")),
+                    )
+                    for evidence in linked_evidence
+                )
         tags_by_atom: dict[str, list[str]] = {}
         for atom_id, tag in tag_rows:
             tags_by_atom.setdefault(str(atom_id), []).append(str(tag))
@@ -2795,12 +2906,129 @@ class ManagementService:
             item["textHash"] = _text_hash(text)
             item["textChars"] = len(text)
             item["textPreview"] = text
-            item["sourceEventCount"] = len(_json_list(item.pop("source_event_ids_json", "[]")))
+            source_event_ids = _positive_ints(
+                _json_list(item.pop("source_event_ids_json", "[]"))
+            )
+            item["sourceEventCount"] = len(source_event_ids)
             item["tags"] = tags_by_atom.get(str(item["id"]), [])
             if str(item.get("type") or "") == "source_event_archive":
                 item["status"] = "source_archive"
+            atom_id = str(item["id"])
+            item["source"] = {"kind": "memory_atom", "id": atom_id}
+            item["ref"] = _canonical_reference("atom", atom_id)
+            item["evidenceRefs"] = evidence_refs_by_atom.get(atom_id, [])[:80]
             items.append(item)
         next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
+        return items, next_cursor
+
+    def _memory_timelines(
+        self,
+        request: PageRequest,
+    ) -> tuple[list[dict[str, object]], str]:
+        if request.visible_owners and ("user", "default") not in request.visible_owners:
+            return [], ""
+        limit = request.limit
+        cursor = _cursor_int(request.cursor)
+        like = f"%{request.query}%"
+        requested_status = "approved" if request.status == "active" else request.status
+        evidence_refs: dict[str, list[dict[str, object]]] = {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT rowid AS row_cursor, timeline_id, timeline_date, timezone,
+                       status, source_event_ids_json, source_event_hash,
+                       segments_json, summary_text, event_count, segment_count,
+                       approved_book_id, approved_by, approved_at_ms,
+                       rejection_reason, metadata_json, created_at_ms, updated_at_ms
+                FROM daily_activity_timelines
+                WHERE (? = 0 OR rowid < ?)
+                  AND (? = '' OR project = ?)
+                  AND (? = '' OR status = ?)
+                  AND (
+                      ? = ''
+                      OR timeline_date LIKE ?
+                      OR summary_text LIKE ?
+                      OR segments_json LIKE ?
+                  )
+                ORDER BY timeline_date DESC, updated_at_ms DESC, rowid DESC
+                LIMIT ?
+                """,
+                (
+                    cursor,
+                    cursor,
+                    request.project,
+                    request.project,
+                    requested_status,
+                    requested_status,
+                    request.query,
+                    like,
+                    like,
+                    like,
+                    limit + 1,
+                ),
+            ).fetchall()
+            has_more = len(rows) > limit
+            scanned_rows = rows[:limit]
+            next_cursor = (
+                str(scanned_rows[-1]["row_cursor"])
+                if has_more and scanned_rows
+                else ""
+            )
+            visible_rows: list[sqlite3.Row] = []
+            for row in scanned_rows:
+                timeline_id = str(row["timeline_id"])
+                event_ids = _positive_ints(
+                    _json_list(row["source_event_ids_json"])
+                )
+                if not _event_ids_visible(conn, event_ids):
+                    continue
+                evidence_refs[timeline_id] = _event_reference_refs(
+                    conn,
+                    event_ids,
+                )
+                visible_rows.append(row)
+            rows = visible_rows
+        items: list[dict[str, object]] = []
+        for row in rows:
+            timeline_id = str(row["timeline_id"])
+            raw_summary = compact_whitespace(str(row["summary_text"] or ""))
+            summary = _safe_reference_preview(raw_summary, maximum=1_800)
+            segments = _safe_timeline_segments(
+                _json_list(row["segments_json"]),
+                timezone_name=str(row["timezone"] or ""),
+            )
+            item = {
+                "id": timeline_id,
+                "timelineId": timeline_id,
+                "title": f"{str(row['timeline_date'])} 活动时间线",
+                "detail": summary,
+                "summary": summary,
+                "date": str(row["timeline_date"]),
+                "timezone": str(row["timezone"] or "local"),
+                "status": str(row["status"]),
+                "type": "timeline",
+                "eventCount": int(row["event_count"] or 0),
+                "taskCount": int(row["segment_count"] or 0),
+                "segmentCount": int(row["segment_count"] or 0),
+                "segments": segments,
+                "sourceEventHash": str(row["source_event_hash"] or ""),
+                "approvedBookId": str(row["approved_book_id"] or ""),
+                "approvedBy": str(row["approved_by"] or ""),
+                "approvedAtMs": int(row["approved_at_ms"] or 0),
+                "ownerKind": "user",
+                "ownerId": "default",
+                "createdAtMs": int(row["created_at_ms"] or 0),
+                "updatedAtMs": int(row["updated_at_ms"] or 0),
+                "source": {
+                    "kind": "input_event_set",
+                    "id": f"event-set:{str(row['source_event_hash'] or '')}",
+                },
+                "ref": _canonical_reference("timeline", timeline_id),
+                "evidenceRefs": evidence_refs.get(timeline_id, [])[:80],
+                "maySupportFacts": False,
+                "corroborationOnly": True,
+            }
+            items.append(item)
         return items, next_cursor
 
     def _memory_tags(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
@@ -3127,17 +3355,33 @@ class ManagementService:
         request: PageRequest,
     ) -> tuple[list[dict[str, object]], str]:
         limit = request.limit
-        cursor = _cursor_int(request.cursor)
+        offset = _cursor_int(request.cursor)
         like = f"%{request.query}%"
-        owner_clause, owner_params = _page_owner_filter(
-            request,
-            table_alias="source",
+        source_owner_clause, source_owner_params = _page_owner_filter(
+            request, table_alias="source"
         )
+        evidence_owner_sql = ""
+        evidence_owner_params: tuple[str, ...] = ()
+        if request.visible_owners:
+            owner_parts: list[str] = []
+            params: list[str] = []
+            for owner_kind, owner_id in request.visible_owners:
+                if owner_kind == "agent":
+                    owner_parts.append("evidence.role_id = ?")
+                    params.append(owner_id)
+                elif owner_kind == "user" and owner_id == "default":
+                    owner_parts.append("evidence.role_id = ''")
+            evidence_owner_sql = (
+                " AND (" + " OR ".join(owner_parts) + ")"
+                if owner_parts
+                else " AND 0 = 1"
+            )
+            evidence_owner_params = tuple(params)
         with self._connect() as conn:
-            rows = conn.execute(
+            source_rows = conn.execute(
                 f"""
                 SELECT
-                    event.id AS row_cursor,
+                    event.id AS input_event_id,
                     source.source_id,
                     source.source_kind,
                     source.trust_class,
@@ -3155,8 +3399,21 @@ class ManagementService:
                     event.app
                 FROM agent_memory_sources AS source
                 JOIN input_events AS event ON event.id = source.input_event_id
+                LEFT JOIN memory_state AS state ON state.event_id = event.id
                 WHERE source.status = 'active'
-                  AND (? = 0 OR event.id < ?)
+                  AND COALESCE(state.deleted, 0) = 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM memory_tombstones AS tombstone
+                      WHERE tombstone.active = 1
+                        AND (
+                             (tombstone.target_type = 'source_event_id'
+                              AND tombstone.target_value = CAST(event.id AS TEXT))
+                          OR (tombstone.target_type = 'memory_id'
+                              AND tombstone.target_value = ('event:' || event.id))
+                        )
+                  )
+                  AND (? = '' OR event.project = ?)
                   AND (
                       ? = ''
                       OR event.committed_text LIKE ?
@@ -3166,13 +3423,12 @@ class ManagementService:
                       OR event.app LIKE ?
                   )
                   AND (? = '' OR source.disposition = ?)
-                  AND {owner_clause}
-                ORDER BY event.id DESC
-                LIMIT ?
+                  AND {source_owner_clause}
+                ORDER BY source.created_at_ms DESC, source.source_id DESC
                 """,
                 (
-                    cursor,
-                    cursor,
+                    request.project,
+                    request.project,
                     request.query,
                     like,
                     like,
@@ -3181,27 +3437,68 @@ class ManagementService:
                     like,
                     request.status,
                     request.status,
-                    *owner_params,
-                    limit + 1,
+                    *source_owner_params,
                 ),
             ).fetchall()
-        has_more = len(rows) > limit
-        rows = rows[:limit]
+            agent_rows = conn.execute(
+                f"""
+                SELECT evidence_id, project, role_id, session_id, source_kind,
+                       source_id, content_text, content_sha256,
+                       provenance_json, metadata_json, privacy_class, status,
+                       occurred_at_ms, recorded_at_ms
+                FROM agent_memory_evidence AS evidence
+                WHERE (? = '' OR evidence.project = ?)
+                  AND (
+                      ? = ''
+                      OR evidence.content_text LIKE ?
+                      OR evidence.source_kind LIKE ?
+                      OR evidence.source_id LIKE ?
+                      OR evidence.role_id LIKE ?
+                      OR evidence.session_id LIKE ?
+                  )
+                  AND (? = '' OR evidence.status = ?)
+                  {evidence_owner_sql}
+                ORDER BY evidence.occurred_at_ms DESC, evidence.evidence_id DESC
+                """,
+                (
+                    request.project,
+                    request.project,
+                    request.query,
+                    like,
+                    like,
+                    like,
+                    like,
+                    like,
+                    request.status,
+                    request.status,
+                    *evidence_owner_params,
+                ),
+            ).fetchall()
+            agent_rows = [
+                row
+                for row in agent_rows
+                if _provenance_events_visible(
+                    conn,
+                    _json_mapping(row["provenance_json"]),
+                )
+            ]
+
         items: list[dict[str, object]] = []
-        for row in rows:
+        for row in source_rows:
             raw_text = compact_whitespace(str(row["committed_text"] or ""))
-            sensitive = (
+            sensitive = _reference_text_is_sensitive(raw_text) or (
                 str(row["disposition_reason"] or "") == "sensitive_input"
-                or looks_sensitive(raw_text)
             )
-            display_text = "敏感输入已排除，正文不显示" if sensitive else raw_text
+            display_text = _safe_reference_preview(raw_text)
             disposition = str(row["disposition"] or "pending")
+            source_id = str(row["source_id"])
+            event_id = int(row["input_event_id"])
             items.append(
                 {
-                    "id": str(row["source_id"]),
-                    "itemId": str(row["source_id"]),
+                    "id": source_id,
+                    "itemId": source_id,
                     "type": str(row["source_kind"] or "user_final"),
-                    "source": str(row["transport_source"] or ""),
+                    "transportSource": str(row["transport_source"] or ""),
                     "title": display_text[:160] or "空输入证据",
                     "detail": str(row["disposition_reason"] or "")
                     or _memory_disposition_label(disposition),
@@ -3221,7 +3518,9 @@ class ManagementService:
                     ),
                     "trustClass": str(row["trust_class"] or ""),
                     "curationRunId": str(row["curation_run_id"] or ""),
-                    "metadata": _json_mapping(row["metadata_json"]),
+                    "metadata": _sanitize_reference_value(
+                        _json_mapping(row["metadata_json"])
+                    ),
                     "createdAtMs": int(row["created_at_ms"] or 0),
                     "updatedAtMs": int(
                         row["disposition_updated_at_ms"]
@@ -3234,10 +3533,572 @@ class ManagementService:
                         disposition in {"not_for_memory", "expired"}
                         and not sensitive
                     ),
+                    "source": {
+                        "kind": "input_event",
+                        "id": str(event_id),
+                    },
+                    "ref": _canonical_reference("evidence", source_id),
+                    "evidenceRefs": [
+                        _canonical_reference(
+                            "event",
+                            str(event_id),
+                            label=display_text,
+                        )
+                    ],
+                    "occurredAtMs": int(row["created_at_ms"] or 0),
+                    "catalogSource": "agent_memory_sources",
                 }
             )
-        next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
-        return items, next_cursor
+        for row in agent_rows:
+            raw_text = compact_whitespace(str(row["content_text"] or ""))
+            sensitive = _reference_text_is_sensitive(raw_text)
+            evidence_id = str(row["evidence_id"])
+            role_id = str(row["role_id"] or "")
+            provenance = _sanitize_reference_value(
+                _json_mapping(row["provenance_json"])
+            )
+            event_refs = _event_refs_from_provenance(provenance)
+            items.append(
+                {
+                    "id": evidence_id,
+                    "itemId": evidence_id,
+                    "type": str(row["source_kind"] or "agent_evidence"),
+                    "title": _safe_reference_preview(raw_text)[:160]
+                    or "Agent 证据",
+                    "detail": str(row["source_kind"] or "agent_evidence"),
+                    "text": "" if sensitive else raw_text,
+                    "textPreview": _safe_reference_preview(raw_text),
+                    "textHash": "sha256:" + str(row["content_sha256"] or "")[:16],
+                    "textChars": len(raw_text),
+                    "sensitive": sensitive,
+                    "project": str(row["project"] or ""),
+                    "app": "",
+                    "ownerKind": "agent" if role_id else "user",
+                    "ownerId": role_id or "default",
+                    "status": str(row["status"] or "active"),
+                    "privacyClass": str(row["privacy_class"] or "local"),
+                    "sessionId": str(row["session_id"] or ""),
+                    "sourceId": _safe_reference_identifier(row["source_id"]),
+                    "provenance": provenance,
+                    "metadata": _sanitize_reference_value(
+                        _json_mapping(row["metadata_json"])
+                    ),
+                    "createdAtMs": int(row["recorded_at_ms"] or 0),
+                    "updatedAtMs": int(row["recorded_at_ms"] or 0),
+                    "occurredAtMs": int(row["occurred_at_ms"] or 0),
+                    "source": {
+                        "kind": "agent_memory_evidence",
+                        "id": evidence_id,
+                    },
+                    "ref": _canonical_reference("evidence", evidence_id),
+                    "evidenceRefs": event_refs,
+                    "canForget": False,
+                    "canRestore": False,
+                    "catalogSource": "agent_memory_evidence",
+                }
+            )
+        items.sort(
+            key=lambda item: (
+                -int(item.get("occurredAtMs") or item.get("createdAtMs") or 0),
+                str(item.get("id") or ""),
+            )
+        )
+        page = items[offset : offset + limit]
+        next_cursor = str(offset + limit) if offset + limit < len(items) else ""
+        return page, next_cursor
+
+    def _memory_reference_event(
+        self,
+        conn: sqlite3.Connection,
+        reference_id: str,
+    ) -> dict[str, object] | None:
+        event_id = _event_id_from_reference(reference_id)
+        row = conn.execute(
+            """
+            SELECT event.id, event.created_at_ms, event.source,
+                   event.committed_text, event.app, event.project,
+                   event.provider_name, event.tags_json, event.context_group_id,
+                   event.context_group_level, event.capture_metadata_json
+            FROM input_events AS event
+            LEFT JOIN memory_state AS state ON state.event_id = event.id
+            WHERE event.id = ?
+              AND (? = '' OR event.project IN ('', ?))
+              AND COALESCE(state.deleted, 0) = 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM memory_tombstones AS tombstone
+                  WHERE tombstone.active = 1
+                    AND (
+                         (tombstone.target_type = 'source_event_id'
+                          AND tombstone.target_value = CAST(event.id AS TEXT))
+                      OR (tombstone.target_type = 'memory_id'
+                          AND tombstone.target_value = ('event:' || event.id))
+                    )
+              )
+            LIMIT 1
+            """,
+            (event_id, self.project, self.project),
+        ).fetchone()
+        if row is None:
+            return None
+        raw_text = compact_whitespace(str(row["committed_text"] or ""))
+        sensitive = _reference_text_is_sensitive(raw_text)
+        canonical_id = str(int(row["id"]))
+        item = {
+            "id": canonical_id,
+            "title": _safe_reference_preview(raw_text)[:160] or "输入事件",
+            "text": "" if sensitive else raw_text,
+            "textPreview": _safe_reference_preview(raw_text),
+            "textHash": _text_hash(raw_text),
+            "textChars": len(raw_text),
+            "sensitive": sensitive,
+            "sourceKind": str(row["source"] or ""),
+            "app": str(row["app"] or ""),
+            "project": str(row["project"] or ""),
+            "provider": str(row["provider_name"] or ""),
+            "tags": _safe_reference_string_list(_json_list(row["tags_json"])),
+            "contextGroupId": _safe_reference_identifier(row["context_group_id"]),
+            "contextGroupLevel": str(row["context_group_level"] or ""),
+            "captureMetadata": _sanitize_reference_value(
+                _json_mapping(row["capture_metadata_json"])
+            ),
+            "status": "active",
+            "ownerKind": "user",
+            "ownerId": "default",
+            "occurredAtMs": int(row["created_at_ms"] or 0),
+            "createdAtMs": int(row["created_at_ms"] or 0),
+            "updatedAtMs": int(row["created_at_ms"] or 0),
+        }
+        return {
+            "item": item,
+            "source": {
+                "kind": "input_event",
+                "sourceKind": str(row["source"] or ""),
+                "id": canonical_id,
+            },
+            "ref": _canonical_reference("event", canonical_id),
+            "evidenceRefs": [],
+        }
+
+    def _memory_reference_evidence(
+        self,
+        conn: sqlite3.Connection,
+        reference_id: str,
+    ) -> dict[str, object] | None:
+        agent_row = conn.execute(
+            """
+            SELECT * FROM agent_memory_evidence
+            WHERE evidence_id = ? AND status = 'active'
+              AND (? = '' OR project = ?)
+            LIMIT 1
+            """,
+            (reference_id, self.project, self.project),
+        ).fetchone()
+        source_row = conn.execute(
+            """
+            SELECT source.*, event.id AS input_event_id,
+                   event.committed_text, event.source AS transport_source,
+                   event.app, event.project
+            FROM agent_memory_sources AS source
+            JOIN input_events AS event ON event.id = source.input_event_id
+            LEFT JOIN memory_state AS state ON state.event_id = event.id
+            WHERE source.source_id = ?
+              AND source.status = 'active'
+              AND source.disposition NOT IN ('not_for_memory', 'expired')
+              AND COALESCE(state.deleted, 0) = 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM memory_tombstones AS tombstone
+                  WHERE tombstone.active = 1
+                    AND (
+                         (tombstone.target_type = 'source_event_id'
+                          AND tombstone.target_value = CAST(event.id AS TEXT))
+                      OR (tombstone.target_type = 'memory_id'
+                          AND tombstone.target_value = ('event:' || event.id))
+                    )
+              )
+              AND (? = '' OR event.project = ?)
+            LIMIT 1
+            """,
+            (reference_id, self.project, self.project),
+        ).fetchone()
+        if agent_row is not None and not _provenance_events_visible(
+            conn,
+            _json_mapping(agent_row["provenance_json"]),
+        ):
+            agent_row = None
+        if agent_row is not None and source_row is not None:
+            raise ValueError("memory evidence reference is ambiguous")
+        if agent_row is not None:
+            raw_text = compact_whitespace(str(agent_row["content_text"] or ""))
+            sensitive = _reference_text_is_sensitive(raw_text)
+            provenance = _sanitize_reference_value(
+                _json_mapping(agent_row["provenance_json"])
+            )
+            role_id = str(agent_row["role_id"] or "")
+            return {
+                "item": {
+                    "id": reference_id,
+                    "title": _safe_reference_preview(raw_text)[:160]
+                    or "Agent 证据",
+                    "text": "" if sensitive else raw_text,
+                    "textPreview": _safe_reference_preview(raw_text),
+                    "textHash": "sha256:"
+                    + str(agent_row["content_sha256"] or "")[:16],
+                    "textChars": len(raw_text),
+                    "sensitive": sensitive,
+                    "sourceKind": str(agent_row["source_kind"] or ""),
+                    "sourceId": _safe_reference_identifier(agent_row["source_id"]),
+                    "sessionId": _safe_reference_identifier(agent_row["session_id"]),
+                    "project": str(agent_row["project"] or ""),
+                    "ownerKind": "agent" if role_id else "user",
+                    "ownerId": role_id or "default",
+                    "privacyClass": str(agent_row["privacy_class"] or "local"),
+                    "status": str(agent_row["status"] or "active"),
+                    "provenance": provenance,
+                    "metadata": _sanitize_reference_value(
+                        _json_mapping(agent_row["metadata_json"])
+                    ),
+                    "occurredAtMs": int(agent_row["occurred_at_ms"] or 0),
+                    "createdAtMs": int(agent_row["recorded_at_ms"] or 0),
+                    "updatedAtMs": int(agent_row["recorded_at_ms"] or 0),
+                },
+                "source": {
+                    "kind": "agent_memory_evidence",
+                    "sourceKind": str(agent_row["source_kind"] or ""),
+                    "id": reference_id,
+                },
+                "ref": _canonical_reference("evidence", reference_id),
+                "evidenceRefs": _event_refs_from_provenance(provenance),
+            }
+        if source_row is None:
+            return None
+        raw_text = compact_whitespace(str(source_row["committed_text"] or ""))
+        sensitive = _reference_text_is_sensitive(raw_text) or (
+            str(source_row["disposition_reason"] or "") == "sensitive_input"
+        )
+        event_id = int(source_row["input_event_id"])
+        return {
+            "item": {
+                "id": reference_id,
+                "title": _safe_reference_preview(raw_text)[:160] or "输入证据",
+                "text": "" if sensitive else raw_text,
+                "textPreview": _safe_reference_preview(raw_text),
+                "textHash": _text_hash(raw_text),
+                "textChars": len(raw_text),
+                "sensitive": sensitive,
+                "sourceKind": str(source_row["source_kind"] or ""),
+                "transportSource": str(source_row["transport_source"] or ""),
+                "app": str(source_row["app"] or ""),
+                "project": str(source_row["project"] or ""),
+                "ownerKind": str(source_row["owner_kind"] or "user"),
+                "ownerId": str(source_row["owner_id"] or "default"),
+                "status": str(source_row["disposition"] or "pending"),
+                "disposition": str(source_row["disposition"] or "pending"),
+                "dispositionReason": str(source_row["disposition_reason"] or ""),
+                "metadata": _sanitize_reference_value(
+                    _json_mapping(source_row["metadata_json"])
+                ),
+                "occurredAtMs": int(source_row["created_at_ms"] or 0),
+                "createdAtMs": int(source_row["created_at_ms"] or 0),
+                "updatedAtMs": int(
+                    source_row["disposition_updated_at_ms"]
+                    or source_row["created_at_ms"]
+                    or 0
+                ),
+            },
+            "source": {
+                "kind": "agent_memory_source",
+                "sourceKind": str(source_row["source_kind"] or ""),
+                "id": reference_id,
+            },
+            "ref": _canonical_reference("evidence", reference_id),
+            "evidenceRefs": [
+                _canonical_reference(
+                    "event",
+                    str(event_id),
+                    label=_safe_reference_preview(raw_text),
+                )
+            ],
+        }
+
+    def _memory_reference_atom(
+        self,
+        conn: sqlite3.Connection,
+        reference_id: str,
+    ) -> dict[str, object] | None:
+        row = conn.execute(
+            """
+            SELECT * FROM memory_atoms
+            WHERE id = ? AND privacy_level != 'sensitive'
+              AND status NOT IN ('hidden', 'tombstoned')
+              AND (? = '' OR COALESCE(scope_project, '') IN ('', ?))
+            LIMIT 1
+            """,
+            (reference_id, self.project, self.project),
+        ).fetchone()
+        if row is None:
+            return None
+        raw_text = compact_whitespace(
+            str(row["canonical_text"] or row["text"] or "")
+        )
+        sensitive = _reference_text_is_sensitive(raw_text)
+        evidence_refs = _event_reference_refs(
+            conn,
+            _positive_ints(_json_list(row["source_event_ids_json"])),
+        )
+        linked = conn.execute(
+            """
+            SELECT evidence.evidence_id, evidence.content_text
+            FROM memory_atom_evidence_links AS link
+            JOIN agent_memory_evidence AS evidence
+              ON evidence.evidence_id = link.evidence_id
+            WHERE link.memory_atom_id = ?
+              AND evidence.status = 'active'
+              AND (? = '' OR evidence.project = ?)
+            ORDER BY evidence.occurred_at_ms DESC, evidence.evidence_id DESC
+            LIMIT 60
+            """,
+            (reference_id, self.project, self.project),
+        ).fetchall()
+        evidence_refs.extend(
+            _canonical_reference(
+                "evidence",
+                str(evidence["evidence_id"]),
+                label=_safe_reference_preview(str(evidence["content_text"] or "")),
+            )
+            for evidence in linked
+        )
+        return {
+            "item": {
+                "id": reference_id,
+                "title": _safe_reference_preview(raw_text)[:160] or "记忆 Atom",
+                "text": "" if sensitive else raw_text,
+                "textPreview": _safe_reference_preview(raw_text),
+                "textHash": _text_hash(raw_text),
+                "textChars": len(raw_text),
+                "sensitive": sensitive,
+                "type": str(row["kind"] or ""),
+                "kind": str(row["kind"] or ""),
+                "project": str(row["scope_project"] or ""),
+                "app": str(row["scope_app"] or ""),
+                "ownerKind": str(row["owner_kind"] or "user"),
+                "ownerId": str(row["owner_id"] or "default"),
+                "status": str(row["status"] or ""),
+                "claimState": str(row["claim_state"] or ""),
+                "claimKey": str(row["claim_key"] or ""),
+                "lineageId": str(row["lineage_id"] or ""),
+                "supersedesId": str(row["supersedes_id"] or ""),
+                "confidence": float(row["confidence"] or 0),
+                "qualityScore": float(row["quality_score"] or 0),
+                "createdAtMs": int(row["created_at_ms"] or 0),
+                "updatedAtMs": int(row["updated_at_ms"] or 0),
+            },
+            "source": {"kind": "memory_atom", "id": reference_id},
+            "ref": _canonical_reference("atom", reference_id),
+            "evidenceRefs": _deduplicate_references(evidence_refs),
+        }
+
+    def _memory_reference_book(
+        self,
+        conn: sqlite3.Connection,
+        reference_id: str,
+    ) -> dict[str, object] | None:
+        row = conn.execute(
+            """
+            SELECT * FROM memory_books
+            WHERE book_id = ?
+              AND status NOT IN ('hidden', 'tombstoned')
+              AND (? = '' OR project IN ('', ?))
+            LIMIT 1
+            """,
+            (reference_id, self.project, self.project),
+        ).fetchone()
+        if row is None:
+            return None
+        raw_summary = compact_whitespace(str(row["summary"] or ""))
+        title = _safe_reference_preview(str(row["title"] or ""), maximum=160)
+        summary = _safe_reference_preview(raw_summary, maximum=1_800)
+        evidence_refs = _event_reference_refs(
+            conn,
+            _positive_ints(_json_list(row["source_event_ids_json"])),
+        )
+        atom_ids = [
+            str(value)
+            for value in _json_list(row["memory_atom_ids_json"])
+            if compact_whitespace(str(value))
+        ]
+        if atom_ids:
+            placeholders = ",".join("?" for _ in atom_ids)
+            atoms = conn.execute(
+                f"""
+                SELECT id, COALESCE(NULLIF(canonical_text, ''), text) AS text
+                FROM memory_atoms
+                WHERE id IN ({placeholders})
+                  AND privacy_level != 'sensitive'
+                """,
+                atom_ids,
+            ).fetchall()
+            evidence_refs.extend(
+                _canonical_reference(
+                    "atom",
+                    str(atom["id"]),
+                    label=_safe_reference_preview(str(atom["text"] or "")),
+                )
+                for atom in atoms
+            )
+        metadata = _sanitize_reference_value(_json_mapping(row["metadata_json"]))
+        return {
+            "item": {
+                "id": reference_id,
+                "title": title or "主题书",
+                "summary": summary,
+                "detail": summary,
+                "textPreview": summary,
+                "type": str(row["book_type"] or ""),
+                "project": str(row["project"] or ""),
+                "app": str(row["app"] or ""),
+                "ownerKind": str(row["owner_kind"] or "user"),
+                "ownerId": str(row["owner_id"] or "default"),
+                "status": str(row["status"] or ""),
+                "tags": _safe_reference_string_list(_json_list(row["tags_json"])),
+                "metadata": metadata,
+                "createdAtMs": int(row["created_at_ms"] or 0),
+                "updatedAtMs": int(row["updated_at_ms"] or 0),
+            },
+            "source": {"kind": "memory_book", "id": reference_id},
+            "ref": _canonical_reference("book", reference_id),
+            "evidenceRefs": _deduplicate_references(evidence_refs),
+        }
+
+    def _memory_reference_timeline(
+        self,
+        conn: sqlite3.Connection,
+        reference_id: str,
+    ) -> dict[str, object] | None:
+        row = conn.execute(
+            """
+            SELECT * FROM daily_activity_timelines
+            WHERE timeline_id = ? AND (? = '' OR project = ?)
+            LIMIT 1
+            """,
+            (reference_id, self.project, self.project),
+        ).fetchone()
+        if row is None:
+            return None
+        source_event_ids = _positive_ints(
+            _json_list(row["source_event_ids_json"])
+        )
+        if not _event_ids_visible(conn, source_event_ids):
+            return None
+        raw_summary = compact_whitespace(str(row["summary_text"] or ""))
+        summary = _safe_reference_preview(raw_summary, maximum=1_800)
+        evidence_refs = _event_reference_refs(
+            conn,
+            source_event_ids,
+        )
+        return {
+            "item": {
+                "id": reference_id,
+                "timelineId": reference_id,
+                "title": f"{str(row['timeline_date'])} 活动时间线",
+                "summary": summary,
+                "detail": summary,
+                "textPreview": summary,
+                "date": str(row["timeline_date"]),
+                "timezone": str(row["timezone"] or "local"),
+                "status": str(row["status"] or ""),
+                "project": str(row["project"] or ""),
+                "ownerKind": "user",
+                "ownerId": "default",
+                "eventCount": int(row["event_count"] or 0),
+                "taskCount": int(row["segment_count"] or 0),
+                "segments": _safe_timeline_segments(
+                    _json_list(row["segments_json"]),
+                    timezone_name=str(row["timezone"] or ""),
+                ),
+                "sourceEventHash": str(row["source_event_hash"] or ""),
+                "approvedBookId": str(row["approved_book_id"] or ""),
+                "approvedAtMs": int(row["approved_at_ms"] or 0),
+                "maySupportFacts": False,
+                "corroborationOnly": True,
+                "createdAtMs": int(row["created_at_ms"] or 0),
+                "updatedAtMs": int(row["updated_at_ms"] or 0),
+            },
+            "source": {
+                "kind": "input_event_set",
+                "id": f"event-set:{str(row['source_event_hash'] or '')}",
+            },
+            "ref": _canonical_reference("timeline", reference_id),
+            "evidenceRefs": evidence_refs,
+        }
+
+    def _memory_reference_role_book_revision(
+        self,
+        conn: sqlite3.Connection,
+        reference_id: str,
+    ) -> dict[str, object] | None:
+        row = conn.execute(
+            """
+            SELECT * FROM agent_role_book_revisions
+            WHERE revision_id = ?
+            LIMIT 1
+            """,
+            (reference_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        content = _sanitize_reference_value(_json_mapping(row["content_json"]))
+        evidence_ids = _collect_nested_evidence_ids(content)
+        evidence_refs: list[dict[str, object]] = []
+        if evidence_ids:
+            placeholders = ",".join("?" for _ in evidence_ids)
+            rows = conn.execute(
+                f"""
+                SELECT evidence_id, content_text
+                FROM agent_memory_evidence
+                WHERE evidence_id IN ({placeholders})
+                  AND status = 'active'
+                  AND (? = '' OR project = ?)
+                """,
+                (*evidence_ids, self.project, self.project),
+            ).fetchall()
+            evidence_refs = [
+                _canonical_reference(
+                    "evidence",
+                    str(evidence["evidence_id"]),
+                    label=_safe_reference_preview(str(evidence["content_text"] or "")),
+                )
+                for evidence in rows
+            ]
+        return {
+            "item": {
+                "id": reference_id,
+                "title": f"{str(row['role_id'])} 角色书修订 #{int(row['revision_number'])}",
+                "detail": _safe_reference_preview(
+                    str(row["change_summary"] or ""), maximum=760
+                ),
+                "roleId": str(row["role_id"] or ""),
+                "roleVersion": str(row["role_version"] or ""),
+                "revisionNumber": int(row["revision_number"] or 0),
+                "status": str(row["status"] or ""),
+                "content": content,
+                "sourceRevisionId": str(row["source_revision_id"] or ""),
+                "proposedBy": _safe_reference_identifier(row["proposed_by"]),
+                "ownerKind": "agent",
+                "ownerId": str(row["role_id"] or ""),
+                "createdAtMs": int(row["created_at_ms"] or 0),
+                "updatedAtMs": int(
+                    row["activated_at_ms"] or row["created_at_ms"] or 0
+                ),
+            },
+            "source": {
+                "kind": "agent_role_book_revision",
+                "id": reference_id,
+            },
+            "ref": _canonical_reference("role_book_revision", reference_id),
+            "evidenceRefs": evidence_refs,
+        }
 
     def _memory_groups(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
         limit = request.limit
@@ -4301,6 +5162,306 @@ def _redacted_preview(value: str) -> str:
     if not compact:
         return ""
     return f"{compact[:8]}...（{len(compact)} 字）" if len(compact) > 8 else f"{len(compact)} 字内容"
+
+
+def _reference_text_is_sensitive(value: object) -> bool:
+    text = compact_whitespace(str(value or ""))
+    return bool(text) and (looks_sensitive(text) or contains_sensitive_content(text))
+
+
+def _safe_reference_preview(value: object, *, maximum: int = 420) -> str:
+    text = compact_whitespace(str(value or ""))
+    if not text:
+        return ""
+    if _reference_text_is_sensitive(text):
+        return "[敏感内容已隐藏]"
+    return text[: max(1, min(int(maximum), 2_000))]
+
+
+def _safe_reference_identifier(value: object) -> str:
+    text = compact_whitespace(str(value or ""))[:240]
+    if not text or contains_sensitive_content(text) or looks_sensitive(text):
+        return "" if not text else "[REDACTED]"
+    return text
+
+
+def _safe_reference_string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[str] = []
+    for raw in value:
+        text = _safe_reference_identifier(raw)
+        if text and text not in result:
+            result.append(text)
+    return result[:80]
+
+
+def _sanitize_reference_value(value: object, *, depth: int = 0) -> object:
+    if depth > 5:
+        return "[TRUNCATED]"
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        for raw_key, raw_value in list(value.items())[:80]:
+            key = compact_whitespace(str(raw_key or ""))[:120]
+            if not key:
+                continue
+            result[key] = (
+                "[REDACTED]"
+                if is_sensitive_mapping_key(key)
+                else _sanitize_reference_value(raw_value, depth=depth + 1)
+            )
+        return result
+    if isinstance(value, (list, tuple)):
+        return [
+            _sanitize_reference_value(item, depth=depth + 1)
+            for item in list(value)[:80]
+        ]
+    if isinstance(value, str):
+        return _safe_reference_preview(value, maximum=1_000)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _safe_reference_preview(str(value), maximum=1_000)
+
+
+def _canonical_reference(
+    kind: str,
+    reference_id: str,
+    *,
+    label: str = "",
+) -> dict[str, object]:
+    item: dict[str, object] = {
+        "kind": kind,
+        "id": reference_id,
+        "referenceKind": kind,
+        "referenceId": reference_id,
+    }
+    safe_label = _safe_reference_preview(label, maximum=180)
+    if safe_label:
+        item["label"] = safe_label
+    return item
+
+
+def _deduplicate_references(
+    values: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for value in values:
+        identity = (str(value.get("kind") or ""), str(value.get("id") or ""))
+        if not all(identity) or identity in seen:
+            continue
+        seen.add(identity)
+        result.append(value)
+    return result[:80]
+
+
+def _positive_ints(value: object) -> list[int]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[int] = []
+    for raw in value:
+        try:
+            item = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if item > 0 and item not in result:
+            result.append(item)
+    return result
+
+
+def _event_reference_refs(
+    conn: sqlite3.Connection,
+    event_ids: list[int],
+) -> list[dict[str, object]]:
+    if not event_ids:
+        return []
+    placeholders = ",".join("?" for _ in event_ids[:80])
+    rows = conn.execute(
+        f"""
+        SELECT event.id, event.committed_text
+        FROM input_events AS event
+        LEFT JOIN memory_state AS state ON state.event_id = event.id
+        WHERE event.id IN ({placeholders})
+          AND COALESCE(state.deleted, 0) = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM memory_tombstones AS tombstone
+              WHERE tombstone.active = 1
+                AND (
+                     (tombstone.target_type = 'source_event_id'
+                      AND tombstone.target_value = CAST(event.id AS TEXT))
+                  OR (tombstone.target_type = 'memory_id'
+                      AND tombstone.target_value = ('event:' || event.id))
+                )
+          )
+        """,
+        event_ids[:80],
+    ).fetchall()
+    by_id = {int(row["id"]): str(row["committed_text"] or "") for row in rows}
+    return [
+        _canonical_reference(
+            "event",
+            str(event_id),
+            label=_safe_reference_preview(by_id.get(event_id, ""), maximum=180),
+        )
+        for event_id in event_ids[:80]
+        if event_id in by_id
+    ]
+
+
+def _event_ids_from_provenance(value: object) -> list[int]:
+    if not isinstance(value, Mapping):
+        return []
+    candidates: list[object] = []
+    for key in ("eventId", "inputEventId", "sourceEventId"):
+        if key in value:
+            candidates.append(value[key])
+    source_type = compact_whitespace(str(value.get("sourceType") or "")).lower()
+    if source_type in {"input_event", "event"} and value.get("sourceId") is not None:
+        candidates.append(value["sourceId"])
+    event_ids: list[int] = []
+    for candidate in candidates:
+        try:
+            event_id = _event_id_from_reference(str(candidate))
+        except ValueError:
+            continue
+        if event_id not in event_ids:
+            event_ids.append(event_id)
+    return event_ids
+
+
+def _event_refs_from_provenance(value: object) -> list[dict[str, object]]:
+    return [
+        _canonical_reference("event", str(event_id))
+        for event_id in _event_ids_from_provenance(value)
+    ]
+
+
+def _provenance_events_visible(
+    conn: sqlite3.Connection,
+    value: object,
+) -> bool:
+    return _event_ids_visible(conn, _event_ids_from_provenance(value))
+
+
+def _event_ids_visible(
+    conn: sqlite3.Connection,
+    event_ids: list[int],
+) -> bool:
+    if not event_ids:
+        return True
+    visible_ids = {
+        int(reference["id"])
+        for reference in _event_reference_refs(conn, event_ids)
+    }
+    return visible_ids == set(event_ids)
+
+
+def _event_id_from_reference(value: str) -> int:
+    text = compact_whitespace(value)
+    for prefix in ("event:", "input-memory:", "input_event:"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix) :]
+            break
+    if not text.isdigit():
+        raise ValueError("event reference id must be a positive integer or event:<id>")
+    event_id = int(text)
+    if event_id <= 0 or event_id > 9_223_372_036_854_775_807:
+        raise ValueError("event reference id is outside the supported range")
+    return event_id
+
+
+def _safe_timeline_segments(
+    value: object,
+    *,
+    timezone_name: str = "",
+) -> list[dict[str, object]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[dict[str, object]] = []
+    for raw in list(value)[:20]:
+        if not isinstance(raw, Mapping):
+            continue
+        event_ids = _positive_ints(raw.get("sourceEventIds"))
+        raw_refs = raw.get("evidenceRefs")
+        if isinstance(raw_refs, (list, tuple)):
+            for raw_ref in raw_refs:
+                if not isinstance(raw_ref, Mapping):
+                    continue
+                try:
+                    event_id = _event_id_from_reference(
+                        str(raw_ref.get("sourceId") or raw_ref.get("eventId") or "")
+                    )
+                except ValueError:
+                    continue
+                if event_id not in event_ids:
+                    event_ids.append(event_id)
+        start_ms = max(0, int(raw.get("startMs") or 0))
+        end_ms = max(0, int(raw.get("endMs") or 0))
+        period = compact_whitespace(
+            str(raw.get("period") or raw.get("dayPart") or "")
+        ).lower()
+        if period not in {"day", "morning", "afternoon", "evening"}:
+            period = activity_timeline_period(
+                start_ms,
+                end_ms,
+                timezone_name=timezone_name,
+            )
+        result.append(
+            {
+                "segmentId": _safe_reference_identifier(raw.get("segmentId")),
+                "position": max(0, int(raw.get("position") or 0)),
+                "title": _safe_reference_preview(
+                    raw.get("title") or raw.get("summary"), maximum=160
+                ),
+                "summary": _safe_reference_preview(raw.get("summary"), maximum=760),
+                "apps": _safe_reference_string_list(raw.get("apps")),
+                "startMs": start_ms,
+                "endMs": end_ms,
+                "period": period,
+                "eventCount": max(0, int(raw.get("eventCount") or len(event_ids))),
+                "redactedEventCount": max(
+                    0, int(raw.get("redactedEventCount") or 0)
+                ),
+                # Segment IDs are display identities, not a separate reference
+                # kind. Every drill-down therefore resolves to canonical events.
+                "evidenceRefs": [
+                    _canonical_reference("event", str(event_id))
+                    for event_id in event_ids[:80]
+                ],
+            }
+        )
+    return result
+
+
+def _collect_nested_evidence_ids(value: object) -> list[str]:
+    result: list[str] = []
+
+    def visit(current: object, depth: int) -> None:
+        if depth > 6 or len(result) >= 80:
+            return
+        if isinstance(current, Mapping):
+            for key, child in current.items():
+                normalized_key = compact_whitespace(str(key or "")).lower()
+                if normalized_key in {"evidenceid", "evidence_id"}:
+                    identifier = _safe_reference_identifier(child)
+                    if identifier and identifier not in result:
+                        result.append(identifier)
+                elif normalized_key in {"evidenceids", "evidence_ids"} and isinstance(
+                    child, (list, tuple)
+                ):
+                    for raw in child:
+                        identifier = _safe_reference_identifier(raw)
+                        if identifier and identifier not in result:
+                            result.append(identifier)
+                else:
+                    visit(child, depth + 1)
+        elif isinstance(current, (list, tuple)):
+            for child in current:
+                visit(child, depth + 1)
+
+    visit(value, 0)
+    return result[:80]
 
 
 def _json_list(value: object) -> list[object]:

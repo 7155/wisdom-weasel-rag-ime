@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 186,
+  "routeCount": 187,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -124,6 +124,7 @@
     "planning.mutation.rollback",
     "memory.summary",
     "memory.pages",
+    "memory.reference.get",
     "memory.graph.get",
     "memory.entity.get",
     "memory.edit",

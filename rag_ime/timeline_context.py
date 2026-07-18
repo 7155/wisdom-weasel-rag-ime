@@ -6,12 +6,16 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
+from .activity_timeline import activity_timeline_period
 from .daily_planner import estimate_tokens, planning_context, planning_evidence_pack
 from .input_event_assembly import recent_complete_input_context, resolve_temporal_window
 from .text_utils import compact_whitespace, stable_text_hash, truncate_text
 
 
 TIMELINE_CONTEXT_SCHEMA_VERSION = "rag-ime.timeline-context.v1"
+_EXPLICIT_RECENT_INPUT_LIMIT = 4
+_EXPLICIT_PLANNING_ITEM_LIMIT = 6
+_APPROVED_TIMELINE_TASK_LIMIT = 2
 
 
 def build_timeline_context_pack(
@@ -21,8 +25,8 @@ def build_timeline_context_pack(
     app: str = "",
     current_context: str = "",
     selected_text: str = "",
-    recent_limit: int = 20,
-    recent_max_records: int = 80,
+    recent_limit: int = _EXPLICIT_RECENT_INPUT_LIMIT,
+    recent_max_records: int = _EXPLICIT_RECENT_INPUT_LIMIT,
     context_token_budget: int = 4096,
     reserved_tokens: int = 1024,
     book_limit: int = 3,
@@ -32,8 +36,14 @@ def build_timeline_context_pack(
     normalized_app = compact_whitespace(app)
     query_text = compact_whitespace(" ".join(item for item in (selected_text, current_context) if item))
     preferences = _timeline_preferences(core)
-    recent_limit = int(preferences.get("recentInputBaseline") or recent_limit)
-    recent_max_records = int(preferences.get("recentInputMaximum") or recent_max_records)
+    recent_limit = min(
+        _EXPLICIT_RECENT_INPUT_LIMIT,
+        max(1, int(preferences.get("recentInputBaseline") or recent_limit)),
+    )
+    recent_max_records = min(
+        _EXPLICIT_RECENT_INPUT_LIMIT,
+        max(recent_limit, int(preferences.get("recentInputMaximum") or recent_max_records)),
+    )
     context_token_budget = int(preferences.get("tokenBudget") or context_token_budget)
     reserved_tokens = int(preferences.get("reservedOutputTokens") or reserved_tokens)
     temporal_query = query_text if bool(preferences.get("temporalRecall", True)) else ""
@@ -51,6 +61,11 @@ def build_timeline_context_pack(
         if planning_enabled
         else {"openTasks": [], "longTermGoals": [], "counts": {"taskCount": 0, "goalCount": 0}}
     )
+    activity_timeline = _latest_approved_activity_timeline(
+        core,
+        project=normalized_project,
+        task_limit=_APPROVED_TIMELINE_TASK_LIMIT,
+    )
     current_input_tokens = estimate_tokens(query_text)
     planning_tokens = int(planning.get("estimatedTokens") or 0) if planning_enabled and planning_injected else 0
     memory_book_tokens = sum(
@@ -66,6 +81,18 @@ def build_timeline_context_pack(
         )
         for book in books
     )
+    activity_timeline_tokens = sum(
+        estimate_tokens(
+            compact_whitespace(
+                " ".join(
+                    str(item.get(key) or "")
+                    for key in ("title", "summary")
+                )
+            )
+        )
+        for item in activity_timeline.get("items", [])
+        if isinstance(item, dict)
+    )
     # The recent-input selector used to spend the whole context allowance on
     # its own. Reserve higher-priority current/planning/book content first so
     # the combined timeline pack stays near the configured soft budget.
@@ -77,16 +104,25 @@ def build_timeline_context_pack(
         baseline_records=recent_limit,
         max_records=recent_max_records,
         token_budget=context_token_budget,
-        reserved_tokens=reserved_tokens + current_input_tokens + planning_tokens + memory_book_tokens,
+        reserved_tokens=(
+            reserved_tokens
+            + current_input_tokens
+            + planning_tokens
+            + activity_timeline_tokens
+            + memory_book_tokens
+        ),
     )
     recent_input = compact_whitespace(str(recent_context.get("rendered") or ""))
     recent_records = recent_context.get("records") if isinstance(recent_context.get("records"), list) else []
     evidence: list[dict[str, object]] = []
+    if planning_enabled and planning_injected:
+        evidence.extend(_planning_evidence(core, project=normalized_project))
+    for activity in activity_timeline.get("items", []):
+        if isinstance(activity, dict):
+            evidence.append(_approved_timeline_evidence(activity))
     for record in recent_records:
         if isinstance(record, dict):
             evidence.append(_recent_record_evidence(record))
-    if planning_enabled and planning_injected:
-        evidence.extend(_planning_evidence(core, project=normalized_project))
     for book in books:
         evidence.append(_book_evidence(book))
     recent_observability = (
@@ -104,7 +140,13 @@ def build_timeline_context_pack(
         )
         for item in evidence
     )
-    total_estimated_tokens = current_input_tokens + recent_input_tokens + planning_tokens + memory_book_tokens
+    total_estimated_tokens = (
+        current_input_tokens
+        + planning_tokens
+        + activity_timeline_tokens
+        + recent_input_tokens
+        + memory_book_tokens
+    )
     available_context_tokens = max(256, context_token_budget - reserved_tokens)
     context_observability = {
         "tokenBudget": context_token_budget,
@@ -121,6 +163,11 @@ def build_timeline_context_pack(
             "taskCount": int(planning_counts.get("taskCount") or 0) if planning_injected else 0,
             "goalCount": int(planning_counts.get("goalCount") or 0) if planning_injected else 0,
             "estimatedTokens": planning_tokens,
+        },
+        "activityTimeline": {
+            "recordCount": len(activity_timeline.get("items", [])),
+            "estimatedTokens": activity_timeline_tokens,
+            "maySupportFacts": False,
         },
         "memoryBooks": {"recordCount": len(books), "estimatedTokens": memory_book_tokens},
         "ragEvidence": {"recordCount": len(evidence), "estimatedTokens": evidence_tokens},
@@ -142,6 +189,7 @@ def build_timeline_context_pack(
         "contextObservability": context_observability,
         "planning": planning,
         "planningInjected": planning_enabled and planning_injected,
+        "activityTimeline": activity_timeline,
         "dailyBooks": books,
         "evidencePack": evidence,
     }
@@ -284,13 +332,254 @@ def _latest_memory_books(
     return [item for item in books if item.get("status") in {"active", "approved"}][: max(1, int(limit))]
 
 
+def _latest_approved_activity_timeline(
+    core: object,
+    *,
+    project: str,
+    task_limit: int,
+) -> dict[str, object]:
+    """Load the latest governed activity summary as continuity, never fact evidence."""
+
+    empty: dict[str, object] = {
+        "role": "continuity_context",
+        "maySupportIntent": True,
+        "maySupportFacts": False,
+        "timelineId": "",
+        "date": "",
+        "summary": "",
+        "ref": {},
+        "items": [],
+    }
+    connect = getattr(core, "_connect", None)
+    if not callable(connect) or task_limit <= 0:
+        return empty
+    try:
+        with connect() as conn:
+            row = conn.execute(
+                """
+                SELECT timeline_id, project AS timeline_project, timeline_date, timezone,
+                       summary_text, segments_json, source_event_ids_json, updated_at_ms
+                FROM daily_activity_timelines
+                WHERE status = 'approved'
+                  AND ((? <> '' AND (project = ? OR project = ''))
+                       OR (? = '' AND project = ''))
+                ORDER BY CASE WHEN project = ? THEN 0 ELSE 1 END,
+                         timeline_date DESC, updated_at_ms DESC, timeline_id DESC
+                LIMIT 1
+                """,
+                (project, project, project, project),
+            ).fetchone()
+            if row is not None and not _approved_timeline_source_events_visible(
+                conn,
+                project=str(row["timeline_project"] or ""),
+                event_ids=_json_ints(row["source_event_ids_json"], limit=2_000),
+            ):
+                row = None
+    except (sqlite3.Error, AttributeError, TypeError):
+        return empty
+    if row is None:
+        return empty
+
+    timeline_id = compact_whitespace(str(row["timeline_id"] or ""))
+    timeline_date = compact_whitespace(str(row["timeline_date"] or ""))
+    tasks: list[dict[str, object]] = []
+    for index, raw in enumerate(_json_objects(row["segments_json"]), start=1):
+        title = compact_whitespace(
+            str(raw.get("title") or raw.get("taskTitle") or raw.get("name") or "")
+        )
+        summary = compact_whitespace(
+            str(raw.get("summary") or raw.get("description") or raw.get("detail") or "")
+        )
+        if not title:
+            title = _timeline_task_title(summary, index=index)
+        if not summary:
+            summary = title
+        apps = _timeline_task_apps(raw)
+        task_id = compact_whitespace(
+            str(
+                raw.get("taskId")
+                or raw.get("semanticTaskId")
+                or raw.get("segmentId")
+                or raw.get("id")
+                or f"task:{index}"
+            )
+        )
+        event_ids = [
+            int(value)
+            for value in raw.get("sourceEventIds", [])
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        ] if isinstance(raw.get("sourceEventIds"), list) else []
+        evidence_refs = raw.get("evidenceRefs") if isinstance(raw.get("evidenceRefs"), list) else []
+        tasks.append(
+            {
+                "id": task_id,
+                "timelineId": timeline_id,
+                "date": timeline_date,
+                "title": truncate_text(title, 120),
+                "summary": truncate_text(summary, 320),
+                "period": _timeline_task_period(
+                    raw,
+                    timezone_name=compact_whitespace(str(row["timezone"] or "")),
+                ),
+                "startMs": _safe_nonnegative_int(raw.get("startMs")),
+                "endMs": _safe_nonnegative_int(raw.get("endMs")),
+                "apps": apps[:8],
+                "evidenceCount": max(
+                    _safe_nonnegative_int(raw.get("evidenceCount")),
+                    len(event_ids),
+                    len(evidence_refs),
+                    _safe_nonnegative_int(raw.get("eventCount")),
+                ),
+                "redactedEventCount": _safe_nonnegative_int(raw.get("redactedEventCount")),
+                "ref": {"kind": "timeline", "id": timeline_id},
+                "maySupportFacts": False,
+            }
+        )
+        if len(tasks) >= max(1, min(int(task_limit), _APPROVED_TIMELINE_TASK_LIMIT)):
+            break
+    if not tasks:
+        summary = compact_whitespace(str(row["summary_text"] or ""))
+        if summary:
+            tasks.append(
+                {
+                    "id": f"{timeline_id}:summary",
+                    "timelineId": timeline_id,
+                    "date": timeline_date,
+                    "title": _timeline_task_title(summary, index=1),
+                    "summary": truncate_text(summary, 320),
+                    "period": "",
+                    "startMs": 0,
+                    "endMs": 0,
+                    "apps": [],
+                    "evidenceCount": 0,
+                    "redactedEventCount": 0,
+                    "ref": {"kind": "timeline", "id": timeline_id},
+                    "maySupportFacts": False,
+                }
+            )
+    return {
+        **empty,
+        "timelineId": timeline_id,
+        "date": timeline_date,
+        "summary": truncate_text(compact_whitespace(str(row["summary_text"] or "")), 420),
+        "ref": {"kind": "timeline", "id": timeline_id},
+        "items": tasks,
+    }
+
+
+def _approved_timeline_source_events_visible(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    event_ids: list[int],
+) -> bool:
+    unique_ids = list(dict.fromkeys(event_ids))
+    if not unique_ids:
+        return False
+    placeholders = ", ".join("?" for _ in unique_ids)
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM input_events event
+        LEFT JOIN memory_state state ON state.event_id = event.id
+        WHERE event.id IN ({placeholders}) AND event.project = ?
+          AND COALESCE(state.deleted, 0) = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM memory_tombstones tombstone
+              WHERE tombstone.active = 1
+                AND (
+                    (tombstone.target_type = 'source_event_id'
+                     AND tombstone.target_value = CAST(event.id AS TEXT))
+                    OR
+                    (tombstone.target_type = 'memory_id'
+                     AND tombstone.target_value = ('event:' || event.id))
+                )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM agent_memory_sources source
+              WHERE source.input_event_id = event.id
+                AND (
+                    source.status = 'tombstoned'
+                    OR source.disposition IN ('not_for_memory', 'expired')
+                    OR source.disposition_reason = 'sensitive_input'
+                )
+          )
+        """,  # noqa: S608 - placeholders are generated, never values
+        (*unique_ids, project),
+    ).fetchone()
+    return row is not None and int(row[0] or 0) == len(unique_ids)
+
+
+def _timeline_task_apps(raw: dict[str, object]) -> list[str]:
+    values = raw.get("apps") if isinstance(raw.get("apps"), list) else []
+    if not values and raw.get("app"):
+        values = [raw.get("app")]
+    apps: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            app = compact_whitespace(
+                str(
+                    value.get("displayName")
+                    or value.get("name")
+                    or value.get("bundleId")
+                    or value.get("id")
+                    or ""
+                )
+            )
+        else:
+            app = compact_whitespace(str(value or ""))
+        if app and app not in apps:
+            apps.append(app)
+    return apps
+
+
+def _timeline_task_period(
+    raw: dict[str, object],
+    *,
+    timezone_name: str,
+) -> str:
+    period = compact_whitespace(
+        str(raw.get("period") or raw.get("dayPart") or "")
+    ).lower()
+    if period in {"day", "morning", "afternoon", "evening"}:
+        return period
+    return activity_timeline_period(
+        raw.get("startMs"),
+        raw.get("endMs"),
+        timezone_name=timezone_name,
+    )
+
+
+def _timeline_task_title(summary: str, *, index: int) -> str:
+    text = compact_whitespace(summary)
+    if not text:
+        return f"语义任务 {index}"
+    text = re.sub(r"^[^：:\n]{1,48}[：:]\s*", "", text).strip()
+    clause = re.split(r"[。；\n]", text, maxsplit=1)[0].strip()
+    return truncate_text(clause or text, 120)
+
+
+def _safe_nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
 def _planning_context(core: object, *, project: str) -> dict[str, object]:
     connect = getattr(core, "_connect", None)
     if not callable(connect):
         return {"openTasks": [], "longTermGoals": [], "counts": {"taskCount": 0, "goalCount": 0}}
     try:
         with connect() as conn:
-            return planning_context(conn, project=project)
+            return planning_context(
+                conn,
+                project=project,
+                task_limit=_EXPLICIT_PLANNING_ITEM_LIMIT,
+                goal_limit=_EXPLICIT_PLANNING_ITEM_LIMIT,
+            )
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
         return {"openTasks": [], "longTermGoals": [], "counts": {"taskCount": 0, "goalCount": 0}}
 
@@ -301,15 +590,56 @@ def _planning_evidence(core: object, *, project: str) -> list[dict[str, object]]
         return []
     try:
         with connect() as conn:
-            return list(planning_evidence_pack(conn, project=project, max_items=12))
+            items = list(
+                planning_evidence_pack(
+                    conn,
+                    project=project,
+                    max_items=_EXPLICIT_PLANNING_ITEM_LIMIT,
+                )
+            )
+            if len(items) < _EXPLICIT_PLANNING_ITEM_LIMIT:
+                context = planning_context(
+                    conn,
+                    project=project,
+                    task_limit=_EXPLICIT_PLANNING_ITEM_LIMIT,
+                    goal_limit=_EXPLICIT_PLANNING_ITEM_LIMIT,
+                )
+                for goal in context.get("longTermGoals", []):
+                    if not isinstance(goal, dict):
+                        continue
+                    title = compact_whitespace(str(goal.get("title") or ""))
+                    if not title:
+                        continue
+                    items.append(
+                        {
+                            "sourceType": "goal",
+                            "sourceLane": "planning_long_term_goal",
+                            "title": title,
+                            "summary": compact_whitespace(str(goal.get("detail") or title)),
+                            "evidencePreview": title,
+                            "surfaceHints": [],
+                            "tags": ["goal", "planning"],
+                            "metadata": {
+                                "contextOnly": True,
+                                "maySupportIntent": True,
+                                "maySupportFacts": False,
+                                "goalId": goal.get("id"),
+                                "priority": goal.get("priority"),
+                                "status": goal.get("status"),
+                            },
+                        }
+                    )
+                    if len(items) >= _EXPLICIT_PLANNING_ITEM_LIMIT:
+                        break
+            return items[:_EXPLICIT_PLANNING_ITEM_LIMIT]
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
         return []
 
 
 def timeline_context_preferences(core: object) -> dict[str, object]:
     defaults: dict[str, object] = {
-        "recentInputBaseline": 20,
-        "recentInputMaximum": 80,
+        "recentInputBaseline": _EXPLICIT_RECENT_INPUT_LIMIT,
+        "recentInputMaximum": _EXPLICIT_RECENT_INPUT_LIMIT,
         "tokenBudget": 4096,
         "reservedOutputTokens": 1024,
         "temporalRecall": True,
@@ -337,8 +667,18 @@ def timeline_context_preferences(core: object) -> dict[str, object]:
     context = values.get("context", {})
     planning = values.get("planning", {})
     return {
-        "recentInputBaseline": _bounded_int(context.get("recentInputBaseline"), 20, 10, 80),
-        "recentInputMaximum": _bounded_int(context.get("recentInputMaximum"), 80, 20, 200),
+        "recentInputBaseline": _bounded_int(
+            context.get("recentInputBaseline"),
+            _EXPLICIT_RECENT_INPUT_LIMIT,
+            1,
+            _EXPLICIT_RECENT_INPUT_LIMIT,
+        ),
+        "recentInputMaximum": _bounded_int(
+            context.get("recentInputMaximum"),
+            _EXPLICIT_RECENT_INPUT_LIMIT,
+            1,
+            _EXPLICIT_RECENT_INPUT_LIMIT,
+        ),
         "tokenBudget": _bounded_int(context.get("tokenBudget"), 4096, 2048, 32768),
         "reservedOutputTokens": _bounded_int(context.get("reservedOutputTokens"), 1024, 256, 8192),
         "temporalRecall": bool(context.get("temporalRecall", True)),
@@ -377,9 +717,45 @@ def _recent_record_evidence(record: dict[str, object]) -> dict[str, object]:
             "createdAtMs": record.get("createdAtMs"),
             "app": app,
             "contextOnly": True,
+            "maySupportIntent": True,
+            "maySupportFacts": False,
             "complete": record.get("complete"),
             "finalized": record.get("finalized"),
             "injectable": record.get("injectable"),
+        },
+    }
+
+
+def _approved_timeline_evidence(activity: dict[str, object]) -> dict[str, object]:
+    title = compact_whitespace(str(activity.get("title") or ""))
+    summary = compact_whitespace(str(activity.get("summary") or title))
+    return {
+        "sourceType": "activity_timeline",
+        "sourceLane": "timeline_approved_activity",
+        "title": title,
+        "summary": summary,
+        "evidencePreview": summary,
+        "surfaceHints": [],
+        "tags": ["activity_timeline", "approved", "continuity"],
+        "timelineId": compact_whitespace(str(activity.get("timelineId") or "")),
+        "activityId": compact_whitespace(str(activity.get("id") or "")),
+        "metadata": {
+            "source": "daily_activity_timelines",
+            "contextOnly": True,
+            "maySupportIntent": True,
+            "maySupportFacts": False,
+            "date": activity.get("date") or "",
+            "period": activity.get("period") or "",
+            "startMs": activity.get("startMs") or 0,
+            "endMs": activity.get("endMs") or 0,
+            "apps": list(activity.get("apps") or [])
+            if isinstance(activity.get("apps"), list)
+            else [],
+            "evidenceCount": _safe_nonnegative_int(activity.get("evidenceCount")),
+            "redactedEventCount": _safe_nonnegative_int(activity.get("redactedEventCount")),
+            "ref": dict(activity.get("ref") or {})
+            if isinstance(activity.get("ref"), dict)
+            else {},
         },
     }
 
@@ -443,6 +819,19 @@ def _json_list(raw: Any, *, limit: int) -> list[str]:
         if len(result) >= limit:
             break
     return result
+
+
+def _json_objects(raw: Any) -> list[dict[str, object]]:
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            return []
+    else:
+        parsed = raw
+    if not isinstance(parsed, list):
+        return []
+    return [dict(item) for item in parsed if isinstance(item, dict)]
 
 
 def _json_ints(raw: Any, *, limit: int) -> list[int]:

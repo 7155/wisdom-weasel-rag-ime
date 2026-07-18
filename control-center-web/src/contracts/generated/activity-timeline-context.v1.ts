@@ -61,6 +61,8 @@ export interface ActivityTimelineContextV1 {
   redactedEventCount: number;
   corroborationOnly: true;
   maySupportFacts: false;
+  source?: Source;
+  ref?: Ref;
 }
 export interface Segment {
   segmentId: string;
@@ -131,4 +133,46 @@ export interface Segment {
   eventCount: number;
   summary: string;
   redactedEventCount: number;
+  title?: string;
+  /**
+   * @maxItems 12
+   */
+  apps?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+  source?: Source;
+  ref?: Ref;
+}
+export interface Source {
+  type: 'activity_timeline';
+  id: string;
+}
+export interface Ref {
+  type: 'timeline';
+  id: string;
+  segmentId?: string;
 }

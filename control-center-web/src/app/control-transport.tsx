@@ -116,6 +116,11 @@ function createPreviewTransport(): MockControlTransport {
     stringValue(record(request.params).kind),
     stringValue(record(request.params).entityId),
   );
+  routes['memory.reference.get'] = (request: ControlRequest) =>
+    previewMemoryReference(
+      stringValue(record(request.params).kind),
+      stringValue(record(request.params).referenceId),
+    );
   routes['agent.memoryMaintenance.run'] = (request: ControlRequest) =>
     stringValue(record(request.query).runId)
       ? previewMemoryCurationRun(previewMemorySelections, previewMemoryRunStatus)
@@ -386,7 +391,7 @@ function previewResponse(pathId: ControlPathId): unknown {
           previewTool('ime.input', '输入法', '查看输入设置、方案与候选解释，并在批准后调整配置或词表', 'input', 'R1', ['get_settings', 'preview_settings', 'apply_settings', 'rollback_settings', 'profile', 'candidate_explain', 'lexicon_review', 'lexicon_apply', 'lexicon_rollback']),
           previewTool('voice.input', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply', 'provider_rollback']),
           previewTool('planning.tasks', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
-          previewTool('ime.memory', '记忆与工具书', '查询 Memory Book，并生成 Atom-first 可审阅草案', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'curation_prepare', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
+          previewTool('ime.memory', '个人上下文记忆', '查询 Evidence、Current Fact、Topic Book 与已批准 Timeline，并生成 Atom-first 可审阅草案', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'curation_prepare', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
           previewTool('ime_knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
           previewTool('ime_browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'screenshot', 'trace', 'navigate', 'click', 'type', 'scroll', 'wait', 'stop']),
         ],
@@ -600,26 +605,34 @@ function previewMemoryPage(
       ok: true,
       items: [
         {
-          id: 'input-memory:preview-noise',
+          id: 'event:10001',
           title: '嗯嗯那个这个',
           detail: evidenceDisposition === 'not_for_memory'
             ? 'input_noise_filler'
             : 'user_restored',
           status: evidenceDisposition,
           disposition: evidenceDisposition,
-          source: 'squirrel_rime_commit_burst',
+          source: { type: 'input_event', id: 'event:10001' },
+          ref: { type: 'event', id: 'event:10001' },
+          evidenceRefs: [],
           type: 'user_final',
           ownerKind: 'user',
           ownerId: 'default',
           updatedAtMs: Date.now() - 86_400_000,
         },
         {
-          id: 'agent-memory:preview-compaction',
+          id: 'evidence:preview-compaction',
           title: '桌面上下文默认读取 Accessibility Tree，截图仅作兜底。',
           detail: 'durable_role_summary',
           status: 'remember',
           disposition: 'remember',
-          source: 'pi_agent_compaction',
+          source: { type: 'agent_memory_evidence', id: 'evidence:preview-compaction' },
+          ref: { type: 'evidence', id: 'evidence:preview-compaction' },
+          evidenceRefs: [{
+            kind: 'event',
+            referenceId: 'event:10002',
+            title: 'Accessibility Tree 与截图边界的对话记录',
+          }],
           type: 'session_compaction',
           ownerKind: 'agent',
           ownerId: 'zhiyou-v1',
@@ -639,7 +652,12 @@ function previewMemoryPage(
           title: '记忆治理与桌面上下文',
           summary: '按用户、角色和项目隔离证据；每日整理先生成可审阅草案。',
           status: 'active',
-          source: 'memory_book',
+          source: { type: 'memory_book', id: 'book:preview-memory-governance' },
+          ref: { type: 'book', id: 'book:preview-memory-governance' },
+          evidenceRefs: [
+            { kind: 'atom', referenceId: 'atom:input-boundary', title: '输入段封口规则' },
+            { kind: 'atom', referenceId: 'atom:timeline-governance', title: '时间线必须审批后参与召回' },
+          ],
           type: 'topic',
           ownerKind: 'user',
           ownerId: 'default',
@@ -651,7 +669,154 @@ function previewMemoryPage(
       limit: 50,
     };
   }
+  if (kind === 'timelines') {
+    const date = new Date().toISOString().slice(0, 10);
+    const timeline = previewActivityTimeline(date, 'approved');
+    return {
+      ok: true,
+      items: [{
+        id: timeline.timelineId,
+        title: `${date} 语义任务时间线`,
+        summary: timeline.summary,
+        status: timeline.status,
+        type: 'daily_activity_timeline',
+        taskCount: timeline.segmentCount,
+        eventCount: timeline.eventCount,
+        source: timeline.source,
+        ref: timeline.ref,
+        evidenceRefs: (timeline.segments as Record<string, unknown>[])
+          .flatMap((segment) => segment.evidenceRefs as Record<string, unknown>[]),
+        updatedAtMs: timeline.updatedAtMs,
+      }],
+      nextCursor: '',
+      limit: 50,
+    };
+  }
   return previewMemoryCatalogPage(kind);
+}
+
+function previewMemoryReference(kind: string, referenceId: string): Record<string, unknown> {
+  const now = Date.now();
+  if (kind === 'event') {
+    return {
+      schemaVersion: 'rag-ime.memory-reference.v1',
+      ok: true,
+      source: { type: 'input_event', id: referenceId },
+      ref: { type: 'event', id: referenceId },
+      item: {
+        id: referenceId,
+        title: '原始完整输入',
+        committedText: referenceId.endsWith('10001')
+          ? '嗯嗯那个这个'
+          : '输入框最终文本已在提交时形成可追溯证据。',
+        status: 'active',
+        app: referenceId.endsWith('10001') ? 'com.mitchellh.ghostty' : 'com.openai.codex',
+        sourceKind: 'squirrel_input_segment',
+        ownerKind: 'user',
+        ownerId: 'default',
+        occurredAtMs: now - 3_600_000,
+      },
+      evidenceRefs: [],
+    };
+  }
+  if (kind === 'evidence') {
+    return {
+      schemaVersion: 'rag-ime.memory-reference.v1',
+      ok: true,
+      source: { type: 'agent_memory_evidence', id: referenceId },
+      ref: { type: 'evidence', id: referenceId },
+      item: {
+        id: referenceId,
+        title: 'Agent 对话整理证据',
+        detail: '桌面上下文默认读取 Accessibility Tree，截图仅在语义不足时兜底。',
+        status: 'remember',
+        ownerKind: 'agent',
+        ownerId: 'zhiyou-v1',
+        updatedAtMs: now - 2_400_000,
+      },
+      evidenceRefs: [{ kind: 'event', referenceId: 'event:10002', title: '原始对话输入' }],
+    };
+  }
+  if (kind === 'atom') {
+    const timelineBoundary = referenceId.includes('timeline');
+    return {
+      schemaVersion: 'rag-ime.memory-reference.v1',
+      ok: true,
+      source: { type: 'memory_atom', id: referenceId },
+      ref: { type: 'atom', id: referenceId },
+      item: {
+        id: referenceId,
+        title: timelineBoundary ? '时间线召回边界' : '输入段封口规则',
+        text: timelineBoundary
+          ? '已批准时间线可用于活动背景，但不能单独证明稳定事实。'
+          : '输入框最终文本优先，Enter 或切换 App 后才形成完整输入段。',
+        status: 'active',
+        claimState: 'current',
+        ownerKind: 'user',
+        ownerId: 'default',
+        updatedAtMs: now - 120_000,
+      },
+      evidenceRefs: timelineBoundary
+        ? [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }]
+        : [{ kind: 'event', referenceId: 'event:10003', title: '输入框最终文本采集记录' }],
+    };
+  }
+  if (kind === 'book') {
+    return {
+      schemaVersion: 'rag-ime.memory-reference.v1',
+      ok: true,
+      source: { type: 'memory_book', id: referenceId },
+      ref: { type: 'book', id: referenceId },
+      item: {
+        id: referenceId,
+        title: referenceId.includes('agent-runtime') ? 'Agent Runtime' : '输入法记忆与上下文',
+        summary: '聚合当前 Atom 和来源证据，作为主题检索入口。',
+        status: 'active',
+        type: 'topic',
+        ownerKind: 'user',
+        ownerId: 'default',
+        updatedAtMs: now - 90_000,
+      },
+      evidenceRefs: [
+        { kind: 'atom', referenceId: 'atom:input-boundary', title: '输入段封口规则' },
+        { kind: 'atom', referenceId: 'atom:timeline-governance', title: '时间线召回边界' },
+      ],
+    };
+  }
+  if (kind === 'timeline') {
+    const matchedDate = referenceId.match(/(20\d{2}-\d{2}-\d{2})/u)?.[1]
+      ?? new Date().toISOString().slice(0, 10);
+    const timeline = previewActivityTimeline(matchedDate, 'approved');
+    return {
+      schemaVersion: 'rag-ime.memory-reference.v1',
+      ok: true,
+      source: timeline.source,
+      ref: timeline.ref,
+      item: {
+        ...timeline,
+        id: timeline.timelineId,
+        title: `${matchedDate} 语义任务时间线`,
+      },
+      evidenceRefs: (timeline.segments as Record<string, unknown>[])
+        .flatMap((segment) => segment.evidenceRefs as Record<string, unknown>[]),
+    };
+  }
+  return {
+    schemaVersion: 'rag-ime.memory-reference.v1',
+    ok: true,
+    source: { type: 'role_book_revision', id: referenceId },
+    ref: { type: 'role_book_revision', id: referenceId },
+    item: {
+      id: referenceId,
+      title: '智鼬 · 当前角色书',
+      detail: '维护角色使命、能力画像、协作习惯与已验证教训。',
+      status: 'active',
+      ownerKind: 'agent',
+      ownerId: 'zhiyou-v1',
+      updatedAtMs: now - 60_000,
+    },
+    evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: '最近角色整理证据' }],
+  };
 }
 
 function previewBrowserSnapshot(): Record<string, unknown> {
@@ -882,10 +1047,46 @@ function previewActivityTimeline(date: string, status: string): Record<string, u
   const dayStart = localPreviewDayStart(date);
   const hash = '8d4a2d9c1fc84d408f8fe9a314f34c767b28e32e5b6461d73cc8e22d2209dc11';
   const segments = [
-    previewActivitySegment('planning', 0, 'com.openai.codex', dayStart + 8.5 * 3_600_000, dayStart + 10.1 * 3_600_000, 18, '梳理个人上下文核心的治理边界，并核对 Atom、Book 与 Role Book 的职责。', ['pi_agent'], ['group:personal-context']),
-    previewActivitySegment('research', 1, 'com.google.Chrome', dayStart + 10.2 * 3_600_000, dayStart + 11.3 * 3_600_000, 12, '查阅记忆评测与长期记忆更新资料，补充验证条件。', ['browser_extension', 'squirrel_input_segment'], ['group:memory-evaluation']),
-    previewActivitySegment('implementation', 2, 'com.microsoft.VSCode', dayStart + 13.2 * 3_600_000, dayStart + 15.8 * 3_600_000, 31, '实现最终输入框捕获、投影状态和每日时间线管理界面。', ['squirrel_input_segment', 'pi_agent'], ['group:input-method', 'group:personal-context']),
-    previewActivitySegment('verification', 3, 'com.mitchellh.ghostty', dayStart + 16 * 3_600_000, dayStart + 17.1 * 3_600_000, 14, '运行后端、Web 与输入法集成测试，核对三条记忆消费路径。', ['squirrel_input_segment'], ['group:verification']),
+    previewActivitySegment({
+      id: 'codex-account-switch',
+      position: 0,
+      title: 'CAS 切换 Codex 账号',
+      apps: ['com.mitchellh.ghostty', 'com.openai.codex'],
+      startMs: dayStart + 8.4 * 3_600_000,
+      endMs: dayStart + 9.1 * 3_600_000,
+      eventCount: 8,
+      summary: '在 Ghostty 中使用 CAS 切换账号，随后回到 Codex 验证新账号会话；跨 App 事件属于同一个任务。',
+      sourceKinds: ['squirrel_input_segment', 'pi_agent'],
+      contextGroupIds: ['group:codex-account'],
+      previews: ['cas codex switch work', '已切换 Codex 账号，继续当前会话'],
+    }),
+    previewActivitySegment({
+      id: 'memory-redesign',
+      position: 1,
+      title: '重构个人上下文记忆系统',
+      apps: ['com.openai.codex', 'com.google.Chrome'],
+      startMs: dayStart + 9.2 * 3_600_000,
+      endMs: dayStart + 12.1 * 3_600_000,
+      eventCount: 27,
+      summary: '围绕 Evidence、Current Fact、Topic Book、Role Book 和 Timeline 的边界完成方案核对与资料查证。',
+      sourceKinds: ['pi_agent', 'browser_extension', 'squirrel_input_segment'],
+      contextGroupIds: ['group:personal-context', 'group:memory-evaluation'],
+      previews: ['现在记忆系统是什么结构', '核对长期记忆更新与来源追溯方案'],
+      redactedEventCount: 2,
+    }),
+    previewActivitySegment({
+      id: 'timeline-implementation',
+      position: 2,
+      title: '实现语义时间线与来源下钻',
+      apps: ['com.microsoft.VSCode', 'com.mitchellh.ghostty', 'com.openai.codex'],
+      startMs: dayStart + 13.2 * 3_600_000,
+      endMs: dayStart + 17.1 * 3_600_000,
+      eventCount: 36,
+      summary: '实现跨 App 任务聚合、记忆召回和逐层来源查看，并运行 Web、后端与输入法集成验证。',
+      sourceKinds: ['squirrel_input_segment', 'pi_agent'],
+      contextGroupIds: ['group:input-method', 'group:personal-context', 'group:verification'],
+      previews: ['完成新版前端和时间线整理', '运行后端、Web 与输入法集成测试'],
+    }),
   ];
   return {
     schemaVersion: 'rag-ime.daily-activity-timeline.v1',
@@ -894,10 +1095,11 @@ function previewActivityTimeline(date: string, status: string): Record<string, u
     date,
     timezone: 'Asia/Shanghai',
     status,
+    segmentationMode: 'semantic_task_v2',
     sourceEventIds: segments.flatMap((segment) => segment.sourceEventIds as number[]),
     sourceEventHash: hash,
     segments,
-    summary: '当天围绕个人上下文架构完成了资料核对、输入链改造、时间线前端和端到端验证。',
+    summary: '当天完成 Codex 账号切换、个人上下文架构重构，以及语义时间线和来源下钻的实现验证。',
     eventCount: segments.reduce((sum, segment) => sum + Number(segment.eventCount), 0),
     segmentCount: segments.length,
     approvedBookId: status === 'approved' ? `book:daily:${date}` : '',
@@ -905,6 +1107,8 @@ function previewActivityTimeline(date: string, status: string): Record<string, u
     approvedAtMs: status === 'approved' ? Date.now() - 30_000 : 0,
     createdAtMs: dayStart + 18 * 3_600_000,
     updatedAtMs: Date.now() - 30_000,
+    source: { type: 'daily_activity_timeline', id: `timeline:${date}` },
+    ref: { type: 'timeline', id: `timeline:${date}` },
     policy: {
       derivedFromInputEvents: true,
       longTermFact: false,
@@ -914,31 +1118,54 @@ function previewActivityTimeline(date: string, status: string): Record<string, u
   };
 }
 
-function previewActivitySegment(
-  id: string,
-  position: number,
-  app: string,
-  startMs: number,
-  endMs: number,
-  eventCount: number,
-  summary: string,
-  sourceKinds: string[],
-  contextGroupIds: string[],
-): Record<string, unknown> {
-  const firstEventId = 10_001 + position * 100;
+function previewActivitySegment(input: {
+  id: string;
+  position: number;
+  title: string;
+  apps: string[];
+  startMs: number;
+  endMs: number;
+  eventCount: number;
+  summary: string;
+  sourceKinds: string[];
+  contextGroupIds: string[];
+  previews: string[];
+  redactedEventCount?: number;
+}): Record<string, unknown> {
+  const firstEventId = 10_001 + input.position * 100;
+  const sourceEventIds = Array.from(
+    { length: input.eventCount },
+    (_, index) => firstEventId + index,
+  );
   return {
-    segmentId: `segment:${id}`,
-    position,
-    app,
-    sourceKinds,
-    contextGroupIds,
-    startMs: Math.round(startMs),
-    endMs: Math.round(endMs),
-    eventCount,
-    sourceEventIds: [firstEventId, firstEventId + 1],
+    segmentId: `segment:${input.id}`,
+    position: input.position,
+    title: input.title,
+    app: input.apps[0],
+    apps: input.apps,
+    sourceKinds: input.sourceKinds,
+    contextGroupIds: input.contextGroupIds,
+    startMs: Math.round(input.startMs),
+    endMs: Math.round(input.endMs),
+    eventCount: input.eventCount,
+    sourceEventIds,
     sourceEventHash: '24d18e6ea9f1d8dd36b957d3948dc6948c00c86173691104be5b3e24358da8bb',
-    summary,
-    redactedEventCount: position === 1 ? 2 : 0,
+    summary: input.summary,
+    redactedEventCount: input.redactedEventCount ?? 0,
+    evidenceRefs: sourceEventIds.map((eventId, index) => ({
+      sourceType: 'input_event',
+      sourceId: `event:${eventId}`,
+      eventId,
+      app: input.apps[index % input.apps.length],
+      sourceKind: input.sourceKinds[index % input.sourceKinds.length],
+      occurredAtMs: Math.round(
+        input.startMs
+        + ((input.endMs - input.startMs) * index) / Math.max(1, input.eventCount - 1),
+      ),
+      preview: input.previews[index % input.previews.length],
+    })),
+    source: { type: 'daily_activity_timeline', id: `timeline:${new Date(input.startMs).toISOString().slice(0, 10)}` },
+    ref: { type: 'timeline', id: `timeline:${new Date(input.startMs).toISOString().slice(0, 10)}` },
   };
 }
 
@@ -989,8 +1216,28 @@ function previewMemoryCatalogPage(kind: string): Record<string, unknown> {
     return {
       ...common,
       items: [
-        { id: 'atom:input-boundary', title: '输入段封口规则', text: 'Backspace 修改当前缓冲区，Enter 或切换 App 后才形成完整输入段。', status: 'active', source: 'agent', tags: ['输入封口', '记忆质量'], updatedAtMs: Date.now() - 120_000 },
-        { id: 'atom:lightning', title: '闪电联想上下文', text: '闪电联想只读取进程内实时缓冲，不把未封口碎片写进普通 Agent 上下文。', status: 'active', source: 'agent', tags: ['输入法', 'Agent Runtime'], updatedAtMs: Date.now() - 240_000 },
+        {
+          id: 'atom:input-boundary',
+          title: '输入段封口规则',
+          text: 'Backspace 修改当前缓冲区，Enter 或切换 App 后才形成完整输入段。',
+          status: 'active',
+          source: { type: 'memory_atom', id: 'atom:input-boundary' },
+          ref: { type: 'atom', id: 'atom:input-boundary' },
+          evidenceRefs: [{ kind: 'event', referenceId: 'event:10003', title: '输入框最终文本采集记录' }],
+          tags: ['输入封口', '记忆质量'],
+          updatedAtMs: Date.now() - 120_000,
+        },
+        {
+          id: 'atom:timeline-governance',
+          title: '时间线召回边界',
+          text: '活动时间线是经审批的活动衍生物，可参与 Session 启动上下文和工具检索，但不能单独证明长期事实。',
+          status: 'active',
+          source: { type: 'memory_atom', id: 'atom:timeline-governance' },
+          ref: { type: 'atom', id: 'atom:timeline-governance' },
+          evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }],
+          tags: ['时间线', '记忆治理'],
+          updatedAtMs: Date.now() - 240_000,
+        },
       ],
     };
   }
@@ -1003,8 +1250,30 @@ function previewMemoryCatalogPage(kind: string): Record<string, unknown> {
   return {
     ...common,
     items: [
-      { id: 'book:input-memory', type: 'topic', title: '输入法记忆与上下文', summary: '完整输入段、App 来源和闪电联想边界', status: 'active', source: 'agent', tags: ['输入封口', '记忆质量'], updatedAtMs: Date.now() - 90_000 },
-      { id: 'book:agent-runtime', type: 'topic', title: 'Agent Runtime', summary: 'Pi Skill、会话与受控写入', status: 'active', source: 'agent', tags: ['Agent Runtime'], updatedAtMs: Date.now() - 210_000 },
+      {
+        id: 'book:input-memory',
+        type: 'topic',
+        title: '输入法记忆与上下文',
+        summary: '完整输入段、App 来源、当前事实与闪电联想边界。',
+        status: 'active',
+        source: { type: 'memory_book', id: 'book:input-memory' },
+        ref: { type: 'book', id: 'book:input-memory' },
+        evidenceRefs: [{ kind: 'atom', referenceId: 'atom:input-boundary', title: '输入段封口规则' }],
+        tags: ['输入封口', '记忆质量'],
+        updatedAtMs: Date.now() - 90_000,
+      },
+      {
+        id: 'book:agent-runtime',
+        type: 'topic',
+        title: 'Agent Runtime',
+        summary: 'Role Book、Session 启动注入、显式记忆工具与受控写入。',
+        status: 'active',
+        source: { type: 'memory_book', id: 'book:agent-runtime' },
+        ref: { type: 'book', id: 'book:agent-runtime' },
+        evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }],
+        tags: ['Agent Runtime'],
+        updatedAtMs: Date.now() - 210_000,
+      },
     ],
   };
 }

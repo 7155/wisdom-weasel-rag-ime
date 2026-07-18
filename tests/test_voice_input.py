@@ -33,6 +33,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertNotIn("RagImeMac.app", build)
         self.assertIn("RunAtLoad bool true", launch)
         self.assertIn("KeepAlive:SuccessfulExit bool false", launch)
+        self.assertLess(launch.index("launchctl enable"), launch.index("launchctl bootstrap"))
 
     def test_credentials_avoid_repeat_prompts_and_sensitive_fields_are_blocked(self) -> None:
         keychain = (ROOT / "macos/Shared/VoiceKeychainStore.swift").read_text(encoding="utf-8")

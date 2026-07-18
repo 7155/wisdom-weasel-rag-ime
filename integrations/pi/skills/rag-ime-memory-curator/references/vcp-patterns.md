@@ -10,10 +10,11 @@ RAG-IME adapts those ideas as follows:
 
 | VCP pressure | RAG-IME rule |
 | --- | --- |
-| Raw diary text is not the final prompt | Keep `input_events` separate from approved Atom/Book retrieval documents. |
-| Tool calls make memory changes observable | Pi uses `ime_memory`; the skill never writes SQLite. |
-| Semantic grouping needs control | Agent creates a diff; the Memory page exposes per-item checkboxes before apply. |
+| Raw diary text is not the final prompt | Keep Evidence separate from Current Atom and Topic Book retrieval documents. |
+| Tool calls make memory changes observable | Pi uses preview/apply/rollback operations on `ime_memory`; the skill never writes SQLite. |
+| Semantic grouping needs control | Cross-App Task Timelines retain every App as provenance and remain continuity context, not fact evidence. |
 | Retrieval should be useful but bounded | Ordinary Agent context admits only finalized, quality-gated segments. |
 | Runtime metadata is not knowledge | App is provenance; transport source/tag names never become semantic tags. |
+| Agent identity is not user memory | Role Book changes stay in pinned revisions and can only be proposed/reviewed by the Agent. |
 
 The important difference is the IME's live lightning path. Its editable buffer may be used immediately to infer the current intent, but it bypasses persistence and is cleared/finalized at Enter or App boundaries.

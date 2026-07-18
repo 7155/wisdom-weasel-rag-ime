@@ -688,7 +688,12 @@ def _materialize_event(
     if projection_kind == RETRIEVAL_DOCS_PROJECTION:
         from .retrieval_docs import rebuild_retrieval_docs
 
-        report = rebuild_retrieval_docs(conn, project=project)
+        report = rebuild_retrieval_docs(
+            conn,
+            project=project,
+            include_phrases=True,
+            include_legacy_items=False,
+        )
         vector_outbox_id = enqueue_memory_projection(
             conn,
             projection_kind=RETRIEVAL_VECTORS_PROJECTION,

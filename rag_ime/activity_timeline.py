@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -23,7 +24,10 @@ if TYPE_CHECKING:
 
 
 DAILY_ACTIVITY_TIMELINE_SCHEMA_VERSION = "rag-ime.daily-activity-timeline.v1"
-DEFAULT_SEGMENT_GAP_MS = 30 * 60 * 1_000
+DEFAULT_SEGMENT_GAP_MS = 45 * 60 * 1_000
+_SEMANTIC_TASK_MAX_GAP_MS = 6 * 60 * 60 * 1_000
+_MAX_SEMANTIC_TASKS_PER_DAY = 3
+_FRAGMENT_BURST_GAP_MS = 20 * 1_000
 
 _INTERNAL_EVENT_SOURCES = frozenset(
     {
@@ -49,11 +53,15 @@ class ActivityTimelineSegment:
     context_group_ids: tuple[str, ...]
     start_ms: int
     end_ms: int
+    period: str
     event_count: int
     source_event_ids: tuple[int, ...]
     source_event_hash: str
     summary: str
     redacted_event_count: int
+    title: str
+    apps: tuple[str, ...]
+    evidence_refs: tuple[dict[str, object], ...]
 
     def payload(self) -> dict[str, object]:
         return {
@@ -64,11 +72,19 @@ class ActivityTimelineSegment:
             "contextGroupIds": list(self.context_group_ids),
             "startMs": self.start_ms,
             "endMs": self.end_ms,
+            "period": self.period,
             "eventCount": self.event_count,
             "sourceEventIds": list(self.source_event_ids),
             "sourceEventHash": self.source_event_hash,
             "summary": self.summary,
             "redactedEventCount": self.redacted_event_count,
+            "title": self.title,
+            "apps": list(self.apps),
+            "evidenceRefs": [dict(value) for value in self.evidence_refs],
+            "source": {
+                "type": "input_event_bundle",
+                "id": f"event-set:{self.source_event_hash}",
+            },
         }
 
 
@@ -161,7 +177,22 @@ class DailyActivityTimelineStore:
                 """,
                 (self.project, day.isoformat(), event_hash),
             ).fetchone()
-            if existing is not None and str(existing["status"]) != "superseded":
+            existing_status = str(existing["status"]) if existing is not None else ""
+            existing_metadata = (
+                _json_mapping(existing["metadata_json"])
+                if existing is not None
+                else {}
+            )
+            existing_segmentation_mode = str(
+                existing_metadata.get("segmentationMode") or ""
+            )
+            if (
+                existing is not None
+                and (
+                    existing_status in {"approved", "rejected", "superseded"}
+                    or existing_segmentation_mode == "semantic_task_v2"
+                )
+            ):
                 timeline = _timeline_payload(existing)
                 validate_contract(timeline, "daily-activity-timeline.v1.json")
                 return {
@@ -194,6 +225,7 @@ class DailyActivityTimelineStore:
             metadata = {
                 "derivedFrom": "input_events",
                 "segmentGapMs": self.segment_gap_ms,
+                "segmentationMode": "semantic_task_v2",
                 "longTermFact": False,
                 "automaticPromotion": False,
                 "explicitApprovalRequired": True,
@@ -423,8 +455,13 @@ class DailyActivityTimelineStore:
                 )
             )
             app = apps[0] if len(apps) == 1 else "multiple"
-            title = f"{day.isoformat()} 跨应用活动时间线"
+            title = f"{day.isoformat()} 语义任务时间线"
             summary = compact_whitespace(str(row["summary_text"] or ""))
+            task_titles = [
+                compact_whitespace(str(segment.get("title") or ""))
+                for segment in segments
+                if compact_whitespace(str(segment.get("title") or ""))
+            ]
             metadata = {
                 "schemaVersion": "rag-ime.approved-activity-timeline-book.v1",
                 "derivedArtifactType": "daily_activity_timeline",
@@ -437,6 +474,17 @@ class DailyActivityTimelineStore:
                 "longTermFact": False,
                 "automaticPromotion": False,
                 "segmentCount": int(row["segment_count"]),
+                "taskCount": int(row["segment_count"]),
+                "taskTitles": task_titles,
+                "timelineDate": day.isoformat(),
+                "source": {
+                    "type": "input_event_set",
+                    "id": f"event-set:{expected_hash}",
+                },
+                "ref": {
+                    "type": "timeline",
+                    "id": identifier,
+                },
             }
             conn.execute(
                 """
@@ -598,6 +646,17 @@ class DailyActivityTimelineStore:
             WHERE e.created_at_ms >= ? AND e.created_at_ms < ?
               AND e.project = ?
               AND COALESCE(s.deleted, 0) = 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM memory_tombstones AS tombstone
+                  WHERE tombstone.active = 1
+                    AND (
+                         (tombstone.target_type = 'source_event_id'
+                          AND tombstone.target_value = CAST(e.id AS TEXT))
+                      OR (tombstone.target_type = 'memory_id'
+                          AND tombstone.target_value = ('event:' || e.id))
+                    )
+              )
               AND e.source NOT IN ({_placeholders(_INTERNAL_EVENT_SOURCES)})
             ORDER BY e.created_at_ms ASC, e.id ASC
             """,
@@ -647,25 +706,24 @@ def _segments(
     timezone: tzinfo,
     max_gap_ms: int,
 ) -> list[ActivityTimelineSegment]:
-    groups: list[list[_ActivityEvent]] = []
-    for event in events:
-        app = _safe_label(event.app, fallback=_safe_label(event.source, fallback="unknown-app"))
-        if (
-            not groups
-            or _safe_label(
-                groups[-1][-1].app,
-                fallback=_safe_label(groups[-1][-1].source, fallback="unknown-app"),
-            )
-            != app
-            or event.created_at_ms - groups[-1][-1].created_at_ms > max_gap_ms
-        ):
-            groups.append([event])
-        else:
-            groups[-1].append(event)
+    groups = _semantic_task_groups(
+        events,
+        max_gap_ms=max_gap_ms,
+    )
+    _assert_event_conservation(events, groups)
 
     segments: list[ActivityTimelineSegment] = []
     for position, group in enumerate(groups):
-        app = _safe_label(group[0].app, fallback=_safe_label(group[0].source, fallback="unknown-app"))
+        apps = tuple(
+            dict.fromkeys(
+                _safe_label(
+                    event.app,
+                    fallback=_safe_label(event.source, fallback="unknown-app"),
+                )
+                for event in group
+            )
+        )
+        app = apps[0] if len(apps) == 1 else "multiple"
         source_kinds = tuple(
             dict.fromkeys(
                 _safe_label(event.source, fallback="unknown-source")
@@ -685,7 +743,13 @@ def _segments(
         source_hash = _event_hash(group)
         snippets: list[str] = []
         redacted_count = 0
+        evidence_refs: list[dict[str, object]] = []
         for event in group:
+            event_app = _safe_label(
+                event.app,
+                fallback=_safe_label(event.source, fallback="unknown-app"),
+            )
+            event_source = _safe_label(event.source, fallback="unknown-source")
             text = compact_whitespace(event.text)
             if contains_sensitive_content(text):
                 redacted_count += 1
@@ -694,9 +758,24 @@ def _segments(
                 text = truncate_text(text, 180)
             if text and text not in snippets:
                 snippets.append(text)
+            evidence_refs.append(
+                {
+                    "sourceType": "input_event",
+                    "sourceId": f"event:{event.event_id}",
+                    "eventId": event.event_id,
+                    "app": event_app,
+                    "sourceKind": event_source,
+                    "occurredAtMs": event.created_at_ms,
+                    "preview": text or "[无可显示文本]",
+                }
+            )
         if not snippets:
             snippets = ["[无可显示文本]"]
-        summary = f"{app}：{'；'.join(snippets[:4])}"
+        title = _task_title(group, snippets=snippets)
+        detail_snippets = [value for value in snippets if value != title]
+        summary = title
+        if detail_snippets:
+            summary += f"：{'；'.join(detail_snippets[:4])}"
         if len(group) > 4:
             summary += f"；另有 {len(group) - 4} 条输入"
         segment_id = (
@@ -712,11 +791,19 @@ def _segments(
                 context_group_ids=context_groups,
                 start_ms=group[0].created_at_ms,
                 end_ms=group[-1].created_at_ms,
+                period=_activity_period(
+                    group[0].created_at_ms,
+                    group[-1].created_at_ms,
+                    timezone=timezone,
+                ),
                 event_count=len(group),
                 source_event_ids=source_ids,
                 source_event_hash=source_hash,
                 summary=truncate_text(summary, 760),
                 redacted_event_count=redacted_count,
+                title=title,
+                apps=apps,
+                evidence_refs=tuple(evidence_refs),
             )
         )
     return segments
@@ -764,16 +851,28 @@ def _event_hash(events: Sequence[_ActivityEvent]) -> str:
 
 
 def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
+    timeline_id = str(row["timeline_id"])
+    event_hash = str(row["source_event_hash"])
+    metadata = _json_mapping(row["metadata_json"])
+    segmentation_mode = compact_whitespace(
+        str(metadata.get("segmentationMode") or "")
+    )
+    if segmentation_mode != "semantic_task_v2":
+        segmentation_mode = "legacy_app_interval_v1"
+    segments = _timeline_segments_payload(
+        row["segments_json"],
+        timezone_name=str(row["timezone"] or ""),
+    )
     return {
         "schemaVersion": DAILY_ACTIVITY_TIMELINE_SCHEMA_VERSION,
-        "timelineId": str(row["timeline_id"]),
+        "timelineId": timeline_id,
         "project": str(row["project"] or ""),
         "date": str(row["timeline_date"]),
         "timezone": str(row["timezone"] or "local"),
         "status": str(row["status"]),
         "sourceEventIds": _json_ints(row["source_event_ids_json"]),
-        "sourceEventHash": str(row["source_event_hash"]),
-        "segments": _json_objects(row["segments_json"]),
+        "sourceEventHash": event_hash,
+        "segments": segments,
         "summary": str(row["summary_text"]),
         "eventCount": int(row["event_count"]),
         "segmentCount": int(row["segment_count"]),
@@ -782,6 +881,15 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
         "approvedAtMs": int(row["approved_at_ms"] or 0),
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
+        "segmentationMode": segmentation_mode,
+        "source": {
+            "type": "input_event_set",
+            "id": f"event-set:{event_hash}",
+        },
+        "ref": {
+            "type": "timeline",
+            "id": timeline_id,
+        },
         "policy": {
             "derivedFromInputEvents": True,
             "longTermFact": False,
@@ -789,6 +897,565 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
             "explicitApprovalRequired": True,
         },
     }
+
+
+def _timeline_segments_payload(
+    raw: object,
+    *,
+    timezone_name: str,
+) -> list[dict[str, object]]:
+    """Expose an explicit period for both new and legacy stored segments."""
+
+    timezone = _payload_timezone(timezone_name)
+    segments: list[dict[str, object]] = []
+    for value in _json_objects(raw):
+        segment = dict(value)
+        period = compact_whitespace(
+            str(segment.get("period") or segment.get("dayPart") or "")
+        ).lower()
+        if period not in {"day", "morning", "afternoon", "evening"}:
+            period = _activity_period(
+                _safe_timestamp(segment.get("startMs")),
+                _safe_timestamp(segment.get("endMs")),
+                timezone=timezone,
+            )
+        segment.pop("dayPart", None)
+        segment["period"] = period
+        segments.append(segment)
+    return segments
+
+
+def _payload_timezone(value: str) -> tzinfo:
+    name = compact_whitespace(value)
+    try:
+        return _resolve_timezone("" if name == "local" else name)
+    except ValueError:
+        return _resolve_timezone("")
+
+
+def _safe_timestamp(value: object) -> int:
+    try:
+        return max(0, int(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _activity_period(start_ms: int, end_ms: int, *, timezone: tzinfo) -> str:
+    """Classify one semantic task; crossing a day partition is an all-day task."""
+
+    if start_ms <= 0:
+        return "day"
+    bounded_end = max(start_ms, end_ms)
+    start_part = _activity_day_part(start_ms, timezone=timezone)
+    end_part = _activity_day_part(bounded_end, timezone=timezone)
+    return start_part if start_part == end_part else "day"
+
+
+def activity_timeline_period(
+    start_ms: object,
+    end_ms: object,
+    *,
+    timezone_name: str = "",
+) -> str:
+    """Return the canonical period for API projections outside this store."""
+
+    return _activity_period(
+        _safe_timestamp(start_ms),
+        _safe_timestamp(end_ms),
+        timezone=_payload_timezone(timezone_name),
+    )
+
+
+def _activity_day_part(timestamp_ms: int, *, timezone: tzinfo) -> str:
+    hour = datetime.fromtimestamp(timestamp_ms / 1_000, tz=timezone).hour
+    if hour < 12:
+        return "morning"
+    if hour < 18:
+        return "afternoon"
+    return "evening"
+
+
+def _semantic_task_groups(
+    events: Sequence[_ActivityEvent],
+    *,
+    max_gap_ms: int,
+) -> list[list[_ActivityEvent]]:
+    """Build task episodes without treating foreground App switches as boundaries."""
+
+    episodes: list[list[_ActivityEvent]] = []
+    for event in events:
+        if (
+            not episodes
+            or event.created_at_ms - episodes[-1][-1].created_at_ms > max_gap_ms
+        ):
+            episodes.append([event])
+        else:
+            episodes[-1].append(event)
+
+    groups: list[list[_ActivityEvent]] = []
+    episode_indexes: list[int] = []
+    for episode_index, episode in enumerate(episodes):
+        episode_groups: list[list[_ActivityEvent]] = []
+        for event in episode:
+            if not episode_groups:
+                episode_groups.append([event])
+                continue
+            if _same_short_fragment_burst(event, episode_groups[-1][-1]):
+                episode_groups[-1].append(event)
+                continue
+            best_index = max(
+                range(len(episode_groups)),
+                key=lambda index: _event_group_affinity(
+                    event,
+                    episode_groups[index],
+                    max_gap_ms=max_gap_ms,
+                ),
+            )
+            best_score = _event_group_affinity(
+                event,
+                episode_groups[best_index],
+                max_gap_ms=max_gap_ms,
+            )
+            if best_score >= 0.34:
+                episode_groups[best_index].append(event)
+            elif _obvious_topic_break(event, episode_groups[-1]):
+                episode_groups.append([event])
+            else:
+                episode_groups[-1].append(event)
+        for group in episode_groups:
+            group.sort(key=lambda value: (value.created_at_ms, value.event_id))
+            groups.append(group)
+            episode_indexes.append(episode_index)
+
+    # A real pause starts a new episode. Merge across it only when the events
+    # carry strong shared entities or commands; runtime scope is only a weak
+    # corroborating signal.
+    changed = True
+    while changed:
+        changed = False
+        for left in range(len(groups)):
+            for right in range(left + 1, len(groups)):
+                if episode_indexes[left] == episode_indexes[right]:
+                    continue
+                if _strong_cross_episode_match(groups[left], groups[right]):
+                    groups[left] = sorted(
+                        [*groups[left], *groups[right]],
+                        key=lambda value: (value.created_at_ms, value.event_id),
+                    )
+                    del groups[right]
+                    del episode_indexes[right]
+                    changed = True
+                    break
+            if changed:
+                break
+    groups = sorted(groups, key=lambda group: (group[0].created_at_ms, group[0].event_id))
+    return _coarsen_task_groups(groups, maximum=_MAX_SEMANTIC_TASKS_PER_DAY)
+
+
+def _event_group_affinity(
+    event: _ActivityEvent,
+    group: Sequence[_ActivityEvent],
+    *,
+    max_gap_ms: int,
+) -> float:
+    latest = max(group, key=lambda value: (value.created_at_ms, value.event_id))
+    gap = max(0, event.created_at_ms - latest.created_at_ms)
+    event_groups = _event_context_groups(event)
+    group_contexts = {
+        value for item in group for value in _event_context_groups(item)
+    }
+    same_runtime_scope = bool(event_groups & group_contexts)
+    event_terms = _event_semantic_terms(event)
+    group_terms = {term for item in group for term in _event_semantic_terms(item)}
+    shared = event_terms & group_terms
+    salient_shared = _specific_semantic_terms(shared)
+    overlap = len(shared) / max(1, min(len(event_terms), len(group_terms)))
+    union = len(event_terms | group_terms)
+    jaccard = len(shared) / max(1, union)
+    score = 0.62 * overlap + 0.22 * jaccard
+    score += min(0.48, 0.30 * len(salient_shared))
+    event_app = _normalized_app(event)
+    if event_app and any(_normalized_app(item) == event_app for item in group):
+        score += 0.06
+    # context_group_id is an App/document/project runtime scope, not a topic.
+    # It can break a tie but must never force unrelated work into one task.
+    if same_runtime_scope:
+        score += 0.08
+    if gap <= max_gap_ms:
+        score += 0.08
+    elif gap > _SEMANTIC_TASK_MAX_GAP_MS and not shared:
+        return 0.0
+    same_app = bool(
+        event_app and any(_normalized_app(item) == event_app for item in group)
+    )
+    if not event_terms and same_app and gap <= max_gap_ms:
+        score += 0.34
+    return min(1.0, score)
+
+
+def _obvious_topic_break(
+    event: _ActivityEvent,
+    current_group: Sequence[_ActivityEvent],
+) -> bool:
+    event_terms = _event_semantic_terms(event)
+    group_terms = {
+        term for item in current_group for term in _event_semantic_terms(item)
+    }
+    if not event_terms or not group_terms or event_terms & group_terms:
+        return False
+    event_contexts = _event_context_groups(event)
+    group_contexts = {
+        value for item in current_group for value in _event_context_groups(item)
+    }
+    event_concepts = {
+        term for term in event_terms if term.startswith(("concept:", "action:"))
+    }
+    group_concepts = {
+        term for term in group_terms if term.startswith(("concept:", "action:"))
+    }
+    if event_concepts and group_concepts and not (event_concepts & group_concepts):
+        return True
+    if event_contexts and group_contexts and not (event_contexts & group_contexts):
+        return True
+    return False
+
+
+def _strong_cross_episode_match(
+    left: Sequence[_ActivityEvent],
+    right: Sequence[_ActivityEvent],
+) -> bool:
+    left_contexts = {
+        value for item in left for value in _event_context_groups(item)
+    }
+    right_contexts = {
+        value for item in right for value in _event_context_groups(item)
+    }
+    same_runtime_scope = bool(left_contexts & right_contexts)
+    left_terms = {term for item in left for term in _event_semantic_terms(item)}
+    right_terms = {term for item in right for term in _event_semantic_terms(item)}
+    shared = left_terms & right_terms
+    salient = _specific_semantic_terms(shared)
+    overlap = len(shared) / max(1, min(len(left_terms), len(right_terms)))
+    if len(salient) >= 2 and overlap >= 0.45:
+        return True
+    return same_runtime_scope and len(salient) >= 2 and overlap >= 0.55
+
+
+def _coarsen_task_groups(
+    groups: Sequence[Sequence[_ActivityEvent]],
+    *,
+    maximum: int,
+) -> list[list[_ActivityEvent]]:
+    """Keep the user-facing Timeline at work-block granularity.
+
+    Fine-grained evidence remains inside each block. Only adjacent task groups
+    are merged, so this cap cannot reorder the day or lose provenance.
+    """
+
+    result = [list(group) for group in groups if group]
+    limit = max(1, int(maximum))
+    while len(result) > limit:
+        pair_index = max(
+            range(len(result) - 1),
+            key=lambda index: _adjacent_group_merge_score(
+                result[index],
+                result[index + 1],
+            ),
+        )
+        result[pair_index] = sorted(
+            [*result[pair_index], *result[pair_index + 1]],
+            key=lambda value: (value.created_at_ms, value.event_id),
+        )
+        del result[pair_index + 1]
+    return result
+
+
+def _adjacent_group_merge_score(
+    left: Sequence[_ActivityEvent],
+    right: Sequence[_ActivityEvent],
+) -> float:
+    left_terms = {term for item in left for term in _event_semantic_terms(item)}
+    right_terms = {term for item in right for term in _event_semantic_terms(item)}
+    shared = left_terms & right_terms
+    specific = _specific_semantic_terms(shared)
+    left_end = max(item.created_at_ms for item in left)
+    right_start = min(item.created_at_ms for item in right)
+    gap = max(0, right_start - left_end)
+    score = 1.4 * len(specific)
+    score += 0.8 * (len(shared) / max(1, min(len(left_terms), len(right_terms))))
+    if gap <= DEFAULT_SEGMENT_GAP_MS:
+        score += 0.8
+    elif gap <= _SEMANTIC_TASK_MAX_GAP_MS:
+        score += 0.25
+    left_apps = {_normalized_app(item) for item in left}
+    right_apps = {_normalized_app(item) for item in right}
+    if left_apps & right_apps:
+        score += 0.25
+    # Prefer absorbing a tiny follow-up into its surrounding work block instead
+    # of leaving "继续" or one correction as a standalone Timeline task.
+    score += 0.45 / max(1, min(len(left), len(right)))
+    if _is_cas_account_group(left) != _is_cas_account_group(right) and not specific:
+        score -= 1.5
+    return score
+
+
+def _specific_semantic_terms(terms: set[str]) -> set[str]:
+    return {
+        term
+        for term in terms
+        if term.startswith("action:")
+        or term in {"concept:account", "concept:thesis"}
+        or (
+            not term.startswith("concept:")
+            and len(term) >= 4
+            and term not in _SEMANTIC_STOP_WORDS
+        )
+    }
+
+
+def _is_cas_account_group(group: Sequence[_ActivityEvent]) -> bool:
+    if len(group) > 12:
+        return False
+    terms = {term for item in group for term in _event_semantic_terms(item)}
+    combined = compact_whitespace(" ".join(item.text for item in group)).casefold()
+    return "cas" in combined and {
+        "concept:codex",
+        "concept:account",
+        "action:switch",
+    }.issubset(terms)
+
+
+def _assert_event_conservation(
+    events: Sequence[_ActivityEvent],
+    groups: Sequence[Sequence[_ActivityEvent]],
+) -> None:
+    expected = [event.event_id for event in events]
+    actual = [event.event_id for group in groups for event in group]
+    if len(actual) != len(set(actual)):
+        raise RuntimeError("semantic activity grouping duplicated an input event")
+    if sorted(actual) != sorted(expected):
+        raise RuntimeError("semantic activity grouping lost an input event")
+
+
+def _event_context_groups(event: _ActivityEvent) -> set[str]:
+    value = compact_whitespace(event.context_group_id).casefold()
+    return {value} if value else set()
+
+
+def _same_short_fragment_burst(
+    event: _ActivityEvent,
+    previous: _ActivityEvent,
+) -> bool:
+    gap = event.created_at_ms - previous.created_at_ms
+    if gap < 0 or gap > _FRAGMENT_BURST_GAP_MS:
+        return False
+    if _normalized_app(event) != _normalized_app(previous):
+        return False
+    event_contexts = _event_context_groups(event)
+    previous_contexts = _event_context_groups(previous)
+    if event_contexts and previous_contexts and not (event_contexts & previous_contexts):
+        return False
+    current = compact_whitespace(event.text)
+    before = compact_whitespace(previous.text)
+    return (
+        0 < len(current) <= 12
+        and 0 < len(before) <= 12
+        and min(len(current), len(before)) <= 4
+    )
+
+
+def _event_semantic_terms(event: _ActivityEvent) -> set[str]:
+    text = compact_whitespace(
+        " ".join((event.text, event.recent_context, event.preedit))
+    ).casefold()
+    if not text or contains_sensitive_content(text):
+        return set()
+    terms = {
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9._-]{1,48}", text)
+        if token not in _SEMANTIC_STOP_WORDS
+    }
+    for chunk in re.findall(r"[\u3400-\u9fff]{2,24}", text):
+        terms.add(chunk)
+        terms.update(chunk[index : index + 2] for index in range(len(chunk) - 1))
+    aliases: set[str] = set()
+    if terms & {"codex", "chatgpt", "openai", "gpt"} or "大模型" in text:
+        aliases.add("concept:codex")
+    if terms & {"cas", "account", "accounts", "login", "profile"} or any(
+        value in text for value in ("账号", "账户", "登录")
+    ):
+        aliases.add("concept:account")
+    if "cas" in terms:
+        aliases.add("action:switch")
+    if terms & {"switch", "switched", "change"} or "切换" in text:
+        aliases.add("action:switch")
+    if terms & {"memory", "rag", "longmemeval"} or "记忆" in text:
+        aliases.add("concept:memory")
+    if terms & {"ime", "squirrel", "rime"} or "输入法" in text:
+        aliases.add("concept:ime")
+    if terms & {"thesis", "paper", "bibliography", "citation"} or any(
+        value in text for value in ("论文", "参考文献", "毕业")
+    ):
+        aliases.add("concept:thesis")
+    return terms | aliases
+
+
+_SEMANTIC_STOP_WORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "this",
+        "that",
+        "from",
+        "into",
+        "then",
+        "继续",
+        "今天",
+        "完成",
+        "进行",
+    }
+)
+
+
+def _normalized_app(event: _ActivityEvent) -> str:
+    return _safe_label(
+        event.app,
+        fallback=_safe_label(event.source, fallback="unknown-app"),
+    ).casefold()
+
+
+def _task_title(
+    group: Sequence[_ActivityEvent],
+    *,
+    snippets: Sequence[str],
+) -> str:
+    combined = compact_whitespace(" ".join(snippets)).casefold()
+    terms = {term for event in group for term in _event_semantic_terms(event)}
+    if {
+        "concept:codex",
+        "concept:account",
+        "action:switch",
+    }.issubset(terms) and len(group) <= 12 and (
+        "cas" in combined or any("cas" in value for value in terms)
+    ):
+        return "CAS 切换 Codex 账号"
+    if sum("Git 合并" in _event_task_facets(event) for event in group) >= 2:
+        return "合并分支并记录改动"
+    coarse_title = _coarse_task_title(group)
+    if coarse_title:
+        return coarse_title
+    visible = [value for value in snippets if value != "[敏感内容已脱敏]"]
+    if not visible:
+        return "敏感活动（内容已脱敏）"
+    candidate = max(
+        visible,
+        key=lambda value: (len(_semantic_title_terms(value)), len(value)),
+    )
+    return truncate_text(candidate, 72)
+
+
+def _coarse_task_title(group: Sequence[_ActivityEvent]) -> str:
+    """Name a large work block by repeated facets, not one longest utterance."""
+
+    if len(group) < 8:
+        return ""
+    facet_counts: dict[str, int] = {}
+    facet_order = {
+        "记忆系统": 0,
+        "上下文捕获": 1,
+        "前端界面": 2,
+        "时间线": 3,
+        "Agent 工具": 4,
+        "输入法": 5,
+        "Git 合并": 6,
+    }
+    for event in group:
+        for facet in _event_task_facets(event):
+            facet_counts[facet] = facet_counts.get(facet, 0) + 1
+    if not facet_counts:
+        return ""
+    strongest = max(facet_counts.values())
+    minimum_count = max(2, strongest // 3)
+    facets = sorted(
+        (
+            (facet, count)
+            for facet, count in facet_counts.items()
+            if count >= minimum_count
+        ),
+        key=lambda value: (-value[1], facet_order[value[0]]),
+    )[:3]
+    if not facets:
+        return ""
+    labels = [facet for facet, _count in facets]
+    if len(labels) == 1:
+        return f"{labels[0]}优化"
+    last_label = labels[-1]
+    if last_label[0].isascii():
+        last_label = f" {last_label}"
+    return f"{'、'.join(labels[:-1])}与{last_label}协同优化"
+
+
+def _event_task_facets(event: _ActivityEvent) -> set[str]:
+    text = compact_whitespace(event.text).casefold()
+    if not text or contains_sensitive_content(text):
+        return set()
+    latin_terms = set(re.findall(r"[a-z0-9][a-z0-9._-]{1,48}", text))
+    facets: set[str] = set()
+    if any(
+        value in text for value in ("记忆", "召回", "检索", "主题书", "原子")
+    ) or latin_terms & {
+        "rag",
+        "book",
+        "bm25",
+        "embedding",
+    }:
+        facets.add("记忆系统")
+    if any(
+        value in text for value in ("上下文", "输入框", "无障碍")
+    ) or latin_terms & {
+        "ax",
+        "context",
+        "accessibility",
+    }:
+        facets.add("上下文捕获")
+    if any(
+        value in text for value in ("前端", "界面", "抽屉")
+    ) or latin_terms & {
+        "ui",
+        "ux",
+        "react",
+        "vite",
+        "css",
+    }:
+        facets.add("前端界面")
+    if "时间线" in text or "timeline" in latin_terms:
+        facets.add("时间线")
+    if any(value in text for value in ("工具", "智能体")) or latin_terms & {
+        "agent",
+        "agents",
+        "tool",
+        "tools",
+        "mcp",
+        "pi",
+    }:
+        facets.add("Agent 工具")
+    if any(
+        value in text for value in ("输入法", "候选", "拼音")
+    ) or latin_terms & {
+        "ime",
+        "squirrel",
+        "rime",
+    }:
+        facets.add("输入法")
+    if any(value in text for value in ("合并", "分支")) or "git" in latin_terms:
+        facets.add("Git 合并")
+    return facets
+
+
+def _semantic_title_terms(value: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9][a-z0-9._-]{1,48}|[\u3400-\u9fff]{2,24}", value.casefold()))
 
 
 def _day_bounds_ms(day: date, timezone: tzinfo) -> tuple[int, int]:
@@ -870,6 +1537,14 @@ def _json_objects(raw: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
+def _json_mapping(raw: object) -> dict[str, object]:
+    try:
+        value = json.loads(str(raw or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _placeholders(values: Sequence[object] | frozenset[str]) -> str:

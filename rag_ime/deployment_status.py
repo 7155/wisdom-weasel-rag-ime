@@ -181,6 +181,12 @@ def audit_installed_product(
         runtime_root=app_support / "PiRuntime",
         required="piRuntime" in required,
         verify_files=verify_pi_files,
+        expected_product_commit=expected,
+    )
+    components["piSkills"] = _pi_skills_component(
+        source_root=repo_root / "integrations" / "pi" / "skills",
+        installed_root=app_support / "Agent" / "config" / "skills",
+        required="piRuntime" in required or "piSkills" in required,
     )
 
     issues = [
@@ -332,7 +338,13 @@ def _squirrel_component(*, repo_root: Path, marker_path: Path, required: bool) -
     }
 
 
-def _pi_component(*, runtime_root: Path, required: bool, verify_files: bool) -> dict[str, Any]:
+def _pi_component(
+    *,
+    runtime_root: Path,
+    required: bool,
+    verify_files: bool,
+    expected_product_commit: str,
+) -> dict[str, Any]:
     pointer_path = runtime_root / "current.json"
     pointer = _mapping(load_json(pointer_path))
     version = _text(pointer.get("version"))
@@ -348,6 +360,10 @@ def _pi_component(*, runtime_root: Path, required: bool, verify_files: bool) -> 
         and manifest_hash == pointer.get("manifestSha256")
     )
     files_valid = _pi_files_valid(runtime_root / version, manifest) if verify_files and manifest_valid else manifest_valid
+    product_commit = _text(_mapping(manifest.get("source")).get("productCommit"))
+    product_current = bool(
+        expected_product_commit and product_commit == expected_product_commit
+    )
     installed = bool(pointer)
     if not installed:
         ok = not required
@@ -361,6 +377,13 @@ def _pi_component(*, runtime_root: Path, required: bool, verify_files: bool) -> 
         ok = False
         code = "payload_mismatch"
         detail = "piRuntime payload files no longer match the activated manifest."
+    elif not product_current:
+        ok = False
+        code = "product_commit_mismatch"
+        detail = (
+            f"piRuntime was packaged for {product_commit or 'an unknown product commit'}, "
+            f"expected {expected_product_commit or 'a canonical product commit'}."
+        )
     else:
         ok = True
         code = "ready"
@@ -372,11 +395,13 @@ def _pi_component(*, runtime_root: Path, required: bool, verify_files: bool) -> 
         "detail": detail,
         "required": required,
         "installed": installed,
-        "current": files_valid,
+        "current": files_valid and product_current,
         "pointerPath": str(pointer_path),
         "manifestPath": str(manifest_path),
         "runtimeVersion": version,
         "sourceCommit": _text(_mapping(manifest.get("source")).get("commit")),
+        "productCommit": product_commit,
+        "expectedProductCommit": expected_product_commit,
         "marker": dict(pointer),
     }
 
@@ -394,6 +419,111 @@ def _pi_files_valid(runtime_dir: Path, manifest: Mapping[str, Any]) -> bool:
         if sha256_file(runtime_dir / relative) != _text(item.get("sha256")):
             return False
     return True
+
+
+def _pi_skills_component(
+    *,
+    source_root: Path,
+    installed_root: Path,
+    required: bool,
+) -> dict[str, Any]:
+    source_skills = _product_skill_digests(source_root)
+    source_available = source_skills is not None and bool(source_skills)
+    installed_skills = (
+        _selected_skill_digests(installed_root, tuple(source_skills))
+        if source_skills
+        else None
+    )
+    installed = bool(installed_skills)
+    current = bool(
+        source_available
+        and installed_skills is not None
+        and installed_skills == source_skills
+    )
+    if not source_available:
+        ok = not required
+        code = "source_unavailable"
+        detail = "piSkills source is unavailable" + (" but is required." if required else ".")
+    elif installed_skills is None or not installed:
+        ok = not required
+        code = "not_installed"
+        detail = "piSkills are not installed" + (" but are required." if required else ".")
+    elif not current:
+        ok = False
+        code = "source_mismatch"
+        detail = "piSkills do not match the product-owned Agent skills in this source tree."
+    else:
+        ok = True
+        code = "ready"
+        detail = "piSkills match the current product-owned Agent skills."
+    return {
+        "id": "piSkills",
+        "ok": ok,
+        "code": code,
+        "detail": detail,
+        "required": required,
+        "installed": installed,
+        "current": current,
+        "sourcePath": str(source_root),
+        "installedPath": str(installed_root),
+        "skills": sorted(source_skills or {}),
+    }
+
+
+def _product_skill_digests(root: Path) -> dict[str, str] | None:
+    if not root.is_dir() or root.is_symlink():
+        return None
+    result: dict[str, str] = {}
+    try:
+        children = sorted(root.iterdir(), key=lambda item: item.name)
+    except OSError:
+        return None
+    for child in children:
+        if child.is_symlink() or not child.is_dir():
+            continue
+        digest = _tree_digest(child)
+        if digest is None:
+            return None
+        result[child.name] = digest
+    return result
+
+
+def _selected_skill_digests(
+    root: Path,
+    names: tuple[str, ...],
+) -> dict[str, str] | None:
+    if not root.is_dir() or root.is_symlink():
+        return None
+    result: dict[str, str] = {}
+    for name in names:
+        skill = root / name
+        if not skill.is_dir() or skill.is_symlink():
+            return None
+        digest = _tree_digest(skill)
+        if digest is None:
+            return None
+        result[name] = digest
+    return result
+
+
+def _tree_digest(root: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        paths = sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix())
+        for path in paths:
+            if path.is_symlink():
+                return None
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root).as_posix()
+            content = path.read_bytes()
+            digest.update(relative.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(content)
+            digest.update(b"\0")
+    except OSError:
+        return None
+    return digest.hexdigest()
 
 
 def _mapping(value: object) -> dict[str, Any]:

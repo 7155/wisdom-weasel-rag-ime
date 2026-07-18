@@ -16,7 +16,7 @@ describe('preview control transport', () => {
     await transport.request({
       pathId: 'memory.source.disposition',
       body: {
-        sourceId: 'input-memory:preview-noise',
+        sourceId: 'event:10001',
         disposition: 'pending',
       },
     });
@@ -30,12 +30,12 @@ describe('preview control transport', () => {
       expect.objectContaining({ ownerKind: 'user', ownerId: 'default' }),
       expect.objectContaining({ ownerKind: 'agent', ownerId: 'zhiyou-v1' }),
     ]));
-    expect(before.items[0]).toMatchObject({
-      id: 'input-memory:preview-noise',
+    expect(before.items.find((item) => item.id === 'event:10001')).toMatchObject({
+      id: 'event:10001',
       disposition: 'not_for_memory',
     });
-    expect(after.items[0]).toMatchObject({
-      id: 'input-memory:preview-noise',
+    expect(after.items.find((item) => item.id === 'event:10001')).toMatchObject({
+      id: 'event:10001',
       disposition: 'pending',
     });
   });

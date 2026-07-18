@@ -13,14 +13,14 @@ import { Button } from '@/components/primitives';
 import { asRecord, numberValue, stringValue } from '@/features/overview/management-ui';
 
 interface MemorySystemOverviewProps {
-  onOpenCatalog: () => void;
+  onOpenLayer: (layer: 'evidence' | 'atoms' | 'books' | 'roleBooks') => void;
   onOpenOrganize: () => void;
   onOpenTimeline: () => void;
   summary: Record<string, unknown>;
 }
 
 export function MemorySystemOverview({
-  onOpenCatalog,
+  onOpenLayer,
   onOpenOrganize,
   onOpenTimeline,
   summary,
@@ -35,6 +35,8 @@ export function MemorySystemOverview({
     + numberValue(timelineCounts.draft)
     + numberValue(roleBookCounts.draft);
   const projectionSignal = describeProjection(projection);
+  const inputEvidenceCount = numberValue(summary.evidenceSourceCount);
+  const agentEvidenceCount = numberValue(summary.agentEvidenceCount);
 
   return (
     <section className="memory-system-overview" aria-labelledby="memory-system-overview-title">
@@ -65,16 +67,18 @@ export function MemorySystemOverview({
 
       <div className="memory-system-overview__pipeline" aria-label="个人上下文数据层">
         <PipelineStage
-          detail="对话与工作回执"
+          detail={`输入 ${inputEvidenceCount} · Agent ${agentEvidenceCount}`}
           icon={Archive}
-          label="Agent 证据"
-          value={numberValue(summary.agentEvidenceCount, numberValue(summary.evidenceSourceCount))}
+          label="可追溯证据"
+          onClick={() => onOpenLayer('evidence')}
+          value={inputEvidenceCount + agentEvidenceCount}
         />
         <ArrowRight aria-hidden="true" className="memory-system-overview__arrow" size={16} />
         <PipelineStage
           detail={`共 ${numberValue(summary.memoryAtomTotalCount, numberValue(summary.currentAtomCount, numberValue(summary.memoryAtomCount)) + numberValue(summary.historicalAtomCount, numberValue(summary.memoryAtomArchivedCount)) + numberValue(summary.memoryAtomSourceArchiveCount))} 条 · 历史 ${numberValue(summary.historicalAtomCount, numberValue(summary.memoryAtomArchivedCount))} · 碎片证据 ${numberValue(summary.memoryAtomSourceArchiveCount)}`}
           icon={Tags}
           label="当前事实"
+          onClick={() => onOpenLayer('atoms')}
           value={numberValue(summary.currentAtomCount, numberValue(summary.memoryAtomCount))}
         />
         <ArrowRight aria-hidden="true" className="memory-system-overview__arrow" size={16} />
@@ -82,6 +86,7 @@ export function MemorySystemOverview({
           detail="主题与关系"
           icon={BookOpen}
           label="主题书"
+          onClick={() => onOpenLayer('books')}
           value={numberValue(summary.memoryBookCount)}
         />
         <ArrowRight aria-hidden="true" className="memory-system-overview__arrow" size={16} />
@@ -89,6 +94,7 @@ export function MemorySystemOverview({
           detail="会话身份"
           icon={UserRoundCog}
           label="角色书"
+          onClick={() => onOpenLayer('roleBooks')}
           value={numberValue(roleBookCounts.active)}
         />
       </div>
@@ -101,7 +107,7 @@ export function MemorySystemOverview({
           <span><ShieldCheck size={15} />{numberValue(summary.forgottenSourceCount)} 条已隔离</span>
         </div>
         <div className="memory-system-overview__actions">
-          <Button onClick={onOpenCatalog} size="small" variant="quiet">查看事实</Button>
+          <Button onClick={() => onOpenLayer('atoms')} size="small" variant="quiet">查看事实</Button>
           <Button onClick={onOpenOrganize} size="small" variant="quiet">处理草案</Button>
           <Button leadingIcon={<CalendarClock size={15} />} onClick={onOpenTimeline} size="small">
             打开时间线
@@ -125,18 +131,21 @@ function PipelineStage({
   detail,
   icon: Icon,
   label,
+  onClick,
   value,
 }: {
   detail: string;
   icon: typeof Archive;
   label: string;
+  onClick: () => void;
   value: number;
 }) {
   return (
-    <div className="memory-system-overview__stage">
+    <button className="memory-system-overview__stage" onClick={onClick} type="button">
       <span><Icon aria-hidden="true" size={16} /></span>
       <div><small>{label}</small><strong>{value}</strong><em>{detail}</em></div>
-    </div>
+      <ArrowRight aria-hidden="true" className="memory-system-overview__stage-open" size={15} />
+    </button>
   );
 }
 

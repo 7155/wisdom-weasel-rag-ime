@@ -73,9 +73,13 @@ needs continued evaluation.**
 Retrieval combines SQLite FTS5 BM25, vector similarity, tags and tag relations,
 time, feedback, and weighted reciprocal-rank fusion. A configurable soft
 context budget defaults to 4096 tokens with 1024 tokens reserved for output.
-Recent input starts from a 10-20 complete-event baseline and can exceed 20 when
-the budget allows. Diagnostics report the number and estimated tokens actually
-injected for recent inputs, plans/Todos, timeline notes, and RAG evidence.
+Each consumer owns a bounded projection instead of receiving one shared text
+dump. Explicit generation prioritizes the current field, up to six planning
+items, two approved Timeline tasks, four recent complete inputs, and six
+governed Atom/Book grounding items. A new Agent Session receives one compact
+bootstrap; later turns rely on Session history and on-demand `ime_memory` calls.
+Diagnostics report the number and estimated tokens actually injected for each
+source.
 
 Explicit queries such as "yesterday", "last week", "before", or "the original
 requirement" can retrieve the corresponding time window and bypass ordinary
@@ -227,6 +231,12 @@ continues through the separate `input_events` to daily Memory Book timeline,
 so raw dialogue or typing history is never silently promoted into a system
 prompt.
 
+The bundled `rag-ime-memory-curator` skill follows the same authority boundary:
+Evidence can support a Current Atom, Atoms can be organized into Topic Books,
+and cross-App activity can become a reviewed Task Timeline. The skill may
+prepare and apply governed memory proposals, but it cannot bypass native
+approval or activate a Role Book revision.
+
 ### Diagnostics And Repair
 
 **Status: implemented; doctor output is necessary but not sufficient evidence.**
@@ -368,13 +378,44 @@ Sidecar, Agent gateway, MLX worker, voice agent, maintenance job, and visible
 app cannot silently remain on different commits:
 
 ```bash
-scripts/build_control_center.sh install-stack --include-squirrel
+scripts/build_control_center.sh install-stack --include-squirrel --include-pi
 scripts/check_installed_product_components.py --require-current
 ```
 
 The stack installer isolates each worker's copied Python package, records its
 source commit, refuses dirty tracked source by default, and audits the complete
 installed generation before returning success.
+
+### Migrate A Legacy Memory Database
+
+The semantic-memory migration is copy-first and fail-closed. Preview is
+read-only. A production candidate requires the configured embedding provider,
+complete document/vector parity, caught-up projection checkpoints, and an empty
+failed/dead Outbox before it can be activated. No Timeline or Role Book draft is
+auto-approved.
+
+```bash
+DB="$HOME/Library/Application Support/RagIme/rag-ime.sqlite"
+CANDIDATE="/path/to/rag-ime-semantic-v2-candidate.sqlite"
+ROLLBACK="/path/to/rag-ime-before-semantic-v2.sqlite"
+
+python3 scripts/migrate_semantic_memory_v2.py \
+  --source "$DB" --project wisdom-weasel-rag-ime
+
+scripts/stop_rag_ime_runtime.sh
+python3 scripts/migrate_semantic_memory_v2.py \
+  --source "$DB" --output "$CANDIDATE" \
+  --project wisdom-weasel-rag-ime --timezone Asia/Shanghai \
+  --embedding-from-env --apply
+python3 scripts/activate_semantic_memory_candidate.py \
+  --target "$DB" --candidate "$CANDIDATE" --rollback "$ROLLBACK" \
+  --confirm ACTIVATE_SEMANTIC_MEMORY_V2
+scripts/build_control_center.sh install-stack --include-squirrel --include-pi --include-mlx
+```
+
+The activation report is bound to the candidate SHA-256 and is revalidated
+against the live candidate immediately before and after the atomic replacement.
+Keep all writers stopped from candidate creation through activation.
 
 ### Multi-Device Agent Gateway
 

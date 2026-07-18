@@ -721,6 +721,14 @@ export const CONTROL_ROUTES = {
     params: { kind: ['apps', 'books', 'atoms', 'tags', 'phrases', 'evidence', 'groups', 'negative'] },
     query: ['limit', 'cursor', 'query', 'status', 'ownerKind', 'ownerId'],
   },
+  'memory.reference.get': {
+    method: 'GET',
+    path: '/api/memory/references/:kind/:referenceId',
+    params: {
+      kind: ['event', 'evidence', 'atom', 'book', 'timeline', 'role_book_revision'],
+      referenceId: null,
+    },
+  },
   'memory.graph.get': {
     method: 'GET',
     path: '/api/memory/graph',

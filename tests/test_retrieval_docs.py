@@ -11,6 +11,7 @@ from pathlib import Path
 from rag_ime.cli import main
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
+from rag_ime.memory_ingest import normalize_text, upsert_memory_item
 from rag_ime.models import InputEvent
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.text_utils import now_ms
@@ -231,6 +232,77 @@ class RetrievalDocsTests(unittest.TestCase):
         self.assertFalse(any("sk-secret-value" in text for text in texts))
         self.assertFalse(any("噪声短语" in text for text in texts))
 
+    def test_retrieval_docs_remove_all_projections_for_forgotten_source_event(self) -> None:
+        event_id = self._record_seed_event()
+        plan = memory_book_plan_from_compile_output(
+            sample_compile_output(event_id),
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+
+        def linked_doc_types(conn: sqlite3.Connection) -> set[str]:
+            result: set[str] = set()
+            for row in conn.execute(
+                "SELECT doc_type, metadata_json FROM memory_retrieval_docs"
+            ).fetchall():
+                metadata = json.loads(str(row["metadata_json"] or "{}"))
+                raw_ids = list(metadata.get("sourceEventIds") or [])
+                raw_ids.append(metadata.get("sourceEventId"))
+                source_ids: set[int] = set()
+                for value in raw_ids:
+                    try:
+                        parsed = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed > 0:
+                        source_ids.add(parsed)
+                if event_id in source_ids:
+                    result.add(str(row["doc_type"]))
+            return result
+
+        with self.connect() as conn:
+            apply_memory_book_plan(conn, plan)
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            self.assertTrue(
+                {"phrase", "atom", "book"}.issubset(linked_doc_types(conn))
+            )
+
+            for target_type, target_value in (
+                ("source_event_id", str(event_id)),
+                ("memory_id", f"event:{event_id}"),
+            ):
+                with self.subTest(target_type=target_type):
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO memory_tombstones(
+                            created_at_ms, target_type, target_value, reason,
+                            active, metadata_json
+                        ) VALUES (?, ?, ?, 'test-forget-source', 1, '{}')
+                        """,
+                        (now_ms(), target_type, target_value),
+                    )
+                    tombstone_id = int(cursor.lastrowid)
+                    rebuild_retrieval_docs(
+                        conn,
+                        project="wisdom-weasel-rag-ime",
+                    )
+                    self.assertEqual(linked_doc_types(conn), set())
+
+                    conn.execute(
+                        "UPDATE memory_tombstones SET active = 0 WHERE id = ?",
+                        (tombstone_id,),
+                    )
+                    rebuild_retrieval_docs(
+                        conn,
+                        project="wisdom-weasel-rag-ime",
+                    )
+                    self.assertTrue(
+                        {"phrase", "atom", "book"}.issubset(
+                            linked_doc_types(conn)
+                        )
+                    )
+
     def test_retrieval_docs_rebuild_is_idempotent(self) -> None:
         self._record_seed_event()
 
@@ -242,6 +314,90 @@ class RetrievalDocsTests(unittest.TestCase):
 
         self.assertEqual(first["docCount"], second["docCount"])
         self.assertEqual(first_rows, second_rows)
+
+    def test_default_rebuild_prunes_legacy_item_projection_but_keeps_phrase_and_source(self) -> None:
+        with self.connect() as conn:
+            self._insert_memory_item(
+                conn,
+                memory_id="stable:legacy-policy",
+                kind="stable_memory",
+                text="旧 stable memory 仍保留作治理来源",
+            )
+            self._insert_memory_item(
+                conn,
+                memory_id="phrase:保留候选",
+                kind="phrase",
+                text="保留候选",
+            )
+            compatibility = rebuild_retrieval_docs(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                include_items=True,
+            )
+            legacy_doc_id = "item:stable:legacy-policy"
+            legacy_rowid = int(
+                conn.execute(
+                    "SELECT rowid FROM memory_retrieval_docs WHERE doc_id = ?",
+                    (legacy_doc_id,),
+                ).fetchone()[0]
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_retrieval_doc_vectors(
+                    doc_id, provider_fingerprint, raw_vector_json,
+                    tag_vector_json, group_vector_json, dimensions, updated_at_ms
+                ) VALUES (?, 'test-provider', '[]', '[]', '[]', 0, ?)
+                """,
+                (legacy_doc_id, now_ms()),
+            )
+            source_before = tuple(
+                conn.execute(
+                    """
+                    SELECT kind, text, status, privacy_class
+                    FROM memory_items WHERE memory_id = 'stable:legacy-policy'
+                    """
+                ).fetchone()
+            )
+
+            report = rebuild_retrieval_docs(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+            source_after = tuple(
+                conn.execute(
+                    """
+                    SELECT kind, text, status, privacy_class
+                    FROM memory_items WHERE memory_id = 'stable:legacy-policy'
+                    """
+                ).fetchone()
+            )
+            remaining_types = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT doc_type FROM memory_retrieval_docs"
+                ).fetchall()
+            }
+            legacy_vector_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_doc_vectors WHERE doc_id = ?",
+                    (legacy_doc_id,),
+                ).fetchone()[0]
+            )
+            legacy_fts_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs_fts WHERE rowid = ?",
+                    (legacy_rowid,),
+                ).fetchone()[0]
+            )
+
+        self.assertTrue(compatibility["includeLegacyItems"])
+        self.assertIn(legacy_doc_id, report["removedDocIds"])
+        self.assertTrue(report["includePhrases"])
+        self.assertFalse(report["includeLegacyItems"])
+        self.assertEqual(remaining_types, {"phrase"})
+        self.assertEqual(legacy_vector_count, 0)
+        self.assertEqual(legacy_fts_count, 0)
+        self.assertEqual(source_after, source_before)
 
     def test_project_rebuild_preserves_other_project_fts_rows(self) -> None:
         with self.connect() as conn:
@@ -355,6 +511,37 @@ class RetrievalDocsTests(unittest.TestCase):
                 ),
             )
         return event_id
+
+    def _insert_memory_item(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        memory_id: str,
+        kind: str,
+        text: str,
+    ) -> None:
+        timestamp = now_ms()
+        upsert_memory_item(
+            conn,
+            memory_id=memory_id,
+            kind=kind,
+            text=text,
+            normalized_text=normalize_text(text),
+            summary="",
+            source_event_id=None,
+            project="wisdom-weasel-rag-ime",
+            app="",
+            confidence=0.9,
+            quality_score=0.9,
+            status="approved",
+            privacy_class="normal",
+            created_at_ms=timestamp,
+            updated_at_ms=timestamp,
+            metadata={},
+            tags=("RAG",),
+            embedding_provider=None,
+            tag_source="manual",
+        )
 
 
 def sample_compile_output(event_id: int) -> dict[str, object]:

@@ -13,6 +13,9 @@ from pathlib import Path
 class MemoryBookMaintenanceScriptTests(unittest.TestCase):
     def test_install_memory_book_maintenance_launch_agent_dry_run(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        installer = (
+            root / "scripts" / "install_memory_book_maintenance_launch_agent.sh"
+        ).read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory(prefix="rag-ime-memory-book-agent-") as tmp:
             home = Path(tmp) / "home"
             model_env = Path(tmp) / "source-deepseek.env"
@@ -74,6 +77,10 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK"], "0")
         self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS"], "86400")
         self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT"], "500")
+        self.assertLess(
+            installer.rindex("launchctl enable"),
+            installer.rindex("launchctl bootstrap"),
+        )
 
     def test_install_discovers_existing_app_support_model_env(self) -> None:
         root = Path(__file__).resolve().parents[1]

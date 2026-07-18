@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.memory-reference.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "settingsRevision",
+    "runtimeRevision",
+    "ok",
+    "kind",
+    "referenceId",
+    "item",
+    "source",
+    "ref",
+    "evidenceRefs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.memory-reference.v1"},
+    "settingsRevision": {"type": "string", "minLength": 1},
+    "runtimeRevision": {"type": "integer", "minimum": 0},
+    "ok": {"type": "boolean", "const": true},
+    "kind": {"$ref": "#/$defs/referenceKind"},
+    "referenceId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "item": {
+      "type": "object",
+      "required": ["id", "title", "status"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "title": {"type": "string", "minLength": 1, "maxLength": 240},
+        "status": {"type": "string", "minLength": 1, "maxLength": 64},
+        "text": {"type": "string", "maxLength": 32000},
+        "textPreview": {"type": "string", "maxLength": 2000},
+        "summary": {"type": "string", "maxLength": 2000},
+        "detail": {"type": "string", "maxLength": 2000},
+        "sensitive": {"type": "boolean"},
+        "ownerKind": {"type": "string", "maxLength": 32},
+        "ownerId": {"type": "string", "maxLength": 240},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0},
+        "occurredAtMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "source": {"$ref": "#/$defs/source"},
+    "ref": {"$ref": "#/$defs/reference"},
+    "evidenceRefs": {
+      "type": "array",
+      "maxItems": 80,
+      "items": {"$ref": "#/$defs/reference"}
+    }
+  },
+  "$defs": {
+    "referenceKind": {
+      "type": "string",
+      "enum": ["event", "evidence", "atom", "book", "timeline", "role_book_revision"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1, "maxLength": 80},
+        "sourceKind": {"type": "string", "maxLength": 120},
+        "id": {"type": "string", "minLength": 1, "maxLength": 320}
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "referenceKind", "referenceId"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/referenceKind"},
+        "id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "referenceKind": {"$ref": "#/$defs/referenceKind"},
+        "referenceId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "label": {"type": "string", "maxLength": 180}
+      }
+    }
+  }
+}

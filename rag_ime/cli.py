@@ -523,12 +523,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     rebuild_retrieval_docs_parser = subparsers.add_parser(
         "rebuild-retrieval-docs",
-        help="Rebuild BM25-ready Memory Book / atom / item retrieval documents",
+        help="Rebuild governed Book / atom / phrase retrieval documents",
     )
     rebuild_retrieval_docs_parser.add_argument("--project", default="wisdom-weasel-rag-ime")
     rebuild_retrieval_docs_parser.add_argument("--no-books", action="store_true")
     rebuild_retrieval_docs_parser.add_argument("--no-atoms", action="store_true")
-    rebuild_retrieval_docs_parser.add_argument("--no-items", action="store_true")
+    rebuild_retrieval_docs_parser.add_argument("--no-phrases", action="store_true")
+    rebuild_retrieval_docs_parser.add_argument(
+        "--include-legacy-items",
+        action="store_true",
+        help="Temporarily rebuild retired stable_memory item projections for audit only",
+    )
+    rebuild_retrieval_docs_parser.add_argument(
+        "--no-items",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
 
     rebuild_vector = subparsers.add_parser("rebuild-vector-index", help="Backfill optional local-core vector side index")
     rebuild_vector.add_argument("--project", default="")
@@ -2054,7 +2064,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project=args.project,
                 include_books=not bool(args.no_books),
                 include_atoms=not bool(args.no_atoms),
-                include_items=not bool(args.no_items),
+                include_phrases=not bool(args.no_phrases),
+                include_legacy_items=(
+                    bool(args.include_legacy_items) and not bool(args.no_items)
+                ),
             )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0

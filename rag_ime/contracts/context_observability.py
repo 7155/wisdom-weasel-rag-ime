@@ -92,7 +92,11 @@ def build_context_injection_trace(
         "selectedTextIncluded": _payload_has_text(parsed_user_payload, "selectedText", selected_text),
         "contextPacketIncluded": bool(packet) and isinstance(parsed_user_payload.get("contextPacket"), dict),
         "evidenceIncluded": bool(evidence_items)
-        and bool(parsed_user_payload.get("evidencePack") or parsed_user_payload.get("evidenceHints")),
+        and bool(
+            parsed_user_payload.get("groundingEvidence")
+            or parsed_user_payload.get("evidencePack")
+            or parsed_user_payload.get("evidenceHints")
+        ),
     }
     required = ["promptBuilt", "currentContextIncluded"]
     if selected_text:

@@ -1,13 +1,16 @@
 import {
   BookOpen,
+  ChevronRight,
   EyeOff,
-  Network,
+  Fingerprint,
+  GitBranch,
   RefreshCw,
   RotateCcw,
   Search,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Button,
   Dialog,
@@ -40,6 +43,11 @@ import { MemoryRelations } from './MemoryRelations';
 import { MemoryCurationWorkbench } from './MemoryCurationWorkbench';
 import { ActivityTimeline } from './ActivityTimeline';
 import { MemorySystemOverview } from './MemorySystemOverview';
+import { RoleBookLayer } from './RoleBookLayer';
+import {
+  MemoryReferenceDialog,
+  type MemoryReferenceSelection,
+} from './MemoryReferenceDialog';
 import {
   InlineNotice,
   ManagementPage,
@@ -61,15 +69,14 @@ import {
 import type { JsonValue } from '@/platform/transport';
 import './memory.css';
 
-const kinds = [
-  { value: 'apps', label: '应用' },
-  { value: 'books', label: '主题书' },
-  { value: 'atoms', label: '原子' },
-  { value: 'tags', label: '标签' },
-  { value: 'phrases', label: '短语' },
+type MemoryLayer = 'evidence' | 'atoms' | 'books';
+type MemoryRouteLayer = MemoryLayer | 'timelines' | 'role-books';
+type MemoryView = 'catalog' | 'roleBooks' | 'timeline' | 'relations' | 'organize';
+
+const layers = [
   { value: 'evidence', label: '证据' },
-  { value: 'groups', label: '分组' },
-  { value: 'negative', label: '负反馈' },
+  { value: 'atoms', label: '当前事实' },
+  { value: 'books', label: '主题书' },
 ] as const;
 
 function defaultMemoryStatus(kind: MemoryKind): string {
@@ -80,14 +87,23 @@ function defaultMemoryStatus(kind: MemoryKind): string {
 
 export function MemoryFeature() {
   const queryClient = useQueryClient();
-  const [view, setView] = useState<'catalog' | 'relations' | 'timeline' | 'organize'>('catalog');
-  const [kind, setKind] = useState<MemoryKind>('books');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeSelection = useMemo(() => memoryRouteSelection(location.search), [location.search]);
+  const [view, setView] = useState<MemoryView>(
+    routeSelection.view,
+  );
+  const [layer, setLayer] = useState<MemoryLayer>(routeSelection.layer);
+  const kind: MemoryKind = layer;
   const [draftQuery, setDraftQuery] = useState('');
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState(defaultMemoryStatus('books'));
+  const [status, setStatus] = useState(defaultMemoryStatus(kind));
   const [ownerKey, setOwnerKey] = useState('');
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(routeSelection.id);
   const [editOpen, setEditOpen] = useState(false);
+  const [reference, setReference] = useState<MemoryReferenceSelection | null>(
+    routeSelection.reference,
+  );
   const selectedOwner = parseOwnerKey(ownerKey);
   const { pages, summary } = useMemoryQueries(
     kind,
@@ -95,6 +111,7 @@ export function MemoryFeature() {
     status,
     selectedOwner.ownerKind,
     selectedOwner.ownerId,
+    view === 'catalog',
   );
   const archiveBoundary = useMemoryBookArchiveBoundary();
   const summaryPayload = asRecord(summary.data);
@@ -122,16 +139,28 @@ export function MemoryFeature() {
   };
   const archiveAvailability = archiveBoundary.availability(archiveBlockedReason());
   const runtimeRevision = numberValue(summaryPayload.runtimeRevision);
-  const error = (pages.error ?? summary.error) as Error | null;
-  const pending = pages.isPending || summary.isPending;
+  const error = ((view === 'catalog' ? pages.error : null) ?? summary.error) as Error | null;
+  const pending = summary.isPending || (view === 'catalog' && pages.isPending);
   const refresh = () => queryClient.refetchQueries({
     queryKey: memoryQueryKeys.root,
     type: 'active',
   });
 
+  useEffect(() => {
+    const next = memoryRouteSelection(location.search);
+    setView(next.view);
+    if (next.view === 'catalog') {
+      setLayer(next.layer);
+      setStatus(defaultMemoryStatus(next.layer));
+      setSelectedId(next.id);
+      setEditOpen(false);
+    }
+    setReference(next.reference);
+  }, [location.search]);
+
   return (
     <ManagementPage
-      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={pages.isRefetching} onClick={refresh} size="small">刷新</Button>}
+      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>}
       description="查看个人上下文的证据、当前事实、主题关系、每日活动和治理状态。"
       eyebrow="Personal Context"
       routeId="memory"
@@ -139,48 +168,39 @@ export function MemoryFeature() {
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <MemorySystemOverview
-          onOpenCatalog={() => { setKind('atoms'); setStatus('active'); setView('catalog'); }}
+          onOpenLayer={(next) => {
+            if (next === 'roleBooks') openView('roleBooks');
+            else openCatalogLayer(next);
+          }}
           onOpenOrganize={() => setView('organize')}
-          onOpenTimeline={() => setView('timeline')}
+          onOpenTimeline={() => openView('timeline')}
           summary={summaryPayload}
         />
 
         <ViewTabs
           className="memory-view-tabs"
-          onValueChange={(next) => setView(
-            next === 'relations' || next === 'timeline' || next === 'organize' ? next : 'catalog',
-          )}
+          onValueChange={(next) => openView(normalizeMemoryView(next))}
           value={view}
         >
           <TabsList aria-label="记忆视图">
-            <TabsTrigger value="catalog">目录</TabsTrigger>
-            <TabsTrigger value="relations">关系图</TabsTrigger>
+            <TabsTrigger value="catalog">事实链</TabsTrigger>
+            <TabsTrigger value="roleBooks">角色书</TabsTrigger>
             <TabsTrigger value="timeline">时间线</TabsTrigger>
-            <TabsTrigger value="organize">整理</TabsTrigger>
+            <TabsTrigger value="relations">关系索引</TabsTrigger>
+            <TabsTrigger value="organize">治理</TabsTrigger>
           </TabsList>
           <TabsContent value="catalog">
             <ManagementSection
-              title={kind === 'tags' ? '标签节点目录' : kind === 'apps' ? '应用上下文' : '记忆目录'}
-              description={kind === 'tags'
-                ? '检索和管理图谱中的标签节点；节点关系在标签图谱中呈现。'
-                : kind === 'apps'
-                  ? '不同应用的输入、上下文分段和长期记忆保持独立来源。'
-                  : '按类型、状态和内容查找记忆。'}
-              trailing={kind === 'tags' ? (
-                <Button leadingIcon={<Network size={14} />} onClick={() => setView('relations')} size="small">
-                  查看标签图谱
-                </Button>
-              ) : undefined}
+              title="个人事实链"
+              description="证据是可追溯来源，Atom 表示当前有效事实，主题书负责组织事实与关系。应用、标签和分组只作为索引，不再冒充记忆层。"
             >
               <div className="mgmt-stack">
-                <SegmentedControl aria-label="记忆类型" items={kinds} onValueChange={(next) => {
-                  const nextKind = next as MemoryKind;
-                  setKind(nextKind);
-                  setStatus(defaultMemoryStatus(nextKind));
-                  if (!ownerAwareKind(nextKind)) setOwnerKey('');
-                  setSelectedId('');
-                  setEditOpen(false);
-                }} value={kind} />
+                <SegmentedControl
+                  aria-label="事实链层级"
+                  items={layers}
+                  onValueChange={(next) => openCatalogLayer(next as MemoryLayer)}
+                  value={layer}
+                />
                 <div className="mgmt-filter-row">
                   <Field htmlFor="memory-search" label="搜索">
                     <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
@@ -214,124 +234,129 @@ export function MemoryFeature() {
                   ) : null}
                 </div>
               </div>
-              {rows.length ? (
-                <>
-                  <OperationalList items={rows.map((row) => {
-                    const id = stringValue(row.id);
-                    const rowStatus = stringValue(row.status, 'unknown');
-                    return {
-                      id,
-                      title: stringValue(row.title, '未命名记忆'),
-                      detail: stringValue(row.detail, '暂无摘要'),
-                      meta: [
-                        kindLabel(kind),
-                        sourceLabel(stringValue(row.source)),
-                        ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId)),
-                      ].filter(Boolean).join(' · '),
-                      status: <StatusBadge label={statusLabel(rowStatus)} tone={statusTone(rowStatus)} />,
-                      onClick: () => setSelectedId(id),
-                      selected: id === selectedId,
-                    };
-                  })} />
-                  <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} />
-                </>
-              ) : (
-                <EmptyState description="当前筛选没有记忆项。" icon={Search} title="没有匹配结果" />
-              )}
-            </ManagementSection>
-
-            <ManagementSection title="查看与管理" description="从上方目录选择一项；只有可预览、可确认的操作才会开放。">
-              {selected ? <MemoryCatalogDetail kind={kind} row={selected} /> : (
-                <EmptyState description="从目录中选择一项，查看完整摘要与可用操作。" icon={BookOpen} title="尚未选择记忆" />
-              )}
-              {kind === 'apps' ? (
-                <InlineNotice title="应用边界由输入来源维护" tone="info">
-                  App 不是可编辑记忆；回车封口、切换应用和上下文分段会自动更新这里的统计。
-                </InlineNotice>
-              ) : (
-                <div className="mgmt-grid-2">
-                  {kind === 'evidence' ? (
-                  <MemoryEvidenceDispositionAction
-                    disabledReason={sourceDispositionBlockedReason()}
-                    onChanged={refresh}
-                    row={selected}
-                  />
-                ) : (
-                  <>
-                    <DirectMemoryEditAction
-                      disabledReason={memoryEditBlockedReason()}
-                      onClick={() => setEditOpen(true)}
-                    />
-                    {archiveAvailability.state === 'unsupported' ? (
-                      <UnavailableMemoryAction
-                        description="归档或恢复主题记忆，并保留原始内容与关系。"
-                        reason={archiveAvailability.reason || '安全归档暂未开放。'}
-                        risk="R2"
-                        title="管理主题记忆"
+              <div className="memory-layer-workspace">
+                <aside className="memory-layer-list" aria-label={`${kindLabel(kind)}目录`}>
+                  {rows.length ? (
+                    <>
+                      <OperationalList items={rows.map((row) => {
+                        const id = stringValue(row.id);
+                        const rowStatus = stringValue(row.status, 'unknown');
+                        return {
+                          id,
+                          title: stringValue(row.title, '未命名记忆'),
+                          detail: stringValue(row.detail, '暂无摘要'),
+                          meta: [
+                            sourceLabel(stringValue(row.source)),
+                            ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId)),
+                          ].filter(Boolean).join(' · '),
+                          status: <StatusBadge label={statusLabel(rowStatus)} tone={statusTone(rowStatus)} />,
+                          onClick: () => {
+                            setSelectedId(id);
+                            setEditOpen(false);
+                          },
+                          selected: id === selectedId,
+                        };
+                      })} />
+                      <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} />
+                    </>
+                  ) : (
+                    <EmptyState description="当前筛选没有这一层的记录。" icon={Search} title="没有匹配结果" />
+                  )}
+                </aside>
+                <div className="memory-layer-detail">
+                  {selected ? (
+                    <>
+                      <MemoryCatalogDetail
+                        kind={kind}
+                        onOpenReference={(next) => setReference(next)}
+                        row={selected}
                       />
-                    ) : (
-                      <ManagementMutationWorkflow
-                        availability={archiveAvailability}
-                        description={archiveDraft.archived
-                          ? '归档主题记忆，退出日常自动召回；原始内容与关系仍会保留。'
-                          : '恢复主题记忆，重新参与日常记忆召回。'}
-                        draftKey={JSON.stringify(archiveDraft)}
-                        mutationKey={['memory', 'mutation', 'archive']}
-                        onApply={async (preview) => parseManagementWorkReceipt(
-                          await archiveBoundary.request({
-                            pathId: memoryBookArchivePathIds.apply,
-                            body: {
-                              ...preview.context,
-                              expectedRuntimeRevision: preview.expectedRuntimeRevision,
-                              previewToken: preview.previewToken,
-                              payloadSha256: preview.payloadSha256,
-                              confirmText: preview.requiredConfirm,
-                            },
-                          }),
-                          memoryBookArchivePathIds.apply,
-                          preview.payloadSha256,
+                      <div className="memory-layer-actions">
+                        {kind === 'evidence' ? (
+                          <MemoryEvidenceDispositionAction
+                            disabledReason={sourceDispositionBlockedReason()}
+                            onChanged={refresh}
+                            row={selected}
+                          />
+                        ) : (
+                          <DirectMemoryEditAction
+                            disabledReason={memoryEditBlockedReason()}
+                            onClick={() => setEditOpen(true)}
+                          />
                         )}
-                        onApplied={() => refresh()}
-                        onPreview={async () => parseManagementWorkPreview(
-                          await archiveBoundary.request({
-                            pathId: memoryBookArchivePathIds.preview,
-                            body: { ...archiveDraft, expectedRuntimeRevision: runtimeRevision },
-                          }),
-                          memoryBookArchivePathIds.apply,
-                          archiveDraft,
-                        )}
-                        onRollback={async (receipt, preview) => parseManagementWorkReceipt(
-                          await archiveBoundary.request({
-                            pathId: memoryBookArchivePathIds.rollback,
-                            body: {
-                              receiptId: receipt.receiptId,
-                              rollbackToken: receipt.rollbackToken,
-                              payloadSha256: receipt.payloadSha256,
-                              confirmText: 'rollback',
-                            },
-                          }),
-                          memoryBookArchivePathIds.rollback,
-                          preview.payloadSha256,
-                        )}
-                        onRolledBack={() => refresh()}
-                        risk="R2"
-                        title={archiveDraft.archived ? '归档主题记忆' : '恢复主题记忆'}
-                      />
-                    )}
-                  </>
-                )}
+                        {kind === 'books' ? (
+                          archiveAvailability.state === 'unsupported' ? (
+                            <UnavailableMemoryAction
+                              description="归档或恢复主题书，并保留事实与来源关系。"
+                              reason={archiveAvailability.reason || '安全归档暂未开放。'}
+                              risk="R2"
+                              title="管理主题书"
+                            />
+                          ) : (
+                            <ManagementMutationWorkflow
+                              availability={archiveAvailability}
+                              description={archiveDraft.archived
+                                ? '归档主题书，退出日常自动召回；事实和来源关系仍会保留。'
+                                : '恢复主题书，重新参与日常记忆召回。'}
+                              draftKey={JSON.stringify(archiveDraft)}
+                              mutationKey={['memory', 'mutation', 'archive']}
+                              onApply={async (preview) => parseManagementWorkReceipt(
+                                await archiveBoundary.request({
+                                  pathId: memoryBookArchivePathIds.apply,
+                                  body: {
+                                    ...preview.context,
+                                    expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                                    previewToken: preview.previewToken,
+                                    payloadSha256: preview.payloadSha256,
+                                    confirmText: preview.requiredConfirm,
+                                  },
+                                }),
+                                memoryBookArchivePathIds.apply,
+                                preview.payloadSha256,
+                              )}
+                              onApplied={() => refresh()}
+                              onPreview={async () => parseManagementWorkPreview(
+                                await archiveBoundary.request({
+                                  pathId: memoryBookArchivePathIds.preview,
+                                  body: { ...archiveDraft, expectedRuntimeRevision: runtimeRevision },
+                                }),
+                                memoryBookArchivePathIds.apply,
+                                archiveDraft,
+                              )}
+                              onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+                                await archiveBoundary.request({
+                                  pathId: memoryBookArchivePathIds.rollback,
+                                  body: {
+                                    receiptId: receipt.receiptId,
+                                    rollbackToken: receipt.rollbackToken,
+                                    payloadSha256: receipt.payloadSha256,
+                                    confirmText: 'rollback',
+                                  },
+                                }),
+                                memoryBookArchivePathIds.rollback,
+                                preview.payloadSha256,
+                              )}
+                              onRolledBack={() => refresh()}
+                              risk="R2"
+                              title={archiveDraft.archived ? '归档主题书' : '恢复主题书'}
+                            />
+                          )
+                        ) : null}
+                      </div>
+                    </>
+                  ) : (
+                    <EmptyState description="从左侧选择一项，查看正文、状态和证据来源。" icon={BookOpen} title="选择一条记录" />
+                  )}
                 </div>
-              )}
+              </div>
             </ManagementSection>
-
-            <ManagementSection title="维护草案" description="批量整理必须先生成可逐项审阅的草案。">
-              <AgentMemoryAction
-                description="审阅去重、合并、归档与标签调整。"
-                onClick={() => handoffToAgent('请使用记忆工具检查当前记忆库，生成一份去重、合并、归档与标签调整草案。先逐项说明依据和影响，未经我确认不要写入。')}
-                safety="逐项确认"
-                title="整理记忆"
-              />
-            </ManagementSection>
+          </TabsContent>
+          <TabsContent value="roleBooks">
+            <RoleBookLayer
+              enabled={view === 'roleBooks'}
+              initialReferenceId={routeSelection.routeLayer === 'role-books' ? routeSelection.id : ''}
+              onOpenGovernance={() => setView('organize')}
+            />
           </TabsContent>
           <TabsContent value="relations">
             <MemoryRelations enabled={view === 'relations'} />
@@ -350,6 +375,18 @@ export function MemoryFeature() {
           open={editOpen && Boolean(selected)}
           row={selected}
         />
+        {reference ? (
+          <MemoryReferenceDialog
+            {...reference}
+            onOpenChange={(open) => {
+              if (open) return;
+              setReference(null);
+              if (routeSelection.id) {
+                navigate({ pathname: location.pathname, search: `?layer=${routeSelection.routeLayer}` }, { replace: true });
+              }
+            }}
+          />
+        ) : null}
       </QueryState>
     </ManagementPage>
   );
@@ -360,8 +397,28 @@ export function MemoryFeature() {
     setQuery(draftQuery.trim());
   }
 
-  function handoffToAgent(draft: string) {
-    window.location.hash = `/agent?draft=${encodeURIComponent(draft)}`;
+  function openCatalogLayer(next: MemoryLayer) {
+    setView('catalog');
+    setLayer(next);
+    setStatus(defaultMemoryStatus(next));
+    setOwnerKey('');
+    setSelectedId('');
+    setEditOpen(false);
+    setReference(null);
+    navigate({ pathname: location.pathname, search: `?layer=${next}` }, { replace: true });
+  }
+
+  function openView(next: MemoryView) {
+    setView(next);
+    setEditOpen(false);
+    setReference(null);
+    if (next === 'catalog') {
+      navigate({ pathname: location.pathname, search: `?layer=${layer}` }, { replace: true });
+    } else if (next === 'timeline') {
+      navigate({ pathname: location.pathname, search: '?layer=timelines' }, { replace: true });
+    } else if (next === 'roleBooks') {
+      navigate({ pathname: location.pathname, search: '?layer=role-books' }, { replace: true });
+    }
   }
 
   function archiveBlockedReason(): string {
@@ -407,12 +464,70 @@ export function MemoryFeature() {
   }
 }
 
+interface MemoryRouteSelection {
+  id: string;
+  layer: MemoryLayer;
+  reference: MemoryReferenceSelection | null;
+  routeLayer: MemoryRouteLayer;
+  view: MemoryView;
+}
+
+function memoryRouteSelection(search: string): MemoryRouteSelection {
+  const params = new URLSearchParams(search);
+  const rawLayer = params.get('layer') ?? 'atoms';
+  const routeLayer: MemoryRouteLayer = isMemoryRouteLayer(rawLayer) ? rawLayer : 'atoms';
+  const id = (params.get('id') ?? '').trim().slice(0, 500);
+  const view: MemoryView = routeLayer === 'timelines'
+    ? 'timeline'
+    : routeLayer === 'role-books'
+      ? 'roleBooks'
+      : 'catalog';
+  const layer: MemoryLayer = routeLayer === 'evidence' || routeLayer === 'books'
+    ? routeLayer
+    : 'atoms';
+  return {
+    id,
+    layer,
+    reference: id ? {
+      kind: referenceKindForRoute(routeLayer, id),
+      referenceId: id,
+    } : null,
+    routeLayer,
+    view,
+  };
+}
+
+function isMemoryRouteLayer(value: string): value is MemoryRouteLayer {
+  return ['evidence', 'atoms', 'books', 'timelines', 'role-books'].includes(value);
+}
+
+function referenceKindForRoute(layer: MemoryRouteLayer, id: string): MemoryReferenceSelection['kind'] {
+  if (layer === 'atoms') return 'atom';
+  if (layer === 'books') return 'book';
+  if (layer === 'timelines') return 'timeline';
+  if (layer === 'role-books') return 'role_book_revision';
+  return /^\d+$/u.test(id) || id.startsWith('event:') || id.startsWith('input-memory:')
+    ? 'event'
+    : 'evidence';
+}
+
+function normalizeMemoryView(value: string): MemoryView {
+  return value === 'roleBooks' || value === 'timeline' || value === 'relations' || value === 'organize'
+    ? value
+    : 'catalog';
+}
+
 function normalizeMemoryRow(item: Record<string, unknown>): Record<string, unknown> {
+  const source = asRecord(item.source);
   return {
     id: item.id ?? item.bookId ?? item.atomId ?? item.tagId ?? item.groupId ?? item.phraseId,
     title: item.title ?? item.name ?? item.label ?? item.tag ?? item.text ?? item.phrase ?? item.reason ?? item.value,
     detail: item.detail ?? item.summary ?? item.note ?? item.description ?? item.text ?? item.reason ?? item.value ?? item.aliases,
-    source: item.source ?? item.sourceType ?? item.project ?? item.kind,
+    source: typeof item.source === 'string'
+      ? item.source
+      : source.type ?? source.kind ?? source.sourceType ?? item.sourceType ?? item.project ?? item.kind,
+    sourceRecord: item.source,
+    ref: item.ref,
     status: item.status ?? (item.active === false ? 'inactive' : 'active'),
     type: item.type ?? item.bookType ?? item.kind,
     text: item.text ?? item.textPreview ?? item.phrase,
@@ -438,8 +553,13 @@ function normalizeMemoryRow(item: Record<string, unknown>): Record<string, unkno
     contextGroupCount: item.contextGroupCount,
     atomCount: item.atomCount,
     bookCount: item.bookCount,
+    confidence: item.confidence,
+    qualityScore: item.qualityScore,
+    createdAtMs: item.createdAtMs ?? item.created_at_ms,
     latestAtMs: item.latestAtMs,
     updatedAtMs: item.updatedAtMs ?? item.updated_at_ms,
+    evidenceRefs: item.evidenceRefs ?? item.sourceRefs ?? item.references ?? item.sourceEventIds,
+    memories: item.memories,
   };
 }
 
@@ -452,44 +572,188 @@ function safeCatalogStringList(value: unknown): string[] {
   }).slice(0, 64);
 }
 
-function MemoryCatalogDetail({ kind, row }: { kind: MemoryKind; row: Record<string, unknown> }) {
+function MemoryCatalogDetail({
+  kind,
+  onOpenReference,
+  row,
+}: {
+  kind: MemoryKind;
+  onOpenReference: (reference: MemoryReferenceSelection) => void;
+  row: Record<string, unknown>;
+}) {
   const values = Array.isArray(row.tags)
     ? safeCatalogStringList(row.tags)
     : Array.isArray(row.aliases)
       ? safeCatalogStringList(row.aliases)
       : [];
+  const references = catalogReferences(row, kind);
+  const rootReference = catalogRootReference(row, kind);
+  const status = stringValue(row.status);
+  const forgotten = status === 'not_for_memory' || status === 'expired';
+  const redacted = row.sensitive === true;
   return (
     <section className="memory-catalog-detail" aria-label={`${stringValue(row.title, '记忆')} 详情`}>
-      <div>
-        <span>{kindLabel(kind)}</span>
+      <div className="memory-catalog-detail__identity">
+        <span><Fingerprint aria-hidden="true" size={16} />{kindLabel(kind)}</span>
         <h3>{stringValue(row.title, '未命名记忆')}</h3>
-        <p>{stringValue(row.detail, '暂无摘要')}</p>
+        <p>{redacted ? '正文因为隐私策略已隐藏，只保留可审计的来源和状态。' : stringValue(row.detail, '暂无摘要')}</p>
       </div>
       <dl>
-        {kind === 'apps' ? (
-          <>
-            <div><dt>完整输入</dt><dd>{numberValue(row.eventCount)} 段</dd></div>
-            <div><dt>回车封口</dt><dd>{numberValue(row.finalizedSegmentCount)} 段</dd></div>
-            <div><dt>上下文分段</dt><dd>{numberValue(row.contextGroupCount)} 个</dd></div>
-            <div><dt>长期记忆</dt><dd>{numberValue(row.atomCount)} 原子 · {numberValue(row.bookCount)} 书</dd></div>
-            <div><dt>Bundle ID</dt><dd>{stringValue(row.bundleId, stringValue(row.id))}</dd></div>
-            <div><dt>最近输入</dt><dd>{formatUpdatedAt(numberValue(row.latestAtMs))}</dd></div>
-          </>
-        ) : (
-          <>
-            <div><dt>状态</dt><dd>{statusLabel(stringValue(row.status))}</dd></div>
-            <div><dt>来源</dt><dd>{sourceLabel(stringValue(row.source))}</dd></div>
-            {stringValue(row.ownerKind) ? (
-              <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
-            ) : null}
-            <div><dt>更新</dt><dd>{formatUpdatedAt(numberValue(row.updatedAtMs ?? row.updated_at_ms))}</dd></div>
-            <div><dt>关联</dt><dd>{values.length ? `${values.length} 项` : '暂无'}</dd></div>
-          </>
-        )}
+        <div><dt>状态</dt><dd>{statusLabel(status)}</dd></div>
+        <div><dt>来源</dt><dd>{sourceLabel(stringValue(row.source))}</dd></div>
+        {stringValue(row.ownerKind) ? (
+          <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
+        ) : null}
+        <div><dt>更新</dt><dd>{formatUpdatedAt(numberValue(row.updatedAtMs))}</dd></div>
+        <div><dt>索引关系</dt><dd>{values.length ? `${values.length} 项` : '暂无'}</dd></div>
+        <div><dt>来源引用</dt><dd>{references.length ? `${references.length} 条` : '查看完整链路'}</dd></div>
       </dl>
       {values.length ? <div className="memory-catalog-detail__tags">{values.slice(0, 8).map((value) => <span key={value}>{value}</span>)}</div> : null}
+      {redacted ? (
+        <InlineNotice title="敏感内容已脱敏" tone="warning">
+          此处不会显示原文。来源标识、处理时间和治理状态仍可用于审计。
+        </InlineNotice>
+      ) : forgotten ? (
+        <InlineNotice title="这条证据已退出记忆召回" tone="info">
+          遗忘不会伪造删除历史：正文不再参与整理和召回，审计引用仍然保留，并可在允许时恢复。
+        </InlineNotice>
+      ) : null}
+      <div className="memory-lineage-panel">
+        <div>
+          <span><GitBranch aria-hidden="true" size={15} />证据链</span>
+          <strong>{references.length ? `${references.length} 条直接引用` : '从稳定引用读取完整来源'}</strong>
+          <p>点击引用会进入统一查看器；查看器支持继续向下展开，并阻止循环或异常深链。</p>
+        </div>
+        {references.length ? (
+          <div className="memory-reference-list" aria-label="直接来源引用">
+            {references.map((reference) => (
+              <button key={`${reference.kind}:${reference.referenceId}`} onClick={() => onOpenReference(reference)} type="button">
+                <Fingerprint aria-hidden="true" size={14} />
+                <span>{reference.label || referenceKindLabel(reference.kind)}</span>
+                <ChevronRight aria-hidden="true" size={14} />
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {rootReference ? (
+          <Button
+            leadingIcon={<GitBranch size={14} />}
+            onClick={() => onOpenReference(rootReference)}
+            size="small"
+            variant="quiet"
+          >
+            查看完整来源
+          </Button>
+        ) : null}
+      </div>
     </section>
   );
+}
+
+function catalogRootReference(
+  row: Record<string, unknown>,
+  kind: MemoryKind,
+): MemoryReferenceSelection | null {
+  const canonicalRef = asRecord(row.ref);
+  const referenceId = stringValue(
+    canonicalRef.referenceId,
+    stringValue(canonicalRef.refId, stringValue(canonicalRef.id, stringValue(row.id))),
+  );
+  if (!referenceId) return null;
+  const explicitKind = stringValue(
+    canonicalRef.kind,
+    stringValue(canonicalRef.referenceKind, stringValue(canonicalRef.type)),
+  );
+  if (kind === 'atoms') return {
+    kind: normalizeCatalogReferenceKind(explicitKind, referenceId, 'atom'),
+    referenceId,
+    label: stringValue(row.title),
+  };
+  if (kind === 'books') return {
+    kind: normalizeCatalogReferenceKind(explicitKind, referenceId, 'book'),
+    referenceId,
+    label: stringValue(row.title),
+  };
+  if (kind === 'evidence') {
+    return {
+      kind: normalizeCatalogReferenceKind(
+        explicitKind,
+        referenceId,
+        /^\d+$/u.test(referenceId) || referenceId.startsWith('input-memory:') ? 'event' : 'evidence',
+      ),
+      referenceId,
+      label: stringValue(row.title),
+    };
+  }
+  return null;
+}
+
+function catalogReferences(
+  row: Record<string, unknown>,
+  kind: MemoryKind,
+): MemoryReferenceSelection[] {
+  const candidates = [
+    ...(Array.isArray(row.evidenceRefs) ? row.evidenceRefs : []),
+    ...(Array.isArray(row.memories) ? row.memories : []),
+  ];
+  const fallback: MemoryReferenceSelection['kind'] = kind === 'books' ? 'atom' : 'event';
+  const seen = new Set<string>();
+  return candidates.flatMap((value): MemoryReferenceSelection[] => {
+    const item = asRecord(value);
+    const referenceId = typeof value === 'string' || typeof value === 'number'
+      ? String(value)
+      : stringValue(
+        item.referenceId,
+        stringValue(item.refId, stringValue(item.id, stringValue(item.sourceId))),
+      );
+    if (!referenceId) return [];
+    const referenceKind = normalizeCatalogReferenceKind(
+      stringValue(
+        item.kind,
+        stringValue(item.referenceKind, stringValue(item.type, stringValue(item.sourceType))),
+      ),
+      referenceId,
+      fallback,
+    );
+    const key = `${referenceKind}:${referenceId}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      kind: referenceKind,
+      referenceId,
+      label: stringValue(item.label, stringValue(item.title, stringValue(item.textPreview, stringValue(item.text)))),
+    }];
+  }).slice(0, 40);
+}
+
+function normalizeCatalogReferenceKind(
+  value: string,
+  referenceId: string,
+  fallback: MemoryReferenceSelection['kind'],
+): MemoryReferenceSelection['kind'] {
+  const normalized = value.toLocaleLowerCase('en-US').replaceAll('-', '_');
+  if (normalized.includes('role_book')) return 'role_book_revision';
+  if (normalized.includes('timeline')) return 'timeline';
+  if (normalized.includes('book')) return 'book';
+  if (normalized.includes('atom') || normalized === 'fact') return 'atom';
+  if (normalized.includes('evidence')) return 'evidence';
+  if (normalized.includes('event')) return 'event';
+  if (referenceId.startsWith('atom:')) return 'atom';
+  if (referenceId.startsWith('book:')) return 'book';
+  if (referenceId.startsWith('timeline:')) return 'timeline';
+  if (referenceId.startsWith('evidence:')) return 'evidence';
+  return fallback;
+}
+
+function referenceKindLabel(kind: MemoryReferenceSelection['kind']): string {
+  return ({
+    event: '原始事件',
+    evidence: 'Agent 证据',
+    atom: '当前事实',
+    book: '主题书',
+    timeline: '活动时间线',
+    role_book_revision: '角色书修订',
+  } as const)[kind];
 }
 
 interface MemoryEditDraft {
@@ -803,34 +1067,6 @@ function UnavailableMemoryAction({
         <Button disabled size="small">暂未开放</Button>
       </div>
       <p className="memory-action-unavailable">{reason}</p>
-    </div>
-  );
-}
-
-function AgentMemoryAction({
-  description,
-  disabledReason = '',
-  onClick,
-  safety,
-  title,
-}: {
-  description: string;
-  disabledReason?: string;
-  onClick: () => void;
-  safety: string;
-  title: string;
-}) {
-  return (
-    <div className="mgmt-workflow" data-availability={disabledReason ? 'blocked' : 'available'} data-stage="idle">
-      <div className="mgmt-workflow__heading">
-        <div>
-          <span className="mgmt-workflow__risk">{safety}</span>
-          <strong>{title}</strong>
-          <p>{description}</p>
-        </div>
-        <Button disabled={Boolean(disabledReason)} onClick={onClick} size="small">交给智鼬</Button>
-      </div>
-      <p className="memory-action-unavailable">{disabledReason || '智鼬会先生成可审阅的方案，不会直接修改记忆。'}</p>
     </div>
   );
 }

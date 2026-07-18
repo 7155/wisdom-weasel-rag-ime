@@ -370,7 +370,10 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-tool-preview__items li { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-memory) 16%, var(--color-border)); }
 .agent-tool-preview__items li:last-child { border-bottom: 0; padding-bottom: 0; }
 .agent-tool-preview__items span { color: var(--color-memory); font-size: 12px; font-weight: 700; }
-.agent-tool-preview__items p { margin: 0; color: var(--color-text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-tool-preview__items p,
+.agent-tool-preview__items a { margin: 0; color: var(--color-text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-tool-preview__items a { text-decoration-color: color-mix(in srgb, var(--color-memory) 48%, transparent); text-underline-offset: 3px; }
+.agent-tool-preview__items a:hover { color: var(--color-memory); }
 .agent-tool-result-panel { display: grid; gap: 6px; margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--color-accent); background: var(--color-surface-subtle); }
 .agent-tool-result-panel[data-tone='error'] { border-left-color: var(--color-danger); background: var(--color-danger-soft); }
 .agent-tool-result-panel > strong { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-secondary); font-size: 13px; }

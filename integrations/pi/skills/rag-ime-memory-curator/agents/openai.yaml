@@ -1,4 +1,4 @@
 interface:
   display_name: "RAG-IME 记忆整理"
-  short_description: "清理、合并并审阅输入法长期记忆，批准后再更新数据库"
-  default_prompt: "Use the RAG-IME memory tools to inspect curated memory, propose a cleanup draft, and wait for selective approval before applying changes."
+  short_description: "按 Evidence、Atom、Topic Book 与 Timeline 分层治理记忆写入"
+  default_prompt: "Use ime_memory to create evidence-backed remember, correct, or forget previews, preserve Atom lineage and cross-App Timeline provenance, and wait for native approval. Use agent_role_book only to read, propose, or review a pinned revision; never activate it."

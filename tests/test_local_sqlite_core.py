@@ -1757,7 +1757,49 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(metadata["fieldContextChars"], 18)
         self.assertNotIn("语音粘贴", raw)
 
+    def test_accessibility_terminal_scrollback_is_not_recorded_as_input(self) -> None:
+        before = self.core.event_count()
+        event_ref = self.adapter.commit_text(
+            "终端窗口里与当前输入无关的三千字滚动缓冲区",
+            source="squirrel_input_segment",
+            app="com.mitchellh.ghostty",
+            tags=("input-segment", "finalized", "complete-input"),
+            privacy_disposition="allowed",
+            capture_metadata={
+                "captureSource": "accessibility",
+                "fieldContextChars": 3123,
+                "imeBufferChars": 18,
+            },
+        )
+
+        self.assertEqual(event_ref, "skipped:accessibility_context_not_input")
+        self.assertEqual(self.core.event_count(), before)
+
+    def test_accessibility_without_ime_transaction_is_not_recorded_as_input(self) -> None:
+        before = self.core.event_count()
+        event_ref = self.adapter.commit_text(
+            "浏览器或控制中心当前页面的完整可访问文本",
+            source="squirrel_input_segment",
+            app="com.rag-ime.control",
+            privacy_disposition="allowed",
+            capture_metadata={
+                "captureSource": "accessibility",
+                "fieldContextChars": 4000,
+                "imeBufferChars": 0,
+            },
+        )
+
+        self.assertEqual(event_ref, "skipped:accessibility_context_not_input")
+        self.assertEqual(self.core.event_count(), before)
+
     def test_agent_hook_reads_from_local_memory_db(self) -> None:
+        self.adapter.commit_text(
+            "Agent 首次运行 PROJECT_MEMORY_BLOCK",
+            source="manual",
+            tags=("phrase-memory",),
+            privacy_disposition="allowed",
+        )
+        self.core.process_memory_projection_outbox()
         injection = build_first_run_injection(
             self.adapter,
             project="wisdom-weasel-rag-ime",
@@ -1866,7 +1908,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         plain_adapter.commit_text(
             "赤色星球探索计划",
             recent_context="航天项目背景",
-            tags=("curated",),
+            tags=("phrase-memory",),
             privacy_disposition="allowed",
         )
 

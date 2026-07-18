@@ -101,10 +101,10 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "ime_memory",
         "domain": "memory",
-        "displayName": "记忆与工具书",
+        "displayName": "个人上下文记忆",
         "description": (
-            "查询当前或历史记忆与 Memory Book；需要整理时生成可审阅草案。"
-            "增加、更正、遗忘和回滚均使用持久提议与原生审批，系统永不自动应用。"
+            "查询用户 Evidence、Atom、Book 与已批准 Timeline；"
+            "Role Book 请用 agent_role_book。写操作只能经持久提议和原生审批。"
         ),
         "operations": (
             "catalog",
@@ -717,7 +717,16 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     },
     "kind": {
         "type": "string",
-        "enum": ["books", "atoms", "tags", "phrases", "groups"],
+        "enum": [
+            "apps",
+            "books",
+            "atoms",
+            "timelines",
+            "evidence",
+            "tags",
+            "phrases",
+            "groups",
+        ],
     },
     "scheduleId": {
         "type": "string",
@@ -978,17 +987,23 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
         "不要用任务标题代替 taskId，也不要在审批完成前声称任务已经执行。"
     ),
     "ime_memory": (
-        "当回答依赖跨会话偏好、决定、约束或持续计划时，先用 catalog 定位工具书，"
-        "再用 read 或受治理 Atom 查询读取正文；写入先 preview，再用 proposalId apply。"
-        "recent 只返回当前角色可见且已治理的证据，不要把 pending、needs_review 或 not_for_memory 当作事实。"
+        "Session 启动快照只在首轮注入一次，后续需要旧信息时主动调用本工具。"
+        "事实用 search/get/explain(kind=atoms)，主题用 catalog/read/list(kind=books)，"
+        "活动用 search(kind=timelines)，来源用 list(kind=evidence)；Timeline 不能单独证明稳定事实。"
+        "写入先调用对应 preview，再将 proposalId 交给 apply；没有原生审批回执不得声称已修改。"
+        "targetId 必须来自 search/get 的 memoryId 或 ref.id。"
+        "recent 不含 pending、needs_review 或 not_for_memory。"
     ),
     "ime_browser": (
         "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
         "页面变化后旧 refId 会失效；执行 navigate、click、type、scroll、wait 或 stop 前需要用户批准。"
     ),
     "agent_role_book": (
-        "get 默认读取当前 Session 固定的 revision；propose_revision 只保存 draft，"
-        "不能激活或改变身份、权限、安全策略和工具白名单。"
+        "Role Book 是 Agent 自身画像并随 Session 固定版本注入系统提示词，不是用户记忆。"
+        "get 默认读取当前 Session 固定的 revision；history/review 用于检查每日整理产生的草案。"
+        "需要补充最近工作、能力、性格或经验教训时，先引用真实 Evidence，"
+        "再用 propose_revision 提交 personality/capabilities/recentWork/lessonsAndLimits/activeCommitments。"
+        "propose_revision 只保存 draft，不能激活或改变身份、权限、安全策略和工具白名单。"
     ),
 }
 
@@ -4728,7 +4743,7 @@ class ControlToolGateway:
             raise ValueError("draftId is required for ime_memory.review")
         if operation in {"search", "get", "explain"}:
             kind = _bounded_text(args.get("kind"), maximum=40) or "atoms"
-            if kind == "atoms":
+            if kind in {"atoms", "timelines"}:
                 return self._governed_memory_store().read(operation, args)
             if operation != "search":
                 raise ValueError(
@@ -4857,7 +4872,16 @@ class ControlToolGateway:
                 "stale": review.get("stale") is True,
             }
         kind = _bounded_text(args.get("kind"), maximum=40) or "atoms"
-        if kind not in {"apps", "books", "atoms", "tags", "phrases", "groups"}:
+        if kind not in {
+            "apps",
+            "books",
+            "atoms",
+            "timelines",
+            "evidence",
+            "tags",
+            "phrases",
+            "groups",
+        }:
             raise ValueError("unsupported memory list kind")
         query = _bounded_text(args.get("query"), maximum=240)
         limit = _bounded_int(args.get("limit"), default=8, minimum=1, maximum=20)
@@ -5222,14 +5246,33 @@ class ControlToolGateway:
             raise ValueError("memory book not found")
         memories = [
             {
+                "memoryId": _bounded_text(item.get("id"), maximum=240),
                 "type": _bounded_text(item.get("type"), maximum=80),
                 "text": _bounded_text(item.get("text"), maximum=1200),
                 "updatedAtMs": _safe_int(item.get("updatedAtMs")),
+                **(
+                    {
+                        "ref": _memory_reference(
+                            "atom",
+                            _bounded_text(item.get("id"), maximum=240),
+                            legacy_type="memory_atom",
+                        )
+                    }
+                    if _bounded_text(item.get("id"), maximum=240)
+                    else {}
+                ),
             }
             for item in match.get("memories", [])
             if isinstance(item, Mapping)
         ][:20]
         title = _bounded_text(match.get("title"), maximum=180)
+        book_ref = _coerce_memory_reference(
+            match.get("ref"),
+            fallback_kind="book",
+            fallback_id=book_id,
+            legacy_type="book",
+        )
+        evidence_refs = _safe_memory_references(match.get("evidenceRefs"), limit=80)
         return {
             "summary": f"已读取工具书《{title or '未命名'}》，包含 {len(memories)} 条相关记忆",
             "book": {
@@ -5241,8 +5284,10 @@ class ControlToolGateway:
                 "sourceStartMs": _safe_int(match.get("sourceStartMs")),
                 "sourceEndMs": _safe_int(match.get("sourceEndMs")),
                 "memories": memories,
+                "ref": book_ref,
+                "evidenceRefs": evidence_refs,
             },
-            "items": [{"title": title, "kind": "book"}],
+            "items": [{"title": title, "kind": "book", "ref": book_ref}],
         }
 
     def _recent(
@@ -5300,11 +5345,36 @@ class ControlToolGateway:
             ):
                 continue
             seen.add(source_id)
+            raw_source = item.get("source")
+            source_ref = (
+                _safe_memory_source(raw_source)
+                if isinstance(raw_source, Mapping)
+                else {}
+            )
+            legacy_source = (
+                _bounded_text(item.get("transportSource"), maximum=80)
+                if source_ref
+                else _bounded_text(raw_source, maximum=80)
+            )
+            ref = _coerce_memory_reference(
+                item.get("ref"),
+                fallback_kind="evidence",
+                fallback_id=source_id,
+                legacy_type="evidence",
+            )
             items.append(
                 {
                     "sourceId": source_id,
                     "createdAtMs": _safe_int(item.get("createdAtMs")),
-                    "source": _bounded_text(item.get("source"), maximum=80),
+                    # Keep the historical string field while exposing the new
+                    # structured source and actionable stable reference.
+                    "source": legacy_source,
+                    "sourceRef": source_ref,
+                    "ref": ref,
+                    "evidenceRefs": _safe_memory_references(
+                        item.get("evidenceRefs"),
+                        limit=40,
+                    ),
                     "sourceKind": _bounded_text(item.get("type"), maximum=80),
                     "text": text,
                     "app": _bounded_text(item.get("app"), maximum=160),
@@ -5351,9 +5421,10 @@ class ControlToolGateway:
 
 
 def _catalog_book(item: Mapping[str, object]) -> dict[str, object]:
+    book_id = _bounded_text(item.get("id"), maximum=240)
     return {
         "kind": "book",
-        "bookId": _bounded_text(item.get("id"), maximum=240),
+        "bookId": book_id,
         "title": _bounded_text(item.get("title"), maximum=180),
         "summary": _bounded_text(item.get("summary"), maximum=800),
         "tags": _string_list(item.get("tags"), limit=20),
@@ -5361,7 +5432,116 @@ def _catalog_book(item: Mapping[str, object]) -> dict[str, object]:
         "updatedAtMs": _safe_int(item.get("updated_at_ms") or item.get("updatedAtMs")),
         "ownerKind": _bounded_text(item.get("ownerKind"), maximum=40),
         "ownerId": _bounded_text(item.get("ownerId"), maximum=160),
+        "ref": _coerce_memory_reference(
+            item.get("ref"),
+            fallback_kind="book",
+            fallback_id=book_id,
+            legacy_type="book",
+        ),
+        "evidenceRefs": _safe_memory_references(
+            item.get("evidenceRefs"),
+            limit=80,
+        ),
     }
+
+
+_MEMORY_REFERENCE_KINDS = frozenset(
+    {"event", "evidence", "atom", "book", "timeline", "role_book_revision"}
+)
+
+
+def _memory_reference(
+    kind: str,
+    reference_id: str,
+    *,
+    legacy_type: str = "",
+    label: str = "",
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "kind": kind,
+        "id": reference_id,
+        "referenceKind": kind,
+        "referenceId": reference_id,
+    }
+    if legacy_type:
+        value["type"] = legacy_type
+    if label:
+        value["label"] = label
+    return value
+
+
+def _coerce_memory_reference(
+    value: object,
+    *,
+    fallback_kind: str,
+    fallback_id: str,
+    legacy_type: str,
+) -> dict[str, object]:
+    source = value if isinstance(value, Mapping) else {}
+    kind = _bounded_text(
+        source.get("referenceKind") or source.get("kind") or fallback_kind,
+        maximum=40,
+    )
+    if kind not in _MEMORY_REFERENCE_KINDS:
+        kind = fallback_kind
+    reference_id = _bounded_text(
+        source.get("referenceId") or source.get("id") or fallback_id,
+        maximum=240,
+    )
+    if not reference_id:
+        return {}
+    return _memory_reference(
+        kind,
+        reference_id,
+        legacy_type=_bounded_text(source.get("type"), maximum=80) or legacy_type,
+        label=_bounded_text(source.get("label"), maximum=180),
+    )
+
+
+def _safe_memory_references(value: object, *, limit: int) -> list[dict[str, object]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in value[: max(0, limit)]:
+        if not isinstance(raw, Mapping):
+            continue
+        kind = _bounded_text(
+            raw.get("referenceKind") or raw.get("kind"),
+            maximum=40,
+        )
+        reference_id = _bounded_text(
+            raw.get("referenceId") or raw.get("id"),
+            maximum=240,
+        )
+        identity = (kind, reference_id)
+        if kind not in _MEMORY_REFERENCE_KINDS or not reference_id or identity in seen:
+            continue
+        seen.add(identity)
+        result.append(
+            _memory_reference(
+                kind,
+                reference_id,
+                legacy_type=_bounded_text(raw.get("type"), maximum=80) or kind,
+                label=_bounded_text(raw.get("label"), maximum=180),
+            )
+        )
+    return result
+
+
+def _safe_memory_source(value: Mapping[str, object]) -> dict[str, object]:
+    kind = _bounded_text(value.get("kind") or value.get("type"), maximum=80)
+    source_id = _bounded_text(value.get("id"), maximum=320)
+    if not kind or not source_id:
+        return {}
+    result: dict[str, object] = {"kind": kind, "id": source_id}
+    source_kind = _bounded_text(value.get("sourceKind"), maximum=120)
+    if source_kind:
+        result["sourceKind"] = source_kind
+    legacy_type = _bounded_text(value.get("type"), maximum=80)
+    if legacy_type:
+        result["type"] = legacy_type
+    return result
 
 
 def _compact_memory_run_for_agent(run: Mapping[str, object]) -> dict[str, object]:
@@ -5733,40 +5913,59 @@ def _tool_profile_allows(
 def _runtime_memory_tool_parameter_schema(
     operations: list[str],
 ) -> dict[str, object]:
-    required_by_operation = {
-        "read": ("bookId",),
-        "trace": ("traceId",),
-        "maintenance_review": ("runId",),
-        "maintenance_apply": ("runId",),
-        "maintenance_rollback": ("runId",),
+    argument_names = (*_RUNTIME_TOOL_ARGUMENTS["ime_memory"], "scope", "policy")
+    properties = {
+        name: dict(
+            _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES.get(
+                ("ime_memory", name),
+                _RUNTIME_TOOL_ARGUMENT_SCHEMAS[name],
+            )
+        )
+        for name in argument_names
+        if name in _RUNTIME_TOOL_ARGUMENT_SCHEMAS
+        or ("ime_memory", name) in _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES
     }
-    return {
-        "type": "object",
-        "description": "每次选择一个记忆操作；整理只生成草案并等待用户审阅。",
-        "additionalProperties": False,
-        "required": ["op"],
-        "properties": {
+    properties.update(
+        {
             "op": {"type": "string", "enum": operations},
             "query": {"type": "string", "maxLength": 240},
             "limit": {"type": "integer", "minimum": 1, "maximum": 30},
-            "kind": {
-                "type": "string",
-                "enum": ["apps", "books", "atoms", "tags", "phrases", "groups"],
-            },
-            "bookId": {"type": "string", "minLength": 1, "maxLength": 240},
-            "traceId": {"type": "string", "minLength": 1, "maxLength": 240},
-            "runId": {"type": "string", "minLength": 1, "maxLength": 240},
             "instruction": {"type": "string", "maxLength": 800},
             "scope": {"type": "string", "enum": ["incremental", "global"]},
             "policy": {"type": "string", "enum": ["conservative"]},
-        },
-        "oneOf": [
-            {
-                "required": ["op", *required_by_operation.get(operation, ())],
-                "properties": {"op": {"const": operation}},
-            }
-            for operation in operations
-        ],
+        }
+    )
+    branches: list[dict[str, object]] = []
+    for operation in operations:
+        branch: dict[str, object] = {
+            "required": [
+                "op",
+                *_RUNTIME_TOOL_REQUIRED_ARGUMENTS.get(
+                    ("ime_memory", operation),
+                    (),
+                ),
+            ],
+            "properties": {"op": {"const": operation}},
+        }
+        alternatives = _RUNTIME_TOOL_REQUIRED_ALTERNATIVES.get(
+            ("ime_memory", operation),
+            (),
+        )
+        if alternatives:
+            branch["anyOf"] = [
+                {"required": list(alternative)} for alternative in alternatives
+            ]
+        branches.append(branch)
+    return {
+        "type": "object",
+        "description": (
+            "Evidence 为来源，Atom 为事实，Book 为主题，Timeline 为活动连续性；"
+            "Role Book 使用 agent_role_book。"
+        ),
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": properties,
+        "oneOf": branches,
     }
 
 

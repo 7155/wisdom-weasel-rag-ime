@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.active_rag_service import ACTIVE_RAG_DEFAULT_MAX_CHARS, ActiveRagService, ActiveRagStartRequest
+from rag_ime.daily_planner import local_date_string
 from rag_ime.deepseek_completion import CompletionCandidateDelta, DeepSeekCompletionError, build_deepseek_completion_messages
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent
@@ -159,9 +160,9 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(progress["stage"], "generating")
         self.assertEqual(progress["context"]["foregroundChars"], len(selected))
         self.assertEqual(progress["context"]["windowNodeCount"], 16)
-        self.assertEqual(progress["retrieval"]["evidenceCount"], 1)
-        self.assertEqual(progress["retrieval"]["items"][0]["title"], "时间衰减 · 记忆检索")
-        self.assertIn("时间衰减", progress["retrieval"]["items"][0]["preview"])
+        self.assertEqual(progress["retrieval"]["evidenceCount"], 0)
+        self.assertEqual(progress["retrieval"]["contextEvidenceCount"], 1)
+        self.assertEqual(progress["retrieval"]["items"], [])
         context_view = pending["diagnostics"]["contextView"]
         self.assertEqual(context_view["source"], "provider_request")
         self.assertEqual(context_view["currentRequest"], selected)
@@ -170,6 +171,8 @@ class ActiveRagServiceTests(unittest.TestCase):
             "这是 AX 树实际捕获的编辑区内容",
         )
         self.assertEqual(context_view["windowContext"]["projection"], "generation_text")
+        self.assertEqual(context_view["planning"]["items"][0]["title"], "检查并完善记忆检索的时间衰减设计")
+        self.assertFalse(context_view["planning"]["maySupportFacts"])
         self.assertNotIn("nodeRef", str(context_view["windowContext"]))
         self.assertNotIn("actions", str(context_view["windowContext"]))
         self.assertNotIn("你是 macOS 输入法", str(context_view))
@@ -574,7 +577,27 @@ class ActiveRagServiceTests(unittest.TestCase):
     def test_active_rag_retries_once_without_rag_when_first_result_is_empty(self) -> None:
         provider = SequencedActiveRagProvider(((), ("重新依据当前请求生成可用正文",)))
         service = ActiveRagService(completion_provider=provider)
-        request = _request(selected_text="检查当前请求和RAG拼接", max_chars=120)
+        request = _request(
+            selected_text="检查当前请求和RAG拼接",
+            max_chars=120,
+            evidence_pack=(
+                {
+                    "evidenceId": "atom:retry-grounding",
+                    "surfaceHints": ["主题书和原子事实用于首次生成"],
+                    "sourceType": "memory",
+                    "sourceLane": "vector_raw",
+                    "atomIds": ["atom:retry-grounding"],
+                },
+                {
+                    "evidenceId": "recent:retry-continuity",
+                    "surfaceHints": ["最近完整输入用于恢复对话连续性"],
+                    "sourceType": "recent_input_context",
+                    "sourceLane": "timeline_recent_input",
+                    "contextOnly": True,
+                    "maySupportFacts": False,
+                },
+            ),
+        )
 
         with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
             started = service.start(request)
@@ -587,6 +610,20 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(provider.calls[1].evidence_pack, ())
         self.assertTrue(provider.calls[1].recovery_mode)
         self.assertEqual(provider.calls[1].selected_text, request.selected_text)
+        self.assertNotIn("groundingEvidence", provider.calls[1].context_packet)
+        self.assertNotIn("ragEvidenceHints", provider.calls[1].context_packet)
+        initial_payload = json.loads(build_deepseek_completion_messages(provider.calls[0])[1]["content"])
+        recovery_payload = json.loads(build_deepseek_completion_messages(provider.calls[1])[1]["content"])
+        self.assertTrue(initial_payload["groundingEvidence"])
+        self.assertEqual(initial_payload["groundingMode"], "rag_grounded")
+        self.assertTrue(recovery_payload["recoveryMode"])
+        self.assertNotEqual(recovery_payload["groundingMode"], "rag_grounded")
+        self.assertEqual(recovery_payload["groundingEvidence"], [])
+        self.assertTrue(recovery_payload["contextPacket"]["recentCompleteInputs"])
+        self.assertIn(
+            "最近完整输入用于恢复对话连续性",
+            json.dumps(recovery_payload["contextPacket"]["recentCompleteInputs"], ensure_ascii=False),
+        )
         self.assertTrue(ready["diagnostics"]["modelRequest"]["contentRetryCompleted"])
 
     def test_active_rag_reports_quality_retry_while_recovery_request_is_running(self) -> None:
@@ -707,10 +744,44 @@ class ActiveRagServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-timeline-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "active-rag-timeline.sqlite")
             event_id = _record_timeline_event(core, "主动 DeepSeek 生成按钮进入候选框")
-            _insert_timeline_book(core, event_id=event_id)
+            _insert_planning_and_activity_context(core, event_id=event_id)
+            fact_pack = tuple(
+                {
+                    "evidenceId": f"hit:atom:{index}",
+                    "text": f"输入法事实原子 {index} 说明混合检索链路。",
+                    "evidencePreview": f"输入法事实原子 {index} 说明混合检索链路。",
+                    "title": f"当前事实 {index}",
+                    "sourceType": "memory",
+                    "sourceLane": "vector_raw",
+                    "atomIds": [f"atom:context:{index}"],
+                }
+                for index in range(1, 8)
+            ) + (
+                {
+                    "evidenceId": "hit:topic-book",
+                    "text": "输入法主题书记录长期上下文架构。",
+                    "evidencePreview": "输入法主题书记录长期上下文架构。",
+                    "title": "输入法主题书",
+                    "sourceType": "memory",
+                    "sourceLane": "bm25_tags",
+                    "bookIds": ["book:ime-context"],
+                },
+                {
+                    "evidenceId": "hit:ordinary-rag",
+                    "text": "普通 RAG 文档记录显式生成接口。",
+                    "evidencePreview": "普通 RAG 文档记录显式生成接口。",
+                    "title": "生成接口文档",
+                    "sourceType": "rag",
+                    "sourceLane": "bm25_raw",
+                },
+            )
             provider = FakeActiveRagProvider(("DeepSeek主动候选",))
             service = ActiveRagService(core=core, completion_provider=provider)
-            request = _request(selected_text="主动候选")
+            request = _request(
+                selected_text="主动候选",
+                evidence_pack=fact_pack,
+                max_chars=120,
+            )
 
             with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
                 started = service.start(request)
@@ -720,23 +791,36 @@ class ActiveRagServiceTests(unittest.TestCase):
         context_packet = provider.calls[0].context_packet
         source_types = [item.get("sourceType") for item in evidence_pack]
         self.assertEqual(ready["status"], "ready")
+        self.assertEqual(len(provider.calls), 1)
         self.assertNotIn("recent_input_context", source_types)
-        self.assertTrue(any(source_type in {"daily_book", "memory"} for source_type in source_types))
-        self.assertTrue(
-            any(
-                "DeepSeek" in " ".join(
-                    [str(item.get("evidencePreview") or ""), *(str(value) for value in item.get("surfaceHints", []))]
-                )
-                for item in evidence_pack
-            )
-        )
+        self.assertIn("memory", source_types)
+        self.assertIn("rag", source_types)
         self.assertEqual(context_packet["schemaVersion"], "rag-ime.smart-context-packet.v1")
         self.assertEqual(context_packet["currentInput"]["mode"], "active_rag")
         self.assertTrue(context_packet["oneRing"]["events"])
         self.assertFalse(context_packet["oneRing"]["maySupportFacts"])
-        self.assertEqual(context_packet["oneRing"]["baselineEvents"], 20)
+        self.assertEqual(context_packet["oneRing"]["baselineEvents"], 4)
+        self.assertLessEqual(len(context_packet["oneRing"]["events"]), 4)
+        self.assertTrue(context_packet["planning"]["items"])
+        self.assertFalse(context_packet["planning"]["maySupportFacts"])
+        self.assertEqual(len(context_packet["activityTimeline"]["items"]), 2)
+        self.assertFalse(context_packet["activityTimeline"]["maySupportFacts"])
+        grounding_types = [item["sourceType"] for item in context_packet["groundingEvidence"]]
+        self.assertLessEqual(len(grounding_types), 6)
+        self.assertIn("memory_atom", grounding_types)
+        self.assertIn("memory_book", grounding_types)
+        self.assertNotIn("activity_timeline", grounding_types)
         self.assertIn("recentCompleteInputs", context_packet["trace"]["contextSourceTokens"])
         self.assertTrue(context_packet["notebook"]["items"])
+        payload = json.loads(build_deepseek_completion_messages(provider.calls[0])[1]["content"])
+        self.assertIn("planning", payload["contextPacket"])
+        self.assertIn("activityTimeline", payload["contextPacket"])
+        self.assertIn("recentCompleteInputs", payload["contextPacket"])
+        self.assertIn("groundingEvidence", payload)
+        self.assertNotIn("groundingEvidence", payload["contextPacket"])
+        self.assertNotIn("ragEvidenceHints", payload["contextPacket"])
+        self.assertNotIn("evidenceHints", payload)
+        self.assertLessEqual(len(payload["groundingEvidence"]), 6)
         diagnostics = ready["diagnostics"]
         self.assertTrue(diagnostics["contextInjection"]["applied"])
         self.assertGreater(diagnostics["contextInjection"]["contextChars"], 0)
@@ -750,6 +834,11 @@ class ActiveRagServiceTests(unittest.TestCase):
         trace_names = [item["name"] for item in ready["traceEvents"]]
         self.assertIn("deepseek_request_context_built", trace_names)
         self.assertIn("deepseek_request_completed", trace_names)
+        context_view = diagnostics["contextView"]
+        self.assertTrue(context_view["planning"]["items"])
+        self.assertEqual(len(context_view["activityTimeline"]["items"]), 2)
+        self.assertLessEqual(len(context_view["recentCompleteInputs"]), 4)
+        self.assertEqual(context_view["groundingEvidence"], payload["groundingEvidence"])
 
     def test_active_rag_keeps_short_foreground_context_primary_over_recent_voice_tail(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-voice-context-") as tmp:
@@ -924,7 +1013,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(payload["groundingMode"], "foreground_with_history")
         self.assertIn(recent, str(payload["contextPacket"]["recentCompleteInputs"]))
 
-    def test_active_rag_local_timeline_candidate_does_not_show_generic_recent_title(self) -> None:
+    def test_active_rag_local_timeline_context_does_not_impersonate_fact_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-local-timeline-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "active-rag-local-timeline.sqlite")
             event_id = _record_timeline_event(core, "LLM 候选需要明确显示模型预测来源")
@@ -944,8 +1033,9 @@ class ActiveRagServiceTests(unittest.TestCase):
             ready = _wait_ready(service, str(started["sessionId"]))
 
         self.assertEqual(ready["status"], "ready")
-        self.assertGreaterEqual(ready["evidenceCount"], 1)
+        self.assertEqual(ready["evidenceCount"], 0)
         self.assertNotEqual(ready["candidates"][0]["text"], "最近输入上下文")
+        self.assertEqual(ready["candidates"][0]["sourceType"], "status")
         injection = ready["diagnostics"]["contextInjection"]
         self.assertGreater(injection["timelineRecentInputChars"], 0)
         self.assertGreater(injection["timelineRecentInputRecordCount"], 0)
@@ -953,7 +1043,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(injection["contextPolicy"], "foreground_primary_history_secondary")
         self.assertIn("recent_input_history_available_not_injected", injection["warnings"])
 
-    def test_active_rag_local_issue_request_never_impersonates_remote_model(self) -> None:
+    def test_unprojected_timeline_book_never_impersonates_hybrid_memory(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-local-fallback-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "active-rag-local-fallback.sqlite")
             event_id = _record_timeline_event(core, "LLM消失LLM")
@@ -973,7 +1063,7 @@ class ActiveRagServiceTests(unittest.TestCase):
             ready = _wait_ready(service, str(started["sessionId"]))
 
         self.assertEqual(ready["status"], "ready")
-        self.assertEqual(ready["candidates"][0]["sourceType"], "memory")
+        self.assertEqual(ready["candidates"][0]["sourceType"], "status")
         self.assertTrue(ready["candidates"][0]["text"])
         self.assertNotEqual(ready["candidates"][0]["text"], "修复LLM显示")
         self.assertNotIn("request_fallback", json.dumps(ready, ensure_ascii=False))
@@ -1002,7 +1092,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(provider.calls[0].current_context, foreground)
         self.assertFalse(ready["diagnostics"]["contextInjection"]["contextTruncatedToBudget"])
 
-    def test_active_rag_final_packet_can_use_more_than_twenty_recent_inputs_within_budget(self) -> None:
+    def test_active_rag_final_packet_caps_recent_inputs_at_four(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-context-budget-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "active-rag-context-budget.sqlite")
             for index in range(1, 41):
@@ -1027,7 +1117,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         trace = provider.calls[0].context_packet["trace"]
         payload = json.loads(build_deepseek_completion_messages(provider.calls[0])[1]["content"])
         self.assertEqual(ready["status"], "ready")
-        self.assertGreater(trace["contextSourceCounts"]["recentInputs"], 20)
+        self.assertEqual(trace["contextSourceCounts"]["recentInputs"], 4)
         self.assertLessEqual(trace["estimatedContextTokens"], trace["availableContextTokens"])
         self.assertTrue(trace["withinSoftBudget"])
         self.assertEqual(
@@ -1344,6 +1434,107 @@ def _insert_timeline_book(core: LocalSqliteCoreClient, *, event_id: int) -> None
                 json.dumps(["DeepSeek 生成", "主动候选"], ensure_ascii=False),
                 json.dumps(["Active RAG", "候选框"], ensure_ascii=False),
                 json.dumps([event_id], ensure_ascii=False),
+                timestamp,
+                timestamp,
+            ),
+        )
+
+
+def _insert_planning_and_activity_context(
+    core: LocalSqliteCoreClient,
+    *,
+    event_id: int,
+) -> None:
+    core.initialize()
+    timestamp = now_ms()
+    day = local_date_string()
+    segments = [
+        {
+            "segmentId": "task:memory",
+            "title": "整理记忆召回",
+            "summary": "梳理个人记忆、主题书与混合检索。",
+            "startMs": timestamp - 7_200_000,
+            "endMs": timestamp - 5_400_000,
+            "apps": ["Codex", "Ghostty"],
+            "eventCount": 8,
+            "sourceEventIds": [event_id],
+        },
+        {
+            "segmentId": "task:generation",
+            "title": "验证候选生成",
+            "summary": "确认计划与时间线进入最终 provider payload。",
+            "startMs": timestamp - 5_200_000,
+            "endMs": timestamp - 3_800_000,
+            "apps": ["Ghostty"],
+            "eventCount": 6,
+            "sourceEventIds": [event_id],
+        },
+        {
+            "segmentId": "task:ui",
+            "title": "完善控制中心",
+            "summary": "第三项语义任务用于验证最多注入两项。",
+            "startMs": timestamp - 3_000_000,
+            "endMs": timestamp - 2_000_000,
+            "apps": ["Chrome"],
+            "eventCount": 4,
+            "sourceEventIds": [event_id],
+        },
+    ]
+    with core._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO planning_daily(
+                plan_id, plan_date, project, intention, notes, reflection,
+                assistant_summary, created_at_ms, updated_at_ms, metadata_json
+            ) VALUES (?, ?, ?, ?, '', '', '', ?, ?, '{}')
+            """,
+            (
+                "plan:active-rag",
+                day,
+                "wisdom-weasel-rag-ime",
+                "完成显式生成上下文注入",
+                timestamp,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO planning_tasks(
+                task_id, plan_date, title, detail, status, priority, due_at_ms,
+                project, goal_id, source, confidence, created_at_ms, updated_at_ms,
+                completed_at_ms, metadata_json
+            ) VALUES (?, ?, ?, ?, 'in_progress', 5, NULL, ?, '', 'manual', 1.0, ?, ?, NULL, '{}')
+            """,
+            (
+                "task:active-rag-context",
+                day,
+                "修复生成上下文链路",
+                "让当前请求、计划、活动时间线与事实证据保持类型边界。",
+                "wisdom-weasel-rag-ime",
+                timestamp,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_activity_timelines(
+                timeline_id, project, timeline_date, timezone, status,
+                source_event_ids_json, source_event_hash, segments_json,
+                summary_text, event_count, segment_count, approved_book_id,
+                approved_by, approved_at_ms, rejection_reason, metadata_json,
+                created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, 'Asia/Shanghai', 'approved', ?, ?, ?, ?, 18, 3,
+                      '', 'user:test', ?, '', '{}', ?, ?)
+            """,
+            (
+                "activity-timeline:active-rag",
+                "wisdom-weasel-rag-ime",
+                day,
+                json.dumps([event_id], ensure_ascii=False),
+                "sha256:active-rag-approved-timeline",
+                json.dumps(segments, ensure_ascii=False),
+                "上午完成记忆召回与候选生成链路。",
+                timestamp,
                 timestamp,
                 timestamp,
             ),

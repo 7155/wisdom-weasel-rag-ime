@@ -80,6 +80,12 @@ _CURATED_EVENT_SQL = """
 )
 """
 _CURATED_EVENT_TAGS = {"compiled-memory", "compiled-phrase", "curated", "phrase-memory", "stable-memory"}
+_TERMINAL_APP_BUNDLE_IDS = {
+    "com.mitchellh.ghostty",
+    "com.apple.Terminal",
+    "com.googlecode.iterm2",
+    "dev.warp.Warp-Stable",
+}
 _SOURCE_CONTEXT_ENABLED_EVENT_SQL = f"""
 (
     e.source != 'codex_history'
@@ -113,6 +119,23 @@ _PHRASE_FEEDBACK_JOIN = """
                 GROUP BY e2.committed_text
             ) pfb ON pfb.committed_text = e.committed_text
 """
+
+
+def _is_unbound_accessibility_input(event: InputEvent) -> bool:
+    """Reject AX context snapshots that masquerade as finalized user input."""
+
+    if compact_whitespace(event.source).lower() != "squirrel_input_segment":
+        return False
+    metadata = event.capture_metadata
+    capture_source = compact_whitespace(str(metadata.get("captureSource") or "")).lower()
+    if capture_source != "accessibility":
+        return False
+    try:
+        ime_buffer_chars = int(metadata.get("imeBufferChars") or 0)
+    except (TypeError, ValueError):
+        ime_buffer_chars = 0
+    app = compact_whitespace(event.app)
+    return ime_buffer_chars <= 0 or app in _TERMINAL_APP_BUNDLE_IDS
 
 
 class LocalSqliteCoreClient:
@@ -268,6 +291,8 @@ class LocalSqliteCoreClient:
             raise ValueError("privacy_disposition must be allowed, sensitive, or unknown")
         if privacy_disposition != "allowed":
             return f"skipped:privacy_{privacy_disposition}"
+        if _is_unbound_accessibility_input(event):
+            return "skipped:accessibility_context_not_input"
         self.initialize()
         text = compact_whitespace(event.committed_text)
         if not text:

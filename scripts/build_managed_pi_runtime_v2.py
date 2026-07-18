@@ -159,6 +159,17 @@ def _hash_tree(path: Path) -> bytes:
     return digest.digest()
 
 
+def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ...]:
+    if not source_root.is_dir():
+        return ()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for skill in sorted(item for item in source_root.iterdir() if item.is_dir()):
+        shutil.copytree(skill, runtime_root / skill.name, dirs_exist_ok=True)
+        copied.append(skill.name)
+    return tuple(copied)
+
+
 def _runtime_host_banner(skills_root: Path) -> str:
     skill_names = sorted(item.name for item in skills_root.iterdir() if item.is_dir()) if skills_root.is_dir() else []
     return (
@@ -259,6 +270,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pi_version = str(json.loads(package_json.read_text(encoding="utf-8"))["version"])
         source_commit, dirty_digest = _source_revision(pi_root)
+        product_commit = _run(["git", "rev-parse", "HEAD"], cwd=ROOT)
+        product_commit_ms = int(
+            _run(["git", "show", "-s", "--format=%ct", product_commit], cwd=ROOT)
+        ) * 1_000
         provider_bridge_source = ROOT / "rag_ime" / "node" / "pi_provider_bridge_bundled.ts"
         product_skills = ROOT / "integrations" / "pi" / "skills"
         packager_digest = hashlib.sha256(
@@ -266,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
             + Path(__file__).read_bytes()
             + _hash_tree(product_skills)
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
+            + product_commit.encode("ascii")
         ).hexdigest()[:10]
         commit_prefix = source_commit.split("+", 1)[0][:12]
         dirty_suffix = f"-d{dirty_digest[:8]}" if dirty_digest else ""
@@ -290,11 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             bundled_skills = package_root / "skills"
             if bundled_skills.is_dir():
                 shutil.copytree(bundled_skills, runtime_dir / "skills")
-            if product_skills.is_dir():
-                runtime_skills = runtime_dir / "skills"
-                runtime_skills.mkdir(exist_ok=True)
-                for skill in sorted(item for item in product_skills.iterdir() if item.is_dir()):
-                    shutil.copytree(skill, runtime_skills / skill.name, dirs_exist_ok=True)
+            _copy_product_skills(product_skills, runtime_dir / "skills")
             bundled_entrypoint = runtime_dir / "cli.mjs"
             _run(
                 [
@@ -352,6 +364,15 @@ def main(argv: list[str] | None = None) -> int:
                 source_package="@earendil-works/pi-rag-ime-runtime-host",
                 protocol_version="2",
             )
+            manifest["source"] = {
+                **dict(manifest["source"]),
+                "productRepository": str(ROOT),
+                "productCommit": product_commit,
+            }
+            # The runtime version is content-addressed. Keep its manifest
+            # deterministic so reinstalling the same product commit is an
+            # idempotent verification instead of a version collision.
+            manifest["createdAtMs"] = product_commit_ms
             write_managed_pi_runtime_manifest(staging / MANIFEST_NAME, manifest)
             os.replace(staging, destination)
         finally:
@@ -367,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         "piVersion": pi_version,
         "protocolVersion": "2",
         "sourceCommit": source_commit,
+        "productCommit": product_commit,
         "payload": str(destination),
         "manifest": str(destination / MANIFEST_NAME),
         "fileCount": len(manifest["files"]),

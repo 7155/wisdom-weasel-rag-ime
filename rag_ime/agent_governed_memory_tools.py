@@ -16,6 +16,7 @@ from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
 from .sensitive_content import contains_sensitive_content
+from .text_utils import compact_whitespace
 
 
 _ROLE_BOOK_SECTIONS = (
@@ -604,8 +605,17 @@ class MemoryGovernanceProposalStore:
             field="targetId",
             maximum=240,
         )
+        kind = str(args.get("kind") or "atoms").strip().lower()
+        if kind not in {"atoms", "timelines"}:
+            raise ValueError("kind must be atoms or timelines")
+        if kind == "timelines" and operation != "search":
+            raise ValueError("Timeline memory currently supports search only")
+        if kind == "timelines" and mode != "current":
+            raise ValueError("Timeline memory only has an approved current view")
         with self._connect() as conn:
             if operation == "search":
+                if kind == "timelines":
+                    return self._search_timelines(conn, query=query, limit=limit)
                 return self._search(conn, mode=mode, query=query, limit=limit)
             if operation == "get":
                 if not target_id:
@@ -616,6 +626,87 @@ class MemoryGovernanceProposalStore:
                     raise ValueError("targetId is required for ime_memory.explain")
                 return self._explain(conn, mode=mode, target_id=target_id)
         raise ValueError("unsupported governed memory read operation")
+
+    def _search_timelines(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        query: str,
+        limit: int,
+    ) -> dict[str, object]:
+        sql = """
+            SELECT timeline.*, book.book_id, book.title AS book_title
+            FROM daily_activity_timelines AS timeline
+            JOIN memory_books AS book
+              ON book.book_id = timeline.approved_book_id
+             AND book.status IN ('active', 'approved')
+            WHERE timeline.project = ? AND timeline.status = 'approved'
+        """
+        params: list[object] = [self.project]
+        if query:
+            needle = f"%{query}%"
+            sql += """
+              AND (
+                timeline.timeline_id LIKE ? OR timeline.timeline_date LIKE ?
+                OR timeline.summary_text LIKE ? OR timeline.segments_json LIKE ?
+              )
+            """
+            params.extend([needle] * 4)
+        sql += " ORDER BY timeline.timeline_date DESC, timeline.updated_at_ms DESC LIMIT ?"
+        params.append(limit)
+        items: list[dict[str, object]] = []
+        for row in conn.execute(sql, params).fetchall():
+            summary = compact_whitespace(str(row["summary_text"] or ""))
+            if not summary or contains_sensitive_content(summary):
+                continue
+            timeline_id = str(row["timeline_id"])
+            book_id = str(row["book_id"])
+            segments = [
+                _safe_timeline_segment(value, timeline_id=timeline_id)
+                for value in _json_array(row["segments_json"])
+                if isinstance(value, Mapping)
+            ][:6]
+            source = {
+                "type": "activity_timeline",
+                "kind": "activity_timeline",
+                "id": timeline_id,
+            }
+            items.append(
+                {
+                    "timelineId": timeline_id,
+                    "bookId": book_id,
+                    "date": str(row["timeline_date"]),
+                    "title": str(row["book_title"] or ""),
+                    "summary": summary,
+                    "status": "approved",
+                    "taskCount": int(row["segment_count"] or 0),
+                    "eventCount": int(row["event_count"] or 0),
+                    "segments": segments,
+                    "source": source,
+                    "ref": _compatible_reference(
+                        "timeline",
+                        timeline_id,
+                        legacy_type="timeline",
+                        bookId=book_id,
+                    ),
+                    "bookRef": _compatible_reference(
+                        "book",
+                        book_id,
+                        legacy_type="book",
+                    ),
+                    "maySupportFacts": False,
+                    "corroborationOnly": True,
+                }
+            )
+        return {
+            "summary": f"检索到 {len(items)} 条已批准活动时间线",
+            "mode": "current",
+            "kind": "timelines",
+            "query": query,
+            "items": items,
+            "count": len(items),
+            "boundary": "Timeline 只说明某时段做过什么，不证明稳定事实。",
+        }
 
     def daily_user_memory_draft(
         self,
@@ -1164,6 +1255,11 @@ class MemoryGovernanceProposalStore:
                 provenance.get("sourceId") or ""
             ):
                 raise ValueError("evidence provenance is required")
+            event_ids = _input_event_ids_from_provenance(provenance)
+            if event_ids and not _input_events_are_memory_eligible(conn, event_ids):
+                raise ValueError(
+                    "evidence source event is deleted, tombstoned, expired, or not for memory"
+                )
             result.append(
                 {
                     "evidenceId": evidence_id,
@@ -2197,11 +2293,38 @@ def _row_value(row: Mapping[str, object], key: str) -> object:
         return None
 
 
+def _compatible_reference(
+    kind: str,
+    reference_id: str,
+    *,
+    legacy_type: str = "",
+    **metadata: object,
+) -> dict[str, object]:
+    """Expose the new stable reference without breaking pre-migration callers."""
+
+    value: dict[str, object] = {
+        "kind": kind,
+        "id": reference_id,
+        "referenceKind": kind,
+        "referenceId": reference_id,
+    }
+    if legacy_type:
+        value["type"] = legacy_type
+    value.update(metadata)
+    return value
+
+
 def _atom_payload(row: Mapping[str, object]) -> dict[str, object]:
     if not _agent_visible_atom(row):
         raise ValueError("sensitive memory atoms are not Agent-visible")
+    memory_id = str(row["id"])
+    source_event_ids = [
+        int(value)
+        for value in _json_strings(_row_value(row, "source_event_ids_json"))
+        if str(value).isdigit() and int(value) > 0
+    ]
     return {
-        "memoryId": str(row["id"]),
+        "memoryId": memory_id,
         "kind": str(row["kind"]),
         "text": str(row["text"]),
         "canonicalText": str(row["canonical_text"] or ""),
@@ -2219,14 +2342,34 @@ def _atom_payload(row: Mapping[str, object]) -> dict[str, object]:
         "supersedesId": str(row["supersedes_id"] or ""),
         "createdAtMs": int(row["created_at_ms"] or 0),
         "updatedAtMs": int(row["updated_at_ms"] or 0),
+        "sourceEventIds": source_event_ids,
+        "source": {
+            "type": "memory_atom",
+            "kind": "memory_atom",
+            "id": memory_id,
+        },
+        "ref": _compatible_reference(
+            "atom",
+            memory_id,
+            legacy_type="memory_atom",
+        ),
+        "evidenceRefs": [
+            _compatible_reference(
+                "event",
+                str(event_id),
+                legacy_type="event",
+            )
+            for event_id in source_event_ids
+        ],
     }
 
 
 def _change_payload(row: Mapping[str, object]) -> dict[str, object]:
     if not _agent_visible_change(row):
         raise ValueError("cross-project or sensitive memory changes are not Agent-visible")
+    supersession_id = str(row["supersession_id"])
     return {
-        "supersessionId": str(row["supersession_id"]),
+        "supersessionId": supersession_id,
         "oldMemoryId": str(row["old_memory_id"]),
         "newMemoryId": str(row["new_memory_id"]),
         "oldText": str(row["old_text"] or ""),
@@ -2240,6 +2383,64 @@ def _change_payload(row: Mapping[str, object]) -> dict[str, object]:
             int(row["rolled_back_at_ms"])
             if row["rolled_back_at_ms"] is not None
             else None
+        ),
+        "source": {"type": "memory_supersession", "id": supersession_id},
+        "ref": {"type": "memory_supersession", "id": supersession_id},
+    }
+
+
+def _safe_timeline_segment(
+    value: Mapping[str, object],
+    *,
+    timeline_id: str,
+) -> dict[str, object]:
+    segment_id = _optional_identifier(
+        value.get("segmentId"),
+        field="segmentId",
+        maximum=240,
+    ) or ""
+    previews: list[str] = []
+    evidence_refs: list[dict[str, object]] = []
+    for evidence in _json_array(value.get("evidenceRefs")):
+        preview = compact_whitespace(str(evidence.get("preview") or ""))
+        if preview and not contains_sensitive_content(preview):
+            previews.append(preview[:180])
+        event_id = str(evidence.get("eventId") or "")
+        source_id = compact_whitespace(str(evidence.get("sourceId") or ""))
+        if not event_id and source_id.startswith("event:"):
+            event_id = source_id.split(":", 1)[1]
+        if event_id.isdigit() and int(event_id) > 0:
+            evidence_refs.append(
+                _compatible_reference(
+                    "event",
+                    event_id,
+                    legacy_type="event",
+                    **({"label": preview[:180]} if preview else {}),
+                )
+            )
+    return {
+        "segmentId": segment_id,
+        "title": compact_whitespace(str(value.get("title") or ""))[:160],
+        "apps": [
+            compact_whitespace(str(item))[:240]
+            for item in _json_strings(value.get("apps"))
+            if compact_whitespace(str(item))
+        ][:12],
+        "startMs": max(0, int(value.get("startMs") or 0)),
+        "endMs": max(0, int(value.get("endMs") or 0)),
+        "eventCount": max(0, int(value.get("eventCount") or 0)),
+        "previews": previews[:6],
+        "evidenceRefs": evidence_refs[:40],
+        "source": {
+            "type": "activity_timeline",
+            "kind": "activity_timeline",
+            "id": timeline_id,
+        },
+        "ref": _compatible_reference(
+            "timeline",
+            timeline_id,
+            legacy_type="timeline",
+            segmentId=segment_id,
         ),
     }
 
@@ -2374,6 +2575,77 @@ def _json_strings(value: object) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [str(item) for item in parsed if str(item)]
+
+
+def _input_event_ids_from_provenance(value: Mapping[str, object]) -> list[int]:
+    candidates: list[object] = []
+    for key in ("eventId", "inputEventId", "sourceEventId"):
+        if key in value:
+            candidates.append(value[key])
+    for key in ("eventIds", "inputEventIds", "sourceEventIds"):
+        raw = value.get(key)
+        if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+            candidates.extend(raw)
+    source_type = compact_whitespace(str(value.get("sourceType") or "")).lower()
+    if source_type in {"event", "input_event"} and value.get("sourceId") is not None:
+        candidates.append(value["sourceId"])
+
+    event_ids: list[int] = []
+    for candidate in candidates:
+        text = compact_whitespace(str(candidate or ""))
+        for prefix in ("event:", "input-memory:", "input_event:"):
+            if text.lower().startswith(prefix):
+                text = text[len(prefix) :]
+                break
+        if not text.isdigit():
+            continue
+        event_id = int(text)
+        if 0 < event_id <= 9_223_372_036_854_775_807 and event_id not in event_ids:
+            event_ids.append(event_id)
+    return event_ids
+
+
+def _input_events_are_memory_eligible(
+    conn: sqlite3.Connection,
+    event_ids: Sequence[int],
+) -> bool:
+    unique_ids = list(dict.fromkeys(int(value) for value in event_ids if int(value) > 0))
+    if not unique_ids:
+        return True
+    placeholders = ", ".join("?" for _ in unique_ids)
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM input_events event
+        LEFT JOIN memory_state state ON state.event_id = event.id
+        WHERE event.id IN ({placeholders})
+          AND COALESCE(state.deleted, 0) = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM memory_tombstones tombstone
+              WHERE tombstone.active = 1
+                AND (
+                    (tombstone.target_type = 'source_event_id'
+                     AND tombstone.target_value = CAST(event.id AS TEXT))
+                    OR
+                    (tombstone.target_type = 'memory_id'
+                     AND tombstone.target_value = ('event:' || event.id))
+                )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM agent_memory_sources source
+              WHERE source.input_event_id = event.id
+                AND (
+                    source.status = 'tombstoned'
+                    OR source.disposition IN ('not_for_memory', 'expired')
+                    OR source.disposition_reason = 'sensitive_input'
+                )
+          )
+        """,  # noqa: S608 - placeholders are generated, never values
+        unique_ids,
+    ).fetchone()
+    return row is not None and int(row[0] or 0) == len(unique_ids)
 
 
 def _daily_draft_evidence(

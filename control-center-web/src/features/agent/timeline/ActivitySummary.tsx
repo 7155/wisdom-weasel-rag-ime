@@ -323,7 +323,7 @@ function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResul
           {preview.items.map((item) => (
             <li key={item.id}>
               {item.label ? <span>{item.label}</span> : null}
-              <p>{item.text}</p>
+              {item.href ? <a href={item.href}>{item.text}</a> : <p>{item.text}</p>}
             </li>
           ))}
         </ol>

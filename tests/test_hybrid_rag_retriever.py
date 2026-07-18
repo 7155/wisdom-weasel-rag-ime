@@ -147,6 +147,55 @@ class HybridRagRetrieverTests(unittest.TestCase):
 
         self.assertNotIn("这是一个很长的历史输入句子，不应该直接复读出来", [item["text"] for item in payload["candidates"]])
 
+    def test_hybrid_retriever_rejects_legacy_item_but_keeps_phrase(self) -> None:
+        with self.connect() as conn:
+            timestamp = now_ms()
+            conn.executemany(
+                """
+                INSERT INTO memory_retrieval_docs(
+                    doc_id, doc_type, source_id, raw_text, tags_text, aliases_text,
+                    surface_hints_text, query_expansions_text, time_key, project, app,
+                    owner_kind, owner_id, status, updated_at_ms, metadata_json
+                ) VALUES (?, ?, ?, ?, '', '', ?, '', '',
+                          'wisdom-weasel-rag-ime', '', 'user', 'default', 'active', ?, '{}')
+                """,
+                (
+                    (
+                        "item:stable:legacy",
+                        "item",
+                        "stable:legacy",
+                        "遗留策略原文不应进入召回",
+                        "",
+                        timestamp,
+                    ),
+                    (
+                        "phrase:遗留策略短语",
+                        "phrase",
+                        "phrase:遗留策略短语",
+                        "遗留策略短语",
+                        "遗留策略短语",
+                        timestamp,
+                    ),
+                ),
+            )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="遗留策略",
+                    project="wisdom-weasel-rag-ime",
+                ),
+            )
+
+        self.assertNotIn("item", {hit["doc_type"] for hit in payload["memoryHits"]})
+        self.assertNotIn(
+            "遗留策略原文不应进入召回",
+            [candidate["text"] for candidate in payload["candidates"]],
+        )
+        self.assertIn(
+            "遗留策略短语",
+            [candidate["text"] for candidate in payload["candidates"]],
+        )
+
     def test_hybrid_retrieval_respects_tombstone_and_suppression(self) -> None:
         self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG",))
         self._record_event("TagMemo", recent_context="RAG 输入法", tags=("RAG",))

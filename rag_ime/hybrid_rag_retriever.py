@@ -376,6 +376,7 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
                updated_at_ms, metadata_json
         FROM memory_retrieval_docs
         WHERE status = 'active'
+          AND doc_type != 'item'
           AND (? = '' OR project = ? OR project = '')
           AND (? = '' OR app = ? OR app = '')
           AND {owner_clause}

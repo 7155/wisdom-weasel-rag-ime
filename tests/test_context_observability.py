@@ -21,7 +21,13 @@ class ContextObservabilityTests(unittest.TestCase):
                         "currentContext": context,
                         "selectedText": selected,
                         "contextPacket": packet,
-                        "evidenceHints": ["私密证据"],
+                        "groundingEvidence": [
+                            {
+                                "sourceType": "memory_book",
+                                "sourceLane": "timeline_daily_book",
+                                "preview": "私密证据",
+                            }
+                        ],
                     },
                     ensure_ascii=False,
                 ),

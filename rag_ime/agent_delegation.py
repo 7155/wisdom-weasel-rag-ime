@@ -1587,14 +1587,20 @@ class AgentDelegationCoordinator:
             active.runtime.stop()
         except Exception:
             pass
-        active.forced.set()
-        self.store.checkpoint_supervision(
-            run_id,
-            phase="forced",
-            reason=active.cancellation_reason or "Delegated runtime ignored cancellation",
-            requested_at_ms=_timestamp(None),
-            grace_ms=self._cancellation_grace_ms,
-        )
+        try:
+            # Publish the wake-up only after the forced supervision checkpoint
+            # is durable. Otherwise the worker can finish and its caller can
+            # tear down the runtime while this daemon is still writing the
+            # artifact, leaving a visible terminal run stuck at phase=hard.
+            self.store.checkpoint_supervision(
+                run_id,
+                phase="forced",
+                reason=active.cancellation_reason or "Delegated runtime ignored cancellation",
+                requested_at_ms=_timestamp(None),
+                grace_ms=self._cancellation_grace_ms,
+            )
+        finally:
+            active.forced.set()
 
     def _publish_parent_progress(
         self,

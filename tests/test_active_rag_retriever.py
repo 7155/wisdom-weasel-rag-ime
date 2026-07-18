@@ -6,7 +6,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.active_rag_models import ActiveRagFrame
-from rag_ime.active_rag_retriever import _relevant_active_rag_candidates, retrieve_active_rag_evidence
+from rag_ime.active_rag_retriever import (
+    _diversify_active_rag_evidence,
+    _relevant_active_rag_candidates,
+    retrieve_active_rag_evidence,
+)
 from rag_ime.embeddings import HashingEmbeddingProvider
 from rag_ime.hybrid_rag_models import HybridRagCandidate, MemoryHit
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -107,6 +111,49 @@ class ActiveRagRetrieverTests(unittest.TestCase):
         self.assertIn("100M 自训练模型", evidence[0].text)
         self.assertEqual(evidence[0].atom_ids, ("atom:current-model",))
 
+    def test_active_rag_keeps_relevant_atom_and_topic_book_in_final_evidence(self) -> None:
+        atoms = [
+            _memory_hit(
+                hit_id=f"hit:atom:{index}",
+                doc_type="atom",
+                text=f"记忆召回事实 {index}",
+                score=1.0 - index / 100,
+            )
+            for index in range(14)
+        ]
+        book = _memory_hit(
+            hit_id="hit:book:memory-governance",
+            doc_type="book",
+            text="记忆治理主题书汇总 Atom、来源证据和召回边界。",
+            score=0.78,
+        )
+
+        selected = _diversify_active_rag_evidence([*atoms, book], limit=12)
+
+        self.assertEqual(len(selected), 12)
+        self.assertTrue(any(item.doc_type == "atom" for item in selected))
+        self.assertTrue(any(item.doc_type == "book" for item in selected))
+        self.assertEqual(selected[-1].hit_id, "hit:book:memory-governance")
+
+    def test_active_rag_excludes_untyped_legacy_memory_item_grounding(self) -> None:
+        frame = ActiveRagFrame.from_text("输入法混合检索链路", intent="answer", max_candidates=1)
+        legacy = _memory_hit(
+            hit_id="hit:item:legacy",
+            doc_type="item",
+            text="输入法使用混合检索。 输入法使用混合检索。",
+            score=0.98,
+        )
+        atom = _memory_hit(
+            hit_id="hit:atom:hybrid",
+            doc_type="atom",
+            text="输入法使用混合检索提供事实依据。",
+            score=0.91,
+        )
+
+        selected = _relevant_active_rag_candidates([legacy, atom], frame=frame)
+
+        self.assertEqual(selected, [atom])
+
 
 def _candidate(*, text: str, lanes: list[str], raw_scores: dict[str, float]) -> HybridRagCandidate:
     return HybridRagCandidate(
@@ -124,6 +171,35 @@ def _candidate(*, text: str, lanes: list[str], raw_scores: dict[str, float]) -> 
         evidence_event_ids=(1,),
         evidence_preview=text,
         metadata={"lanes": lanes, "rawScores": raw_scores},
+    )
+
+
+def _memory_hit(
+    *,
+    hit_id: str,
+    doc_type: str,
+    text: str,
+    score: float,
+) -> MemoryHit:
+    source_id = hit_id.removeprefix("hit:")
+    return MemoryHit(
+        hit_id=hit_id,
+        doc_id=source_id,
+        doc_type=doc_type,
+        source_id=source_id,
+        text=text,
+        surface_hints=(),
+        source_type="memory",
+        source_lane="bm25_raw",
+        score=score,
+        confidence=0.9,
+        tags=("记忆",),
+        memory_ids=(source_id,),
+        atom_ids=(source_id,) if doc_type == "atom" else (),
+        book_ids=(source_id,) if doc_type == "book" else (),
+        evidence_event_ids=(1,),
+        evidence_preview=text,
+        metadata={"lanes": ["bm25_raw"], "rawScores": {"bm25_raw": -2.0}},
     )
 
 

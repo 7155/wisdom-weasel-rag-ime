@@ -216,6 +216,7 @@ final class NativeRoutePolicy {
             "planning.mutation.rollback": route("POST", "/api/planning/mutation/rollback", "/control/v1/planning/mutation/rollback", bodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"], requiredBodyKeys: ["receiptId", "rollbackToken", "payloadSha256", "confirmText"]),
             "memory.summary": route("GET", "/api/memory/summary", "/control/v1/memory/summary", remoteSafe: true),
             "memory.pages": route("GET", "/api/memory/{kind}", "/control/v1/memory/{kind}", query: ["limit", "cursor", "query", "status", "ownerKind", "ownerId"], remoteSafe: true),
+            "memory.reference.get": route("GET", "/api/memory/references/{kind}/{referenceId}", "/control/v1/memory/references/{kind}/{referenceId}", remoteSafe: true),
             "memory.graph.get": route("GET", "/api/memory/graph", "/control/v1/memory/graph", query: ["plane", "project", "status", "query", "focusId", "depth", "nodeLimit", "edgeLimit", "minWeight"], requiredQuery: ["plane"], remoteSafe: true),
             "memory.entity.get": route("GET", "/api/memory/entities/{kind}/{entityId}", "/control/v1/memory/entities/{kind}/{entityId}", query: ["project", "connectionsLimit", "connectionsCursor", "membersLimit", "membersCursor"], remoteSafe: true),
             "memory.edit": route("POST", "/api/memory/edit", "/control/v1/memory/edit", bodyKeys: ["kind", "id", "title", "text", "summary", "note", "description", "tags", "aliases", "type", "color", "reason", "active"], requiredBodyKeys: ["kind", "id"]),
@@ -398,7 +399,12 @@ final class NativeRoutePolicy {
         }
         if pathId == "memory.pages",
            let kind = parameters["kind"],
-           !Set(["books", "atoms", "tags", "phrases", "groups", "negative"]).contains(kind) {
+           !Set(["apps", "books", "atoms", "timelines", "tags", "phrases", "evidence", "groups", "negative"]).contains(kind) {
+            throw NativeRoutePolicyError.invalidParameter("kind")
+        }
+        if pathId == "memory.reference.get",
+           let kind = parameters["kind"],
+           !Set(["event", "evidence", "atom", "book", "timeline", "role_book_revision"]).contains(kind) {
             throw NativeRoutePolicyError.invalidParameter("kind")
         }
         if pathId == "memory.entity.get",

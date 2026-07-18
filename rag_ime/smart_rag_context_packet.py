@@ -208,8 +208,8 @@ def build_active_rag_context_packet(
     remote_model_allowed: bool = True,
     context_token_budget: int = 4096,
     reserved_output_tokens: int = 1024,
-    recent_input_baseline: int = 20,
-    recent_input_maximum: int = 80,
+    recent_input_baseline: int = 4,
+    recent_input_maximum: int = 4,
     window_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     raw_context = compact_whitespace(current_context)
@@ -224,42 +224,65 @@ def build_active_rag_context_packet(
     evidence_items = tuple(evidence)
     history_items = tuple(recent_input_history)
     raw_planning_items = [_planning_item(item) for item in evidence_items if _is_planning_evidence(item)]
+    raw_activity_items = [
+        _activity_timeline_item(item)
+        for item in evidence_items
+        if _is_activity_timeline_evidence(item)
+    ]
     raw_notebook_items = [
         _notebook_item(item)
         for item in evidence_items
-        if _is_notebook_evidence(item) and not _is_planning_evidence(item)
+        if _is_notebook_evidence(item)
+        and not _is_planning_evidence(item)
+        and not _is_activity_timeline_evidence(item)
     ]
-    raw_timeline_items = [_timeline_item(item) for item in evidence_items if _is_timeline_evidence(item)]
+    raw_timeline_items = [
+        _timeline_item(item)
+        for item in evidence_items
+        if _is_timeline_evidence(item) and not _is_activity_timeline_evidence(item)
+    ]
     raw_recent_items = _recent_input_items(
         (*evidence_items, *history_items),
         current_context=context,
         selected_text=selected,
     )
     remaining_tokens = max(0, available_tokens - estimate_tokens(context))
+    planning_items, remaining_tokens = _take_budgeted_items(
+        raw_planning_items,
+        remaining_tokens=remaining_tokens,
+        text_keys=("title", "detail"),
+        limit=6,
+    )
     compact_window_context, remaining_tokens = _take_budgeted_window_context(
         raw_window_context,
         remaining_tokens=remaining_tokens,
         maximum_tokens=900,
     )
     window_context_tokens = _window_context_estimated_tokens(compact_window_context)
-    planning_items, remaining_tokens = _take_budgeted_items(
-        raw_planning_items,
+    activity_items, remaining_tokens = _take_budgeted_items(
+        raw_activity_items,
         remaining_tokens=remaining_tokens,
-        text_keys=("title", "detail"),
-        limit=24,
+        text_keys=("title", "summary"),
+        limit=2,
     )
     recent_items, remaining_tokens = _take_budgeted_recent_items(
         raw_recent_items,
         remaining_tokens=remaining_tokens,
-        limit=max(20, min(200, int(recent_input_maximum))),
+        limit=min(4, max(1, int(recent_input_maximum))),
     )
+    grounding_items = _structured_grounding_evidence(evidence_items, limit=6)
     rag_hints, remaining_tokens = _take_budgeted_items(
-        _rag_evidence_hints(evidence_items),
+        _rag_evidence_hints_from_grounding(grounding_items),
         remaining_tokens=remaining_tokens,
         text_keys=("text",),
-        limit=24,
+        limit=6,
     )
     selected_rag_ids = {str(item.get("evidenceId") or "") for item in rag_hints}
+    selected_grounding_items = [
+        item
+        for item in grounding_items
+        if str(item.get("evidenceId") or "") in selected_rag_ids
+    ]
     notebook_items = [item for item in raw_notebook_items if str(item.get("id") or "") in selected_rag_ids]
     timeline_items = [item for item in raw_timeline_items if str(item.get("id") or "") in selected_rag_ids]
     rag_tokens = sum(estimate_tokens(str(item.get("text") or "")) for item in rag_hints)
@@ -268,6 +291,14 @@ def build_active_rag_context_packet(
         "windowContext": window_context_tokens,
         "recentCompleteInputs": sum(
             estimate_tokens(str(item.get("textPreview") or "")) for item in recent_items
+        ),
+        "activityTimeline": sum(
+            estimate_tokens(
+                compact_whitespace(
+                    f"{item.get('title') or ''} {item.get('summary') or ''}"
+                )
+            )
+            for item in activity_items
         ),
         "plansAndTodos": sum(
             estimate_tokens(str(item.get("title") or item.get("notes") or ""))
@@ -299,10 +330,11 @@ def build_active_rag_context_packet(
         "scene": scene,
         "priority": [
             "currentInput",
-            "windowContext",
             "planning",
+            "windowContext",
+            "activityTimeline",
             "recentCompleteInputs",
-            "timeline",
+            "groundingEvidence",
             "notebook",
         ],
         "currentInput": {
@@ -326,15 +358,24 @@ def build_active_rag_context_packet(
             "role": "continuity_context",
             "maySupportIntent": True,
             "maySupportFacts": False,
-            "baselineEvents": max(10, min(80, int(recent_input_baseline))),
-            "maxEvents": max(20, min(200, int(recent_input_maximum))),
+            "baselineEvents": min(4, max(1, int(recent_input_baseline))),
+            "maxEvents": min(4, max(1, int(recent_input_maximum))),
             "events": recent_items,
             "negativeSignals": [],
         },
         "planning": {
-            "items": planning_items[:24],
-            "openTasks": [item for item in planning_items if item.get("kind") == "todo"][:20],
-            "longTermGoals": [item for item in planning_items if item.get("kind") == "goal"][:8],
+            "role": "work_intent_context",
+            "maySupportIntent": True,
+            "maySupportFacts": False,
+            "items": planning_items[:6],
+            "openTasks": [item for item in planning_items if item.get("kind") == "todo"][:6],
+            "longTermGoals": [item for item in planning_items if item.get("kind") == "goal"][:6],
+        },
+        "activityTimeline": {
+            "role": "continuity_context",
+            "maySupportIntent": True,
+            "maySupportFacts": False,
+            "items": activity_items[:2],
         },
         "notebook": {
             "scope": {"project": compact_whitespace(project), "app": compact_whitespace(app)},
@@ -346,9 +387,10 @@ def build_active_rag_context_packet(
             "timeWindow": "7d",
             "currentPhase": _current_phase(timeline_items),
             "recentDecisions": timeline_items[:5],
-            "openTasks": [item for item in planning_items if item.get("kind") == "todo"][:20],
+            "openTasks": [item for item in planning_items if item.get("kind") == "todo"][:6],
             "expiresAtMs": now_ms() + 7 * 24 * 60 * 60 * 1000,
         },
+        "groundingEvidence": selected_grounding_items,
         "ragEvidenceHints": rag_hints,
         "outputContract": {
             "maxCandidates": max(1, int(max_candidates)),
@@ -378,6 +420,7 @@ def build_active_rag_context_packet(
             "timelineCount": len(timeline_items),
             "oneRingEventCount": len(recent_items),
             "planningCount": len(planning_items),
+            "activityTimelineCount": len(activity_items),
             "tokenBudget": token_budget,
             "reservedOutputTokens": reserved_tokens,
             "availableContextTokens": available_tokens,
@@ -386,8 +429,9 @@ def build_active_rag_context_packet(
                 for key in (
                     "currentInput",
                     "windowContext",
-                    "recentCompleteInputs",
                     "plansAndTodos",
+                    "activityTimeline",
+                    "recentCompleteInputs",
                     "ragEvidence",
                 )
             ),
@@ -399,6 +443,7 @@ def build_active_rag_context_packet(
                 if isinstance(compact_window_context.get("nodes"), list)
                 else 0,
                 "plansAndTodos": len(planning_items),
+                "activityTimeline": len(activity_items),
                 "timeline": len(timeline_items),
                 "notebook": len(notebook_items),
                 "ragEvidence": len(rag_hints),
@@ -415,7 +460,8 @@ def build_active_rag_context_packet(
                 and isinstance(compact_window_context.get("nodes"), list)
                 else 0,
                 "plansAndTodos": max(0, len(raw_planning_items) - len(planning_items)),
-                "ragEvidence": max(0, len(_rag_evidence_hints(evidence_items)) - len(rag_hints)),
+                "activityTimeline": max(0, len(raw_activity_items) - len(activity_items)),
+                "ragEvidence": max(0, len(grounding_items) - len(rag_hints)),
             },
         },
     }
@@ -463,42 +509,233 @@ def _take_budgeted_items(
     return selected, remaining
 
 
-def _rag_evidence_hints(evidence: Sequence[ActiveRagEvidence]) -> list[dict[str, object]]:
+def _structured_grounding_evidence(
+    evidence: Sequence[ActiveRagEvidence],
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    """Keep typed facts small and deduplicate the same fact across retrieval lanes."""
+
     result: list[dict[str, object]] = []
-    seen: set[str] = set()
+    semantic_keys: list[str] = []
     for item in evidence:
-        if _is_recent_input_evidence(item) or _is_planning_evidence(item):
+        if (
+            _is_recent_input_evidence(item)
+            or _is_planning_evidence(item)
+            or _is_activity_timeline_evidence(item)
+            or item.source_type in {"phrase", "surface_phrase"}
+        ):
             continue
         metadata = item.metadata if isinstance(item.metadata, dict) else {}
-        surface_hints = metadata.get("surfaceHints") if isinstance(metadata.get("surfaceHints"), list) else []
-        text = compact_whitespace(
-            " ".join(
-                str(value)
-                for value in (
-                    *(surface_hints[:3]),
-                    metadata.get("title"),
-                    metadata.get("summary"),
-                    item.preview,
-                    item.text,
-                )
-                if compact_whitespace(str(value or ""))
-            )
-        )
-        normalized = text.lower()
-        if not text or normalized in seen:
+        if bool(metadata.get("contextOnly")) or metadata.get("maySupportFacts") is False:
             continue
-        seen.add(normalized)
-        category = "timeline" if _is_timeline_evidence(item) else ("notebook" if _is_notebook_evidence(item) else "rag")
+        title = truncate_text(
+            compact_whitespace(
+                str(metadata.get("title") or metadata.get("bookTitle") or "")
+            ),
+            100,
+        )
+        preview = _canonical_evidence_text(item, metadata=metadata)
+        semantic_key = _semantic_fact_key(preview or title)
+        if not semantic_key or any(
+            _semantic_facts_overlap(semantic_key, existing)
+            for existing in semantic_keys
+        ):
+            continue
+        semantic_keys.append(semantic_key)
+        source_type = _typed_grounding_source_type(item, metadata=metadata)
         result.append(
             {
                 "evidenceId": item.evidence_id,
-                "sourceType": item.source_type,
+                "sourceType": source_type,
                 "sourceLane": item.source_lane,
-                "category": category,
-                "text": text,
+                "category": "notebook" if _is_notebook_evidence(item) else "rag",
+                "title": title,
+                "preview": preview,
+                "ref": _grounding_reference(item, source_type=source_type),
+                "maySupportFacts": True,
             }
         )
-    return result
+    return _diversify_grounding_items(result, limit=limit)
+
+
+def _diversify_grounding_items(
+    items: Sequence[dict[str, object]],
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    """Keep rank order while reserving room for both Atom and Topic Book facts."""
+
+    bounded_limit = max(0, int(limit))
+    if bounded_limit == 0:
+        return []
+    selected = [dict(item) for item in items[:bounded_limit]]
+    required_types = {
+        source_type
+        for source_type in ("memory_atom", "memory_book")
+        if any(str(item.get("sourceType") or "") == source_type for item in items)
+    }
+    for required_type in ("memory_atom", "memory_book"):
+        if required_type not in required_types or any(
+            str(item.get("sourceType") or "") == required_type
+            for item in selected
+        ):
+            continue
+        replacement = next(
+            (
+                dict(item)
+                for item in items[bounded_limit:]
+                if str(item.get("sourceType") or "") == required_type
+            ),
+            None,
+        )
+        if replacement is None:
+            continue
+        type_counts = {
+            source_type: sum(
+                1
+                for item in selected
+                if str(item.get("sourceType") or "") == source_type
+            )
+            for source_type in required_types
+        }
+        replacement_index = next(
+            (
+                index
+                for index in range(len(selected) - 1, -1, -1)
+                if (
+                    str(selected[index].get("sourceType") or "") not in required_types
+                    or type_counts.get(str(selected[index].get("sourceType") or ""), 0) > 1
+                )
+            ),
+            -1,
+        )
+        if replacement_index >= 0:
+            selected[replacement_index] = replacement
+    return selected
+
+
+def _rag_evidence_hints_from_grounding(
+    grounding: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "evidenceId": str(item.get("evidenceId") or ""),
+            "sourceType": str(item.get("sourceType") or ""),
+            "sourceLane": str(item.get("sourceLane") or ""),
+            "category": str(item.get("category") or "rag"),
+            # One canonical field only. Do not concatenate title, summary,
+            # preview and text into a repeated sentence.
+            "text": compact_whitespace(
+                str(item.get("preview") or item.get("title") or "")
+            ),
+        }
+        for item in grounding
+        if compact_whitespace(str(item.get("preview") or item.get("title") or ""))
+    ]
+
+
+def _rag_evidence_hints(evidence: Sequence[ActiveRagEvidence]) -> list[dict[str, object]]:
+    """Compatibility wrapper for callers/tests that used the old private helper."""
+
+    return _rag_evidence_hints_from_grounding(
+        _structured_grounding_evidence(evidence, limit=6)
+    )
+
+
+def _canonical_evidence_text(
+    item: ActiveRagEvidence,
+    *,
+    metadata: Mapping[str, object],
+) -> str:
+    for value in (
+        item.preview,
+        metadata.get("summary"),
+        item.text,
+        metadata.get("title"),
+    ):
+        text = truncate_text(
+            _deduplicate_adjacent_evidence_text(str(value or "")),
+            240,
+        )
+        if text:
+            return text
+    surface_hints = metadata.get("surfaceHints")
+    if isinstance(surface_hints, list):
+        for value in surface_hints:
+            text = truncate_text(compact_whitespace(str(value or "")), 240)
+            if text:
+                return text
+    return ""
+
+
+def _deduplicate_adjacent_evidence_text(value: str) -> str:
+    """Collapse the legacy ``memory_items`` text+summary exact duplicate."""
+
+    text = compact_whitespace(value)
+    if not text:
+        return ""
+    for separator_chars in (0, 1):
+        repeated_chars = len(text) - separator_chars
+        if repeated_chars <= 0 or repeated_chars % 2:
+            continue
+        half = repeated_chars // 2
+        left = text[:half]
+        right = text[half + separator_chars :]
+        separator = text[half : half + separator_chars]
+        if left and left == right and (separator_chars == 0 or separator == " "):
+            return left
+    return text
+
+
+def _semantic_fact_key(value: str) -> str:
+    return "".join(
+        character.lower()
+        for character in compact_whitespace(value)
+        if character.isalnum() or "\u3400" <= character <= "\u9fff"
+    )
+
+
+def _semantic_facts_overlap(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    shorter, longer = sorted((left, right), key=len)
+    return len(shorter) >= 8 and shorter in longer
+
+
+def _grounding_reference(
+    item: ActiveRagEvidence,
+    *,
+    source_type: str,
+) -> dict[str, str]:
+    if item.atom_ids:
+        return {"kind": "atom", "id": str(item.atom_ids[0])}
+    if item.book_ids:
+        return {"kind": "book", "id": str(item.book_ids[0])}
+    evidence_id = compact_whitespace(item.evidence_id)
+    lowered = evidence_id.lower()
+    if lowered.startswith("atom:") or source_type in {"atom", "memory_atom"}:
+        kind = "atom"
+    elif lowered.startswith("book:") or source_type in {"book", "memory_book"}:
+        kind = "book"
+    else:
+        kind = "evidence"
+    return {"kind": kind, "id": evidence_id}
+
+
+def _typed_grounding_source_type(
+    item: ActiveRagEvidence,
+    *,
+    metadata: Mapping[str, object],
+) -> str:
+    explicit = compact_whitespace(str(metadata.get("sourceType") or ""))
+    if explicit and explicit not in {"memory", "rag"}:
+        return explicit
+    if item.atom_ids:
+        return "memory_atom"
+    if item.book_ids:
+        return "memory_book"
+    return explicit or compact_whitespace(item.source_type) or "rag"
 
 
 def _packet_id(
@@ -541,6 +778,13 @@ def _is_timeline_evidence(item: ActiveRagEvidence) -> bool:
     return bool(metadata.get("timelineContext")) or item.source_lane.startswith("timeline_")
 
 
+def _is_activity_timeline_evidence(item: ActiveRagEvidence) -> bool:
+    return (
+        item.source_type == "activity_timeline"
+        or item.source_lane == "timeline_approved_activity"
+    )
+
+
 def _is_recent_input_evidence(item: ActiveRagEvidence) -> bool:
     return item.source_type == "recent_input_context" or item.source_lane == "timeline_recent_input"
 
@@ -574,7 +818,7 @@ def _recent_input_items(
             continue
         seen.add(normalized)
         result.append(_one_ring_like_event(item, text=text))
-    return result[-80:]
+    return result[-4:]
 
 
 def _notebook_item(item: ActiveRagEvidence) -> dict[str, object]:
@@ -605,6 +849,47 @@ def _timeline_item(item: ActiveRagEvidence) -> dict[str, object]:
         "tags": list(item.tags[:6]),
         "sourceEventIds": list(item.evidence_event_ids[:8]),
     }
+
+
+def _activity_timeline_item(item: ActiveRagEvidence) -> dict[str, object]:
+    metadata = item.metadata if isinstance(item.metadata, dict) else {}
+    title = truncate_text(
+        compact_whitespace(str(metadata.get("title") or item.text or item.preview)),
+        120,
+    )
+    summary = truncate_text(
+        compact_whitespace(str(metadata.get("summary") or item.preview or item.text)),
+        320,
+    )
+    ref = metadata.get("ref") if isinstance(metadata.get("ref"), dict) else {}
+    return {
+        "id": item.evidence_id,
+        "title": title,
+        "summary": summary,
+        "date": compact_whitespace(str(metadata.get("date") or "")),
+        "period": compact_whitespace(str(metadata.get("period") or "")),
+        "startMs": _nonnegative_int(metadata.get("startMs")),
+        "endMs": _nonnegative_int(metadata.get("endMs")),
+        "apps": [
+            truncate_text(compact_whitespace(str(value)), 80)
+            for value in metadata.get("apps", [])
+            if compact_whitespace(str(value))
+        ][:8] if isinstance(metadata.get("apps"), list) else [],
+        "evidenceCount": _nonnegative_int(metadata.get("evidenceCount")),
+        "redactedEventCount": _nonnegative_int(metadata.get("redactedEventCount")),
+        "ref": {
+            "kind": compact_whitespace(str(ref.get("kind") or "timeline")),
+            "id": compact_whitespace(str(ref.get("id") or item.evidence_id)),
+        },
+        "maySupportFacts": False,
+    }
+
+
+def _nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 
 def _one_ring_like_event(item: ActiveRagEvidence, *, text: str | None = None) -> dict[str, object]:

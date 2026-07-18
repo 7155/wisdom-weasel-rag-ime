@@ -27,6 +27,18 @@ type ToolParams = {
   bookId?: string;
   traceId?: string;
   runId?: string;
+  targetId?: string;
+  text?: string;
+  reason?: string;
+  memoryKind?: "fact" | "preference" | "decision" | "commitment" | "project_state";
+  evidenceIds?: string[];
+  claimKey?: string;
+  idempotencyKey?: string;
+  proposalId?: string;
+  draftId?: string;
+  revisionId?: string;
+  updates?: Record<string, unknown>;
+  changeSummary?: string;
   instruction?: string;
   scope?: "incremental" | "global";
   policy?: "conservative";
@@ -66,7 +78,7 @@ type ToolParams = {
   cwd?: string;
   timeoutSeconds?: number;
   allowNetwork?: boolean;
-  mode?: "content" | "name" | "both";
+  mode?: "content" | "name" | "both" | "current" | "historical" | "change";
   oldText?: string;
   newText?: string;
   expectedOccurrences?: number;
@@ -208,7 +220,7 @@ const planningParameterSchema: Record<string, unknown> = {
 };
 
 const memoryParameterSchema: Record<string, unknown> = {
-  description: "每次只选择一个操作；草案由 curation_prepare 在后台生成，主对话不枚举数据库变更。",
+  description: "每次只选择一个操作。Evidence 是来源、Atom 是当前事实、Topic Book 是主题聚合；Timeline 只提供活动连续性。新增、更正、遗忘必须先预览，应用与回滚仍需原生审批。",
   oneOf: [
     {
       type: "object",
@@ -290,12 +302,150 @@ const memoryParameterSchema: Record<string, unknown> = {
         op: { const: op },
         kind: {
           type: "string",
-          enum: ["apps", "books", "atoms", "tags", "phrases", "groups", "negative"],
+          enum: ["apps", "books", "atoms", "timelines", "evidence", "tags", "phrases", "groups"],
         },
         query: { type: "string", maxLength: 240 },
         limit: { type: "integer", minimum: 1, maximum: 20 },
+        mode: { type: "string", enum: ["current", "historical", "change"] },
       },
     })),
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      anyOf: [{ required: ["targetId"] }, { required: ["draftId"] }],
+      properties: {
+        op: { const: "get" },
+        targetId: { type: "string", minLength: 1, maxLength: 240 },
+        draftId: { type: "string", minLength: 1, maxLength: 160 },
+        kind: { type: "string", enum: ["atoms"] },
+        mode: { type: "string", enum: ["current", "historical", "change"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "targetId"],
+      properties: {
+        op: { const: "explain" },
+        targetId: { type: "string", minLength: 1, maxLength: 240 },
+        kind: { type: "string", enum: ["atoms"] },
+        mode: { type: "string", enum: ["current", "historical", "change"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "draftId"],
+      properties: {
+        op: { const: "review" },
+        draftId: { type: "string", minLength: 1, maxLength: 160 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "text"],
+      properties: {
+        op: { const: "remember_preview" },
+        text: { type: "string", minLength: 1, maxLength: 1200 },
+        memoryKind: { type: "string", enum: ["fact", "preference", "decision", "commitment", "project_state"] },
+        claimKey: { type: "string", maxLength: 240 },
+        reason: { type: "string", maxLength: 400 },
+        evidenceIds: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 240 } },
+        idempotencyKey: { type: "string", maxLength: 240 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "targetId", "text"],
+      properties: {
+        op: { const: "correct_preview" },
+        targetId: { type: "string", minLength: 1, maxLength: 240 },
+        text: { type: "string", minLength: 1, maxLength: 1200 },
+        memoryKind: { type: "string", enum: ["fact", "preference", "decision", "commitment", "project_state"] },
+        reason: { type: "string", maxLength: 400 },
+        evidenceIds: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 240 } },
+        idempotencyKey: { type: "string", maxLength: 240 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "targetId", "reason"],
+      properties: {
+        op: { const: "forget_preview" },
+        targetId: { type: "string", minLength: 1, maxLength: 240 },
+        reason: { type: "string", minLength: 1, maxLength: 400 },
+        evidenceIds: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 240 } },
+        idempotencyKey: { type: "string", maxLength: 240 },
+      },
+    },
+    ...["remember_apply", "correct_apply", "forget_apply", "governance_rollback"].map((op) => ({
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "proposalId"],
+      properties: {
+        op: { const: op },
+        proposalId: { type: "string", minLength: 1, maxLength: 240 },
+      },
+    })),
+  ],
+};
+
+const roleBookParameterSchema: Record<string, unknown> = {
+  description: "Role Book 只描述 Agent 自身。读取固定修订或创建待审草案；该 Tool 没有激活、提权或修改安全策略的能力。",
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: { const: "get" },
+        revisionId: { type: "string", minLength: 1, maxLength: 240 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      properties: {
+        op: { const: "history" },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op", "updates"],
+      properties: {
+        op: { const: "propose_revision" },
+        updates: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            personality: { type: "array", maxItems: 20, items: { type: "object" } },
+            capabilities: { type: "array", maxItems: 20, items: { type: "object" } },
+            recentWork: { type: "array", maxItems: 20, items: { type: "object" } },
+            lessonsAndLimits: { type: "array", maxItems: 20, items: { type: "object" } },
+            activeCommitments: { type: "array", maxItems: 20, items: { type: "object" } },
+          },
+        },
+        changeSummary: { type: "string", maxLength: 400 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["op"],
+      oneOf: [{ required: ["revisionId"] }, { required: ["draftId"] }],
+      properties: {
+        op: { const: "review" },
+        revisionId: { type: "string", minLength: 1, maxLength: 240 },
+        draftId: { type: "string", minLength: 1, maxLength: 160 },
+      },
+    },
   ],
 };
 
@@ -413,7 +563,7 @@ const toolSpecs: ToolSpec[] = [
   {
     name: "ime_memory",
     label: "记忆与工具书",
-    description: "查询 Memory Book；需要整理时用 curation_prepare 生成 Atom-first 草案。系统也会自动生成草案，但永不自动应用。",
+    description: "查询 Evidence、Current Atom、Topic Book 和已批准 Timeline；也可创建增加、更正、遗忘的受治理预览。系统永不自动应用长期记忆。",
     operations: [
       "catalog",
       "read",
@@ -427,6 +577,16 @@ const toolSpecs: ToolSpec[] = [
       "maintenance_rollback",
       "list",
       "search",
+      "get",
+      "explain",
+      "review",
+      "remember_preview",
+      "correct_preview",
+      "forget_preview",
+      "remember_apply",
+      "correct_apply",
+      "forget_apply",
+      "governance_rollback",
     ],
     progress: {
       catalog: "正在查找相关工具书、Group 和 Tag",
@@ -441,15 +601,46 @@ const toolSpecs: ToolSpec[] = [
       maintenance_rollback: "正在准备记忆回滚预览",
       list: "正在浏览记忆目录",
       search: "正在检索记忆记录",
+      get: "正在读取一条受治理记忆",
+      explain: "正在追溯当前事实与变更谱系",
+      review: "正在读取每日记忆草案",
+      remember_preview: "正在生成新增记忆预览",
+      correct_preview: "正在生成事实更正预览",
+      forget_preview: "正在生成遗忘预览",
+      remember_apply: "正在准备新增记忆审批",
+      correct_apply: "正在准备事实更正审批",
+      forget_apply: "正在准备遗忘审批",
+      governance_rollback: "正在准备记忆治理回滚审批",
     },
     guidelines: [
-      "当前连续会话没有相关证据，或证据已过期、冲突、主题变化时，先用 catalog 查找相关 Book、Group 和 Tag；已有足够且仍有效的前文证据时直接复用，不要每轮机械重复检索。",
-      "需要详细证据时再用 read；需要近期上下文时用 recent；不要在回答正文显示内部 ID 或 [L:...] 标签。",
+      "Session 启动快照只在首轮注入一次。后续缺少相关证据、证据冲突或主题变化时再主动检索，不要每轮机械调用。",
+      "事实使用 search/get/explain(kind=atoms)，主题使用 catalog/read 或 list(kind=books)，活动连续性使用 search(kind=timelines)，原始来源使用 list(kind=evidence)。Timeline 不能单独证明稳定事实。",
+      "增加、更正、遗忘必须先调用对应 preview，再把返回的真实 proposalId 交给对应 apply；没有原生审批回执不得声称已修改。targetId 只能使用 search/get 返回的稳定 ID。",
+      "Evidence 处于 sensitive、not_for_memory、expired、deleted 或 tombstoned 状态时必须失败关闭；不得引用、重建或通过 Timeline 绕过来源治理。",
       "需要整理时只调用一次 curation_prepare；不要在主对话逐条生成或复述 Atom、Group、Tag、Book 和词库操作。maintenance_preview 仅为旧客户端别名。",
       "curation_prepare 和 maintenance_review 会立即暂停当前回合并打开控制中心审阅；恢复后只简要说明审阅结果并结束本轮，不要再次调用记忆维护工具。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
-      "应用或回滚只能使用 maintenance_status/curation_prepare 返回的真实 runId，不能猜测内部 ID。",
+      "旧维护流的应用或回滚只能使用 maintenance_status/curation_prepare 返回的真实 runId；治理回滚只能使用已应用回执中的 proposalId。",
     ],
     parameterSchema: memoryParameterSchema,
+  },
+  {
+    name: "agent_role_book",
+    label: "Agent 角色书",
+    description: "读取当前 Session 固定的 Role Book 修订、查看历史，并为 Agent 的性格、能力、近期工作和经验教训创建待审草案。",
+    operations: ["get", "history", "propose_revision", "review"],
+    progress: {
+      get: "正在读取当前 Session 固定的角色书",
+      history: "正在查看角色书修订历史",
+      propose_revision: "正在保存角色书待审草案",
+      review: "正在审阅角色书草案或修订",
+    },
+    guidelines: [
+      "Role Book 只描述 Agent，不是用户事实；不得复制到用户 Atom、Topic Book 或 Timeline。",
+      "当前 Session 固定到一个 revision。未固定或已过期的 Session 必须失败，不得静默基于新版本重放。",
+      "propose_revision 只保存 draft，不能激活、自我提权或修改身份、权限、安全策略、审批规则和工具白名单。",
+      "每天或周期整理只能从可见 Evidence 补充 personality、capabilities、recentWork、lessonsAndLimits、activeCommitments，并保留 evidenceIds。",
+    ],
+    parameterSchema: roleBookParameterSchema,
   },
   {
     name: "ime_knowledge",
@@ -824,7 +1015,10 @@ function parametersFor(spec: ToolSpec) {
       recurrenceKind: { type: "string", enum: ["once", "daily", "weekly"] },
       recurrenceInterval: { type: "integer", minimum: 1, maximum: 30 },
       maxRuns: { type: "integer", minimum: 1, maximum: 100 },
-      kind: { type: "string", enum: ["apps", "books", "atoms", "tags", "phrases", "groups", "negative"] },
+      kind: {
+        type: "string",
+        enum: ["apps", "books", "atoms", "timelines", "evidence", "tags", "phrases", "groups"],
+      },
       date: { type: "string", maxLength: 24 },
       project: { type: "string", maxLength: 160 },
       action: { type: "string", enum: ["complete", "start", "reopen", "cancel"] },
@@ -887,7 +1081,11 @@ function specsForToolProfile(specs: ToolSpec[]) {
   }
   const allowed: Record<string, string[]> = {
     ime_overview: ["status", "capabilities", "recent_activity"],
-    ime_memory: ["catalog", "read", "recent", "trace", "maintenance_status", "list", "search"],
+    ime_memory: [
+      "catalog", "read", "recent", "trace", "maintenance_status", "list", "search",
+      "get", "explain", "review", "remember_preview", "correct_preview", "forget_preview",
+    ],
+    agent_role_book: ["get", "history", "review"],
     ime_knowledge: ["list_bases", "search", "find", "open", "status"],
     ime_models: ["status", "profiles", "probe", "cache_stats"],
     ime_runtime: ["health", "components", "diagnose"],

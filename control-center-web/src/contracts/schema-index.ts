@@ -498,6 +498,12 @@ export const contractSchemas = {
       "maySupportFacts": {
         "type": "boolean",
         "const": false
+      },
+      "source": {
+        "$ref": "#/$defs/source"
+      },
+      "ref": {
+        "$ref": "#/$defs/ref"
       }
     },
     "$defs": {
@@ -571,6 +577,67 @@ export const contractSchemas = {
           "redactedEventCount": {
             "type": "integer",
             "minimum": 0
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "apps": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            },
+            "uniqueItems": true
+          },
+          "source": {
+            "$ref": "#/$defs/source"
+          },
+          "ref": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      },
+      "source": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "activity_timeline"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "ref": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "timeline"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "segmentId": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -6110,6 +6177,19 @@ export const contractSchemas = {
         "type": "integer",
         "minimum": 0
       },
+      "segmentationMode": {
+        "type": "string",
+        "enum": [
+          "semantic_task_v2",
+          "legacy_app_interval_v1"
+        ]
+      },
+      "source": {
+        "$ref": "#/$defs/source"
+      },
+      "ref": {
+        "$ref": "#/$defs/ref"
+      },
       "policy": {
         "type": "object",
         "additionalProperties": false,
@@ -6151,6 +6231,7 @@ export const contractSchemas = {
           "contextGroupIds",
           "startMs",
           "endMs",
+          "period",
           "eventCount",
           "sourceEventIds",
           "sourceEventHash",
@@ -6194,6 +6275,15 @@ export const contractSchemas = {
             "type": "integer",
             "minimum": 0
           },
+          "period": {
+            "type": "string",
+            "enum": [
+              "day",
+              "morning",
+              "afternoon",
+              "evening"
+            ]
+          },
           "eventCount": {
             "type": "integer",
             "minimum": 1
@@ -6217,6 +6307,107 @@ export const contractSchemas = {
           "redactedEventCount": {
             "type": "integer",
             "minimum": 0
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "apps": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/evidenceRef"
+            }
+          },
+          "source": {
+            "$ref": "#/$defs/source"
+          },
+          "ref": {
+            "$ref": "#/$defs/ref"
+          }
+        }
+      },
+      "source": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "ref": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "evidenceRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceType",
+          "sourceId",
+          "eventId",
+          "app",
+          "sourceKind",
+          "occurredAtMs",
+          "preview"
+        ],
+        "properties": {
+          "sourceType": {
+            "type": "string",
+            "const": "input_event"
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "app": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "occurredAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "preview": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 180
           }
         }
       }
@@ -8374,6 +8565,33 @@ export const contractSchemas = {
           "rawDialogueIsLongTermFact": {
             "type": "boolean",
             "const": false
+          },
+          "layerBoundaries": {
+            "type": "object",
+            "required": [
+              "evidence",
+              "atom",
+              "topicBook",
+              "roleBook",
+              "timeline"
+            ],
+            "properties": {
+              "evidence": {
+                "type": "string"
+              },
+              "atom": {
+                "type": "string"
+              },
+              "topicBook": {
+                "type": "string"
+              },
+              "roleBook": {
+                "type": "string"
+              },
+              "timeline": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -8419,6 +8637,30 @@ export const contractSchemas = {
           },
           "provenance": {
             "type": "object"
+          },
+          "source": {
+            "$ref": "#/$defs/sourceRef"
+          },
+          "ref": {
+            "$ref": "#/$defs/sourceRef"
+          }
+        }
+      },
+      "sourceRef": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "bookId": {
+            "type": "string"
           }
         }
       }
@@ -9397,6 +9639,196 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1,
         "maxLength": 256
+      }
+    }
+  },
+  "memory-reference.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.memory-reference.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "settingsRevision",
+      "runtimeRevision",
+      "ok",
+      "kind",
+      "referenceId",
+      "item",
+      "source",
+      "ref",
+      "evidenceRefs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.memory-reference.v1"
+      },
+      "settingsRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "runtimeRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "kind": {
+        "$ref": "#/$defs/referenceKind"
+      },
+      "referenceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "item": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 32000
+          },
+          "textPreview": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "sensitive": {
+            "type": "boolean"
+          },
+          "ownerKind": {
+            "type": "string",
+            "maxLength": 32
+          },
+          "ownerId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "occurredAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "source": {
+        "$ref": "#/$defs/source"
+      },
+      "ref": {
+        "$ref": "#/$defs/reference"
+      },
+      "evidenceRefs": {
+        "type": "array",
+        "maxItems": 80,
+        "items": {
+          "$ref": "#/$defs/reference"
+        }
+      }
+    },
+    "$defs": {
+      "referenceKind": {
+        "type": "string",
+        "enum": [
+          "event",
+          "evidence",
+          "atom",
+          "book",
+          "timeline",
+          "role_book_revision"
+        ]
+      },
+      "source": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceKind": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          }
+        }
+      },
+      "reference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "id",
+          "referenceKind",
+          "referenceId"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/referenceKind"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "referenceKind": {
+            "$ref": "#/$defs/referenceKind"
+          },
+          "referenceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 180
+          }
+        }
       }
     }
   },

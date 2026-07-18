@@ -22,6 +22,7 @@ from rag_ime.memory_projection import (
     process_memory_projection_outbox,
 )
 from rag_ime.models import InputEvent
+from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.text_utils import now_ms
 
 
@@ -90,6 +91,78 @@ class MemoryProjectionTests(unittest.TestCase):
         self.assertEqual(report["freshness"]["vectorCoverage"], 1.0)
         self.assertTrue(report["freshness"]["checkpointCaughtUp"])
         self.assertEqual(worker.status()["lastError"], "")
+
+    def test_outbox_materializer_prunes_and_does_not_recreate_legacy_items(self) -> None:
+        legacy_memory_id = "stable:legacy-outbox"
+        legacy_doc_id = f"item:{legacy_memory_id}"
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            self._insert_phrase(conn, memory_id="phrase:kept", text="保留短语")
+            self._insert_stable_memory(
+                conn,
+                memory_id=legacy_memory_id,
+                text="旧稳定记忆仅保留为治理来源",
+            )
+            rebuild_retrieval_docs(
+                conn,
+                project="project-a",
+                include_legacy_items=True,
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs WHERE doc_id = ?",
+                    (legacy_doc_id,),
+                ).fetchone()[0],
+                1,
+            )
+            enqueue_memory_projection(
+                conn,
+                projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                aggregate_type="memory_item",
+                aggregate_id=legacy_memory_id,
+                operation="upsert",
+                project="project-a",
+            )
+
+        worker = MemoryProjectionWorker(
+            self.core._connect,  # type: ignore[arg-type]
+            embedding_provider=self.provider,
+        )
+        report = worker.run_once()
+
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            legacy_doc_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs WHERE doc_id = ?",
+                    (legacy_doc_id,),
+                ).fetchone()[0]
+            )
+            phrase_doc_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs WHERE source_id = 'phrase:kept'"
+                ).fetchone()[0]
+            )
+            source_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_items WHERE memory_id = ?",
+                    (legacy_memory_id,),
+                ).fetchone()[0]
+            )
+            item_vector_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM memory_retrieval_doc_vectors AS vector
+                    JOIN memory_retrieval_docs AS doc ON doc.doc_id = vector.doc_id
+                    WHERE doc.doc_type = 'item'
+                    """
+                ).fetchone()[0]
+            )
+
+        self.assertEqual(legacy_doc_count, 0)
+        self.assertEqual(phrase_doc_count, 1)
+        self.assertEqual(source_count, 1)
+        self.assertEqual(item_vector_count, 0)
+        self.assertTrue(report["freshness"]["fresh"])
 
     def test_retry_is_bounded_and_poison_event_moves_to_dead(self) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]
@@ -425,6 +498,37 @@ class MemoryProjectionTests(unittest.TestCase):
             conn,
             memory_id=memory_id,
             kind="phrase",
+            text=text,
+            normalized_text=normalize_text(text),
+            summary="",
+            source_event_id=None,
+            project=project,
+            app="",
+            confidence=0.9,
+            quality_score=0.9,
+            status="approved",
+            privacy_class="normal",
+            created_at_ms=timestamp,
+            updated_at_ms=timestamp,
+            metadata={},
+            tags=("RAG",),
+            embedding_provider=None,
+            tag_source="manual",
+        )
+
+    def _insert_stable_memory(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        memory_id: str,
+        text: str,
+        project: str = "project-a",
+    ) -> None:
+        timestamp = now_ms()
+        upsert_memory_item(
+            conn,
+            memory_id=memory_id,
+            kind="stable_memory",
             text=text,
             normalized_text=normalize_text(text),
             summary="",

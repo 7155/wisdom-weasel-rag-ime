@@ -23,7 +23,7 @@ export interface PublicToolResultView {
 }
 
 export interface PublicToolSemanticPreview {
-  kind: 'book' | 'collection';
+  kind: 'atom' | 'book' | 'collection' | 'evidence' | 'timeline' | 'role_book';
   title: string;
   description?: string;
   badges: string[];
@@ -31,6 +31,7 @@ export interface PublicToolSemanticPreview {
     id: string;
     label?: string;
     text: string;
+    href?: string;
   }>;
 }
 
@@ -39,7 +40,8 @@ const toolLabels: Record<string, string> = {
   ime_input: '输入法',
   ime_voice: '语音输入',
   ime_planning: '规划与任务',
-  ime_memory: '记忆与工具书',
+  ime_memory: '个人上下文记忆',
+  agent_role_book: 'Agent 角色书',
   ime_knowledge: '文档知识库',
   ime_models: '模型',
   ime_runtime: '诊断与运行时',
@@ -73,6 +75,7 @@ const toolDestinations: Record<string, { href: string; label: string }> = {
   ime_voice: { href: '#/voice', label: '打开语音输入' },
   ime_planning: { href: '#/planning', label: '打开规划' },
   ime_memory: { href: '#/memory', label: '打开记忆' },
+  agent_role_book: { href: '#/memory?layer=role-books', label: '打开角色书' },
   ime_knowledge: { href: '#/knowledge', label: '打开知识库' },
   ime_models: { href: '#/configuration', label: '打开模型配置' },
   ime_runtime: { href: '#/diagnostics', label: '打开诊断' },
@@ -95,6 +98,17 @@ const operationLabels: Record<string, string> = {
   read: '读取内容',
   recent: '查看近期记录',
   search: '搜索',
+  get: '读取详情',
+  explain: '追溯事实来源',
+  review: '审阅草案',
+  remember_preview: '预览新增记忆',
+  correct_preview: '预览事实更正',
+  forget_preview: '预览遗忘',
+  remember_apply: '应用新增记忆',
+  correct_apply: '应用事实更正',
+  forget_apply: '应用遗忘',
+  governance_rollback: '回滚记忆变更',
+  propose_revision: '提出角色书修订',
   list_bases: '查看知识库',
   find: '定位文档证据',
   open: '读取引用窗口',
@@ -157,8 +171,10 @@ const booleanFields: Array<[string, string, string, string]> = [
 const memoryCountFields: Array<[string, string]> = [
   ['eventCount', '输入记录'],
   ['memoryItemCount', '记忆项目'],
-  ['memoryBookCount', '记忆工具书'],
-  ['memoryAtomCount', '记忆原子'],
+  ['memoryBookCount', '主题书'],
+  ['memoryAtomCount', '当前事实'],
+  ['timelineCount', '活动时间线'],
+  ['roleBookCount', '角色书'],
   ['retrievalDocCount', '可检索文档'],
   ['pendingCompileEvents', '待整理记录'],
 ];
@@ -307,6 +323,7 @@ function semanticToolPreview(
   operation: string,
   layers: Record<string, unknown>[],
 ): PublicToolSemanticPreview | undefined {
+  if (toolId === 'agent_role_book') return roleBookToolPreview(operation, layers);
   if (toolId !== 'ime_memory') return undefined;
 
   if (operation === 'read') {
@@ -318,12 +335,19 @@ function semanticToolPreview(
     const memories = firstArray([book], ['memories']);
     const items = memories.slice(0, 8).flatMap((value, index) => {
       const memory = record(value);
+      const ref = record(memory.ref);
+      const kind = memoryReferenceKind(memory, ref);
       const itemText = publicLongText(memory.text);
       if (!itemText) return [];
+      const referenceId = memoryReferenceId(memory, ref);
+      const layer = memoryLayerForKind(kind);
       return [{
-        id: `memory:${index}`,
+        id: referenceId || `memory:${index}`,
         label: memoryTypeLabel(text(memory.type)),
         text: itemText,
+        ...(referenceId && layer ? {
+          href: `#/memory?layer=${encodeURIComponent(layer)}&id=${encodeURIComponent(referenceId)}`,
+        } : {}),
       }];
     });
     return {
@@ -338,24 +362,159 @@ function semanticToolPreview(
   if (operation === 'catalog') {
     const items = firstArray(layers, ['items']).slice(0, 8).flatMap((value, index) => {
       const item = record(value);
+      const ref = record(item.ref);
+      const kind = memoryReferenceKind(item, ref);
       const itemText = publicDisplayText(item.title ?? item.name ?? item.label, '');
       if (!itemText) return [];
+      const referenceId = memoryReferenceId(item, ref);
+      const layer = memoryLayerForKind(kind);
       return [{
-        id: `catalog:${index}`,
-        label: memoryCatalogKindLabel(text(item.kind ?? item.type)),
+        id: referenceId || `catalog:${index}`,
+        label: memoryCatalogKindLabel(kind),
         text: itemText,
+        ...(referenceId && layer ? {
+          href: `#/memory?layer=${encodeURIComponent(layer)}&id=${encodeURIComponent(referenceId)}`,
+        } : {}),
       }];
     });
     if (items.length === 0) return undefined;
     return {
       kind: 'collection',
-      title: '记忆目录',
+      title: '个人上下文目录',
       badges: [],
       items,
     };
   }
 
+  if (['search', 'get', 'explain', 'recent', 'list'].includes(operation)) {
+    const rawItems = firstArray(layers, ['items']);
+    const singleItem = firstRecord(layers, ['item']);
+    const values = rawItems.length ? rawItems : Object.keys(singleItem).length ? [singleItem] : [];
+    const items = values.slice(0, 8).flatMap((value, index) => {
+      const item = record(value);
+      const ref = record(item.ref);
+      const kind = memoryReferenceKind(item, ref);
+      const itemText = publicLongText(
+        item.text ?? item.summary ?? item.title ?? item.label ?? item.preview,
+      );
+      if (!itemText) return [];
+      const referenceId = memoryReferenceId(item, ref);
+      const layer = memoryLayerForKind(kind);
+      return [{
+        id: referenceId || `memory-result:${index}`,
+        label: memoryCatalogKindLabel(kind),
+        text: itemText,
+        ...(referenceId && layer ? {
+          href: `#/memory?layer=${encodeURIComponent(layer)}&id=${encodeURIComponent(referenceId)}`,
+        } : {}),
+      }];
+    });
+    if (!items.length) return undefined;
+    const kinds = [...new Set(values.map((value) => {
+      const item = record(value);
+      const ref = record(item.ref);
+      return memoryReferenceKind(item, ref);
+    }).filter(Boolean))];
+    const previewKind = kinds.length === 1 ? semanticPreviewKind(kinds[0]!) : 'collection';
+    return {
+      kind: previewKind,
+      title: operation === 'search' ? '记忆召回结果' : '记忆详情',
+      badges: kinds.map(memoryCatalogKindLabel).filter((value, index, source) => source.indexOf(value) === index),
+      items,
+    };
+  }
+
+  if (['remember_preview', 'correct_preview', 'forget_preview'].includes(operation)) {
+    const proposedText = firstPublicText(layers, ['proposedText', 'text', 'summary']);
+    const targetId = firstText(layers, ['targetId', 'targetMemoryId']);
+    const proposalId = firstText(layers, ['proposalId']);
+    const evidenceIds = firstArray(layers, ['evidenceIds']).map(text).filter(Boolean).slice(0, 8);
+    const items: PublicToolSemanticPreview['items'] = [];
+    if (proposedText) {
+      items.push({
+        id: targetId || proposalId || 'memory-proposal',
+        label: operation === 'forget_preview' ? '将撤回' : operation === 'correct_preview' ? '更正为' : '新增事实',
+        text: proposedText,
+        ...(targetId ? { href: `#/memory?layer=atoms&id=${encodeURIComponent(targetId)}` } : {}),
+      });
+    }
+    evidenceIds.forEach((evidenceId, index) => items.push({
+      id: `proposal-evidence:${evidenceId}`,
+      label: '原始证据',
+      text: `来源证据 ${index + 1}`,
+      href: `#/memory?layer=evidence&id=${encodeURIComponent(evidenceId)}`,
+    }));
+    if (!items.length) return undefined;
+    return {
+      kind: 'atom',
+      title: '受治理记忆预览',
+      badges: ['尚未应用', '需要本机审批'],
+      items,
+    };
+  }
+
+  if (['remember_apply', 'correct_apply', 'forget_apply', 'governance_rollback'].includes(operation)) {
+    const memoryId = firstText(layers, ['memoryId', 'previousMemoryId']);
+    const summary = firstPublicText(layers, ['summary']);
+    if (!memoryId || !summary) return undefined;
+    return {
+      kind: 'atom',
+      title: '记忆治理回执',
+      badges: ['已留审计记录'],
+      items: [{
+        id: memoryId,
+        label: '事实谱系',
+        text: summary,
+        href: `#/memory?layer=atoms&id=${encodeURIComponent(memoryId)}`,
+      }],
+    };
+  }
+
   return undefined;
+}
+
+function roleBookToolPreview(
+  operation: string,
+  layers: Record<string, unknown>[],
+): PublicToolSemanticPreview | undefined {
+  const revision = firstRecord(layers, ['revision']);
+  const draft = firstRecord(layers, ['draft']);
+  const history = firstArray(layers, ['items']);
+  const values = history.length
+    ? history
+    : Object.keys(revision).length
+      ? [revision]
+      : Object.keys(draft).length
+        ? [draft]
+        : [];
+  const items = values.slice(0, 8).flatMap((value, index) => {
+    const item = record(value);
+    const revisionId = text(item.revisionId);
+    const draftId = text(item.draftId);
+    const id = revisionId || draftId || `role-book:${index}`;
+    const revisionNumber = finiteNumber(item.revisionNumber);
+    const itemText = publicDisplayText(
+      item.changeSummary
+        ?? item.summary
+        ?? (revisionNumber !== undefined ? `角色书修订 #${revisionNumber}` : '角色书待审草案'),
+      '角色书修订',
+    );
+    return [{
+      id,
+      label: text(item.status) === 'draft' || draftId ? '待审草案' : '角色书修订',
+      text: itemText,
+      ...(revisionId ? {
+        href: `#/memory?layer=role-books&id=${encodeURIComponent(revisionId)}`,
+      } : {}),
+    }];
+  });
+  if (!items.length) return undefined;
+  return {
+    kind: 'role_book',
+    title: operation === 'history' ? '角色书修订历史' : 'Agent 角色书',
+    badges: operation === 'propose_revision' ? ['仅保存草案', '不能自行激活'] : [],
+    items,
+  };
 }
 
 interface PublicCodeToolResult {
@@ -490,10 +649,79 @@ function memoryTypeLabel(value: string): string {
 
 function memoryCatalogKindLabel(value: string): string {
   return ({
-    book: '工具书',
+    atom: '当前事实',
+    memory_atom: '当前事实',
+    current_fact: '当前事实',
+    fact: '当前事实',
+    book: '主题书',
+    memory_book: '主题书',
+    topic: '主题书',
+    timeline: '活动时间线',
+    daily_timeline: '活动时间线',
+    activity_timeline: '活动时间线',
+    evidence: '原始证据',
+    event: '原始证据',
+    role_book: '角色书',
+    role_book_revision: '角色书',
     group: '分组',
     tag: '标签',
   } as Record<string, string>)[value.toLowerCase()] ?? '条目';
+}
+
+function memoryLayerForKind(value: string): string {
+  return ({
+    atom: 'atoms',
+    memory_atom: 'atoms',
+    current_fact: 'atoms',
+    fact: 'atoms',
+    book: 'books',
+    memory_book: 'books',
+    topic: 'books',
+    timeline: 'timelines',
+    daily_timeline: 'timelines',
+    activity_timeline: 'timelines',
+    evidence: 'evidence',
+    event: 'evidence',
+    role_book: 'role-books',
+    role_book_revision: 'role-books',
+  } as Record<string, string>)[value.toLowerCase()] ?? '';
+}
+
+function memoryReferenceKind(
+  item: Record<string, unknown>,
+  ref: Record<string, unknown>,
+): string {
+  return text(
+    ref.referenceKind
+    ?? ref.kind
+    ?? ref.type
+    ?? item.referenceKind
+    ?? item.kind
+    ?? item.type
+    ?? item.docType,
+  ).toLowerCase();
+}
+
+function memoryReferenceId(
+  item: Record<string, unknown>,
+  ref: Record<string, unknown>,
+): string {
+  return text(
+    ref.referenceId
+    ?? ref.id
+    ?? item.referenceId
+    ?? item.id
+    ?? item.sourceId,
+  );
+}
+
+function semanticPreviewKind(value: string): PublicToolSemanticPreview['kind'] {
+  const layer = memoryLayerForKind(value);
+  if (layer === 'atoms') return 'atom';
+  if (layer === 'books') return 'book';
+  if (layer === 'timelines') return 'timeline';
+  if (layer === 'evidence') return 'evidence';
+  return 'collection';
 }
 
 function publicToolError(layers: Record<string, unknown>[], carrier: Record<string, unknown>): string {
