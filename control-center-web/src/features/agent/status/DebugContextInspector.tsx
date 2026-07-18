@@ -15,8 +15,10 @@ import {
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { IconButton } from '@/components/primitives';
+import { IconButton, SegmentedControl } from '@/components/primitives';
 import './DebugContextInspector.css';
+
+type DebugView = 'semantic' | 'raw';
 
 interface DebugStage {
   id: string;
@@ -55,9 +57,10 @@ export function DebugContextInspector({
   const response = useMemo(() => normalizeDebugResponse(query.data), [query.data]);
   const stages = useMemo(() => debugStages(response.context), [response.context]);
   const [copiedId, setCopiedId] = useState('');
+  const [view, setView] = useState<DebugView>('semantic');
 
   async function copyStage(stage: DebugStage): Promise<void> {
-    const rendered = renderDebugValue(stage);
+    const rendered = renderDebugValue(stage, view);
     if (!rendered) return;
     try {
       await navigator.clipboard.writeText(rendered);
@@ -76,6 +79,15 @@ export function DebugContextInspector({
           <strong>模型上下文增量</strong>
           <small>按 Pi 实际装配顺序，每步只显示本次新增内容</small>
         </span>
+        <SegmentedControl
+          aria-label="上下文展示形式"
+          items={[
+            { value: 'semantic', label: '模型语义' },
+            { value: 'raw', label: '原始 JSON' },
+          ]}
+          onValueChange={setView}
+          value={view}
+        />
       </header>
       <DebugStorage storage={response.storage} />
       {query.isPending ? <p className="debug-context-inspector__empty">正在读取本轮上下文快照</p> : null}
@@ -83,7 +95,7 @@ export function DebugContextInspector({
       {!query.isPending && !query.error && !response.available ? <p className="debug-context-inspector__empty">这轮尚未生成上下文快照</p> : null}
       {response.available ? <DebugTelemetryStrip telemetry={response.telemetry} /> : null}
       {stages.length ? (
-        <ol className="debug-context-inspector__pipeline" aria-label="模型上下文注入顺序">
+        <ol className="debug-context-inspector__pipeline" data-view={view} aria-label="模型上下文注入顺序">
           {stages.map((stage, index) => (
             <li key={stage.id} data-channel={stage.channel}>
               <details>
@@ -94,7 +106,7 @@ export function DebugContextInspector({
                     <strong>{stage.label}</strong>
                     <small>{stage.detail}</small>
                   </span>
-                  <em>{stage.channel === 'wire' ? '传输快照' : '本步新增'}</em>
+                  <em>{view === 'semantic' ? '模型语义' : stage.channel === 'wire' ? '传输 JSON' : '原始数据'}</em>
                   <ChevronRight size={14} />
                 </summary>
                 <section className="debug-context-inspector__stage-value">
@@ -106,7 +118,7 @@ export function DebugContextInspector({
                     size="small"
                     tooltip
                   />
-                  <pre>{renderDebugValue(stage)}</pre>
+                  <pre>{renderDebugValue(stage, view)}</pre>
                 </section>
               </details>
             </li>
@@ -320,13 +332,143 @@ function DebugStageIcon({ channel }: { channel: DebugStage['channel'] }): ReactN
   return <PackageOpen size={14} />;
 }
 
-function renderDebugValue(stage: DebugStage): string {
+function renderDebugValue(stage: DebugStage, view: DebugView): string {
+  if (view === 'semantic') return renderSemanticValue(stage);
   if (stage.kind === 'text') return text(stage.value);
   try {
     return JSON.stringify(stage.value ?? null, null, 2);
   } catch {
     return String(stage.value ?? '');
   }
+}
+
+function renderSemanticValue(stage: DebugStage): string {
+  if (stage.kind === 'text') return text(stage.value);
+  if (stage.channel === 'tools') return semanticTools(stage.value);
+  if (stage.channel === 'wire') return semanticProviderRequest(stage.value);
+  if (stage.channel === 'messages') return semanticMessages(stage.value);
+  if (stage.id === 'system:skills') {
+    return array(stage.value).map((item, index) => {
+      const skill = record(item);
+      return [
+        `${index + 1}. ${text(skill.name) || '未命名 Skill'}`,
+        text(skill.description) ? `   ${text(skill.description)}` : '',
+        text(skill.filePath) ? `   来源: ${text(skill.filePath)}` : '',
+      ].filter(Boolean).join('\n');
+    }).join('\n\n');
+  }
+  return semanticObject(stage.value);
+}
+
+function semanticProviderRequest(value: unknown): string {
+  const payload = record(value);
+  const sections: string[] = [];
+  const controls = [
+    ['模型', payload.model],
+    ['接口', payload.api],
+    ['流式', payload.stream],
+    ['最大输出', payload.max_tokens ?? payload.max_output_tokens],
+    ['思考强度', payload.reasoning_effort ?? record(payload.reasoning).effort],
+  ].filter(([, item]) => item !== undefined);
+  if (controls.length) {
+    sections.push(`[请求控制]\n${controls.map(([label, item]) => `${label}: ${scalar(item)}`).join('\n')}`);
+  }
+  const instructions = text(payload.instructions) || text(payload.system);
+  if (instructions) sections.push(`[SYSTEM / INSTRUCTIONS]\n${instructions}`);
+  const messages = payload.input ?? payload.messages;
+  if (messages !== undefined) sections.push(semanticMessages(messages));
+  const tools = payload.tools;
+  if (Array.isArray(tools) && tools.length) sections.push(semanticTools({ schemas: tools }));
+  const known = new Set([
+    'model', 'api', 'stream', 'max_tokens', 'max_output_tokens', 'reasoning_effort',
+    'reasoning', 'instructions', 'system', 'input', 'messages', 'tools',
+  ]);
+  const remaining = Object.fromEntries(Object.entries(payload).filter(([key]) => !known.has(key)));
+  if (Object.keys(remaining).length) {
+    sections.push(`[其他传输参数]\n${semanticObject(remaining)}`);
+  }
+  return sections.filter(Boolean).join('\n\n') || '本次 Provider 请求没有可显示的语义内容。';
+}
+
+function semanticMessages(value: unknown): string {
+  const messages = Array.isArray(value) ? value : [value];
+  return messages.map((item, index) => {
+    if (typeof item === 'string') return `[MESSAGE ${index + 1}]\n${item}`;
+    const message = record(item);
+    const role = text(message.role).toUpperCase() || `MESSAGE ${index + 1}`;
+    const name = text(message.name) || text(message.toolName);
+    const heading = name ? `[${role} · ${name}]` : `[${role}]`;
+    const content = semanticContent(message.content ?? message);
+    return `${heading}\n${content || '(无文本内容)'}`;
+  }).join('\n\n');
+}
+
+function semanticContent(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(semanticContent).filter(Boolean).join('\n');
+  const item = record(value);
+  const type = text(item.type);
+  const directText = text(item.text) || text(item.input_text) || text(item.output_text);
+  if (directText) return directText;
+  const name = text(item.name) || text(record(item.function).name);
+  const argumentsValue = item.arguments ?? record(item.function).arguments;
+  if (type.toLowerCase().includes('tool') || type.toLowerCase().includes('function') || name) {
+    const label = name || '未命名工具';
+    const argumentsText = typeof argumentsValue === 'string'
+      ? argumentsValue
+      : semanticObject(argumentsValue);
+    return `调用工具: ${label}${argumentsText ? `\n参数: ${argumentsText}` : ''}`;
+  }
+  if (item.content !== undefined && item.content !== value) return semanticContent(item.content);
+  return semanticObject(item);
+}
+
+function semanticTools(value: unknown): string {
+  const container = record(value);
+  const schemas = array(container.schemas ?? value);
+  const activeTools = array(container.activeTools).map(String);
+  const lines = schemas.map((item, index) => {
+    const schema = record(item);
+    const fn = record(schema.function);
+    const name = text(schema.name) || text(fn.name) || activeTools[index] || `工具 ${index + 1}`;
+    const description = text(schema.description) || text(fn.description);
+    const parameters = record(schema.parameters ?? fn.parameters);
+    const properties = record(parameters.properties);
+    const required = new Set(array(parameters.required).map(String));
+    const fields = Object.entries(properties).map(([key, definition]) => {
+      const field = record(definition);
+      const type = text(field.type) || 'any';
+      return `  - ${key}: ${type}${required.has(key) ? '（必填）' : ''}${text(field.description) ? ` · ${text(field.description)}` : ''}`;
+    });
+    return [
+      `${index + 1}. ${name}`,
+      description ? `   ${description}` : '',
+      fields.length ? `   参数\n${fields.join('\n')}` : '   参数: 无或由 Provider 管理',
+    ].filter(Boolean).join('\n');
+  });
+  if (!lines.length && activeTools.length) return activeTools.map((name, index) => `${index + 1}. ${name}`).join('\n');
+  return `[可用工具]\n${lines.join('\n\n')}`;
+}
+
+function semanticObject(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'object') return scalar(value);
+  if (Array.isArray(value)) return value.map((item, index) => `${index + 1}. ${semanticContent(item)}`).join('\n');
+  return Object.entries(record(value)).map(([key, item]) => {
+    if (item !== null && typeof item === 'object') return `${key}:\n${indent(semanticObject(item))}`;
+    return `${key}: ${scalar(item)}`;
+  }).join('\n');
+}
+
+function scalar(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === null) return 'null';
+  if (value === undefined) return '';
+  return String(value);
+}
+
+function indent(value: string): string {
+  return value.split('\n').map((line) => `  ${line}`).join('\n');
 }
 
 function normalizeDebugResponse(value: unknown): {

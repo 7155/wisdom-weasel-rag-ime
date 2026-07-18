@@ -75,6 +75,10 @@ describe('DebugContextInspector', () => {
     await user.click(within(pipeline).getByText('Provider 请求 1'));
     expect(screen.getByText(/RAW_PROVIDER_PAYLOAD/)).toBeVisible();
     expect(screen.getByText(/API 线上的 JSON 信封/)).toBeVisible();
+    expect(screen.getByRole('radiogroup', { name: '上下文展示形式' })).toHaveTextContent('模型语义');
+    await user.click(screen.getByRole('radio', { name: '原始 JSON' }));
+    expect(within(pipeline).getByText('传输 JSON')).toBeVisible();
+    expect(screen.getByText(/"messages":/)).toBeVisible();
     expect(transport.requests[0]).toEqual(expect.objectContaining({
       pathId: 'agent.session.debugContext.get',
       params: { sessionId: 'session-1' },
