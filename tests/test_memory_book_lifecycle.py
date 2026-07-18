@@ -92,6 +92,26 @@ class MemoryBookLifecycleTests(unittest.TestCase):
         self.assertTrue(retrieval_metadata["archived"])
         self.assertTrue(any(item["source_id"] == "book:topic:legacy-ime" for item in payload["hits"]))
 
+    def test_manual_review_discard_is_not_projected_for_retrieval(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-book-discard-") as temporary:
+            core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")
+            core.initialize()
+            with core._connect() as conn:
+                _insert_book(conn, "book:topic:raw-tool-log", "请调用工具的原始日志", old_ms=1_700_000_000_000)
+                conn.execute(
+                    """UPDATE memory_books
+                       SET status = 'archived', archive_reason = 'discarded_by_manual_review',
+                           archived_at_ms = 1_800_000_000_000
+                       WHERE book_id = 'book:topic:raw-tool-log'"""
+                )
+                rebuild_retrieval_docs(conn)
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs WHERE source_id = ?",
+                    ("book:topic:raw-tool-log",),
+                ).fetchone()[0]
+
+        self.assertEqual(count, 0)
+
 
 def _insert_book(conn, book_id: str, title: str, *, old_ms: int, pinned: bool = False) -> None:
     conn.execute(

@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from rag_ime.agent_memory_sources import AgentMemorySourceStore
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.db.migration_runner import DEFAULT_MIGRATIONS_DIR, apply_database_migrations
 from rag_ime.embeddings import HashingEmbeddingProvider
 from rag_ime.memory_projection import (
@@ -23,6 +25,7 @@ from rag_ime.memory_projection import (
     enqueue_memory_projection,
 )
 from rag_ime.semantic_memory_migration import (
+    _timeline_conservation_errors,
     migrate_semantic_memory_database,
     preview_semantic_memory_migration,
     verify_semantic_memory_database,
@@ -63,6 +66,173 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         self.assertEqual(preview["legacyItems"]["quarantined"], 1)
         self.assertEqual(preview["legacyTimelineDrafts"]["count"], 1)
         self.assertEqual(preview["missingAtomClaimKeys"], 2)
+
+    def test_timeline_conservation_accepts_logical_and_physical_counts(self) -> None:
+        segment = {
+            "segmentId": "segment:reviewed",
+            "eventCount": 1,
+            "physicalEventCount": 2,
+            "sourceEventIds": [1, 2],
+        }
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """INSERT INTO daily_activity_timelines(
+                       timeline_id, project, timeline_date, timezone, status,
+                       source_event_ids_json, source_event_hash, segments_json,
+                       summary_text, event_count, segment_count, metadata_json,
+                       created_at_ms, updated_at_ms
+                   ) VALUES ('timeline:reviewed', ?, '2026-07-18', 'Asia/Shanghai',
+                             'approved', '[1,2]', ?, ?, '整理后的活动', 1, 1, ?, 1, 1)""",
+                (
+                    PROJECT,
+                    "c" * 64,
+                    json.dumps([segment], ensure_ascii=False),
+                    json.dumps({"segmentationMode": "semantic_task_v2"}),
+                ),
+            )
+            errors = _timeline_conservation_errors(conn, project=PROJECT)
+
+        self.assertFalse(
+            any(item["timelineId"] == "timeline:reviewed" for item in errors)
+        )
+
+    def test_verification_rejects_active_artifacts_without_source_evidence(self) -> None:
+        report = migrate_semantic_memory_database(
+            self.db_path,
+            project=PROJECT,
+            timezone_name="Asia/Shanghai",
+        )
+        self.assertTrue(report["verification"]["ok"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            timeline_id = str(
+                conn.execute(
+                    """SELECT timeline_id FROM daily_activity_timelines
+                       WHERE project = ? AND status = 'draft'""",
+                    (PROJECT,),
+                ).fetchone()[0]
+            )
+            conn.execute(
+                """UPDATE memory_atoms SET source_event_ids_json = '[]'
+                   WHERE id = 'atom:new'"""
+            )
+            conn.execute(
+                """INSERT INTO memory_books(
+                       book_id, book_type, book_key, title, summary,
+                       normalized_text, project, source_event_ids_json,
+                       memory_atom_ids_json, status, confidence, quality_score,
+                       created_at_ms, updated_at_ms, metadata_json
+                   ) VALUES ('book:unbacked', 'topic', 'unbacked',
+                             '无来源主题', '这条主题书没有事实来源。',
+                             '无来源主题', ?, '[]', '[]', 'active',
+                             0.9, 0.9, 1, 1, '{}')""",
+                (PROJECT,),
+            )
+            conn.execute(
+                """INSERT INTO memory_items(
+                       memory_id, kind, text, normalized_text, summary,
+                       source_event_id, project, status, created_at_ms,
+                       updated_at_ms, metadata_json
+                   ) VALUES ('phrase:unbacked', 'phrase', '无来源短语',
+                             '无来源短语', '', NULL, ?, 'active', 1, 1, '{}')""",
+                (PROJECT,),
+            )
+            conn.execute(
+                """UPDATE daily_activity_timelines
+                   SET status = 'approved', source_event_ids_json = '[]',
+                       segments_json = '[]', event_count = 0, segment_count = 0
+                   WHERE project = ? AND status = 'draft'""",
+                (PROJECT,),
+            )
+
+            verification = verify_semantic_memory_database(conn, project=PROJECT)
+
+        self.assertFalse(verification["ok"])
+        self.assertIn("active_artifact_evidence_errors=4", verification["errors"])
+        self.assertEqual(
+            {
+                (item["artifactType"], item["artifactId"], item["reason"])
+                for item in verification["activeArtifactEvidenceErrors"]
+            },
+            {
+                ("atom", "atom:new", "missing_source_evidence"),
+                ("book", "book:unbacked", "missing_source_evidence"),
+                ("phrase", "phrase:unbacked", "missing_source_evidence"),
+                ("timeline", timeline_id, "missing_source_evidence"),
+            },
+        )
+
+    def test_verification_rejects_governed_evidence_not_fully_remembered(self) -> None:
+        report = migrate_semantic_memory_database(
+            self.db_path,
+            project=PROJECT,
+            timezone_name="Asia/Shanghai",
+        )
+        self.assertTrue(report["verification"]["ok"])
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="mixed-governance", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project=PROJECT)
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:mixed",
+            turn_id="turn:mixed",
+            text="治理测试来源。",
+            created_at_ms=1_800_000_000_000,
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """UPDATE agent_memory_sources
+                   SET input_event_id = 2, disposition = 'not_for_memory',
+                       disposition_reason = 'manual_review_excluded'
+                   WHERE pi_entry_id = 'entry:mixed'"""
+            )
+
+            verification = verify_semantic_memory_database(conn, project=PROJECT)
+
+        self.assertFalse(verification["ok"])
+        self.assertTrue(
+            any(
+                item["artifactType"] == "atom"
+                and item["artifactId"] == "atom:new"
+                and item["reason"] == "source_disposition_not_fully_remembered"
+                and item["eventIds"] == [2]
+                for item in verification["activeArtifactEvidenceErrors"]
+            )
+        )
+
+    def test_verification_accepts_remembered_evidence_when_raw_row_is_hidden(self) -> None:
+        report = migrate_semantic_memory_database(
+            self.db_path,
+            project=PROJECT,
+            timezone_name="Asia/Shanghai",
+        )
+        self.assertTrue(report["verification"]["ok"])
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="hidden-raw-evidence", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project=PROJECT)
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:hidden-raw-evidence",
+            turn_id="turn:hidden-raw-evidence",
+            text="隐藏原始输入不等于遗忘已整理事实。",
+            created_at_ms=1_800_000_000_000,
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """UPDATE agent_memory_sources
+                   SET input_event_id = 2, disposition = 'remember',
+                       disposition_reason = 'manual_review_remembered'
+                   WHERE pi_entry_id = 'entry:hidden-raw-evidence'"""
+            )
+            conn.execute("UPDATE memory_state SET deleted = 1 WHERE event_id = 2")
+
+            verification = verify_semantic_memory_database(conn, project=PROJECT)
+
+        self.assertTrue(verification["ok"], verification["errors"])
+        self.assertEqual(verification["activeArtifactEvidenceErrors"], [])
 
     def test_migration_translates_reviewed_item_and_rebuilds_only_draft(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
@@ -822,6 +992,245 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         self.assertNotEqual(permissive.returncode, 0)
         self.assertIn("must not be accessible by group or others", permissive.stderr)
         self.assertFalse(rollback.exists())
+
+    def test_activation_accepts_strict_manual_candidate_report(self) -> None:
+        candidate, semantic_report_path = self._build_activation_candidate("manual")
+        rollback = self.root / "manual-rollback.sqlite"
+        module = self._load_activation_module("test_manual_candidate_activation")
+        manual_report_path = self._write_manual_activation_report(
+            module,
+            candidate=candidate,
+            semantic_report_path=semantic_report_path,
+        )
+        semantic_report_path.unlink()
+
+        with mock.patch.object(
+            module,
+            "_runtime_stop_verification",
+            return_value=self._stopped_runtime_proof(),
+        ):
+            receipt = module.activate_candidate(
+                target=self.db_path,
+                candidate=candidate,
+                rollback=rollback,
+            )
+
+        self.assertEqual(
+            receipt["candidateReportSchemaVersion"],
+            "rag-ime.manual-memory-candidate-report.v1",
+        )
+        self.assertEqual(receipt["beforeState"]["project"], PROJECT)
+        self.assertEqual(
+            receipt["migrationReportPath"],
+            str(manual_report_path.resolve()),
+        )
+        self.assertTrue(receipt["verification"]["ok"])
+        self.assertTrue(rollback.is_file())
+
+    def test_activation_rejects_manual_report_when_full_input_history_drifts(self) -> None:
+        candidate, semantic_report_path = self._build_activation_candidate("manual-drift")
+        rollback = self.root / "manual-drift-rollback.sqlite"
+        module = self._load_activation_module("test_manual_candidate_drift")
+        manual_report_path = self._write_manual_activation_report(
+            module,
+            candidate=candidate,
+            semantic_report_path=semantic_report_path,
+        )
+        # This event has no agent_memory_source.  Project evidence remains the
+        # same, while the full immutable input history fingerprint must change.
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                """INSERT INTO input_events(
+                       created_at_ms, source, committed_text, app, project, tags_json
+                   ) VALUES (9999999999999, 'test', 'unreviewed input drift',
+                             'test.app', 'unrelated-project', '[]')"""
+            )
+            conn.commit()
+
+        with mock.patch.object(
+            module,
+            "_runtime_stop_verification",
+            return_value=self._stopped_runtime_proof(),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "inputEventsFingerprint"):
+                module.activate_candidate(
+                    target=self.db_path,
+                    candidate=candidate,
+                    rollback=rollback,
+                    report_path=manual_report_path,
+                )
+
+        self.assertFalse(rollback.exists())
+        self.assertFalse(
+            rollback.with_suffix(rollback.suffix + ".activation.json").exists()
+        )
+
+    def test_activation_rejects_incomplete_manual_before_state(self) -> None:
+        candidate, semantic_report_path = self._build_activation_candidate(
+            "manual-incomplete"
+        )
+        rollback = self.root / "manual-incomplete-rollback.sqlite"
+        module = self._load_activation_module("test_manual_candidate_incomplete")
+        manual_report_path = self._write_manual_activation_report(
+            module,
+            candidate=candidate,
+            semantic_report_path=semantic_report_path,
+        )
+        report = json.loads(manual_report_path.read_text(encoding="utf-8"))
+        del report["beforeState"]["governanceFingerprint"]
+        manual_report_path.write_text(
+            json.dumps(report, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.chmod(manual_report_path, 0o600)
+
+        with self.assertRaisesRegex(ValueError, "governanceFingerprint"):
+            module.activate_candidate(
+                target=self.db_path,
+                candidate=candidate,
+                rollback=rollback,
+                report_path=manual_report_path,
+            )
+        self.assertFalse(rollback.exists())
+
+    def test_activation_live_gate_rejects_unbacked_active_artifact(self) -> None:
+        candidate, semantic_report_path = self._build_activation_candidate(
+            "manual-unbacked"
+        )
+        rollback = self.root / "manual-unbacked-rollback.sqlite"
+        module = self._load_activation_module("test_manual_candidate_unbacked")
+        manual_report_path = self._write_manual_activation_report(
+            module,
+            candidate=candidate,
+            semantic_report_path=semantic_report_path,
+        )
+        target_before = self.db_path.read_bytes()
+        with closing(sqlite3.connect(candidate)) as conn:
+            conn.execute(
+                """UPDATE memory_atoms SET source_event_ids_json = '[]'
+                   WHERE id = 'atom:new'"""
+            )
+            conn.commit()
+        report = json.loads(manual_report_path.read_text(encoding="utf-8"))
+        # Keep all static report checks satisfied. The activation path must not
+        # trust the old report's semanticVerification; it must re-open and
+        # verify the exact candidate bytes immediately before replacement.
+        report["candidateSha256"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        manual_report_path.write_text(
+            json.dumps(report, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.chmod(manual_report_path, 0o600)
+
+        with mock.patch.object(
+            module,
+            "_runtime_stop_verification",
+            return_value=self._stopped_runtime_proof(),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "active_artifact_evidence_errors",
+            ):
+                module.activate_candidate(
+                    target=self.db_path,
+                    candidate=candidate,
+                    rollback=rollback,
+                    report_path=manual_report_path,
+                )
+
+        self.assertEqual(self.db_path.read_bytes(), target_before)
+        self.assertFalse(rollback.exists())
+
+    def _build_activation_candidate(self, name: str) -> tuple[Path, Path]:
+        candidate = self.root / f"{name}-candidate.sqlite"
+        migrate = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "migrate_semantic_memory_v2.py"),
+                "--source",
+                str(self.db_path),
+                "--output",
+                str(candidate),
+                "--project",
+                PROJECT,
+                "--embedding-from-env",
+                "--apply",
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self._embedding_environment(),
+        )
+        self.assertEqual(migrate.returncode, 0, migrate.stderr)
+        return (
+            candidate,
+            candidate.with_suffix(candidate.suffix + ".semantic-v2-report.json"),
+        )
+
+    def _write_manual_activation_report(
+        self,
+        module: object,
+        *,
+        candidate: Path,
+        semantic_report_path: Path,
+    ) -> Path:
+        semantic_report = json.loads(
+            semantic_report_path.read_text(encoding="utf-8")
+        )
+        before_state = module._manual_before_state(self.db_path, project=PROJECT)
+        application = {
+            "ok": True,
+            "project": PROJECT,
+            "candidatePath": str(candidate.resolve()),
+            "beforeState": before_state,
+            "evidenceFingerprint": before_state["evidenceFingerprint"],
+            "memoryCatalogFingerprintBefore": before_state[
+                "memoryCatalogFingerprint"
+            ],
+            "governanceFingerprintBefore": before_state["governanceFingerprint"],
+            "inputEventsFingerprint": before_state["inputEventsFingerprint"],
+            "verification": {"ok": True, "errors": []},
+        }
+        report = {
+            "schemaVersion": "rag-ime.manual-memory-candidate-report.v1",
+            "ok": True,
+            "beforeState": before_state,
+            "candidatePath": str(candidate.resolve()),
+            "candidateSha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+            "providerFingerprint": semantic_report["verification"][
+                "vectorProviderFingerprint"
+            ],
+            "application": application,
+            "manualVerification": {"ok": True, "errors": []},
+            "semanticVerification": semantic_report["verification"],
+        }
+        path = candidate.with_suffix(candidate.suffix + ".manual-review-report.json")
+        path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        os.chmod(path, 0o600)
+        return path
+
+    @staticmethod
+    def _load_activation_module(name: str) -> object:
+        script = ROOT / "scripts" / "activate_semantic_memory_candidate.py"
+        spec = importlib.util.spec_from_file_location(name, script)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _stopped_runtime_proof(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.runtime-stop-verification.v1",
+            "required": True,
+            "ok": True,
+            "targetPath": str(self.db_path),
+            "loadedLaunchAgents": [],
+            "listeningPorts": [],
+            "databaseOpenHandles": [],
+            "orphanRuntimeProcesses": [],
+            "errors": [],
+        }
 
     def _seed(self, conn: sqlite3.Connection) -> None:
         tz = ZoneInfo("Asia/Shanghai")

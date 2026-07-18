@@ -272,7 +272,7 @@ const memoryParameterSchema: Record<string, unknown> = {
     ...["curation_prepare", "maintenance_preview"].map((op) => ({
       type: "object",
       additionalProperties: false,
-      required: ["op"],
+      required: ["op", "trigger"],
       properties: {
         op: {
           const: op,
@@ -283,6 +283,11 @@ const memoryParameterSchema: Record<string, unknown> = {
         scope: { type: "string", enum: ["incremental", "global"] },
         policy: { type: "string", enum: ["conservative"] },
         instruction: { type: "string", maxLength: 800 },
+        trigger: {
+          type: "string",
+          enum: ["task_completion", "explicit_request", "idle_batch"],
+          description: "仅允许在已验证任务完成、用户明确要求或低频空闲批处理时整理；普通聊天轮次不是触发器。",
+        },
       },
     })),
     ...["maintenance_review", "maintenance_apply", "maintenance_rollback"].map((op) => ({
@@ -616,8 +621,11 @@ const toolSpecs: ToolSpec[] = [
       "Session 启动快照只在首轮注入一次。后续缺少相关证据、证据冲突或主题变化时再主动检索，不要每轮机械调用。",
       "事实使用 search/get/explain(kind=atoms)，主题使用 catalog/read 或 list(kind=books)，活动连续性使用 search(kind=timelines)，原始来源使用 list(kind=evidence)。Timeline 不能单独证明稳定事实。",
       "增加、更正、遗忘必须先调用对应 preview，再把返回的真实 proposalId 交给对应 apply；没有原生审批回执不得声称已修改。targetId 只能使用 search/get 返回的稳定 ID。",
-      "Evidence 处于 sensitive、not_for_memory、expired、deleted 或 tombstoned 状态时必须失败关闭；不得引用、重建或通过 Timeline 绕过来源治理。",
-      "需要整理时只调用一次 curation_prepare；不要在主对话逐条生成或复述 Atom、Group、Tag、Book 和词库操作。maintenance_preview 仅为旧客户端别名。",
+      "Evidence 处于 sensitive、not_for_memory、expired、显式遗忘或 tombstoned 状态时必须失败关闭；不得引用、重建或通过 Timeline 绕过来源治理。审核后隐藏的原始输入不等于显式遗忘：可以使用已批准的派生 Atom，但不得重新打开或引用隐藏原文。",
+      "长期记忆只接收可跨会话复用的事实、稳定偏好、明确决定、长期约束和持续计划。无事实问题、失败/拒绝/超时回执、整理流程状态、重复问句和当轮临时指令必须进入 not_for_memory，仅保留 Evidence 与审计记录。",
+      "zhiyou-v1 的普通聊天、回合结束、进度播报和助手自述不得触发记忆整理。仅在项目/功能/阶段实际完成且有可复用信息、用户明确要求，或低频空闲批处理时调用；完成边界先本地过 Durable Information Gate，无内容则不调用。",
+      "问题中若包含稳定陈述，只抽取陈述部分；Atom、Book 与 Timeline 必须综合成规范事实或任务摘要，禁止原封不动复制长输入、问句、工具回执、runId 或草案提示。instruction 只能收窄范围，不能放宽这些门禁。",
+      "需要整理时只调用一次 curation_prepare，并明确传 trigger=task_completion、explicit_request 或 idle_batch；不要在主对话逐条生成或复述 Atom、Group、Tag、Book 和词库操作。maintenance_preview 仅为旧客户端别名。",
       "curation_prepare 和 maintenance_review 会立即暂停当前回合并打开控制中心审阅；恢复后只简要说明审阅结果并结束本轮，不要再次调用记忆维护工具。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
       "旧维护流的应用或回滚只能使用 maintenance_status/curation_prepare 返回的真实 runId；治理回滚只能使用已应用回执中的 proposalId。",
     ],

@@ -249,12 +249,27 @@ def _memory_item_docs(
         memory_id = str(row["memory_id"])
         text = compact_whitespace(str(row["text"] or ""))
         normalized = compact_whitespace(str(row["normalized_text"] or ""))
+        metadata = _json_object(row["metadata_json"])
+        metadata_source_event_ids = metadata.get("sourceEventIds")
+        source_event_ids = _positive_event_ids(
+            [
+                row["source_event_id"],
+                *(
+                    metadata_source_event_ids
+                    if isinstance(metadata_source_event_ids, (list, tuple))
+                    else []
+                ),
+            ]
+        )
         if not text or _is_tombstoned(
             memory_id=memory_id,
             text=text,
             normalized_text=normalized,
-            source_event_ids=[row["source_event_id"]],
+            source_event_ids=source_event_ids,
             tombstones=tombstones,
+        ) or (
+            source_event_ids
+            and not _source_events_retrievable(conn, source_event_ids)
         ):
             continue
         tags = _memory_item_tags(conn, memory_item_pk=int(row["id"]))
@@ -263,7 +278,6 @@ def _memory_item_docs(
             continue
         if doc_type == "item" and not include_legacy_items:
             continue
-        metadata = _json_object(row["metadata_json"])
         context_group_id = compact_whitespace(str(metadata.get("contextGroupId") or ""))
         if not context_group_id and int(row["source_event_id"] or 0) > 0:
             context_group_id = _event_context_group(conn, int(row["source_event_id"]))
@@ -324,6 +338,9 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             normalized_text="",
             source_event_ids=source_event_ids,
             tombstones=tombstones,
+        ) or (
+            source_event_ids
+            and not _source_events_retrievable(conn, source_event_ids)
         ):
             continue
         aliases = _atom_aliases(conn, atom_id=atom_id)
@@ -370,7 +387,8 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
           AND book_type != 'app_archive'
           AND archive_reason NOT IN (
               'complete_input_history',
-              'superseded_by_curated_baseline'
+              'superseded_by_curated_baseline',
+              'discarded_by_manual_review'
           )
           AND (? = '' OR project = ? OR project = '')
         ORDER BY updated_at_ms DESC
@@ -388,6 +406,9 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             normalized_text="",
             source_event_ids=source_event_ids,
             tombstones=tombstones,
+        ) or (
+            source_event_ids
+            and not _source_events_retrievable(conn, source_event_ids)
         ):
             continue
         book_type = str(row["book_type"] or "")
@@ -572,6 +593,69 @@ def _source_event_tombstoned(
         ):
             return True
     return False
+
+
+def _positive_event_ids(values: list[object] | tuple[object, ...]) -> list[int]:
+    result: list[int] = []
+    for value in values:
+        try:
+            event_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if event_id > 0 and event_id not in result:
+            result.append(event_id)
+    return result
+
+
+def _source_events_retrievable(
+    conn: sqlite3.Connection,
+    event_ids: list[object] | tuple[object, ...],
+) -> bool:
+    normalized = _positive_event_ids(event_ids)
+    if not normalized:
+        return False
+    placeholders = ",".join("?" for _ in normalized)
+    visible = int(
+        conn.execute(
+            f"""SELECT COUNT(*)
+                FROM input_events AS event
+                WHERE event.id IN ({placeholders})
+                  AND NOT EXISTS (
+                      SELECT 1 FROM memory_tombstones AS tombstone
+                      WHERE tombstone.active = 1
+                        AND (
+                            (tombstone.target_type = 'source_event_id'
+                             AND tombstone.target_value = CAST(event.id AS TEXT))
+                            OR
+                            (tombstone.target_type = 'memory_id'
+                             AND tombstone.target_value = ('event:' || event.id))
+                        )
+                  )""",
+            tuple(normalized),
+        ).fetchone()[0]
+    )
+    if visible != len(normalized):
+        return False
+    governed_unavailable = int(
+        conn.execute(
+            f"""SELECT COUNT(*)
+                FROM (
+                    SELECT input_event_id
+                    FROM agent_memory_sources
+                    WHERE status = 'active'
+                      AND input_event_id IN ({placeholders})
+                    GROUP BY input_event_id
+                    HAVING SUM(
+                        CASE
+                            WHEN disposition NOT IN ('not_for_memory', 'expired')
+                            THEN 1 ELSE 0
+                        END
+                    ) = 0
+                ) AS unavailable""",
+            tuple(normalized),
+        ).fetchone()[0]
+    )
+    return governed_unavailable == 0
 
 
 def _json_list(raw: Any) -> list[str]:

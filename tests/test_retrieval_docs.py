@@ -8,6 +8,8 @@ import unittest
 from contextlib import closing, contextmanager, redirect_stdout
 from pathlib import Path
 
+from rag_ime.agent_memory_sources import AgentMemorySourceStore
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.cli import main
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
@@ -302,6 +304,114 @@ class RetrievalDocsTests(unittest.TestCase):
                             linked_doc_types(conn)
                         )
                     )
+
+    def test_retrieval_docs_do_not_publish_governed_excluded_evidence(self) -> None:
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="projection-governance", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:excluded",
+            turn_id="turn:excluded",
+            text="候选数据库必须先完成验证再激活。",
+            created_at_ms=1_700_000_000_000,
+        )
+        with self.connect() as conn:
+            event_id = int(
+                conn.execute(
+                    """SELECT id FROM input_events
+                       WHERE committed_text = '候选数据库必须先完成验证再激活。'"""
+                ).fetchone()[0]
+            )
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    sample_compile_output(event_id),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            conn.execute(
+                """UPDATE agent_memory_sources
+                   SET disposition = 'not_for_memory',
+                       disposition_reason = 'manual_review_excluded'
+                   WHERE input_event_id = ?""",
+                (event_id,),
+            )
+
+            report = rebuild_retrieval_docs(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+            linked = {
+                str(row[0])
+                for row in conn.execute(
+                    """SELECT doc_type FROM memory_retrieval_docs
+                       WHERE json_extract(metadata_json, '$.sourceEventId') = ?
+                          OR metadata_json LIKE ?""",
+                    (event_id, f"%{event_id}%"),
+                ).fetchall()
+            }
+
+        self.assertEqual(linked, set())
+        self.assertEqual(report["counts"]["phrase"], 0)
+        self.assertEqual(report["counts"]["atom"], 0)
+        self.assertEqual(report["counts"]["book"], 0)
+
+    def test_hidden_raw_event_still_publishes_remembered_derived_artifacts(self) -> None:
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="projection-remember", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:remembered",
+            turn_id="turn:remembered",
+            text="整理后的记忆应保留可追溯证据。",
+            created_at_ms=1_700_000_000_000,
+        )
+        with self.connect() as conn:
+            event_id = int(
+                conn.execute(
+                    """SELECT id FROM input_events
+                       WHERE committed_text = '整理后的记忆应保留可追溯证据。'"""
+                ).fetchone()[0]
+            )
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    sample_compile_output(event_id),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            conn.execute(
+                """UPDATE agent_memory_sources
+                   SET disposition = 'remember',
+                       disposition_reason = 'manual_review_remembered'
+                   WHERE input_event_id = ?""",
+                (event_id,),
+            )
+            # Hiding the raw row prevents direct raw-history recall; it does
+            # not revoke the reviewed artifacts derived from that evidence.
+            conn.execute(
+                "UPDATE memory_state SET deleted = 1 WHERE event_id = ?",
+                (event_id,),
+            )
+
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            projected = {
+                (str(row[0]), str(row[1]))
+                for row in conn.execute(
+                    """SELECT doc_type, source_id FROM memory_retrieval_docs
+                       WHERE status = 'active'"""
+                ).fetchall()
+            }
+
+        self.assertIn(("phrase", "phrase:多路召回"), projected)
+        self.assertIn(("atom", "atom:vcp-style-rag-core"), projected)
+        self.assertTrue(any(kind == "book" for kind, _ in projected))
 
     def test_retrieval_docs_rebuild_is_idempotent(self) -> None:
         self._record_seed_event()

@@ -128,13 +128,20 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertIn("甲角色采用海盐缓存方案", rendered)
         self.assertIn("agent/role-a", rendered)
         self.assertNotIn("乙角色采用薄荷缓存方案", rendered)
+        self.assertTrue(role_a_payload["retrieval"]["temporalIntent"])
+        self.assertFalse(role_a_payload["retrieval"]["activityTimelineIncluded"])
+        self.assertEqual(role_a["lifecycle"], "persistent")
 
     def test_daily_activity_book_requires_temporal_or_continuation_intent(self) -> None:
         hits = [
             {
                 "doc_type": "book",
                 "source_id": "book:daily:activity:test",
-                "text": "当天很多互不相关的完整输入汇总",
+                "text": (
+                    "当天时间线：上午学习 FFN 隐藏层。；"
+                    "下午修复 RAG IME 的 Session 召回。；"
+                    + "晚上整理其他课程内容。；" * 80
+                ),
                 "score": 1.2,
                 "confidence": 1.0,
                 "tags": ["daily", "activity-timeline"],
@@ -159,7 +166,7 @@ class SessionMemoryRecallTests(unittest.TestCase):
         )
         continuing, _ = _select_hits(
             hits,
-            query_text="继续最近的工作",
+            query_text="继续最近的 RAG IME 工作",
             max_items=8,
             max_chars=6_400,
         )
@@ -168,6 +175,82 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertEqual(
             [item["sourceId"] for item in continuing],
             ["book:daily:activity:test", "atom:pi-context"],
+        )
+        self.assertIn("Session 召回", continuing[0]["text"])
+        self.assertNotIn("FFN 隐藏层", continuing[0]["text"])
+
+        unrelated, _ = _select_hits(
+            [
+                {
+                    "doc_type": "book",
+                    "source_id": "book:daily:activity:unrelated",
+                    "text": "当天时间线：上午切换 CAS 账号；下午学习 FFN 隐藏层。",
+                    "score": 1.2,
+                    "confidence": 1.0,
+                    "tags": ["daily", "activity-timeline"],
+                    "metadata": {"lanes": ["bm25_raw", "time"]},
+                },
+                hits[1],
+            ],
+            query_text="我最近在 RAG IME 项目里做了什么？",
+            max_items=8,
+            max_chars=6_400,
+        )
+        self.assertEqual(
+            [item["sourceId"] for item in unrelated],
+            ["atom:pi-context"],
+        )
+
+    def test_topic_book_quota_prefers_query_tags_and_vector_relevance(self) -> None:
+        def book(
+            source_id: str,
+            *,
+            tags: list[str],
+            vector_raw: float,
+            score: float,
+        ) -> dict[str, object]:
+            return {
+                "doc_type": "book",
+                "source_id": source_id,
+                "text": source_id,
+                "score": score,
+                "confidence": 1.0,
+                "tags": tags,
+                "metadata": {
+                    "lanes": ["bm25_raw", "vector_raw"],
+                    "rawScores": {"vector_raw": vector_raw},
+                },
+            }
+
+        selected, _ = _select_hits(
+            [
+                book(
+                    "book:candidate-ui",
+                    tags=["候选展示", "UI"],
+                    vector_raw=0.35,
+                    score=1.2,
+                ),
+                book(
+                    "book:memory-rag",
+                    tags=["记忆", "RAG"],
+                    vector_raw=0.55,
+                    score=1.0,
+                ),
+                book(
+                    "book:pi-gateway",
+                    tags=["PI", "网关型Agent"],
+                    vector_raw=0.39,
+                    score=0.98,
+                ),
+            ],
+            query_text="Pi Runtime 如何注入记忆 RAG？",
+            max_items=8,
+            max_chars=6_400,
+        )
+
+        self.assertEqual(
+            [item["sourceId"] for item in selected],
+            ["book:memory-rag", "book:pi-gateway"],
         )
 
     def _record_input(self, text: str) -> int:

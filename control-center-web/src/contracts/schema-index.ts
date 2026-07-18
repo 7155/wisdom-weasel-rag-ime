@@ -11272,7 +11272,9 @@ export const contractSchemas = {
           "visibleOwners",
           "requestedEmbeddingProvider",
           "embeddingProvider",
-          "embeddingFallback"
+          "embeddingFallback",
+          "temporalIntent",
+          "activityTimelineIncluded"
         ],
         "properties": {
           "strategy": {
@@ -11320,6 +11322,12 @@ export const contractSchemas = {
             "type": "string"
           },
           "embeddingFallback": {
+            "type": "boolean"
+          },
+          "temporalIntent": {
+            "type": "boolean"
+          },
+          "activityTimelineIncluded": {
             "type": "boolean"
           }
         }

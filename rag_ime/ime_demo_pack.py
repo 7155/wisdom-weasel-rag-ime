@@ -558,7 +558,7 @@ def _verify_no_store(db_path: Path, *, fixture: dict[str, Any]) -> dict[str, obj
 
 def _resolved_memory_book(fixture: dict[str, Any], *, event_ids: dict[str, int]) -> dict[str, object]:
     compile_output = copy.deepcopy(_object(fixture["memoryBook"], "Memory Book"))
-    for section in ("dailyBooks", "memoryAtoms", "phraseCandidates"):
+    for section in ("dailyBooks", "topicBooks", "memoryAtoms", "phraseCandidates"):
         for raw in compile_output.get(section, []):
             item = _object(raw, section)
             item["sourceEventIds"] = _resolve_refs(item.pop("sourceRefs", []), event_ids=event_ids)

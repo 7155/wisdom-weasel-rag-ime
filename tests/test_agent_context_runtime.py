@@ -141,7 +141,10 @@ class AgentContextRuntimeTests(unittest.TestCase):
             payload={"queryFree": True},
         )
 
-        expired = self.runtime.expire_legacy_memory_bootstrap(self.session_id)
+        expired = self.runtime.expire_legacy_memory_bootstrap(
+            self.session_id,
+            current_dedupe_key=f"memory-bootstrap:{self.session_id}:v3",
+        )
 
         self.assertEqual(expired, 1)
         items = self.runtime.list_items(self.session_id, status="expired")
@@ -191,6 +194,7 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertTrue(prompt.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
         envelope = json.loads(prompt.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX))
         self.assertEqual(envelope["message"], "用户现在的问题")
+        self.assertEqual(envelope["sessionContext"], "")
         self.assertEqual(envelope["transientContext"], "<context>异步结果</context>")
 
     def test_maintenance_bounds_terminal_payloads_and_trace_history(self) -> None:

@@ -19,7 +19,11 @@ from .agent_configuration import (
     default_agent_configuration,
     runtime_policy_from_configuration,
 )
-from .agent_context_runtime import AgentContextRuntime, compose_runtime_prompt
+from .agent_context_runtime import (
+    AgentContextRuntime,
+    compose_runtime_prompt,
+    render_context_items,
+)
 from .agent_command_receipts import AgentCommandReceiptStore
 from .agent_events import AgentEventHub
 from .agent_delegation import AgentDelegationCoordinator
@@ -2977,7 +2981,11 @@ class AgentService:
             reason="" if async_items else "inbox empty",
             metadata={"itemCount": len(async_items)},
         )
-        runtime_message = compose_runtime_prompt(message, str(materialized["prompt"]))
+        runtime_message = compose_runtime_prompt(
+            message,
+            render_context_items(async_items),
+            session_context_prompt=render_context_items(memory_items),
+        )
         request_node = self.context_runtime.add_trace_node(
             trace_id,
             stage="runtime_request",
@@ -3097,7 +3105,8 @@ class AgentService:
         dedupe_key = self.memory_bootstrap.dedupe_key(session_id)
         try:
             expired_legacy = self.context_runtime.expire_legacy_memory_bootstrap(
-                session_id
+                session_id,
+                current_dedupe_key=dedupe_key,
             )
             existing = self.context_runtime.item_by_dedupe_key(
                 session_id,

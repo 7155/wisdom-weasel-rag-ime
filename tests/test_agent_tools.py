@@ -771,6 +771,14 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         self.assertIn("curation_prepare", by_operation)
         self.assertEqual(
+            by_operation["curation_prepare"]["required"],
+            ["op", "trigger"],
+        )
+        self.assertEqual(
+            parameters["properties"]["trigger"]["enum"],
+            ["task_completion", "explicit_request", "idle_batch"],
+        )
+        self.assertEqual(
             parameters["properties"]["scope"]["enum"],
             ["incremental", "global"],
         )
@@ -817,6 +825,9 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertIn(field, parameters["properties"])
         self.assertIn("Session 启动快照只在首轮注入一次", memory["description"])
         self.assertIn("Timeline 不能单独证明稳定事实", memory["description"])
+        self.assertIn("无事实问题", memory["description"])
+        self.assertIn("失败回执", memory["description"])
+        self.assertIn("禁止原样复制长输入", memory["description"])
         self.assertNotIn("changes", str(parameters))
 
         role_book = next(
@@ -1254,7 +1265,11 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_memory_preview_apply_and_rollback_use_native_approval_and_revision_hash(self) -> None:
         preview = self.gateway.execute(
-            self._call("maintenance_preview", instruction="整理本次 Pi 会话的最终事实")
+            self._call(
+                "maintenance_preview",
+                trigger="explicit_request",
+                instruction="整理本次 Pi 会话的最终事实",
+            )
         )["result"]
         self.assertTrue(preview["reviewRequired"])
         self.assertTrue(preview["needsReview"])
@@ -1311,6 +1326,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         result = self.gateway.execute(
             self._call(
                 "curation_prepare",
+                trigger="task_completion",
                 scope="incremental",
                 policy="conservative",
             )
@@ -1333,6 +1349,18 @@ class ControlToolGatewayTests(unittest.TestCase):
             (request["ownerKind"], request["ownerId"]),
             ("user", "default"),
         )
+        self.assertEqual(request["trigger"], "task_completion")
+
+    def test_memory_curation_prepare_rejects_ordinary_chat_without_completion_trigger(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "requires trigger"):
+            self.gateway.execute(self._call("curation_prepare"))
+        with self.assertRaisesRegex(ValueError, "requires trigger"):
+            self.gateway.execute(
+                self._call("curation_prepare", trigger="ordinary_chat")
+            )
+        self.assertEqual(self.facade.memory_maintenance_requests, [])
 
     def test_memory_curation_prepare_treats_no_sources_as_success(self) -> None:
         self.facade.memory_prepare_no_run = True
@@ -1340,6 +1368,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         result = self.gateway.execute(
             self._call(
                 "curation_prepare",
+                trigger="explicit_request",
                 scope="incremental",
                 policy="conservative",
             )

@@ -119,12 +119,14 @@ class _DecisionOnlyOrganizer:
                 {
                     "sourceRef": item["sourceRef"],
                     "disposition": (
-                        "needs_review" if "指代不清" in str(item["text"]) else "remember"
+                        "needs_review"
+                        if "指代不清" in str(item["text"])
+                        else "not_for_memory"
                     ),
                     "reasonCode": (
                         "ambiguous_reference"
                         if "指代不清" in str(item["text"])
-                        else "durable_user_intent"
+                        else "one_batch_test_input"
                     ),
                     "confidence": 0.95,
                 }
@@ -183,7 +185,17 @@ class _OmittingOrganizer:
                 }
             ],
             "topicBooks": [],
-            "memoryAtoms": [],
+            "memoryAtoms": [
+                {
+                    "canonicalText": str(first["text"]),
+                    "summary": "模型已覆盖的稳定证据",
+                    "kind": "project_requirement",
+                    "sourceEventIds": list(first["sourceEventIds"]),
+                    "confidence": 0.9,
+                    "qualityScore": 0.9,
+                    "directCandidateAllowed": False,
+                }
+            ],
         }
 
 
@@ -480,7 +492,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             session_id=str(self.user_session["id"]),
             pi_entry_id="entry:joint-context",
             turn_id="turn:joint-context",
-            text="继续整理输入法个人记忆",
+            text="输入法个人记忆需要按可追溯证据整理。",
             created_at_ms=timestamp,
         )
         evidence = AgentMemoryEvidenceStore(
@@ -592,7 +604,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         first_status = curator.status(current_ms=1_000)
         second_report = curator.run_due(current_ms=61_001)
 
-        self.assertTrue(first_report["ok"])
+        self.assertTrue(first_report["ok"], first_report)
         self.assertEqual(
             first_status["scopes"][0]["lastSourceCursor"]["sourceId"],
             str(first["source"]["sourceId"]),
@@ -637,7 +649,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         report = curator.run_due(current_ms=1_000)
         status = report["status"]["scopes"][0]
 
-        self.assertTrue(report["ok"])
+        self.assertTrue(report["ok"], report)
         self.assertEqual(
             self.sources.get(str(first["source"]["sourceId"]))["disposition"],
             "remember",
@@ -719,6 +731,126 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         )
         stored = self.sources.get(str(source["source"]["sourceId"]))
         self.assertEqual(stored["disposition"], "not_for_memory")
+
+    def test_fact_free_questions_workflow_noise_duplicates_and_commands_are_filtered(self) -> None:
+        texts = [
+            "Pi Runtime 的新 Session 个人记忆应该如何注入？",
+            "Pi Runtime 的新 Session 个人记忆应该如何注入？",
+            "请调用 ime_memory Tool 的 curation_prepare，只生成草案并返回 runId。",
+            "合并分支并记录改动",
+        ]
+        sources = [
+            self.sources.checkpoint_user_message(
+                session_id=str(self.user_session["id"]),
+                pi_entry_id=f"entry:noise:{index}",
+                turn_id=f"turn:noise:{index}",
+                text=text,
+                created_at_ms=100 + index,
+            )
+            for index, text in enumerate(texts)
+        ]
+        organizer = _FakeOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+        )
+        curator.initialize()
+
+        report = curator.run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(organizer.calls, [])
+        reasons = [
+            self.sources.get(str(source["source"]["sourceId"]))["dispositionReason"]
+            for source in sources
+        ]
+        self.assertEqual(
+            reasons,
+            [
+                "duplicate_repeated_input",
+                "standalone_question_no_durable_claim",
+                "memory_workflow_instruction",
+                "transient_user_instruction",
+            ],
+        )
+        self.assertTrue(
+            all(
+                self.sources.get(str(source["source"]["sourceId"]))["disposition"]
+                == "not_for_memory"
+                for source in sources
+            )
+        )
+
+    def test_failed_tool_receipt_is_audit_only(self) -> None:
+        source = self.sources.checkpoint_tool_receipt(
+            {
+                "approvalId": "approval:failed-memory-draft",
+                "sessionId": str(self.user_session["id"]),
+                # Simulate a legacy/malformed row that passed the old receipt
+                # checkpoint despite carrying a failed outcome in its text.
+                "state": "applied",
+                "receipt": {
+                    "mutationApplied": True,
+                    "summary": "草案生成被网关校验拒绝，尚未生成 runId。",
+                },
+            },
+            created_at_ms=100,
+        )
+        organizer = _FakeOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+        )
+        curator.initialize()
+
+        report = curator.run_due(
+            manual=True,
+            owner_kind="shared",
+            owner_id="wisdom-weasel-rag-ime",
+            current_ms=1_000,
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(organizer.calls, [])
+        stored = self.sources.get(str(source["source"]["sourceId"]))
+        self.assertEqual(stored["disposition"], "not_for_memory")
+        self.assertEqual(stored["dispositionReason"], "failed_tool_receipt")
+
+    def test_verbatim_long_source_cannot_become_atom_or_book(self) -> None:
+        source = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:verbatim-long",
+            turn_id="turn:verbatim-long",
+            text=(
+                "输入法记忆整理需要先核对每条证据，再生成事实原子和主题书，"
+                "同时不得把这段长输入原封不动复制进长期记忆正文。"
+            ),
+            created_at_ms=100,
+        )
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_FakeOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+        )
+        curator.initialize()
+
+        report = curator.run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"])
+        result = report["results"][0]
+        self.assertEqual(result["runStatus"], "idle")
+        self.assertEqual(result["diffCount"], 0)
+        stored = self.sources.get(str(source["source"]["sourceId"]))
+        self.assertEqual(stored["disposition"], "needs_review")
+        self.assertEqual(
+            stored["dispositionReason"],
+            "remember_without_durable_atom",
+        )
 
     def test_rejecting_every_semantic_write_resolves_review_without_forgetting_evidence(
         self,

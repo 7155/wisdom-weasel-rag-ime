@@ -386,40 +386,58 @@ The stack installer isolates each worker's copied Python package, records its
 source commit, refuses dirty tracked source by default, and audits the complete
 installed generation before returning success.
 
-### Migrate A Legacy Memory Database
+### Review And Migrate A Legacy Memory Database
 
-The semantic-memory migration is copy-first and fail-closed. Preview is
-read-only. A production candidate requires the configured embedding provider,
-complete document/vector parity, caught-up projection checkpoints, and an empty
-failed/dead Outbox before it can be activated. By default no Timeline or Role
-Book draft is auto-approved. The explicit historical-curation mode below is the
-only exception: it reviews every owner-memory batch inside the offline candidate,
-rejects transient runtime receipts and ambiguous evidence, approves source-backed
-derived Timelines, and fails unless no historical source or draft remains pending.
+Historical curation is manual, copy-first, and fail-closed. Do not let a local
+large model rewrite the production database. First export an immutable private
+snapshot, make an explicit decision for every logical input and every existing
+Atom, Book, and Phrase, and validate the complete manifest. Questions without a
+durable assertion, workflow noise, failed receipts, duplicates, and one-turn
+commands stay in Evidence/audit storage as `not_for_memory`; they do not become
+Atoms, Books, Timelines, Phrases, or retrieval documents.
+
+A production candidate additionally requires the configured embedding provider,
+complete document/vector parity, caught-up projection checkpoints, an empty
+failed/dead Outbox, and exact source fingerprints. No Timeline or Role Book draft
+is auto-approved.
 
 ```bash
 DB="$HOME/Library/Application Support/RagIme/rag-ime.sqlite"
-CANDIDATE="/path/to/rag-ime-semantic-v2-candidate.sqlite"
+SNAPSHOT="/private/path/rag-ime-reviewed-source.sqlite"
+EXPORT="/private/path/rag-ime-review-export.json"
+MANIFEST="/private/path/rag-ime-review-manifest.json"
+CANDIDATE="/private/path/rag-ime-reviewed-candidate.sqlite"
 ROLLBACK="/path/to/rag-ime-before-semantic-v2.sqlite"
 
-python3 scripts/migrate_semantic_memory_v2.py \
-  --source "$DB" --project wisdom-weasel-rag-ime
+python3 scripts/review_memory_history.py export \
+  --source "$DB" --snapshot "$SNAPSHOT" --output "$EXPORT" \
+  --project wisdom-weasel-rag-ime --timezone Asia/Shanghai
+
+# Review every exported logical input and existing memory item. Then assemble
+# the reviewed parts and catalog audit into one complete manifest.
+python3 scripts/review_memory_history.py assemble \
+  --export "$EXPORT" --part /private/path/review-part-01.json \
+  --existing-audit /private/path/existing-memory-audit.json \
+  --output "$MANIFEST"
+python3 scripts/review_memory_history.py validate \
+  --export "$EXPORT" --manifest "$MANIFEST"
+
+python3 scripts/apply_manual_memory_review.py \
+  --source "$SNAPSHOT" --export "$EXPORT" --manifest "$MANIFEST" \
+  --output "$CANDIDATE" --embedding-from-env
 
 scripts/stop_rag_ime_runtime.sh
-python3 scripts/migrate_semantic_memory_v2.py \
-  --source "$DB" --output "$CANDIDATE" \
-  --project wisdom-weasel-rag-ime --timezone Asia/Shanghai \
-  --embedding-from-env --curate-history \
-  --confirm-history-curation CURATE_ALL_HISTORICAL_MEMORY --apply
 python3 scripts/activate_semantic_memory_candidate.py \
-  --target "$DB" --candidate "$CANDIDATE" --rollback "$ROLLBACK" \
+  --target "$DB" --candidate "$CANDIDATE" \
+  --report "${CANDIDATE}.manual-review-report.json" --rollback "$ROLLBACK" \
   --confirm ACTIVATE_SEMANTIC_MEMORY_V2
 scripts/build_control_center.sh install-stack --include-squirrel --include-pi --include-mlx
 ```
 
-The activation report is bound to the candidate SHA-256 and is revalidated
-against the live candidate immediately before and after the atomic replacement.
-Keep all writers stopped from candidate creation through activation.
+The activation report is bound to the candidate SHA-256 and all four reviewed
+source fingerprints. They are revalidated immediately before the atomic
+replacement, and the activated database is verified again afterward. Keep all
+writers stopped from the final drift check through activation.
 
 ### Multi-Device Agent Gateway
 

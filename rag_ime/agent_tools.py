@@ -879,7 +879,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "ime_memory": (
         "query", "limit", "kind", "bookId", "traceId", "runId", "instruction",
         "targetId", "text", "reason", "memoryKind", "evidenceIds", "claimKey",
-        "idempotencyKey", "proposalId", "draftId", "mode",
+        "idempotencyKey", "proposalId", "draftId", "mode", "trigger",
     ),
     "agent_role_book": (
         "revisionId", "draftId", "limit", "updates", "changeSummary",
@@ -923,6 +923,8 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("agent_schedule", "retry"): ("scheduleId",),
     ("ime_memory", "read"): ("bookId",),
     ("ime_memory", "trace"): ("traceId",),
+    ("ime_memory", "curation_prepare"): ("trigger",),
+    ("ime_memory", "maintenance_preview"): ("trigger",),
     ("ime_memory", "maintenance_review"): ("runId",),
     ("ime_memory", "maintenance_apply"): ("runId",),
     ("ime_memory", "maintenance_rollback"): ("runId",),
@@ -987,12 +989,9 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
         "不要用任务标题代替 taskId，也不要在审批完成前声称任务已经执行。"
     ),
     "ime_memory": (
-        "Session 启动快照只在首轮注入一次，后续需要旧信息时主动调用本工具。"
-        "事实用 search/get/explain(kind=atoms)，主题用 catalog/read/list(kind=books)，"
-        "活动用 search(kind=timelines)，来源用 list(kind=evidence)；Timeline 不能单独证明稳定事实。"
-        "写入先调用对应 preview，再将 proposalId 交给 apply；没有原生审批回执不得声称已修改。"
-        "targetId 必须来自 search/get 的 memoryId 或 ref.id。"
-        "recent 不含 pending、needs_review 或 not_for_memory。"
+        "Session 启动快照只在首轮注入一次。Timeline 不能单独证明稳定事实。"
+        "无事实问题/流程噪声/失败回执/重复问句/临时指令 not_for_memory；禁止原样复制长输入。"
+        "普通 zhiyou-v1 聊天禁整理；task_completion/explicit_request/idle_batch 且有事实时才调用；"
     ),
     "ime_browser": (
         "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
@@ -4798,11 +4797,18 @@ class ControlToolGateway:
                 "maintenance": _safe_payload(payload),
             }
         if operation in {"curation_prepare", "maintenance_preview"}:
+            trigger = _bounded_text(args.get("trigger"), maximum=40)
+            if trigger not in {"task_completion", "explicit_request", "idle_batch"}:
+                raise ValueError(
+                    "ime_memory.curation_prepare requires trigger="
+                    "task_completion, explicit_request, or idle_batch"
+                )
             payload = self._facade_call(
                 "agent_memory_maintenance_prepare",
                 {
                     "project": self.project,
                     "instruction": _bounded_text(args.get("instruction"), maximum=800),
+                    "trigger": trigger,
                     "ownerKind": curation_owner[0],
                     "ownerId": curation_owner[1],
                 },
@@ -6021,6 +6027,10 @@ def _runtime_memory_tool_parameter_schema(
             "query": {"type": "string", "maxLength": 240},
             "limit": {"type": "integer", "minimum": 1, "maximum": 30},
             "instruction": {"type": "string", "maxLength": 800},
+            "trigger": {
+                "type": "string",
+                "enum": ["task_completion", "explicit_request", "idle_batch"],
+            },
             "scope": {"type": "string", "enum": ["incremental", "global"]},
             "policy": {"type": "string", "enum": ["conservative"]},
         }
@@ -6048,10 +6058,7 @@ def _runtime_memory_tool_parameter_schema(
         branches.append(branch)
     return {
         "type": "object",
-        "description": (
-            "Evidence 为来源，Atom 为事实，Book 为主题，Timeline 为活动连续性；"
-            "Role Book 使用 agent_role_book。"
-        ),
+        "description": "Evidence->Atom->Book/Timeline；Role Book 用 agent_role_book。",
         "additionalProperties": False,
         "required": ["op"],
         "properties": properties,

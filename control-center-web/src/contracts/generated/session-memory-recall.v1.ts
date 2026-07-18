@@ -30,6 +30,8 @@ export interface SessionMemoryRecallV1 {
     requestedEmbeddingProvider: string;
     embeddingProvider: string;
     embeddingFallback: boolean;
+    temporalIntent: boolean;
+    activityTimelineIncluded: boolean;
   };
   /**
    * @maxItems 12

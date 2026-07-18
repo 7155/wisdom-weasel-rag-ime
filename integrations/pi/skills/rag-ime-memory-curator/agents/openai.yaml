@@ -1,4 +1,4 @@
 interface:
   display_name: "RAG-IME 记忆整理"
   short_description: "按 Evidence、Atom、Topic Book 与 Timeline 分层治理记忆写入"
-  default_prompt: "Use ime_memory to create evidence-backed remember, correct, or forget previews, preserve Atom lineage and cross-App Timeline provenance, and wait for native approval. Use agent_role_book only to read, propose, or review a pinned revision; never activate it."
+  default_prompt: "Do not curate ordinary zhiyou-v1 chat turns. At verified task/feature/stage completion, first apply the Durable Information Gate; only when reusable information survives, call ime_memory once with curation_prepare, trigger=task_completion, incremental scope, and conservative policy. Explicit user requests and low-frequency draft-only idle batches are the only other triggers. Exclude fact-free questions, failed receipts, workflow noise, duplicate questions, and one-turn commands from durable artifacts. Preserve Atom lineage and provenance, synthesize normalized claims instead of copying transcripts, and wait for native approval. Use agent_role_book only for evidence-backed completion changes and never activate it."

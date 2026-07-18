@@ -27,6 +27,17 @@ _EXPLICIT_HISTORY_RE = re.compile(
     r"\d{4}[年./-]\d{1,2}(?:[月./-]\d{1,2}日?)?)",
     re.IGNORECASE,
 )
+_TIMELINE_INTENT_RE = re.compile(
+    r"(?:时间线|日程|活动记录|工作记录|最近|近期|这几天|近几天|今天|今日|昨天|昨日|"
+    r"前天|本周|这周|上周|本月|上月|"
+    r"daily\s*book|timeline|activity\s*(?:log|history)|"
+    r"\d{4}[年./-]\d{1,2}(?:[月./-]\d{1,2}日?)?)",
+    re.IGNORECASE,
+)
+_RECENT_TIMELINE_INTENT_RE = re.compile(
+    r"(?:最近(?:几天)?|近期|这几天|近几天|recent\s+(?:work|activity|timeline))",
+    re.IGNORECASE,
+)
 
 
 def retrieve_hybrid_rag_candidates(
@@ -51,7 +62,16 @@ def retrieve_hybrid_rag_candidates(
     blocked = _blocked_sets(conn)
     vector_available = bool(embedding_provider and embedding_provider.fingerprint != "none")
     enabled_lanes = _resolved_lane_enabled(query.enabled_lanes, vector_available=vector_available)
+    timeline_requested = _timeline_requested(query)
+    # Daily timelines are a derived, short-lived view. They must not compete
+    # with stable Atoms and topic Books for an ordinary semantic question.
+    # A temporal query opts into both the documents and their dedicated lane.
+    enabled_lanes["time"] = enabled_lanes["time"] and timeline_requested
     lane_weights = _resolved_lane_weights(query.lane_weights)
+    # Keep the recall pool independent of a small presentation top_k. With a
+    # top_k-derived pool, asking for 5 results could entirely omit the exact
+    # fact that appears when asking for 12, making ranking non-monotonic.
+    lane_limit = max(64, query.top_k * 4)
     vectors = (
         load_retrieval_doc_vectors(conn, embedding_provider.fingerprint, (str(doc["doc_id"]) for doc in docs))
         if vector_available and embedding_provider is not None else {}
@@ -72,7 +92,7 @@ def retrieve_hybrid_rag_candidates(
             project=query.project,
             app=query.app,
             visible_owners=visible_owners,
-            limit=max(8, query.top_k * 4),
+            limit=lane_limit,
         )
     bm25_tags_hits = []
     if enabled_lanes["bm25_tags"]:
@@ -86,7 +106,7 @@ def retrieve_hybrid_rag_candidates(
             project=query.project,
             app=query.app,
             visible_owners=visible_owners,
-            limit=max(8, query.top_k * 4),
+            limit=lane_limit,
         )
     tagmemo_hits = []
     if enabled_lanes["tagmemo"]:
@@ -100,7 +120,7 @@ def retrieve_hybrid_rag_candidates(
             project=query.project,
             app=query.app,
             visible_owners=visible_owners,
-            limit=max(8, query.top_k * 4),
+            limit=lane_limit,
         )
     feedback_hits = (
         _feedback_hits(
@@ -109,25 +129,25 @@ def retrieve_hybrid_rag_candidates(
             query=query,
             terms=(*expansion.lexical_terms, *expansion.matched_aliases, *expansion.activated_tags),
             blocked=blocked,
-            limit=max(8, query.top_k * 4),
+            limit=lane_limit,
         )
         if enabled_lanes["feedback"] else []
     )
     tasks = {
         "vector_raw": lambda: _rank_vector_docs(
             docs, vectors=vectors, query_vector=query_vector, lane="vector_raw", vector_index=0,
-            blocked=blocked, limit=max(8, query.top_k * 4),
+            blocked=blocked, limit=lane_limit,
         ) if enabled_lanes["vector_raw"] else [],
         "vector_tag_boost": lambda: _rank_vector_docs(
             docs, vectors=vectors, query_vector=query_vector, lane="vector_tag_boost", vector_index=1,
-            blocked=blocked, limit=max(8, query.top_k * 4), include_group=True,
+            blocked=blocked, limit=lane_limit, include_group=True,
         ) if enabled_lanes["vector_tag_boost"] else [],
         "time": lambda: (
             _rank_time_docs(
                 docs,
                 expansion_terms=(*expansion.expansion_terms, *expansion.activated_tags),
                 blocked=blocked,
-                limit=max(8, query.top_k * 4),
+                limit=lane_limit,
             )
             if enabled_lanes["time"]
             else []
@@ -149,6 +169,8 @@ def retrieve_hybrid_rag_candidates(
         lane_weights=lane_weights,
         decay_settings=_memory_decay_settings(conn),
     )
+    if _recent_timeline_requested(query):
+        memory_hits.sort(key=_recent_timeline_sort_key, reverse=True)
     historical_book_ids = _historical_books_for_explicit_history(
         hits=hits,
         query_text=" ".join(
@@ -177,6 +199,8 @@ def retrieve_hybrid_rag_candidates(
                 {"ownerKind": kind, "ownerId": identity}
                 for kind, identity in visible_owners
             ],
+            "timelineRequested": timeline_requested,
+            "recentTimelineRequested": _recent_timeline_requested(query),
         },
         "lanes": {
             name: {
@@ -200,7 +224,11 @@ def retrieve_hybrid_rag_candidates(
                 "skippedReason": (
                     ("embedding_provider_not_wired" if not vector_available else "vector_index_empty")
                     if name in {"vector_raw", "vector_tag_boost"} and not values
-                    else ("disabled_by_effective_runtime_config" if not enabled_lanes[name] else "")
+                    else (
+                        "not_requested_by_query"
+                        if name == "time" and not timeline_requested
+                        else ("disabled_by_effective_runtime_config" if not enabled_lanes[name] else "")
+                    )
                 ),
                 "weight": lane_weights[name],
                 "count": len(values),
@@ -391,9 +419,25 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
         app_bundle_id=compact_whitespace(query.app),
         project=compact_whitespace(query.project),
     )
+    parsed_rows = [(row, _metadata(row["metadata_json"])) for row in rows]
+    governed_visible_event_ids = _governed_visible_event_ids(
+        conn,
+        {
+            event_id
+            for _, metadata in parsed_rows
+            for event_id in _metadata_source_event_ids(metadata)
+        },
+    )
     docs: list[dict[str, object]] = []
-    for row in rows:
-        metadata = _metadata(row["metadata_json"])
+    timeline_requested = _timeline_requested(query)
+    for row, metadata in parsed_rows:
+        source_event_ids = _metadata_source_event_ids(metadata)
+        if source_event_ids and not set(source_event_ids).issubset(
+            governed_visible_event_ids
+        ):
+            continue
+        if _is_daily_timeline_doc(metadata) and not timeline_requested:
+            continue
         short_term = bool(metadata.get("shortTerm") or metadata.get("short_term"))
         compatibility = context_group_compatibility(
             current_group,
@@ -424,6 +468,106 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
         })
     docs.sort(key=lambda item: float(dict(item.get("metadata") or {}).get("groupCompatibility") or 0.0), reverse=True)
     return docs
+
+
+def _metadata_source_event_ids(metadata: dict[str, object]) -> list[int]:
+    values = metadata.get("sourceEventIds")
+    raw_values = list(values) if isinstance(values, (list, tuple)) else []
+    raw_values.append(metadata.get("sourceEventId"))
+    result: list[int] = []
+    for value in raw_values:
+        try:
+            event_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if event_id > 0 and event_id not in result:
+            result.append(event_id)
+    return result
+
+
+def _governed_visible_event_ids(
+    conn: sqlite3.Connection,
+    event_ids: set[int],
+) -> set[int]:
+    if not event_ids:
+        return set()
+    visible: set[int] = set()
+    values = sorted(event_ids)
+    for offset in range(0, len(values), 500):
+        chunk = values[offset : offset + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        visible.update(
+            int(row[0])
+            for row in conn.execute(
+                f"""SELECT event.id
+                    FROM input_events AS event
+                    WHERE event.id IN ({placeholders})
+                      AND NOT EXISTS (
+                          SELECT 1 FROM memory_tombstones AS tombstone
+                          WHERE tombstone.active = 1
+                            AND (
+                                (tombstone.target_type = 'source_event_id'
+                                 AND tombstone.target_value = CAST(event.id AS TEXT))
+                                OR
+                                (tombstone.target_type = 'memory_id'
+                                 AND tombstone.target_value = ('event:' || event.id))
+                            )
+                      )""",
+                tuple(chunk),
+            ).fetchall()
+        )
+        governed_rows = conn.execute(
+            f"""SELECT input_event_id,
+                       SUM(CASE WHEN disposition NOT IN ('not_for_memory', 'expired')
+                                THEN 1 ELSE 0 END)
+                FROM agent_memory_sources
+                WHERE status = 'active' AND input_event_id IN ({placeholders})
+                GROUP BY input_event_id""",
+            tuple(chunk),
+        ).fetchall()
+        visible.difference_update(
+            int(row[0]) for row in governed_rows if int(row[1] or 0) == 0
+        )
+    return visible
+
+
+def _timeline_requested(query: HybridRagQuery) -> bool:
+    text = " ".join(
+        part
+        for part in (
+            query.query_text,
+            query.raw_input,
+            query.committed_tail,
+        )
+        if compact_whitespace(part)
+    )
+    return _TIMELINE_INTENT_RE.search(compact_whitespace(text)) is not None
+
+
+def _recent_timeline_requested(query: HybridRagQuery) -> bool:
+    text = " ".join(
+        part
+        for part in (query.query_text, query.raw_input, query.committed_tail)
+        if compact_whitespace(part)
+    )
+    return _RECENT_TIMELINE_INTENT_RE.search(compact_whitespace(text)) is not None
+
+
+def _recent_timeline_sort_key(hit: MemoryHit) -> tuple[int, str, float]:
+    metadata = hit.metadata
+    daily = _is_daily_timeline_doc(metadata)
+    date_key = compact_whitespace(
+        str(metadata.get("timelineDate") or metadata.get("bookKey") or "")
+    )
+    return (1 if daily else 0, date_key if daily else "", hit.score)
+
+
+def _is_daily_timeline_doc(metadata: dict[str, object]) -> bool:
+    return (
+        compact_whitespace(str(metadata.get("bookType") or "")).lower() == "daily"
+        or compact_whitespace(str(metadata.get("derivedArtifactType") or "")).lower()
+        == "daily_activity_timeline"
+    )
 
 
 def _rank_docs(

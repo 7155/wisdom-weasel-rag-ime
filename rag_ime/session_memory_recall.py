@@ -16,11 +16,11 @@ from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .input_event_assembly import recent_complete_input_context
 from .memory_ownership import agent_visible_memory_owners
-from .text_utils import compact_whitespace, truncate_text
+from .text_utils import compact_whitespace, split_sentences, token_terms, truncate_text
 
 
 SESSION_MEMORY_RECALL_SCHEMA_VERSION = "rag-ime.session-memory-recall.v1"
-_BOOTSTRAP_DEDUPE_VERSION = "v2"
+_BOOTSTRAP_DEDUPE_VERSION = "v3"
 _RELEVANCE_LANES = frozenset(
     {
         "bm25_raw",
@@ -143,6 +143,14 @@ class SessionMemoryRecallBuilder:
             max_chars=bounded_chars,
         )
         activated_tags = _selected_activated_tags(retrieval, selected)
+        temporal_intent = bool(_ACTIVITY_TIMELINE_INTENT_RE.search(query))
+        activity_timeline_included = any(
+            item.get("sourceType") == "memory_book"
+            and {"daily", "activity-timeline"}.intersection(
+                {tag.casefold() for tag in _string_list(item.get("tags"), 16)}
+            )
+            for item in selected
+        )
         source_ids = [str(item["sourceId"]) for item in selected]
         query_sha256 = hashlib.sha256(query.encode("utf-8")).hexdigest()
         recall_material = json.dumps(
@@ -190,6 +198,8 @@ class SessionMemoryRecallBuilder:
                 "requestedEmbeddingProvider": requested_embedding,
                 "embeddingProvider": effective_embedding,
                 "embeddingFallback": embedding_fallback,
+                "temporalIntent": temporal_intent,
+                "activityTimelineIncluded": activity_timeline_included,
             },
             "items": selected,
             "sourceIds": source_ids,
@@ -218,10 +228,9 @@ class SessionMemoryRecallBuilder:
             ),
             "payload": payload,
             "lane": "fact",
-            # The Pi Session keeps the first turn in its own conversation
-            # history. Inject the recall pack once at the first real prompt;
-            # repeating it on every turn would duplicate context and tokens.
-            "lifecycle": "once",
+            # Provider calls are stateless: high-priority memory must be
+            # re-projected on every turn and restored after Runtime restart.
+            "lifecycle": "persistent",
             "dedupe_key": self.dedupe_key(session),
         }
 
@@ -261,6 +270,12 @@ def _select_hits(
     activity_timeline_allowed = bool(
         _ACTIVITY_TIMELINE_INTENT_RE.search(compact_whitespace(query_text))
     )
+    preferred_book_sources = _preferred_book_source_ids(
+        candidates,
+        query_text=query_text,
+        activity_timeline_allowed=activity_timeline_allowed,
+        limit=2,
+    )
     for item in candidates:
         doc_type = compact_whitespace(str(item.get("doc_type") or ""))
         metadata = _mapping(item.get("metadata"))
@@ -285,10 +300,23 @@ def _select_hits(
             continue
         eligible_count += 1
         source_id = compact_whitespace(str(item.get("source_id") or ""))
-        text = truncate_text(str(item.get("text") or ""), 760)
+        if doc_type == "book" and source_id not in preferred_book_sources:
+            continue
+        is_activity_timeline = bool(
+            {"daily", "activity-timeline"}.intersection(normalized_tags)
+        )
+        text = (
+            _focused_activity_excerpt(
+                str(item.get("text") or ""),
+                query_text=query_text,
+                max_chars=760,
+            )
+            if is_activity_timeline
+            else truncate_text(str(item.get("text") or ""), 760)
+        )
         if not source_id or not text or source_id in seen_sources:
             continue
-        type_limit = 4 if doc_type == "book" else 5
+        type_limit = 2 if doc_type == "book" else 5
         if type_counts[doc_type] >= type_limit:
             continue
         if selected and used_chars + len(text) > max_chars:
@@ -332,6 +360,170 @@ def _select_hits(
         if len(selected) >= max_items:
             break
     return selected, max(0, eligible_count - len(selected))
+
+
+def _preferred_book_source_ids(
+    candidates: Sequence[Mapping[str, object]],
+    *,
+    query_text: str,
+    activity_timeline_allowed: bool,
+    limit: int,
+) -> set[str]:
+    books: list[Mapping[str, object]] = []
+    for item in candidates:
+        if compact_whitespace(str(item.get("doc_type") or "")) != "book":
+            continue
+        metadata = _mapping(item.get("metadata"))
+        if bool(metadata.get("archived")):
+            continue
+        if not set(_string_list(metadata.get("lanes"), 16)).intersection(
+            _RELEVANCE_LANES
+        ):
+            continue
+        tags = {tag.casefold() for tag in _string_list(item.get("tags"), 16)}
+        if {"daily", "activity-timeline"}.intersection(tags):
+            if not activity_timeline_allowed:
+                continue
+            if not _activity_matches_subject(item, query_text=query_text):
+                continue
+        books.append(item)
+    ranked = sorted(
+        books,
+        key=lambda item: _book_relevance_key(
+            item,
+            query_text=query_text,
+            activity_timeline_allowed=activity_timeline_allowed,
+        ),
+        reverse=True,
+    )
+    return {
+        compact_whitespace(str(item.get("source_id") or ""))
+        for item in ranked[: max(0, int(limit))]
+        if compact_whitespace(str(item.get("source_id") or ""))
+    }
+
+
+def _book_relevance_key(
+    item: Mapping[str, object],
+    *,
+    query_text: str,
+    activity_timeline_allowed: bool,
+) -> tuple[float, int, float, float]:
+    tags = _string_list(item.get("tags"), 16)
+    normalized_query = compact_whitespace(query_text).casefold()
+    tag_matches = sum(
+        1
+        for tag in tags
+        if compact_whitespace(tag).casefold()
+        and compact_whitespace(tag).casefold() in normalized_query
+    )
+    normalized_tags = {tag.casefold() for tag in tags}
+    temporal_priority = (
+        1.0
+        if activity_timeline_allowed
+        and {"daily", "activity-timeline"}.intersection(normalized_tags)
+        and _activity_matches_subject(item, query_text=query_text)
+        else 0.0
+    )
+    raw_scores = _mapping(_mapping(item.get("metadata")).get("rawScores"))
+    vector_relevance = sum(
+        float(raw_scores.get(lane) or 0.0)
+        for lane in ("vector_raw", "vector_tag_boost")
+    )
+    return (
+        temporal_priority,
+        tag_matches,
+        vector_relevance,
+        float(item.get("score") or 0.0),
+    )
+
+
+def _focused_activity_excerpt(
+    value: str,
+    *,
+    query_text: str,
+    max_chars: int,
+) -> str:
+    text = compact_whitespace(value)
+    segments = split_sentences(text)
+    if not segments:
+        return truncate_text(text, max_chars)
+    terms = _subject_query_terms(query_text)
+    if not terms:
+        return truncate_text(text, max_chars)
+    scored: list[tuple[float, int]] = []
+    for index, segment in enumerate(segments):
+        normalized = segment.casefold()
+        matched = {term for term in terms if _subject_term_hits(term, normalized)}
+        if not matched:
+            continue
+        term_score = sum(2.0 if len(term) >= 3 else 1.0 for term in matched)
+        recency_tiebreaker = index / max(1, len(segments))
+        scored.append((term_score + recency_tiebreaker, index))
+    if scored:
+        chosen = sorted(
+            index for _, index in sorted(scored, reverse=True)[:5]
+        )
+    else:
+        chosen = list(range(max(0, len(segments) - 4), len(segments)))
+    excerpt = "；".join(segments[index] for index in chosen)
+    return truncate_text(f"相关时间线片段：{excerpt}", max_chars)
+
+
+def _activity_matches_subject(
+    item: Mapping[str, object],
+    *,
+    query_text: str,
+) -> bool:
+    terms = _subject_query_terms(query_text)
+    if not terms:
+        return True
+    metadata = _mapping(item.get("metadata"))
+    haystack = " ".join(
+        (
+            str(item.get("text") or ""),
+            str(metadata.get("bookTitle") or ""),
+            " ".join(_string_list(item.get("tags"), 16)),
+        )
+    ).casefold()
+    return any(_subject_term_hits(term, haystack) for term in terms)
+
+
+def _subject_query_terms(value: str) -> list[str]:
+    ignored_terms = {
+        "什么",
+        "怎么",
+        "怎样",
+        "应该",
+        "主要",
+        "最近",
+        "项目",
+        "当前",
+        "现在",
+        "做了",
+        "的是",
+        "我最",
+        "近在",
+        "里主",
+        "要做",
+    }
+    return [
+        term.casefold()
+        for term in token_terms(value, max_terms=32)
+        if len(term) >= 2 and term.casefold() not in ignored_terms
+    ]
+
+
+def _subject_term_hits(term: str, text: str) -> bool:
+    if re.fullmatch(r"[a-z0-9_+#.\-]+", term):
+        return (
+            re.search(
+                rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])",
+                text,
+            )
+            is not None
+        )
+    return term in text
 
 
 def _selected_activated_tags(

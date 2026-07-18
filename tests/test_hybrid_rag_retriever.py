@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+from rag_ime.agent_memory_sources import AgentMemorySourceStore
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.hybrid_rag_models import HybridRagQuery
 from rag_ime.hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -102,6 +104,112 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertGreaterEqual(payload["lanes"]["time"]["count"], 1)
         self.assertIn("多路召回", [item["text"] for item in payload["candidates"]])
         self.assertNotIn("RAG 输入法多路召回方案", [item["text"] for item in payload["candidates"]])
+
+    def test_daily_timeline_does_not_pollute_ordinary_fact_recall(self) -> None:
+        event_id = self._record_event("RAG 输入法多路召回方案", tags=("RAG",))
+        with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    book_compile_output(event_id),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    qwen_compile_output(event_id),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="输入法本地模型如何配置",
+                    project="wisdom-weasel-rag-ime",
+                ),
+            )
+
+        self.assertFalse(payload["lanes"]["time"]["enabled"])
+        self.assertEqual(payload["lanes"]["time"]["skippedReason"], "not_requested_by_query")
+        self.assertFalse(
+            any(item["metadata"].get("bookType") == "daily" for item in payload["memoryHits"])
+        )
+        self.assertTrue(
+            any(item["source_id"] == "atom:qwen3-local-model" for item in payload["memoryHits"])
+        )
+
+    def test_vague_history_word_does_not_enable_daily_timeline(self) -> None:
+        event_id = self._record_event("RAG 输入法多路召回方案", tags=("RAG",))
+        with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    book_compile_output(event_id),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="之前那个模型怎么优化",
+                    project="wisdom-weasel-rag-ime",
+                    top_k=5,
+                ),
+            )
+
+        self.assertFalse(payload["query"]["timelineRequested"])
+        self.assertFalse(payload["lanes"]["time"]["enabled"])
+        self.assertFalse(
+            any(item["metadata"].get("bookType") == "daily" for item in payload["memoryHits"])
+        )
+
+    def test_recent_timeline_query_orders_daily_books_newest_first(self) -> None:
+        old_event_id = self._record_event("旧的输入法工作", tags=("输入法",))
+        new_event_id = self._record_event("新的记忆工作", tags=("记忆",))
+        old_plan = book_compile_output(old_event_id)
+        old_plan["dailyBooks"][0].update(
+            {"bookKey": "2026-07-10", "title": "2026-07-10 活动时间线"}
+        )
+        new_plan = book_compile_output(new_event_id)
+        new_plan["dailyBooks"][0].update(
+            {"bookKey": "2026-07-18", "title": "2026-07-18 活动时间线"}
+        )
+        with self.connect() as conn:
+            for compiled in (old_plan, new_plan):
+                apply_memory_book_plan(
+                    conn,
+                    memory_book_plan_from_compile_output(
+                        compiled,
+                        project="wisdom-weasel-rag-ime",
+                        provider="deepseek",
+                        model="deepseek-v4-flash",
+                    ),
+                )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="最近几天我在做什么",
+                    project="wisdom-weasel-rag-ime",
+                    top_k=5,
+                ),
+            )
+
+        daily_hits = [
+            item for item in payload["memoryHits"] if item["metadata"].get("bookType") == "daily"
+        ]
+        self.assertTrue(payload["query"]["recentTimelineRequested"])
+        self.assertGreaterEqual(len(daily_hits), 2)
+        self.assertEqual(daily_hits[0]["metadata"]["bookKey"], "2026-07-18")
 
     def test_feedback_lane_promotes_accepted_phrase(self) -> None:
         self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG",))
@@ -214,6 +322,146 @@ class HybridRagRetrieverTests(unittest.TestCase):
         texts = [item["text"] for item in payload["candidates"]]
         self.assertFalse(any(text.startswith("多路召回") for text in texts), texts)
         self.assertFalse(any(text.startswith("TagMemo") for text in texts), texts)
+
+    def test_hybrid_retrieval_rejects_stale_projection_for_forgotten_evidence(self) -> None:
+        event_id = self._record_event(
+            "候选数据库验证",
+            recent_context="正式激活前先验证",
+            tags=("数据库",),
+        )
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            self.assertIsNotNone(
+                conn.execute(
+                    """SELECT 1 FROM memory_retrieval_docs
+                       WHERE source_id = 'phrase:候选数据库验证'"""
+                ).fetchone()
+            )
+            # Do not rebuild the projection after forgetting the evidence. The
+            # read path itself must fail closed during the outbox freshness gap.
+            conn.execute(
+                """INSERT INTO memory_tombstones(
+                       created_at_ms, target_type, target_value, reason,
+                       active, metadata_json
+                   ) VALUES (?, 'source_event_id', ?, 'test-forget-source', 1, '{}')""",
+                (now_ms(), str(event_id)),
+            )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="候选数据库验证",
+                    project="wisdom-weasel-rag-ime",
+                ),
+            )
+
+        self.assertFalse(
+            any(
+                item["source_id"] == "phrase:候选数据库验证"
+                for item in payload["memoryHits"]
+            )
+        )
+        self.assertNotIn(
+            "候选数据库验证",
+            [item["text"] for item in payload["candidates"]],
+        )
+
+    def test_hybrid_retrieval_keeps_reviewed_artifact_when_raw_event_is_hidden(self) -> None:
+        event_id = self._record_event("本地模型实验", tags=("输入法",))
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="hidden-raw", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:hidden-raw",
+            turn_id="turn:hidden-raw",
+            text="这条逻辑来源用于治理隐藏原文后的派生记忆。",
+            created_at_ms=1_700_000_000_000,
+        )
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE agent_memory_sources
+                   SET input_event_id = ?, disposition = 'remember',
+                       disposition_reason = 'manual_review_remembered'
+                   WHERE pi_entry_id = 'entry:hidden-raw'""",
+                (event_id,),
+            )
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    qwen_compile_output(event_id),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            conn.execute(
+                "UPDATE memory_state SET deleted = 1 WHERE event_id = ?",
+                (event_id,),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="千文三",
+                    project="wisdom-weasel-rag-ime",
+                ),
+            )
+
+        self.assertTrue(
+            any(
+                item["source_id"] == "atom:qwen3-local-model"
+                for item in payload["memoryHits"]
+            ),
+            payload["memoryHits"],
+        )
+
+    def test_hybrid_retrieval_rejects_stale_projection_with_only_unavailable_source(self) -> None:
+        event_id = self._record_event("不应继续召回的治理证据", tags=("治理",))
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="unavailable-source", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:unavailable-source",
+            turn_id="turn:unavailable-source",
+            text="这条逻辑来源稍后会被排除。",
+            created_at_ms=1_700_000_000_000,
+        )
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            self.assertIsNotNone(
+                conn.execute(
+                    """SELECT 1 FROM memory_retrieval_docs
+                       WHERE source_id = 'phrase:不应继续召回的治理证据'"""
+                ).fetchone()
+            )
+            # Simulate the interval before the projection worker consumes the
+            # governance outbox. The read gate must still stop the stale row.
+            conn.execute(
+                """UPDATE agent_memory_sources
+                   SET input_event_id = ?, disposition = 'not_for_memory',
+                       disposition_reason = 'manual_review_excluded'
+                   WHERE pi_entry_id = 'entry:unavailable-source'""",
+                (event_id,),
+            )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="不应继续召回的治理证据",
+                    project="wisdom-weasel-rag-ime",
+                ),
+            )
+
+        self.assertFalse(
+            any(
+                item["source_id"] == "phrase:不应继续召回的治理证据"
+                for item in payload["memoryHits"]
+            )
+        )
+        self.assertNotIn(
+            "不应继续召回的治理证据",
+            [item["text"] for item in payload["candidates"]],
+        )
 
     def test_hybrid_retrieval_stays_under_budget(self) -> None:
         self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG",))

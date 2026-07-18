@@ -149,22 +149,29 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         first_envelope = json.loads(
             first_runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
         )
-        transient_context = str(first_envelope["transientContext"])
-        second_runtime_message = runtime_prompt.call_args_list[1].args[1]
+        session_context = str(first_envelope["sessionContext"])
+        second_envelope = json.loads(
+            runtime_prompt.call_args_list[1].args[1].removeprefix(
+                RUNTIME_PROMPT_ENVELOPE_PREFIX
+            )
+        )
 
         self.assertEqual(first["contextItemsDelivered"], 1)
-        self.assertEqual(second["contextItemsDelivered"], 0)
+        self.assertEqual(second["contextItemsDelivered"], 1)
         self.assertEqual(first_envelope["message"], "输入法模型架构现在是什么？")
-        self.assertIn("## 新 Session 个人记忆召回", transient_context)
-        self.assertIn(NEW_ATOM_ID, transient_context)
-        self.assertIn(NEW_FACT, transient_context)
-        self.assertIn(BOOK_ID, transient_context)
-        self.assertIn(BOOK_SUMMARY, transient_context)
-        self.assertNotIn(f"来源: `{OLD_ATOM_ID}`", transient_context)
-        self.assertNotIn(OLD_FACT, transient_context)
-        self.assertEqual(second_runtime_message, "继续展开测试")
+        self.assertEqual(second_envelope["message"], "继续展开测试")
+        self.assertEqual(first_envelope["transientContext"], "")
+        self.assertEqual(second_envelope["transientContext"], "")
+        self.assertEqual(second_envelope["sessionContext"], session_context)
+        self.assertIn("## 新 Session 个人记忆召回", session_context)
+        self.assertIn(NEW_ATOM_ID, session_context)
+        self.assertIn(NEW_FACT, session_context)
+        self.assertIn(BOOK_ID, session_context)
+        self.assertIn(BOOK_SUMMARY, session_context)
+        self.assertNotIn(f"来源: `{OLD_ATOM_ID}`", session_context)
+        self.assertNotIn(OLD_FACT, session_context)
         self.assertEqual(
-            len(self.service.context_runtime.list_items(session_id, status="consumed")),
+            len(self.service.context_runtime.list_items(session_id, status="delivered")),
             1,
         )
 
@@ -313,7 +320,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         envelope = json.loads(
             runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
         )
-        transient_context = str(envelope["transientContext"])
+        transient_context = str(envelope["sessionContext"])
         self.assertEqual(result["contextItemsDelivered"], 1)
         self.assertIn(new_atom_id, transient_context)
         self.assertIn(NEW_FACT, transient_context)

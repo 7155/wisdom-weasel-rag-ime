@@ -53,7 +53,9 @@
         "visibleOwners",
         "requestedEmbeddingProvider",
         "embeddingProvider",
-        "embeddingFallback"
+        "embeddingFallback",
+        "temporalIntent",
+        "activityTimelineIncluded"
       ],
       "properties": {
         "strategy": {"const": "vcp_hybrid_book_atom"},
@@ -74,7 +76,9 @@
         },
         "requestedEmbeddingProvider": {"type": "string"},
         "embeddingProvider": {"type": "string"},
-        "embeddingFallback": {"type": "boolean"}
+        "embeddingFallback": {"type": "boolean"},
+        "temporalIntent": {"type": "boolean"},
+        "activityTimelineIncluded": {"type": "boolean"}
       }
     },
     "items": {

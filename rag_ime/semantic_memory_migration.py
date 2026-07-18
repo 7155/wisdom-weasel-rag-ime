@@ -193,6 +193,7 @@ def verify_semantic_memory_database(
     )
     legacy_drafts = len(_legacy_draft_rows(conn, project=project))
     broken_book_refs = _broken_book_atom_refs(conn)
+    artifact_evidence_errors = _active_artifact_evidence_errors(conn)
     timeline_errors = _timeline_conservation_errors(conn, project=project)
     fts_orphans = _fts_orphan_count(conn)
     vector_orphans = _count(
@@ -217,6 +218,10 @@ def verify_semantic_memory_database(
         errors.append(f"legacy_timeline_drafts={legacy_drafts}")
     if broken_book_refs:
         errors.append(f"broken_book_atom_refs={len(broken_book_refs)}")
+    if artifact_evidence_errors:
+        errors.append(
+            f"active_artifact_evidence_errors={len(artifact_evidence_errors)}"
+        )
     if timeline_errors:
         errors.append(f"timeline_conservation_errors={len(timeline_errors)}")
     if fts_orphans:
@@ -361,6 +366,7 @@ def verify_semantic_memory_database(
         "legacyRetrievalDocuments": legacy_docs,
         "legacyTimelineDrafts": legacy_drafts,
         "brokenBookAtomRefs": broken_book_refs,
+        "activeArtifactEvidenceErrors": artifact_evidence_errors,
         "timelineConservationErrors": timeline_errors,
         "retrievalFtsOrphans": fts_orphans,
         "retrievalVectorOrphans": vector_orphans,
@@ -693,6 +699,44 @@ def _event_is_visible(conn: sqlite3.Connection, event_id: int) -> bool:
     )
 
 
+def _event_is_available_as_evidence(
+    conn: sqlite3.Connection,
+    event_id: int,
+) -> bool:
+    """Return whether an immutable source event can still support an artifact.
+
+    ``memory_state.deleted`` only hides a raw input row from direct recall. The
+    manual curation pipeline deliberately hides those raw rows after deriving
+    reviewed Atoms, Books, Timelines, and Phrases from them. An explicit
+    tombstone, in contrast, is the user's forget boundary and invalidates the
+    evidence transitively.
+    """
+    return (
+        conn.execute(
+            """
+            SELECT 1
+            FROM input_events event
+            WHERE event.id = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM memory_tombstones tombstone
+                  WHERE tombstone.active = 1
+                    AND (
+                        (tombstone.target_type = 'source_event_id'
+                         AND tombstone.target_value = CAST(event.id AS TEXT))
+                        OR
+                        (tombstone.target_type = 'memory_id'
+                         AND tombstone.target_value = ('event:' || event.id))
+                    )
+              )
+            LIMIT 1
+            """,
+            (int(event_id),),
+        ).fetchone()
+        is not None
+    )
+
+
 def _legacy_draft_rows(
     conn: sqlite3.Connection,
     *,
@@ -798,6 +842,115 @@ def _broken_book_atom_refs(conn: sqlite3.Connection) -> list[dict[str, str]]:
     return broken
 
 
+def _active_artifact_evidence_errors(
+    conn: sqlite3.Connection,
+) -> list[dict[str, object]]:
+    artifacts: list[tuple[str, str, list[int]]] = []
+    for table, artifact_type, identifier, status_filter in (
+        (
+            "memory_atoms",
+            "atom",
+            "id",
+            "status IN ('active', 'approved') AND claim_state = 'current'",
+        ),
+        (
+            "memory_books",
+            "book",
+            "book_id",
+            "status IN ('active', 'approved')",
+        ),
+        (
+            "daily_activity_timelines",
+            "timeline",
+            "timeline_id",
+            "status = 'approved'",
+        ),
+    ):
+        for row in conn.execute(
+            f"SELECT {identifier}, source_event_ids_json FROM {table} "
+            f"WHERE {status_filter}"
+        ).fetchall():
+            artifacts.append(
+                (
+                    artifact_type,
+                    str(row[identifier]),
+                    _json_ints(row["source_event_ids_json"]),
+                )
+            )
+    for row in conn.execute(
+        """SELECT memory_id, source_event_id, metadata_json
+           FROM memory_items
+           WHERE kind = 'phrase' AND status IN ('active', 'approved')"""
+    ).fetchall():
+        metadata = _json_object(row["metadata_json"])
+        event_ids = _json_ints(metadata.get("sourceEventIds"))
+        source_event_id = int(row["source_event_id"] or 0)
+        if source_event_id > 0 and source_event_id not in event_ids:
+            event_ids.append(source_event_id)
+        artifacts.append(("phrase", str(row["memory_id"]), event_ids))
+
+    errors: list[dict[str, object]] = []
+    visibility_cache: dict[int, bool] = {}
+    disposition_cache: dict[int, list[str]] = {}
+    for artifact_type, artifact_id, event_ids in artifacts:
+        if not event_ids:
+            errors.append(
+                {
+                    "artifactType": artifact_type,
+                    "artifactId": artifact_id,
+                    "reason": "missing_source_evidence",
+                    "eventIds": [],
+                }
+            )
+            continue
+        invisible: list[int] = []
+        governed_not_remembered: list[int] = []
+        for event_id in event_ids:
+            visible = visibility_cache.get(event_id)
+            if visible is None:
+                visible = _event_is_available_as_evidence(conn, event_id)
+                visibility_cache[event_id] = visible
+            if not visible:
+                invisible.append(event_id)
+                continue
+            dispositions = disposition_cache.get(event_id)
+            if dispositions is None:
+                dispositions = [
+                    str(row[0])
+                    for row in conn.execute(
+                        """SELECT disposition FROM agent_memory_sources
+                           WHERE status = 'active' AND input_event_id = ?
+                           ORDER BY source_id""",
+                        (event_id,),
+                    ).fetchall()
+                ]
+                disposition_cache[event_id] = dispositions
+            # Older evidence may predate agent_memory_sources. Once an event is
+            # governed by that table, every active source must agree to remember
+            # it; a mixed decision is a fail-closed activation error.
+            if dispositions and any(value != "remember" for value in dispositions):
+                governed_not_remembered.append(event_id)
+        if invisible:
+            errors.append(
+                {
+                    "artifactType": artifact_type,
+                    "artifactId": artifact_id,
+                    "reason": "missing_or_forgotten_source_evidence",
+                    "eventIds": invisible,
+                }
+            )
+        if governed_not_remembered:
+            errors.append(
+                {
+                    "artifactType": artifact_type,
+                    "artifactId": artifact_id,
+                    "reason": "source_disposition_not_fully_remembered",
+                    "eventIds": governed_not_remembered,
+                }
+            )
+    return errors
+
+
 def _timeline_conservation_errors(
     conn: sqlite3.Connection,
     *,
@@ -819,15 +972,40 @@ def _timeline_conservation_errors(
         source_ids = _json_ints(row["source_event_ids_json"])
         segment_ids: list[int] = []
         declared_segment_events = 0
+        declared_physical_events = 0
+        has_physical_counts = False
         for segment in _json_objects(row["segments_json"]):
-            declared_segment_events += int(segment.get("eventCount") or 0)
+            logical_count = int(segment.get("eventCount") or 0)
+            declared_segment_events += logical_count
+            if "physicalEventCount" in segment:
+                has_physical_counts = True
+                declared_physical_events += int(
+                    segment.get("physicalEventCount") or 0
+                )
+            else:
+                declared_physical_events += logical_count
             for event_id in _json_ints(segment.get("sourceEventIds")):
                 segment_ids.append(event_id)
+        # Reviewed timelines collapse repeated/coalesced physical events into
+        # one logical evidence item for the UI. Conservation still checks the
+        # complete physical union, while event_count intentionally reports the
+        # smaller logical count.
+        stored_event_count = int(row["event_count"] or 0)
+        count_mismatch = (
+            declared_segment_events != stored_event_count
+            or (
+                has_physical_counts
+                and declared_physical_events != len(source_ids)
+            )
+            or (
+                not has_physical_counts
+                and len(source_ids) != stored_event_count
+            )
+        )
         if (
             sorted(source_ids) != sorted(set(segment_ids))
             or len(segment_ids) != len(set(segment_ids))
-            or len(source_ids) != int(row["event_count"] or 0)
-            or declared_segment_events != int(row["event_count"] or 0)
+            or count_mismatch
         ):
             errors.append(
                 {

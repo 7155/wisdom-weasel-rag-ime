@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from rag_ime.hybrid_rag_models import HybridRagHit
-from rag_ime.hybrid_rag_ranker import rank_hybrid_hits, rrf
+from rag_ime.hybrid_rag_ranker import rank_hybrid_hits, rank_hybrid_hits_to_memory_hits, rrf
 
 
 class HybridRagRankerTests(unittest.TestCase):
@@ -85,6 +85,41 @@ class HybridRagRankerTests(unittest.TestCase):
         self.assertGreater(
             configured_order[0].debug_features["bm25_raw"],
             configured_order[1].debug_features["tagmemo"],
+        )
+
+    def test_query_coverage_prevents_broad_tag_from_beating_exact_fact(self) -> None:
+        broad = HybridRagHit(
+            doc_id="doc:broad",
+            doc_type="atom",
+            source_id="atom:broad",
+            text="输入法相关场景是当前项目的首要产品优先级。",
+            surface_hints=(),
+            tags=("项目", "评测"),
+            source_lane="bm25_tags",
+            rank=1,
+            raw_score=1.0,
+        )
+        exact = HybridRagHit(
+            doc_id="doc:exact",
+            doc_type="atom",
+            source_id="atom:exact",
+            text="项目评测优先采用社区认可、可复现的公开 Benchmark；私有测试集只作为补充证据。",
+            surface_hints=(),
+            tags=("公开评测",),
+            source_lane="bm25_raw",
+            rank=2,
+            raw_score=1.0,
+        )
+
+        candidates = rank_hybrid_hits_to_memory_hits(
+            [broad, exact],
+            query_text="项目评测应该优先使用什么测试集",
+        )
+
+        self.assertEqual(candidates[0].text, exact.text)
+        self.assertGreater(
+            candidates[0].debug_features["query_coverage"],
+            candidates[1].debug_features["query_coverage"],
         )
 
     def test_type_specific_decay_favors_stable_preference_over_old_temporary_fact(self) -> None:

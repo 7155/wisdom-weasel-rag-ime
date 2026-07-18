@@ -456,6 +456,11 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         self.assertIn("输入法或语音噪声", system_prompt)
         self.assertIn("不要截图", system_prompt)
         self.assertIn("不应请求助手逐轮输出", system_prompt)
+        self.assertIn("没有可复用事实的问题", system_prompt)
+        self.assertIn("失败或被拒绝的工具回执", system_prompt)
+        self.assertIn("重复问句", system_prompt)
+        self.assertIn("禁止 project_question", system_prompt)
+        self.assertIn("不能原封不动复制长输入", system_prompt)
 
     def test_memory_organizer_repairs_missing_phrase_pinyin_with_bounded_second_request(self) -> None:
         config = load_deepseek_config(

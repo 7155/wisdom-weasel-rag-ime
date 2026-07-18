@@ -62,14 +62,30 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             "lineageId",
             "memory_supersessions",
             "not_for_memory",
+            "Question with no asserted durable information",
+            "Failed, rejected, timed-out",
+            "Curation protocol/status",
+            "Repeated question or duplicate message",
+            "verbatim",
             "fails closed",
             "agent_role_book",
             "propose_revision",
             "session is pinned",
             "cannot activate",
+            "Do not run memory curation merely because the Agent is chatting",
+            "task_completion",
+            "explicit_request",
+            "idle_batch",
+            "do not call a memory",
         ):
             self.assertIn(required, skill)
         self.assertIn("native approval", agent_prompt)
+        self.assertIn("fact-free questions", agent_prompt)
+        self.assertIn("failed receipts", agent_prompt)
+        self.assertIn("workflow noise", agent_prompt)
+        self.assertIn("duplicate questions", agent_prompt)
+        self.assertIn("Do not curate ordinary zhiyou-v1 chat turns", agent_prompt)
+        self.assertIn("trigger=task_completion", agent_prompt)
         self.assertIn("never activate it", agent_prompt)
 
 

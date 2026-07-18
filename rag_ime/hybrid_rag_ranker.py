@@ -6,7 +6,7 @@ import re
 import time
 
 from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, MemoryHit
-from .text_utils import compact_whitespace, truncate_text
+from .text_utils import compact_whitespace, token_terms, truncate_text
 
 
 LANE_WEIGHTS = {
@@ -66,7 +66,11 @@ def rank_hybrid_hits_to_memory_hits(
     memory_hits: list[MemoryHit] = []
     for doc_id, doc_hits in grouped.items():
         best_hit = _best_hit(doc_hits, lane_weights=effective_lane_weights)
-        features = _score_features(doc_hits, lane_weights=effective_lane_weights)
+        features = _score_features(
+            doc_hits,
+            lane_weights=effective_lane_weights,
+            query_text=query_text,
+        )
         base_score = sum(features.values())
         decay_factor = _time_decay_factor(
             metadata=best_hit.metadata,
@@ -122,7 +126,12 @@ def _best_hit(hits: list[HybridRagHit], *, lane_weights: dict[str, float]) -> Hy
     return sorted(hits, key=lambda hit: (lane_weights.get(hit.source_lane, 0.1), -hit.rank, hit.raw_score), reverse=True)[0]
 
 
-def _score_features(hits: list[HybridRagHit], *, lane_weights: dict[str, float]) -> dict[str, float]:
+def _score_features(
+    hits: list[HybridRagHit],
+    *,
+    lane_weights: dict[str, float],
+    query_text: str,
+) -> dict[str, float]:
     features: dict[str, float] = {}
     for hit in hits:
         lane = hit.source_lane
@@ -138,6 +147,19 @@ def _score_features(hits: list[HybridRagHit], *, lane_weights: dict[str, float])
     group_compatibility = float(best_metadata.get("groupCompatibility") or 0.0)
     if group_compatibility > 0.0:
         features["group_compatibility"] = group_compatibility * 0.8
+    query_terms = token_terms(query_text, max_terms=32)
+    if query_terms and hits:
+        best = hits[0]
+        haystack = compact_whitespace(
+            " ".join((best.text, " ".join(best.surface_hints), " ".join(best.tags)))
+        ).lower()
+        matched = {term for term in query_terms if term.lower() in haystack}
+        if matched:
+            # RRF combines lanes, while this bounded coverage feature answers
+            # a different question: does the final fact itself contain the
+            # concepts asked for? It prevents broad tags from beating an exact
+            # Atom merely because they appear in more expansion lanes.
+            features["query_coverage"] = 0.25 * len(matched) / len(set(query_terms))
     return features
 
 

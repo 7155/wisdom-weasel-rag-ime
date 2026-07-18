@@ -55,6 +55,51 @@ _TRANSIENT_TOOL_RECEIPT_RE = re.compile(
     r"(?:已暂停|已恢复|已停止|已启动|已重启|暂停成功|恢复成功|停止成功|启动成功|重启成功)",
     re.IGNORECASE,
 )
+_FAILED_TOOL_RECEIPT_RE = re.compile(
+    r"(?:失败|出错|错误|异常|被拒绝|校验拒绝|未成功|未生成|未执行|未应用|"
+    r"无法完成|调用超时|执行超时|\bfailed\b|\berror\b|\btimeout\b|\bblocked\b)",
+    re.IGNORECASE,
+)
+_MEMORY_WORKFLOW_NOISE_RE = re.compile(
+    r"(?:请(?:调用|使用)\s*ime_memory|\bcuration_prepare\b|"
+    r"\bmaintenance_(?:preview|review|apply|rollback)\b|\brunId\b|"
+    r"可审阅草案|待审草案|记忆草案已(?:生成|复用)|等待(?:原生)?审阅)",
+    re.IGNORECASE,
+)
+_TRANSIENT_USER_COMMAND_RE = re.compile(
+    r"^(?:请)?(?:继续|重试|再试(?:一次)?|刷新|打开|关闭|点击|滚动|切换|"
+    r"合并|提交|编译|安装|运行|检查|看一下|读一下|删除)(?:一下|这个|该|当前)?"
+    r"[^。！？!?]{0,36}[。！？!?]?$",
+    re.IGNORECASE,
+)
+_QUESTION_SIGNAL_RE = re.compile(
+    r"(?:为什么|怎么|如何|是什么|什么是|是否|能否|有没有|哪里|哪个|谁|"
+    r"什么时候|多少|几种|哪一|咋)",
+    re.IGNORECASE,
+)
+_DURABLE_ASSERTION_RE = re.compile(
+    r"(?:我(?:决定|希望|要求|偏好)|以后(?:都|要|不要)|长期|始终|每(?:次|天|周)|"
+    r"默认(?:使用|采用|开启|关闭|保留)|项目(?:采用|需要|必须|禁止)|"
+    r"必须|禁止|不要|优先|需要支持)",
+    re.IGNORECASE,
+)
+_DERIVED_PROTOCOL_NOISE_RE = re.compile(
+    r"(?:user_message|assistant_message|\[敏感内容已隐藏\]|\[REDACTED:|"
+    r"请(?:调用|使用)\s*ime_memory|\bcuration_prepare\b|\brunId\b|"
+    r"可审阅草案|等待(?:原生)?审阅)",
+    re.IGNORECASE,
+)
+_DURABLE_ATOM_KINDS = frozenset(
+    {
+        "project_fact",
+        "project_requirement",
+        "durable_preference",
+        "project_decision",
+        "project_plan",
+        "security_constraint",
+        "project_constraint",
+    }
+)
 
 
 class OwnerMemoryOrganizer(Protocol):
@@ -237,8 +282,24 @@ class OwnerMemoryCurator:
             )
             deterministic: list[dict[str, object]] = []
             model_inputs: list[dict[str, object]] = []
-            for item in inputs:
-                rule = _deterministic_disposition(item)
+            last_user_input_by_text = {
+                normalize_text(str(item.get("text") or "")): index
+                for index, item in enumerate(inputs)
+                if str(item.get("sourceKind") or "") == "user_final"
+                and normalize_text(str(item.get("text") or ""))
+            }
+            for index, item in enumerate(inputs):
+                normalized_text = normalize_text(str(item.get("text") or ""))
+                duplicate = (
+                    str(item.get("sourceKind") or "") == "user_final"
+                    and bool(normalized_text)
+                    and last_user_input_by_text.get(normalized_text) != index
+                )
+                rule = (
+                    "duplicate_repeated_input"
+                    if duplicate
+                    else _deterministic_disposition(item)
+                )
                 if rule is None:
                     model_inputs.append(item)
                     continue
@@ -482,6 +543,11 @@ class OwnerMemoryCurator:
                 continue
             decisions_by_ref[source_ref] = decision
 
+        durable_atom_event_ids = _eligible_owner_atom_event_ids(
+            compile_output,
+            model_inputs=model_inputs,
+        )
+
         results: list[dict[str, object]] = []
         for item in model_inputs:
             source_ref = compact_whitespace(str(item.get("sourceRef") or ""))
@@ -508,6 +574,15 @@ class OwnerMemoryCurator:
                 elif disposition == "remember" and confidence < 0.55:
                     effective = "needs_review"
                     reason = "low_confidence_remember"
+                elif disposition == "remember" and not durable_atom_event_ids.intersection(
+                    _positive_event_ids(item.get("sourceEventIds"))
+                ):
+                    # Atom-first is a storage invariant, not merely a prompt
+                    # preference. A source cannot become remembered evidence
+                    # when the organizer emitted only a transcript, question,
+                    # Book summary, or other non-Atom artifact for it.
+                    effective = "needs_review"
+                    reason = "remember_without_durable_atom"
                 elif disposition in {
                     "remember",
                     "not_for_memory",
@@ -1288,6 +1363,115 @@ def _all_input_source_ids(inputs: list[dict[str, object]]) -> list[str]:
     )
 
 
+def _positive_event_ids(value: object) -> set[int]:
+    values = value if isinstance(value, list) else []
+    return {
+        int(item)
+        for item in values
+        if str(item).isdigit() and int(item) > 0
+    }
+
+
+def _looks_like_standalone_question(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if not normalized or _DURABLE_ASSERTION_RE.search(normalized):
+        return False
+    return bool(
+        _QUESTION_SIGNAL_RE.search(normalized)
+        and (
+            normalized.endswith(("?", "？"))
+            or len(normalized) <= 80
+        )
+    )
+
+
+def _durable_atom_rejection_reason(
+    canonical: str,
+    *,
+    kind: str,
+    source_texts: list[str],
+) -> str:
+    if kind not in _DURABLE_ATOM_KINDS:
+        return "non_durable_atom_kind"
+    if _DERIVED_PROTOCOL_NOISE_RE.search(canonical):
+        return "workflow_protocol_noise"
+    if canonical.endswith(("?", "？")) or _looks_like_standalone_question(canonical):
+        return "standalone_question"
+    normalized = normalize_text(canonical)
+    if len(canonical) >= 48 and any(
+        normalized == normalize_text(source_text)
+        for source_text in source_texts
+    ):
+        return "verbatim_long_source"
+    return ""
+
+
+def _derived_summary_rejection_reason(summary: str) -> str:
+    if not summary:
+        return "empty_summary"
+    if _DERIVED_PROTOCOL_NOISE_RE.search(summary):
+        return "workflow_protocol_noise"
+    return ""
+
+
+def _expanded_logical_atom_sources(
+    source_event_ids: object,
+    *,
+    model_inputs: list[dict[str, object]],
+    legal_event_ids: set[int],
+) -> tuple[list[int], list[str]]:
+    selected = _positive_event_ids(source_event_ids).intersection(legal_event_ids)
+    if not selected:
+        return [], []
+    expanded: set[int] = set()
+    source_texts: list[str] = []
+    for model_input in model_inputs:
+        logical_ids = _positive_event_ids(model_input.get("sourceEventIds")).intersection(
+            legal_event_ids
+        )
+        if not selected.intersection(logical_ids):
+            continue
+        expanded.update(logical_ids)
+        text = compact_whitespace(str(model_input.get("text") or ""))
+        if text:
+            source_texts.append(text)
+    return sorted(expanded), source_texts
+
+
+def _eligible_owner_atom_event_ids(
+    compile_output: Mapping[str, object],
+    *,
+    model_inputs: list[dict[str, object]],
+) -> set[int]:
+    legal_event_ids = {
+        event_id
+        for model_input in model_inputs
+        for event_id in _positive_event_ids(model_input.get("sourceEventIds"))
+    }
+    eligible: set[int] = set()
+    for item in compile_output.get("memoryAtoms") or []:
+        if not isinstance(item, Mapping):
+            continue
+        canonical = compact_whitespace(
+            str(item.get("canonicalText") or item.get("text") or "")
+        )
+        source_ids, source_texts = _expanded_logical_atom_sources(
+            item.get("sourceEventIds"),
+            model_inputs=model_inputs,
+            legal_event_ids=legal_event_ids,
+        )
+        if not canonical or not source_ids:
+            continue
+        if _durable_atom_rejection_reason(
+            canonical,
+            kind=compact_whitespace(str(item.get("kind") or "")),
+            source_texts=source_texts,
+        ):
+            continue
+        eligible.update(source_ids)
+    return eligible
+
+
 def _govern_owner_compile_output(
     compile_output: Mapping[str, object],
     *,
@@ -1321,6 +1505,11 @@ def _govern_owner_compile_output(
     ).hexdigest()[:16]
     owner_book_id = f"book:owner:{owner_hash}"
     owner_book_key = f"owner-{owner_hash}"
+    bundle_inputs = [
+        dict(item)
+        for item in bundle.get("inputs") or []
+        if isinstance(item, dict)
+    ]
     atoms: list[dict[str, object]] = []
     atom_ids: list[str] = []
     for item in compile_output.get("memoryAtoms") or []:
@@ -1329,19 +1518,40 @@ def _govern_owner_compile_output(
         canonical = compact_whitespace(
             str(item.get("canonicalText") or item.get("text") or "")
         )
-        source_ids = _legal_ints(item.get("sourceEventIds"), remembered_event_ids)
-        if not canonical or not source_ids:
+        source_ids, source_texts = _expanded_logical_atom_sources(
+            item.get("sourceEventIds"),
+            model_inputs=bundle_inputs,
+            legal_event_ids=remembered_event_ids,
+        )
+        kind = compact_whitespace(str(item.get("kind") or ""))
+        if (
+            not canonical
+            or not source_ids
+            or _durable_atom_rejection_reason(
+                canonical,
+                kind=kind,
+                source_texts=source_texts,
+            )
+        ):
             continue
         atom_id = (
             f"atom:{owner_hash}:"
             f"{stable_text_hash(normalize_text(canonical)).removeprefix('sha256:')[:24]}"
         )
+        claim_key = compact_whitespace(str(item.get("claimKey") or ""))[:120]
+        if not claim_key:
+            claim_digest = stable_text_hash(normalize_text(canonical)).removeprefix(
+                "sha256:"
+            )[:8]
+            claim_key = f"owner:{owner_hash[:8]}:{kind}:{claim_digest}"
         atom_ids.append(atom_id)
         atoms.append(
             {
                 **item,
                 "atomId": atom_id,
                 "canonicalText": canonical,
+                "kind": kind,
+                "claimKey": claim_key,
                 "summary": compact_whitespace(str(item.get("summary") or ""))[:500],
                 "sourceEventIds": source_ids,
                 "tags": [],
@@ -1378,13 +1588,14 @@ def _govern_owner_compile_output(
         == "archived"
     )
     books: list[dict[str, object]] = []
-    if proposed_books and not owner_book_archived:
+    if proposed_books and atoms and not owner_book_archived:
         proposed = proposed_books[0]
+        proposed_summary = compact_whitespace(str(proposed.get("summary") or ""))
         source_ids = _legal_ints(
             proposed.get("sourceEventIds"),
             remembered_event_ids,
         ) or sorted(remembered_event_ids)
-        if source_ids:
+        if source_ids and not _derived_summary_rejection_reason(proposed_summary):
             books.append(
                 {
                     **proposed,
@@ -1398,7 +1609,7 @@ def _govern_owner_compile_output(
                         if owner_kind == "shared"
                         else f"{display_name} 的长期记忆"
                     ),
-                    "summary": compact_whitespace(str(proposed.get("summary") or ""))[:2400],
+                    "summary": proposed_summary[:2400],
                     "sourceEventIds": source_ids,
                     "memoryAtomIds": atom_ids,
                     "tags": [],
@@ -1407,7 +1618,7 @@ def _govern_owner_compile_output(
                     "ownerId": owner_id,
                 }
             )
-    elif atoms and not owner_book_archived:
+    if not books and atoms and not owner_book_archived:
         source_ids = sorted(
             {
                 source_id
@@ -1482,18 +1693,31 @@ def _has_durable_memory(compile_output: Mapping[str, object]) -> bool:
 def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
     source_kind = compact_whitespace(str(item.get("sourceKind") or ""))
     text = compact_whitespace(str(item.get("text") or ""))
-    if source_kind == "tool_receipt" and _TRANSIENT_TOOL_RECEIPT_RE.search(text):
-        return "transient_runtime_receipt"
+    if source_kind == "tool_receipt":
+        if _FAILED_TOOL_RECEIPT_RE.search(text):
+            return "failed_tool_receipt"
+        if _TRANSIENT_TOOL_RECEIPT_RE.search(text):
+            return "transient_runtime_receipt"
     if source_kind != "user_final":
         return None
     if not text:
         return "empty_input"
+    if _MEMORY_WORKFLOW_NOISE_RE.search(text):
+        return "memory_workflow_instruction"
     if _FILLER_RE.fullmatch(text):
         return "input_noise_filler"
     if len(text) <= 8 and _RANDOM_INPUT_RE.fullmatch(text):
         return "random_key_input"
     if len(text) <= 80 and _RUNTIME_PROBE_RE.search(text):
         return "runtime_probe"
+    if _looks_like_standalone_question(text):
+        return "standalone_question_no_durable_claim"
+    if (
+        len(text) <= 60
+        and _TRANSIENT_USER_COMMAND_RE.fullmatch(text)
+        and not _DURABLE_ASSERTION_RE.search(text)
+    ):
+        return "transient_user_instruction"
     return None
 
 
@@ -1591,7 +1815,6 @@ def _boundary_before_sources(
         JOIN input_events AS e ON e.id = s.input_event_id
         WHERE s.owner_kind = ? AND s.owner_id = ? AND s.status = 'active'
           AND (? = '' OR e.project = ? OR e.project = '')
-          AND s.disposition IN ({','.join('?' for _ in _ELIGIBLE_DISPOSITIONS)})
           AND (
               s.created_at_ms < ?
               OR (s.created_at_ms = ? AND s.source_id < ?)
@@ -1604,7 +1827,6 @@ def _boundary_before_sources(
             owner_id,
             project,
             project,
-            *_ELIGIBLE_DISPOSITIONS,
             target_ms,
             target_ms,
             target_id,

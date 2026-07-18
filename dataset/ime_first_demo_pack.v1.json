@@ -107,7 +107,7 @@
   ],
   "memoryBook": {
     "schemaVersion": "rag-ime.memory-book-compile.v1",
-    "dailyBooks": [
+    "topicBooks": [
       {
         "bookId": "book:demo:ime-first",
         "bookKey": "ime-first-demo-v1",
