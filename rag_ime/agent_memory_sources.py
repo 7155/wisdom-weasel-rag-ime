@@ -13,6 +13,7 @@ from .agent_sessions import AgentSessionStore
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_ingest import looks_sensitive, sync_event_to_memory_v2
+from .knowledge_scope import quarantine_scope_issue, session_knowledge_scope
 from .sensitive_content import contains_sensitive_content
 from .text_utils import compact_whitespace
 
@@ -825,7 +826,40 @@ class AgentMemorySourceStore:
                 }
             role_id = compact_whitespace(str(session["role_id"] or ""))
             role_version = compact_whitespace(str(session["role_version"] or ""))
+            scope_status, authoritative_scope, scope_reason = session_knowledge_scope(
+                conn,
+                session_id,
+            )
+            if scope_status == "quarantined":
+                quarantine_id = quarantine_scope_issue(
+                    conn,
+                    source_table="agent_memory_sources",
+                    source_id=f"{session_id}:{pi_entry_id}:{source_kind}",
+                    reason_code=scope_reason,
+                    observed_scope={"sessionId": session_id, "sourceKind": source_kind},
+                    observed_at_ms=timestamp,
+                )
+                return {
+                    "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                    "ok": True,
+                    "stored": False,
+                    "status": "quarantined",
+                    "quarantineId": quarantine_id,
+                }
             normalized_owner_id = compact_whitespace(owner_id)
+            scope_columns = {
+                "knowledge_domain": "legacy",
+                "scope_kind": "legacy",
+                "scope_id": "",
+                "visibility": "legacy",
+                "authorization_revision": "",
+                "binding_id": "",
+                "scope_mode": "legacy",
+            }
+            if authoritative_scope is not None:
+                normalized_owner_kind = authoritative_scope.owner_kind
+                normalized_owner_id = authoritative_scope.owner_id
+                scope_columns = authoritative_scope.columns()
             if normalized_owner_kind == "agent" and not normalized_owner_id:
                 normalized_owner_id = role_id
             if not normalized_owner_id:
@@ -888,10 +922,18 @@ class AgentMemorySourceStore:
             conn.execute(
                 """
                 UPDATE memory_items
-                SET owner_kind = ?, owner_id = ?
+                SET owner_kind = ?, owner_id = ?, knowledge_domain = ?,
+                    scope_kind = ?, scope_id = ?, visibility = ?,
+                    authorization_revision = ?, binding_id = ?, scope_mode = ?
                 WHERE source_event_id = ?
                 """,
-                (normalized_owner_kind, normalized_owner_id, event_id),
+                (
+                    normalized_owner_kind, normalized_owner_id,
+                    scope_columns["knowledge_domain"], scope_columns["scope_kind"],
+                    scope_columns["scope_id"], scope_columns["visibility"],
+                    scope_columns["authorization_revision"], scope_columns["binding_id"],
+                    scope_columns["scope_mode"], event_id,
+                ),
             )
             source_id = f"agent-memory:{uuid.uuid4()}"
             conn.execute(
@@ -901,10 +943,12 @@ class AgentMemorySourceStore:
                     source_revision, canonical_text_sha256, status, turn_id,
                     approval_id, created_at_ms, owner_kind, owner_id, role_id,
                     role_version, source_kind, trust_class, disposition,
-                    coverage_start_entry_id, coverage_end_entry_id, metadata_json
+                    coverage_start_entry_id, coverage_end_entry_id, metadata_json,
+                    knowledge_domain, scope_kind, scope_id, visibility,
+                    authorization_revision, binding_id, scope_mode
                 ) VALUES (
                     ?, ?, ?, ?, ?, 1, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    'pending', ?, ?, ?
+                    'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -926,6 +970,13 @@ class AgentMemorySourceStore:
                     compact_whitespace(coverage_start_entry_id),
                     compact_whitespace(coverage_end_entry_id),
                     _json_object(metadata),
+                    scope_columns["knowledge_domain"],
+                    scope_columns["scope_kind"],
+                    scope_columns["scope_id"],
+                    scope_columns["visibility"],
+                    scope_columns["authorization_revision"],
+                    scope_columns["binding_id"],
+                    scope_columns["scope_mode"],
                 ),
             )
             conn.execute(
@@ -1178,6 +1229,13 @@ def _source_payload(row: sqlite3.Row) -> dict[str, object]:
         "status": str(row["status"]),
         "ownerKind": str(row["owner_kind"]),
         "ownerId": str(row["owner_id"]),
+        "knowledgeDomain": str(row["knowledge_domain"]),
+        "scopeKind": str(row["scope_kind"]),
+        "scopeId": str(row["scope_id"]),
+        "visibility": str(row["visibility"]),
+        "authorizationRevision": str(row["authorization_revision"]),
+        "bindingId": str(row["binding_id"]),
+        "scopeMode": str(row["scope_mode"]),
         "roleId": str(row["role_id"]),
         "roleVersion": str(row["role_version"]),
         "sourceKind": str(row["source_kind"]),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .hybrid_rag_models import HybridRagCandidate, MemoryHit
+from .knowledge_scope import KnowledgeCallerContext, scope_visible
 from .models import AgentContextInjection
 from .text_utils import compact_whitespace, now_ms, truncate_text
 
@@ -66,6 +67,7 @@ class AgentMemoryProjector:
         top_k: int = 5,
         max_chars: int = 2400,
         generated_at_ms: int | None = None,
+        knowledge_caller: KnowledgeCallerContext | None = None,
     ) -> AgentContextInjection:
         lines = [
             "PROJECT_MEMORY_BLOCK",
@@ -76,6 +78,8 @@ class AgentMemoryProjector:
         source_event_ids: list[int] = []
         selected_count = 0
         for hit in hits:
+            if not scope_visible(hit.metadata, knowledge_caller):
+                continue
             if hit.doc_type == "item":
                 continue
             source_ids = (*hit.book_ids, *hit.atom_ids, *hit.memory_ids)

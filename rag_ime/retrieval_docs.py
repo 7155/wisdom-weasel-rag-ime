@@ -6,6 +6,7 @@ from typing import Any
 
 from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG
 from .memory_schema_v2 import ensure_memory_v2_schema
+from .knowledge_scope import quarantine_scope_issue, scope_from_row
 from .text_utils import build_fts_document, compact_whitespace, now_ms, truncate_text
 
 
@@ -41,7 +42,9 @@ def rebuild_retrieval_docs(
     existing_rows = conn.execute(
         f"""SELECT rowid, doc_id, doc_type, source_id, raw_text, tags_text,
                    aliases_text, surface_hints_text, query_expansions_text,
-                   time_key, project, app, owner_kind, owner_id, metadata_json,
+                   time_key, project, app, owner_kind, owner_id,
+                   knowledge_domain, scope_kind, scope_id, visibility,
+                   authorization_revision, binding_id, scope_mode, metadata_json,
                    updated_at_ms,
                    EXISTS(
                        SELECT 1 FROM memory_retrieval_docs_fts f
@@ -57,7 +60,9 @@ def rebuild_retrieval_docs(
             "signature": tuple(str(row[key] or "") for key in (
                 "doc_type", "source_id", "raw_text", "tags_text", "aliases_text",
                 "surface_hints_text", "query_expansions_text", "time_key",
-                "project", "app", "owner_kind", "owner_id", "metadata_json",
+                "project", "app", "owner_kind", "owner_id", "knowledge_domain",
+                "scope_kind", "scope_id", "visibility", "authorization_revision",
+                "binding_id", "scope_mode", "metadata_json",
             )),
             "rowid": int(row["rowid"]),
             "updatedAtMs": int(row["updated_at_ms"] or 0),
@@ -79,6 +84,7 @@ def rebuild_retrieval_docs(
     active_doc_ids: set[str] = set()
     changed_doc_ids: set[str] = set()
     for doc in docs:
+        _ensure_legacy_projection_scope(doc)
         doc_id = str(doc["doc_id"])
         active_doc_ids.add(doc_id)
         doc_type = str(doc["doc_type"])
@@ -87,7 +93,8 @@ def rebuild_retrieval_docs(
         signature = tuple(str(doc[key] or "") for key in (
             "doc_type", "source_id", "raw_text", "tags_text", "aliases_text",
             "surface_hints_text", "query_expansions_text", "time_key", "project", "app",
-            "owner_kind", "owner_id",
+            "owner_kind", "owner_id", "knowledge_domain", "scope_kind", "scope_id",
+            "visibility", "authorization_revision", "binding_id", "scope_mode",
         )) + (metadata_json,)
         previous = existing.get(doc_id)
         if (
@@ -106,9 +113,12 @@ def rebuild_retrieval_docs(
             INSERT INTO memory_retrieval_docs(
                 doc_id, doc_type, source_id, raw_text, tags_text, aliases_text,
                 surface_hints_text, query_expansions_text, time_key, project, app,
-                owner_kind, owner_id, status, updated_at_ms, metadata_json
+                owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
+                visibility, authorization_revision, binding_id, scope_mode,
+                status, updated_at_ms, metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    'active', ?, ?)
             ON CONFLICT(doc_id) DO UPDATE SET
                 doc_type=excluded.doc_type, source_id=excluded.source_id,
                 raw_text=excluded.raw_text, tags_text=excluded.tags_text,
@@ -116,6 +126,10 @@ def rebuild_retrieval_docs(
                 query_expansions_text=excluded.query_expansions_text, time_key=excluded.time_key,
                 project=excluded.project, app=excluded.app,
                 owner_kind=excluded.owner_kind, owner_id=excluded.owner_id, status='active',
+                knowledge_domain=excluded.knowledge_domain, scope_kind=excluded.scope_kind,
+                scope_id=excluded.scope_id, visibility=excluded.visibility,
+                authorization_revision=excluded.authorization_revision,
+                binding_id=excluded.binding_id, scope_mode=excluded.scope_mode,
                 updated_at_ms=excluded.updated_at_ms, metadata_json=excluded.metadata_json
             """,
             (
@@ -132,6 +146,13 @@ def rebuild_retrieval_docs(
                 doc["app"],
                 doc["owner_kind"],
                 doc["owner_id"],
+                doc["knowledge_domain"],
+                doc["scope_kind"],
+                doc["scope_id"],
+                doc["visibility"],
+                doc["authorization_revision"],
+                doc["binding_id"],
+                doc["scope_mode"],
                 timestamp,
                 metadata_json,
             ),
@@ -238,7 +259,9 @@ def _memory_item_docs(
     rows = conn.execute(
         """
         SELECT id, memory_id, kind, text, normalized_text, summary, source_event_id,
-               project, app, owner_kind, owner_id, status, privacy_class,
+               project, app, owner_kind, owner_id, knowledge_domain, scope_kind,
+               scope_id, visibility, authorization_revision, binding_id, scope_mode,
+               status, privacy_class,
                metadata_json, updated_at_ms
         FROM memory_items
         WHERE status IN ('active', 'approved')
@@ -258,6 +281,9 @@ def _memory_item_docs(
     ).fetchall()
     docs: list[dict[str, object]] = []
     for row in rows:
+        scope = _projected_scope(conn, "memory_items", str(row["memory_id"]), row)
+        if scope is None:
+            continue
         memory_id = str(row["memory_id"])
         text = compact_whitespace(str(row["text"] or ""))
         normalized = compact_whitespace(str(row["normalized_text"] or ""))
@@ -306,8 +332,7 @@ def _memory_item_docs(
                 "time_key": "",
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
-                "owner_kind": str(row["owner_kind"] or "user"),
-                "owner_id": str(row["owner_id"] or "default"),
+                **scope,
                 "metadata": {
                     **metadata,
                     "kind": str(row["kind"]),
@@ -316,8 +341,7 @@ def _memory_item_docs(
                     "source": "memory_items",
                     "contextGroupId": context_group_id,
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
-                    "ownerKind": str(row["owner_kind"] or "user"),
-                    "ownerId": str(row["owner_id"] or "default"),
+                    **_scope_metadata(scope),
                 },
             }
         )
@@ -328,7 +352,9 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
     rows = conn.execute(
         """
         SELECT id, kind, text, canonical_text, source_event_ids_json, scope_project,
-               scope_app, owner_kind, owner_id, status, quality_score, confidence,
+               scope_app, owner_kind, owner_id, knowledge_domain, scope_kind,
+               scope_id, visibility, authorization_revision, binding_id, scope_mode,
+               status, quality_score, confidence,
                updated_at_ms
         FROM memory_atoms
         WHERE status IN ('active', 'approved')
@@ -341,6 +367,9 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
     ).fetchall()
     docs: list[dict[str, object]] = []
     for row in rows:
+        scope = _projected_scope(conn, "memory_atoms", str(row["id"]), row)
+        if scope is None:
+            continue
         atom_id = str(row["id"])
         raw_text = compact_whitespace(str(row["canonical_text"] or row["text"] or ""))
         source_event_ids = _json_list(row["source_event_ids_json"])
@@ -369,8 +398,7 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "time_key": "",
                 "project": str(row["scope_project"] or ""),
                 "app": str(row["scope_app"] or ""),
-                "owner_kind": str(row["owner_kind"] or "user"),
-                "owner_id": str(row["owner_id"] or "default"),
+                **scope,
                 "metadata": {
                     "kind": str(row["kind"]),
                     "atomId": atom_id,
@@ -378,8 +406,7 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "source": "memory_atoms",
                     "contextGroupId": _first_event_context_group(conn, source_event_ids),
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
-                    "ownerKind": str(row["owner_kind"] or "user"),
-                    "ownerId": str(row["owner_id"] or "default"),
+                    **_scope_metadata(scope),
                 },
             }
         )
@@ -391,7 +418,9 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         """
         SELECT book_id, book_type, book_key, title, summary, project, app, tags_json,
                surface_hints_json, query_expansions_json, source_event_ids_json, memory_atom_ids_json,
-               owner_kind, owner_id, status, confidence, quality_score, metadata_json,
+               owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
+               visibility, authorization_revision, binding_id, scope_mode,
+               status, confidence, quality_score, metadata_json,
                updated_at_ms,
                archived_at_ms, last_active_at_ms, archive_reason
         FROM memory_books
@@ -409,6 +438,9 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
     ).fetchall()
     docs: list[dict[str, object]] = []
     for row in rows:
+        scope = _projected_scope(conn, "memory_books", str(row["book_id"]), row)
+        if scope is None:
+            continue
         book_id = str(row["book_id"])
         raw_text = compact_whitespace(" ".join(item for item in (str(row["title"] or ""), str(row["summary"] or "")) if item))
         source_event_ids = _json_list(row["source_event_ids_json"])
@@ -439,8 +471,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "time_key": f"{book_type}:{book_key}" if book_type and book_key else book_key,
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
-                "owner_kind": str(row["owner_kind"] or "user"),
-                "owner_id": str(row["owner_id"] or "default"),
+                **scope,
                 "metadata": {
                     **stored_metadata,
                     "bookType": book_type,
@@ -457,8 +488,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                     "contextGroupId": compact_whitespace(str(stored_metadata.get("contextGroupId") or ""))
                     or _first_event_context_group(conn, source_event_ids),
-                    "ownerKind": str(row["owner_kind"] or "user"),
-                    "ownerId": str(row["owner_id"] or "default"),
+                    **_scope_metadata(scope),
                 },
             }
         )
@@ -589,6 +619,70 @@ def _activity_timeline_docs(
             }
         )
     return docs
+
+
+def _projected_scope(
+    conn: sqlite3.Connection,
+    source_table: str,
+    source_id: str,
+    row: sqlite3.Row,
+) -> dict[str, str] | None:
+    observed = {key: row[key] for key in (
+        "owner_kind", "owner_id", "knowledge_domain", "scope_kind", "scope_id",
+        "visibility", "authorization_revision", "binding_id", "scope_mode",
+    )}
+    try:
+        authoritative = scope_from_row(observed)
+    except ValueError as exc:
+        quarantine_scope_issue(
+            conn,
+            source_table=source_table,
+            source_id=source_id,
+            reason_code="invalid_authoritative_scope",
+            observed_scope={**observed, "error": str(exc)},
+        )
+        return None
+    if authoritative is not None:
+        return authoritative.columns()
+    return {
+        "owner_kind": str(row["owner_kind"]),
+        "owner_id": str(row["owner_id"]),
+        "knowledge_domain": "legacy",
+        "scope_kind": "legacy",
+        "scope_id": "",
+        "visibility": "legacy",
+        "authorization_revision": "",
+        "binding_id": "",
+        "scope_mode": "legacy",
+    }
+
+
+def _scope_metadata(scope: dict[str, str]) -> dict[str, str]:
+    return {
+        "ownerKind": scope["owner_kind"],
+        "ownerId": scope["owner_id"],
+        "knowledgeDomain": scope["knowledge_domain"],
+        "scopeKind": scope["scope_kind"],
+        "scopeId": scope["scope_id"],
+        "visibility": scope["visibility"],
+        "authorizationRevision": scope["authorization_revision"],
+        "bindingId": scope["binding_id"],
+        "scopeMode": scope["scope_mode"],
+    }
+
+
+def _ensure_legacy_projection_scope(doc: dict[str, object]) -> None:
+    defaults = {
+        "knowledge_domain": "legacy",
+        "scope_kind": "legacy",
+        "scope_id": "",
+        "visibility": "legacy",
+        "authorization_revision": "",
+        "binding_id": "",
+        "scope_mode": "legacy",
+    }
+    for key, value in defaults.items():
+        doc.setdefault(key, value)
 
 
 def _memory_item_tags(conn: sqlite3.Connection, *, memory_item_pk: int) -> list[str]:

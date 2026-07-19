@@ -13,6 +13,7 @@ from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider
 from .hybrid_rag_models import HybridRagQuery
+from .knowledge_scope import session_knowledge_caller
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .input_event_assembly import recent_complete_input_context
 from .memory_ownership import agent_visible_memory_owners
@@ -161,6 +162,7 @@ class SessionMemoryRecallBuilder:
         )
 
         with self._connect() as conn:
+            knowledge_caller = session_knowledge_caller(conn, session)
             recent = recent_complete_input_context(
                 conn,
                 project=self.project,
@@ -182,6 +184,7 @@ class SessionMemoryRecallBuilder:
                 top_k=max(24, bounded_items * 4),
                 latency_budget_ms=2_500,
                 visible_owners=visible_owners,
+                knowledge_caller=knowledge_caller,
                 vector_context_text=_tail_text(vector_context_text, 6_000),
                 vector_context_weight=vector_context_weight,
             )

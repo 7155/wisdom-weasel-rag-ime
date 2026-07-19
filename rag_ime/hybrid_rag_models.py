@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .knowledge_scope import KnowledgeCallerContext
+
 
 @dataclass(frozen=True)
 class HybridRagQuery:
@@ -21,6 +23,7 @@ class HybridRagQuery:
     enabled_lanes: tuple[tuple[str, bool], ...] = ()
     lane_weights: tuple[tuple[str, float], ...] = ()
     visible_owners: tuple[tuple[str, str], ...] = ()
+    knowledge_caller: KnowledgeCallerContext | None = None
     # Vector-only context never enters BM25/TagMemo terms. This lets a caller
     # bias semantic retrieval with a compacted conversation summary without
     # turning that summary into a second lexical query.
