@@ -274,7 +274,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "planning",
         "displayName": "任务执行清单",
         "description": "维护跨回合与压缩保留的 Session 执行清单；它不修改用户的每日规划",
-        "operations": ("list", "update"),
+        "operations": ("list", "update", "submit_review", "complete", "cancel"),
         "resultPresentation": "tool_result",
     },
     {
@@ -503,6 +503,15 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                         "type": "string",
                         "enum": ["pending", "in_progress", "completed"],
                     },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {
+                    "op": {"enum": ["submit_review", "complete", "cancel"]},
+                    "note": {"type": "string", "maxLength": 600},
                 },
             },
         ],
@@ -1097,6 +1106,7 @@ class ControlToolGateway:
         browser_control: BrowserControlService | None = None,
         desktop_client: object | None = None,
         role_books: object | None = None,
+        workflow_publisher: Callable[[str, str], object] | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -1112,6 +1122,7 @@ class ControlToolGateway:
         self.browser_control = browser_control
         self.desktop_client = desktop_client or DesktopBridgeClient()
         self.role_books = role_books
+        self.workflow_publisher = workflow_publisher
         self._role_book_tool_adapter: AgentRoleBookToolAdapter | None = None
         self._memory_governance_store: MemoryGovernanceProposalStore | None = None
         self._auto_approval_executor: (
@@ -1255,6 +1266,13 @@ class ControlToolGateway:
             raise ValueError(f"unsupported {tool} operation")
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
             raise ValueError("tool operation is not enabled for this session tool profile")
+        if (tool, operation) in {
+            ("workspace_patch", "apply"),
+            ("workspace_shell", "run"),
+        }:
+            # A preview request is still planning. Prove Act is open here, but
+            # transition to executing only when an approved write is applied.
+            self.sessions.require_workspace_act(session_id)
         handlers = {
             "ime_overview": self._overview,
             "ime_input": self._input,
@@ -1579,6 +1597,7 @@ class ControlToolGateway:
             )
             event = result["event"] if isinstance(result.get("event"), Mapping) else {}
             plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
+            self._publish_workflow(session_id, "plan:item_update")
             return {
                 "summary": f"计划项《{event.get('title', '')}》已更新为 {event.get('status', '')}",
                 "presentationKind": "task_plan",
@@ -1586,7 +1605,34 @@ class ControlToolGateway:
                 "plan": plan,
                 "items": list(plan.get("items") or []),
             }
+        if operation in {"submit_review", "complete", "cancel"}:
+            action = {
+                "submit_review": "submit_review",
+                "complete": "complete",
+                "cancel": "cancel",
+            }[operation]
+            result = self.sessions.mutate_agent_plan(
+                session_id,
+                {
+                    "action": action,
+                    "note": _bounded_text(args.get("note"), maximum=600),
+                },
+                actor="agent-runtime",
+            )
+            plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
+            self._publish_workflow(session_id, f"plan:{action}")
+            return {
+                "summary": f"执行计划已进入 {plan.get('status', '')} 状态",
+                "presentationKind": "task_plan",
+                "plan": plan,
+                "items": list(plan.get("items") or []),
+            }
         raise ValueError("unsupported agent_plan operation")
+
+    def _publish_workflow(self, session_id: str, reason: str) -> None:
+        if self.workflow_publisher is None:
+            return
+        self.workflow_publisher(session_id, reason)
 
     def apply_approval(self, approval: Mapping[str, object]) -> dict[str, object]:
         """Execute one already-approved operation after revalidating its preview."""
@@ -1595,10 +1641,19 @@ class ControlToolGateway:
             raise ValueError("approval must be in approved state before execution")
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
+        if (tool, operation) in {
+            ("workspace_patch", "apply"),
+            ("workspace_shell", "run"),
+        }:
+            self.sessions.require_workspace_act(str(approval.get("sessionId") or ""))
         if (tool, operation) == ("workspace_shell", "run"):
-            return self._apply_workspace_command(approval)
+            result = self._apply_workspace_command(approval)
+            self._mark_workspace_execution_started(approval)
+            return result
         if (tool, operation) == ("workspace_patch", "apply"):
-            return self._apply_workspace_patch(approval)
+            result = self._apply_workspace_patch(approval)
+            self._mark_workspace_execution_started(approval)
+            return result
         if (tool, operation) == ("desktop_semantic", "act"):
             return self._apply_desktop_action(approval)
         if (tool, operation) == ("ime_planning", "undo_task_event"):
@@ -1691,6 +1746,24 @@ class ControlToolGateway:
             result=result,
             audit_persisted=True,
         )
+
+    def _mark_workspace_execution_started(self, approval: Mapping[str, object]) -> None:
+        """Advance Plan only after the hash-bound workspace write succeeds."""
+
+        session_id = str(approval.get("sessionId") or "")
+        before = self.sessions.agent_plan(session_id)
+        if before.get("status") != "approved":
+            return
+        self.sessions.mutate_agent_plan(
+            session_id,
+            {
+                "action": "start_execution",
+                "expectedRevision": before.get("revision"),
+                "note": "首个受控工作区写操作已完成",
+            },
+            actor="agent-runtime",
+        )
+        self._publish_workflow(session_id, "plan:start_execution")
 
     def _prepare_browser_action(
         self,
@@ -5996,7 +6069,7 @@ def _tool_profile_allows(
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
-        "agent_plan": frozenset({"list", "update"}),
+        "agent_plan": frozenset({"list", "update", "submit_review", "complete", "cancel"}),
         "workspace_list": frozenset({"list"}),
         "workspace_read": frozenset({"read"}),
         "workspace_search": frozenset({"search"}),

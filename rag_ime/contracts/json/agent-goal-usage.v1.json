@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-goal-usage.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sessionId", "idempotencyKey"],
+  "anyOf": [
+    { "required": ["tokenDelta"] },
+    { "required": ["elapsedDeltaMs"] }
+  ],
+  "properties": {
+    "sessionId": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "turnId": { "type": "string", "maxLength": 240 },
+    "eventId": { "type": "string", "maxLength": 240 },
+    "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "tokenDelta": { "type": "integer", "minimum": 0, "maximum": 10000000 },
+    "elapsedDeltaMs": { "type": "integer", "minimum": 0, "maximum": 604800000 }
+  }
+}

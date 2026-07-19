@@ -29,11 +29,20 @@ describe('Agent chat rendering', () => {
   it('renders the session plan as a compact live checklist', () => {
     const { container, rerender } = render(
       <AgentPlanCard plan={{
+        id: 'plan:session-1',
+        sessionId: 'session-1',
         revision: 3,
+        title: '执行计划',
+        status: 'executing',
+        actor: 'agent',
+        note: '',
+        updatedAtMs: 3,
+        editable: false,
+        actApproved: true,
         items: [
-          { id: 'step-1', title: '核对上下文链路', status: 'completed', sequence: 1, updatedAtMs: 1 },
-          { id: 'step-2', title: '实现执行清单', status: 'in_progress', sequence: 2, updatedAtMs: 2 },
-          { id: 'step-3', title: '运行真实验收', status: 'pending', sequence: 3, updatedAtMs: 3 },
+          { id: 'step-1', title: '核对上下文链路', status: 'completed', position: 1, sequence: 1, updatedAtMs: 1 },
+          { id: 'step-2', title: '实现执行清单', status: 'in_progress', position: 2, sequence: 2, updatedAtMs: 2 },
+          { id: 'step-3', title: '运行真实验收', status: 'pending', position: 3, sequence: 3, updatedAtMs: 3 },
         ],
         counts: { total: 3, pending: 1, inProgress: 1, completed: 1 },
       }} />,
@@ -45,11 +54,20 @@ describe('Agent chat rendering', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '33');
 
     rerender(<AgentPlanCard plan={{
+      id: 'plan:session-1',
+      sessionId: 'session-1',
       revision: 4,
+      title: '执行计划',
+      status: 'completed',
+      actor: 'agent',
+      note: '',
+      updatedAtMs: 5,
+      editable: false,
+      actApproved: false,
       items: [
-        { id: 'step-1', title: '核对上下文链路', status: 'completed', sequence: 1, updatedAtMs: 1 },
-        { id: 'step-2', title: '实现执行清单', status: 'completed', sequence: 4, updatedAtMs: 4 },
-        { id: 'step-3', title: '运行真实验收', status: 'completed', sequence: 5, updatedAtMs: 5 },
+        { id: 'step-1', title: '核对上下文链路', status: 'completed', position: 1, sequence: 1, updatedAtMs: 1 },
+        { id: 'step-2', title: '实现执行清单', status: 'completed', position: 2, sequence: 4, updatedAtMs: 4 },
+        { id: 'step-3', title: '运行真实验收', status: 'completed', position: 3, sequence: 5, updatedAtMs: 5 },
       ],
       counts: { total: 3, pending: 0, inProgress: 0, completed: 3 },
     }} />);

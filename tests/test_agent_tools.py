@@ -1061,6 +1061,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=2,
         )
+        self._approve_plan(str(coordinator["id"]))
         executed = []
 
         def fake_execute(prepared):
@@ -1110,6 +1111,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("README.md", str(listed))
         self.assertEqual(read["content"], "coordinator proof\n")
         self.assertTrue(prepared["approvalRequired"])
+        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
         self.assertEqual(executed, [])
         approval = prepared["approval"]
         decided = self.store.decide_approval(
@@ -1122,6 +1124,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(receipt["exitCode"], 0)
         self.assertEqual(receipt["auditId"], approval["approvalId"])
         self.assertEqual(len(executed), 1)
+        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "executing")
 
     def test_dangerous_profile_auto_approves_through_the_bound_service_bridge(self) -> None:
         self.session = self.store.set_runtime_policy(
@@ -1169,6 +1172,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=3,
         )
+        self._approve_plan(str(coordinator["id"]))
         found = self.gateway.execute(
             {
                 **self._tool_call("workspace_search", "search", query="before"),
@@ -1199,6 +1203,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         receipt = self.gateway.apply_approval(decided)
         self.assertEqual(receipt["replacementCount"], 1)
         self.assertEqual(target.read_text(encoding="utf-8"), "print('after')\n")
+        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "executing")
 
     def test_workspace_patch_fails_closed_if_file_changes_after_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-stale"
@@ -1211,6 +1216,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=4,
         )
+        self._approve_plan(str(coordinator["id"]))
         prepared = self.gateway.execute(
             {
                 **self._tool_call(
@@ -1234,6 +1240,81 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkspaceHarnessError, "changed"):
             self.gateway.apply_approval(decided)
         self.assertEqual(target.read_text(encoding="utf-8"), "changed\n")
+        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
+
+    def test_workspace_write_requires_reviewed_plan_but_read_tools_remain_available(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-gated"
+        workspace.mkdir()
+        (workspace / "README.md").write_text("readable\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="coordinator gated",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=5,
+        )
+        listed = self.gateway.execute(
+            {
+                **self._tool_call("workspace_list", "list", path=str(workspace)),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        self.assertIn("README.md", str(listed))
+        with self.assertRaisesRegex(ValueError, "Act Gate blocked.*plan_required"):
+            self.gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_shell",
+                        "run",
+                        command="pwd",
+                        cwd=str(workspace),
+                    ),
+                    "sessionId": coordinator["id"],
+                }
+            )
+
+    def test_workspace_harness_failure_keeps_approved_plan_out_of_execution(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-failing"
+        workspace.mkdir()
+        coordinator = self.store.create(
+            title="coordinator failing",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=6,
+        )
+        self._approve_plan(str(coordinator["id"]))
+
+        def fail_execute(_prepared):
+            raise WorkspaceHarnessError("runner unavailable")
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            workspace_harness=WorkspaceHarness(executor=fail_execute),
+        )
+        prepared = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_shell",
+                    "run",
+                    command="pwd",
+                    cwd=str(workspace),
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+
+        with self.assertRaisesRegex(WorkspaceHarnessError, "runner unavailable"):
+            gateway.apply_approval(decided)
+        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
 
     def test_task_action_requires_native_approval_then_returns_rollback_receipt(self) -> None:
         prepared = self.gateway.execute(
@@ -2249,6 +2330,22 @@ class ControlToolGatewayTests(unittest.TestCase):
             "toolCallId": "tool:1",
             "args": {"op": operation, **args},
         }
+
+    def _approve_plan(self, session_id: str) -> dict[str, object]:
+        review = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "submit_review",
+                "title": "受控工作区执行",
+                "items": [{"title": "执行已审阅的工作区变更", "status": "pending"}],
+            },
+            actor="test-user",
+        )["plan"]
+        return self.store.mutate_agent_plan(
+            session_id,
+            {"action": "approve", "expectedRevision": review["revision"]},
+            actor="test-user",
+        )["plan"]
 
 
 if __name__ == "__main__":

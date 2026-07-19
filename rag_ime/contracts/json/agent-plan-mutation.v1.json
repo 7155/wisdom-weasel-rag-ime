@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-plan-mutation.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action"],
+  "properties": {
+    "action": { "type": "string", "enum": ["save", "submit_review", "approve", "return_to_draft", "complete", "cancel", "reset"] },
+    "expectedRevision": { "type": "integer", "minimum": 0 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "note": { "type": "string", "maxLength": 600 },
+    "items": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "status"],
+        "properties": {
+          "id": { "type": "string", "maxLength": 160 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 240 },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] }
+        }
+      }
+    }
+  }
+}

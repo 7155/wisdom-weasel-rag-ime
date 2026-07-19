@@ -219,6 +219,28 @@ export const CONTROL_ROUTES = {
     params: { sessionId: null },
     body: ['instructions'],
   },
+  'agent.session.workflow.get': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/workflow',
+    params: { sessionId: null },
+    responseContract: 'agent-workflow-state.v1',
+  },
+  'agent.session.plan.mutate': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/plan',
+    params: { sessionId: null },
+    body: ['action', 'expectedRevision', 'title', 'items', 'note'],
+    requiredBody: ['action'],
+    responseContract: 'agent-workflow-state.v1',
+  },
+  'agent.session.goal.mutate': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/goal',
+    params: { sessionId: null },
+    body: ['action', 'expectedRevision', 'objective', 'tokenBudget', 'timeBudgetMs', 'summary', 'evidence'],
+    requiredBody: ['action'],
+    responseContract: 'agent-workflow-state.v1',
+  },
   'agent.session.commands': {
     method: 'GET',
     path: '/api/agent/sessions/:sessionId/commands',

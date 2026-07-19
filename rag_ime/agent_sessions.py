@@ -673,46 +673,414 @@ class AgentSessionStore:
         self.get(session_id)
         bounded_limit = max(1, min(int(limit), 100))
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                WITH latest AS (
-                    SELECT event_id, sequence, item_id, title, status, created_at_ms,
-                           MIN(sequence) OVER (
-                               PARTITION BY item_id
-                           ) AS first_sequence,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY item_id ORDER BY sequence DESC
-                           ) AS row_number
-                    FROM agent_plan_events
-                    WHERE session_id = ?
-                )
-                SELECT event_id, sequence, item_id, title, status, created_at_ms
-                FROM latest
-                WHERE row_number = 1
-                ORDER BY first_sequence, item_id
-                LIMIT ?
-                """,
-                (session_id, bounded_limit),
-            ).fetchall()
-            revision_row = conn.execute(
-                "SELECT COALESCE(MAX(sequence), 0) FROM agent_plan_events WHERE session_id = ?",
+            return _agent_plan_projection(conn, session_id, limit=bounded_limit)
+
+    def mutate_agent_plan(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        actor: str = "control-center-user",
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        action = str(payload.get("action") or "").strip()
+        if action not in {
+            "save",
+            "submit_review",
+            "approve",
+            "return_to_draft",
+            "start_execution",
+            "complete",
+            "cancel",
+            "reset",
+        }:
+            raise ValueError("unsupported agent plan action")
+        timestamp = _timestamp(updated_at_ms)
+        normalized_actor = _bounded_plan_text(actor, field="actor", maximum=120)
+        note = _bounded_plan_text(payload.get("note"), field="note", maximum=600, required=False)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session = conn.execute(
+                "SELECT id FROM agent_sessions WHERE id = ? AND status <> 'archived'",
                 (session_id,),
             ).fetchone()
-        items = [_agent_plan_item(row) for row in rows]
-        completed = sum(1 for item in items if item["status"] == "completed")
-        in_progress = sum(1 for item in items if item["status"] == "in_progress")
+            if session is None:
+                raise AgentSessionNotFound(session_id)
+            current = _agent_plan_projection(conn, session_id, limit=100)
+            expected_revision = payload.get("expectedRevision")
+            if expected_revision is not None and int(expected_revision) != int(current["revision"]):
+                raise ValueError("agent plan changed; refresh before saving")
+            current_status = str(current["status"])
+            if action in {"save", "submit_review"} and current_status != "draft":
+                raise ValueError("only a draft plan can be edited or submitted")
+            if action == "approve" and current_status != "review":
+                raise ValueError("only a plan in review can be approved")
+            if action == "return_to_draft" and current_status not in {"review", "approved"}:
+                raise ValueError("only a reviewed or approved plan can return to draft")
+            if action == "start_execution" and current_status not in {"approved", "executing"}:
+                raise ValueError("plan approval is required before execution")
+            if action == "complete" and current_status not in {"approved", "executing"}:
+                raise ValueError("only an approved or executing plan can be completed")
+            if action == "cancel" and current_status in {"completed", "cancelled"}:
+                raise ValueError("terminal plans cannot be cancelled again")
+            if action == "reset" and current_status not in {"completed", "cancelled"}:
+                raise ValueError("only a terminal plan can be reset")
+
+            title = _bounded_plan_text(
+                payload.get("title") if "title" in payload else current.get("title"),
+                field="title",
+                maximum=160,
+            )
+            if action in {"save", "submit_review", "reset"}:
+                raw_items = payload.get("items", [] if action == "reset" else None)
+                if raw_items is not None:
+                    if not isinstance(raw_items, list):
+                        raise ValueError("agent plan items must be an array")
+                    _replace_agent_plan_items(
+                        conn,
+                        session_id,
+                        raw_items,
+                        timestamp=timestamp,
+                    )
+
+            projected = _agent_plan_projection(conn, session_id, limit=100)
+            if action in {"submit_review", "approve", "start_execution", "complete"} and not projected["items"]:
+                raise ValueError("agent plan must contain at least one item")
+            if action == "complete" and any(
+                str(item.get("status") or "") != "completed"
+                for item in projected["items"]
+            ):
+                raise ValueError("all agent plan items must be completed first")
+
+            target_status = {
+                "save": "draft",
+                "submit_review": "review",
+                "approve": "approved",
+                "return_to_draft": "draft",
+                "start_execution": "executing",
+                "complete": "completed",
+                "cancel": "cancelled",
+                "reset": "draft",
+            }[action]
+            state_event = _append_agent_plan_state(
+                conn,
+                session_id,
+                title=title,
+                status=target_status,
+                actor=normalized_actor,
+                note=note,
+                created_at_ms=timestamp,
+            )
+            conn.execute(
+                "UPDATE agent_sessions SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, session_id),
+            )
+            plan = _agent_plan_projection(conn, session_id, limit=100)
         return {
-            "schemaVersion": "rag-ime.agent-plan.v1",
+            "schemaVersion": "rag-ime.agent-plan-mutation-result.v1",
+            "ok": True,
+            "action": action,
+            "event": state_event,
+            "plan": plan,
+        }
+
+    def agent_goal(self, session_id: str) -> dict[str, object]:
+        self.get(session_id)
+        with self._connect() as conn:
+            return _agent_goal_projection(conn, session_id)
+
+    def workflow_state(self, session_id: str) -> dict[str, object]:
+        self.get(session_id)
+        with self._connect() as conn:
+            plan = _agent_plan_projection(conn, session_id, limit=100)
+            goal = _agent_goal_projection(conn, session_id)
+        return {
+            "schemaVersion": "rag-ime.agent-workflow-state.v1",
+            "ok": True,
             "sessionId": session_id,
-            "revision": int(revision_row[0] if revision_row else 0),
-            "items": items,
-            "counts": {
-                "total": len(items),
-                "pending": len(items) - completed - in_progress,
-                "inProgress": in_progress,
-                "completed": completed,
+            "plan": plan,
+            "goal": goal,
+            "actGate": _agent_act_gate(plan, goal),
+        }
+
+    def mutate_agent_goal(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        actor: str = "control-center-user",
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        action = str(payload.get("action") or "").strip()
+        if action not in {"set", "update", "pause", "resume", "complete", "clear"}:
+            raise ValueError("unsupported agent goal action")
+        timestamp = _timestamp(updated_at_ms)
+        normalized_actor = _bounded_goal_text(actor, field="actor", maximum=120)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session = conn.execute(
+                "SELECT id FROM agent_sessions WHERE id = ? AND status <> 'archived'",
+                (session_id,),
+            ).fetchone()
+            if session is None:
+                raise AgentSessionNotFound(session_id)
+            current = _agent_goal_projection(conn, session_id)
+            expected_revision = payload.get("expectedRevision")
+            if expected_revision is not None and int(expected_revision) != int(current["revision"]):
+                raise ValueError("agent goal changed; refresh before saving")
+            configured = bool(current["configured"])
+            current_status = str(current["status"])
+            if action == "set" and configured:
+                raise ValueError("clear the current agent goal before setting another")
+            if action in {"update", "pause", "resume", "complete", "clear"} and not configured:
+                raise ValueError("this Session has no active agent goal")
+            if action == "update" and current_status not in {"active", "paused"}:
+                raise ValueError("only an active or paused goal can be edited")
+            if action == "pause" and current_status != "active":
+                raise ValueError("only an active goal can be paused")
+            if action == "resume" and current_status != "paused":
+                raise ValueError("only a paused goal can be resumed")
+            if action == "complete" and current_status not in {"active", "paused"}:
+                raise ValueError("only an active or paused goal can be completed")
+            if action == "clear" and current_status == "cleared":
+                raise ValueError("agent goal is already cleared")
+
+            goal_id = (
+                f"goal:{uuid.uuid4()}"
+                if action == "set"
+                else str(current["goalId"])
+            )
+            objective = _bounded_goal_text(
+                payload.get("objective")
+                if action == "set" or "objective" in payload
+                else current.get("objective"),
+                field="objective",
+                maximum=4_000,
+            )
+            current_budget = current.get("budget") if isinstance(current.get("budget"), Mapping) else {}
+            token_budget = _optional_positive_budget(
+                payload.get("tokenBudget")
+                if "tokenBudget" in payload
+                else current_budget.get("tokenLimit"),
+                field="tokenBudget",
+                maximum=100_000_000,
+            )
+            time_budget_ms = _optional_positive_budget(
+                payload.get("timeBudgetMs")
+                if "timeBudgetMs" in payload
+                else current_budget.get("timeLimitMs"),
+                field="timeBudgetMs",
+                maximum=365 * 24 * 60 * 60 * 1000,
+            )
+            usage = current.get("usage") if isinstance(current.get("usage"), Mapping) else {}
+            tokens_used = int(usage.get("tokens") or 0) if configured else 0
+            elapsed_ms = int(usage.get("elapsedMs") or 0) if configured else 0
+            audit_id: str | None = None
+            if action == "complete":
+                summary = _bounded_goal_text(
+                    payload.get("summary"),
+                    field="completion summary",
+                    maximum=2_000,
+                )
+                evidence = _goal_completion_evidence(payload.get("evidence"))
+                audit_id = f"goal-audit:{uuid.uuid4()}"
+                conn.execute(
+                    """
+                    INSERT INTO agent_goal_completion_audits(
+                        audit_id, session_id, goal_id, summary, evidence_json,
+                        completed_by, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        audit_id,
+                        session_id,
+                        goal_id,
+                        summary,
+                        json.dumps(evidence, ensure_ascii=False, separators=(",", ":")),
+                        normalized_actor,
+                        timestamp,
+                    ),
+                )
+
+            target_status = {
+                "set": "active",
+                "update": current_status,
+                "pause": "paused",
+                "resume": "active",
+                "complete": "completed",
+                "clear": "cleared",
+            }[action]
+            event = _append_agent_goal_event(
+                conn,
+                session_id,
+                goal_id=goal_id,
+                objective=objective,
+                status=target_status,
+                token_budget=token_budget,
+                time_budget_ms=time_budget_ms,
+                tokens_used=tokens_used,
+                elapsed_ms=elapsed_ms,
+                completion_audit_id=audit_id,
+                actor=normalized_actor,
+                created_at_ms=timestamp,
+            )
+            conn.execute(
+                "UPDATE agent_sessions SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, session_id),
+            )
+            goal = _agent_goal_projection(conn, session_id)
+            plan = _agent_plan_projection(conn, session_id, limit=100)
+        return {
+            "schemaVersion": "rag-ime.agent-goal-mutation-result.v1",
+            "ok": True,
+            "action": action,
+            "event": event,
+            "workflow": {
+                "schemaVersion": "rag-ime.agent-workflow-state.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "plan": plan,
+                "goal": goal,
+                "actGate": _agent_act_gate(plan, goal),
             },
         }
+
+    def record_agent_goal_usage(
+        self,
+        session_id: str,
+        *,
+        idempotency_key: str,
+        turn_id: str = "",
+        event_id: str = "",
+        token_delta: int = 0,
+        elapsed_delta_ms: int = 0,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized_key = str(idempotency_key or "").strip()
+        normalized_turn_id = str(turn_id or "").strip()
+        normalized_event_id = str(event_id or "").strip()
+        if not normalized_key or len(normalized_key) > 300 or "\x00" in normalized_key:
+            raise ValueError("goal usage idempotencyKey is invalid")
+        if len(normalized_turn_id) > 240 or "\x00" in normalized_turn_id:
+            raise ValueError("goal usage turnId is invalid")
+        if len(normalized_event_id) > 240 or "\x00" in normalized_event_id:
+            raise ValueError("goal usage eventId is invalid")
+        normalized_token_delta = int(token_delta)
+        normalized_elapsed_delta = int(elapsed_delta_ms)
+        if normalized_token_delta < 0 or normalized_token_delta > 10_000_000:
+            raise ValueError("goal tokenDelta is invalid")
+        if normalized_elapsed_delta < 0 or normalized_elapsed_delta > 7 * 24 * 60 * 60 * 1000:
+            raise ValueError("goal elapsedDeltaMs is invalid")
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            receipt = conn.execute(
+                """
+                SELECT goal_id, turn_id, source_event_id, token_delta, elapsed_delta_ms
+                FROM agent_goal_usage_receipts
+                WHERE session_id = ? AND idempotency_key = ?
+                """,
+                (session_id, normalized_key),
+            ).fetchone()
+            if receipt is not None:
+                if (
+                    str(receipt["turn_id"]) != normalized_turn_id
+                    or str(receipt["source_event_id"]) != normalized_event_id
+                    or int(receipt["token_delta"]) != normalized_token_delta
+                    or int(receipt["elapsed_delta_ms"]) != normalized_elapsed_delta
+                ):
+                    raise ValueError("goal usage idempotencyKey was reused with different data")
+                plan = _agent_plan_projection(conn, session_id, limit=100)
+                goal = _agent_goal_projection(conn, session_id)
+                return {
+                    "schemaVersion": "rag-ime.agent-workflow-state.v1",
+                    "ok": True,
+                    "sessionId": session_id,
+                    "plan": plan,
+                    "goal": goal,
+                    "actGate": _agent_act_gate(plan, goal),
+                }
+            current = _agent_goal_projection(conn, session_id)
+            if not current["configured"] or current["status"] != "active":
+                raise ValueError("goal usage can only be recorded for an active goal")
+            budget = current["budget"] if isinstance(current.get("budget"), Mapping) else {}
+            usage = current["usage"] if isinstance(current.get("usage"), Mapping) else {}
+            usage_event = _append_agent_goal_event(
+                conn,
+                session_id,
+                goal_id=str(current["goalId"]),
+                objective=str(current["objective"]),
+                status="active",
+                token_budget=_optional_positive_budget(
+                    budget.get("tokenLimit"), field="tokenBudget", maximum=100_000_000
+                ),
+                time_budget_ms=_optional_positive_budget(
+                    budget.get("timeLimitMs"),
+                    field="timeBudgetMs",
+                    maximum=365 * 24 * 60 * 60 * 1000,
+                ),
+                tokens_used=int(usage.get("tokens") or 0) + normalized_token_delta,
+                elapsed_ms=int(usage.get("elapsedMs") or 0) + normalized_elapsed_delta,
+                completion_audit_id=None,
+                actor="pi-runtime",
+                created_at_ms=timestamp,
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_goal_usage_receipts(
+                    receipt_id, session_id, goal_id, idempotency_key, turn_id,
+                    source_event_id, token_delta, elapsed_delta_ms,
+                    goal_event_id, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"goal-usage:{uuid.uuid4()}",
+                    session_id,
+                    str(current["goalId"]),
+                    normalized_key,
+                    normalized_turn_id,
+                    normalized_event_id,
+                    normalized_token_delta,
+                    normalized_elapsed_delta,
+                    str(usage_event["eventId"]),
+                    timestamp,
+                ),
+            )
+            plan = _agent_plan_projection(conn, session_id, limit=100)
+            goal = _agent_goal_projection(conn, session_id)
+        return {
+            "schemaVersion": "rag-ime.agent-workflow-state.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "plan": plan,
+            "goal": goal,
+            "actGate": _agent_act_gate(plan, goal),
+        }
+
+    def require_workspace_act(self, session_id: str) -> dict[str, object]:
+        state = self.workflow_state(session_id)
+        gate = state["actGate"] if isinstance(state.get("actGate"), Mapping) else {}
+        if gate.get("allowed") is not True:
+            reason = str(gate.get("reason") or "act_gate_closed")
+            message = str(gate.get("message") or "workspace mutation is not approved")
+            raise ValueError(f"Act Gate blocked workspace mutation ({reason}): {message}")
+        return state
+
+    def begin_agent_plan_execution(self, session_id: str) -> dict[str, object]:
+        state = self.require_workspace_act(session_id)
+        plan = state["plan"] if isinstance(state.get("plan"), Mapping) else {}
+        if plan.get("status") != "approved":
+            return state
+        self.mutate_agent_plan(
+            session_id,
+            {
+                "action": "start_execution",
+                "expectedRevision": plan.get("revision"),
+                "note": "首个受控工作区写操作开始执行",
+            },
+            actor="agent-runtime",
+        )
+        return self.workflow_state(session_id)
 
     def update_agent_plan_item(
         self,
@@ -747,21 +1115,45 @@ class AgentSessionStore:
                 raise AgentSessionNotFound(session_id)
             current = conn.execute(
                 """
-                SELECT title, status FROM agent_plan_events
+                SELECT title, status, position, is_deleted FROM agent_plan_events
                 WHERE session_id = ? AND item_id = ?
                 ORDER BY sequence DESC LIMIT 1
                 """,
                 (session_id, normalized_item_id),
             ).fetchone()
-            if current is None:
-                item_count = int(
-                    conn.execute(
-                        "SELECT COUNT(DISTINCT item_id) FROM agent_plan_events WHERE session_id = ?",
-                        (session_id,),
-                    ).fetchone()[0]
+            plan_state = conn.execute(
+                """
+                SELECT status FROM agent_plan_state_events
+                WHERE session_id = ? ORDER BY sequence DESC LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            lifecycle = str(plan_state["status"]) if plan_state is not None else "draft"
+            active_current = current is not None and int(current["is_deleted"]) == 0
+            if lifecycle in {"review", "completed", "cancelled"}:
+                raise ValueError(f"plan items cannot change while plan is {lifecycle}")
+            if lifecycle in {"approved", "executing"}:
+                if not active_current:
+                    raise ValueError("approved plan scope cannot add new items")
+                if requested_title and requested_title != str(current["title"]):
+                    raise ValueError("approved plan item titles cannot change")
+            active_stats = conn.execute(
+                """
+                WITH latest AS (
+                    SELECT item_id, position, is_deleted,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY item_id ORDER BY sequence DESC
+                           ) AS row_number
+                    FROM agent_plan_events WHERE session_id = ?
                 )
-                if item_count >= 100:
-                    raise ValueError("agent plan is limited to 100 items")
+                SELECT COUNT(*) AS item_count, COALESCE(MAX(position), 0) AS max_position
+                FROM latest WHERE row_number = 1 AND is_deleted = 0
+                """,
+                (session_id,),
+            ).fetchone()
+            item_count = int(active_stats["item_count"])
+            if not active_current and item_count >= 100:
+                raise ValueError("agent plan is limited to 100 items")
             normalized_title = requested_title or (str(current["title"]) if current is not None else "")
             normalized_status = requested_status or (
                 str(current["status"]) if current is not None else "pending"
@@ -772,14 +1164,15 @@ class AgentSessionStore:
                 other = conn.execute(
                     """
                     WITH latest AS (
-                        SELECT item_id, status,
+                        SELECT item_id, status, is_deleted,
                                ROW_NUMBER() OVER (
                                    PARTITION BY item_id ORDER BY sequence DESC
                                ) AS row_number
                         FROM agent_plan_events WHERE session_id = ?
                     )
                     SELECT item_id FROM latest
-                    WHERE row_number = 1 AND status = 'in_progress' AND item_id <> ?
+                    WHERE row_number = 1 AND is_deleted = 0
+                      AND status = 'in_progress' AND item_id <> ?
                     LIMIT 1
                     """,
                     (session_id, normalized_item_id),
@@ -796,8 +1189,9 @@ class AgentSessionStore:
             conn.execute(
                 """
                 INSERT INTO agent_plan_events(
-                    event_id, session_id, sequence, item_id, title, status, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    event_id, session_id, sequence, item_id, title, status,
+                    position, is_deleted, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
                 """,
                 (
                     event_id,
@@ -806,6 +1200,11 @@ class AgentSessionStore:
                     normalized_item_id,
                     normalized_title,
                     normalized_status,
+                    (
+                        int(current["position"])
+                        if active_current
+                        else int(active_stats["max_position"]) + 1
+                    ),
                     timestamp,
                 ),
             )
@@ -1228,9 +1627,484 @@ def _agent_plan_item(row: sqlite3.Row) -> dict[str, object]:
         "id": str(row["item_id"]),
         "title": str(row["title"]),
         "status": str(row["status"]),
+        "position": int(row["position"]),
         "sequence": int(row["sequence"]),
         "updatedAtMs": int(row["created_at_ms"]),
     }
+
+
+def _agent_plan_projection(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    limit: int,
+) -> dict[str, object]:
+    rows = conn.execute(
+        """
+        WITH latest AS (
+            SELECT event_id, sequence, item_id, title, status, position,
+                   is_deleted, created_at_ms,
+                   MIN(sequence) OVER (PARTITION BY item_id) AS first_sequence,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY item_id ORDER BY sequence DESC
+                   ) AS row_number
+            FROM agent_plan_events
+            WHERE session_id = ?
+        )
+        SELECT event_id, sequence, item_id, title, status, position, created_at_ms
+        FROM latest
+        WHERE row_number = 1 AND is_deleted = 0
+        ORDER BY
+            CASE WHEN position > 0 THEN position ELSE 1000000 + first_sequence END,
+            first_sequence,
+            item_id
+        LIMIT ?
+        """,
+        (session_id, limit),
+    ).fetchall()
+    state = conn.execute(
+        """
+        SELECT event_id, sequence, title, status, actor, note, created_at_ms
+        FROM agent_plan_state_events
+        WHERE session_id = ?
+        ORDER BY sequence DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    revisions = conn.execute(
+        """
+        SELECT
+            (SELECT COALESCE(MAX(sequence), 0) FROM agent_plan_events WHERE session_id = ?) +
+            (SELECT COALESCE(MAX(sequence), 0) FROM agent_plan_state_events WHERE session_id = ?)
+        """,
+        (session_id, session_id),
+    ).fetchone()
+    items = [_agent_plan_item(row) for row in rows]
+    completed = sum(1 for item in items if item["status"] == "completed")
+    in_progress = sum(1 for item in items if item["status"] == "in_progress")
+    status = str(state["status"]) if state is not None else "draft"
+    updated_at_ms = max(
+        [int(item["updatedAtMs"]) for item in items]
+        + ([int(state["created_at_ms"])] if state is not None else [0])
+    )
+    return {
+        "schemaVersion": "rag-ime.agent-plan.v2",
+        "id": f"plan:{session_id}",
+        "sessionId": session_id,
+        "revision": int(revisions[0] if revisions else 0),
+        "title": str(state["title"]) if state is not None else "执行计划",
+        "status": status,
+        "actor": str(state["actor"]) if state is not None else "agent",
+        "note": str(state["note"]) if state is not None else "",
+        "updatedAtMs": updated_at_ms,
+        "editable": status == "draft",
+        "actApproved": status in {"approved", "executing"},
+        "items": items,
+        "counts": {
+            "total": len(items),
+            "pending": len(items) - completed - in_progress,
+            "inProgress": in_progress,
+            "completed": completed,
+        },
+    }
+
+
+def _replace_agent_plan_items(
+    conn: sqlite3.Connection,
+    session_id: str,
+    raw_items: list[object],
+    *,
+    timestamp: int,
+) -> None:
+    if len(raw_items) > 100:
+        raise ValueError("agent plan is limited to 100 items")
+    current_rows = conn.execute(
+        """
+        WITH latest AS (
+            SELECT item_id, title, status, position, is_deleted,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY item_id ORDER BY sequence DESC
+                   ) AS row_number
+            FROM agent_plan_events
+            WHERE session_id = ?
+        )
+        SELECT item_id, title, status, position, is_deleted
+        FROM latest WHERE row_number = 1
+        """,
+        (session_id,),
+    ).fetchall()
+    current = {str(row["item_id"]): row for row in current_rows}
+    next_sequence = int(
+        conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_plan_events WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+    )
+    seen: set[str] = set()
+    in_progress_count = 0
+    for position, raw_item in enumerate(raw_items, start=1):
+        if not isinstance(raw_item, Mapping):
+            raise ValueError("agent plan item must be an object")
+        item_id = str(raw_item.get("id") or raw_item.get("itemId") or "").strip()
+        if not item_id:
+            item_id = f"plan-item:{uuid.uuid4()}"
+        _validate_agent_plan_item_id(item_id)
+        if item_id in seen:
+            raise ValueError("agent plan item ids must be unique")
+        seen.add(item_id)
+        previous = current.get(item_id)
+        title = _bounded_plan_text(
+            raw_item.get("title") if "title" in raw_item else (
+                previous["title"] if previous is not None else ""
+            ),
+            field="item title",
+            maximum=240,
+        )
+        status = str(
+            raw_item.get("status")
+            or (previous["status"] if previous is not None else "pending")
+        ).strip()
+        if status not in {"pending", "in_progress", "completed"}:
+            raise ValueError("agent plan item status is invalid")
+        if status == "in_progress":
+            in_progress_count += 1
+            if in_progress_count > 1:
+                raise ValueError("only one agent plan item may be in_progress")
+        conn.execute(
+            """
+            INSERT INTO agent_plan_events(
+                event_id, session_id, sequence, item_id, title, status,
+                position, is_deleted, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+            """,
+            (
+                f"plan-event:{uuid.uuid4()}",
+                session_id,
+                next_sequence,
+                item_id,
+                title,
+                status,
+                position,
+                timestamp,
+            ),
+        )
+        next_sequence += 1
+    for item_id, previous in current.items():
+        if item_id in seen or int(previous["is_deleted"]):
+            continue
+        conn.execute(
+            """
+            INSERT INTO agent_plan_events(
+                event_id, session_id, sequence, item_id, title, status,
+                position, is_deleted, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                f"plan-event:{uuid.uuid4()}",
+                session_id,
+                next_sequence,
+                item_id,
+                str(previous["title"]),
+                str(previous["status"]),
+                int(previous["position"]),
+                timestamp,
+            ),
+        )
+        next_sequence += 1
+
+
+def _append_agent_plan_state(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    title: str,
+    status: str,
+    actor: str,
+    note: str,
+    created_at_ms: int,
+) -> dict[str, object]:
+    sequence = int(
+        conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_plan_state_events WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+    )
+    event_id = f"plan-state:{uuid.uuid4()}"
+    conn.execute(
+        """
+        INSERT INTO agent_plan_state_events(
+            event_id, session_id, sequence, title, status, actor, note, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (event_id, session_id, sequence, title, status, actor, note, created_at_ms),
+    )
+    return {
+        "eventId": event_id,
+        "sequence": sequence,
+        "title": title,
+        "status": status,
+        "actor": actor,
+        "note": note,
+        "createdAtMs": created_at_ms,
+    }
+
+
+def _validate_agent_plan_item_id(item_id: str) -> None:
+    if len(item_id) > 160 or any(
+        character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:_-."
+        for character in item_id
+    ):
+        raise ValueError("agent plan itemId is invalid")
+
+
+def _bounded_plan_text(
+    value: object,
+    *,
+    field: str,
+    maximum: int,
+    required: bool = True,
+) -> str:
+    text = " ".join(str(value or "").split())[:maximum]
+    if required and not text:
+        raise ValueError(f"agent plan {field} must not be empty")
+    if "\x00" in text:
+        raise ValueError(f"agent plan {field} is invalid")
+    return text
+
+
+def _agent_goal_projection(
+    conn: sqlite3.Connection,
+    session_id: str,
+) -> dict[str, object]:
+    row = conn.execute(
+        """
+        SELECT event_id, goal_id, sequence, objective, status, token_budget,
+               time_budget_ms, tokens_used, elapsed_ms, completion_audit_id,
+               actor, created_at_ms
+        FROM agent_thread_goal_events
+        WHERE session_id = ?
+        ORDER BY sequence DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    if row is None:
+        return {
+            "schemaVersion": "rag-ime.agent-goal.v1",
+            "sessionId": session_id,
+            "configured": False,
+            "goalId": "",
+            "revision": 0,
+            "objective": "",
+            "status": "cleared",
+            "budget": {"tokenLimit": None, "timeLimitMs": None},
+            "usage": {"tokens": 0, "elapsedMs": 0},
+            "remaining": {"tokens": None, "timeMs": None},
+            "budgetExceeded": False,
+            "completionAudit": None,
+            "updatedAtMs": 0,
+        }
+    token_budget = int(row["token_budget"]) if row["token_budget"] is not None else None
+    time_budget_ms = int(row["time_budget_ms"]) if row["time_budget_ms"] is not None else None
+    tokens_used = int(row["tokens_used"])
+    elapsed_ms = int(row["elapsed_ms"])
+    remaining_tokens = max(0, token_budget - tokens_used) if token_budget is not None else None
+    remaining_time = max(0, time_budget_ms - elapsed_ms) if time_budget_ms is not None else None
+    audit = None
+    audit_id = str(row["completion_audit_id"] or "")
+    if audit_id:
+        audit_row = conn.execute(
+            """
+            SELECT audit_id, summary, evidence_json, completed_by, created_at_ms
+            FROM agent_goal_completion_audits
+            WHERE audit_id = ? AND session_id = ?
+            """,
+            (audit_id, session_id),
+        ).fetchone()
+        if audit_row is not None:
+            try:
+                evidence = json.loads(str(audit_row["evidence_json"] or "[]"))
+            except json.JSONDecodeError:
+                evidence = []
+            audit = {
+                "auditId": str(audit_row["audit_id"]),
+                "summary": str(audit_row["summary"]),
+                "evidence": evidence if isinstance(evidence, list) else [],
+                "completedBy": str(audit_row["completed_by"]),
+                "createdAtMs": int(audit_row["created_at_ms"]),
+            }
+    status = str(row["status"])
+    configured = status != "cleared"
+    return {
+        "schemaVersion": "rag-ime.agent-goal.v1",
+        "sessionId": session_id,
+        "configured": configured,
+        "goalId": str(row["goal_id"]),
+        "revision": int(row["sequence"]),
+        "objective": str(row["objective"]),
+        "status": status,
+        "budget": {
+            "tokenLimit": token_budget,
+            "timeLimitMs": time_budget_ms,
+        },
+        "usage": {"tokens": tokens_used, "elapsedMs": elapsed_ms},
+        "remaining": {"tokens": remaining_tokens, "timeMs": remaining_time},
+        "budgetExceeded": (
+            (token_budget is not None and tokens_used >= token_budget)
+            or (time_budget_ms is not None and elapsed_ms >= time_budget_ms)
+        ),
+        "completionAudit": audit,
+        "updatedAtMs": int(row["created_at_ms"]),
+    }
+
+
+def _append_agent_goal_event(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    goal_id: str,
+    objective: str,
+    status: str,
+    token_budget: int | None,
+    time_budget_ms: int | None,
+    tokens_used: int,
+    elapsed_ms: int,
+    completion_audit_id: str | None,
+    actor: str,
+    created_at_ms: int,
+) -> dict[str, object]:
+    sequence = int(
+        conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_thread_goal_events WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+    )
+    event_id = f"goal-event:{uuid.uuid4()}"
+    conn.execute(
+        """
+        INSERT INTO agent_thread_goal_events(
+            event_id, session_id, goal_id, sequence, objective, status,
+            token_budget, time_budget_ms, tokens_used, elapsed_ms,
+            completion_audit_id, actor, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            session_id,
+            goal_id,
+            sequence,
+            objective,
+            status,
+            token_budget,
+            time_budget_ms,
+            tokens_used,
+            elapsed_ms,
+            completion_audit_id,
+            actor,
+            created_at_ms,
+        ),
+    )
+    return {
+        "eventId": event_id,
+        "goalId": goal_id,
+        "sequence": sequence,
+        "status": status,
+        "actor": actor,
+        "createdAtMs": created_at_ms,
+    }
+
+
+def _agent_act_gate(
+    plan: Mapping[str, object],
+    goal: Mapping[str, object],
+) -> dict[str, object]:
+    plan_status = str(plan.get("status") or "draft")
+    items = plan.get("items") if isinstance(plan.get("items"), list) else []
+    if not items:
+        return {
+            "allowed": False,
+            "reason": "plan_required",
+            "message": "先创建执行计划并提交审阅。",
+        }
+    if plan_status not in {"approved", "executing"}:
+        return {
+            "allowed": False,
+            "reason": "plan_not_approved",
+            "message": "计划尚未获得用户批准，只允许只读调研。",
+        }
+    if goal.get("configured") is True:
+        goal_status = str(goal.get("status") or "")
+        if goal_status == "paused":
+            return {
+                "allowed": False,
+                "reason": "goal_paused",
+                "message": "当前 Goal 已暂停，恢复后才能继续写入。",
+            }
+        if goal_status == "completed":
+            return {
+                "allowed": False,
+                "reason": "goal_completed",
+                "message": "当前 Goal 已完成审计，请清除或设置新 Goal。",
+            }
+        if goal.get("budgetExceeded") is True:
+            return {
+                "allowed": False,
+                "reason": "goal_budget_exhausted",
+                "message": "Goal 的 Token 或时间预算已经耗尽。",
+            }
+    return {
+        "allowed": True,
+        "reason": "approved",
+        "message": "Plan 已批准，工作区写操作仍需通过原有预览与审批。",
+    }
+
+
+def _optional_positive_budget(
+    value: object,
+    *,
+    field: str,
+    maximum: int,
+) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"agent goal {field} must be an integer") from exc
+    if normalized <= 0 or normalized > maximum:
+        raise ValueError(f"agent goal {field} is out of range")
+    return normalized
+
+
+def _bounded_goal_text(
+    value: object,
+    *,
+    field: str,
+    maximum: int,
+) -> str:
+    text = " ".join(str(value or "").split())[:maximum]
+    if not text or "\x00" in text:
+        raise ValueError(f"agent goal {field} must not be empty")
+    return text
+
+
+def _goal_completion_evidence(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 20:
+        raise ValueError("goal completion requires 1 to 20 evidence items")
+    evidence: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError("goal completion evidence must be an object")
+        kind = str(item.get("kind") or "").strip()
+        if kind not in {"test", "artifact", "commit", "receipt", "note"}:
+            raise ValueError("goal completion evidence kind is invalid")
+        summary = " ".join(str(item.get("summary") or "").split())[:600]
+        reference = " ".join(str(item.get("reference") or "").split())[:1_000]
+        if not summary or not reference:
+            raise ValueError("goal completion evidence requires summary and reference")
+        evidence.append({"kind": kind, "summary": summary, "reference": reference})
+    return evidence
 
 
 def _runtime_binding_text(

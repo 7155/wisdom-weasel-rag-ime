@@ -504,6 +504,10 @@ class DebugImeService:
             extensions=self.agent_extensions,
             scheduling=self.agent,
             browser_control=self.browser_control,
+            workflow_publisher=lambda session_id, reason: self.agent.publish_workflow_state(
+                session_id,
+                reason=reason,
+            ),
         )
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
         self.control_api = AgentKernelControlFacade(
@@ -6148,6 +6152,15 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if agent_session_id and agent_action == "workflow":
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.workflow_state(agent_session_id),
+                )
+            except Exception as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
         if agent_session_id and agent_action == "debug-context":
             if not self.service._include_raw_text():
                 self._write_json(
@@ -7082,6 +7095,30 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self.service.agent.refresh_session_context(self._read_json()),
                 )
                 return
+            if path in {
+                "/api/agent/tool/workflow-state",
+                "/api/agent/tool/goal-usage",
+            }:
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": "agent capability token required",
+                        },
+                    )
+                    return
+                internal_payload = self._read_json()
+                response = (
+                    self.service.agent.internal_workflow_state(internal_payload)
+                    if path.endswith("/workflow-state")
+                    else self.service.agent.record_goal_usage(internal_payload)
+                )
+                self._write_json(HTTPStatus.OK, response)
+                return
             if path == "/api/agent/tool/approval-result":
                 provided = self.headers.get("X-RAG-IME-Agent-Token", "")
                 expected = self.service.agent.tool_token
@@ -7369,6 +7406,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "compact":
                 self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
+            elif agent_session_id and agent_action == "plan":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.mutate_plan(agent_session_id, payload),
+                )
+            elif agent_session_id and agent_action == "goal":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.mutate_goal(agent_session_id, payload),
+                )
             elif agent_session_id and agent_action == "model":
                 self._write_json(HTTPStatus.OK, self.service.agent.select_model(agent_session_id, payload))
             elif agent_session_id and agent_action == "thinking":

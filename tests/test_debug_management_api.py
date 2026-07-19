@@ -1874,6 +1874,49 @@ class DebugManagementApiTests(unittest.TestCase):
             with urlopen(allowed_tool_request, timeout=5) as response:
                 tool_result = json.loads(response.read().decode("utf-8"))
 
+            self.service.agent.sessions.mutate_agent_goal(
+                session_id,
+                {
+                    "action": "set",
+                    "objective": "验证 Pi Goal 用量幂等上报",
+                    "tokenBudget": 1_000,
+                },
+            )
+            workflow_request = Request(
+                f"{base_url}/tool/workflow-state",
+                data=json.dumps({"sessionId": session_id}).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+                },
+                method="POST",
+            )
+            with urlopen(workflow_request, timeout=5) as response:
+                workflow_state = json.loads(response.read().decode("utf-8"))
+            goal_usage_body = json.dumps(
+                {
+                    "sessionId": session_id,
+                    "turnId": "turn:http:usage",
+                    "eventId": "event:http:usage",
+                    "idempotencyKey": "goal-usage:http:turn-1",
+                    "tokenDelta": 120,
+                    "elapsedDeltaMs": 250,
+                }
+            ).encode("utf-8")
+            goal_usage_request = Request(
+                f"{base_url}/tool/goal-usage",
+                data=goal_usage_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+                },
+                method="POST",
+            )
+            with urlopen(goal_usage_request, timeout=5) as response:
+                goal_usage = json.loads(response.read().decode("utf-8"))
+            with urlopen(goal_usage_request, timeout=5) as response:
+                duplicate_goal_usage = json.loads(response.read().decode("utf-8"))
+
             context_refresh_body = json.dumps(
                 {
                     "schemaVersion": "rag-ime.agent-session-context-refresh-request.v1",
@@ -2062,6 +2105,9 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(deep_search["turnId"], "turn:http:deep")
         self.assertTrue(tool_result["ok"])
         self.assertEqual(tool_result["operation"], "catalog")
+        self.assertEqual(set(workflow_state["result"]), {"plan", "goal", "actGate"})
+        self.assertEqual(goal_usage["result"]["goal"]["usage"]["tokens"], 120)
+        self.assertEqual(duplicate_goal_usage["result"]["goal"]["usage"]["tokens"], 120)
         self.assertTrue(context_refresh["ok"])
         self.assertEqual(context_refresh["result"]["trigger"], "first_user_prompt")
         self.assertIn("## Session 记忆", context_refresh["result"]["sessionContext"])

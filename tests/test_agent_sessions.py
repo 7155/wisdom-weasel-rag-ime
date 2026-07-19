@@ -224,6 +224,7 @@ class AgentSessionStoreTests(unittest.TestCase):
                     "id": item_id,
                     "title": "核对权限边界",
                     "status": "in_progress",
+                    "position": 1,
                     "sequence": 2,
                     "updatedAtMs": 300,
                 }
@@ -308,6 +309,188 @@ class AgentSessionStoreTests(unittest.TestCase):
             [item["status"] for item in plan["items"]],
             ["completed", "in_progress"],
         )
+
+    def test_plan_review_gate_preserves_approved_scope_and_tracks_execution(self) -> None:
+        session = self.store.create(title="reviewed plan", created_at_ms=100)
+        session_id = str(session["id"])
+        saved = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "save",
+                "title": "交付 Goal Mode",
+                "items": [
+                    {"title": "核对契约", "status": "pending"},
+                    {"title": "实现并验收", "status": "pending"},
+                ],
+            },
+            updated_at_ms=200,
+        )["plan"]
+        first_id, second_id = [str(item["id"]) for item in saved["items"]]
+
+        reordered = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "save",
+                "expectedRevision": saved["revision"],
+                "title": "交付 Goal Mode",
+                "items": [
+                    {"id": second_id, "title": "实现并验收", "status": "pending"},
+                    {"id": first_id, "title": "核对契约", "status": "pending"},
+                ],
+            },
+            updated_at_ms=300,
+        )["plan"]
+        self.assertEqual([item["id"] for item in reordered["items"]], [second_id, first_id])
+        self.assertEqual([item["position"] for item in reordered["items"]], [1, 2])
+
+        review = self.store.mutate_agent_plan(
+            session_id,
+            {"action": "submit_review", "expectedRevision": reordered["revision"]},
+            updated_at_ms=400,
+        )["plan"]
+        self.assertEqual(review["status"], "review")
+        self.assertEqual(self.store.workflow_state(session_id)["actGate"]["reason"], "plan_not_approved")
+        with self.assertRaisesRegex(ValueError, "while plan is review"):
+            self.store.update_agent_plan_item(session_id, item_id=second_id, status="in_progress")
+
+        approved = self.store.mutate_agent_plan(
+            session_id,
+            {"action": "approve", "expectedRevision": review["revision"]},
+            updated_at_ms=500,
+        )["plan"]
+        self.assertEqual(approved["status"], "approved")
+        self.assertTrue(self.store.workflow_state(session_id)["actGate"]["allowed"])
+        with self.assertRaisesRegex(ValueError, "titles cannot change"):
+            self.store.update_agent_plan_item(
+                session_id,
+                item_id=second_id,
+                title="悄悄扩大范围",
+            )
+        with self.assertRaisesRegex(ValueError, "cannot add new items"):
+            self.store.update_agent_plan_item(session_id, title="未审阅步骤", status="pending")
+
+        executing = self.store.begin_agent_plan_execution(session_id)["plan"]
+        self.assertEqual(executing["status"], "executing")
+        self.store.update_agent_plan_item(session_id, item_id=second_id, status="completed")
+        finished_items = self.store.update_agent_plan_item(
+            session_id,
+            item_id=first_id,
+            status="completed",
+        )["plan"]
+        completed = self.store.mutate_agent_plan(
+            session_id,
+            {"action": "complete", "expectedRevision": finished_items["revision"]},
+            updated_at_ms=600,
+        )["plan"]
+        self.assertEqual(completed["status"], "completed")
+        self.assertFalse(completed["actApproved"])
+
+    def test_thread_goal_budget_pause_and_evidence_audit_control_act_gate(self) -> None:
+        session = self.store.create(title="goal", created_at_ms=100)
+        session_id = str(session["id"])
+        plan = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "submit_review",
+                "title": "完成 Goal",
+                "items": [{"title": "实现并验证", "status": "pending"}],
+            },
+        )["plan"]
+        self.store.mutate_agent_plan(
+            session_id,
+            {"action": "approve", "expectedRevision": plan["revision"]},
+        )
+
+        goal = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "set",
+                "objective": "在固定预算内交付可验证实现",
+                "tokenBudget": 1_000,
+                "timeBudgetMs": 60_000,
+            },
+        )["workflow"]["goal"]
+        usage = self.store.record_agent_goal_usage(
+            session_id,
+            idempotency_key="turn:1:usage",
+            turn_id="turn:1",
+            event_id="event:1",
+            token_delta=600,
+            elapsed_delta_ms=30_000,
+        )["goal"]
+        self.assertEqual(usage["usage"], {"tokens": 600, "elapsedMs": 30_000})
+        duplicate = self.store.record_agent_goal_usage(
+            session_id,
+            idempotency_key="turn:1:usage",
+            turn_id="turn:1",
+            event_id="event:1",
+            token_delta=600,
+            elapsed_delta_ms=30_000,
+        )["goal"]
+        self.assertEqual(duplicate["usage"], {"tokens": 600, "elapsedMs": 30_000})
+        with self.assertRaisesRegex(ValueError, "reused with different data"):
+            self.store.record_agent_goal_usage(
+                session_id,
+                idempotency_key="turn:1:usage",
+                turn_id="turn:1",
+                event_id="event:1",
+                token_delta=601,
+                elapsed_delta_ms=30_000,
+            )
+
+        paused = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "pause", "expectedRevision": usage["revision"]},
+        )["workflow"]
+        self.assertEqual(paused["actGate"]["reason"], "goal_paused")
+        resumed = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "resume", "expectedRevision": paused["goal"]["revision"]},
+        )["workflow"]["goal"]
+        exhausted = self.store.record_agent_goal_usage(
+            session_id,
+            idempotency_key="turn:2:usage",
+            turn_id="turn:2",
+            event_id="event:2",
+            token_delta=400,
+            elapsed_delta_ms=1,
+        )
+        self.assertTrue(exhausted["goal"]["budgetExceeded"])
+        self.assertEqual(exhausted["actGate"]["reason"], "goal_budget_exhausted")
+
+        expanded = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "update",
+                "expectedRevision": exhausted["goal"]["revision"],
+                "objective": goal["objective"],
+                "tokenBudget": 2_000,
+                "timeBudgetMs": 120_000,
+            },
+        )["workflow"]["goal"]
+        completed = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "complete",
+                "expectedRevision": expanded["revision"],
+                "summary": "契约、测试与产物均已验收",
+                "evidence": [
+                    {
+                        "kind": "test",
+                        "summary": "聚焦测试通过",
+                        "reference": "python3 -m unittest tests.test_agent_sessions",
+                    }
+                ],
+            },
+        )["workflow"]
+        self.assertEqual(completed["goal"]["completionAudit"]["evidence"][0]["kind"], "test")
+        self.assertEqual(completed["actGate"]["reason"], "goal_completed")
+        cleared = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "clear", "expectedRevision": completed["goal"]["revision"]},
+        )["workflow"]
+        self.assertFalse(cleared["goal"]["configured"])
+        self.assertTrue(cleared["actGate"]["allowed"])
 
     def test_unknown_mode_and_status_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "assistant or coordinator"):

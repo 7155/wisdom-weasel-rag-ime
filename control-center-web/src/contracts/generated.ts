@@ -17,6 +17,8 @@ import type { AgentControlBootstrapV1 } from './generated/agent-control-bootstra
 import type { AgentControlEventV1 } from './generated/agent-control-event.v1';
 import type { AgentConversationContextV1 } from './generated/agent-conversation-context.v1';
 import type { AgentEventV1 } from './generated/agent-event.v1';
+import type { AgentGoalMutationV1 } from './generated/agent-goal-mutation.v1';
+import type { AgentGoalUsageV1 } from './generated/agent-goal-usage.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
 import type { AgentMemoryEvidenceV1 } from './generated/agent-memory-evidence.v1';
 import type { AgentMemoryMaintenanceStatusV1 } from './generated/agent-memory-maintenance-status.v1';
@@ -26,6 +28,7 @@ import type { AgentModelCatalogV1 } from './generated/agent-model-catalog.v1';
 import type { AgentModelSelectionV1 } from './generated/agent-model-selection.v1';
 import type { AgentParticipantV1 } from './generated/agent-participant.v1';
 import type { AgentPersonaV1 } from './generated/agent-persona.v1';
+import type { AgentPlanMutationV1 } from './generated/agent-plan-mutation.v1';
 import type { AgentRoleBookToolResultV1 } from './generated/agent-role-book-tool-result.v1';
 import type { AgentRoleBookV1 } from './generated/agent-role-book.v1';
 import type { AgentRoleRoutingProfileV1 } from './generated/agent-role-routing-profile.v1';
@@ -46,6 +49,7 @@ import type { AgentTemplateV1 } from './generated/agent-template.v1';
 import type { AgentThinkingSelectionV1 } from './generated/agent-thinking-selection.v1';
 import type { AgentToolCallV1 } from './generated/agent-tool-call.v1';
 import type { AgentToolResultV1 } from './generated/agent-tool-result.v1';
+import type { AgentWorkflowStateV1 } from './generated/agent-workflow-state.v1';
 import type { AssistantCandidateActionV1 } from './generated/assistant-candidate-action.v1';
 import type { AssistantOverlayV1 } from './generated/assistant-overlay.v1';
 import type { ControlToolManifestV1 } from './generated/control-tool-manifest.v1';
@@ -99,6 +103,8 @@ export type {
   AgentControlEventV1,
   AgentConversationContextV1,
   AgentEventV1,
+  AgentGoalMutationV1,
+  AgentGoalUsageV1,
   AgentMediaV1,
   AgentMemoryEvidenceV1,
   AgentMemoryMaintenanceStatusV1,
@@ -108,6 +114,7 @@ export type {
   AgentModelSelectionV1,
   AgentParticipantV1,
   AgentPersonaV1,
+  AgentPlanMutationV1,
   AgentRoleBookToolResultV1,
   AgentRoleBookV1,
   AgentRoleRoutingProfileV1,
@@ -128,6 +135,7 @@ export type {
   AgentThinkingSelectionV1,
   AgentToolCallV1,
   AgentToolResultV1,
+  AgentWorkflowStateV1,
   AssistantCandidateActionV1,
   AssistantOverlayV1,
   ControlToolManifestV1,
@@ -182,6 +190,8 @@ export interface ContractTypeMap {
   'agent-control-event.v1': AgentControlEventV1;
   'agent-conversation-context.v1': AgentConversationContextV1;
   'agent-event.v1': AgentEventV1;
+  'agent-goal-mutation.v1': AgentGoalMutationV1;
+  'agent-goal-usage.v1': AgentGoalUsageV1;
   'agent-media.v1': AgentMediaV1;
   'agent-memory-evidence.v1': AgentMemoryEvidenceV1;
   'agent-memory-maintenance-status.v1': AgentMemoryMaintenanceStatusV1;
@@ -191,6 +201,7 @@ export interface ContractTypeMap {
   'agent-model-selection.v1': AgentModelSelectionV1;
   'agent-participant.v1': AgentParticipantV1;
   'agent-persona.v1': AgentPersonaV1;
+  'agent-plan-mutation.v1': AgentPlanMutationV1;
   'agent-role-book-tool-result.v1': AgentRoleBookToolResultV1;
   'agent-role-book.v1': AgentRoleBookV1;
   'agent-role-routing-profile.v1': AgentRoleRoutingProfileV1;
@@ -211,6 +222,7 @@ export interface ContractTypeMap {
   'agent-thinking-selection.v1': AgentThinkingSelectionV1;
   'agent-tool-call.v1': AgentToolCallV1;
   'agent-tool-result.v1': AgentToolResultV1;
+  'agent-workflow-state.v1': AgentWorkflowStateV1;
   'assistant-candidate-action.v1': AssistantCandidateActionV1;
   'assistant-overlay.v1': AssistantOverlayV1;
   'control-tool-manifest.v1': ControlToolManifestV1;

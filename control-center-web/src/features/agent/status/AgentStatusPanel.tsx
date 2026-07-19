@@ -35,9 +35,9 @@ import {
 import type { AgentActivityProjection, AgentProjectionState, AgentTurnStatus } from '@/contracts/agent-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import { useAgentLiveStore } from '../state/live-store';
-import { AgentPlanCard } from '../timeline/AgentPlanCard';
 import { publicToolResultView } from '../timeline/public-tool-result';
 import { ContextRuntimeSections } from './ContextRuntimePanel';
+import { AgentWorkflowPanel } from './AgentWorkflowPanel';
 
 type IdleWindow = Window & typeof globalThis & {
   requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
@@ -92,36 +92,22 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
         <IconButton icon={<PanelRightClose size={17} />} label="收起状态面板" onClick={onClose} tooltip />
       </header>
       {contentReady ? <div className="agent-status-panel__body">
-        {projection?.plan.items.length ? (
-          <>
-            <AgentPlanCard plan={projection.plan} />
-            {view.turn ? (
-              <div className="agent-status-turn agent-plan-turn-summary" data-state={view.turn.status}>
-                <TurnStateIcon status={view.turn.status} />
-                <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
-              </div>
-            ) : null}
-          </>
-        ) : (
+        <AgentWorkflowPanel
+          sessionId={sessionId}
+          fallbackPlan={projection?.plan}
+          fallbackGoal={projection?.goal}
+          fallbackActGate={projection?.actGate}
+        />
+        {view.turn ? (
+          <div className="agent-status-turn agent-plan-turn-summary" data-state={view.turn.status}>
+            <TurnStateIcon status={view.turn.status} />
+            <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
+          </div>
+        ) : !projection ? (
           <StatusSection icon={ListChecks} title="执行进度" count={view.tasks.length}>
-            {view.turn ? (
-              <div className="agent-status-turn" data-state={view.turn.status}>
-                <TurnStateIcon status={view.turn.status} />
-                <span><strong>{turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
-              </div>
-            ) : <EmptyLine>还没有可展示的回合状态</EmptyLine>}
-            {view.tasks.length ? (
-              <ol className="agent-status-tasks">
-                {view.tasks.map((task) => (
-                  <li key={task.id} data-state={task.status}>
-                    <TaskStateIcon status={task.status} />
-                    <span>{task.label}</span>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
+            <EmptyLine>还没有可展示的回合状态</EmptyLine>
           </StatusSection>
-        )}
+        ) : null}
 
         <StatusSection icon={MessagesSquare} title="消息队列" count={(projection?.messageQueue.steering.length ?? 0) + (projection?.messageQueue.followUp.length ?? 0)}>
           <MessageQueueView projection={projection} />

@@ -5,7 +5,13 @@ export function AgentPlanCard({ plan }: { plan: AgentPlanProjection }) {
   if (plan.items.length === 0) return null;
   const activeIndex = plan.items.findIndex((item) => item.status === 'in_progress');
   const allCompleted = plan.counts.completed === plan.counts.total;
-  const state = allCompleted ? 'completed' : activeIndex >= 0 ? 'running' : 'pending';
+  const state = plan.status === 'cancelled'
+    ? 'cancelled'
+    : allCompleted || plan.status === 'completed'
+      ? 'completed'
+      : activeIndex >= 0 || plan.status === 'executing'
+        ? 'running'
+        : 'pending';
   const progress = plan.counts.total > 0
     ? Math.round((plan.counts.completed / plan.counts.total) * 100)
     : 0;
@@ -24,8 +30,8 @@ export function AgentPlanCard({ plan }: { plan: AgentPlanProjection }) {
     >
       <header>
         <span aria-hidden="true"><ListChecks size={16} /></span>
-        <strong>执行计划</strong>
-        <small>{allCompleted ? '已完成' : activeIndex >= 0 ? '进行中' : '待开始'}</small>
+        <strong>{plan.title}</strong>
+        <small>{planStatusLabel(plan.status)}</small>
       </header>
       <ol>
         {plan.items.map((item) => (
@@ -62,4 +68,15 @@ export function AgentPlanCard({ plan }: { plan: AgentPlanProjection }) {
       </footer>
     </section>
   );
+}
+
+function planStatusLabel(status: AgentPlanProjection['status']): string {
+  return {
+    draft: '草案',
+    review: '待审阅',
+    approved: '已批准',
+    executing: '执行中',
+    completed: '已完成',
+    cancelled: '已取消',
+  }[status];
 }

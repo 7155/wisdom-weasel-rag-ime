@@ -1,5 +1,9 @@
 import type { UiAgentEvent, UiAgentMessage } from './ui-events';
 import type { AgentSessionTelemetryV1 } from './generated/agent-session-telemetry.v1';
+import type {
+  ActGate as AgentActGateProjection,
+  Goal as AgentGoalProjection,
+} from './generated/agent-workflow-state.v1';
 import { parseAgentEvent, tryParseAgentMessage, validateContract } from './validators';
 
 export type AgentTurnStatus =
@@ -80,6 +84,8 @@ export interface AgentProjectionState {
   telemetry?: AgentSessionTelemetryV1;
   messageQueue: AgentMessageQueue;
   plan: AgentPlanProjection;
+  goal: AgentGoalProjection;
+  actGate: AgentActGateProjection;
 }
 
 export interface AgentMessageQueue {
@@ -93,12 +99,22 @@ export interface AgentPlanItemProjection {
   id: string;
   title: string;
   status: AgentPlanItemStatus;
+  position: number;
   sequence: number;
   updatedAtMs: number;
 }
 
 export interface AgentPlanProjection {
+  id: string;
+  sessionId: string;
   revision: number;
+  title: string;
+  status: 'draft' | 'review' | 'approved' | 'executing' | 'completed' | 'cancelled';
+  actor: string;
+  note: string;
+  updatedAtMs: number;
+  editable: boolean;
+  actApproved: boolean;
   items: AgentPlanItemProjection[];
   counts: {
     total: number;
@@ -129,6 +145,8 @@ export interface AgentSnapshot {
   telemetry?: unknown;
   messageQueue?: unknown;
   plan?: unknown;
+  goal?: unknown;
+  actGate?: unknown;
 }
 
 export interface OptimisticAgentMessageInput {
@@ -161,6 +179,8 @@ export function createAgentProjection(sessionId: string): AgentProjectionState {
     telemetry: undefined,
     messageQueue: { steering: [], followUp: [] },
     plan: emptyAgentPlan(),
+    goal: emptyAgentGoal(),
+    actGate: closedActGate(),
   };
 }
 
@@ -237,6 +257,11 @@ export function reduceAgentEvent(
       break;
     case 'message_queue_updated':
       next.messageQueue = parseMessageQueue(payload);
+      break;
+    case 'workflow_changed':
+      next.plan = parseAgentPlan(payload.plan) ?? next.plan;
+      next.goal = parseAgentGoal(payload.goal) ?? next.goal;
+      next.actGate = parseActGate(payload.actGate) ?? next.actGate;
       break;
     case 'reasoning_summary':
       upsertActivity(next, event, payload, 'completed');
@@ -401,6 +426,8 @@ export function applyAgentSnapshot(
   next.telemetry = parseTelemetry(snapshot.telemetry) ?? state.telemetry;
   next.messageQueue = parseMessageQueue(snapshot.messageQueue);
   next.plan = parseAgentPlan(snapshot.plan) ?? state.plan;
+  next.goal = parseAgentGoal(snapshot.goal) ?? state.goal;
+  next.actGate = parseActGate(snapshot.actGate) ?? state.actGate;
 
   const serverClientIds = new Set<string>();
   for (const rawMessage of snapshot.messages) {
@@ -501,6 +528,8 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
     ...(payload.telemetry === undefined ? {} : { telemetry: payload.telemetry }),
     ...(payload.messageQueue === undefined ? {} : { messageQueue: payload.messageQueue }),
     ...(payload.plan === undefined ? {} : { plan: payload.plan }),
+    ...(payload.goal === undefined ? {} : { goal: payload.goal }),
+    ...(payload.actGate === undefined ? {} : { actGate: payload.actGate }),
   };
 }
 
@@ -1044,6 +1073,16 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
       items: state.plan.items.map((item) => ({ ...item })),
       counts: { ...state.plan.counts },
     },
+    goal: {
+      ...state.goal,
+      budget: { ...state.goal.budget },
+      usage: { ...state.goal.usage },
+      remaining: { ...state.goal.remaining },
+      completionAudit: state.goal.completionAudit
+        ? { ...state.goal.completionAudit, evidence: state.goal.completionAudit.evidence }
+        : null,
+    },
+    actGate: { ...state.actGate },
     ...(state.gap ? { gap: { ...state.gap } } : {}),
   };
 }
@@ -1083,7 +1122,16 @@ function parseMessageQueue(value: unknown): AgentMessageQueue {
 
 function emptyAgentPlan(): AgentPlanProjection {
   return {
+    id: '',
+    sessionId: '',
     revision: 0,
+    title: '执行计划',
+    status: 'draft',
+    actor: '',
+    note: '',
+    updatedAtMs: 0,
+    editable: true,
+    actApproved: false,
     items: [],
     counts: {
       total: 0,
@@ -1107,6 +1155,7 @@ export function parseAgentPlan(value: unknown): AgentPlanProjection | undefined 
       id,
       title,
       status: status as AgentPlanItemStatus,
+      position: integer(item.position) || index + 1,
       sequence: integer(item.sequence),
       updatedAtMs: integer(item.updatedAtMs ?? item.createdAtMs),
     }];
@@ -1114,7 +1163,18 @@ export function parseAgentPlan(value: unknown): AgentPlanProjection | undefined 
   const completed = items.filter((item) => item.status === 'completed').length;
   const inProgress = items.filter((item) => item.status === 'in_progress').length;
   return {
+    id: text(source.id),
+    sessionId: text(source.sessionId),
     revision: integer(source.revision),
+    title: text(source.title).trim().slice(0, 160) || '执行计划',
+    status: ['draft', 'review', 'approved', 'executing', 'completed', 'cancelled'].includes(text(source.status))
+      ? text(source.status) as AgentPlanProjection['status']
+      : 'draft',
+    actor: text(source.actor).slice(0, 120),
+    note: text(source.note).slice(0, 600),
+    updatedAtMs: integer(source.updatedAtMs),
+    editable: source.editable === undefined ? true : source.editable === true,
+    actApproved: source.actApproved === true,
     items,
     counts: {
       total: items.length,
@@ -1123,6 +1183,98 @@ export function parseAgentPlan(value: unknown): AgentPlanProjection | undefined 
       completed,
     },
   };
+}
+
+function emptyAgentGoal(): AgentGoalProjection {
+  return {
+    schemaVersion: 'rag-ime.agent-goal.v1',
+    sessionId: '',
+    configured: false,
+    goalId: '',
+    revision: 0,
+    objective: '',
+    status: 'cleared',
+    budget: { tokenLimit: null, timeLimitMs: null },
+    usage: { tokens: 0, elapsedMs: 0 },
+    remaining: { tokens: null, timeMs: null },
+    budgetExceeded: false,
+    completionAudit: null,
+    updatedAtMs: 0,
+  };
+}
+
+function closedActGate(): AgentActGateProjection {
+  return {
+    allowed: false,
+    reason: 'plan_required',
+    message: '先创建执行计划并提交审阅。',
+  };
+}
+
+function parseAgentGoal(value: unknown): AgentGoalProjection | undefined {
+  const source = record(value);
+  if (source.schemaVersion !== 'rag-ime.agent-goal.v1') return undefined;
+  const status = text(source.status);
+  if (!['active', 'paused', 'completed', 'cleared'].includes(status)) return undefined;
+  const budget = record(source.budget);
+  const usage = record(source.usage);
+  const remaining = record(source.remaining);
+  const auditSource = record(source.completionAudit);
+  const evidence = Array.isArray(auditSource.evidence)
+    ? auditSource.evidence.flatMap((rawEvidence) => {
+      const item = record(rawEvidence);
+      const kind = text(item.kind);
+      const summary = text(item.summary);
+      const reference = text(item.reference);
+      return ['test', 'artifact', 'commit', 'receipt', 'note'].includes(kind) && summary && reference
+        ? [{ kind, summary, reference }]
+        : [];
+    })
+    : [];
+  return {
+    schemaVersion: 'rag-ime.agent-goal.v1',
+    sessionId: text(source.sessionId),
+    configured: source.configured === true,
+    goalId: text(source.goalId),
+    revision: integer(source.revision),
+    objective: text(source.objective).slice(0, 4_000),
+    status: status as AgentGoalProjection['status'],
+    budget: {
+      tokenLimit: nullableInteger(budget.tokenLimit),
+      timeLimitMs: nullableInteger(budget.timeLimitMs),
+    },
+    usage: { tokens: integer(usage.tokens), elapsedMs: integer(usage.elapsedMs) },
+    remaining: {
+      tokens: nullableInteger(remaining.tokens),
+      timeMs: nullableInteger(remaining.timeMs),
+    },
+    budgetExceeded: source.budgetExceeded === true,
+    completionAudit: auditSource.auditId && evidence.length
+      ? {
+          auditId: text(auditSource.auditId),
+          summary: text(auditSource.summary),
+          evidence: evidence as NonNullable<AgentGoalProjection['completionAudit']>['evidence'],
+          completedBy: text(auditSource.completedBy),
+          createdAtMs: integer(auditSource.createdAtMs),
+        }
+      : null,
+    updatedAtMs: integer(source.updatedAtMs),
+  };
+}
+
+function parseActGate(value: unknown): AgentActGateProjection | undefined {
+  const source = record(value);
+  const reason = text(source.reason);
+  if (!['approved', 'plan_required', 'plan_not_approved', 'goal_paused', 'goal_completed', 'goal_budget_exhausted'].includes(reason)) return undefined;
+  return {
+    allowed: source.allowed === true,
+    reason: reason as AgentActGateProjection['reason'],
+    message: text(source.message),
+  };
+}
+
+function nullableInteger(value: unknown): number | null {
+  return value === null ? null : integer(value);
 }
 
 function updateAgentPlanFromActivity(

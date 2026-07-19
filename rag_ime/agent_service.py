@@ -464,6 +464,82 @@ class AgentService:
             "activeSessionId": self.runtime_status().get("activeSessionId"),
         }
 
+    def workflow_state(self, session_id: str) -> dict[str, object]:
+        state = self.sessions.workflow_state(session_id)
+        validate_contract(state, "agent-workflow-state.v1.json")
+        return state
+
+    def mutate_plan(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        request = dict(payload)
+        validate_contract(request, "agent-plan-mutation.v1.json")
+        self.sessions.mutate_agent_plan(session_id, request)
+        return self.publish_workflow_state(session_id, reason=f"plan:{request['action']}")
+
+    def mutate_goal(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        request = dict(payload)
+        validate_contract(request, "agent-goal-mutation.v1.json")
+        self.sessions.mutate_agent_goal(session_id, request)
+        return self.publish_workflow_state(session_id, reason=f"goal:{request['action']}")
+
+    def internal_workflow_state(self, payload: Mapping[str, object]) -> dict[str, object]:
+        state = self.workflow_state(_required_text(payload, "sessionId"))
+        return {
+            "ok": True,
+            "result": {
+                "plan": state["plan"],
+                "goal": state["goal"],
+                "actGate": state["actGate"],
+            },
+        }
+
+    def record_goal_usage(self, payload: Mapping[str, object]) -> dict[str, object]:
+        request = dict(payload)
+        validate_contract(request, "agent-goal-usage.v1.json")
+        state = self.sessions.record_agent_goal_usage(
+            str(request["sessionId"]),
+            idempotency_key=str(request["idempotencyKey"]),
+            turn_id=str(request.get("turnId") or ""),
+            event_id=str(request.get("eventId") or ""),
+            token_delta=int(request.get("tokenDelta") or 0),
+            elapsed_delta_ms=int(request.get("elapsedDeltaMs") or 0),
+        )
+        validate_contract(state, "agent-workflow-state.v1.json")
+        self.events.publish(
+            str(request["sessionId"]),
+            "workflow_changed",
+            {"reason": "goal:usage", **state},
+        )
+        return {
+            "ok": True,
+            "result": {
+                "plan": state["plan"],
+                "goal": state["goal"],
+                "actGate": state["actGate"],
+            },
+        }
+
+    def publish_workflow_state(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        state = self.workflow_state(session_id)
+        self.events.publish(
+            session_id,
+            "workflow_changed",
+            {"reason": reason, **state},
+        )
+        return state
+
     def create_session(self, payload: Mapping[str, object]) -> dict[str, object]:
         title = str(payload.get("title") or "新对话")
         mode = str(payload.get("mode") or "assistant")
@@ -2580,6 +2656,7 @@ class AgentService:
             effective_status = "busy" if session_id in busy_session_ids else "idle"
             if effective_status != persisted_status:
                 session = self.sessions.set_status(session_id, effective_status)
+        workflow = self.sessions.workflow_state(session_id)
         return {
             "schemaVersion": "rag-ime.agent-message-list.v1",
             "ok": True,
@@ -2595,7 +2672,9 @@ class AgentService:
             # its latest projection explicitly so reopening a Session or
             # restoring after compaction never depends on the bounded tool
             # event replay window.
-            "plan": self.sessions.agent_plan(session_id),
+            "plan": workflow["plan"],
+            "goal": workflow["goal"],
+            "actGate": workflow["actGate"],
         }
 
     def import_media(
