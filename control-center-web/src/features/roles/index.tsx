@@ -46,6 +46,7 @@ import {
   type CollaborationProfileFixture,
   type CollaborationRoleFixture,
 } from './agent-definition-fixtures';
+import { CollaborationProfileGovernancePanel } from './CollaborationProfileGovernancePanel';
 import './roles.css';
 
 export function RolesFeature() {
@@ -599,6 +600,7 @@ function CollaborationProfileInspector({ profile }: { profile: CollaborationProf
     <div className="template-inspector__title"><span><UsersRound size={23} /></span><div><small>角色书 · 只读基线</small><h3>{profile.displayName}</h3><p>{profile.summary}</p></div></div>
     <dl><div><dt>协作岗位</dt><dd>{profile.collaborationRoles.join(' · ')}</dd></div><div><dt>必要门禁</dt><dd>{profile.requiredGates.join(' · ')}</dd></div><div><dt>信任边界</dt><dd>只能收窄已授权能力</dd></div></dl>
     <section className="definition-responsibilities" aria-label="角色书能力请求"><header><strong>能力请求</strong><small>请求不是授权</small></header><div className="template-capabilities">{profile.capabilityRequests.map((capability) => <span key={capability}>{capabilityLabel(capability as AgentTemplateV1['capabilities'][number])}</span>)}</div></section>
+    <CollaborationProfileGovernancePanel projection={profile.governance} />
   </aside>;
 }
 
