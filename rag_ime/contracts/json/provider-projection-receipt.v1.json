@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/provider-projection-receipt.v1.json",
+  "title": "Provider projection seal receipt",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "receiptId",
+    "journalId",
+    "providerRequestId",
+    "generation",
+    "sealedThroughSequence",
+    "projectionHash",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.provider-projection-receipt.v1"},
+    "receiptId": {"type": "string", "minLength": 1},
+    "journalId": {"type": "string", "minLength": 1},
+    "providerRequestId": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "sealedThroughSequence": {"type": "integer", "minimum": 1},
+    "projectionHash": {"type": "string", "minLength": 64},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

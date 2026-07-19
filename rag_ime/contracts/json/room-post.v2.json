@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-post.v2.json",
+  "title": "Explicit Room Post",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "postId",
+    "roomId",
+    "rootId",
+    "generation",
+    "authorActorRef",
+    "kind",
+    "visibility",
+    "content",
+    "idempotencyKey",
+    "publicationSource",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-post.v2"},
+    "postId": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "taskId": {"type": "string"},
+    "dispatchId": {"type": "string"},
+    "authorActorRef": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "minLength": 1},
+    "visibility": {"enum": ["room", "root"]},
+    "content": {"type": "string", "minLength": 1},
+    "idempotencyKey": {"type": "string", "minLength": 1},
+    "publicationSource": {
+      "type": "object",
+      "required": ["kind", "ref"],
+      "properties": {
+        "kind": {"enum": ["user", "room_commit"]},
+        "ref": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}
