@@ -62,8 +62,8 @@ for line in sys.stdin:
                              "sessionCancelOperationRegistry": False,
                              "sessionCancelOperations": {
                                  "provider": True, "tool": True, "retrySleep": True,
-                                 "manualCompaction": False, "autoCompaction": False,
-                                 "branchSummary": False, "bashProcess": False,
+                                 "manualCompaction": True, "autoCompaction": True,
+                                 "branchSummary": False, "bashProcess": True,
                                  "continuationTimer": False},
                              "roomTypes": False}}})
     elif method == "completion.once":
@@ -408,6 +408,16 @@ class PiRuntimeV2Tests(unittest.TestCase):
             status["capabilities"]["runtimePrimitives"][
                 "sessionCancelOperationRegistry"
             ]
+        )
+        self.assertTrue(
+            status["capabilities"]["runtimePrimitives"][
+                "sessionCancelOperations"
+            ]["manualCompaction"]
+        )
+        self.assertTrue(
+            status["capabilities"]["runtimePrimitives"][
+                "sessionCancelOperations"
+            ]["bashProcess"]
         )
         requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
         opened = [row for row in requests if row["method"] == "session.open"]
