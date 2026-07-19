@@ -1,48 +1,73 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRoomKernelProjection, type RoomKernelProjection } from '@/contracts/room-kernel-reducer';
+import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
+import { createRoomKernelProjection, type RoomKernelProjection, type RootProjection } from '@/contracts/room-kernel-reducer';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
+import { createFixtureRoomKernelCommandTransport } from './room-kernel-command-transport';
 
 describe('RoomKernelControlPlane', () => {
   afterEach(cleanup);
 
-  it('renders explicit Posts separately from private Session state and receipts', () => {
+  it('renders generated projections and keeps Session transcript private', () => {
     renderPlane(projection());
-
     expect(screen.getByRole('region', { name: 'root-a 公开 Posts' })).toHaveTextContent('经过明确提交的研究发现');
     expect(screen.getByRole('region', { name: 'root-a 私有 Sessions' })).toHaveTextContent('session-private-a');
-    expect(screen.getByRole('region', { name: 'root-a 私有 Sessions' })).toHaveTextContent('Transcript私有，不投影到 Room');
-    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('context-17');
-    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('capability-9');
-    expect(screen.getByText('已完成，等待终态回执')).toBeInTheDocument();
     expect(screen.queryByText('Session 私有正文')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('只读，等待后端接口');
   });
 
-  it('emits a typed Stop target for the selected Root and does not stop another Root', () => {
-    const onRequestStop = vi.fn();
-    renderPlane(projection(), onRequestStop);
+  it('does not expose a production Stop write without a command transport', () => {
+    renderPlane(projection());
+    const buttons = screen.getAllByRole('button', { name: '停止' });
+    expect(buttons[0]).toBeDisabled();
+    expect(buttons[0]).toHaveAttribute('title', '后端 command route 尚未接入');
+  });
+
+  it('sends canonical room root generation command through fixture transport and displays receipt', async () => {
+    const handler = vi.fn((command) => receipt({
+      receiptId: 'cancel-root-a', commandId: command.commandId, rootId: command.rootId,
+      generation: command.generation, receiptKind: 'root_cancelled',
+    }));
+    const transport = createFixtureRoomKernelCommandTransport(handler);
+    renderPlane(projection(), transport);
 
     fireEvent.click(screen.getAllByRole('button', { name: '停止' })[0]!);
-    expect(onRequestStop).toHaveBeenCalledTimes(1);
-    expect(onRequestStop).toHaveBeenCalledWith({ roomId: 'room-a', rootId: 'root-a', generation: 3 });
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({
+      schemaVersion: 'wisdom-weasel.room-kernel-command.v1', roomId: 'room-a', rootId: 'root-a',
+      targetKind: 'root', targetId: 'root-a', generation: 3, commandKind: 'cancel_root',
+    });
+    expect(await screen.findByText(/root_cancelled\/applied · cancel-root-a/)).toBeInTheDocument();
   });
 
-  it('shows terminal receipt state without an active Stop command', () => {
-    const state = projection();
-    state.rootsById['root-a'] = { ...state.rootsById['root-a']!, isFinal: true };
-    state.terminalReceiptsByRootId['root-a'] = {
-      receiptId: 'terminal-a', rootId: 'root-a', generation: 3,
-      terminalState: 'completed', quiescent: true, acceptancePassed: true,
-    };
-    renderPlane(state);
+  it('targets the keyboard-selected concurrent Root only', async () => {
+    const handler = vi.fn((command) => receipt({
+      receiptId: `cancel-${command.rootId}`, commandId: command.commandId, rootId: command.rootId,
+      generation: command.generation, receiptKind: 'root_cancelled',
+    }));
+    renderPlane(projection(), createFixtureRoomKernelCommandTransport(handler));
+    const buttons = screen.getAllByRole('button', { name: '停止' });
+    buttons[1]!.focus();
+    fireEvent.keyDown(buttons[1]!, { key: 'Enter' });
+    fireEvent.click(buttons[1]!);
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({ rootId: 'root-b', generation: 1 });
+  });
 
+  it('shows final only from the read projection terminal receipt', () => {
+    const state = projection();
+    state.rootsById['root-a'] = { ...state.rootsById['root-a']!, state: 'completed', terminalReceiptId: 'terminal-a', isFinal: true };
+    state.terminalReceiptByRootId['root-a'] = receipt({
+      receiptId: 'terminal-a', commandId: null, receiptKind: 'terminal', rootId: 'root-a', generation: 3,
+    });
+    renderPlane(state);
     expect(screen.getByText('终态已确认')).toBeInTheDocument();
-    expect(screen.getByText('completed · terminal-a')).toBeInTheDocument();
+    expect(screen.getByText('terminal/applied · terminal-a')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '停止' })).toHaveLength(1);
   });
 });
 
-function renderPlane(state: RoomKernelProjection, onRequestStop = vi.fn()) {
+function renderPlane(state: RoomKernelProjection, commandTransport?: ReturnType<typeof createFixtureRoomKernelCommandTransport>) {
   return render(<RoomKernelControlPlane
     projection={state}
     budgetsByRootId={{
@@ -51,19 +76,36 @@ function renderPlane(state: RoomKernelProjection, onRequestStop = vi.fn()) {
     }}
     contextReceiptsByRootId={{ 'root-a': { revision: 'context-17', status: 'sealed', contentHash: `sha256:${'a'.repeat(64)}` } }}
     capabilityReceiptsByRootId={{ 'root-a': { revision: 'capability-9', status: 'sealed', contentHash: `sha256:${'b'.repeat(64)}` } }}
-    onRequestStop={onRequestStop}
+    commandTransport={commandTransport}
   />);
 }
 
 function projection(): RoomKernelProjection {
   const state = createRoomKernelProjection('room-a');
   state.lastSequence = 12;
-  state.rootsById['root-a'] = { rootId: 'root-a', generation: 3, state: 'completed', ownerParticipantId: '研究员', isFinal: false, updatedAtMs: 12 };
-  state.rootsById['root-b'] = { rootId: 'root-b', generation: 1, state: 'running', ownerParticipantId: '审查员', isFinal: false, updatedAtMs: 11 };
-  state.runtimeByRootId['root-a'] = { generation: 3, stopRequest: null };
-  state.runtimeByRootId['root-b'] = { generation: 1, stopRequest: null };
+  state.rootsById['root-a'] = root('root-a', 3, '研究员', 'completed', 12);
+  state.rootsById['root-b'] = root('root-b', 1, '审查员', 'running', 11);
   state.postOrder.push('post-a');
-  state.postsById['post-a'] = { postId: 'post-a', roomId: 'room-a', rootId: 'root-a', sequence: 1, authorParticipantId: '研究员', kind: 'finding', visibility: 'room', content: '经过明确提交的研究发现', createdAtMs: 1 };
+  state.postsById['post-a'] = {
+    schemaVersion: 'wisdom-weasel.room-post.v2', postId: 'post-a', roomId: 'room-a', rootId: 'root-a', generation: 3,
+    authorActorRef: '研究员', kind: 'finding', visibility: 'room', content: '经过明确提交的研究发现',
+    idempotencyKey: 'post-a', publicationSource: { kind: 'room_commit', ref: 'commit-a' }, createdAtMs: 1,
+  };
   state.sessionsById['session-private-a'] = { sessionId: 'session-private-a', rootId: 'root-a', generation: 3, state: 'completed', updatedAtMs: 10 };
   return state;
+}
+
+function root(rootId: string, generation: number, owner: string, state: RootProjection['state'], updatedAtMs: number): RootProjection {
+  return {
+    schemaVersion: 'wisdom-weasel.room-root-execution.v2', rootId, roomId: 'room-a', generation, state, owner,
+    requirementAnchorRef: `requirement:${rootId}`, createdByActorRef: 'user:1', terminalReceiptId: null,
+    activeProfileRef: null, budgetPolicyRef: 'budget:default', createdAtMs: 1, isFinal: false, updatedAtMs,
+  };
+}
+
+function receipt(overrides: Partial<RoomKernelReceiptV1>): RoomKernelReceiptV1 {
+  return {
+    schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1', receiptId: 'receipt-a', rootId: 'root-a', commandId: 'command-a',
+    receiptKind: 'accepted', status: 'applied', generation: 3, details: {}, createdAtMs: 4, ...overrides,
+  };
 }

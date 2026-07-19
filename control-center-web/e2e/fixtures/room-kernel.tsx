@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { createRoomKernelProjection } from '../../src/contracts/room-kernel-reducer';
 import { RoomKernelControlPlane } from '../../src/features/rooms/kernel/RoomKernelControlPlane';
+import { createFixtureRoomKernelCommandTransport } from '../../src/features/rooms/kernel/room-kernel-command-transport';
 import '../../src/design/tokens.css';
 import '../../src/design/typography.css';
 import '../../src/components/primitives/primitives.css';
@@ -8,31 +9,40 @@ import '../../src/components/primitives/primitives.css';
 const projection = createRoomKernelProjection('room-kernel-qa');
 projection.lastSequence = 218;
 projection.rootsById['root-research-2026-07-19-with-a-deliberately-long-identifier'] = {
+  schemaVersion: 'wisdom-weasel.room-root-execution.v2',
   rootId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
+  roomId: projection.roomId,
   generation: 3,
   state: 'completed',
-  ownerParticipantId: '证据审查员与知识治理负责人',
+  owner: '证据审查员与知识治理负责人',
+  requirementAnchorRef: 'requirement:research',
+  createdByActorRef: 'user:fixture',
+  terminalReceiptId: null,
+  activeProfileRef: null,
+  budgetPolicyRef: 'budget:fixture',
+  createdAtMs: 1,
   isFinal: false,
   updatedAtMs: 218,
 };
 projection.rootsById['root-implementation'] = {
-  rootId: 'root-implementation', generation: 1, state: 'running',
-  ownerParticipantId: '实现者', isFinal: false, updatedAtMs: 217,
+  schemaVersion: 'wisdom-weasel.room-root-execution.v2', rootId: 'root-implementation', roomId: projection.roomId,
+  generation: 1, state: 'running', owner: '实现者', requirementAnchorRef: 'requirement:implementation',
+  createdByActorRef: 'user:fixture', terminalReceiptId: null, activeProfileRef: null,
+  budgetPolicyRef: 'budget:fixture', createdAtMs: 2, isFinal: false, updatedAtMs: 217,
 };
-projection.runtimeByRootId['root-research-2026-07-19-with-a-deliberately-long-identifier'] = { generation: 3, stopRequest: null };
-projection.runtimeByRootId['root-implementation'] = { generation: 1, stopRequest: null };
 projection.postOrder.push('post-finding', 'post-decision');
 projection.postsById['post-finding'] = {
-  postId: 'post-finding', roomId: projection.roomId,
+  schemaVersion: 'wisdom-weasel.room-post.v2', postId: 'post-finding', roomId: projection.roomId,
   rootId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
-  sequence: 216, authorParticipantId: '证据审查员', kind: 'finding', visibility: 'room',
+  generation: 3, authorActorRef: '证据审查员', kind: 'finding', visibility: 'room',
   content: '这是经过显式提交才进入 Room 的研究发现。Session 内部的推理、工具日志和自言自语不会混入公开上下文。',
-  createdAtMs: 216,
+  idempotencyKey: 'post:finding', publicationSource: { kind: 'room_commit', ref: 'commit:finding' }, createdAtMs: 216,
 };
 projection.postsById['post-decision'] = {
-  postId: 'post-decision', roomId: projection.roomId, rootId: 'root-implementation',
-  sequence: 217, authorParticipantId: '实现者', kind: 'decision', visibility: 'room',
-  content: '保持 Root 级停止入口可达，并等待全链静止后的终态回执。', createdAtMs: 217,
+  schemaVersion: 'wisdom-weasel.room-post.v2', postId: 'post-decision', roomId: projection.roomId, rootId: 'root-implementation',
+  generation: 1, authorActorRef: '实现者', kind: 'decision', visibility: 'room',
+  content: '保持 Root 级停止入口可达，并等待全链静止后的终态回执。', idempotencyKey: 'post:decision',
+  publicationSource: { kind: 'room_commit', ref: 'commit:decision' }, createdAtMs: 217,
 };
 projection.sessionsById['session-private-research-with-long-id'] = {
   sessionId: 'session-private-research-with-long-id',
@@ -66,5 +76,12 @@ createRoot(document.getElementById('root')!).render(<RoomKernelControlPlane
       revision: 'capability-revision-9', status: 'sealed', contentHash: `sha256:${'b'.repeat(64)}`,
     },
   }}
-  onRequestStop={(command) => { document.body.dataset.lastStop = JSON.stringify(command); }}
+  commandTransport={createFixtureRoomKernelCommandTransport((command) => {
+    document.body.dataset.lastStop = JSON.stringify(command);
+    return {
+      schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1', receiptId: `fixture:${command.commandId}`,
+      rootId: command.rootId, commandId: command.commandId, receiptKind: 'root_cancelled', status: 'applied',
+      generation: command.generation, details: {}, createdAtMs: Date.now(),
+    };
+  })}
 />);

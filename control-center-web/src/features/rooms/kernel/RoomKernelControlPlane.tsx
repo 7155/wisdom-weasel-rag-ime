@@ -9,8 +9,14 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
+import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
+import {
+  buildCancelRootCommand,
+  type RoomKernelCommandTransport,
+} from './room-kernel-command-transport';
 import './room-kernel-control-plane.css';
 
 export type RootBudgetSummary = {
@@ -28,24 +34,18 @@ export type RuntimeReceiptSummary = {
   contentHash: string;
 };
 
-export type RootStopCommand = {
-  roomId: string;
-  rootId: string;
-  generation: number;
-};
-
 export function RoomKernelControlPlane({
   budgetsByRootId,
   capabilityReceiptsByRootId,
   contextReceiptsByRootId,
-  onRequestStop,
+  commandTransport,
   projection,
 }: {
   projection: RoomKernelProjection;
   budgetsByRootId: Record<string, RootBudgetSummary>;
   contextReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
   capabilityReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
-  onRequestStop?: (command: RootStopCommand) => void;
+  commandTransport?: RoomKernelCommandTransport;
 }) {
   const roots = Object.values(projection.rootsById).sort((left, right) => (
     left.updatedAtMs === right.updatedAtMs
@@ -62,7 +62,7 @@ export function RoomKernelControlPlane({
         budget={budgetsByRootId[root.rootId]}
         contextReceipt={contextReceiptsByRootId[root.rootId]}
         capabilityReceipt={capabilityReceiptsByRootId[root.rootId]}
-        onRequestStop={onRequestStop}
+        commandTransport={commandTransport}
       />)}
       {!roots.length ? <p className="room-kernel-control__empty">当前没有根任务。</p> : null}
     </div>
@@ -73,7 +73,7 @@ function RootControlSection({
   budget,
   capabilityReceipt,
   contextReceipt,
-  onRequestStop,
+  commandTransport,
   projection,
   root,
 }: {
@@ -82,7 +82,7 @@ function RootControlSection({
   budget?: RootBudgetSummary;
   contextReceipt?: RuntimeReceiptSummary;
   capabilityReceipt?: RuntimeReceiptSummary;
-  onRequestStop?: (command: RootStopCommand) => void;
+  commandTransport?: RoomKernelCommandTransport;
 }) {
   const posts = projection.postOrder
     .map((postId) => projection.postsById[postId])
@@ -90,15 +90,36 @@ function RootControlSection({
   const sessions = Object.values(projection.sessionsById)
     .filter((session) => session.rootId === root.rootId)
     .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
-  const receipt = projection.terminalReceiptsByRootId[root.rootId];
-  const stop = projection.runtimeByRootId[root.rootId]?.stopRequest;
+  const receipt = projection.terminalReceiptByRootId[root.rootId];
+  const cancelReceipt = projection.cancelReceiptByRootId[root.rootId];
+  const [pending, setPending] = useState(false);
+  const [commandReceipt, setCommandReceipt] = useState<RoomKernelReceiptV1 | null>(null);
+  const [commandError, setCommandError] = useState('');
+  const requestStop = async () => {
+    if (!commandTransport || pending) return;
+    setPending(true);
+    setCommandReceipt(null);
+    setCommandError('');
+    const commandId = `ui-cancel:${root.rootId}:${root.generation}:${Date.now()}`;
+    try {
+      const nextReceipt = await commandTransport.execute(buildCancelRootCommand(
+        { roomId: projection.roomId, rootId: root.rootId, generation: root.generation },
+        { commandId, sourceId: 'room-kernel-control-plane', createdAtMs: Date.now() },
+      ));
+      setCommandReceipt(nextReceipt);
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : '取消命令未返回有效回执');
+    } finally {
+      setPending(false);
+    }
+  };
   return <article className="room-kernel-root" data-root-state={root.state}>
     <header className="room-kernel-root__header">
       <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root)}</i></span>
-      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={Boolean(stop)} onClick={() => onRequestStop?.({ roomId: projection.roomId, rootId: root.rootId, generation: root.generation })}>{stop ? '正在停止' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
+      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending} title={commandTransport ? '向 fixture transport 发送带 generation 的取消命令' : '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
     </header>
     <div className="room-kernel-root__summary">
-      <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.ownerParticipantId ?? '等待分派'}</strong></span>
+      <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.owner || '等待分派'}</strong></span>
       <BudgetMetric icon={<Gauge size={14} />} label="Dispatch" used={budget?.usedDispatches} maximum={budget?.maxDispatches} />
       <BudgetMetric icon={<FileText size={14} />} label="Token" used={budget?.usedTokens} maximum={budget?.maxTokens} />
       <BudgetMetric icon={<Clock3 size={14} />} label="墙钟" used={budget?.elapsedMs} maximum={budget?.maxWallTimeMs} formatter={durationLabel} />
@@ -106,10 +127,12 @@ function RootControlSection({
     <section className="room-kernel-root__receipts" aria-label={`${root.rootId} 运行回执`}>
       <ReceiptSummary icon={<LockKeyhole size={14} />} label="Context" receipt={contextReceipt} />
       <ReceiptSummary icon={<Wrench size={14} />} label="Capability" receipt={capabilityReceipt} />
-      <span><CircleCheck size={14} /><small>Terminal</small><strong>{receipt ? `${receipt.terminalState} · ${receipt.receiptId}` : '等待全链静止'}</strong></span>
+      <span><CircleCheck size={14} /><small>Terminal</small><strong>{receipt ? `${receipt.receiptKind}/${receipt.status} · ${receipt.receiptId}` : '等待全链静止'}</strong></span>
+      <span><Square size={14} /><small>Cancel</small><strong>{commandReceipt ? `${commandReceipt.receiptKind}/${commandReceipt.status} · ${commandReceipt.receiptId}` : cancelReceipt ? `${cancelReceipt.receiptKind}/${cancelReceipt.status} · ${cancelReceipt.receiptId}` : commandTransport ? '尚未请求' : '只读，等待后端接口'}</strong></span>
     </section>
+    {commandError ? <p className="room-kernel-control__command-error" role="alert">{commandError}</p> : null}
     <div className="room-kernel-root__planes">
-      <section className="room-kernel-posts" aria-label={`${root.rootId} 公开 Posts`}><header><strong>公开 Posts</strong><small>仅显式提交</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorParticipantId ?? '用户'}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开提交。</p>}</section>
+      <section className="room-kernel-posts" aria-label={`${root.rootId} 公开 Posts`}><header><strong>公开 Posts</strong><small>仅显式提交</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorActorRef}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开提交。</p>}</section>
       <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div></dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
     </div>
   </article>;
@@ -139,7 +162,7 @@ function ReceiptSummary({ icon, label, receipt }: { icon: ReactNode; label: stri
 
 function rootStateLabel(root: RootProjection): string {
   if (root.isFinal) return '已完成并确认';
-  return ({ queued: '排队中', running: '执行中', waiting: '等待中', completed: '已完成，等待终态回执', failed: '失败，等待终态回执', cancelled: '已取消，等待终态回执' } as Record<RootProjection['state'], string>)[root.state];
+  return ({ pending: '排队中', running: '执行中', waiting: '等待中', blocked: '已阻塞', cancelling: '取消中', completed: '已完成，等待终态回执', failed: '失败，等待终态回执', cancelled: '已取消，等待终态回执', cancelled_with_unknowns: '已取消，仍有未知执行' } as Record<RootProjection['state'], string>)[root.state];
 }
 
 function sessionStateLabel(value: string): string {

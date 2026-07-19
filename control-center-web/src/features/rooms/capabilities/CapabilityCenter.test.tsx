@@ -50,8 +50,8 @@ describe('Capability Center', () => {
     const fixture = capabilityCenterFixture();
     render(<RoomExecutionTopology
       roots={[
-        { rootId: 'root-research', generation: 3, state: 'running', ownerParticipantId: 'researcher', isFinal: false, updatedAtMs: 2 },
-        { rootId: 'root-review', generation: 1, state: 'waiting', ownerParticipantId: 'reviewer', isFinal: false, updatedAtMs: 1 },
+        { rootId: 'root-research', generation: 3, state: 'running', isFinal: false },
+        { rootId: 'root-review', generation: 1, state: 'waiting', isFinal: false },
       ]}
       tasksByRootId={fixture.tasksByRootId}
       dispatchesByRootId={fixture.dispatchesByRootId}
