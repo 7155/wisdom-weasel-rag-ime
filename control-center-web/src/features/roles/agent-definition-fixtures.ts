@@ -21,6 +21,27 @@ export type CollaborationProfileFixture = {
   requiredGates: string[];
   capabilityRequests: string[];
   trustTier: 'builtin';
+  governance: CollaborationProfileGovernanceProjection;
+};
+
+export type CollaborationProfileGovernanceProjection = {
+  pointerRevision: number;
+  activeContentHash: string;
+  activeVersion: string;
+  signerId: string;
+  pipelineChecks: Array<'inspect' | 'validate' | 'compile' | 'dry-run' | 'stage' | 'activate'>;
+  compileReceipt: {
+    receiptId: string;
+    bindingRevision: string;
+    effectiveCapabilities: string[];
+    rejectedCapabilities: string[];
+  };
+  diff: {
+    previousVersion: string | null;
+    currentVersion: string;
+    removedCapabilities: string[];
+    addedCapabilities: string[];
+  };
 };
 
 export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
@@ -79,5 +100,24 @@ export const collaborationProfileFixtures: CollaborationProfileFixture[] = [
     requiredGates: ['证据提交', '独立复核'],
     capabilityRequests: ['delegation', 'memory', 'rag', 'review'],
     trustTier: 'builtin',
+    governance: {
+      pointerRevision: 1,
+      activeContentHash: `sha256:${'a'.repeat(64)}`,
+      activeVersion: '1',
+      signerId: 'builtin',
+      pipelineChecks: ['inspect', 'validate', 'compile', 'dry-run', 'stage', 'activate'],
+      compileReceipt: {
+        receiptId: 'profile-compile:fixture00000000000000000',
+        bindingRevision: 'binding-revision-1',
+        effectiveCapabilities: ['memory', 'rag', 'review'],
+        rejectedCapabilities: ['delegation'],
+      },
+      diff: {
+        previousVersion: null,
+        currentVersion: '1',
+        removedCapabilities: ['delegation'],
+        addedCapabilities: [],
+      },
+    },
   },
 ];

@@ -1,0 +1,17 @@
+.profile-governance { display: grid; min-width: 0; gap: 10px; border-top: 1px solid var(--color-border); padding-top: 14px; }
+.profile-governance > header, .profile-governance__diff > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.profile-governance > header span, .profile-governance__diff > header span { display: inline-flex; align-items: center; gap: 6px; }
+.profile-governance > header strong, .profile-governance__diff > header strong { font-size: 13px; }
+.profile-governance > header small, .profile-governance__diff > header small { color: var(--color-text-tertiary); font: 500 12px var(--font-mono); }
+.profile-governance dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 0; }
+.profile-governance dl > div { grid-template-columns: 96px minmax(0, 1fr); padding: 7px 0; }
+.profile-governance dd { min-width: 0; overflow: hidden; font: 600 12px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.profile-governance ol { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; margin: 0; padding: 0; overflow: hidden; background: var(--color-border); list-style: none; }
+.profile-governance li { display: inline-flex; min-width: 0; align-items: center; justify-content: center; gap: 3px; padding: 6px 3px; background: var(--color-success-soft); color: var(--color-success); font-size: 11px; white-space: nowrap; }
+.profile-governance__diff { display: grid; gap: 0; }
+.profile-governance__diff > p { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 6px; margin: 0; border-bottom: 1px solid var(--color-border); padding: 7px 0; font-size: 12px; }
+.profile-governance__diff p b { color: var(--color-text-tertiary); }
+.profile-governance__diff p span { min-width: 0; overflow-wrap: anywhere; }
+.profile-governance__diff p[data-change='removed'] b { color: var(--color-warning); }
+.profile-governance__diff p[data-change='blocked'] b { color: var(--color-danger); }
+@media (max-width: 520px) { .profile-governance dl { grid-template-columns: 1fr; } .profile-governance ol { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

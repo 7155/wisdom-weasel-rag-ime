@@ -221,9 +221,9 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
             "schemaVersion": PARTICIPANT_BINDING_SCHEMA_VERSION,
             "bindingId": "participant-binding:1",
             "sessionId": "session:ordinary-assistant",
-            "personaRef": "persona:present@1",
-            "collaborationRoleRef": "collaboration-role:companion@1",
-            "agentTemplateRef": "agent-template:assistant@1",
+            "personaRef": "rag-ime-definition://persona/present?version=1&contentHash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collaborationRoleRef": "rag-ime-definition://collaboration-role/companion?version=1&contentHash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "agentTemplateRef": "rag-ime-definition://agent-template/assistant?version=1&contentHash=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "collaborationProfileRef": None,
             "compiledRuntimeProfileRef": {
                 "profileId": "runtime-profile:assistant",

@@ -6616,6 +6616,81 @@ export const contractSchemas = {
       }
     }
   },
+  "collaboration-profile-compile-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.collaboration-profile-compile-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "contentHash",
+      "compilerVersion",
+      "bindingRevision",
+      "baselineCapabilities",
+      "requestedCapabilities",
+      "effectiveCapabilities",
+      "rejectedCapabilities",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.collaboration-profile-compile-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "pattern": "^profile-compile:[a-f0-9]{24}$"
+      },
+      "contentHash": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "compilerVersion": {
+        "type": "string",
+        "const": "collaboration-profile-compiler-v1"
+      },
+      "bindingRevision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "baselineCapabilities": {
+        "$ref": "#/$defs/capabilities"
+      },
+      "requestedCapabilities": {
+        "$ref": "#/$defs/capabilities"
+      },
+      "effectiveCapabilities": {
+        "$ref": "#/$defs/capabilities"
+      },
+      "rejectedCapabilities": {
+        "$ref": "#/$defs/capabilities"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "capabilities": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "rag",
+            "memory",
+            "planning",
+            "review",
+            "control",
+            "delegation"
+          ]
+        }
+      }
+    }
+  },
   "collaboration-profile.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.collaboration-profile.v1",
@@ -11496,6 +11571,121 @@ export const contractSchemas = {
       }
     }
   },
+  "provider-projection-journal.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/provider-projection-journal.v1.json",
+    "title": "Provider-only append and seal journal",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "journalId",
+      "rootId",
+      "roomId",
+      "bindingId",
+      "sessionId",
+      "sessionEpoch",
+      "contextEpoch",
+      "generation",
+      "sealedThroughSequence",
+      "revision"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.provider-projection-journal.v1"
+      },
+      "journalId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "bindingId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionEpoch": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "contextEpoch": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sealedThroughSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "additionalProperties": false
+  },
+  "provider-projection-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/provider-projection-receipt.v1.json",
+    "title": "Provider projection seal receipt",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "journalId",
+      "providerRequestId",
+      "generation",
+      "sealedThroughSequence",
+      "projectionHash",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.provider-projection-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "journalId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "providerRequestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sealedThroughSequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "projectionHash": {
+        "type": "string",
+        "minLength": 64
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "additionalProperties": false
+  },
   "rime-rank-selection.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.rime-rank-selection.v1",
@@ -12203,6 +12393,1088 @@ export const contractSchemas = {
             "const": true
           }
         }
+      }
+    }
+  },
+  "room-binding.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-binding.v2.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "bindingId",
+      "rootId",
+      "roomId",
+      "participantId",
+      "taskId",
+      "generation",
+      "protocolRevision",
+      "capabilityRevision",
+      "access"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-binding.v2"
+      },
+      "bindingId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "participantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "taskId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "protocolRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "capabilityRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "access": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write"
+        ]
+      }
+    }
+  },
+  "room-commit.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-commit.v2.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "commitId",
+      "dispatchId",
+      "action",
+      "contentHash",
+      "postProposal",
+      "evidenceRefs",
+      "requirementCoverage",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-commit.v2"
+      },
+      "commitId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "dispatchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "post",
+          "dispatch",
+          "wait",
+          "complete",
+          "block"
+        ]
+      },
+      "contentHash": {
+        "type": "string",
+        "minLength": 1
+      },
+      "postProposal": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "evidenceRefs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "requirementCoverage": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "room-context-entry.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-context-entry.v1.json",
+    "title": "Immutable Room Context Ledger entry",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "entryId",
+      "rootId",
+      "roomId",
+      "generation",
+      "sequence",
+      "entryKind",
+      "sourceRef",
+      "contentHash",
+      "content",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-context-entry.v1"
+      },
+      "entryId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "entryKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "contentHash": {
+        "type": "string",
+        "minLength": 64
+      },
+      "content": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "additionalProperties": false
+  },
+  "room-dispatch-envelope.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-dispatch-envelope.v2.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "dispatchId",
+      "rootId",
+      "taskId",
+      "parentDispatchId",
+      "generation",
+      "targetSessionId",
+      "targetParticipantId",
+      "triggerId",
+      "intentKind",
+      "idempotencyKey",
+      "attempt",
+      "capabilityEpoch",
+      "runtimeProfileRevision",
+      "state"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-dispatch-envelope.v2"
+      },
+      "dispatchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "taskId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentDispatchId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "targetSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "targetParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "triggerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "intentKind": {
+        "type": "string",
+        "enum": [
+          "execute",
+          "review",
+          "revise",
+          "resume",
+          "retry",
+          "wake",
+          "callback"
+        ]
+      },
+      "idempotencyKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "attempt": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "capabilityEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "runtimeProfileRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "leased",
+          "running",
+          "committed",
+          "unknown",
+          "failed",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "room-event-envelope.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-event-envelope.v2.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "entityKind",
+      "entityId",
+      "eventKind",
+      "sequence",
+      "occurredAtMs",
+      "payload"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-event-envelope.v2"
+      },
+      "entityKind": {
+        "type": "string",
+        "enum": [
+          "root",
+          "task",
+          "dispatch",
+          "commit",
+          "post",
+          "binding"
+        ]
+      },
+      "entityId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "eventKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "occurredAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "payload": {
+        "type": "object"
+      }
+    }
+  },
+  "room-legacy-ref.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-legacy-ref.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "sourceKind",
+      "sourceId"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-legacy-ref.v1"
+      },
+      "sourceKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceId": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "room-participant-binding.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-participant-binding.v2.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "bindingId",
+      "sessionId",
+      "personaRef",
+      "collaborationRoleRef",
+      "agentTemplateRef",
+      "collaborationProfileRef",
+      "compiledRuntimeProfileRef",
+      "capabilityRevision",
+      "capabilityEpoch",
+      "roomBindingRef"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-participant-binding.v2"
+      },
+      "bindingId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "personaRef": {
+        "type": "string",
+        "description": "Canonical immutable definition reference: rag-ime-definition://{kind}/{percent-encoded-id}?version={version}&contentHash=sha256:{64 lowercase hex}",
+        "pattern": "^rag-ime-definition://persona/[^/?#&]+\\?version=[1-9][0-9]{0,5}&contentHash=sha256:[a-f0-9]{64}$"
+      },
+      "collaborationRoleRef": {
+        "type": "string",
+        "description": "Canonical immutable definition reference: rag-ime-definition://{kind}/{percent-encoded-id}?version={version}&contentHash=sha256:{64 lowercase hex}",
+        "pattern": "^rag-ime-definition://collaboration-role/[^/?#&]+\\?version=[1-9][0-9]{0,5}&contentHash=sha256:[a-f0-9]{64}$"
+      },
+      "agentTemplateRef": {
+        "type": "string",
+        "description": "Canonical immutable definition reference: rag-ime-definition://{kind}/{percent-encoded-id}?version={version}&contentHash=sha256:{64 lowercase hex}",
+        "pattern": "^rag-ime-definition://agent-template/[^/?#&]+\\?version=[1-9][0-9]{0,5}&contentHash=sha256:[a-f0-9]{64}$"
+      },
+      "collaborationProfileRef": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Null, or canonical immutable definition reference: rag-ime-definition://{kind}/{percent-encoded-id}?version={version}&contentHash=sha256:{64 lowercase hex}",
+        "pattern": "^rag-ime-definition://collaboration-profile/[^/?#&]+\\?version=[1-9][0-9]{0,5}&contentHash=sha256:[a-f0-9]{64}$"
+      },
+      "compiledRuntimeProfileRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "profileId",
+          "revision",
+          "contentHash"
+        ],
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "contentHash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{6,}$"
+          }
+        }
+      },
+      "capabilityRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "capabilityEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "roomBindingRef": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": false,
+        "required": [
+          "bindingId",
+          "schemaVersion"
+        ],
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schemaVersion": {
+            "type": "string",
+            "const": "wisdom-weasel.room-binding.v2"
+          }
+        }
+      }
+    }
+  },
+  "room-post.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-post.v2.json",
+    "title": "Explicit Room Post",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "postId",
+      "roomId",
+      "rootId",
+      "generation",
+      "authorActorRef",
+      "kind",
+      "visibility",
+      "content",
+      "idempotencyKey",
+      "publicationSource",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-post.v2"
+      },
+      "postId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "taskId": {
+        "type": "string"
+      },
+      "dispatchId": {
+        "type": "string"
+      },
+      "authorActorRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "visibility": {
+        "enum": [
+          "room",
+          "root"
+        ]
+      },
+      "content": {
+        "type": "string",
+        "minLength": 1
+      },
+      "idempotencyKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "publicationSource": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "user",
+              "room_commit"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "additionalProperties": false
+  },
+  "room-root-execution.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-root-execution.v2.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "rootId",
+      "roomId",
+      "generation",
+      "state",
+      "owner",
+      "requirementAnchorRef",
+      "createdByActorRef",
+      "terminalReceiptId",
+      "activeProfileRef",
+      "budgetPolicyRef",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-root-execution.v2"
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "waiting",
+          "blocked",
+          "cancelling",
+          "cancelled",
+          "cancelled_with_unknowns",
+          "completed",
+          "failed"
+        ]
+      },
+      "owner": {
+        "type": "string",
+        "minLength": 1
+      },
+      "requirementAnchorRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "createdByActorRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "terminalReceiptId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "activeProfileRef": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "budgetPolicyRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "room-shadow-observation.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-shadow-observation.v1.json",
+    "title": "Room V2 shadow observation envelope",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "rootId",
+      "triggerId",
+      "recordKind",
+      "entityId",
+      "payload"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.room-shadow-observation.v1"
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "taskId": {
+        "type": "string"
+      },
+      "dispatchId": {
+        "type": "string"
+      },
+      "triggerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "recordKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "entityId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "payload": {
+        "type": "object"
+      }
+    },
+    "additionalProperties": false
+  },
+  "room-skill-load-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-skill-load-receipt.v1.json",
+    "title": "Pinned Room native Skill load receipt",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "rootId",
+      "taskId",
+      "dispatchId",
+      "sessionId",
+      "skillId",
+      "skillHash",
+      "hashRule",
+      "catalogRevision",
+      "policyId",
+      "policyVersion",
+      "loadReason",
+      "capabilityEpoch",
+      "idempotencyKey",
+      "state",
+      "sourceReceiptId",
+      "createdAtMs",
+      "revokedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-skill-load-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "taskId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "dispatchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "skillId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "skillHash": {
+        "type": "string",
+        "minLength": 64
+      },
+      "hashRule": {
+        "const": "sha256-skill-body-utf8-v1"
+      },
+      "catalogRevision": {
+        "type": "string",
+        "minLength": 64
+      },
+      "policyId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "policyVersion": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "loadReason": {
+        "enum": [
+          "stage_required",
+          "model_selected",
+          "compaction_restore"
+        ]
+      },
+      "capabilityEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "idempotencyKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "state": {
+        "enum": [
+          "active",
+          "revoked"
+        ]
+      },
+      "sourceReceiptId": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "revokedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      }
+    },
+    "additionalProperties": false
+  },
+  "room-skill-policy.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-skill-policy.v1.json",
+    "title": "Room native Skill governance policy",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "policyId",
+      "version",
+      "hashRule",
+      "skills"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-skill-policy.v1"
+      },
+      "policyId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "version": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "hashRule": {
+        "const": "sha256-skill-body-utf8-v1"
+      },
+      "skills": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "skillId",
+            "stages",
+            "risk",
+            "nextCandidates"
+          ],
+          "properties": {
+            "skillId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "risk": {
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            },
+            "nextCandidates": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "additionalProperties": false
+  },
+  "room-skill-recovery.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-skill-recovery.v1.json",
+    "title": "Room native Skill compaction recovery pin",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "restoredFromReceiptId",
+      "skillId",
+      "skillHash",
+      "hashRule",
+      "catalogRevision",
+      "policyId",
+      "policyVersion",
+      "capabilityEpoch"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-skill-recovery.v1"
+      },
+      "restoredFromReceiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "skillId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "skillHash": {
+        "type": "string",
+        "minLength": 64
+      },
+      "hashRule": {
+        "const": "sha256-skill-body-utf8-v1"
+      },
+      "catalogRevision": {
+        "type": "string",
+        "minLength": 64
+      },
+      "policyId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "policyVersion": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "capabilityEpoch": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "additionalProperties": false
+  },
+  "room-skill-selection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-skill-selection.v1.json",
+    "title": "Room stage to native Skill selection",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "stage",
+      "selection",
+      "skillId",
+      "candidateSkillIds",
+      "risk"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-skill-selection.v1"
+      },
+      "stage": {
+        "type": "string",
+        "minLength": 1
+      },
+      "selection": {
+        "enum": [
+          "required",
+          "suggested",
+          "none"
+        ]
+      },
+      "skillId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "candidateSkillIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "risk": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "room-task.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-task.v2.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "taskId",
+      "rootId",
+      "parentTaskId",
+      "ownerParticipantId",
+      "assigneeParticipantId",
+      "objective",
+      "expectedOutput",
+      "requirementItemIds",
+      "acceptanceCriterionIds",
+      "revision",
+      "state"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-task.v2"
+      },
+      "taskId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentTaskId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "ownerParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "assigneeParticipantId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "objective": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedOutput": {
+        "type": "string",
+        "minLength": 1
+      },
+      "requirementItemIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "acceptanceCriterionIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "review",
+          "waiting",
+          "blocked",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
       }
     }
   },

@@ -52,6 +52,7 @@ import type { AgentToolResultV1 } from './generated/agent-tool-result.v1';
 import type { AgentWorkflowStateV1 } from './generated/agent-workflow-state.v1';
 import type { AssistantCandidateActionV1 } from './generated/assistant-candidate-action.v1';
 import type { AssistantOverlayV1 } from './generated/assistant-overlay.v1';
+import type { CollaborationProfileCompileReceiptV1 } from './generated/collaboration-profile-compile-receipt.v1';
 import type { CollaborationProfileV1 } from './generated/collaboration-profile.v1';
 import type { CollaborationRoleV1 } from './generated/collaboration-role.v1';
 import type { CompiledAgentRuntimeProfileV1 } from './generated/compiled-agent-runtime-profile.v1';
@@ -83,12 +84,29 @@ import type { ObservationEventV1 } from './generated/observation-event.v1';
 import type { ObservationSnapshotV1 } from './generated/observation-snapshot.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
 import type { PiRuntimeManifestV1 } from './generated/pi-runtime-manifest.v1';
+import type { ProviderProjectionJournalV1 } from './generated/provider-projection-journal.v1';
+import type { ProviderProjectionReceiptV1 } from './generated/provider-projection-receipt.v1';
 import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
 import type { RimeSelectV1 } from './generated/rime-select.v1';
 import type { RimeSuggestRequestV1 } from './generated/rime-suggest-request.v1';
 import type { RimeSuggestResponseV1 } from './generated/rime-suggest-response.v1';
 import type { RoleBookCurationV1 } from './generated/role-book-curation.v1';
 import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-draft.v1';
+import type { RoomBindingV2 } from './generated/room-binding.v2';
+import type { RoomCommitV2 } from './generated/room-commit.v2';
+import type { RoomContextEntryV1 } from './generated/room-context-entry.v1';
+import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
+import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
+import type { RoomLegacyRefV1 } from './generated/room-legacy-ref.v1';
+import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
+import type { RoomPostV2 } from './generated/room-post.v2';
+import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
+import type { RoomShadowObservationV1 } from './generated/room-shadow-observation.v1';
+import type { RoomSkillLoadReceiptV1 } from './generated/room-skill-load-receipt.v1';
+import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
+import type { RoomSkillRecoveryV1 } from './generated/room-skill-recovery.v1';
+import type { RoomSkillSelectionV1 } from './generated/room-skill-selection.v1';
+import type { RoomTaskV2 } from './generated/room-task.v2';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
@@ -141,6 +159,7 @@ export type {
   AgentWorkflowStateV1,
   AssistantCandidateActionV1,
   AssistantOverlayV1,
+  CollaborationProfileCompileReceiptV1,
   CollaborationProfileV1,
   CollaborationRoleV1,
   CompiledAgentRuntimeProfileV1,
@@ -172,12 +191,29 @@ export type {
   ObservationSnapshotV1,
   OverlayConfigV1,
   PiRuntimeManifestV1,
+  ProviderProjectionJournalV1,
+  ProviderProjectionReceiptV1,
   RimeRankSelectionV1,
   RimeSelectV1,
   RimeSuggestRequestV1,
   RimeSuggestResponseV1,
   RoleBookCurationV1,
   RoleBookRevisionDraftV1,
+  RoomBindingV2,
+  RoomCommitV2,
+  RoomContextEntryV1,
+  RoomDispatchEnvelopeV2,
+  RoomEventEnvelopeV2,
+  RoomLegacyRefV1,
+  RoomParticipantBindingV2,
+  RoomPostV2,
+  RoomRootExecutionV2,
+  RoomShadowObservationV1,
+  RoomSkillLoadReceiptV1,
+  RoomSkillPolicyV1,
+  RoomSkillRecoveryV1,
+  RoomSkillSelectionV1,
+  RoomTaskV2,
   SessionMemoryRecallV1,
   UserMemoryDraftV1,
 };
@@ -231,6 +267,7 @@ export interface ContractTypeMap {
   'agent-workflow-state.v1': AgentWorkflowStateV1;
   'assistant-candidate-action.v1': AssistantCandidateActionV1;
   'assistant-overlay.v1': AssistantOverlayV1;
+  'collaboration-profile-compile-receipt.v1': CollaborationProfileCompileReceiptV1;
   'collaboration-profile.v1': CollaborationProfileV1;
   'collaboration-role.v1': CollaborationRoleV1;
   'compiled-agent-runtime-profile.v1': CompiledAgentRuntimeProfileV1;
@@ -262,12 +299,29 @@ export interface ContractTypeMap {
   'observation-snapshot.v1': ObservationSnapshotV1;
   'overlay-config.v1': OverlayConfigV1;
   'pi-runtime-manifest.v1': PiRuntimeManifestV1;
+  'provider-projection-journal.v1': ProviderProjectionJournalV1;
+  'provider-projection-receipt.v1': ProviderProjectionReceiptV1;
   'rime-rank-selection.v1': RimeRankSelectionV1;
   'rime-select.v1': RimeSelectV1;
   'rime-suggest-request.v1': RimeSuggestRequestV1;
   'rime-suggest-response.v1': RimeSuggestResponseV1;
   'role-book-curation.v1': RoleBookCurationV1;
   'role-book-revision-draft.v1': RoleBookRevisionDraftV1;
+  'room-binding.v2': RoomBindingV2;
+  'room-commit.v2': RoomCommitV2;
+  'room-context-entry.v1': RoomContextEntryV1;
+  'room-dispatch-envelope.v2': RoomDispatchEnvelopeV2;
+  'room-event-envelope.v2': RoomEventEnvelopeV2;
+  'room-legacy-ref.v1': RoomLegacyRefV1;
+  'room-participant-binding.v2': RoomParticipantBindingV2;
+  'room-post.v2': RoomPostV2;
+  'room-root-execution.v2': RoomRootExecutionV2;
+  'room-shadow-observation.v1': RoomShadowObservationV1;
+  'room-skill-load-receipt.v1': RoomSkillLoadReceiptV1;
+  'room-skill-policy.v1': RoomSkillPolicyV1;
+  'room-skill-recovery.v1': RoomSkillRecoveryV1;
+  'room-skill-selection.v1': RoomSkillSelectionV1;
+  'room-task.v2': RoomTaskV2;
   'session-memory-recall.v1': SessionMemoryRecallV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
 }

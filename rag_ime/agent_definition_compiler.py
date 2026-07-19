@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from typing import Mapping
+from urllib.parse import quote
 
 from .agent_definitions import CollaborationProfileManifest, CollaborationRoleManifest
 from .agent_roles import PersonaManifest
@@ -28,6 +29,13 @@ class DefinitionRef:
             "version": self.version,
             "contentHash": self.content_hash,
         }
+
+    def to_canonical_ref(self) -> str:
+        return (
+            f"rag-ime-definition://{quote(self.kind, safe='')}/"
+            f"{quote(self.definition_id, safe='')}?version={quote(self.version, safe='')}"
+            f"&contentHash={self.content_hash}"
+        )
 
 
 @dataclass(frozen=True)
@@ -73,7 +81,6 @@ class CompiledAgentRuntimeProfile:
 class ParticipantBinding:
     binding_id: str
     session_id: str
-    participant_id: str
     room_binding_ref: Mapping[str, str] | None
     persona_ref: DefinitionRef
     collaboration_role_ref: DefinitionRef
@@ -88,13 +95,12 @@ class ParticipantBinding:
             "schemaVersion": "wisdom-weasel.room-participant-binding.v2",
             "bindingId": self.binding_id,
             "sessionId": self.session_id,
-            "participantId": self.participant_id,
             "roomBindingRef": dict(self.room_binding_ref) if self.room_binding_ref is not None else None,
-            "personaRef": self.persona_ref.to_payload(),
-            "collaborationRoleRef": self.collaboration_role_ref.to_payload(),
-            "agentTemplateRef": self.template_ref.to_payload(),
+            "personaRef": self.persona_ref.to_canonical_ref(),
+            "collaborationRoleRef": self.collaboration_role_ref.to_canonical_ref(),
+            "agentTemplateRef": self.template_ref.to_canonical_ref(),
             "collaborationProfileRef": (
-                self.collaboration_profile_ref.to_payload()
+                self.collaboration_profile_ref.to_canonical_ref()
                 if self.collaboration_profile_ref is not None
                 else None
             ),
@@ -102,7 +108,7 @@ class ParticipantBinding:
             "capabilityRevision": self.capability_revision,
             "capabilityEpoch": self.capability_epoch,
         }
-        _validate_participant_binding_projection(payload)
+        validate_contract(payload, "room-participant-binding.v2.json")
         return payload
 
 
@@ -120,7 +126,6 @@ class AgentDefinitionCompiler:
         *,
         binding_id: str,
         session_id: str,
-        participant_id: str,
         persona: PersonaManifest,
         collaboration_role: CollaborationRoleManifest,
         template: AgentTemplate,
@@ -190,7 +195,6 @@ class AgentDefinitionCompiler:
         binding = ParticipantBinding(
             binding_id=_required(binding_id, "binding_id"),
             session_id=_required(session_id, "session_id"),
-            participant_id=_required(participant_id, "participant_id"),
             room_binding_ref=_room_binding_ref(room_binding_ref),
             persona_ref=persona_ref,
             collaboration_role_ref=role_ref,
@@ -241,19 +245,3 @@ def _room_binding_ref(value: Mapping[str, str] | None) -> Mapping[str, str] | No
     if schema_version != "wisdom-weasel.room-binding.v2" or not binding_id:
         raise ValueError("room_binding_ref must reference wisdom-weasel.room-binding.v2")
     return {"schemaVersion": schema_version, "bindingId": binding_id}
-
-
-def _validate_participant_binding_projection(payload: Mapping[str, object]) -> None:
-    """Narrow guard until lane A lands the canonical v2 JSON Schema."""
-
-    if payload.get("schemaVersion") != "wisdom-weasel.room-participant-binding.v2":
-        raise ValueError("unsupported participant binding schema")
-    for field in ("bindingId", "sessionId", "participantId", "capabilityRevision"):
-        if not str(payload.get(field) or "").strip():
-            raise ValueError(f"participant binding {field} is required")
-    profile_ref = payload.get("compiledRuntimeProfileRef")
-    if not isinstance(profile_ref, Mapping):
-        raise ValueError("participant binding compiledRuntimeProfileRef is required")
-    content_hash = str(profile_ref.get("contentHash") or "")
-    if not content_hash.startswith("sha256:") or len(content_hash) != 71:
-        raise ValueError("participant binding compiledRuntimeProfileRef hash is invalid")

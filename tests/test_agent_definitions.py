@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_definition_compiler import AgentDefinitionCompiler
+from rag_ime.agent_room_kernel_contracts import validate_kernel_contract
 from rag_ime.agent_definitions import (
     collaboration_profile,
     collaboration_profile_catalog,
@@ -13,6 +14,7 @@ from rag_ime.agent_definitions import (
 )
 from rag_ime.agent_roles import agent_role, agent_role_catalog
 from rag_ime.agent_templates import agent_template, agent_template_catalog
+from rag_ime.contracts.json_schema import ContractValidationError
 
 
 FIXTURE = Path(__file__).with_name("fixtures") / "agent_definition_legacy_baseline.json"
@@ -34,7 +36,6 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         compiled = self.compiler.compile(
             binding_id="binding-room-001",
             session_id="session-researcher-001",
-            participant_id="participant-researcher",
             persona=agent_role("zhiyou-v1", "1"),
             collaboration_role=collaboration_role("researcher", "1"),
             template=agent_template("researcher", "1"),
@@ -58,7 +59,12 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         self.assertEqual(compiled.profile.to_payload()["schemaVersion"], "rag-ime.compiled-agent-runtime-profile.v1")
         binding = compiled.binding.to_payload()
         self.assertEqual(binding["schemaVersion"], "wisdom-weasel.room-participant-binding.v2")
-        self.assertEqual(binding["agentTemplateRef"]["id"], "researcher")
+        self.assertRegex(
+            binding["agentTemplateRef"],
+            r"^rag-ime-definition://agent-template/researcher\?version=1&contentHash=sha256:[a-f0-9]{64}$",
+        )
+        validate_kernel_contract("participantBinding", binding)
+        self.assertNotIn("participantId", binding)
         self.assertEqual(
             binding["compiledRuntimeProfileRef"]["contentHash"],
             compiled.profile.content_hash,
@@ -68,7 +74,6 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         compiled = self.compiler.compile(
             binding_id="binding-ordinary-001",
             session_id="session-ordinary-001",
-            participant_id="participant-ordinary",
             persona=agent_role("zhiyou-v1", "1"),
             collaboration_role=collaboration_role("reviewer", "1"),
             template=agent_template("reviewer", "1"),
@@ -94,7 +99,6 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         kwargs = dict(
             binding_id="binding-stable-001",
             session_id="session-stable-001",
-            participant_id="participant-stable",
             persona=agent_role("hermes-v1", "1"),
             collaboration_role=collaboration_role("researcher", "1"),
             template=agent_template("researcher", "1"),
@@ -114,6 +118,32 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
             left.binding.compiled_runtime_profile_ref["contentHash"],
             right.binding.compiled_runtime_profile_ref["contentHash"],
         )
+
+    def test_participant_binding_rejects_old_object_refs_and_participant_id(self) -> None:
+        compiled = self.compiler.compile(
+            binding_id="binding-contract-001",
+            session_id="session-contract-001",
+            persona=agent_role("zhiyou-v1", "1"),
+            collaboration_role=collaboration_role("researcher", "1"),
+            template=agent_template("researcher", "1"),
+            profile=None,
+            authorized_capabilities=("rag", "memory"),
+            capability_revision="capability-revision-contract",
+            capability_epoch=1,
+            prompt_plan_revision="prompt-plan-v1",
+            skill_policy_revision="skill-policy-v1",
+            context_policy_revision="context-policy-v1",
+        )
+        payload = compiled.binding.to_payload()
+        object_ref = dict(payload)
+        object_ref["personaRef"] = compiled.profile.persona_ref.to_payload()
+        with self.assertRaises(ContractValidationError):
+            validate_kernel_contract("participantBinding", object_ref)
+
+        participant_projection = dict(payload)
+        participant_projection["participantId"] = "participant-contract"
+        with self.assertRaises(ContractValidationError):
+            validate_kernel_contract("participantBinding", participant_projection)
 
     def test_catalogs_are_read_only_contract_payloads_without_voice_or_tts_fields(self) -> None:
         roles = collaboration_role_catalog()
