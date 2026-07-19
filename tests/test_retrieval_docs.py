@@ -104,8 +104,63 @@ class RetrievalDocsTests(unittest.TestCase):
         self.assertIn("RAG 输入法多路召回方案", row["raw_text"])
         self.assertIn("VCP", row["tags_text"])
         self.assertIn("多路召回", row["surface_hints_text"])
-        self.assertIn("Daily Book", row["query_expansions_text"])
-        self.assertEqual(row["time_key"], "daily:2026-07-06")
+        self.assertIn("Topic Book", row["query_expansions_text"])
+        self.assertEqual(row["time_key"], "topic:rag-retrieval")
+
+    def test_activity_timeline_has_its_own_retrieval_doc_type(self) -> None:
+        event_id = self._record_seed_event()
+        timeline_id = "activity-timeline:independent-index"
+        segment = {
+            "title": "验证时间线独立索引",
+            "summary": "将每日活动从主题书中拆出并按时间问题召回。",
+            "app": "com.openai.codex",
+            "apps": ["com.openai.codex"],
+        }
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO daily_activity_timelines(
+                    timeline_id, project, timeline_date, timezone, status,
+                    source_event_ids_json, source_event_hash, segments_json,
+                    summary_text, event_count, segment_count, approved_by,
+                    approved_at_ms, metadata_json, created_at_ms, updated_at_ms
+                ) VALUES (
+                    ?, 'wisdom-weasel-rag-ime', '2026-07-18', 'Asia/Shanghai',
+                    'approved', ?, ?, ?, ?, 1, 1, 'system:test', 200,
+                    '{"derivedArtifactType":"daily_activity_timeline"}', 100, 200
+                )
+                """,
+                (
+                    timeline_id,
+                    json.dumps([event_id]),
+                    "a" * 64,
+                    json.dumps([segment], ensure_ascii=False),
+                    "验证时间线独立索引。",
+                ),
+            )
+
+            report = rebuild_retrieval_docs(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM memory_retrieval_docs
+                WHERE doc_type = 'timeline' AND source_id = ?
+                """,
+                (timeline_id,),
+            ).fetchone()
+
+        self.assertEqual(report["counts"]["timeline"], 1)
+        self.assertEqual(report["counts"]["book"], 0)
+        self.assertTrue(report["includeTimelines"])
+        self.assertIsNotNone(row)
+        self.assertEqual(row["time_key"], "timeline:2026-07-18")
+        self.assertIn("验证时间线独立索引", row["surface_hints_text"])
+        self.assertEqual(
+            json.loads(row["metadata_json"])["derivedArtifactType"],
+            "daily_activity_timeline",
+        )
 
     def test_retrieval_docs_exclude_raw_app_archives_and_superseded_baselines(self) -> None:
         with self.connect() as conn:
@@ -657,14 +712,14 @@ class RetrievalDocsTests(unittest.TestCase):
 def sample_compile_output(event_id: int) -> dict[str, object]:
     return {
         "schemaVersion": "rag-ime.memory-book-compile.v1",
-        "dailyBooks": [
+        "topicBooks": [
             {
-                "bookKey": "2026-07-06",
+                "bookKey": "rag-retrieval",
                 "title": "RAG 输入法多路召回方案",
                 "summary": "用户希望借鉴 VCP 的 BM25、向量、TagMemo 和 Time。",
                 "tags": ["RAG", "输入法", "VCP"],
                 "surfaceHints": ["多路召回", "TagMemo"],
-                "queryExpansions": ["VCP RAG", "Daily Book"],
+                "queryExpansions": ["VCP RAG", "Topic Book"],
                 "sourceEventIds": [event_id],
                 "confidence": 0.86,
             }

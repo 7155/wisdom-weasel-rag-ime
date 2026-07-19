@@ -18,11 +18,26 @@
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-memory-maintenance-status.v1"},
     "ok": {"type": "boolean", "const": true},
-    "policy": {"type": "string", "const": "review"},
-    "autoApply": {"type": "boolean", "const": false},
-    "scheduledDraftOnly": {"type": "boolean", "const": true},
+    "policy": {
+      "type": "string",
+      "enum": ["review", "auto_governed", "disabled"]
+    },
+    "autoApply": {"type": "boolean"},
+    "scheduledDraftOnly": {"type": "boolean"},
     "due": {"type": "boolean"},
-    "dueReason": {"type": "string", "enum": ["pending_events", "idle", "daily", "owner_daily", "draft_pending_review", "not_due"]},
+    "dueReason": {
+      "type": "string",
+      "enum": [
+        "pending_events",
+        "idle",
+        "daily",
+        "owner_daily",
+        "owner_scheduled",
+        "draft_pending_review",
+        "automatic_organization_disabled",
+        "not_due"
+      ]
+    },
     "idleMs": {"type": "integer", "minimum": 0},
     "compileState": {
       "type": "object",

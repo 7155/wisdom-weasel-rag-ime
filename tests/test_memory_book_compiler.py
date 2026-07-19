@@ -423,6 +423,47 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(report["counts"]["semanticGroups"], 3)
         self.assertIn("semantic_group_new_limit_applied", plan["metadata"]["warnings"])
 
+    def test_memory_atom_uses_external_source_occurrence_time_not_import_time(
+        self,
+    ) -> None:
+        output = sample_compile_output(self.event_id)
+        import_time_ms = 1_752_900_000_000
+        source_time_ms = 1_752_036_400_000
+        bundle = {
+            "recentEvents": [
+                {
+                    "eventId": self.event_id,
+                    "sourceEventIds": [self.event_id],
+                    "createdAtMs": import_time_ms,
+                    "sourceOccurredAtMs": source_time_ms,
+                    "text": "Codex 已整理的外部记忆摘要",
+                }
+            ],
+            "inputs": [
+                {
+                    "sourceEventIds": [self.event_id],
+                    "createdAtMs": import_time_ms,
+                    "sourceOccurredAtMs": source_time_ms,
+                }
+            ],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        atom = next(
+            item["payload"]
+            for item in plan["diffs"]
+            if item["op"] == "upsert_memory_atom"
+        )
+
+        self.assertEqual(atom["validFromMs"], source_time_ms)
+        self.assertNotEqual(atom["validFromMs"], import_time_ms)
+
     def test_tag_edge_accepts_dsv4_descriptive_field_names(self) -> None:
         output = sample_compile_output(self.event_id)
         output["tagEdges"] = [
@@ -635,6 +676,57 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(set(book["sourceEventIds"]), {self.event_id, self.event_id + 100})
         self.assertIn("atom:existing", book["memoryAtomIds"])
 
+    def test_owner_scoped_topic_identity_does_not_fall_back_to_legacy_umbrella_book(
+        self,
+    ) -> None:
+        output = sample_compile_output(self.event_id)
+        output["dailyBooks"] = []
+        output["topicBooks"] = [
+            {
+                "bookId": "book:owner:abc:topic:rag-ime",
+                "bookKey": "owner-abc-topic-rag-ime",
+                "bookType": "topic",
+                "title": "RAG IME 记忆架构",
+                "summary": "Atom、Topic Book 和 Timeline 分为三条独立产物线。",
+                "sourceEventIds": [self.event_id],
+            }
+        ]
+        bundle = {
+            "schemaVersion": "rag-ime.owner-memory-source-bundle.v1",
+            "recentEvents": [
+                {"eventId": self.event_id, "text": "整理 RAG IME 记忆架构"}
+            ],
+            "existingMemoryBooks": [
+                {
+                    "bookId": "book:owner:abc",
+                    "bookKey": "owner-abc",
+                    "bookType": "topic",
+                    "title": "个人长期记忆",
+                    "summary": "包含 RAG IME 的长期记忆架构。",
+                    "sourceEventIds": [self.event_id + 100],
+                    "memoryAtomIds": ["atom:legacy"],
+                    "status": "active",
+                }
+            ],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        book = next(
+            item["payload"]
+            for item in plan["diffs"]
+            if item["op"] == "upsert_memory_book"
+        )
+
+        self.assertEqual(book["bookId"], "book:owner:abc:topic:rag-ime")
+        self.assertEqual(book["reusedExistingBookId"], "")
+        self.assertNotIn("atom:legacy", book["memoryAtomIds"])
+
     def test_memory_book_compile_keeps_raw_history_pending_when_model_returns_empty(self) -> None:
         bundle = {
             "bundleHash": "sha256:test-empty-organizer",
@@ -758,6 +850,24 @@ class MemoryBookCompilerTests(unittest.TestCase):
 
                 self.assertFalse(report["ok"])
                 self.assertTrue(any(item["code"] == "sensitive_text_detected" for item in report["errors"]))
+
+    def test_memory_book_compile_allows_token_and_api_key_concepts_without_values(
+        self,
+    ) -> None:
+        output = sample_compile_output(self.event_id)
+        output["dailyBooks"][0]["summary"] = (
+            "需要解释 token 成本、上下文预算和 API key 管理策略，但不保存凭据值。"
+        )
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertTrue(report["ok"], report)
 
     def test_memory_book_apply_requires_apply_flag(self) -> None:
         plan_path = self._write_sample_plan()

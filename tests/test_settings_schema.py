@@ -15,6 +15,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertIn("rag", section_ids)
         self.assertIn("models", section_ids)
         self.assertIn("activeRag", section_ids)
+        self.assertIn("externalMemorySources", section_ids)
         self.assertIn("agent", section_ids)
         self.assertIn("pinyin", section_ids)
         self.assertIn("privacy", section_ids)
@@ -58,6 +59,25 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["context"]["reservedOutputTokens"], 1024)
         self.assertFalse(defaults["agent"]["pi"]["enabled"])
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
+        self.assertTrue(defaults["memory"]["automaticOrganization"]["enabled"])
+        self.assertEqual(
+            defaults["memory"]["automaticOrganization"]["model"],
+            "deepseek-v4-flash",
+        )
+        self.assertEqual(
+            defaults["memory"]["automaticOrganization"]["runsPerDay"],
+            2,
+        )
+        self.assertTrue(defaults["memory"]["dreaming"]["enabled"])
+        self.assertEqual(defaults["memory"]["dreaming"]["runsPerDay"], 2)
+        self.assertFalse(
+            defaults["memory"]["externalSources"]["codexMemory"]["enabled"]
+        )
+        self.assertEqual(
+            defaults["memory"]["externalSources"]["codexMemory"]["lookbackDays"],
+            90,
+        )
+        self.assertEqual(defaults["memory"]["recall"]["detailLevel"], "compact")
 
         fields = {field["key"]: field for section in settings_schema()["sections"] for field in section["fields"]}
         self.assertFalse(fields["interaction.composition.showPrediction"]["default"])
@@ -69,6 +89,22 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
         self.assertEqual(fields["activeRag.quickThinkingLevel"]["options"], ["off", "low"])
         self.assertNotIn("activeRag.visualModel", fields)
+        self.assertEqual(
+            fields["memory.automaticOrganization.enabled"]["label"],
+            "自动整理",
+        )
+        self.assertEqual(
+            fields["memory.dreaming.enabled"]["label"],
+            "记忆做梦",
+        )
+        self.assertEqual(
+            fields["memory.externalSources.codexMemory.enabled"]["label"],
+            "读取 Codex 记忆",
+        )
+        self.assertEqual(
+            fields["memory.externalSources.codexMemory.lookbackDays"]["max"],
+            90,
+        )
 
     def test_flatten_roundtrip(self) -> None:
         original = {"interaction": {"postCommit": {"panelTtlMs": 4200}}, "display": {"badges": {"model": "模"}}}

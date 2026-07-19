@@ -59,8 +59,8 @@
       "properties": {
         "derivedFromInputEvents": {"type": "boolean", "const": true},
         "longTermFact": {"type": "boolean", "const": false},
-        "automaticPromotion": {"type": "boolean", "const": false},
-        "explicitApprovalRequired": {"type": "boolean", "const": true}
+        "automaticPromotion": {"type": "boolean", "const": true},
+        "explicitApprovalRequired": {"type": "boolean", "const": false}
       }
     }
   },

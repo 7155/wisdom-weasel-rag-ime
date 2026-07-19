@@ -12,6 +12,8 @@ LAUNCH_WRAPPER="$APP_CODE_DIR/memory_book_maintenance_launch.py"
 INSTALLED_SCRIPT_DIR="$APP_CODE_DIR/scripts"
 INSTALLED_SCRIPT="$INSTALLED_SCRIPT_DIR/run_memory_book_maintenance_once.sh"
 INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
+# Poll hourly; each lane reads its own runsPerDay setting and only calls a
+# model when due. This lets the UI change cadence without reinstalling the job.
 INTERVAL_SECONDS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_INTERVAL_SECONDS:-3600}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
@@ -102,9 +104,6 @@ env_keys = [
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT",
     "RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE",
-    "RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED",
-    "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK",
-    "RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS",
     "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT",
     "RAG_IME_PYTHON",
     "SSL_CERT_FILE",
@@ -118,21 +117,11 @@ environment = {
     "RAG_IME_DEEPSEEK_THINKING": os.environ.get("RAG_IME_DEEPSEEK_THINKING", "disabled"),
     "RAG_IME_DEEPSEEK_REASONING_EFFORT": os.environ.get("RAG_IME_DEEPSEEK_REASONING_EFFORT", "low"),
     "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS": os.environ.get("RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS", "2048"),
-    # The scheduled job may prepare a review draft, but it never applies
-    # memory changes. Apply/rollback stays behind the native approval path.
+    # The retired global compiler remains non-applying. Owner-scoped curation
+    # below is the authoritative, governed, reversible auto-apply lane.
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "0",
     # The owner-scoped evidence curator supersedes the old global organizer.
     "RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE": "0",
-    "RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED": os.environ.get(
-        "RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED", "1"
-    ),
-    # Daily consolidation creates drafts. Applying recentWork remains explicit.
-    "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK": os.environ.get(
-        "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK", "0"
-    ),
-    "RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS": os.environ.get(
-        "RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS", "86400"
-    ),
     "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT": os.environ.get(
         "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT", "500"
     ),

@@ -1256,9 +1256,15 @@ class DebugManagementApiTests(unittest.TestCase):
         )
 
         self.assertTrue(status["ok"])
-        self.assertEqual(status["policy"], "review")
-        self.assertFalse(status["autoApply"])
-        self.assertTrue(status["scheduledDraftOnly"])
+        self.assertEqual(status["policy"], "auto_governed")
+        self.assertTrue(status["autoApply"])
+        self.assertFalse(status["scheduledDraftOnly"])
+        self.assertEqual(status["automation"]["runsPerDay"], 2)
+        self.assertEqual(status["automation"]["model"], "deepseek-v4-flash")
+        self.assertEqual(status["ownerCuration"]["policy"]["cadence"], "twice_daily")
+        self.assertTrue(
+            status["ownerCuration"]["policy"]["autoApplyGovernedWrites"]
+        )
         self.assertGreaterEqual(status["compileState"]["pendingEventCount"], 1)
         self.assertEqual(status["pendingDraftCount"], 1)
         self.assertEqual(status["runs"][0]["runId"], plan["runId"])
@@ -2088,8 +2094,8 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(runtime["status"], "disabled")
         self.assertEqual(roles["items"][0]["displayName"], "智鼬·此刻")
         self.assertNotIn("systemPrompt", roles["items"][0])
-        self.assertEqual(maintenance["policy"], "review")
-        self.assertFalse(maintenance["autoApply"])
+        self.assertEqual(maintenance["policy"], "auto_governed")
+        self.assertTrue(maintenance["autoApply"])
         self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
         self.assertEqual(command_catalog["items"][0]["invocation"], "/review")
         self.assertEqual(

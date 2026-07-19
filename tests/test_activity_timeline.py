@@ -26,6 +26,7 @@ from rag_ime.personal_context_maintenance import (
     PersonalContextMaintenanceRunner,
 )
 from rag_ime.personal_context_observability import PersonalContextObservability
+from rag_ime.retrieval_docs import rebuild_retrieval_docs
 
 
 class DailyActivityTimelineTests(unittest.TestCase):
@@ -128,6 +129,7 @@ class DailyActivityTimelineTests(unittest.TestCase):
             config=PersonalContextMaintenanceConfig(
                 project=self.project,
                 min_interval_ms=0,
+                auto_publish_timelines=True,
             ),
         ).run_once(
             now_ms=self._ms(10, 0),
@@ -135,15 +137,17 @@ class DailyActivityTimelineTests(unittest.TestCase):
         )
 
         self.assertTrue(report["ok"])
-        self.assertEqual(report["activityTimelineSummary"]["draftCount"], 1)
+        self.assertEqual(report["activityTimelineSummary"]["draftCount"], 0)
+        self.assertEqual(report["activityTimelineSummary"]["approvedCount"], 1)
         built = report["activityTimelines"][0]
+        self.assertTrue(built["autoPublished"])
         timeline_id = built["timeline"]["timelineId"]
         timeline = DailyActivityTimelineStore(
             self.db_path,
             project=self.project,
             timezone_name="Asia/Shanghai",
         ).review(timeline_id)
-        self.assertEqual(timeline["status"], "draft")
+        self.assertEqual(timeline["status"], "approved")
         self.assertEqual(timeline["sourceEventIds"], own_event_ids)
         self.assertEqual(timeline["eventCount"], 5)
         self.assertEqual(timeline["segmentCount"], 2)
@@ -164,7 +168,8 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertEqual(timeline["segments"][-1]["redactedEventCount"], 1)
         self.assertNotIn("secret-value", json.dumps(timeline, ensure_ascii=False))
         self.assertFalse(timeline["policy"]["longTermFact"])
-        self.assertFalse(timeline["policy"]["automaticPromotion"])
+        self.assertTrue(timeline["policy"]["automaticPromotion"])
+        self.assertFalse(timeline["policy"]["explicitApprovalRequired"])
 
         with sqlite3.connect(self.db_path) as conn:
             output = json.loads(
@@ -192,29 +197,6 @@ class DailyActivityTimelineTests(unittest.TestCase):
                 0,
             )
 
-        store = DailyActivityTimelineStore(
-            self.db_path,
-            project=self.project,
-            timezone_name="Asia/Shanghai",
-        )
-        with self.assertRaisesRegex(ValueError, "confirm_text"):
-            store.approve(
-                timeline_id,
-                expected_source_event_hash=timeline["sourceEventHash"],
-                approved_by="user:local-control-center",
-                confirm_text="yes",
-                approved_at_ms=self._ms(10, 5),
-            )
-        approved = store.approve(
-            timeline_id,
-            expected_source_event_hash=timeline["sourceEventHash"],
-            approved_by="user:local-control-center",
-            confirm_text="approve",
-            approved_at_ms=self._ms(10, 5),
-        )
-        self.assertEqual(approved["status"], "approved")
-        self.assertTrue(approved["approvedBookId"])
-
         after = MemoryBootstrapBuilder(
             self.db_path,
             project=self.project,
@@ -224,25 +206,18 @@ class DailyActivityTimelineTests(unittest.TestCase):
             generated_at_ms=self._ms(10, 6),
         )
         recent = after["payload"]["sections"]["recentTimeline"]
-        self.assertEqual(len(recent), 1)
-        self.assertEqual(recent[0]["sourceId"], approved["approvedBookId"])
-        self.assertEqual(recent[0]["provenance"]["timelineId"], timeline_id)
-        self.assertEqual(
-            recent[0]["provenance"]["sourceEventHash"],
-            timeline["sourceEventHash"],
-        )
-        self.assertFalse(recent[0]["maySupportFacts"])
-        self.assertNotIn("secret-value", json.dumps(recent, ensure_ascii=False))
+        self.assertEqual(recent, [])
+        self.assertEqual(timeline["approvedBookId"], "")
 
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            book = conn.execute(
+            rebuild_retrieval_docs(conn, project=self.project)
+            timeline_doc = conn.execute(
                 """
-                SELECT status, source_event_ids_json, metadata_json
-                FROM memory_books
-                WHERE book_id = ?
-                """,
-                (approved["approvedBookId"],),
+                SELECT source_id, metadata_json
+                FROM memory_retrieval_docs
+                WHERE doc_type = 'timeline'
+                """
             ).fetchone()
             outbox = conn.execute(
                 """
@@ -252,9 +227,17 @@ class DailyActivityTimelineTests(unittest.TestCase):
                 """,
                 (timeline_id,),
             ).fetchone()
-        self.assertEqual(book["status"], "active")
-        self.assertEqual(json.loads(book["source_event_ids_json"]), own_event_ids)
-        self.assertFalse(json.loads(book["metadata_json"])["maySupportFacts"])
+            book_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_books WHERE book_type = 'daily'"
+                ).fetchone()[0]
+            )
+        self.assertEqual(book_count, 0)
+        self.assertEqual(timeline_doc["source_id"], timeline_id)
+        self.assertEqual(
+            json.loads(timeline_doc["metadata_json"])["sourceEventIds"],
+            own_event_ids,
+        )
         self.assertEqual(
             tuple(outbox),
             (

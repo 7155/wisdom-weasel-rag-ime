@@ -19,6 +19,11 @@ from .memory_projectors import ImeMemoryProjector
 from .query_expansion import build_query_expansion
 from .retrieval_vector_index import load_retrieval_doc_vectors
 from .text_utils import compact_whitespace, token_terms
+from .timeline_intent import (
+    TimelineIntent,
+    classify_timeline_intent,
+    timeline_date_bounds,
+)
 
 
 HYBRID_RAG_RETRIEVAL_SCHEMA_VERSION = "rag-ime.hybrid-rag-retrieval.v1"
@@ -27,19 +32,6 @@ _EXPLICIT_HISTORY_RE = re.compile(
     r"\d{4}[年./-]\d{1,2}(?:[月./-]\d{1,2}日?)?)",
     re.IGNORECASE,
 )
-_TIMELINE_INTENT_RE = re.compile(
-    r"(?:时间线|日程|活动记录|工作记录|最近|近期|这几天|近几天|今天|今日|昨天|昨日|"
-    r"前天|本周|这周|上周|本月|上月|"
-    r"daily\s*book|timeline|activity\s*(?:log|history)|"
-    r"\d{4}[年./-]\d{1,2}(?:[月./-]\d{1,2}日?)?)",
-    re.IGNORECASE,
-)
-_RECENT_TIMELINE_INTENT_RE = re.compile(
-    r"(?:最近(?:几天)?|近期|这几天|近几天|recent\s+(?:work|activity|timeline))",
-    re.IGNORECASE,
-)
-
-
 def retrieve_hybrid_rag_candidates(
     conn: sqlite3.Connection,
     query: HybridRagQuery,
@@ -58,11 +50,21 @@ def retrieve_hybrid_rag_candidates(
         app=query.app,
         visible_owners=visible_owners,
     )
-    docs = _active_docs(conn, query=query)
+    timeline_intent = _timeline_intent_for_query(
+        query,
+        enabled=_managed_timeline_recall_enabled(conn),
+    )
+    timeline_requested = timeline_intent.requested
+    retrieval_now_ms = int(time.time() * 1_000)
+    docs = _active_docs(
+        conn,
+        query=query,
+        timeline_intent=timeline_intent,
+        now_ms=retrieval_now_ms,
+    )
     blocked = _blocked_sets(conn)
     vector_available = bool(embedding_provider and embedding_provider.fingerprint != "none")
     enabled_lanes = _resolved_lane_enabled(query.enabled_lanes, vector_available=vector_available)
-    timeline_requested = _timeline_requested(query)
     # Daily timelines are a derived, short-lived view. They must not compete
     # with stable Atoms and topic Books for an ordinary semantic question.
     # A temporal query opts into both the documents and their dedicated lane.
@@ -157,6 +159,7 @@ def retrieve_hybrid_rag_candidates(
                 expansion_terms=(*expansion.expansion_terms, *expansion.activated_tags),
                 blocked=blocked,
                 limit=lane_limit,
+                now_ms=retrieval_now_ms,
             )
             if enabled_lanes["time"]
             else []
@@ -178,7 +181,7 @@ def retrieve_hybrid_rag_candidates(
         lane_weights=lane_weights,
         decay_settings=_memory_decay_settings(conn),
     )
-    if _recent_timeline_requested(query):
+    if _recent_timeline_requested(query, intent=timeline_intent):
         memory_hits.sort(key=_recent_timeline_sort_key, reverse=True)
     historical_book_ids = _historical_books_for_explicit_history(
         hits=hits,
@@ -209,7 +212,11 @@ def retrieve_hybrid_rag_candidates(
                 for kind, identity in visible_owners
             ],
             "timelineRequested": timeline_requested,
-            "recentTimelineRequested": _recent_timeline_requested(query),
+            "recentTimelineRequested": _recent_timeline_requested(
+                query,
+                intent=timeline_intent,
+            ),
+            "timelineIntent": timeline_intent.as_dict(),
             "vectorFusion": vector_fusion,
         },
         "lanes": {
@@ -451,7 +458,13 @@ def retrieve_hybrid_rag_memory_hit_objects(
     return hits[: max(1, int(query.top_k))]
 
 
-def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dict[str, object]]:
+def _active_docs(
+    conn: sqlite3.Connection,
+    *,
+    query: HybridRagQuery,
+    timeline_intent: TimelineIntent | None = None,
+    now_ms: int | None = None,
+) -> list[dict[str, object]]:
     visible_owners = resolve_visible_memory_owners(query.visible_owners, project=query.project)
     owner_clause, owner_params = sql_memory_owner_predicate(
         visible_owners,
@@ -489,7 +502,25 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
         },
     )
     docs: list[dict[str, object]] = []
-    timeline_requested = _timeline_requested(query)
+    resolved_timeline_intent = (
+        _timeline_intent_for_query(query)
+        if timeline_intent is None
+        else timeline_intent
+    )
+    timeline_requested = resolved_timeline_intent.requested
+    resolved_now = datetime.fromtimestamp(
+        (
+            int(now_ms)
+            if now_ms is not None
+            else int(time.time() * 1_000)
+        )
+        / 1_000,
+        tz=timezone.utc,
+    ).astimezone()
+    timeline_bounds = timeline_date_bounds(
+        resolved_timeline_intent,
+        now=resolved_now,
+    )
     for row, metadata in parsed_rows:
         source_event_ids = _metadata_source_event_ids(metadata)
         if source_event_ids and not set(source_event_ids).issubset(
@@ -498,7 +529,22 @@ def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dic
             continue
         if _is_daily_timeline_doc(metadata) and not timeline_requested:
             continue
-        short_term = bool(metadata.get("shortTerm") or metadata.get("short_term"))
+        if (
+            _is_daily_timeline_doc(metadata)
+            and timeline_bounds is not None
+            and not _timeline_doc_in_bounds(
+                metadata,
+                time_key=str(row["time_key"] or ""),
+                bounds=timeline_bounds,
+            )
+        ):
+            continue
+        # A timeline is cross-app by design. Once an explicit temporal query
+        # admits it, score it at project scope instead of requiring the exact
+        # document/app context group used by ordinary short-term snippets.
+        short_term = bool(
+            metadata.get("shortTerm") or metadata.get("short_term")
+        ) and not _is_daily_timeline_doc(metadata)
         compatibility = context_group_compatibility(
             current_group,
             candidate_group_id=str(metadata.get("contextGroupId") or metadata.get("context_group_id") or ""),
@@ -578,10 +624,11 @@ def _governed_visible_event_ids(
         )
         governed_rows = conn.execute(
             f"""SELECT input_event_id,
-                       SUM(CASE WHEN disposition NOT IN ('not_for_memory', 'expired')
+                       SUM(CASE WHEN status = 'active'
+                                     AND disposition NOT IN ('not_for_memory', 'expired')
                                 THEN 1 ELSE 0 END)
                 FROM agent_memory_sources
-                WHERE status = 'active' AND input_event_id IN ({placeholders})
+                WHERE input_event_id IN ({placeholders})
                 GROUP BY input_event_id""",
             tuple(chunk),
         ).fetchall()
@@ -592,25 +639,58 @@ def _governed_visible_event_ids(
 
 
 def _timeline_requested(query: HybridRagQuery) -> bool:
-    text = " ".join(
-        part
-        for part in (
-            query.query_text,
-            query.raw_input,
-            query.committed_tail,
-        )
-        if compact_whitespace(part)
-    )
-    return _TIMELINE_INTENT_RE.search(compact_whitespace(text)) is not None
+    return _timeline_intent_for_query(query).requested
 
 
-def _recent_timeline_requested(query: HybridRagQuery) -> bool:
-    text = " ".join(
-        part
-        for part in (query.query_text, query.raw_input, query.committed_tail)
-        if compact_whitespace(part)
+def _recent_timeline_requested(
+    query: HybridRagQuery,
+    *,
+    intent: TimelineIntent | None = None,
+) -> bool:
+    resolved = intent or _timeline_intent_for_query(query)
+    return resolved.range in {
+        "today",
+        "yesterday",
+        "day_before_yesterday",
+        "recent_days",
+        "current_week",
+    }
+
+
+def _timeline_intent_for_query(
+    query: HybridRagQuery,
+    *,
+    enabled: bool = True,
+) -> TimelineIntent:
+    return classify_timeline_intent(
+        query.query_text,
+        raw_input=query.raw_input,
+        committed_tail=query.committed_tail,
+        enabled=enabled,
     )
-    return _RECENT_TIMELINE_INTENT_RE.search(compact_whitespace(text)) is not None
+
+
+def _managed_timeline_recall_enabled(conn: sqlite3.Connection) -> bool:
+    try:
+        row = conn.execute(
+            "SELECT value_json FROM management_settings WHERE key = 'memory'"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return True
+    if row is None:
+        return True
+    try:
+        payload = json.loads(str(row[0] or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return True
+    if not isinstance(payload, dict):
+        return True
+    recall = payload.get("recall")
+    return (
+        bool(recall.get("timelineEnabled", True))
+        if isinstance(recall, dict)
+        else True
+    )
 
 
 def _recent_timeline_sort_key(hit: MemoryHit) -> tuple[int, str, float]:
@@ -628,6 +708,24 @@ def _is_daily_timeline_doc(metadata: dict[str, object]) -> bool:
         or compact_whitespace(str(metadata.get("derivedArtifactType") or "")).lower()
         == "daily_activity_timeline"
     )
+
+
+def _timeline_doc_in_bounds(
+    metadata: dict[str, object],
+    *,
+    time_key: str,
+    bounds: tuple[str, str],
+) -> bool:
+    timeline_date = compact_whitespace(
+        str(metadata.get("timelineDate") or metadata.get("bookKey") or "")
+    )
+    match = re.search(
+        r"(?<!\d)(20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))(?!\d)",
+        f"{timeline_date} {time_key}",
+    )
+    if match is None:
+        return False
+    return bounds[0] <= match.group(1) <= bounds[1]
 
 
 def _rank_docs(
@@ -832,10 +930,13 @@ def _rank_time_docs(
     expansion_terms: Iterable[str],
     blocked: dict[str, set[str]],
     limit: int,
+    now_ms: int | None = None,
 ) -> list[HybridRagHit]:
     terms = [normalize_text(term) for term in expansion_terms if compact_whitespace(str(term))]
     weighted: list[tuple[float, dict[str, object]]] = []
-    now_ms = int(time.time() * 1000)
+    resolved_now_ms = (
+        int(now_ms) if now_ms is not None else int(time.time() * 1_000)
+    )
     for doc in docs:
         if _doc_blocked(doc, blocked):
             continue
@@ -845,7 +946,11 @@ def _rank_time_docs(
         haystack = normalize_text(" ".join([str(doc.get("raw_text") or ""), str(doc.get("tags_text") or ""), time_key]))
         matched_terms = {term for term in terms if term and term in haystack}
         lexical_ratio = len(matched_terms) / max(1, len(set(terms)))
-        recency = _time_recency_score(time_key, updated_at_ms=int(doc.get("updated_at_ms") or 0), now_ms=now_ms)
+        recency = _time_recency_score(
+            time_key,
+            updated_at_ms=int(doc.get("updated_at_ms") or 0),
+            now_ms=resolved_now_ms,
+        )
         # The Time lane is deliberately an explicit temporal prior, not an
         # unbounded "all Daily Books" fallback. Query overlap keeps an old but
         # relevant book competitive while the half-life prevents it from

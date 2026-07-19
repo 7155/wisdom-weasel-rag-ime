@@ -982,12 +982,15 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
     for item in recalled:
         if not isinstance(item, Mapping):
             continue
-        if item.get("sourceType") == "memory_book":
+        source_type = str(item.get("sourceType") or "")
+        if source_type == "memory_timeline":
+            timelines.append(item)
+        elif source_type == "memory_book":
             normalized_tags = {
                 tag.casefold() for tag in _context_string_list(item.get("tags"))
             }
             (timelines if {"daily", "activity-timeline"}.intersection(normalized_tags) else books).append(item)
-        else:
+        elif source_type == "memory_atom":
             atoms.append(item)
 
     if retrieval.get("temporalIntent") is True:

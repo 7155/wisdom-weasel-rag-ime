@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe('MemoryFeature relations', () => {
-  it('reviews and approves a daily activity timeline without promoting it silently', async () => {
+  it('shows automatic timeline publication and keeps an immediate manual control', async () => {
     const user = userEvent.setup();
     const date = localCalendarDate();
     let status = 'draft';
@@ -62,18 +62,18 @@ describe('MemoryFeature relations', () => {
     await user.click(await screen.findByRole('tab', { name: '时间线' }));
     expect(await screen.findByText('实现最终输入框捕获并核对三条记忆消费路径。')).toBeInTheDocument();
     expect(screen.getByText('2 个语义任务')).toBeInTheDocument();
-    expect(screen.getByText('批准前只是一份派生草案，不参与事实召回')).toBeInTheDocument();
+    expect(screen.getByText('后台会自动发布；仅在时间类问题中按需召回')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '批准整理' }));
-    const dialog = await screen.findByRole('dialog', { name: /批准/ });
-    await user.click(within(dialog).getByRole('button', { name: '批准并写入' }));
+    await user.click(screen.getByRole('button', { name: '立即发布' }));
+    const dialog = await screen.findByRole('dialog', { name: /发布/ });
+    await user.click(within(dialog).getByRole('button', { name: '发布到时间线' }));
 
-    expect(await screen.findByText('已批准')).toBeInTheDocument();
-    expect(screen.getByText('已写入每日主题书')).toBeInTheDocument();
+    expect(await screen.findByText('已发布')).toBeInTheDocument();
+    expect(screen.getByText('已进入独立时间线索引')).toBeInTheDocument();
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.approve')).toHaveLength(1);
 
     await user.click(screen.getByRole('button', { name: '重新整理' }));
-    expect(await screen.findByText('待审核')).toBeInTheDocument();
+    expect(await screen.findByText('待自动发布')).toBeInTheDocument();
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.build')).toHaveLength(1);
 
     await user.click(screen.getByRole('button', { name: '驳回' }));
@@ -81,7 +81,7 @@ describe('MemoryFeature relations', () => {
     await user.type(within(rejectDialog).getByLabelText('原因'), '时段划分需要调整');
     await user.click(within(rejectDialog).getByRole('button', { name: '确认驳回' }));
 
-    expect(await screen.findByText('已驳回')).toBeInTheDocument();
+    expect(await screen.findByText('已删除')).toBeInTheDocument();
     expect(screen.getByText('本次整理未进入长期上下文')).toBeInTheDocument();
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.reject')).toHaveLength(1);
   });
@@ -1051,7 +1051,7 @@ function activityTimeline(status: string, date: string): Record<string, unknown>
     summary: '当天完成个人上下文主链改造与验证。',
     eventCount: 8,
     segmentCount: 2,
-    approvedBookId: status === 'approved' ? `book:daily:${date}` : '',
+    approvedBookId: '',
     approvedBy: status === 'approved' ? 'control-center-user' : '',
     approvedAtMs: status === 'approved' ? start + 10_000 : 0,
     createdAtMs: start,
@@ -1059,8 +1059,8 @@ function activityTimeline(status: string, date: string): Record<string, unknown>
     policy: {
       derivedFromInputEvents: true,
       longTermFact: false,
-      automaticPromotion: false,
-      explicitApprovalRequired: true,
+      automaticPromotion: true,
+      explicitApprovalRequired: false,
     },
   };
 }

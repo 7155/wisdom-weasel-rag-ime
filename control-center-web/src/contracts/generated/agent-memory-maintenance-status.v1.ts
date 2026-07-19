@@ -7,12 +7,19 @@
 export interface AgentMemoryMaintenanceStatusV1 {
   schemaVersion: 'rag-ime.agent-memory-maintenance-status.v1';
   ok: true;
-  policy: 'review';
-  autoApply: false;
-  scheduledDraftOnly: true;
+  policy: 'review' | 'auto_governed' | 'disabled';
+  autoApply: boolean;
+  scheduledDraftOnly: boolean;
   due: boolean;
   dueReason:
-    'pending_events' | 'idle' | 'daily' | 'owner_daily' | 'draft_pending_review' | 'not_due';
+    | 'pending_events'
+    | 'idle'
+    | 'daily'
+    | 'owner_daily'
+    | 'owner_scheduled'
+    | 'draft_pending_review'
+    | 'automatic_organization_disabled'
+    | 'not_due';
   idleMs: number;
   compileState: {
     project: string;

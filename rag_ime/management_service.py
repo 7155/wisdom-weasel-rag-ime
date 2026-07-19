@@ -2622,6 +2622,7 @@ class ManagementService:
                 SELECT book_id, app, source_event_ids_json
                 FROM memory_books
                 WHERE status IN ('active', 'approved')
+                  AND book_type != 'daily'
                 """
             ).fetchall()
 
@@ -2734,6 +2735,7 @@ class ManagementService:
                        archived_at_ms, last_active_at_ms, archive_reason
                 FROM memory_books
                 WHERE (? = 0 OR rowid < ?)
+                  AND book_type != 'daily'
                   AND (? = '' OR project = ? OR project = '')
                   AND (? = '' OR title LIKE ? OR summary LIKE ? OR project LIKE ? OR app LIKE ? OR book_type LIKE ?)
                   AND (? = '' OR status = ?)

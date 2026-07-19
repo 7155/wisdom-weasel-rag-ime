@@ -9,9 +9,11 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
+from .agent_sessions import AgentSessionStore
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_ingest import looks_sensitive, sync_event_to_memory_v2
+from .sensitive_content import contains_sensitive_content
 from .text_utils import compact_whitespace
 
 
@@ -208,6 +210,403 @@ class AgentMemorySourceStore:
             metadata=metadata,
             created_at_ms=created_at_ms,
         )
+
+    def checkpoint_external_summary(
+        self,
+        *,
+        provider: str,
+        external_ref: str,
+        text: str,
+        tier: str,
+        source_occurred_at_ms: int,
+        metadata: Mapping[str, object] | None = None,
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Checkpoint an Agent-curated external digest without importing its raw transcript."""
+
+        normalized_provider = compact_whitespace(provider).casefold()
+        if not normalized_provider or any(
+            character not in "abcdefghijklmnopqrstuvwxyz0123456789._-"
+            for character in normalized_provider
+        ):
+            raise ValueError("external memory provider must be a stable identifier")
+        normalized_ref = compact_whitespace(external_ref)[:500]
+        canonical = compact_whitespace(text)
+        normalized_tier = compact_whitespace(tier).casefold()[:80]
+        if not normalized_ref:
+            raise ValueError("external memory reference is required")
+        if not canonical:
+            raise ValueError("external memory summary must not be empty")
+        if contains_sensitive_content(canonical):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": True,
+                "stored": False,
+                "status": "skipped_sensitive",
+            }
+
+        timestamp = int(
+            created_at_ms if created_at_ms is not None else time.time() * 1000
+        )
+        occurred_at_ms = max(0, int(source_occurred_at_ms))
+        content_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        session_id = self._external_source_session(
+            normalized_provider,
+            created_at_ms=timestamp,
+        )
+        external_metadata = {
+            **dict(metadata or {}),
+            "externalProvider": normalized_provider,
+            "externalRef": normalized_ref,
+            "externalTier": normalized_tier or "summary",
+            "agentCurated": True,
+            "contentSha256": content_hash,
+            "sourceOccurredAtMs": occurred_at_ms,
+            "rawTranscriptImported": False,
+        }
+        pi_entry_id = (
+            "external:"
+            + normalized_provider
+            + ":"
+            + hashlib.sha256(normalized_ref.encode("utf-8")).hexdigest()[:20]
+            + ":"
+            + content_hash[:20]
+            + ":"
+            + hashlib.sha256(str(occurred_at_ms).encode("ascii")).hexdigest()[:12]
+        )
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT *
+                FROM agent_memory_sources
+                WHERE session_id = ? AND source_kind = 'session_digest'
+                  AND status = 'active'
+                  AND json_extract(metadata_json, '$.externalProvider') = ?
+                  AND json_extract(metadata_json, '$.externalRef') = ?
+                  AND json_extract(metadata_json, '$.externalTier') = ?
+                  AND CAST(
+                        json_extract(metadata_json, '$.sourceOccurredAtMs')
+                        AS INTEGER
+                      ) = ?
+                  AND canonical_text_sha256 = ?
+                ORDER BY created_at_ms DESC
+                LIMIT 1
+                """,
+                (
+                    session_id,
+                    normalized_provider,
+                    normalized_ref,
+                    normalized_tier or "summary",
+                    occurred_at_ms,
+                    content_hash,
+                ),
+            ).fetchone()
+            if existing is not None:
+                # External importers keep filesystem observations in metadata so
+                # later runs can avoid reopening unchanged curated summaries.
+                # The evidence text and revision stay immutable.
+                existing_metadata = _loaded_json_object(existing["metadata_json"])
+                merged_metadata = {**existing_metadata, **external_metadata}
+                if merged_metadata != existing_metadata:
+                    conn.execute(
+                        """
+                        UPDATE agent_memory_sources
+                        SET metadata_json = ?
+                        WHERE source_id = ?
+                        """,
+                        (
+                            _json_object(merged_metadata),
+                            str(existing["source_id"]),
+                        ),
+                    )
+                    existing = conn.execute(
+                        "SELECT * FROM agent_memory_sources WHERE source_id = ?",
+                        (str(existing["source_id"]),),
+                    ).fetchone()
+        if existing is not None:
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": True,
+                "stored": False,
+                "status": "already_checkpointed",
+                "source": _source_payload(existing),
+                "supersededSourceIds": [],
+            }
+
+        result = self._checkpoint(
+            session_id=session_id,
+            pi_entry_id=pi_entry_id,
+            turn_id="",
+            source_role="user",
+            source_kind="session_digest",
+            trust_class="session_summary",
+            owner_kind="user",
+            owner_id="default",
+            source=f"{normalized_provider}_memory_index",
+            canonical=canonical,
+            tags=(
+                "external-memory",
+                normalized_provider,
+                "agent-curated",
+                normalized_tier or "summary",
+            ),
+            metadata=external_metadata,
+            created_at_ms=timestamp,
+        )
+        source = result.get("source")
+        new_source_id = (
+            str(source.get("sourceId") or "")
+            if isinstance(source, Mapping)
+            else ""
+        )
+        if not new_source_id:
+            result["supersededSourceIds"] = []
+            return result
+
+        superseded_ids: list[str] = []
+        with self._connect() as conn:
+            previous_rows = conn.execute(
+                """
+                SELECT source_id, input_event_id, disposition
+                FROM agent_memory_sources
+                WHERE session_id = ? AND source_kind = 'session_digest'
+                  AND status = 'active' AND source_id <> ?
+                  AND json_extract(metadata_json, '$.externalProvider') = ?
+                  AND json_extract(metadata_json, '$.externalRef') = ?
+                ORDER BY created_at_ms ASC
+                """,
+                (
+                    session_id,
+                    new_source_id,
+                    normalized_provider,
+                    normalized_ref,
+                ),
+            ).fetchall()
+            for previous in previous_rows:
+                previous_id = str(previous["source_id"])
+                superseded_ids.append(previous_id)
+                conn.execute(
+                    """
+                    UPDATE agent_memory_sources
+                    SET status = 'superseded', superseded_at_ms = ?,
+                        disposition = 'expired',
+                        disposition_reason = 'external_source_replaced',
+                        disposition_updated_at_ms = ?, processed_at_ms = ?
+                    WHERE source_id = ?
+                    """,
+                    (timestamp, timestamp, timestamp, previous_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO memory_source_disposition_events(
+                        event_id, source_id, previous_disposition,
+                        new_disposition, reason_code, actor_kind,
+                        created_at_ms, metadata_json
+                    ) VALUES (?, ?, ?, 'expired', 'external_source_replaced',
+                              'system', ?, ?)
+                    """,
+                    (
+                        f"memory-disposition:{uuid.uuid4()}",
+                        previous_id,
+                        str(previous["disposition"]),
+                        timestamp,
+                        _json_object(
+                            {
+                                "externalProvider": normalized_provider,
+                                "externalRef": normalized_ref,
+                                "replacementSourceId": new_source_id,
+                            }
+                        ),
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE memory_items
+                    SET status = 'superseded', updated_at_ms = ?
+                    WHERE source_event_id = ?
+                    """,
+                    (timestamp, int(previous["input_event_id"])),
+                )
+        result["supersededSourceIds"] = superseded_ids
+        return result
+
+    def active_external_summary_index(
+        self,
+        *,
+        provider: str,
+    ) -> dict[tuple[str, str], dict[str, object]]:
+        """Return the latest active external revisions for incremental discovery."""
+
+        normalized_provider = compact_whitespace(provider).casefold()
+        if not normalized_provider:
+            raise ValueError("external memory provider is required")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_id, canonical_text_sha256, created_at_ms,
+                       metadata_json
+                FROM agent_memory_sources
+                WHERE source_kind = 'session_digest' AND status = 'active'
+                  AND json_extract(metadata_json, '$.externalProvider') = ?
+                ORDER BY created_at_ms DESC, source_id DESC
+                """,
+                (normalized_provider,),
+            ).fetchall()
+        index: dict[tuple[str, str], dict[str, object]] = {}
+        for row in rows:
+            metadata = _loaded_json_object(row["metadata_json"])
+            external_ref = compact_whitespace(
+                str(metadata.get("externalRef") or "")
+            )
+            tier = compact_whitespace(
+                str(metadata.get("externalTier") or "summary")
+            ).casefold()
+            key = (external_ref, tier)
+            if not external_ref or key in index:
+                continue
+            index[key] = {
+                **metadata,
+                "sourceId": str(row["source_id"]),
+                "canonicalTextSha256": str(row["canonical_text_sha256"]),
+                "createdAtMs": int(row["created_at_ms"]),
+            }
+        return index
+
+    def expire_external_summaries_not_in_refs(
+        self,
+        *,
+        provider: str,
+        retained_external_refs: set[str],
+        tier: str,
+        reason_code: str,
+        created_at_ms: int | None = None,
+    ) -> list[str]:
+        """Expire external evidence that has fallen out of a bounded source view."""
+
+        normalized_provider = compact_whitespace(provider).casefold()
+        normalized_tier = compact_whitespace(tier).casefold()
+        normalized_reason = compact_whitespace(reason_code).casefold()
+        retained = {
+            compact_whitespace(value)
+            for value in retained_external_refs
+            if compact_whitespace(value)
+        }
+        if not normalized_provider or not normalized_tier:
+            raise ValueError("external provider and tier are required")
+        if not normalized_reason:
+            raise ValueError("external expiry reason is required")
+        timestamp = int(
+            created_at_ms if created_at_ms is not None else time.time() * 1000
+        )
+        expired_ids: list[str] = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_id, input_event_id, disposition, metadata_json
+                FROM agent_memory_sources
+                WHERE source_kind = 'session_digest' AND status = 'active'
+                  AND json_extract(metadata_json, '$.externalProvider') = ?
+                  AND json_extract(metadata_json, '$.externalTier') = ?
+                ORDER BY created_at_ms ASC, source_id ASC
+                """,
+                (normalized_provider, normalized_tier),
+            ).fetchall()
+            for row in rows:
+                metadata = json.loads(str(row["metadata_json"] or "{}"))
+                external_ref = compact_whitespace(
+                    str(metadata.get("externalRef") or "")
+                )
+                if external_ref in retained:
+                    continue
+                source_id = str(row["source_id"])
+                expired_ids.append(source_id)
+                conn.execute(
+                    """
+                    UPDATE agent_memory_sources
+                    SET status = 'superseded', superseded_at_ms = ?,
+                        disposition = 'expired',
+                        disposition_reason = ?,
+                        disposition_updated_at_ms = ?, processed_at_ms = ?
+                    WHERE source_id = ?
+                    """,
+                    (
+                        timestamp,
+                        normalized_reason,
+                        timestamp,
+                        timestamp,
+                        source_id,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO memory_source_disposition_events(
+                        event_id, source_id, previous_disposition,
+                        new_disposition, reason_code, actor_kind,
+                        created_at_ms, metadata_json
+                    ) VALUES (?, ?, ?, 'expired', ?, 'system', ?, ?)
+                    """,
+                    (
+                        f"memory-disposition:{uuid.uuid4()}",
+                        source_id,
+                        str(row["disposition"]),
+                        normalized_reason,
+                        timestamp,
+                        _json_object(
+                            {
+                                "externalProvider": normalized_provider,
+                                "externalRef": external_ref,
+                                "externalTier": normalized_tier,
+                            }
+                        ),
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE memory_items
+                    SET status = 'superseded', updated_at_ms = ?
+                    WHERE source_event_id = ?
+                    """,
+                    (timestamp, int(row["input_event_id"])),
+                )
+        return expired_ids
+
+    def _external_source_session(
+        self,
+        provider: str,
+        *,
+        created_at_ms: int,
+    ) -> str:
+        role_id = f"external-memory:{provider}"
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM agent_sessions
+                WHERE role_id = ? AND session_kind = 'subagent_runtime'
+                ORDER BY created_at_ms ASC
+                LIMIT 1
+                """,
+                (role_id,),
+            ).fetchone()
+        if row is not None:
+            return str(row["id"])
+
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(
+            title=f"{provider.title()} 外部记忆源",
+            role_id=role_id,
+            role_version="1",
+            model_profile="external-memory-index",
+            project_context_enabled=False,
+            session_kind="subagent_runtime",
+            created_at_ms=created_at_ms,
+        )
+        session_id = str(session["id"])
+        sessions.archive(
+            session_id,
+            updated_at_ms=created_at_ms,
+        )
+        return session_id
 
     def list_for_session(self, session_id: str, *, limit: int = 100) -> list[dict[str, object]]:
         bounded_limit = max(1, min(int(limit), 500))

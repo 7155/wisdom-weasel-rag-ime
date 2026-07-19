@@ -132,7 +132,11 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertNotIn("agent/role-a", rendered)
         self.assertNotIn("命中通道", rendered)
         self.assertNotIn("相关度", rendered)
-        self.assertTrue(role_a_payload["retrieval"]["temporalIntent"])
+        self.assertFalse(role_a_payload["retrieval"]["temporalIntent"])
+        self.assertEqual(
+            role_a_payload["retrieval"]["timelineIntent"]["reason"],
+            "none",
+        )
         self.assertFalse(role_a_payload["retrieval"]["activityTimelineIncluded"])
         self.assertEqual(role_a["lifecycle"], "persistent")
 
@@ -204,6 +208,40 @@ class SessionMemoryRecallTests(unittest.TestCase):
             [item["sourceId"] for item in unrelated],
             ["atom:pi-context"],
         )
+
+    def test_recall_detail_level_expands_budgets_without_injecting_full_book_by_default(
+        self,
+    ) -> None:
+        long_text = "主题摘要。" + "这是用于验证渐进式展开的事实片段。" * 120
+        hits = [
+            {
+                "doc_type": "book",
+                "source_id": "book:progressive",
+                "text": long_text,
+                "score": 1.0,
+                "confidence": 1.0,
+                "tags": ["记忆"],
+                "metadata": {"lanes": ["bm25_raw"]},
+            }
+        ]
+
+        compact, _ = _select_hits(
+            hits,
+            query_text="记忆怎么召回",
+            max_items=12,
+            max_chars=14_000,
+            detail_level="compact",
+        )
+        detailed, _ = _select_hits(
+            hits,
+            query_text="记忆怎么召回",
+            max_items=12,
+            max_chars=14_000,
+            detail_level="detailed",
+        )
+
+        self.assertLessEqual(len(compact[0]["text"]), 480)
+        self.assertGreater(len(detailed[0]["text"]), len(compact[0]["text"]))
 
     def test_compaction_refresh_injects_task_plan_and_recent_dialogue_without_debug_metadata(self) -> None:
         event_id = self._record_input("压缩后继续完成 Session RAG 上下文")

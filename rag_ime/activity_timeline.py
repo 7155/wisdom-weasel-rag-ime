@@ -224,11 +224,13 @@ class DailyActivityTimelineStore:
             )
             metadata = {
                 "derivedFrom": "input_events",
+                "derivedArtifactType": "daily_activity_timeline",
                 "segmentGapMs": self.segment_gap_ms,
                 "segmentationMode": "semantic_task_v2",
                 "longTermFact": False,
-                "automaticPromotion": False,
-                "explicitApprovalRequired": True,
+                "automaticPromotion": True,
+                "explicitApprovalRequired": False,
+                "corroborationOnly": True,
             }
             conn.execute(
                 """
@@ -434,6 +436,18 @@ class DailyActivityTimelineStore:
                         """,
                         (timestamp, timestamp, old_book_id),
                     )
+            legacy_book_id = compact_whitespace(str(row["approved_book_id"] or ""))
+            if legacy_book_id:
+                conn.execute(
+                    """
+                    UPDATE memory_books
+                    SET status = 'archived', archived_at_ms = ?,
+                        archive_reason = 'migrated_to_timeline_index',
+                        updated_at_ms = ?
+                    WHERE book_id = ? AND book_type = 'daily'
+                    """,
+                    (timestamp, timestamp, legacy_book_id),
+                )
             conn.execute(
                 """
                 UPDATE daily_activity_timelines
@@ -444,95 +458,34 @@ class DailyActivityTimelineStore:
                 (timestamp, self.project, day.isoformat(), identifier),
             )
 
-            book_id = f"book:daily:activity:{_stable_digest(identifier)[:24]}"
-            source_event_ids = _json_ints(row["source_event_ids_json"])
-            segments = _json_objects(row["segments_json"])
-            apps = list(
-                dict.fromkeys(
-                    compact_whitespace(str(segment.get("app") or ""))
-                    for segment in segments
-                    if compact_whitespace(str(segment.get("app") or ""))
-                )
+            metadata = _json_mapping(row["metadata_json"])
+            metadata.update(
+                {
+                    "schemaVersion": "rag-ime.activity-timeline-index.v1",
+                    "derivedArtifactType": "daily_activity_timeline",
+                    "timelineId": identifier,
+                    "sourceEventHash": expected_hash,
+                    "publicationStatus": "approved",
+                    "publishedBy": actor,
+                    "publishedAtMs": timestamp,
+                    "maySupportFacts": False,
+                    "longTermFact": False,
+                    "automaticPromotion": True,
+                    "explicitApprovalRequired": False,
+                    "corroborationOnly": True,
+                    "timelineDate": day.isoformat(),
+                },
             )
-            app = apps[0] if len(apps) == 1 else "multiple"
-            title = f"{day.isoformat()} 语义任务时间线"
-            summary = compact_whitespace(str(row["summary_text"] or ""))
-            task_titles = [
-                compact_whitespace(str(segment.get("title") or ""))
-                for segment in segments
-                if compact_whitespace(str(segment.get("title") or ""))
-            ]
-            metadata = {
-                "schemaVersion": "rag-ime.approved-activity-timeline-book.v1",
-                "derivedArtifactType": "daily_activity_timeline",
-                "timelineId": identifier,
-                "sourceEventHash": expected_hash,
-                "approvalStatus": "approved",
-                "approvedBy": actor,
-                "approvedAtMs": timestamp,
-                "maySupportFacts": False,
-                "longTermFact": False,
-                "automaticPromotion": False,
-                "segmentCount": int(row["segment_count"]),
-                "taskCount": int(row["segment_count"]),
-                "taskTitles": task_titles,
-                "timelineDate": day.isoformat(),
-                "source": {
-                    "type": "input_event_set",
-                    "id": f"event-set:{expected_hash}",
-                },
-                "ref": {
-                    "type": "timeline",
-                    "id": identifier,
-                },
-            }
             conn.execute(
                 """
-                INSERT INTO memory_books(
-                    book_id, book_type, book_key, title, summary,
-                    normalized_text, project, app, tags_json,
-                    surface_hints_json, query_expansions_json,
-                    source_event_ids_json, memory_atom_ids_json, status,
-                    confidence, quality_score, created_at_ms, updated_at_ms,
-                    metadata_json, archived_at_ms, last_active_at_ms,
-                    archive_reason, owner_kind, owner_id
-                ) VALUES (
-                    ?, 'daily', ?, ?, ?, ?, ?, ?, ?, '[]', '[]', ?, '[]',
-                    'active', 0.8, 0.8, ?, ?, ?, NULL, ?, '', 'user', 'default'
-                )
-                ON CONFLICT(book_id) DO UPDATE SET
-                    book_key = excluded.book_key,
-                    title = excluded.title,
-                    summary = excluded.summary,
-                    normalized_text = excluded.normalized_text,
-                    project = excluded.project,
-                    app = excluded.app,
-                    tags_json = excluded.tags_json,
-                    source_event_ids_json = excluded.source_event_ids_json,
-                    status = 'active',
-                    confidence = excluded.confidence,
-                    quality_score = excluded.quality_score,
-                    updated_at_ms = excluded.updated_at_ms,
-                    metadata_json = excluded.metadata_json,
-                    archived_at_ms = NULL,
-                    last_active_at_ms = excluded.last_active_at_ms,
-                    archive_reason = ''
+                UPDATE daily_activity_timelines
+                SET status = 'approved', approved_book_id = '',
+                    approved_by = ?, approved_at_ms = ?, metadata_json = ?,
+                    updated_at_ms = ?
+                WHERE timeline_id = ? AND status = 'draft'
                 """,
                 (
-                    book_id,
-                    f"activity:{day.isoformat()}",
-                    title,
-                    summary,
-                    normalize_text(f"{title} {summary}"),
-                    self.project,
-                    app,
-                    json.dumps(
-                        ["daily", "activity-timeline", day.isoformat()],
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                    json.dumps(source_event_ids, separators=(",", ":")),
-                    timestamp,
+                    actor,
                     timestamp,
                     json.dumps(
                         metadata,
@@ -541,16 +494,8 @@ class DailyActivityTimelineStore:
                         separators=(",", ":"),
                     ),
                     timestamp,
+                    identifier,
                 ),
-            )
-            conn.execute(
-                """
-                UPDATE daily_activity_timelines
-                SET status = 'approved', approved_book_id = ?,
-                    approved_by = ?, approved_at_ms = ?, updated_at_ms = ?
-                WHERE timeline_id = ? AND status = 'draft'
-                """,
-                (book_id, actor, timestamp, timestamp, identifier),
             )
             if self.observability is not None:
                 self.observability.record_draft_decision_in_connection(
@@ -571,7 +516,6 @@ class DailyActivityTimelineStore:
                 revision=max(1, timestamp),
                 payload={
                     "timelineId": identifier,
-                    "bookId": book_id,
                     "sourceEventHash": expected_hash,
                 },
                 available_at_ms=timestamp,
@@ -893,8 +837,8 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
         "policy": {
             "derivedFromInputEvents": True,
             "longTermFact": False,
-            "automaticPromotion": False,
-            "explicitApprovalRequired": True,
+            "automaticPromotion": True,
+            "explicitApprovalRequired": False,
         },
     }
 

@@ -28,8 +28,8 @@ export interface DailyActivityTimelineV1 {
   policy: {
     derivedFromInputEvents: true;
     longTermFact: false;
-    automaticPromotion: false;
-    explicitApprovalRequired: true;
+    automaticPromotion: true;
+    explicitApprovalRequired: false;
   };
 }
 export interface Segment {

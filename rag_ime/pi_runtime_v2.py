@@ -9,6 +9,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from .agent_events import AgentEventHub
@@ -564,7 +565,12 @@ class PiRuntimeHostManager:
         except AgentRuntimeError:
             return {"messages": [], "telemetry": None, "messageQueue": None}
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
-        tool_history_events = _pi_tool_history_events(raw_messages, session_id=session_id)
+        raw_entries = snapshot.get("entries") if isinstance(snapshot.get("entries"), list) else []
+        tool_history_events = _pi_tool_history_events(
+            raw_messages,
+            session_id=session_id,
+            raw_entries=raw_entries,
+        )
         result: list[dict[str, object]] = []
         current_turn_id = ""
         for raw in raw_messages:
@@ -1705,6 +1711,7 @@ def _pi_tool_history_events(
     raw_messages: list[object],
     *,
     session_id: str,
+    raw_entries: list[object] | None = None,
     maximum_tools: int = 256,
 ) -> list[dict[str, object]]:
     """Rebuild the public tool timeline from Pi's durable transcript.
@@ -1717,6 +1724,7 @@ def _pi_tool_history_events(
     """
 
     events: list[tuple[str, str, str, int, dict[str, object]]] = []
+    entry_timestamps = _pi_history_entry_timestamps(raw_entries or [])
     current_turn_id = ""
     tool_order: list[str] = []
     tool_names: dict[str, str] = {}
@@ -1730,7 +1738,13 @@ def _pi_tool_history_events(
             current_turn_id = f"history:{message_id}"
             continue
         turn_id = current_turn_id or f"history:{message_id}"
-        created_at_ms = _integer(raw.get("timestamp"))
+        fingerprint = _pi_history_message_fingerprint(raw)
+        durable_timestamps = entry_timestamps.get(fingerprint)
+        created_at_ms = (
+            durable_timestamps.popleft()
+            if durable_timestamps
+            else _integer(raw.get("timestamp"))
+        )
         if role == "assistant":
             content = raw.get("content") if isinstance(raw.get("content"), list) else []
             for item_index, item_value in enumerate(content):
@@ -1803,6 +1817,55 @@ def _pi_tool_history_events(
             ).to_payload()
         )
     return result
+
+
+def _pi_history_entry_timestamps(raw_entries: list[object]) -> dict[str, deque[int]]:
+    """Match Pi context messages to their durable transcript append times.
+
+    Assistant message timestamps mark the beginning of the provider request.
+    The enclosing transcript entry is appended when the tool call is emitted,
+    which is the correct start time for a restored tool execution.
+    """
+
+    timestamps: dict[str, deque[int]] = {}
+    for entry_value in raw_entries:
+        entry = _mapping(entry_value)
+        if str(entry.get("type") or "") != "message":
+            continue
+        message = _mapping(entry.get("message"))
+        fingerprint = _pi_history_message_fingerprint(message)
+        created_at_ms = _pi_history_entry_timestamp_ms(entry.get("timestamp"))
+        if not fingerprint or created_at_ms <= 0:
+            continue
+        timestamps.setdefault(fingerprint, deque()).append(created_at_ms)
+    return timestamps
+
+
+def _pi_history_message_fingerprint(message: Mapping[str, object]) -> str:
+    if not message:
+        return ""
+    try:
+        return json.dumps(
+            dict(message),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        return ""
+
+
+def _pi_history_entry_timestamp_ms(value: object) -> int:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return max(0, int(value))
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    return max(0, int(parsed.timestamp() * 1_000))
 
 
 def _pi_tool_arguments(item: Mapping[str, object]) -> dict[str, object]:

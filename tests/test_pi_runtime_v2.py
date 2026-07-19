@@ -287,42 +287,61 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["codexSkillsEnabled"])
 
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
+        raw_messages = [
+            {
+                "id": "user-1",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "检查项目"}],
+            },
+            {
+                "id": "assistant-tool-1",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "tool-1",
+                    "name": "workspace_read",
+                    "arguments": {
+                        "path": "/Users/private/project/README.md",
+                        "apiKey": "top-secret",
+                    },
+                }],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "tool-1",
+                "toolName": "workspace_read",
+                "isError": False,
+                "details": {"summary": "读取 /Users/private/project/README.md", "token": "secret"},
+            },
+        ]
         events = _pi_tool_history_events(
-            [
+            raw_messages,
+            session_id="session-1",
+            raw_entries=[
                 {
-                    "id": "user-1",
-                    "role": "user",
-                    "timestamp": 100,
-                    "content": [{"type": "text", "text": "检查项目"}],
+                    "type": "message",
+                    "timestamp": "1970-01-01T00:00:00.100Z",
+                    "message": raw_messages[0],
                 },
                 {
-                    "id": "assistant-tool-1",
-                    "role": "assistant",
-                    "timestamp": 101,
-                    "content": [{
-                        "type": "toolCall",
-                        "id": "tool-1",
-                        "name": "workspace_read",
-                        "arguments": {
-                            "path": "/Users/private/project/README.md",
-                            "apiKey": "top-secret",
-                        },
-                    }],
+                    "type": "message",
+                    "timestamp": "1970-01-01T00:00:00.501Z",
+                    "message": raw_messages[1],
                 },
                 {
-                    "role": "toolResult",
-                    "timestamp": 102,
-                    "toolCallId": "tool-1",
-                    "toolName": "workspace_read",
-                    "isError": False,
-                    "details": {"summary": "读取 /Users/private/project/README.md", "token": "secret"},
+                    "type": "message",
+                    "timestamp": "1970-01-01T00:00:00.902Z",
+                    "message": raw_messages[2],
                 },
             ],
-            session_id="session-1",
         )
 
         self.assertEqual([event["eventType"] for event in events], ["tool_started", "tool_finished"])
         self.assertEqual([event["turnId"] for event in events], ["history:user-1", "history:user-1"])
+        self.assertEqual([event["createdAtMs"] for event in events], [501, 902])
         self.assertEqual(events[0]["payload"]["publicResult"]["fileName"], "README.md")
         serialized = json.dumps(events, ensure_ascii=False)
         self.assertNotIn("top-secret", serialized)

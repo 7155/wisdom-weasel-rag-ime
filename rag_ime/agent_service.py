@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -71,6 +72,7 @@ from .personal_context import (
     PersonalContextConsolidator,
 )
 from .session_memory_recall import SessionMemoryRecallBuilder
+from .text_utils import compact_whitespace
 
 _RECOVERABLE_GOVERNED_MEMORY_OPERATIONS = frozenset(
     {
@@ -2606,6 +2608,22 @@ class AgentService:
             if isinstance(runtime_snapshot, Mapping)
             else []
         )
+        try:
+            observation_snapshot = self.observations.snapshot(
+                {
+                    "sessionId": session_id,
+                    "category": "tool",
+                    "limit": 500,
+                }
+            )
+        except Exception:
+            observed_tool_events: list[object] = []
+        else:
+            observed_tool_events = list(observation_snapshot.get("items") or [])
+        tool_history_events = _apply_observed_tool_event_times(
+            tool_history_events,
+            observed_tool_events,
+        )
         replayed, _gap = self.events.replay(session_id)
         replay_events = [
             event.to_payload()
@@ -3057,6 +3075,19 @@ class AgentService:
             if isinstance(item, Mapping)
             and item.get("sourceKind") == "memory_bootstrap"
         ]
+        memory_retrieval = {}
+        if memory_items:
+            memory_payload = memory_items[0].get("payload")
+            if isinstance(memory_payload, Mapping) and isinstance(
+                memory_payload.get("retrieval"),
+                Mapping,
+            ):
+                memory_retrieval = dict(memory_payload["retrieval"])
+        timeline_intent = (
+            dict(memory_retrieval.get("timelineIntent") or {})
+            if isinstance(memory_retrieval.get("timelineIntent"), Mapping)
+            else {}
+        )
         async_items = [
             item
             for item in materialized["items"]
@@ -3071,7 +3102,7 @@ class AgentService:
             parents=[session_node],
             disposition="included" if memory_items else "omitted",
             summary=(
-                "已加入首问与最近完整输入召回的角色可见 Book/Atom 记忆包"
+                "已加入首问与最近完整输入召回的角色可见 Timeline/Topic Book/Atom 记忆包"
                 if memory_items
                 else "本 Session 尚无可投递的首问记忆包"
             ),
@@ -3085,6 +3116,14 @@ class AgentService:
                 "itemCount": len(memory_items),
                 "priority": "developer",
                 "lifecycle": "session",
+                "timelineRequested": timeline_intent.get("requested") is True,
+                "timelineReason": str(timeline_intent.get("reason") or "none"),
+                "timelineMatched": "、".join(
+                    compact_whitespace(str(value))
+                    for value in timeline_intent.get("matched") or []
+                    if compact_whitespace(str(value))
+                ),
+                "timelineRange": str(timeline_intent.get("range") or ""),
             },
         )
         inbox_node = self.context_runtime.add_trace_node(
@@ -3685,11 +3724,45 @@ class AgentService:
         trigger: str,
     ) -> Mapping[str, object]:
         try:
-            return self.memory_sources.checkpoint_compaction(
+            checkpoint = dict(self.memory_sources.checkpoint_compaction(
                 session_id=session_id,
                 result=result,
                 trigger=trigger,
-            )
+            ))
+            summary = _compaction_summary(result)
+            if summary:
+                session = self.sessions.get(session_id)
+                digest_material = json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "summary": summary,
+                        "firstKeptEntryId": str(
+                            result.get("firstKeptEntryId") or ""
+                        ),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                checkpoint["conversationDigest"] = (
+                    self.memory_evidence.record_session_digest(
+                        session_id=session_id,
+                        digest_id=(
+                            "compaction:"
+                            + hashlib.sha256(
+                                digest_material.encode("utf-8")
+                            ).hexdigest()[:32]
+                        ),
+                        text=summary,
+                        role_id=str(session.get("roleId") or ""),
+                        metadata={
+                            "trigger": compact_whitespace(trigger) or "automatic",
+                            "firstKeptEntryId": str(
+                                result.get("firstKeptEntryId") or ""
+                            ),
+                        },
+                    )
+                )
+            return checkpoint
         except Exception as exc:
             return {
                 "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
@@ -5318,6 +5391,55 @@ def _merge_snapshot_tool_events(
             continue
         merged.append(event)
     return merged
+
+
+def _apply_observed_tool_event_times(
+    tool_history_events: Sequence[object],
+    observations: Sequence[object],
+) -> list[dict[str, object]]:
+    """Use durable executor timestamps instead of provider message timestamps."""
+
+    observed_times: dict[tuple[str, str], list[int]] = {}
+    for value in observations:
+        observation = value if isinstance(value, Mapping) else {}
+        event_type = str(observation.get("phase") or observation.get("name") or "")
+        if event_type not in {"tool_started", "tool_progress", "tool_finished"}:
+            continue
+        tool_call_id = _observation_tool_call_id(observation)
+        created_at_ms = _integer(
+            observation.get("createdAtMs"),
+            default=0,
+            minimum=0,
+            maximum=9_223_372_036_854_775_807,
+        )
+        if not tool_call_id or created_at_ms <= 0:
+            continue
+        observed_times.setdefault((tool_call_id, event_type), []).append(created_at_ms)
+    queues = {
+        key: deque(sorted(values))
+        for key, values in observed_times.items()
+    }
+
+    corrected: list[dict[str, object]] = []
+    for value in tool_history_events:
+        event = dict(value) if isinstance(value, Mapping) else {}
+        tool_call_id, event_type = _tool_event_identity(event)
+        timestamps = queues.get((tool_call_id, event_type))
+        if timestamps:
+            event["createdAtMs"] = timestamps.popleft()
+        corrected.append(event)
+    return corrected
+
+
+def _observation_tool_call_id(observation: Mapping[str, object]) -> str:
+    refs = observation.get("refs")
+    if not isinstance(refs, list):
+        return ""
+    for value in refs:
+        ref = value if isinstance(value, Mapping) else {}
+        if str(ref.get("kind") or "") == "tool_call":
+            return str(ref.get("id") or "")
+    return ""
 
 
 def _tool_event_types(events: Sequence[Mapping[str, object]]) -> dict[str, set[str]]:

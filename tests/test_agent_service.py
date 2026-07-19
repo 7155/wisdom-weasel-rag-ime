@@ -479,6 +479,48 @@ class AgentServiceTests(unittest.TestCase):
             "ordinary zhiyou-v1 assistant turns must not create an automatic curation source",
         )
 
+    def test_context_trace_explains_why_timeline_recall_was_enabled(self) -> None:
+        session = self.service.create_session({"title": "时间线门控"})["session"]
+        session_id = str(session["id"])
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:timeline-intent",
+                "piEntryId": "entry:timeline-intent",
+                "response": {"success": True},
+            },
+        ):
+            result = self.service.prompt(
+                session_id,
+                {"message": "昨天 RAG IME 做到哪里了？"},
+            )
+
+        trace = self.service.context_trace(
+            session_id,
+            str(result["contextTraceId"]),
+        )
+        memory_node = next(
+            node for node in trace["nodes"] if node["stage"] == "memory_recall"
+        )
+        self.assertEqual(
+            memory_node["summary"],
+            "已加入首问与最近完整输入召回的角色可见 Timeline/Topic Book/Atom 记忆包",
+        )
+        self.assertEqual(
+            memory_node["metadata"],
+            {
+                "itemCount": 1,
+                "lifecycle": "session",
+                "priority": "developer",
+                "timelineMatched": "昨天",
+                "timelineRange": "yesterday",
+                "timelineReason": "relative_time",
+                "timelineRequested": True,
+            },
+        )
+
     def test_old_consumed_bootstrap_is_migrated_to_persistent_session_context(self) -> None:
         session = self.service.create_session({"title": "旧启动上下文"})["session"]
         session_id = str(session["id"])
@@ -584,7 +626,7 @@ class AgentServiceTests(unittest.TestCase):
                 "compact",
                 return_value={
                     "summary": "压缩后摘要",
-                    "memoryCheckpoint": {},
+                    "firstKeptEntryId": "entry:kept",
                     "contextRefreshApplied": True,
                 },
             ),
@@ -605,6 +647,10 @@ class AgentServiceTests(unittest.TestCase):
             compacted["contextRefresh"]["result"]["status"],
             "runtime_applied",
         )
+        digest = compacted["result"]["memoryCheckpoint"]["conversationDigest"]
+        self.assertTrue(digest["stored"])
+        self.assertEqual(digest["evidence"]["sourceKind"], "session_digest")
+        self.assertEqual(digest["evidence"]["text"], "压缩后摘要")
 
     def test_room_work_item_drives_start_and_compaction_context(self) -> None:
         room = self.service.create_room(
@@ -1377,6 +1423,23 @@ class AgentServiceTests(unittest.TestCase):
                 "telemetry": None,
                 "messageQueue": None,
             },
+        ), patch.object(
+            self.service.observations,
+            "snapshot",
+            return_value={
+                "items": [
+                    {
+                        "phase": "tool_finished",
+                        "createdAtMs": 690,
+                        "refs": [{"kind": "tool_call", "id": "tool-1"}],
+                    },
+                    {
+                        "phase": "tool_started",
+                        "createdAtMs": 550,
+                        "refs": [{"kind": "tool_call", "id": "tool-1"}],
+                    },
+                ],
+            },
         ):
             response = self.service.messages(session_id)
 
@@ -1385,6 +1448,7 @@ class AgentServiceTests(unittest.TestCase):
             if event["eventType"] in {"tool_started", "tool_finished"}
         ]
         self.assertEqual([event["eventType"] for event in tool_events], ["tool_started", "tool_finished"])
+        self.assertEqual([event["createdAtMs"] for event in tool_events], [550, 690])
         self.assertEqual(tool_events[0]["payload"]["args"], {"path": "README.md"})
         self.assertEqual(tool_events[1]["payload"]["result"], {"summary": "读取完成"})
 

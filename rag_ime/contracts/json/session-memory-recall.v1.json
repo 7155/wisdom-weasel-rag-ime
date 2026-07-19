@@ -37,7 +37,8 @@
         "recentCompleteInputCount",
         "recentCompleteInputUsedForRetrieval",
         "retrievalContextUsed",
-        "recentConversationCount"
+        "recentConversationCount",
+        "timelineIntent"
       ],
       "properties": {
         "preview": {"type": "string"},
@@ -45,7 +46,8 @@
         "recentCompleteInputCount": {"type": "integer", "minimum": 0},
         "recentCompleteInputUsedForRetrieval": {"type": "boolean"},
         "retrievalContextUsed": {"type": "boolean"},
-        "recentConversationCount": {"type": "integer", "minimum": 0, "maximum": 8}
+        "recentConversationCount": {"type": "integer", "minimum": 0, "maximum": 8},
+        "timelineIntent": {"$ref": "#/$defs/timelineIntent"}
       }
     },
     "retrieval": {
@@ -61,6 +63,7 @@
         "embeddingProvider",
         "embeddingFallback",
         "temporalIntent",
+        "timelineIntent",
         "activityTimelineIncluded",
         "vectorFusion"
       ],
@@ -85,6 +88,7 @@
         "embeddingProvider": {"type": "string"},
         "embeddingFallback": {"type": "boolean"},
         "temporalIntent": {"type": "boolean"},
+        "timelineIntent": {"$ref": "#/$defs/timelineIntent"},
         "activityTimelineIncluded": {"type": "boolean"},
         "vectorFusion": {
           "type": "object",
@@ -121,7 +125,7 @@
         ],
         "properties": {
           "rank": {"type": "integer", "minimum": 1},
-          "sourceType": {"enum": ["memory_book", "memory_atom"]},
+          "sourceType": {"enum": ["memory_book", "memory_atom", "memory_timeline"]},
           "sourceId": {"type": "string", "minLength": 1},
           "title": {"type": "string"},
           "text": {"type": "string", "minLength": 1},
@@ -198,7 +202,8 @@
         "evidenceOnly",
         "currentUserMessageWins",
         "rawRecentInputInjected",
-        "recentConversationInjected"
+        "recentConversationInjected",
+        "detailLevel"
       ],
       "properties": {
         "priority": {"const": "developer"},
@@ -206,7 +211,27 @@
         "evidenceOnly": {"const": true},
         "currentUserMessageWins": {"const": true},
         "rawRecentInputInjected": {"const": false},
-        "recentConversationInjected": {"type": "boolean"}
+        "recentConversationInjected": {"type": "boolean"},
+        "detailLevel": {"enum": ["compact", "balanced", "detailed"]}
+      }
+    }
+  },
+  "$defs": {
+    "timelineIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "reason", "matched", "range"],
+      "properties": {
+        "requested": {"type": "boolean"},
+        "reason": {
+          "enum": ["none", "disabled", "exact_date", "explicit_timeline", "relative_time"]
+        },
+        "matched": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"type": "string"}
+        },
+        "range": {"type": "string"}
       }
     }
   }

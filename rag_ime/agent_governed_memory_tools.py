@@ -635,11 +635,8 @@ class MemoryGovernanceProposalStore:
         limit: int,
     ) -> dict[str, object]:
         sql = """
-            SELECT timeline.*, book.book_id, book.title AS book_title
+            SELECT timeline.*
             FROM daily_activity_timelines AS timeline
-            JOIN memory_books AS book
-              ON book.book_id = timeline.approved_book_id
-             AND book.status IN ('active', 'approved')
             WHERE timeline.project = ? AND timeline.status = 'approved'
         """
         params: list[object] = [self.project]
@@ -660,7 +657,7 @@ class MemoryGovernanceProposalStore:
             if not summary or contains_sensitive_content(summary):
                 continue
             timeline_id = str(row["timeline_id"])
-            book_id = str(row["book_id"])
+            title = f"{str(row['timeline_date'])} 活动时间线"
             segments = [
                 _safe_timeline_segment(value, timeline_id=timeline_id)
                 for value in _json_array(row["segments_json"])
@@ -674,9 +671,8 @@ class MemoryGovernanceProposalStore:
             items.append(
                 {
                     "timelineId": timeline_id,
-                    "bookId": book_id,
                     "date": str(row["timeline_date"]),
-                    "title": str(row["book_title"] or ""),
+                    "title": title,
                     "summary": summary,
                     "status": "approved",
                     "taskCount": int(row["segment_count"] or 0),
@@ -687,12 +683,6 @@ class MemoryGovernanceProposalStore:
                         "timeline",
                         timeline_id,
                         legacy_type="timeline",
-                        bookId=book_id,
-                    ),
-                    "bookRef": _compatible_reference(
-                        "book",
-                        book_id,
-                        legacy_type="book",
                     ),
                     "maySupportFacts": False,
                     "corroborationOnly": True,

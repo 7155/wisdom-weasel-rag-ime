@@ -636,8 +636,8 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.assertEqual(item["ref"]["type"], "timeline")
         self.assertEqual(item["ref"]["referenceKind"], "timeline")
         self.assertEqual(item["ref"]["referenceId"], item["timelineId"])
-        self.assertEqual(item["bookRef"]["referenceKind"], "book")
-        self.assertEqual(item["bookRef"]["referenceId"], item["bookId"])
+        self.assertNotIn("bookRef", item)
+        self.assertNotIn("bookId", item)
         self.assertEqual(item["segments"][0]["title"], "CAS 切换 Codex 账号")
         self.assertEqual(
             item["segments"][0]["ref"]["referenceKind"],

@@ -26,7 +26,7 @@
           "role": {"type": "string", "enum": ["user", "assistant"]},
           "sourceKind": {
             "type": "string",
-            "enum": ["user_message", "assistant_message", "room_event"]
+            "enum": ["user_message", "assistant_message", "room_event", "session_digest"]
           },
           "text": {"type": "string", "minLength": 1, "maxLength": 600},
           "occurredAtMs": {"type": "integer", "minimum": 0}

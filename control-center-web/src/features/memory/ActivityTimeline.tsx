@@ -190,7 +190,7 @@ export function ActivityTimeline() {
         </InlineNotice>
       ) : !capabilities.isPending && canRead && !canWrite ? (
         <InlineNotice title="每日活动为只读状态" tone="info">
-          可以查看现有时间线，但当前服务不会接收整理、批准或驳回操作。
+          可以查看现有时间线，但当前服务不会接收整理、发布或删除操作。
         </InlineNotice>
       ) : null}
 
@@ -275,7 +275,7 @@ export function ActivityTimeline() {
                     size="small"
                     variant="primary"
                   >
-                    批准整理
+                    立即发布
                   </Button>
                 </>
               ) : (
@@ -327,14 +327,14 @@ export function ActivityTimeline() {
       <Dialog onOpenChange={setApproveOpen} open={approveOpen}>
         <DialogContent className="activity-timeline__dialog">
           <DialogHeader>
-            <DialogTitle>批准 {formatDateHeading(date)} 的时间线</DialogTitle>
+            <DialogTitle>发布 {formatDateHeading(date)} 的时间线</DialogTitle>
             <DialogDescription>
-              当前来源哈希会在写入前再次校验；期间新增记录时，本次批准会被拒绝。
+              当前来源哈希会在发布前再次校验；期间新增记录时会先重新整理。
             </DialogDescription>
           </DialogHeader>
           <div className="activity-timeline__review-line">
             <Check aria-hidden="true" size={17} />
-            <span>{tasks.length} 个语义任务将写入一条已批准的每日主题书。</span>
+            <span>{tasks.length} 个语义任务将进入独立时间线索引，不会创建主题书。</span>
           </div>
           <DialogFooter>
             <Button onClick={() => setApproveOpen(false)} variant="quiet">取消</Button>
@@ -347,7 +347,7 @@ export function ActivityTimeline() {
               )}
               variant="primary"
             >
-              批准并写入
+              发布到时间线
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -363,7 +363,7 @@ export function ActivityTimeline() {
         <DialogContent className="activity-timeline__dialog">
           <DialogHeader>
             <DialogTitle>驳回当天整理</DialogTitle>
-            <DialogDescription>保留决定记录，但不会生成主题书。</DialogDescription>
+            <DialogDescription>保留操作记录，但不会发布这份时间线。</DialogDescription>
           </DialogHeader>
           <Field htmlFor="timeline-reject-reason" label="原因">
             <Input
@@ -991,7 +991,7 @@ function shortHash(value: string): string {
 }
 
 function timelineStatusLabel(status: string): string {
-  return ({ draft: '待审核', approved: '已批准', rejected: '已驳回', superseded: '已更新' } as Record<string, string>)[status] ?? '未知';
+  return ({ draft: '待自动发布', approved: '已发布', rejected: '已删除', superseded: '已更新' } as Record<string, string>)[status] ?? '未知';
 }
 
 function timelineStatusTone(status: string): 'success' | 'warning' | 'danger' | 'info' {
@@ -1002,10 +1002,10 @@ function timelineStatusTone(status: string): 'success' | 'warning' | 'danger' | 
 }
 
 function decisionCopy(status: string, approvedBookId: string): string {
-  if (status === 'approved') return approvedBookId ? '已写入每日主题书' : '已批准';
+  if (status === 'approved') return approvedBookId ? '已迁移到独立时间线索引' : '已进入独立时间线索引';
   if (status === 'rejected') return '本次整理未进入长期上下文';
   if (status === 'superseded') return '来源已经变化，可重新生成草案';
-  return '批准前只是一份派生草案，不参与事实召回';
+  return '后台会自动发布；仅在时间类问题中按需召回';
 }
 
 function friendlyAppName(value: string): string {

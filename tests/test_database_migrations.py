@@ -463,6 +463,170 @@ class DatabaseMigrationTests(unittest.TestCase):
             ).fetchone()
             self.assertEqual(state, (0, 0, "", ""))
 
+    def test_timeline_migration_archives_daily_books_and_enqueues_projection(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0061-") as temporary:
+            migrations_0060 = Path(temporary) / "migrations"
+            migrations_0060.mkdir()
+            for source in DEFAULT_MIGRATIONS_DIR.glob("*.sql"):
+                if source.name < "0061_":
+                    shutil.copy2(source, migrations_0060 / source.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                apply_database_migrations(conn, migrations_dir=migrations_0060)
+                conn.execute(
+                    """
+                    INSERT INTO memory_books(
+                        book_id, book_type, book_key, title, summary,
+                        project, status, created_at_ms, updated_at_ms
+                    ) VALUES (
+                        'book:daily:test', 'daily', 'activity:2026-07-18',
+                        '2026-07-18 活动时间线', '旧 Daily Book',
+                        'wisdom-weasel-rag-ime', 'active', 10, 20
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO daily_activity_timelines(
+                        timeline_id, project, timeline_date, status,
+                        source_event_hash, approved_book_id,
+                        created_at_ms, updated_at_ms
+                    ) VALUES (
+                        'timeline:test', 'wisdom-weasel-rag-ime',
+                        '2026-07-18', 'approved', 'hash:test',
+                        'book:daily:test', 10, 20
+                    )
+                    """
+                )
+
+                result = apply_database_migrations(conn)
+
+                self.assertEqual(result.applied_versions, (61, 62, 63, 64, 65))
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT status, archived_at_ms, archive_reason
+                        FROM memory_books
+                        WHERE book_id = 'book:daily:test'
+                        """
+                    ).fetchone(),
+                    ("archived", 20, "migrated_to_timeline_index"),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT approved_book_id
+                        FROM daily_activity_timelines
+                        WHERE timeline_id = 'timeline:test'
+                        """
+                    ).fetchone()[0],
+                    "",
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT projection_kind, aggregate_type, aggregate_id,
+                               operation, revision, state
+                        FROM memory_projection_outbox
+                        WHERE aggregate_id = '0061_separate_activity_timeline_index'
+                        """
+                    ).fetchone(),
+                    (
+                        "retrieval_docs",
+                        "schema_migration",
+                        "0061_separate_activity_timeline_index",
+                        "rebuild",
+                        61,
+                        "pending",
+                    ),
+                )
+
+    def test_thematic_book_migration_retires_only_redundant_owner_umbrella(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0062-") as temporary:
+            migrations_0061 = Path(temporary) / "migrations"
+            migrations_0061.mkdir()
+            for source in DEFAULT_MIGRATIONS_DIR.glob("*.sql"):
+                if source.name < "0062_":
+                    shutil.copy2(source, migrations_0061 / source.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                apply_database_migrations(conn, migrations_dir=migrations_0061)
+                conn.executemany(
+                    """
+                    INSERT INTO memory_books(
+                        book_id, book_type, book_key, title, summary, project,
+                        owner_kind, owner_id, status, created_at_ms, updated_at_ms
+                    ) VALUES (?, 'topic', ?, ?, ?, ?, 'user', ?, 'active', 10, 20)
+                    """,
+                    (
+                        (
+                            "book:owner:with-topics",
+                            "owner-with-topics",
+                            "个人长期记忆",
+                            "旧总书",
+                            "wisdom-weasel-rag-ime",
+                            "default",
+                        ),
+                        (
+                            "book:owner:with-topics:topic:rag",
+                            "owner-with-topics-topic-rag",
+                            "记忆与 RAG 治理",
+                            "主题书",
+                            "wisdom-weasel-rag-ime",
+                            "default",
+                        ),
+                        (
+                            "book:owner:only-book",
+                            "owner-only-book",
+                            "个人长期记忆",
+                            "唯一总书",
+                            "other-project",
+                            "other-user",
+                        ),
+                    ),
+                )
+
+                result = apply_database_migrations(conn)
+
+                self.assertEqual(result.applied_versions, (62, 63, 64, 65))
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT status, archived_at_ms, archive_reason
+                        FROM memory_books
+                        WHERE book_id = 'book:owner:with-topics'
+                        """
+                    ).fetchone(),
+                    (
+                        "archived",
+                        20,
+                        "migrated_to_thematic_topic_books",
+                    ),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT status
+                        FROM memory_books
+                        WHERE book_id = 'book:owner:only-book'
+                        """
+                    ).fetchone()[0],
+                    "active",
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT operation, revision, state
+                        FROM memory_projection_outbox
+                        WHERE aggregate_id =
+                              '0062_retire_owner_umbrella_topic_books'
+                        """
+                    ).fetchone(),
+                    ("rebuild", 62, "pending"),
+                )
+
     def test_legacy_feedback_table_is_rebuilt_without_losing_rows(self) -> None:
         with closing(sqlite3.connect(":memory:")) as conn, conn:
             conn.execute(

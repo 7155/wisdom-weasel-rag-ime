@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -120,28 +121,45 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertTrue(lane["lexicalFallback"])
         self.assertFalse(lane["fts5Bm25"])
 
-    def test_time_lane_promotes_daily_book_topic(self) -> None:
+    def test_time_lane_promotes_independent_timeline(self) -> None:
         event_id = self._record_event("RAG 输入法多路召回方案", tags=("RAG",))
         with self.connect() as conn:
-            apply_memory_book_plan(conn, memory_book_plan_from_compile_output(book_compile_output(event_id), project="wisdom-weasel-rag-ime", provider="deepseek", model="deepseek-v4-flash"))
+            self._insert_timeline(
+                conn,
+                timeline_id="timeline:2026-07-18",
+                timeline_date="2026-07-18",
+                summary="当天继续完善 RAG 输入法。",
+                task_title="多路召回",
+                source_event_ids=(event_id,),
+            )
             rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
             payload = retrieve_hybrid_rag_candidates(conn, HybridRagQuery(query_text="Daily Book", project="wisdom-weasel-rag-ime"))
 
         self.assertGreaterEqual(payload["lanes"]["time"]["count"], 1)
+        self.assertEqual(
+            payload["query"]["timelineIntent"]["reason"],
+            "explicit_timeline",
+        )
         self.assertIn("多路召回", [item["text"] for item in payload["candidates"]])
         self.assertNotIn("RAG 输入法多路召回方案", [item["text"] for item in payload["candidates"]])
+        self.assertTrue(
+            any(
+                item["doc_type"] == "timeline"
+                and item["source_id"] == "timeline:2026-07-18"
+                for item in payload["memoryHits"]
+            )
+        )
 
     def test_daily_timeline_does_not_pollute_ordinary_fact_recall(self) -> None:
         event_id = self._record_event("RAG 输入法多路召回方案", tags=("RAG",))
         with self.connect() as conn:
-            apply_memory_book_plan(
+            self._insert_timeline(
                 conn,
-                memory_book_plan_from_compile_output(
-                    book_compile_output(event_id),
-                    project="wisdom-weasel-rag-ime",
-                    provider="deepseek",
-                    model="deepseek-v4-flash",
-                ),
+                timeline_id="timeline:ordinary-query",
+                timeline_date="2026-07-18",
+                summary="当天继续完善 RAG 输入法。",
+                task_title="多路召回",
+                source_event_ids=(event_id,),
             )
             apply_memory_book_plan(
                 conn,
@@ -164,7 +182,7 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertFalse(payload["lanes"]["time"]["enabled"])
         self.assertEqual(payload["lanes"]["time"]["skippedReason"], "not_requested_by_query")
         self.assertFalse(
-            any(item["metadata"].get("bookType") == "daily" for item in payload["memoryHits"])
+            any(item["doc_type"] == "timeline" for item in payload["memoryHits"])
         )
         self.assertTrue(
             any(item["source_id"] == "atom:qwen3-local-model" for item in payload["memoryHits"])
@@ -173,14 +191,13 @@ class HybridRagRetrieverTests(unittest.TestCase):
     def test_vague_history_word_does_not_enable_daily_timeline(self) -> None:
         event_id = self._record_event("RAG 输入法多路召回方案", tags=("RAG",))
         with self.connect() as conn:
-            apply_memory_book_plan(
+            self._insert_timeline(
                 conn,
-                memory_book_plan_from_compile_output(
-                    book_compile_output(event_id),
-                    project="wisdom-weasel-rag-ime",
-                    provider="deepseek",
-                    model="deepseek-v4-flash",
-                ),
+                timeline_id="timeline:vague-query",
+                timeline_date="2026-07-18",
+                summary="当天继续完善 RAG 输入法。",
+                task_title="多路召回",
+                source_event_ids=(event_id,),
             )
             rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
             payload = retrieve_hybrid_rag_candidates(
@@ -193,49 +210,113 @@ class HybridRagRetrieverTests(unittest.TestCase):
             )
 
         self.assertFalse(payload["query"]["timelineRequested"])
+        self.assertEqual(
+            payload["query"]["timelineIntent"],
+            {
+                "requested": False,
+                "reason": "none",
+                "matched": [],
+                "range": "",
+            },
+        )
         self.assertFalse(payload["lanes"]["time"]["enabled"])
         self.assertFalse(
-            any(item["metadata"].get("bookType") == "daily" for item in payload["memoryHits"])
+            any(item["doc_type"] == "timeline" for item in payload["memoryHits"])
         )
 
-    def test_recent_timeline_query_orders_daily_books_newest_first(self) -> None:
+    def test_recent_timeline_query_orders_independent_timelines_newest_first(self) -> None:
         old_event_id = self._record_event("旧的输入法工作", tags=("输入法",))
         new_event_id = self._record_event("新的记忆工作", tags=("记忆",))
-        old_plan = book_compile_output(old_event_id)
-        old_plan["dailyBooks"][0].update(
-            {"bookKey": "2026-07-10", "title": "2026-07-10 活动时间线"}
-        )
-        new_plan = book_compile_output(new_event_id)
-        new_plan["dailyBooks"][0].update(
-            {"bookKey": "2026-07-18", "title": "2026-07-18 活动时间线"}
-        )
         with self.connect() as conn:
-            for compiled in (old_plan, new_plan):
-                apply_memory_book_plan(
+            self._insert_timeline(
+                conn,
+                timeline_id="timeline:old",
+                timeline_date="2026-07-15",
+                summary="旧的输入法工作。",
+                task_title="旧工作",
+                source_event_ids=(old_event_id,),
+            )
+            self._insert_timeline(
+                conn,
+                timeline_id="timeline:new",
+                timeline_date="2026-07-18",
+                summary="新的记忆工作。",
+                task_title="新工作",
+                source_event_ids=(new_event_id,),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            with patch(
+                "rag_ime.hybrid_rag_retriever.time.time",
+                return_value=1_784_430_000,
+            ):
+                payload = retrieve_hybrid_rag_candidates(
                     conn,
-                    memory_book_plan_from_compile_output(
-                        compiled,
+                    HybridRagQuery(
+                        query_text="最近几天我在做什么",
                         project="wisdom-weasel-rag-ime",
-                        provider="deepseek",
-                        model="deepseek-v4-flash",
+                        top_k=5,
                     ),
                 )
-            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
-            payload = retrieve_hybrid_rag_candidates(
-                conn,
-                HybridRagQuery(
-                    query_text="最近几天我在做什么",
-                    project="wisdom-weasel-rag-ime",
-                    top_k=5,
-                ),
-            )
 
-        daily_hits = [
-            item for item in payload["memoryHits"] if item["metadata"].get("bookType") == "daily"
+        timeline_hits = [
+            item for item in payload["memoryHits"] if item["doc_type"] == "timeline"
         ]
         self.assertTrue(payload["query"]["recentTimelineRequested"])
-        self.assertGreaterEqual(len(daily_hits), 2)
-        self.assertEqual(daily_hits[0]["metadata"]["bookKey"], "2026-07-18")
+        self.assertEqual(
+            payload["query"]["timelineIntent"]["range"],
+            "recent_days",
+        )
+        self.assertGreaterEqual(len(timeline_hits), 2)
+        self.assertEqual(timeline_hits[0]["metadata"]["timelineDate"], "2026-07-18")
+
+    def test_yesterday_hard_filters_timeline_to_the_resolved_date(self) -> None:
+        old_event_id = self._record_event("旧的 RAG IME 工作", tags=("RAG",))
+        yesterday_event_id = self._record_event(
+            "昨天的 RAG IME 工作",
+            tags=("RAG",),
+        )
+        with self.connect() as conn:
+            self._insert_timeline(
+                conn,
+                timeline_id="timeline:wrong-day",
+                timeline_date="2026-07-11",
+                summary="旧的 RAG IME 工作。",
+                task_title="旧工作",
+                source_event_ids=(old_event_id,),
+            )
+            self._insert_timeline(
+                conn,
+                timeline_id="timeline:yesterday",
+                timeline_date="2026-07-18",
+                summary="昨天的 RAG IME 工作。",
+                task_title="昨天工作",
+                source_event_ids=(yesterday_event_id,),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            with patch(
+                "rag_ime.hybrid_rag_retriever.time.time",
+                return_value=1_784_430_000,
+            ):
+                payload = retrieve_hybrid_rag_candidates(
+                    conn,
+                    HybridRagQuery(
+                        query_text="昨天 RAG IME 做到哪里了",
+                        project="wisdom-weasel-rag-ime",
+                        top_k=8,
+                    ),
+                )
+
+        timeline_hits = [
+            item for item in payload["memoryHits"] if item["doc_type"] == "timeline"
+        ]
+        self.assertEqual(
+            payload["query"]["timelineIntent"]["range"],
+            "yesterday",
+        )
+        self.assertEqual(
+            [item["source_id"] for item in timeline_hits],
+            ["timeline:yesterday"],
+        )
 
     def test_feedback_lane_promotes_accepted_phrase(self) -> None:
         self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG",))
@@ -721,6 +802,58 @@ class HybridRagRetrieverTests(unittest.TestCase):
                 ),
             )
         return event_id
+
+    def _insert_timeline(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        timeline_id: str,
+        timeline_date: str,
+        summary: str,
+        task_title: str,
+        source_event_ids: tuple[int, ...],
+    ) -> None:
+        timestamp = now_ms()
+        segments = [
+            {
+                "title": task_title,
+                "summary": summary,
+                "app": "com.openai.codex",
+                "apps": ["com.openai.codex"],
+                "sourceEventIds": list(source_event_ids),
+            }
+        ]
+        conn.execute(
+            """
+            INSERT INTO daily_activity_timelines(
+                timeline_id, project, timeline_date, timezone, status,
+                source_event_ids_json, source_event_hash, segments_json,
+                summary_text, event_count, segment_count, approved_book_id,
+                approved_by, approved_at_ms, metadata_json,
+                created_at_ms, updated_at_ms
+            ) VALUES (?, 'wisdom-weasel-rag-ime', ?, 'Asia/Shanghai', 'approved',
+                      ?, ?, ?, ?, ?, 1, '', 'test:auto', ?, ?, ?, ?)
+            """,
+            (
+                timeline_id,
+                timeline_date,
+                json.dumps(list(source_event_ids)),
+                f"hash:{timeline_id}",
+                json.dumps(segments, ensure_ascii=False),
+                summary,
+                len(source_event_ids),
+                timestamp,
+                json.dumps(
+                    {
+                        "derivedArtifactType": "daily_activity_timeline",
+                        "automaticPromotion": True,
+                        "explicitApprovalRequired": False,
+                    }
+                ),
+                timestamp,
+                timestamp,
+            ),
+        )
 
 
 class SemanticFakeProvider:

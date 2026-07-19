@@ -71,6 +71,7 @@ class _FakeOrganizer:
             ],
             "topicBooks": [
                 {
+                    "title": "长期工作方式",
                     "summary": "保留这一批跨会话仍然有效的决定和约束。",
                     "sourceEventIds": event_ids,
                     "confidence": 0.9,
@@ -91,6 +92,57 @@ class _FakeOrganizer:
             ],
             "warnings": [],
         }
+
+
+class _MultiTopicOrganizer(_FakeOrganizer):
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        result = super().curate_owner_memory(
+            bundle=bundle,
+            project=project,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            instruction=instruction,
+        )
+        inputs = [dict(item) for item in bundle.get("inputs") or []]
+        result["memoryAtoms"] = [
+            {
+                "canonicalText": str(item["text"]),
+                "summary": "主题内稳定事实",
+                "kind": "project_requirement",
+                "sourceEventIds": list(item["sourceEventIds"]),
+                "confidence": 0.95,
+                "qualityScore": 0.9,
+                "directCandidateAllowed": False,
+            }
+            for item in inputs
+        ]
+        result["topicBooks"] = [
+            {
+                "title": "RAG IME 记忆架构",
+                "summary": "Atom、Topic Book 和 Timeline 必须保持独立。",
+                "sourceEventIds": list(inputs[0]["sourceEventIds"]),
+                "tags": ["RAG IME", "记忆架构"],
+                "confidence": 0.95,
+                "qualityScore": 0.9,
+            },
+            {
+                "title": "本地模型配置",
+                "summary": "记忆整理使用低成本模型并按固定频率运行。",
+                "sourceEventIds": list(inputs[1]["sourceEventIds"]),
+                "tags": ["模型配置"],
+                "confidence": 0.95,
+                "qualityScore": 0.9,
+            },
+        ]
+        return result
 
 
 class _DecisionOnlyOrganizer:
@@ -246,6 +298,150 @@ class _TimelineOnlyFactOrganizer:
         }
 
 
+class _ConversationCapturingOrganizer:
+    provider_name = "fixture"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        del project, owner_kind, owner_id, instruction
+        self.calls.append(bundle)
+        inputs = [dict(item) for item in bundle.get("inputs") or []]
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": "fixture",
+            "model": "fixture-memory",
+            "sourceDecisions": [
+                {
+                    "sourceRef": item["sourceRef"],
+                    "disposition": "not_for_memory",
+                    "reasonCode": "conversation_context_budget_test",
+                    "confidence": 0.99,
+                }
+                for item in inputs
+            ],
+            "topicBooks": [],
+            "memoryAtoms": [],
+        }
+
+
+class _ClaimAwareOrganizer:
+    provider_name = "fixture"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        del project, owner_kind, owner_id, instruction
+        self.calls.append(bundle)
+        source = dict((bundle.get("inputs") or [])[0])
+        existing = [
+            dict(item)
+            for item in bundle.get("existingMemoryAtoms") or []
+            if isinstance(item, dict)
+        ]
+        claim_key = (
+            str(existing[0].get("claimKey") or "")
+            if existing
+            else "project:memory.maintenance-cadence"
+        )
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": "fixture",
+            "model": "fixture-memory",
+            "sourceDecisions": [
+                {
+                    "sourceRef": source["sourceRef"],
+                    "disposition": "remember",
+                    "reasonCode": "durable_preference",
+                    "confidence": 0.99,
+                }
+            ],
+            "memoryAtoms": [
+                {
+                    "canonicalText": str(source["text"]),
+                    "summary": "记忆维护频率",
+                    "kind": "durable_preference",
+                    "claimKey": claim_key,
+                    "sourceEventIds": list(source["sourceEventIds"]),
+                    "confidence": 0.99,
+                    "qualityScore": 0.95,
+                    "directCandidateAllowed": False,
+                }
+            ],
+            "topicBooks": (
+                []
+                if existing
+                else [
+                    {
+                        "title": "记忆维护策略",
+                        "summary": "记忆维护使用明确的周期配置。",
+                        "sourceEventIds": list(source["sourceEventIds"]),
+                        "confidence": 0.95,
+                        "qualityScore": 0.9,
+                    }
+                ]
+            ),
+        }
+
+
+class _ExplicitForgetOrganizer:
+    provider_name = "fixture"
+
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        del project, owner_kind, owner_id, instruction
+        source = dict((bundle.get("inputs") or [])[0])
+        target = dict((bundle.get("existingMemoryAtoms") or [])[0])
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": "fixture",
+            "model": "fixture-memory",
+            "sourceDecisions": [
+                {
+                    "sourceRef": source["sourceRef"],
+                    "disposition": "not_for_memory",
+                    "reasonCode": "explicit_memory_forget",
+                    "confidence": 0.99,
+                }
+            ],
+            "memoryAtoms": [],
+            "topicBooks": [],
+            "memoryRetractions": [
+                {
+                    "targetAtomId": target["atomId"],
+                    "reason": "用户明确要求忘记该偏好",
+                    "sourceEventIds": list(source["sourceEventIds"]),
+                    "confidence": 0.99,
+                }
+            ],
+        }
+
+
 class OwnerMemoryCuratorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-owner-curation-")
@@ -347,6 +543,65 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
                 ("project-a", "remember"),
                 ("project-b", "pending"),
             ],
+        )
+
+    def test_owner_curation_builds_independent_thematic_topic_books(self) -> None:
+        for index, text in enumerate(
+            (
+                "RAG IME 的 Atom、Topic Book 和 Timeline 必须独立存储。",
+                "记忆整理模型固定使用 deepseek-v4-flash，每天运行两次。",
+            ),
+            start=1,
+        ):
+            self.sources.checkpoint_user_message(
+                session_id=str(self.user_session["id"]),
+                pi_entry_id=f"entry:topic-{index}",
+                turn_id=f"turn:topic-{index}",
+                text=text,
+                created_at_ms=index * 100,
+            )
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_MultiTopicOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        )
+
+        report = curator.run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            books = conn.execute(
+                """
+                SELECT book_id, title, memory_atom_ids_json
+                FROM memory_books
+                WHERE status = 'active'
+                ORDER BY title
+                """
+            ).fetchall()
+            atoms = conn.execute(
+                """
+                SELECT id, canonical_text
+                FROM memory_atoms
+                WHERE status = 'active' AND claim_state = 'current'
+                ORDER BY canonical_text
+                """
+            ).fetchall()
+        self.assertEqual(
+            {str(row["title"]) for row in books},
+            {"RAG IME 记忆架构", "本地模型配置"},
+        )
+        self.assertNotIn("个人长期记忆", {str(row["title"]) for row in books})
+        member_sets = [
+            set(json.loads(str(row["memory_atom_ids_json"]))) for row in books
+        ]
+        self.assertEqual([len(member_ids) for member_ids in member_sets], [1, 1])
+        self.assertTrue(member_sets[0].isdisjoint(member_sets[1]))
+        self.assertEqual(
+            set.union(*member_sets),
+            {str(row["id"]) for row in atoms},
         )
 
     def test_daily_run_separates_user_and_role_books_and_forgets_noise_reversibly(self) -> None:
@@ -484,6 +739,67 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         )
         self.assertEqual(restored["source"]["disposition"], "pending")
 
+    def test_twice_daily_auto_apply_needs_no_user_review(self) -> None:
+        durable = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:auto-apply",
+            turn_id="turn:auto-apply",
+            text="记忆整理每天运行两次，并在治理校验后自动应用。",
+            created_at_ms=100,
+        )
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_FakeOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            clock_ms=lambda: 1_000,
+            initial_settle_ms=0,
+            daily_interval_ms=12 * 60 * 60 * 1_000,
+            auto_apply=True,
+        )
+        curator.initialize()
+
+        report = curator.run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["ranScopeCount"], 1)
+        result = report["results"][0]
+        self.assertEqual(result["runStatus"], "applied")
+        self.assertTrue(result["autoApplied"])
+        self.assertFalse(result["reviewRequired"])
+        self.assertEqual(report["status"]["policy"]["cadence"], "twice_daily")
+        self.assertTrue(
+            report["status"]["policy"]["autoApplyGovernedWrites"]
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            run_status = str(
+                conn.execute(
+                    "SELECT status FROM memory_cleanup_runs WHERE run_id = ?",
+                    (result["runId"],),
+                ).fetchone()[0]
+            )
+            atom_count = int(
+                conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0]
+            )
+            book_count = int(
+                conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0]
+            )
+            cursor_status, next_due_at_ms = conn.execute(
+                """
+                SELECT status, next_due_at_ms
+                FROM memory_curation_cursors
+                WHERE owner_kind = 'user' AND owner_id = 'default'
+                """
+            ).fetchone()
+        self.assertEqual(run_status, "applied")
+        self.assertEqual(atom_count, 1)
+        self.assertEqual(book_count, 1)
+        self.assertEqual(cursor_status, "idle")
+        self.assertEqual(next_due_at_ms, 1_000 + 12 * 60 * 60 * 1_000)
+        self.assertEqual(
+            self.sources.get(str(durable["source"]["sourceId"]))["disposition"],
+            "consolidated",
+        )
+
     def test_daily_model_sees_dialogue_and_timeline_but_timeline_cannot_prove_fact(
         self,
     ) -> None:
@@ -573,6 +889,95 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
                 ).fetchone()[0],
                 0,
             )
+
+    def test_daily_model_reads_latest_digest_plus_small_post_digest_tail(self) -> None:
+        timestamp = 1_784_318_400_000
+        session_id = str(self.user_session["id"])
+        self.sources.checkpoint_user_message(
+            session_id=session_id,
+            pi_entry_id="entry:digest-budget",
+            turn_id="turn:digest-budget",
+            text="对话整理需要使用摘要加少量新尾部。",
+            created_at_ms=timestamp,
+        )
+        evidence = AgentMemoryEvidenceStore(
+            self.db_path,
+            project="wisdom-weasel-rag-ime",
+        )
+        evidence.record_user_message(
+            session_id=session_id,
+            pi_entry_id="evidence:user:before-digest",
+            turn_id="turn:before-digest",
+            role_id="zhiyou-v1",
+            text="摘要前的原始用户对话不应重复发送",
+            occurred_at_ms=timestamp + 1_000,
+        )
+        evidence.record_assistant_message(
+            session_id=session_id,
+            pi_entry_id="evidence:assistant:before-digest",
+            turn_id="turn:before-digest",
+            role_id="zhiyou-v1",
+            text="摘要前的原始助手回答不应重复发送",
+            occurred_at_ms=timestamp + 2_000,
+        )
+        evidence.record_session_digest(
+            session_id=session_id,
+            digest_id="digest:old",
+            role_id="zhiyou-v1",
+            text="已经过期的旧摘要",
+            occurred_at_ms=timestamp + 3_000,
+        )
+        evidence.record_session_digest(
+            session_id=session_id,
+            digest_id="digest:latest",
+            role_id="zhiyou-v1",
+            text="最新压缩摘要：用户要求对话整理省 token，并保留可追溯索引。",
+            occurred_at_ms=timestamp + 4_000,
+        )
+        evidence.record_user_message(
+            session_id=session_id,
+            pi_entry_id="evidence:user:after-digest",
+            turn_id="turn:after-digest",
+            role_id="zhiyou-v1",
+            text="摘要之后新增的用户要求",
+            occurred_at_ms=timestamp + 5_000,
+        )
+        evidence.record_assistant_message(
+            session_id=session_id,
+            pi_entry_id="evidence:assistant:after-digest",
+            turn_id="turn:after-digest",
+            role_id="zhiyou-v1",
+            text="摘要之后新增的助手回答" * 80,
+            occurred_at_ms=timestamp + 6_000,
+        )
+        organizer = _ConversationCapturingOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            clock_ms=lambda: timestamp + 10_000,
+            initial_settle_ms=0,
+        )
+
+        report = curator.run_due(current_ms=timestamp + 10_000)
+
+        self.assertTrue(report["ok"])
+        context = organizer.calls[0]["agentConversationContext"]
+        messages = context["messages"]
+        self.assertEqual(
+            [item["sourceKind"] for item in messages],
+            ["session_digest", "user_message", "assistant_message"],
+        )
+        serialized = json.dumps(context, ensure_ascii=False)
+        self.assertIn("最新压缩摘要", serialized)
+        self.assertIn("摘要之后新增的用户要求", serialized)
+        self.assertNotIn("摘要前的原始用户对话", serialized)
+        self.assertNotIn("摘要前的原始助手回答", serialized)
+        self.assertNotIn("已经过期的旧摘要", serialized)
+        self.assertLessEqual(sum(len(item["text"]) for item in messages), 2_000)
+        self.assertLessEqual(len(messages[-1]["text"]), 320)
+        self.assertTrue(context["corroborationOnly"])
+        self.assertFalse(context["maySupportFacts"])
 
     def test_needs_review_source_stays_ahead_of_cursor_for_next_daily_pass(self) -> None:
         first = self.sources.checkpoint_user_message(
@@ -984,9 +1389,9 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             ("archived", 2_000, "user_archive"),
         )
 
-    def test_atom_only_model_output_still_updates_the_existing_owner_book(self) -> None:
+    def test_atom_only_model_output_does_not_force_atom_into_unrelated_book(self) -> None:
         first_text = "每天整理一次角色自己的长期记忆。"
-        second_text = "没有输出 topicBooks 时也要把新原子并入原有主题书。"
+        second_text = "浏览器工具默认使用隔离配置目录。"
         self.sources.checkpoint_user_message(
             session_id=str(self.user_session["id"]),
             pi_entry_id="entry:first-organic-book",
@@ -1030,22 +1435,182 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
-            draft = conn.execute(
+            book_drafts = conn.execute(
                 """
                 SELECT payload_json
                 FROM memory_cleanup_diffs
                 WHERE run_id = ? AND op = 'upsert_memory_book'
                 """,
                 (second_run_id,),
-            ).fetchone()
+            ).fetchall()
             apply_stored_memory_book_run(conn, run_id=second_run_id)
             book = conn.execute(
                 "SELECT summary, memory_atom_ids_json FROM memory_books"
             ).fetchone()
+            atoms = conn.execute(
+                """
+                SELECT canonical_text
+                FROM memory_atoms
+                WHERE status = 'active' AND claim_state = 'current'
+                ORDER BY canonical_text
+                """
+            ).fetchall()
 
-        self.assertIsNotNone(draft)
-        self.assertIn(second_text, str(book["summary"]))
-        self.assertEqual(len(json.loads(book["memory_atom_ids_json"])), 2)
+        self.assertEqual(book_drafts, [])
+        self.assertNotIn(second_text, str(book["summary"]))
+        self.assertEqual(len(json.loads(book["memory_atom_ids_json"])), 1)
+        self.assertEqual(
+            {str(row["canonical_text"]) for row in atoms},
+            {first_text, second_text},
+        )
+
+    def test_existing_claim_metadata_drives_automatic_fact_replacement(self) -> None:
+        organizer = _ClaimAwareOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            daily_interval_ms=60_000,
+            auto_apply=True,
+        )
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:cadence-old",
+            turn_id="turn:cadence-old",
+            text="记忆整理每天运行一次。",
+            created_at_ms=100,
+        )
+        curator.initialize()
+        first = curator.run_due(current_ms=1_000)
+        self.assertTrue(first["ok"], first)
+
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:cadence-new",
+            turn_id="turn:cadence-new",
+            text="记忆整理改成每天运行两次。",
+            created_at_ms=70_000,
+        )
+        second = curator.run_due(current_ms=70_001)
+
+        self.assertTrue(second["ok"], second)
+        existing = organizer.calls[1]["existingMemoryAtoms"][0]
+        self.assertEqual(
+            existing["claimKey"],
+            "project:memory.maintenance-cadence",
+        )
+        self.assertEqual(existing["claimState"], "current")
+        self.assertTrue(existing["lineageId"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, canonical_text, status, claim_state, supersedes_id
+                FROM memory_atoms
+                WHERE claim_key = 'project:memory.maintenance-cadence'
+                ORDER BY valid_from_ms, id
+                """
+            ).fetchall()
+            book = conn.execute(
+                """
+                SELECT summary, memory_atom_ids_json
+                FROM memory_books
+                WHERE status = 'active'
+                """
+            ).fetchone()
+        self.assertEqual(len(rows), 2)
+        current = next(row for row in rows if row["claim_state"] == "current")
+        historical = next(
+            row for row in rows if row["claim_state"] == "superseded"
+        )
+        self.assertIn("每天运行两次", current["canonical_text"])
+        self.assertEqual(current["supersedes_id"], historical["id"])
+        self.assertEqual(historical["status"], "superseded")
+        self.assertIn("每天运行两次", str(book["summary"]))
+        self.assertNotIn("每天运行一次", str(book["summary"]))
+        self.assertEqual(
+            json.loads(str(book["memory_atom_ids_json"])),
+            [str(current["id"])],
+        )
+
+    def test_explicit_forget_auto_retracts_and_rollback_restores_atom(self) -> None:
+        seed = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:dark-preference",
+            turn_id="turn:dark-preference",
+            text="我长期偏好深色界面。",
+            created_at_ms=100,
+        )
+        seed_curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_FakeOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            daily_interval_ms=60_000,
+            auto_apply=True,
+        )
+        seed_curator.initialize()
+        seeded = seed_curator.run_due(current_ms=1_000)
+        self.assertTrue(seeded["ok"], seeded)
+        self.assertEqual(
+            self.sources.get(str(seed["source"]["sourceId"]))["disposition"],
+            "consolidated",
+        )
+
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:forget-dark",
+            turn_id="turn:forget-dark",
+            text="忘记我长期偏好深色界面这条记忆。",
+            created_at_ms=70_000,
+        )
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_ExplicitForgetOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            daily_interval_ms=60_000,
+            auto_apply=True,
+        )
+        forgotten = curator.run_due(current_ms=70_001)
+
+        self.assertTrue(forgotten["ok"], forgotten)
+        result = forgotten["results"][0]
+        self.assertEqual(result["runStatus"], "applied")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            atom = conn.execute(
+                "SELECT id, status, claim_state FROM memory_atoms"
+            ).fetchone()
+            tombstone = conn.execute(
+                """
+                SELECT id, active
+                FROM memory_tombstones
+                WHERE target_type = 'memory_id' AND target_value = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (str(atom["id"]),),
+            ).fetchone()
+            book = conn.execute(
+                "SELECT status, memory_atom_ids_json FROM memory_books"
+            ).fetchone()
+            self.assertEqual((atom["status"], atom["claim_state"]), ("tombstoned", "retracted"))
+            self.assertEqual(int(tombstone["active"]), 1)
+            self.assertEqual(book["status"], "archived")
+            self.assertEqual(json.loads(book["memory_atom_ids_json"]), [])
+            conn.execute("PRAGMA foreign_keys = ON")
+            rollback_memory_book_run(conn, run_id=str(result["runId"]))
+            restored = conn.execute(
+                "SELECT status, claim_state FROM memory_atoms WHERE id = ?",
+                (str(atom["id"]),),
+            ).fetchone()
+            inactive = conn.execute(
+                "SELECT active FROM memory_tombstones WHERE id = ?",
+                (int(tombstone["id"]),),
+            ).fetchone()
+        self.assertEqual(tuple(restored), ("active", "current"))
+        self.assertEqual(int(inactive["active"]), 0)
 
     def test_failure_keeps_cursor_and_enters_backoff(self) -> None:
         self.sources.checkpoint_user_message(

@@ -99,6 +99,30 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "topicBookHalfLifeDays": 180,
             "stablePreferenceHalfLifeDays": 365,
         },
+        "automaticOrganization": {
+            "enabled": True,
+            "model": "deepseek-v4-flash",
+            "runsPerDay": 2,
+            "includeAgentDialogue": True,
+        },
+        "dreaming": {
+            "enabled": True,
+            "model": "deepseek-v4-flash",
+            "runsPerDay": 2,
+        },
+        "externalSources": {
+            "codexMemory": {
+                "enabled": False,
+                "path": "~/.codex/memories",
+                "lookbackDays": 90,
+                "includeRolloutSummaries": True,
+            }
+        },
+        "recall": {
+            "detailLevel": "compact",
+            "timelineEnabled": True,
+            "timelineMaxItems": 2,
+        },
     },
     "context": {
         "recentInputBaseline": 20,
@@ -313,6 +337,26 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "memory.timeDecay.projectHalfLifeDays", "type": "integer", "label": "项目事实衰减半衰期", "default": 120},
                 {"key": "memory.timeDecay.topicBookHalfLifeDays", "type": "integer", "label": "主题书衰减半衰期", "default": 180},
                 {"key": "memory.timeDecay.stablePreferenceHalfLifeDays", "type": "integer", "label": "稳定偏好衰减半衰期", "default": 365},
+                {"key": "memory.automaticOrganization.enabled", "type": "boolean", "label": "自动整理", "default": True},
+                {"key": "memory.automaticOrganization.model", "type": "string", "label": "自动整理模型", "default": "deepseek-v4-flash"},
+                {"key": "memory.automaticOrganization.runsPerDay", "type": "integer", "label": "每天自动整理次数", "default": 2},
+                {"key": "memory.automaticOrganization.includeAgentDialogue", "type": "boolean", "label": "整理 Agent 对话摘要", "default": True},
+                {"key": "memory.dreaming.enabled", "type": "boolean", "label": "记忆做梦", "default": True},
+                {"key": "memory.dreaming.model", "type": "string", "label": "做梦模型", "default": "deepseek-v4-flash"},
+                {"key": "memory.dreaming.runsPerDay", "type": "integer", "label": "每天做梦次数", "default": 2},
+                {"key": "memory.recall.detailLevel", "type": "enum", "label": "召回详细程度", "options": ["compact", "balanced", "detailed"], "default": "compact"},
+                {"key": "memory.recall.timelineEnabled", "type": "boolean", "label": "按需召回时间线", "default": True},
+                {"key": "memory.recall.timelineMaxItems", "type": "integer", "label": "时间线最多召回条数", "default": 2},
+            ],
+        },
+        {
+            "id": "externalMemorySources",
+            "label": "外部记忆源",
+            "fields": [
+                {"key": "memory.externalSources.codexMemory.enabled", "type": "boolean", "label": "读取 Codex 记忆", "default": False},
+                {"key": "memory.externalSources.codexMemory.path", "type": "string", "label": "Codex 记忆目录", "default": "~/.codex/memories"},
+                {"key": "memory.externalSources.codexMemory.lookbackDays", "type": "integer", "label": "读取最近天数", "default": 90},
+                {"key": "memory.externalSources.codexMemory.includeRolloutSummaries", "type": "boolean", "label": "读取 Session 整理摘要", "default": True},
             ],
         },
         {
@@ -490,6 +534,77 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "memory.timeDecay.projectHalfLifeDays": {"min": 7, "max": 1825, "unit": "天", "expert": True},
     "memory.timeDecay.topicBookHalfLifeDays": {"min": 7, "max": 3650, "unit": "天", "expert": True},
     "memory.timeDecay.stablePreferenceHalfLifeDays": {"min": 30, "max": 3650, "unit": "天", "expert": True},
+    "memory.automaticOrganization.enabled": {
+        "description": "把新的用户最终输入、成功回执和压缩后的 Agent 对话异步编译为 Atom 与 Topic Book；关闭后仍保留现有记忆",
+        "applyMode": "next_maintenance_run",
+    },
+    "memory.automaticOrganization.model": {
+        "description": "下一次自动整理使用的模型，不影响输入法热路径",
+        "applyMode": "next_maintenance_run",
+        "validation": "必须是以 deepseek-v4 开头的模型 ID",
+    },
+    "memory.automaticOrganization.runsPerDay": {
+        "description": "后台按此频率判断新来源并自动应用治理后的低风险记忆变更",
+        "applyMode": "next_maintenance_run",
+        "min": 1,
+        "max": 6,
+        "unit": "次/天",
+    },
+    "memory.automaticOrganization.includeAgentDialogue": {
+        "description": "只传入最新会话摘要和摘要后的短尾窗，不把完整原始对话送给整理模型",
+        "applyMode": "next_maintenance_run",
+    },
+    "memory.dreaming.enabled": {
+        "description": "周期性跨 Session 压缩近期工作、关系和角色连续性；关闭后不会删除已生成产物",
+        "applyMode": "next_maintenance_run",
+    },
+    "memory.dreaming.model": {
+        "description": "下一次记忆做梦使用的模型，不参与当前问题的同步回答",
+        "applyMode": "next_maintenance_run",
+        "validation": "必须是以 deepseek-v4 开头的模型 ID",
+    },
+    "memory.dreaming.runsPerDay": {
+        "description": "后台做梦的逻辑频率；系统会轻量轮询，只有到期才调用模型",
+        "applyMode": "next_maintenance_run",
+        "min": 1,
+        "max": 6,
+        "unit": "次/天",
+    },
+    "memory.externalSources.codexMemory.enabled": {
+        "description": "只读 Codex 的顶层记忆索引和已整理 Session 摘要，并交给同一 Atom/Topic Book 治理链；关闭后停止同步，已有治理产物保留且可删除，不会读取原始对话 JSONL",
+        "applyMode": "next_maintenance_run",
+    },
+    "memory.externalSources.codexMemory.path": {
+        "description": "Codex 分层记忆目录；只允许读取 memory_summary.md、MEMORY.md 和 rollout_summaries 下的 Markdown",
+        "applyMode": "next_maintenance_run",
+        "validation": "必须是本机目录；不会跟随目录外的链接",
+    },
+    "memory.externalSources.codexMemory.lookbackDays": {
+        "description": "只跟随顶层索引导入此时间窗内的已整理 Session 摘要；硬上限为最近三个月",
+        "applyMode": "next_maintenance_run",
+        "min": 1,
+        "max": 90,
+        "unit": "天",
+    },
+    "memory.externalSources.codexMemory.includeRolloutSummaries": {
+        "description": "读取近三个月的 rollout summary，并只保存 thread/session 索引；完整原始对话不会进入证据账本",
+        "applyMode": "next_maintenance_run",
+    },
+    "memory.recall.detailLevel": {
+        "description": "compact 只注入主题摘要和最相关 Atom；balanced 与 detailed 逐步放宽片段预算",
+        "applyMode": "next_request",
+    },
+    "memory.recall.timelineEnabled": {
+        "description": "仅在统一 TimelineIntent 判定命中明确日期、相对时间或时间线表达时开放 Timeline 通道",
+        "applyMode": "next_request",
+    },
+    "memory.recall.timelineMaxItems": {
+        "description": "一次问题最多注入的独立 Timeline 片段数量",
+        "applyMode": "next_request",
+        "min": 1,
+        "max": 4,
+        "unit": "条",
+    },
     "context.recentInputBaseline": {"min": 10, "max": 80, "unit": "条"},
     "context.recentInputMaximum": {"min": 20, "max": 200, "unit": "条"},
     "context.tokenBudget": {"min": 2048, "max": 32768, "step": 512, "unit": "token"},
