@@ -55,7 +55,17 @@ for line in sys.stdin:
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
                          "transientContext": True,
                          "statelessCompletion": True,
-                         "conversationFork": True}})
+                         "conversationFork": True,
+                         "runtimePrimitives": {
+                             "continuationEnvelope": "1", "cancelScope": "1",
+                             "sessionContinuationQueue": False,
+                             "sessionCancelOperationRegistry": False,
+                             "sessionCancelOperations": {
+                                 "provider": True, "tool": True, "retrySleep": True,
+                                 "manualCompaction": False, "autoCompaction": False,
+                                 "branchSummary": False, "bashProcess": False,
+                                 "continuationTimer": False},
+                             "roomTypes": False}}})
     elif method == "completion.once":
         sequence += 1
         write({
@@ -390,6 +400,15 @@ class PiRuntimeV2Tests(unittest.TestCase):
         status = self.runtime.runtime_status()
         self.assertEqual(status["openSessionIds"], sorted([first_id, second_id]))
         self.assertTrue(status["capabilities"]["multiSession"])
+        self.assertEqual(
+            status["capabilities"]["runtimePrimitives"]["continuationEnvelope"],
+            "1",
+        )
+        self.assertFalse(
+            status["capabilities"]["runtimePrimitives"][
+                "sessionCancelOperationRegistry"
+            ]
+        )
         requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
         opened = [row for row in requests if row["method"] == "session.open"]
         self.assertEqual(len(opened), 2)

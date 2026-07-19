@@ -46,6 +46,41 @@ from .pi_runtime import (
 _PROTOCOL_VERSION = "2"
 
 
+def _runtime_primitive_capabilities(value: object) -> dict[str, object]:
+    source = _mapping(value)
+    operations = _mapping(source.get("sessionCancelOperations"))
+    return {
+        "continuationEnvelope": (
+            str(source.get("continuationEnvelope") or "")
+            if source.get("continuationEnvelope") == "1"
+            else ""
+        ),
+        "cancelScope": (
+            str(source.get("cancelScope") or "")
+            if source.get("cancelScope") == "1"
+            else ""
+        ),
+        "sessionContinuationQueue": bool(source.get("sessionContinuationQueue")),
+        "sessionCancelOperationRegistry": bool(
+            source.get("sessionCancelOperationRegistry")
+        ),
+        "sessionCancelOperations": {
+            key: bool(operations.get(key))
+            for key in (
+                "provider",
+                "tool",
+                "retrySleep",
+                "manualCompaction",
+                "autoCompaction",
+                "branchSummary",
+                "bashProcess",
+                "continuationTimer",
+            )
+        },
+        "roomTypes": False,
+    }
+
+
 class PiRuntimeHostClient:
     """One long-lived process connection shared by the bounded Session host."""
 
@@ -367,6 +402,9 @@ class PiRuntimeHostManager:
                 ),
                 "transientContext": bool(capabilities.get("transientContext")),
                 "persistentDebugContext": bool(capabilities.get("persistentDebugContext")),
+                "runtimePrimitives": _runtime_primitive_capabilities(
+                    capabilities.get("runtimePrimitives")
+                ),
                 "imageAttachments": True,
                 "coordinator": True,
                 "modelConfigured": self.config.model_configured,
