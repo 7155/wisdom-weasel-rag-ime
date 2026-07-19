@@ -108,6 +108,8 @@ class ControlPathId(str, Enum):
     AGENT_SUBAGENTS_LIST = "agent.subagents.list"
     AGENT_SUBAGENTS_CREATE = "agent.subagents.create"
     AGENT_SUBAGENT_GET = "agent.subagent.get"
+    AGENT_SUBAGENT_CONSOLE = "agent.subagent.console"
+    AGENT_SUBAGENT_CONTROL = "agent.subagent.control"
     AGENT_SUBAGENT_ABORT = "agent.subagent.abort"
     AGENT_MEMORY_SOURCES_LIST = "agent.memorySources.list"
     AGENT_WAKE_SCHEDULES_LIST = "agent.wakeSchedules.list"
@@ -732,6 +734,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SUBAGENTS_LIST, ControlMethod.GET, "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_SUBAGENTS_CREATE, ControlMethod.POST, "/api/agent/subagents/runs", "/control/v1/agent/subagents/runs", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, body={"sessionId", "tasks", "agent", "version", "task", "contextMode", "wait"}, required_body={"sessionId"}, remote_body={"sessionId", "tasks", "agent", "version", "task", "contextMode", "wait"}, remote_body_values={"contextMode": {"fresh"}}),
         _route(ControlPathId.AGENT_SUBAGENT_GET, ControlMethod.GET, "/api/agent/subagents/runs/{runId}", "/control/v1/agent/subagents/runs/{runId}", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, params=_RUN, query={"sessionId"}, required_query={"sessionId"}),
+        _route(ControlPathId.AGENT_SUBAGENT_CONSOLE, ControlMethod.GET, "/api/agent/subagents/runs/{runId}/console", "/control/v1/agent/subagents/runs/{runId}/console", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, params=_RUN, query={"sessionId"}, required_query={"sessionId"}),
+        _route(ControlPathId.AGENT_SUBAGENT_CONTROL, ControlMethod.POST, "/api/agent/subagents/runs/{runId}/control", "/control/v1/agent/subagents/runs/{runId}/control", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, params=_RUN, body={"sessionId", "action", "clientActionId", "message", "inboxId"}, required_body={"sessionId", "action", "clientActionId"}, remote_body={"sessionId", "action", "clientActionId", "message", "inboxId"}, remote_body_values={"action": {"steer", "retry", "resume", "abort", "reply"}}),
         _route(ControlPathId.AGENT_SUBAGENT_ABORT, ControlMethod.POST, "/api/agent/subagents/runs/{runId}/abort", "/control/v1/agent/subagents/runs/{runId}/abort", scopes=[ControlScope.AGENT_DELEGATE], remote_safe=True, params=_RUN, body={"sessionId"}, required_body={"sessionId"}, remote_body={"sessionId"}),
         _route(ControlPathId.AGENT_MEMORY_SOURCES_LIST, ControlMethod.GET, "/api/agent/memory-sources", "/control/v1/agent/memory-sources", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_WAKE_SCHEDULES_LIST, ControlMethod.GET, "/api/agent/wake-schedules", "/control/v1/agent/wake-schedules", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"status", "targetType", "targetId", "createdBySessionId", "limit"}),

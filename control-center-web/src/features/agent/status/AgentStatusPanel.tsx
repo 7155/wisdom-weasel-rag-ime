@@ -24,12 +24,6 @@ import { forwardRef, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
   IconButton,
 } from '@/components/primitives';
 import type { AgentActivityProjection, AgentProjectionState, AgentTurnStatus } from '@/contracts/agent-reducer';
@@ -38,6 +32,8 @@ import { useAgentLiveStore } from '../state/live-store';
 import { publicToolResultView } from '../timeline/public-tool-result';
 import { ContextRuntimeSections } from './ContextRuntimePanel';
 import { AgentWorkflowPanel } from './AgentWorkflowPanel';
+import { ContextXraySections } from './ContextXrayPanel';
+import { SubagentConsoleDialog } from './SubagentConsole';
 
 type IdleWindow = Window & typeof globalThis & {
   requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
@@ -116,6 +112,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
         <StatusSection icon={Gauge} title="上下文与用量" count={projection?.telemetry?.compactionCount ?? 0}>
           <SessionTelemetryView projection={projection} />
         </StatusSection>
+        <ContextXraySections sessionId={sessionId} open={open} />
 
         <StatusSection icon={Wrench} title="关键步骤" count={view.tools.length}>
           {view.tools.length ? (
@@ -342,93 +339,8 @@ function SubagentRow({ run, sessionId }: { run: AgentSubagentRunV1; sessionId: s
       <span className="agent-status-subagent__state"><SubagentStateIcon state={run.state} /></span>
       <span><strong>{templateLabel(run.templateId)}</strong><small>{publicText(run.task, '协作任务')}</small></span>
       <i><span>{stateLabel(run.state)}</span>{elapsed ? <time>{elapsed}</time> : null}</i>
-      <SubagentResultDialog run={run} sessionId={sessionId} triggerLabel={active ? '查看进度' : '查看结果'} />
+      <SubagentConsoleDialog run={run} sessionId={sessionId} triggerLabel={active ? '查看进度' : '查看结果'} />
     </div>
-  );
-}
-
-function SubagentResultDialog({ run, sessionId, triggerLabel }: { run: AgentSubagentRunV1; sessionId: string; triggerLabel: string }) {
-  const transport = useControlTransport();
-  const [open, setOpen] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const [stopError, setStopError] = useState('');
-  const detail = useQuery({
-    queryKey: ['agent', 'status-panel', 'subagent', sessionId, run.id],
-    queryFn: ({ signal }) => transport.request({
-      pathId: 'agent.subagent.get',
-      params: { runId: run.id },
-      query: { sessionId },
-      signal,
-    }),
-    enabled: open,
-    refetchInterval: (query) => {
-      const latest = findSubagentRun(query.state.data, run.id) ?? run;
-      return isActiveSubagentRun(latest) ? 1_000 : false;
-    },
-    retry: false,
-  });
-  const current = findSubagentRun(detail.data, run.id) ?? run;
-  const summary = publicResultSummary(current.result);
-  const active = current.state === 'queued' || current.state === 'running';
-  const artifactId = current.artifact?.artifactId ?? '';
-  const artifact = useQuery({
-    queryKey: ['agent', 'status-panel', 'artifact', sessionId, artifactId],
-    queryFn: ({ signal }) => transport.request({
-      pathId: 'agent.artifact.get',
-      params: { artifactId },
-      query: { sessionId, limit: 60 },
-      signal,
-    }),
-    enabled: open && Boolean(artifactId),
-    refetchInterval: open && active ? 1_500 : false,
-    retry: false,
-  });
-  const records = publicArtifactRecords(artifact.data);
-
-  async function stopRun(): Promise<void> {
-    if (!active || stopping) return;
-    setStopping(true);
-    setStopError('');
-    try {
-      await transport.request({ pathId: 'agent.subagent.abort', params: { runId: current.id }, body: { sessionId } });
-      await detail.refetch();
-    } catch {
-      setStopError('任务暂时无法停止，请稍后重试。');
-    } finally {
-      setStopping(false);
-    }
-  }
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button size="small" variant="quiet">{triggerLabel}</Button></DialogTrigger>
-      <DialogContent className="agent-subagent-result-dialog">
-        <DialogHeader>
-          <DialogTitle>{templateLabel(current.templateId)} · {stateLabel(current.state)}</DialogTitle>
-          <DialogDescription>{publicText(current.task, '协作任务')}</DialogDescription>
-        </DialogHeader>
-        <div className="agent-subagent-result">
-          {detail.isPending ? <EmptyLine animated>正在读取最新结果</EmptyLine> : null}
-          {detail.error ? <EmptyLine tone="danger">最新结果暂时无法读取</EmptyLine> : null}
-          {!detail.isPending ? <p>{summary || terminalResultFallback(current.state)}</p> : null}
-          <dl>
-            <div><dt>回合</dt><dd>{current.usage.turnCount}</dd></div>
-            <div><dt>工具</dt><dd>{current.usage.toolCount}</dd></div>
-            <div><dt>Token</dt><dd>{current.usage.totalTokens}</dd></div>
-            <div><dt>产物</dt><dd>{current.artifact ? '已记录' : '无'}</dd></div>
-          </dl>
-          {artifactId ? (
-            <details className="agent-subagent-artifact">
-              <summary><BookOpenText size={14} /><span>运行记录</span><small>{records.length ? `${records.length} 条` : '读取中'}</small><ChevronRight size={14} /></summary>
-              {artifact.isPending ? <EmptyLine animated>正在读取审计记录</EmptyLine> : null}
-              {artifact.error ? <EmptyLine tone="danger">运行记录暂时不可用</EmptyLine> : null}
-              {records.length ? <ol>{records.map((record) => <li key={record.id}><time>{record.time}</time><span><strong>{record.label}</strong><small>{record.detail}</small></span></li>)}</ol> : null}
-            </details>
-          ) : null}
-          {stopError ? <p className="agent-subagent-result__error" role="alert">{stopError}</p> : null}
-          {active ? <div className="agent-subagent-result__actions"><Button loading={stopping} onClick={() => void stopRun()} variant="danger">停止任务</Button></div> : null}
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -474,40 +386,6 @@ function useRunElapsed(run: AgentSubagentRunV1): string {
   const seconds = Math.max(0, Math.floor((now - startedAt) / 1_000));
   const minutes = Math.floor(seconds / 60);
   return minutes ? `${minutes}分${String(seconds % 60).padStart(2, '0')}秒` : `${seconds}秒`;
-}
-
-function publicArtifactRecords(value: unknown): Array<{ id: string; label: string; detail: string; time: string }> {
-  const items = Array.isArray(record(value).records) ? record(value).records as unknown[] : [];
-  return items.slice(-60).map((item, index) => {
-    const entry = record(item);
-    const payload = record(entry.payload);
-    const eventType = text(entry.eventType);
-    const createdAtMs = Number(entry.createdAtMs);
-    return {
-      id: text(entry.recordId) || `${eventType}:${index}`,
-      label: artifactEventLabel(eventType),
-      detail: publicText(payload.summary ?? payload.message ?? payload.reason ?? payload.state, '状态已记录'),
-      time: Number.isFinite(createdAtMs) && createdAtMs > 0
-        ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(createdAtMs)
-        : '--:--:--',
-    };
-  });
-}
-
-function artifactEventLabel(value: string): string {
-  return ({
-    queued: '已进入队列',
-    started: '开始执行',
-    checkpoint: '保存检查点',
-    supervision_soft: '接近运行预算',
-    supervision_hard: '触发停止保护',
-    supervision_forced: '已强制停止',
-    completed: '执行完成',
-    failed: '执行失败',
-    aborted: '用户已停止',
-    timed_out: '执行超时',
-    runtime_retired: '临时运行环境已清理',
-  } as Record<string, string>)[value] ?? '运行状态更新';
 }
 
 interface StatusPanelProjection {
@@ -591,12 +469,6 @@ function hasActiveSubagentRuns(runs: AgentSubagentRunV1[]): boolean {
   return runs.some(isActiveSubagentRun);
 }
 
-function findSubagentRun(value: unknown, runId: string): AgentSubagentRunV1 | undefined {
-  const batch = record(record(value).batch);
-  const runs = Array.isArray(batch.runs) ? batch.runs : [];
-  return runs.find((item) => isSubagentRun(item) && item.id === runId) as AgentSubagentRunV1 | undefined;
-}
-
 function isSubagentRun(value: unknown): value is AgentSubagentRunV1 {
   const item = record(value);
   const usage = record(item.usage);
@@ -658,17 +530,6 @@ function templateLabel(value: AgentSubagentRunV1['templateId']): string {
 
 function stateLabel(value: AgentSubagentRunV1['state']): string {
   return ({ queued: '排队中', running: '进行中', completed: '已完成', failed: '失败', aborted: '已停止', timed_out: '已超时' })[value];
-}
-
-function terminalResultFallback(state: AgentSubagentRunV1['state']): string {
-  if (state === 'queued') return '任务正在等待执行。';
-  if (state === 'running') return '任务仍在执行，结果会持续更新。';
-  if (state === 'completed') return '任务已完成，最终结论已回到主对话。';
-  return '任务没有生成可公开的结果摘要。';
-}
-
-function publicResultSummary(value: Record<string, unknown>): string {
-  return publicText(value.summary ?? value.title ?? value.message, '');
 }
 
 function publicText(value: unknown, fallback: string): string {

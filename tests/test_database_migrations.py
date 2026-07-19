@@ -30,7 +30,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 62, 64,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 62, 63, 64,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
@@ -68,6 +68,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_room_artifacts", tables)
             self.assertIn("agent_subagent_batches", tables)
             self.assertIn("agent_subagent_runs", tables)
+            self.assertIn("agent_subagent_controls", tables)
+            self.assertIn("agent_subagent_inbox", tables)
             self.assertIn("agent_subagent_events", tables)
             self.assertIn("agent_runtime_bindings", tables)
             self.assertIn("agent_configuration_state", tables)
@@ -265,7 +267,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
                 }
 
-            self.assertEqual(result.applied_versions, (59, 60, 62, 64))
+            self.assertEqual(result.applied_versions, (59, 60, 62, 63, 64))
             self.assertEqual(
                 rows["atom:legacy-old"],
                 (
@@ -392,7 +394,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 result.applied_versions,
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 62, 64,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 62, 63, 64,
                 ),
             )
             self.assertEqual(

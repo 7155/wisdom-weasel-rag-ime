@@ -600,6 +600,20 @@ export const CONTROL_ROUTES = {
     query: ['sessionId'],
     requiredQuery: ['sessionId'],
   },
+  'agent.subagent.console': {
+    method: 'GET',
+    path: '/api/agent/subagents/runs/:runId/console',
+    params: { runId: null },
+    query: ['sessionId'],
+    requiredQuery: ['sessionId'],
+  },
+  'agent.subagent.control': {
+    method: 'POST',
+    path: '/api/agent/subagents/runs/:runId/control',
+    params: { runId: null },
+    body: ['sessionId', 'action', 'clientActionId', 'message', 'inboxId'],
+    requiredBody: ['sessionId', 'action', 'clientActionId'],
+  },
   'agent.subagent.abort': {
     method: 'POST',
     path: '/api/agent/subagents/runs/:runId/abort',

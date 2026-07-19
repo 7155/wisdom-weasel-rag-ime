@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -436,6 +437,328 @@ class AgentDelegationStore:
         for run_id in affected:
             self._sync_run_artifact(run_id)
         return active
+
+    def claim_control(
+        self,
+        *,
+        run_id: str,
+        parent_session_id: str,
+        client_action_id: str,
+        action: str,
+        payload: Mapping[str, object],
+        created_at_ms: int | None = None,
+    ) -> tuple[dict[str, object], bool]:
+        """Claim one parent control command exactly once.
+
+        A repeated clientActionId is a replay only when the action and canonical
+        payload are byte-for-byte equivalent. This prevents a retried HTTP
+        request from steering or restarting a child twice.
+        """
+
+        if action not in {"steer", "retry", "resume", "abort", "reply"}:
+            raise ValueError("unsupported delegated control action")
+        action_id = _bounded_text(client_action_id, maximum=128, required=True)
+        normalized = json.dumps(
+            dict(payload),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        payload_sha256 = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        now = _timestamp(created_at_ms)
+        control_id = f"subagent-control:{uuid.uuid4()}"
+        with self._connect() as conn:
+            owner = conn.execute(
+                """
+                SELECT b.parent_session_id
+                FROM agent_subagent_runs r
+                JOIN agent_subagent_batches b ON b.id = r.batch_id
+                WHERE r.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            if owner is None:
+                raise KeyError(run_id)
+            if str(owner["parent_session_id"]) != parent_session_id:
+                raise ValueError("delegated run does not belong to this session")
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO agent_subagent_controls(
+                        id, run_id, parent_session_id, client_action_id, action,
+                        payload_sha256, payload_json, state, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?)
+                    """,
+                    (
+                        control_id,
+                        run_id,
+                        parent_session_id,
+                        action_id,
+                        action,
+                        payload_sha256,
+                        normalized,
+                        now,
+                        now,
+                    ),
+                )
+                created = True
+            except sqlite3.IntegrityError:
+                created = False
+            row = conn.execute(
+                """
+                SELECT * FROM agent_subagent_controls
+                WHERE run_id = ? AND client_action_id = ?
+                """,
+                (run_id, action_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("delegated control claim was not persisted")
+            if (
+                str(row["action"]) != action
+                or str(row["payload_sha256"]) != payload_sha256
+            ):
+                raise ValueError("clientActionId was already used for a different action")
+        return _control_payload(row), created
+
+    def finish_control(
+        self,
+        control_id: str,
+        *,
+        result: Mapping[str, object] | None = None,
+        error: str = "",
+        completed_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        now = _timestamp(completed_at_ms)
+        state = "failed" if error else "completed"
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_subagent_controls
+                SET state = ?, result_json = ?, error = ?, updated_at_ms = ?,
+                    completed_at_ms = ?
+                WHERE id = ? AND state = 'accepted'
+                """,
+                (
+                    state,
+                    json.dumps(
+                        dict(result or {}),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    _bounded_text(error, maximum=500),
+                    now,
+                    now,
+                    control_id,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM agent_subagent_controls WHERE id = ?",
+                (control_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(control_id)
+            if cursor.rowcount == 0 and str(row["state"]) == "accepted":
+                raise RuntimeError("delegated control could not be completed")
+        return _control_payload(row)
+
+    def list_controls(self, run_id: str, *, limit: int = 50) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_subagent_controls
+                WHERE run_id = ? ORDER BY created_at_ms DESC LIMIT ?
+                """,
+                (run_id, max(1, min(int(limit), 100))),
+            ).fetchall()
+        return [_control_payload(row) for row in rows]
+
+    def upsert_inbox(
+        self,
+        *,
+        run_id: str,
+        parent_session_id: str,
+        child_session_id: str,
+        request_id: str,
+        kind: str,
+        title: str,
+        message: str,
+        turn_id: str = "",
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        if kind not in {"need_decision", "interview", "progress"}:
+            raise ValueError("unsupported delegated inbox kind")
+        now = _timestamp(created_at_ms)
+        bounded_request_id = _bounded_text(request_id, maximum=180, required=True)
+        inbox_id = f"subagent-inbox:{uuid.uuid4()}"
+        initial_status = "observed" if kind == "progress" else "pending"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_subagent_inbox(
+                    id, run_id, parent_session_id, child_session_id, turn_id,
+                    request_id, kind, title, message, status,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, request_id) DO UPDATE SET
+                    title = excluded.title,
+                    message = excluded.message,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    inbox_id,
+                    run_id,
+                    parent_session_id,
+                    child_session_id,
+                    _bounded_text(turn_id, maximum=180),
+                    bounded_request_id,
+                    kind,
+                    _bounded_text(title, maximum=160),
+                    _bounded_text(message, maximum=500),
+                    initial_status,
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM agent_subagent_inbox
+                WHERE run_id = ? AND request_id = ?
+                """,
+                (run_id, bounded_request_id),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("delegated inbox item was not persisted")
+        return _inbox_payload(row)
+
+    def list_inbox(self, run_id: str, *, limit: int = 100) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_subagent_inbox
+                WHERE run_id = ? ORDER BY created_at_ms DESC LIMIT ?
+                """,
+                (run_id, max(1, min(int(limit), 200))),
+            ).fetchall()
+        return [_inbox_payload(row) for row in rows]
+
+    def reply_inbox(
+        self,
+        *,
+        run_id: str,
+        inbox_id: str,
+        response: Mapping[str, object],
+        resolved_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        now = _timestamp(resolved_at_ms)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_subagent_inbox
+                SET status = 'replied', response_json = ?, updated_at_ms = ?,
+                    resolved_at_ms = ?
+                WHERE id = ? AND run_id = ? AND status = 'pending'
+                """,
+                (
+                    json.dumps(
+                        dict(response),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    now,
+                    now,
+                    inbox_id,
+                    run_id,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM agent_subagent_inbox WHERE id = ? AND run_id = ?",
+                (inbox_id, run_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(inbox_id)
+        if cursor.rowcount != 1:
+            raise ValueError("delegated inbox item is no longer pending")
+        return _inbox_payload(row)
+
+    def reopen_run(self, run_id: str, *, updated_at_ms: int | None = None) -> dict[str, object]:
+        now = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT batch_id, state FROM agent_subagent_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            if str(row["state"]) not in {"failed", "aborted", "timed_out"}:
+                raise ValueError("only a stopped delegated run can resume")
+            conn.execute(
+                """
+                UPDATE agent_subagent_runs
+                SET state = 'queued', result_json = '{}', error = '',
+                    started_at_ms = NULL, completed_at_ms = NULL, updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (now, run_id),
+            )
+            conn.execute(
+                """
+                UPDATE agent_subagent_batches
+                SET abort_requested = 0, state = 'queued', completed_at_ms = NULL,
+                    updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (now, str(row["batch_id"])),
+            )
+            self._append_event_conn(
+                conn,
+                run_id=run_id,
+                event_type="progress",
+                payload={"summary": "Parent resumed retained child session"},
+                created_at_ms=now,
+            )
+        self._sync_run_artifact(run_id)
+        return self.get_run(run_id)
+
+    def latest_resume_message(self, run_id: str) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT payload_json FROM agent_subagent_controls
+                WHERE run_id = ? AND action = 'resume' AND state = 'completed'
+                ORDER BY completed_at_ms DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return ""
+        payload = _json_mapping(row["payload_json"])
+        return _bounded_text(
+            payload.get("message") or "继续之前中断的任务。先核对已有进度，再完成剩余工作。",
+            maximum=4_000,
+        )
+
+    def list_events(self, run_id: str, *, limit: int = 100) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_id, sequence, event_type, created_at_ms, payload_json
+                FROM agent_subagent_events
+                WHERE run_id = ? ORDER BY sequence DESC LIMIT ?
+                """,
+                (run_id, max(1, min(int(limit), 200))),
+            ).fetchall()
+        return [
+            {
+                "eventId": str(row["event_id"]),
+                "sequence": int(row["sequence"]),
+                "eventType": str(row["event_type"]),
+                "createdAtMs": int(row["created_at_ms"]),
+                "payload": _json_mapping(row["payload_json"]),
+            }
+            for row in reversed(rows)
+        ]
 
     def append_budget_event(self, run_id: str, reason: str, *, phase: str) -> None:
         if phase not in {"soft", "hard"}:
@@ -1045,6 +1368,248 @@ class AgentDelegationCoordinator:
             "batch": batch,
         }
 
+    def console(self, parent_session_id: str, run_id: str) -> dict[str, object]:
+        run = self.store.get_run(run_id)
+        batch = self.store.get_batch(str(run["batchId"]))
+        _assert_batch_owner(batch, parent_session_id)
+        with self._lock:
+            active = self._active_runs.get(run_id)
+
+        conversation: dict[str, object]
+        if active is not None:
+            try:
+                messages = active.runtime.messages(active.child_session_id)
+                conversation = {
+                    "availability": "available",
+                    "source": "active_runtime",
+                    "items": messages,
+                }
+            except Exception:
+                conversation = {
+                    "availability": "temporarily_unavailable",
+                    "source": "active_runtime",
+                    "items": [],
+                }
+        else:
+            result = run.get("result")
+            result_mapping = dict(result) if isinstance(result, Mapping) else {}
+            persisted = result_mapping.get("messages")
+            if isinstance(persisted, list):
+                conversation = {
+                    "availability": "available",
+                    "source": "completion_snapshot",
+                    "items": [dict(item) for item in persisted if isinstance(item, Mapping)],
+                }
+            else:
+                final_message = result_mapping.get("message")
+                items = (
+                    [dict(final_message)]
+                    if isinstance(final_message, Mapping)
+                    else []
+                )
+                conversation = {
+                    "availability": "partial" if items else "unavailable",
+                    "source": "legacy_result",
+                    "items": items,
+                }
+
+        inbox = self.store.list_inbox(run_id)
+        child_available = True
+        try:
+            self.sessions.get(str(run["childSessionId"]))
+        except KeyError:
+            child_available = False
+        state = str(run["state"])
+        capabilities = {
+            "steer": {
+                "available": active is not None and state == "running",
+                "reason": "" if active is not None and state == "running" else "仅运行中的子 Agent 可接收干预",
+            },
+            "abort": {
+                "available": state in _ACTIVE_STATES,
+                "reason": "" if state in _ACTIVE_STATES else "任务已结束",
+            },
+            "retry": {
+                "available": state in _TERMINAL_STATES,
+                "reason": "" if state in _TERMINAL_STATES else "等待当前任务结束",
+            },
+            "resume": {
+                "available": state in {"failed", "aborted", "timed_out"} and child_available,
+                "reason": (
+                    ""
+                    if state in {"failed", "aborted", "timed_out"} and child_available
+                    else "仅保留了会话的中断任务可继续"
+                ),
+            },
+            "reply": {
+                "available": active is not None
+                and any(item["status"] == "pending" for item in inbox),
+                "reason": (
+                    ""
+                    if active is not None
+                    and any(item["status"] == "pending" for item in inbox)
+                    else "当前没有等待主持人回复的问题"
+                ),
+            },
+        }
+        records = self.artifacts.lifecycle_records(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+        )
+        activity = [
+            {
+                "id": str(item.get("recordId") or ""),
+                "eventType": str(item.get("eventType") or ""),
+                "createdAtMs": int(item.get("createdAtMs") or 0),
+                "payload": dict(item.get("payload") or {})
+                if isinstance(item.get("payload"), Mapping)
+                else {},
+            }
+            for item in records[-120:]
+        ]
+        return {
+            "schemaVersion": "rag-ime.agent-subagent-console.v1",
+            "ok": True,
+            "parentSessionId": parent_session_id,
+            "run": run,
+            "capabilities": capabilities,
+            "conversation": conversation,
+            "activity": activity,
+            "inbox": inbox,
+            "controls": self.store.list_controls(run_id),
+            "updatedAtMs": _timestamp(None),
+        }
+
+    def control(
+        self,
+        parent_session_id: str,
+        run_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        action = _bounded_text(payload.get("action"), maximum=24, required=True)
+        client_action_id = _bounded_text(
+            payload.get("clientActionId"),
+            maximum=128,
+            required=True,
+        )
+        message = _bounded_text(payload.get("message"), maximum=4_000)
+        inbox_id = _bounded_text(payload.get("inboxId"), maximum=180)
+        command_payload = {
+            "action": action,
+            "message": message,
+            "inboxId": inbox_id,
+        }
+        control, created = self.store.claim_control(
+            run_id=run_id,
+            parent_session_id=parent_session_id,
+            client_action_id=client_action_id,
+            action=action,
+            payload=command_payload,
+        )
+        if not created:
+            return {
+                "schemaVersion": "rag-ime.agent-subagent-control.v1",
+                "ok": str(control["state"]) != "failed",
+                "replayed": True,
+                "control": control,
+            }
+
+        try:
+            result: dict[str, object]
+            if action == "steer":
+                if not message:
+                    raise ValueError("steer message is required")
+                active = self._active_run(run_id)
+                result = dict(
+                    active.runtime.prompt(
+                        active.child_session_id,
+                        message,
+                        client_message_id=client_action_id,
+                        delivery="steer",
+                    )
+                )
+            elif action == "reply":
+                if not inbox_id or not message:
+                    raise ValueError("reply requires inboxId and message")
+                pending = next(
+                    (
+                        item
+                        for item in self.store.list_inbox(run_id)
+                        if item["id"] == inbox_id and item["status"] == "pending"
+                    ),
+                    None,
+                )
+                if pending is None:
+                    raise ValueError("delegated inbox item is no longer pending")
+                active = self._active_run(run_id)
+                delivery = dict(
+                    active.runtime.prompt(
+                        active.child_session_id,
+                        message,
+                        client_message_id=client_action_id,
+                        delivery="steer",
+                    )
+                )
+                replied = self.store.reply_inbox(
+                    run_id=run_id,
+                    inbox_id=inbox_id,
+                    response={"message": message, "delivery": "steer"},
+                )
+                result = {"delivery": delivery, "inbox": replied}
+            elif action == "abort":
+                result = self.abort(parent_session_id, {"runId": run_id})
+            elif action == "retry":
+                current = self.store.get_run(run_id)
+                result = self.delegate(
+                    parent_session_id,
+                    {
+                        "agent": current["templateId"],
+                        "version": current["templateVersion"],
+                        "task": current["task"],
+                        "contextMode": "fresh",
+                        "wait": False,
+                    },
+                )
+            elif action == "resume":
+                if not message:
+                    message = "继续之前中断的任务。先核对已有进度，再完成剩余工作。"
+                    command_payload["message"] = message
+                with self._lock:
+                    previous_thread = self._threads.get(run_id)
+                if (
+                    previous_thread is not None
+                    and previous_thread is not threading.current_thread()
+                ):
+                    previous_thread.join(timeout=2.0)
+                    if previous_thread.is_alive():
+                        raise ValueError("delegated run is still finalizing")
+                reopened = self.store.reopen_run(run_id)
+                result = {"run": reopened, "delivery": "retained_session"}
+            else:
+                raise ValueError("unsupported delegated control action")
+            completed = self.store.finish_control(str(control["id"]), result=result)
+            if action == "resume":
+                self._start_run_thread(run_id)
+            return {
+                "schemaVersion": "rag-ime.agent-subagent-control.v1",
+                "ok": True,
+                "replayed": False,
+                "control": completed,
+            }
+        except Exception as exc:
+            self.store.finish_control(
+                str(control["id"]),
+                error=_bounded_text(exc, maximum=500),
+            )
+            raise
+
+    def _active_run(self, run_id: str) -> _ActiveDelegatedRun:
+        with self._lock:
+            active = self._active_runs.get(run_id)
+        if active is None:
+            raise ValueError("delegated run is not currently active")
+        return active
+
     def inspect_artifact(
         self,
         parent_session_id: str,
@@ -1185,9 +1750,10 @@ class AgentDelegationCoordinator:
         completed = False
         budget_reason = ""
         last_message: dict[str, object] = {}
-        turn_count = 0
-        total_tokens = 0
+        turn_count = int(run["usage"]["turnCount"])
+        total_tokens = int(run["usage"]["totalTokens"])
         output_chars = 0
+        base_tool_count = int(run["usage"]["toolCount"])
         tool_ids: set[str] = set()
         update_lock = threading.RLock()
         soft_reasons: set[str] = set()
@@ -1198,7 +1764,7 @@ class AgentDelegationCoordinator:
             return {
                 "usage": {
                     "turnCount": turn_count,
-                    "toolCount": len(tool_ids),
+                    "toolCount": base_tool_count + len(tool_ids),
                     "totalTokens": total_tokens,
                     "outputChars": output_chars,
                 },
@@ -1242,7 +1808,11 @@ class AgentDelegationCoordinator:
             budget = run["budget"]
             checks = (
                 (turn_count, int(budget["maxTurns"]), "turn budget exceeded"),
-                (len(tool_ids), int(budget["maxToolCalls"]), "tool-call budget exceeded"),
+                (
+                    base_tool_count + len(tool_ids),
+                    int(budget["maxToolCalls"]),
+                    "tool-call budget exceeded",
+                ),
                 (total_tokens, int(budget["maxTotalTokens"]), "token budget exceeded"),
                 (output_chars, int(budget["maxOutputChars"]), "output budget exceeded"),
             )
@@ -1276,6 +1846,59 @@ class AgentDelegationCoordinator:
                     )
                     tool_ids.add(identity)
                     persist_runtime_event(event)
+                    self.store.update_usage(
+                        run_id,
+                        turn_count=turn_count,
+                        tool_count=base_tool_count + len(tool_ids),
+                        total_tokens=total_tokens,
+                    )
+                elif event.event_type == "tool_progress":
+                    summary = _bounded_text(
+                        event.payload.get("summary")
+                        or event.payload.get("message")
+                        or event.payload.get("toolName")
+                        or "工具仍在执行",
+                        maximum=240,
+                    )
+                    self.store.upsert_inbox(
+                        run_id=run_id,
+                        parent_session_id=parent_session_id,
+                        child_session_id=child_session_id,
+                        request_id=f"progress:{event.event_id}",
+                        kind="progress",
+                        title=_bounded_text(
+                            event.payload.get("toolName") or "执行进度",
+                            maximum=160,
+                        ),
+                        message=summary,
+                        turn_id=event.turn_id,
+                        created_at_ms=event.created_at_ms,
+                    )
+                    persist_runtime_event(event)
+                elif event.event_type == "user_input_required":
+                    method = str(event.payload.get("method") or "")
+                    kind = "interview" if method in {"input", "editor"} else "need_decision"
+                    self.store.upsert_inbox(
+                        run_id=run_id,
+                        parent_session_id=parent_session_id,
+                        child_session_id=child_session_id,
+                        request_id=str(
+                            event.payload.get("requestId") or event.event_id
+                        ),
+                        kind=kind,
+                        title=_bounded_text(
+                            event.payload.get("title")
+                            or ("需要补充信息" if kind == "interview" else "需要主持人决定"),
+                            maximum=160,
+                        ),
+                        message=_bounded_text(
+                            event.payload.get("message") or "",
+                            maximum=500,
+                        ),
+                        turn_id=event.turn_id,
+                        created_at_ms=event.created_at_ms,
+                    )
+                    persist_runtime_event(event)
                 elif event.event_type == "message_completed":
                     message = event.payload.get("message")
                     if isinstance(message, Mapping) and str(message.get("role") or "") == "assistant":
@@ -1285,6 +1908,14 @@ class AgentDelegationCoordinator:
                         if isinstance(usage, Mapping):
                             total_tokens += max(0, int(usage.get("totalTokens") or 0))
                         persist_runtime_event(event)
+                        self.store.update_usage(
+                            run_id,
+                            turn_count=turn_count,
+                            tool_count=base_tool_count + len(tool_ids),
+                            total_tokens=total_tokens,
+                            summary="子 Agent 已完成一个阶段",
+                            updated_at_ms=event.created_at_ms,
+                        )
                 elif event.event_type == "turn_completed":
                     completed = True
                     persist_runtime_event(event, terminal_state="completed")
@@ -1353,7 +1984,8 @@ class AgentDelegationCoordinator:
                 state = "aborted"
                 error = "Stopped by user"
             else:
-                runtime.prompt(child_session_id, _subagent_prompt(run, batch))
+                prompt = self.store.latest_resume_message(run_id) or _subagent_prompt(run, batch)
+                runtime.prompt(child_session_id, prompt)
                 duration_seconds = int(run["budget"]["maxDurationMs"]) / 1000.0
                 started = time.monotonic()
                 soft_deadline = started + duration_seconds * _SOFT_BUDGET_RATIO
@@ -1400,9 +2032,14 @@ class AgentDelegationCoordinator:
                         last_message,
                         int(run["budget"]["maxOutputChars"]),
                     )
+                    try:
+                        conversation = runtime.messages(child_session_id)
+                    except Exception:
+                        conversation = []
                     result = {
                         "summary": summary,
                         "message": last_message,
+                        "messages": conversation,
                         "childSessionId": child_session_id,
                         "templateId": run["templateId"],
                     }
@@ -1428,7 +2065,7 @@ class AgentDelegationCoordinator:
                 result=result,
                 error=error,
                 turn_count=turn_count,
-                tool_count=len(tool_ids),
+                tool_count=base_tool_count + len(tool_ids),
                 total_tokens=total_tokens,
             )
             self._publish_parent_progress(
@@ -1863,6 +2500,43 @@ def _json_mapping(value: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return dict(payload) if isinstance(payload, Mapping) else {}
+
+
+def _control_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "id": str(row["id"]),
+        "runId": str(row["run_id"]),
+        "clientActionId": str(row["client_action_id"]),
+        "action": str(row["action"]),
+        "state": str(row["state"]),
+        "payload": _json_mapping(row["payload_json"]),
+        "result": _json_mapping(row["result_json"]),
+        "error": str(row["error"] or ""),
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+        "completedAtMs": (
+            int(row["completed_at_ms"]) if row["completed_at_ms"] is not None else None
+        ),
+    }
+
+
+def _inbox_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "id": str(row["id"]),
+        "runId": str(row["run_id"]),
+        "requestId": str(row["request_id"]),
+        "kind": str(row["kind"]),
+        "title": str(row["title"] or ""),
+        "message": str(row["message"] or ""),
+        "status": str(row["status"]),
+        "turnId": str(row["turn_id"] or ""),
+        "response": _json_mapping(row["response_json"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+        "resolvedAtMs": (
+            int(row["resolved_at_ms"]) if row["resolved_at_ms"] is not None else None
+        ),
+    }
 
 
 def _assert_batch_owner(batch: Mapping[str, object], parent_session_id: str) -> None:

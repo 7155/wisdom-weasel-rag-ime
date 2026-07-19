@@ -132,6 +132,98 @@ class _ManyTurnsAndToolsRuntime(_CompletingRuntime):
         return {"accepted": True, "turnId": "turn:11"}
 
 
+class _InteractiveRuntime(_CompletingRuntime):
+    instances: list["_InteractiveRuntime"] = []
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.deliveries: list[tuple[str, str]] = []
+        self.session_id = ""
+        self.__class__.instances.append(self)
+
+    def prompt(self, session_id, message, *, delivery="prompt", **_kwargs):
+        self.deliveries.append((delivery, message))
+        self.session_id = session_id
+        if delivery == "prompt":
+            self.events.publish(
+                session_id,
+                "tool_started",
+                {"toolCallId": "tool:1", "toolName": "ime_knowledge"},
+                turn_id="turn:interactive",
+            )
+            self.events.publish(
+                session_id,
+                "user_input_required",
+                {
+                    "requestId": "request:choice",
+                    "method": "confirm",
+                    "title": "选择实现路径",
+                    "message": "是否保留兼容层？",
+                },
+                turn_id="turn:interactive",
+            )
+        return {"accepted": True, "turnId": "turn:interactive", "delivery": delivery}
+
+    def messages(self, session_id):
+        return [
+            {
+                "schemaVersion": "rag-ime.agent-message.v1",
+                "id": "message:task",
+                "sessionId": session_id,
+                "turnId": "turn:interactive",
+                "role": "user",
+                "status": "completed",
+                "blocks": [
+                    {
+                        "id": "block:task",
+                        "type": "text",
+                        "status": "completed",
+                        "presentationKind": "markdown",
+                        "data": {"text": "核对实现路径"},
+                    }
+                ],
+                "attachments": [],
+                "citations": [],
+                "createdAtMs": 1,
+            }
+        ]
+
+
+class _ResumeRuntime(_CompletingRuntime):
+    prompts: list[str] = []
+
+    def prompt(self, session_id, message, **_kwargs):
+        self.__class__.prompts.append(message)
+        if len(self.__class__.prompts) == 1:
+            self.events.publish(
+                session_id,
+                "turn_failed",
+                {"error": "temporary failure"},
+                turn_id="turn:first",
+            )
+            return {"accepted": True, "turnId": "turn:first"}
+        turn_id = "turn:resumed"
+        self.events.publish(
+            session_id,
+            "message_completed",
+            {
+                "message": _assistant_message(session_id, turn_id, "恢复后完成"),
+                "usage": {"totalTokens": 123},
+            },
+            turn_id=turn_id,
+        )
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turn_id,
+        )
+        return {"accepted": True, "turnId": turn_id}
+
+    def messages(self, _session_id):
+        return []
+
+
 class AgentDelegationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-delegation-")
@@ -774,6 +866,113 @@ class AgentDelegationTests(unittest.TestCase):
         failed = coordinator.store.get_batch(str(running["id"]))
         self.assertEqual(failed["state"], "failed")
         self.assertIn("durable terminal checkpoint", failed["runs"][0]["error"])
+        coordinator.close()
+
+    def test_console_uses_live_runtime_and_controls_are_idempotent(self) -> None:
+        _InteractiveRuntime.instances.clear()
+        coordinator = self.coordinator(_InteractiveRuntime)
+        response = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "agent": "worker",
+                "task": "核对实现路径",
+                "contextMode": "fresh",
+                "wait": False,
+            },
+        )
+        run_id = str(response["batch"]["runs"][0]["id"])
+        _wait_until(lambda: coordinator.store.get_run(run_id)["state"] == "running")
+        _wait_until(lambda: len(coordinator.store.list_inbox(run_id)) == 1)
+
+        console = coordinator.console(str(self.parent["id"]), run_id)
+        self.assertEqual(console["conversation"]["source"], "active_runtime")
+        self.assertTrue(console["capabilities"]["steer"]["available"])
+        self.assertEqual(console["inbox"][0]["kind"], "need_decision")
+        self.assertEqual(console["run"]["usage"]["toolCount"], 1)
+
+        first = coordinator.control(
+            str(self.parent["id"]),
+            run_id,
+            {
+                "action": "steer",
+                "clientActionId": "action:one",
+                "message": "保留兼容层",
+            },
+        )
+        replay = coordinator.control(
+            str(self.parent["id"]),
+            run_id,
+            {
+                "action": "steer",
+                "clientActionId": "action:one",
+                "message": "保留兼容层",
+            },
+        )
+        self.assertFalse(first["replayed"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(
+            _InteractiveRuntime.instances[0].deliveries.count(("steer", "保留兼容层")),
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "different action"):
+            coordinator.control(
+                str(self.parent["id"]),
+                run_id,
+                {
+                    "action": "steer",
+                    "clientActionId": "action:one",
+                    "message": "删除兼容层",
+                },
+            )
+
+        inbox_id = str(console["inbox"][0]["id"])
+        coordinator.control(
+            str(self.parent["id"]),
+            run_id,
+            {
+                "action": "reply",
+                "clientActionId": "action:reply",
+                "inboxId": inbox_id,
+                "message": "是，保留兼容层。",
+            },
+        )
+        self.assertEqual(coordinator.store.list_inbox(run_id)[0]["status"], "replied")
+        coordinator.control(
+            str(self.parent["id"]),
+            run_id,
+            {"action": "abort", "clientActionId": "action:abort"},
+        )
+        _wait_until(lambda: coordinator.store.get_run(run_id)["state"] == "aborted")
+        coordinator.close()
+
+    def test_resume_continues_the_retained_child_session(self) -> None:
+        _ResumeRuntime.prompts.clear()
+        coordinator = self.coordinator(_ResumeRuntime)
+        response = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "agent": "reviewer",
+                "task": "完成中断恢复验证",
+                "contextMode": "fresh",
+                "wait": False,
+            },
+        )
+        run_id = str(response["batch"]["runs"][0]["id"])
+        child_session_id = str(response["batch"]["runs"][0]["childSessionId"])
+        _wait_until(lambda: coordinator.store.get_run(run_id)["state"] == "failed")
+        coordinator.control(
+            str(self.parent["id"]),
+            run_id,
+            {
+                "action": "resume",
+                "clientActionId": "action:resume",
+                "message": "从失败位置继续，不要重复已完成步骤。",
+            },
+        )
+        _wait_until(lambda: coordinator.store.get_run(run_id)["state"] == "completed")
+        resumed = coordinator.store.get_run(run_id)
+        self.assertEqual(resumed["childSessionId"], child_session_id)
+        self.assertEqual(_ResumeRuntime.prompts[-1], "从失败位置继续，不要重复已完成步骤。")
         coordinator.close()
 
 

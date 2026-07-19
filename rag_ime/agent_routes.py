@@ -180,7 +180,7 @@ def agent_subagent_route(path: str) -> tuple[str, str]:
         return "", ""
     run_id = unquote(parts[0]).strip()
     action = parts[1] if len(parts) == 2 else ""
-    if not run_id or action not in {"", "abort"}:
+    if not run_id or action not in {"", "abort", "console", "control"}:
         return "", ""
     return run_id, action
 

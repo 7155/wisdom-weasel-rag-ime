@@ -1,0 +1,217 @@
+.agent-context-xray {
+  --context-xray-success: color-mix(in srgb, var(--color-success) 84%, var(--color-text));
+}
+
+.agent-context-xray__trigger {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-context-xray__trigger > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agent-context-xray__trigger strong {
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.agent-context-xray__trigger small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-context-xray__trigger > svg {
+  color: var(--color-text-tertiary);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.agent-context-xray__trigger[aria-expanded='true'] > svg {
+  transform: rotate(90deg);
+}
+
+.agent-context-xray__body {
+  display: grid;
+  gap: 10px;
+  padding: 0 0 10px;
+}
+
+.agent-context-xray__runtime {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border-block: 1px solid color-mix(in srgb, var(--color-border) 74%, transparent);
+}
+
+.agent-context-xray__runtime > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 8px 7px;
+}
+
+.agent-context-xray__runtime > div + div {
+  border-left: 1px solid color-mix(in srgb, var(--color-border) 74%, transparent);
+}
+
+.agent-context-xray__runtime dt {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.agent-context-xray__runtime dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-context-xray__layers {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-context-xray__layers > li {
+  display: grid;
+  min-width: 0;
+  min-height: 52px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 7px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+}
+
+.agent-context-xray__layers > li > svg {
+  margin-top: 2px;
+  color: var(--color-accent);
+}
+
+.agent-context-xray__layers > li[data-state='absent'] > svg,
+.agent-context-xray__layers > li[data-state='unavailable'] > svg {
+  color: var(--color-text-tertiary);
+}
+
+.agent-context-xray__layers > li > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.agent-context-xray__layers strong {
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.agent-context-xray__layers small,
+.agent-context-xray__layers em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-context-xray__layers small {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-context-xray__layers > li > b {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+  padding: 2px 5px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
+  border-radius: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.agent-context-xray__layers > li > b[data-state='delivered'] {
+  border-color: color-mix(in srgb, var(--color-success) 34%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  color: var(--context-xray-success);
+}
+
+.agent-context-xray__layers > li > b[data-state='missing'] {
+  border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
+  color: var(--color-danger);
+}
+
+.agent-context-xray__layers > li > b[data-state='pending'] {
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
+  color: var(--color-warning);
+}
+
+.agent-context-xray__footnote,
+.agent-context-xray__notice {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.agent-context-xray__notice {
+  padding: 9px 0;
+}
+
+.agent-context-xray__notice[data-tone='warning'] {
+  color: var(--color-warning);
+}
+
+@media (max-width: 560px) {
+  .agent-context-xray__runtime dt {
+    font-size: 11px;
+  }
+
+  .agent-context-xray__runtime dd,
+  .agent-context-xray__layers strong {
+    font-size: 12px;
+  }
+
+  .agent-context-xray__layers small,
+  .agent-context-xray__layers em,
+  .agent-context-xray__footnote {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-context-xray__trigger > svg {
+    transition: none;
+  }
+}

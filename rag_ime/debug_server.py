@@ -6414,6 +6414,15 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if subagent_run_id and subagent_action == "console":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.delegation_console(
+                    _query_first(query, "sessionId"),
+                    subagent_run_id,
+                ),
+            )
+            return
         if artifact_id:
             self._write_json(
                 HTTPStatus.OK,
@@ -7368,6 +7377,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self.service.agent.abort_delegation(
                         str(payload.get("sessionId") or ""),
                         {"runId": subagent_run_id},
+                    ),
+                )
+            elif subagent_run_id and subagent_action == "control":
+                session_id = str(payload.pop("sessionId", ""))
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.control_delegation(
+                        session_id,
+                        subagent_run_id,
+                        payload,
                     ),
                 )
             elif agent_room_id and room_action == "messages":

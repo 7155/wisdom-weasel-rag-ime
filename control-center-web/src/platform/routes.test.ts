@@ -105,6 +105,8 @@ const canonicalPathIds = [
   'agent.subagents.list',
   'agent.subagents.create',
   'agent.subagent.get',
+  'agent.subagent.console',
+  'agent.subagent.control',
   'agent.subagent.abort',
   'agent.memorySources.list',
   'agent.wakeSchedules.list',

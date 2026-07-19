@@ -1073,6 +1073,21 @@ class AgentService:
     ) -> dict[str, object]:
         return self.delegation.status(session_id, payload)
 
+    def delegation_console(
+        self,
+        session_id: str,
+        run_id: str,
+    ) -> dict[str, object]:
+        return self.delegation.console(session_id, run_id)
+
+    def control_delegation(
+        self,
+        session_id: str,
+        run_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.delegation.control(session_id, run_id, payload)
+
     def abort_delegation(
         self,
         session_id: str,
