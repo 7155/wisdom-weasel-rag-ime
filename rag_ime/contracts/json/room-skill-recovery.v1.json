@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-skill-recovery.v1.json",
+  "title": "Room native Skill compaction recovery pin",
+  "type": "object",
+  "required": [
+    "schemaVersion", "restoredFromReceiptId", "skillId", "skillHash",
+    "hashRule", "catalogRevision", "policyId", "policyVersion",
+    "capabilityEpoch"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-skill-recovery.v1"},
+    "restoredFromReceiptId": {"type": "string", "minLength": 1},
+    "skillId": {"type": "string", "minLength": 1},
+    "skillHash": {"type": "string", "minLength": 64},
+    "hashRule": {"const": "sha256-skill-body-utf8-v1"},
+    "catalogRevision": {"type": "string", "minLength": 64},
+    "policyId": {"type": "string", "minLength": 1},
+    "policyVersion": {"type": "integer", "minimum": 1},
+    "capabilityEpoch": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

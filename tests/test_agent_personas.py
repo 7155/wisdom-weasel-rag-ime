@@ -45,7 +45,7 @@ class AgentPersonaStoreTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             self.assertEqual(
                 conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0],
-                71,
+                72,
             )
             private = conn.execute(
                 """

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-skill-policy.v1.json",
+  "title": "Room native Skill governance policy",
+  "type": "object",
+  "required": ["schemaVersion", "policyId", "version", "hashRule", "skills"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-skill-policy.v1"},
+    "policyId": {"type": "string", "minLength": 1},
+    "version": {"type": "integer", "minimum": 1},
+    "hashRule": {"const": "sha256-skill-body-utf8-v1"},
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["skillId", "stages", "risk", "nextCandidates"],
+        "properties": {
+          "skillId": {"type": "string", "minLength": 1},
+          "stages": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "risk": {"enum": ["low", "medium", "high"]},
+          "nextCandidates": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
