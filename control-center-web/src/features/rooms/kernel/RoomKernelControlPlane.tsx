@@ -6,6 +6,7 @@ import {
   LockKeyhole,
   ShieldCheck,
   Square,
+  TriangleAlert,
   Wrench,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -15,6 +16,7 @@ import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kern
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import {
   buildCancelRootCommand,
+  buildPanicCommand,
   type RoomKernelCommandTransport,
 } from './room-kernel-command-transport';
 import './room-kernel-control-plane.css';
@@ -39,6 +41,8 @@ export function RoomKernelControlPlane({
   capabilityReceiptsByRootId,
   contextReceiptsByRootId,
   commandTransport,
+  commandDisabledReason,
+  panicEnabled = false,
   projection,
 }: {
   projection: RoomKernelProjection;
@@ -46,14 +50,39 @@ export function RoomKernelControlPlane({
   contextReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
   capabilityReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
   commandTransport?: RoomKernelCommandTransport;
+  commandDisabledReason?: string;
+  panicEnabled?: boolean;
 }) {
   const roots = Object.values(projection.rootsById).sort((left, right) => (
     left.updatedAtMs === right.updatedAtMs
       ? left.rootId.localeCompare(right.rootId)
       : right.updatedAtMs - left.updatedAtMs
   ));
+  const [panicPending, setPanicPending] = useState(false);
+  const [panicReceipt, setPanicReceipt] = useState<RoomKernelReceiptV1 | null>(null);
+  const [panicError, setPanicError] = useState('');
+  const requestPanic = async () => {
+    if (!panicEnabled || !commandTransport || panicPending) return;
+    if (!window.confirm('紧急停止会取消这个 Room 中所有正在执行的根任务。确认继续？')) return;
+    setPanicPending(true);
+    setPanicReceipt(null);
+    setPanicError('');
+    const commandId = `ui-panic:${projection.roomId}:${Date.now()}`;
+    try {
+      setPanicReceipt(await commandTransport.execute(buildPanicCommand(
+        projection.roomId,
+        { commandId, sourceId: 'room-kernel-control-plane', createdAtMs: Date.now() },
+      )));
+    } catch (error) {
+      setPanicError(error instanceof Error ? error.message : '紧急停止未返回有效回执');
+    } finally {
+      setPanicPending(false);
+    }
+  };
   return <section className="room-kernel-control" aria-label="Room 协作控制面">
-    <header className="room-kernel-control__header"><span><strong>协作控制面</strong><small>{roots.length} 个根任务 · cursor {projection.lastSequence}</small></span>{projection.needsSnapshot ? <b data-state="warning">等待状态快照</b> : <b data-state="healthy">状态已同步</b>}</header>
+    <header className="room-kernel-control__header"><span><strong>协作控制面</strong><small>{roots.length} 个根任务 · cursor {projection.lastSequence}</small></span><span className="room-kernel-control__actions">{projection.needsSnapshot ? <b data-state="warning">等待状态快照</b> : <b data-state="healthy">状态已同步</b>}{panicEnabled ? <Button variant="quiet" size="small" leadingIcon={<TriangleAlert size={13} />} disabled={!commandTransport || panicPending} onClick={() => void requestPanic()}>{panicPending ? '正在停止' : '紧急停止'}</Button> : null}</span></header>
+    {panicReceipt ? <p className="room-kernel-control__panic-receipt" role="status">{receiptStatusLabel(panicReceipt)} · {panicReceipt.receiptId}</p> : null}
+    {panicError ? <p className="room-kernel-control__command-error" role="alert">{panicError}</p> : null}
     <div className="room-kernel-control__roots">
       {roots.map((root) => <RootControlSection
         key={`${root.rootId}:${root.generation}`}
@@ -63,6 +92,7 @@ export function RoomKernelControlPlane({
         contextReceipt={contextReceiptsByRootId[root.rootId]}
         capabilityReceipt={capabilityReceiptsByRootId[root.rootId]}
         commandTransport={commandTransport}
+        commandDisabledReason={commandDisabledReason}
       />)}
       {!roots.length ? <p className="room-kernel-control__empty">当前没有根任务。</p> : null}
     </div>
@@ -74,6 +104,7 @@ function RootControlSection({
   capabilityReceipt,
   contextReceipt,
   commandTransport,
+  commandDisabledReason,
   projection,
   root,
 }: {
@@ -83,6 +114,7 @@ function RootControlSection({
   contextReceipt?: RuntimeReceiptSummary;
   capabilityReceipt?: RuntimeReceiptSummary;
   commandTransport?: RoomKernelCommandTransport;
+  commandDisabledReason?: string;
 }) {
   const posts = projection.postOrder
     .map((postId) => projection.postsById[postId])
@@ -95,6 +127,7 @@ function RootControlSection({
   const [pending, setPending] = useState(false);
   const [commandReceipt, setCommandReceipt] = useState<RoomKernelReceiptV1 | null>(null);
   const [commandError, setCommandError] = useState('');
+  const commandAwaitingProjection = Boolean(commandReceipt && commandReceipt.status !== 'rejected');
   const requestStop = async () => {
     if (!commandTransport || pending) return;
     setPending(true);
@@ -116,7 +149,7 @@ function RootControlSection({
   return <article className="room-kernel-root" data-root-state={root.state}>
     <header className="room-kernel-root__header">
       <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root)}</i></span>
-      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending} title={commandTransport ? '提交带 generation 的取消命令' : '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
+      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '等待 canonical Root 投影更新' : '提交带 generation 的取消命令' : commandDisabledReason || '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : commandAwaitingProjection ? '已提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
     </header>
     <div className="room-kernel-root__summary">
       <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.owner || '等待分派'}</strong></span>
@@ -128,7 +161,7 @@ function RootControlSection({
       <ReceiptSummary icon={<LockKeyhole size={14} />} label="Context" receipt={contextReceipt} />
       <ReceiptSummary icon={<Wrench size={14} />} label="Capability" receipt={capabilityReceipt} />
       <span><CircleCheck size={14} /><small>Terminal</small><strong>{receipt ? `${receipt.receiptKind}/${receipt.status} · ${receipt.receiptId}` : '等待全链静止'}</strong></span>
-      <span><Square size={14} /><small>Cancel</small><strong>{commandReceipt ? `${commandReceipt.receiptKind}/${commandReceipt.status} · ${commandReceipt.receiptId}` : cancelReceipt ? `${cancelReceipt.receiptKind}/${cancelReceipt.status} · ${cancelReceipt.receiptId}` : commandTransport ? '尚未请求' : '只读，等待后端接口'}</strong></span>
+      <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>Cancel</small><strong>{commandReceipt ? `${receiptStatusLabel(commandReceipt)} · ${commandReceipt.receiptId}` : cancelReceipt ? `${receiptStatusLabel(cancelReceipt)} · ${cancelReceipt.receiptId}` : commandTransport ? '尚未请求' : '只读，控制命令未授权'}</strong></span>
     </section>
     {commandError ? <p className="room-kernel-control__command-error" role="alert">{commandError}</p> : null}
     <div className="room-kernel-root__planes">
@@ -157,7 +190,7 @@ function BudgetMetric({
 }
 
 function ReceiptSummary({ icon, label, receipt }: { icon: ReactNode; label: string; receipt?: RuntimeReceiptSummary }) {
-  return <span>{icon}<small>{label}</small><strong>{receipt ? `${receiptStatusLabel(receipt.status)} · ${receipt.revision}` : '未上报'}</strong></span>;
+  return <span>{icon}<small>{label}</small><strong>{receipt ? `${runtimeReceiptStatusLabel(receipt.status)} · ${receipt.revision}` : '未上报'}</strong></span>;
 }
 
 function rootStateLabel(root: RootProjection): string {
@@ -169,8 +202,13 @@ function sessionStateLabel(value: string): string {
   return ({ idle: '空闲', queued: '排队中', running: '执行中', completed: '本地已完成', failed: '本地失败', cancelled: '本地已取消' } as Record<string, string>)[value] ?? value;
 }
 
-function receiptStatusLabel(value: RuntimeReceiptSummary['status']): string {
+function runtimeReceiptStatusLabel(value: RuntimeReceiptSummary['status']): string {
   return ({ pending: '待封存', sealed: '已封存', rejected: '已拒绝', missing: '缺失' } as const)[value];
+}
+
+function receiptStatusLabel(receipt: RoomKernelReceiptV1): string {
+  const status = ({ applied: '已接受', noop: '无需重复执行', rejected: '已拒绝', unknown: '状态未知' } as const)[receipt.status];
+  return `${status} · ${receipt.receiptKind}`;
 }
 
 function postKindLabel(value: string): string {

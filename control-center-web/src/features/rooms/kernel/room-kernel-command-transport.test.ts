@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
-import { buildCancelRootCommand, createFixtureRoomKernelCommandTransport, createHttpRoomKernelCommandTransport } from './room-kernel-command-transport';
+import type { ControlRequest } from '@/platform/transport';
+import { MockControlTransport } from '@/test/mock-transport';
+import { buildCancelRootCommand, buildPanicCommand, createControlRoomKernelCommandTransport, createFixtureRoomKernelCommandTransport } from './room-kernel-command-transport';
 
 describe('Room kernel fixture command transport', () => {
   it('builds a generated typed cancel command bound to Room Root generation', () => {
@@ -15,37 +17,47 @@ describe('Room kernel fixture command transport', () => {
     expect(command.idempotencyKey).toContain('room-a:root-a:7:command-7');
   });
 
+  it('builds a Room-wide panic command without pretending it targets one Root', () => {
+    expect(buildPanicCommand('room-a', { commandId: 'panic-a', sourceId: 'admin', createdAtMs: 12 }))
+      .toMatchObject({ commandKind: 'panic', roomId: 'room-a', rootId: null, targetKind: null, targetId: null, generation: 0 });
+  });
+
   it.each([
-    ['another command', { commandId: 'wrong' }],
-    ['another Root', { rootId: 'root-b' }],
-    ['a stale generation', { generation: 6 }],
+    ['another command', { commandId: 'wrong', generation: 8 }],
+    ['another Root', { rootId: 'root-b', generation: 8 }],
+    ['a stale generation', { generation: 7 }],
   ])('rejects a receipt for %s', async (_label, override) => {
     const command = buildCancelRootCommand(
       { roomId: 'room-a', rootId: 'root-a', generation: 7 },
       { commandId: 'command-7', sourceId: 'test', createdAtMs: 10 },
     );
     const transport = createFixtureRoomKernelCommandTransport(() => receipt({
-      commandId: command.commandId, rootId: command.rootId, generation: command.generation, ...override,
+      commandId: command.commandId, rootId: command.rootId, ...override,
     }));
     await expect(transport.execute(command)).rejects.toThrow(/does not match/);
   });
 
-  it('posts a production command to the canonical Room route and accepts the fenced next generation', async () => {
+  it('uses the single ControlTransport production route and validates its receipt contract', async () => {
+    const control = new MockControlTransport({
+      routes: {
+        'agent.room.kernel.command': (request: ControlRequest) => receipt({
+          commandId: (request.body as Record<string, unknown>).commandId as string,
+          rootId: 'root-a', generation: 8,
+        }),
+      },
+    });
     const command = buildCancelRootCommand(
-      { roomId: 'room:a', rootId: 'root-a', generation: 7 },
+      { roomId: 'room-a', rootId: 'root-a', generation: 7 },
       { commandId: 'command-7', sourceId: 'test', createdAtMs: 10 },
     );
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(receipt({
-      commandId: command.commandId, rootId: command.rootId, generation: 8,
-    })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-    const transport = createHttpRoomKernelCommandTransport(fetcher as typeof fetch);
-
-    await expect(transport.execute(command)).resolves.toMatchObject({ generation: 8 });
-    expect(fetcher).toHaveBeenCalledWith(
-      '/api/agent/rooms/room%3Aa/kernel/commands',
-      expect.objectContaining({ method: 'POST' }),
-    );
+    await expect(createControlRoomKernelCommandTransport(control).execute(command))
+      .resolves.toMatchObject({ receiptKind: 'root_cancelled', generation: 8 });
+    expect(control.requests[0]?.request).toMatchObject({
+      pathId: 'agent.room.kernel.command', params: { roomId: 'room-a' },
+      responseContract: 'room-kernel-receipt.v1',
+    });
   });
+
 });
 
 function receipt(overrides: Partial<RoomKernelReceiptV1>): RoomKernelReceiptV1 {

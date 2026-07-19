@@ -13,7 +13,7 @@ describe('RoomKernelControlPlane', () => {
     expect(screen.getByRole('region', { name: 'root-a 公开 Posts' })).toHaveTextContent('经过明确提交的研究发现');
     expect(screen.getByRole('region', { name: 'root-a 私有 Sessions' })).toHaveTextContent('session-private-a');
     expect(screen.queryByText('Session 私有正文')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('只读，等待后端接口');
+    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('只读，控制命令未授权');
   });
 
   it('does not expose a production Stop write without a command transport', () => {
@@ -37,7 +37,7 @@ describe('RoomKernelControlPlane', () => {
       schemaVersion: 'wisdom-weasel.room-kernel-command.v1', roomId: 'room-a', rootId: 'root-a',
       targetKind: 'root', targetId: 'root-a', generation: 3, commandKind: 'cancel_root',
     });
-    expect(await screen.findByText(/root_cancelled\/applied · cancel-root-a/)).toBeInTheDocument();
+    expect(await screen.findByText(/已接受 · root_cancelled · cancel-root-a/)).toBeInTheDocument();
   });
 
   it('targets the keyboard-selected concurrent Root only', async () => {
@@ -65,9 +65,28 @@ describe('RoomKernelControlPlane', () => {
     expect(screen.getByText('terminal/applied · terminal-a')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '停止' })).toHaveLength(1);
   });
+
+  it('exposes Room panic only for an admin gate and requires explicit confirmation', async () => {
+    const handler = vi.fn((command) => receipt({
+      receiptId: 'panic-room-a', commandId: command.commandId, rootId: null,
+      generation: 0, receiptKind: 'panic', status: 'applied',
+    }));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    renderPlane(projection(), createFixtureRoomKernelCommandTransport(handler), true);
+    const panic = screen.getByRole('button', { name: '紧急停止' });
+    fireEvent.click(panic);
+    expect(handler).not.toHaveBeenCalled();
+    fireEvent.click(panic);
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({
+      roomId: 'room-a', rootId: null, commandKind: 'panic', targetKind: null, generation: 0,
+    });
+    expect(await screen.findByText(/已接受 · panic · panic-room-a/)).toBeInTheDocument();
+    confirm.mockRestore();
+  });
 });
 
-function renderPlane(state: RoomKernelProjection, commandTransport?: ReturnType<typeof createFixtureRoomKernelCommandTransport>) {
+function renderPlane(state: RoomKernelProjection, commandTransport?: ReturnType<typeof createFixtureRoomKernelCommandTransport>, panicEnabled = false) {
   return render(<RoomKernelControlPlane
     projection={state}
     budgetsByRootId={{
@@ -77,6 +96,7 @@ function renderPlane(state: RoomKernelProjection, commandTransport?: ReturnType<
     contextReceiptsByRootId={{ 'root-a': { revision: 'context-17', status: 'sealed', contentHash: `sha256:${'a'.repeat(64)}` } }}
     capabilityReceiptsByRootId={{ 'root-a': { revision: 'capability-9', status: 'sealed', contentHash: `sha256:${'b'.repeat(64)}` } }}
     commandTransport={commandTransport}
+    panicEnabled={panicEnabled}
   />);
 }
 

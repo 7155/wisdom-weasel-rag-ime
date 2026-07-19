@@ -28,7 +28,7 @@ test('Room control plane stays readable and target Stop remains reachable', asyn
     targetId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
     generation: 3,
   });
-  await expect(plane).toContainText('root_cancelled/applied');
+  await expect(plane).toContainText('已接受 · root_cancelled');
 
   await page.screenshot({ path: test.info().outputPath('room-kernel-control.png'), fullPage: true });
 });
