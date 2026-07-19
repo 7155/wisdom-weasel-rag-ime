@@ -251,6 +251,27 @@ class _OmittingOrganizer:
         }
 
 
+class _AtomDecisionOmittingOrganizer(_OmittingOrganizer):
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        result = super().curate_owner_memory(
+            bundle=bundle,
+            project=project,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            instruction=instruction,
+        )
+        result["sourceDecisions"] = []
+        return result
+
+
 class _TimelineOnlyFactOrganizer:
     provider_name = "fixture"
 
@@ -1070,6 +1091,50 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             str(first["source"]["sourceId"]),
         )
         self.assertEqual(status["needsReviewSourceCount"], 1)
+
+    def test_auto_apply_closes_omitted_sources_from_atom_first_output(self) -> None:
+        durable = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:auto-durable",
+            turn_id="turn:auto-durable",
+            text="时间线保持独立索引，按时间意图召回。",
+            created_at_ms=100,
+        )
+        noise = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:auto-noise",
+            turn_id="turn:auto-noise",
+            text="你好呀",
+            created_at_ms=200,
+        )
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_AtomDecisionOmittingOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        )
+        curator.initialize()
+
+        report = curator.run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(
+            self.sources.get(str(durable["source"]["sourceId"]))["disposition"],
+            "consolidated",
+        )
+        forgotten = self.sources.get(str(noise["source"]["sourceId"]))
+        self.assertEqual(forgotten["disposition"], "not_for_memory")
+        self.assertEqual(
+            forgotten["dispositionReason"],
+            "model_omitted_no_durable_atom",
+        )
+        scope = report["status"]["scopes"][0]
+        self.assertEqual(scope["needsReviewSourceCount"], 0)
+        self.assertEqual(
+            scope["lastSourceCursor"]["sourceId"],
+            str(noise["source"]["sourceId"]),
+        )
 
     def test_draft_blocks_repeated_model_calls(self) -> None:
         self.sources.checkpoint_user_message(

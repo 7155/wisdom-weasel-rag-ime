@@ -38,6 +38,27 @@ class TimelineIntentTests(unittest.TestCase):
             with self.subTest(query=query):
                 self.assertFalse(classify_timeline_intent(query).requested)
 
+    def test_timeline_architecture_question_does_not_unlock_activity_records(self) -> None:
+        for query in (
+            "时间线为什么不放主题书？",
+            "记忆系统的时间线索引如何实现？",
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(
+                    classify_timeline_intent(query).as_dict(),
+                    {
+                        "requested": False,
+                        "reason": "none",
+                        "matched": [],
+                        "range": "",
+                    },
+                )
+
+        today = classify_timeline_intent("为什么今天的时间线没有记录？")
+        self.assertTrue(today.requested)
+        self.assertEqual(today.reason, "relative_time")
+        self.assertEqual(today.range, "today")
+
     def test_stale_relative_word_in_raw_history_does_not_unlock_timeline(self) -> None:
         intent = classify_timeline_intent(
             "输入法本地模型怎么配置？",

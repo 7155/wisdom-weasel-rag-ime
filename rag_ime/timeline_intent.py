@@ -18,6 +18,11 @@ _EXPLICIT_TIMELINE_RE = re.compile(
     r"activity\s*(?:log|history)|recent\s+work)",
     re.IGNORECASE,
 )
+_TIMELINE_TOPIC_QUESTION_RE = re.compile(
+    r"(?:为什么|为何|如何(?:设计|实现|存储|召回|整理|工作)|"
+    r"怎么(?:设计|实现|存储|召回|整理|工作)|架构|机制|索引|边界|区别|定义|是什么)",
+    re.IGNORECASE,
+)
 _RELATIVE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:今天|今日|\btoday\b)", re.IGNORECASE), "today"),
     (re.compile(r"(?:昨天|昨日|\byesterday\b)", re.IGNORECASE), "yesterday"),
@@ -78,19 +83,6 @@ def classify_timeline_intent(
             range=_normalized_date_range(date_matches[0]),
         )
 
-    explicit_matches = _unique_matches(_EXPLICIT_TIMELINE_RE, all_context)
-    if explicit_matches:
-        return TimelineIntent(
-            requested=True,
-            reason="explicit_timeline",
-            matched=tuple(explicit_matches),
-            range=(
-                "recent_days"
-                if any("recent" in item.casefold() for item in explicit_matches)
-                else "unspecified"
-            ),
-        )
-
     # Relative words are intentionally limited to the current question and
     # committed tail. A stale "昨天" inside broad RAG history must not unlock
     # Timeline for an unrelated semantic query.
@@ -103,6 +95,24 @@ def classify_timeline_intent(
                 matched=tuple(matches),
                 range=range_name,
             )
+
+    explicit_matches = _unique_matches(_EXPLICIT_TIMELINE_RE, all_context)
+    if explicit_matches:
+        # “时间线为什么不放主题书” asks about the memory architecture, not
+        # for activity records. Without a date or relative-time word, keep the
+        # Timeline lane closed so Topic Books and Atoms can answer the question.
+        if _TIMELINE_TOPIC_QUESTION_RE.search(primary_context):
+            return TimelineIntent(requested=False)
+        return TimelineIntent(
+            requested=True,
+            reason="explicit_timeline",
+            matched=tuple(explicit_matches),
+            range=(
+                "recent_days"
+                if any("recent" in item.casefold() for item in explicit_matches)
+                else "unspecified"
+            ),
+        )
 
     return TimelineIntent(requested=False)
 

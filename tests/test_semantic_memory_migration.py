@@ -234,6 +234,89 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         self.assertTrue(verification["ok"], verification["errors"])
         self.assertEqual(verification["activeArtifactEvidenceErrors"], [])
 
+    def test_verification_accepts_consolidated_source_evidence(self) -> None:
+        report = migrate_semantic_memory_database(
+            self.db_path,
+            project=PROJECT,
+            timezone_name="Asia/Shanghai",
+        )
+        self.assertTrue(report["verification"]["ok"])
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="consolidated-evidence", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project=PROJECT)
+        sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:consolidated-evidence",
+            turn_id="turn:consolidated-evidence",
+            text="已整理事实仍需保留证据。",
+            created_at_ms=1_800_000_000_000,
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """UPDATE agent_memory_sources
+                   SET input_event_id = 2, disposition = 'consolidated',
+                       disposition_reason = 'stored_in_current_atom'
+                   WHERE pi_entry_id = 'entry:consolidated-evidence'"""
+            )
+
+            verification = verify_semantic_memory_database(conn, project=PROJECT)
+
+        self.assertTrue(verification["ok"], verification["errors"])
+        self.assertEqual(verification["activeArtifactEvidenceErrors"], [])
+
+    def test_verification_accepts_applied_governance_evidence_without_input_event(self) -> None:
+        report = migrate_semantic_memory_database(
+            self.db_path,
+            project=PROJECT,
+            timezone_name="Asia/Shanghai",
+        )
+        self.assertTrue(report["verification"]["ok"])
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="governed-evidence", created_at_ms=1)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            content_sha256 = "a" * 64
+            conn.execute(
+                """INSERT INTO agent_memory_evidence(
+                       evidence_id, project, source_kind, source_id,
+                       idempotency_key, content_text, content_sha256,
+                       status, occurred_at_ms, recorded_at_ms
+                   ) VALUES ('evidence:governed', ?, 'session_digest',
+                             'manual:test', 'manual:test', '人工整理事实', ?,
+                             'active', 1, 1)""",
+                (PROJECT, content_sha256),
+            )
+            conn.execute(
+                """INSERT INTO memory_governance_proposals(
+                       proposal_id, session_id, project, operation,
+                       memory_kind, proposed_text, reason, evidence_ids_json,
+                       evidence_snapshot_json, action_json, payload_sha256,
+                       idempotency_key, status, applied_memory_id,
+                       created_at_ms, expires_at_ms, updated_at_ms, applied_at_ms
+                   ) VALUES ('proposal:governed', ?, ?, 'remember_preview',
+                             'fact', '人工整理事实', '人工复核',
+                             '[\"evidence:governed\"]', '[]', '{}', ?,
+                             'manual:test', 'applied', 'atom:new', 1, 2, 1, 1)""",
+                (str(session["id"]), PROJECT, "b" * 64),
+            )
+            conn.execute(
+                "UPDATE memory_atoms SET source_event_ids_json = '[]' WHERE id = 'atom:new'"
+            )
+            conn.execute(
+                """INSERT INTO memory_atom_evidence_links(
+                       memory_atom_id, evidence_id, proposal_id, relation,
+                       content_sha256, provenance_json, created_at_ms
+                   ) VALUES ('atom:new', 'evidence:governed',
+                             'proposal:governed', 'supports', ?, '{}', 1)""",
+                (content_sha256,),
+            )
+
+            verification = verify_semantic_memory_database(conn, project=PROJECT)
+
+        self.assertTrue(verification["ok"], verification["errors"])
+        self.assertEqual(verification["activeArtifactEvidenceErrors"], [])
+
     def test_migration_translates_reviewed_item_and_rebuilds_only_draft(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row

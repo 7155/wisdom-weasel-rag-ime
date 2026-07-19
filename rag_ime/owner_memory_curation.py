@@ -582,6 +582,10 @@ class OwnerMemoryCurator:
                 continue
             decision = decisions_by_ref.get(source_ref)
             agent_curated_external = _is_agent_curated_external_source(item)
+            source_event_ids = _positive_event_ids(item.get("sourceEventIds"))
+            supports_durable_atom = bool(
+                durable_atom_event_ids.intersection(source_event_ids)
+            )
             actor_kind = "model"
             if decision is None:
                 if agent_curated_external:
@@ -589,6 +593,25 @@ class OwnerMemoryCurator:
                     confidence = 0.9
                     effective = "remember"
                     reason = "agent_curated_external_memory"
+                    actor_kind = "system"
+                elif supports_durable_atom:
+                    # The organizer may omit the parallel sourceDecisions row
+                    # while still emitting a valid Atom backed by this source.
+                    # Atom-first evidence is stronger than the missing routing
+                    # field, so do not strand the source in needs_review.
+                    disposition = "remember"
+                    confidence = 0.9
+                    effective = "remember"
+                    reason = "durable_atom_evidence"
+                    actor_kind = "system"
+                elif self.auto_apply:
+                    # Automatic curation must close every reviewed source. An
+                    # omitted source that produced no durable Atom is retained
+                    # as immutable evidence but excluded from long-term recall.
+                    disposition = "not_for_memory"
+                    confidence = 0.9
+                    effective = "not_for_memory"
+                    reason = "model_omitted_no_durable_atom"
                     actor_kind = "system"
                 else:
                     disposition = "needs_review"
@@ -630,7 +653,7 @@ class OwnerMemoryCurator:
                     disposition == "remember"
                     and not agent_curated_external
                     and not durable_atom_event_ids.intersection(
-                        _positive_event_ids(item.get("sourceEventIds"))
+                        source_event_ids
                     )
                 ):
                     # Atom-first is a storage invariant, not merely a prompt

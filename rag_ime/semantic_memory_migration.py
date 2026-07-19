@@ -894,6 +894,11 @@ def _active_artifact_evidence_errors(
     disposition_cache: dict[int, list[str]] = {}
     for artifact_type, artifact_id, event_ids in artifacts:
         if not event_ids:
+            if artifact_type == "atom" and _atom_has_governed_evidence(
+                conn,
+                atom_id=artifact_id,
+            ):
+                continue
             errors.append(
                 {
                     "artifactType": artifact_type,
@@ -928,7 +933,10 @@ def _active_artifact_evidence_errors(
             # Older evidence may predate agent_memory_sources. Once an event is
             # governed by that table, every active source must agree to remember
             # it; a mixed decision is a fail-closed activation error.
-            if dispositions and any(value != "remember" for value in dispositions):
+            if dispositions and any(
+                value not in {"remember", "consolidated"}
+                for value in dispositions
+            ):
                 governed_not_remembered.append(event_id)
         if invisible:
             errors.append(
@@ -949,6 +957,41 @@ def _active_artifact_evidence_errors(
                 }
             )
     return errors
+
+
+def _atom_has_governed_evidence(
+    conn: sqlite3.Connection,
+    *,
+    atom_id: str,
+) -> bool:
+    """Accept evidence-led Agent memories that intentionally have no input event.
+
+    Explicitly governed memories use immutable ``agent_memory_evidence`` rows
+    and an applied proposal rather than ``input_events``. The link digest is
+    checked so a dangling or stale evidence reference cannot satisfy the gate.
+    """
+
+    return (
+        conn.execute(
+            """
+            SELECT 1
+            FROM memory_atom_evidence_links AS link
+            JOIN agent_memory_evidence AS evidence
+              ON evidence.evidence_id = link.evidence_id
+            JOIN memory_governance_proposals AS proposal
+              ON proposal.proposal_id = link.proposal_id
+            WHERE link.memory_atom_id = ?
+              AND link.relation IN ('supports', 'corrects')
+              AND evidence.status = 'active'
+              AND proposal.status = 'applied'
+              AND proposal.applied_memory_id = link.memory_atom_id
+              AND link.content_sha256 = evidence.content_sha256
+            LIMIT 1
+            """,
+            (atom_id,),
+        ).fetchone()
+        is not None
+    )
 
 
 def _timeline_conservation_errors(
