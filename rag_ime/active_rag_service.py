@@ -192,6 +192,8 @@ class ActiveRagService:
         self._trace_lock = threading.RLock()
         self._sessions: dict[str, ActiveRagSession] = {}
         self._blocked_responses: dict[str, dict[str, object]] = {}
+        self._threads: set[threading.Thread] = set()
+        self._closed = False
 
     def bind_trace_observer(
         self,
@@ -223,12 +225,34 @@ class ActiveRagService:
         )
         _append_trace_event(session, "active_rag_context_captured", requestCapture=session.diagnostics["requestCapture"])
         with self._lock:
+            if self._closed:
+                raise RuntimeError("active RAG service is closed")
             self._drop_stale_sessions_locked(request)
             self._sessions[session.session_id] = session
             self._persist_session_trace_locked(session, phase="started")
-        thread = threading.Thread(target=self._run_session, args=(session.session_id,), daemon=True)
-        thread.start()
+            thread = threading.Thread(target=self._run_session, args=(session.session_id,), daemon=True)
+            self._threads.add(thread)
+        try:
+            thread.start()
+        except Exception:
+            with self._lock:
+                self._threads.discard(thread)
+            raise
         return self.status(session.session_id)
+
+    def close(self) -> None:
+        """Stop accepting work and wait briefly for owned session threads."""
+
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            threads = tuple(self._threads)
+        current = threading.current_thread()
+        for thread in threads:
+            if thread is current:
+                continue
+            thread.join(timeout=5.0)
 
     def preview(self, request: ActiveRagStartRequest, *, local_only: bool = True) -> dict[str, object]:
         sensitive_reason = active_rag_sensitive_block_reason(request)
@@ -515,6 +539,13 @@ class ActiveRagService:
                 pass
 
     def _run_session(self, session_id: str) -> None:
+        try:
+            self._run_session_inner(session_id)
+        finally:
+            with self._lock:
+                self._threads.discard(threading.current_thread())
+
+    def _run_session_inner(self, session_id: str) -> None:
         with self._lock:
             session = self._sessions.get(session_id)
         if session is None:

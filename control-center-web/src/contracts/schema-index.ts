@@ -1525,7 +1525,8 @@ export const contractSchemas = {
               "enum": [
                 "user_message",
                 "assistant_message",
-                "room_event"
+                "room_event",
+                "session_digest"
               ]
             },
             "text": {
@@ -2010,15 +2011,17 @@ export const contractSchemas = {
       },
       "policy": {
         "type": "string",
-        "const": "review"
+        "enum": [
+          "review",
+          "auto_governed",
+          "disabled"
+        ]
       },
       "autoApply": {
-        "type": "boolean",
-        "const": false
+        "type": "boolean"
       },
       "scheduledDraftOnly": {
-        "type": "boolean",
-        "const": true
+        "type": "boolean"
       },
       "due": {
         "type": "boolean"
@@ -2030,7 +2033,9 @@ export const contractSchemas = {
           "idle",
           "daily",
           "owner_daily",
+          "owner_scheduled",
           "draft_pending_review",
+          "automatic_organization_disabled",
           "not_due"
         ]
       },
@@ -6868,11 +6873,11 @@ export const contractSchemas = {
           },
           "automaticPromotion": {
             "type": "boolean",
-            "const": false
+            "const": true
           },
           "explicitApprovalRequired": {
             "type": "boolean",
-            "const": true
+            "const": false
           }
         }
       }
@@ -11907,7 +11912,8 @@ export const contractSchemas = {
           "recentCompleteInputCount",
           "recentCompleteInputUsedForRetrieval",
           "retrievalContextUsed",
-          "recentConversationCount"
+          "recentConversationCount",
+          "timelineIntent"
         ],
         "properties": {
           "preview": {
@@ -11931,6 +11937,9 @@ export const contractSchemas = {
             "type": "integer",
             "minimum": 0,
             "maximum": 8
+          },
+          "timelineIntent": {
+            "$ref": "#/$defs/timelineIntent"
           }
         }
       },
@@ -11947,6 +11956,7 @@ export const contractSchemas = {
           "embeddingProvider",
           "embeddingFallback",
           "temporalIntent",
+          "timelineIntent",
           "activityTimelineIncluded",
           "vectorFusion"
         ],
@@ -12000,6 +12010,9 @@ export const contractSchemas = {
           },
           "temporalIntent": {
             "type": "boolean"
+          },
+          "timelineIntent": {
+            "$ref": "#/$defs/timelineIntent"
           },
           "activityTimelineIncluded": {
             "type": "boolean"
@@ -12059,7 +12072,8 @@ export const contractSchemas = {
             "sourceType": {
               "enum": [
                 "memory_book",
-                "memory_atom"
+                "memory_atom",
+                "memory_timeline"
               ]
             },
             "sourceId": {
@@ -12239,7 +12253,8 @@ export const contractSchemas = {
           "evidenceOnly",
           "currentUserMessageWins",
           "rawRecentInputInjected",
-          "recentConversationInjected"
+          "recentConversationInjected",
+          "detailLevel"
         ],
         "properties": {
           "priority": {
@@ -12259,6 +12274,49 @@ export const contractSchemas = {
           },
           "recentConversationInjected": {
             "type": "boolean"
+          },
+          "detailLevel": {
+            "enum": [
+              "compact",
+              "balanced",
+              "detailed"
+            ]
+          }
+        }
+      }
+    },
+    "$defs": {
+      "timelineIntent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requested",
+          "reason",
+          "matched",
+          "range"
+        ],
+        "properties": {
+          "requested": {
+            "type": "boolean"
+          },
+          "reason": {
+            "enum": [
+              "none",
+              "disabled",
+              "exact_date",
+              "explicit_timeline",
+              "relative_time"
+            ]
+          },
+          "matched": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            }
+          },
+          "range": {
+            "type": "string"
           }
         }
       }

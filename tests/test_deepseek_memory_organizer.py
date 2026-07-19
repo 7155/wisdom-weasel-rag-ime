@@ -186,6 +186,57 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         self.assertEqual(source_ids[-1], 5_000)
         self.assertTrue(all(left < right for left, right in zip(source_ids, source_ids[1:])))
 
+    def test_external_owner_bundle_drops_unrelated_daily_context_and_caps_atoms(
+        self,
+    ) -> None:
+        projected = _owner_memory_model_bundle(
+            {
+                "inputs": [
+                    {
+                        "sourceRef": "S1",
+                        "sourceKind": "session_digest",
+                        "trustClass": "session_summary",
+                        "externalProvider": "codex",
+                        "createdAtMs": 2,
+                        "sourceOccurredAtMs": 1,
+                        "sourceEventIds": [11],
+                        "text": "Codex 已整理的 Session 摘要",
+                    }
+                ],
+                "activityContext": {
+                    "available": True,
+                    "summary": "今天正在处理无关的前台窗口。",
+                    "segments": [
+                        {
+                            "segmentId": "segment:1",
+                            "app": "TextEdit",
+                            "summary": "无关活动",
+                        }
+                    ],
+                },
+                "agentConversationContext": {
+                    "available": True,
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "text": "无关对话尾窗",
+                        }
+                    ],
+                },
+                "existingMemoryAtoms": [
+                    {
+                        "atomId": f"atom:{index}",
+                        "canonicalText": f"已有事实 {index}",
+                    }
+                    for index in range(40)
+                ],
+            }
+        )
+
+        self.assertFalse(projected["activityContext"]["available"])
+        self.assertFalse(projected["agentConversationContext"]["available"])
+        self.assertEqual(len(projected["existingMemoryAtoms"]), 20)
+
     def test_deepseek_config_reads_dedicated_env_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / "deepseek.env"
@@ -359,7 +410,9 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
                 return json.dumps(body).encode("utf-8")
 
         def fake_urlopen(request, timeout):
-            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            request_payload = json.loads(request.data.decode("utf-8"))
+            captured.setdefault("payloads", []).append(request_payload)
+            captured.setdefault("payload", request_payload)
             return FakeResponse()
 
         payload = DeepSeekMemoryOrganizer(config, urlopen=fake_urlopen).compile_memory_book(
@@ -416,7 +469,9 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
                 return json.dumps(body, ensure_ascii=False).encode("utf-8")
 
         def fake_urlopen(request, timeout):
-            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            request_payload = json.loads(request.data.decode("utf-8"))
+            captured.setdefault("payloads", []).append(request_payload)
+            captured.setdefault("payload", request_payload)
             return FakeResponse()
 
         payload = DeepSeekMemoryOrganizer(config, urlopen=fake_urlopen).curate_owner_memory(
@@ -450,6 +505,8 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
             [("S1", "remember"), ("S2", "needs_review")],
         )
         self.assertEqual(payload["phraseCandidates"], [])
+        self.assertEqual(len(captured["payloads"]), 2)
+        self.assertIn("retry", payload["modelDiagnostics"])
         request_payload = captured["payload"]
         system_prompt = request_payload["messages"][0]["content"]
         self.assertIn("not_for_memory", system_prompt)
@@ -461,6 +518,139 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         self.assertIn("重复问句", system_prompt)
         self.assertIn("禁止 project_question", system_prompt)
         self.assertIn("不能原封不动复制长输入", system_prompt)
+
+    def test_owner_curator_recovers_truncated_output_with_compact_retry(self) -> None:
+        config = load_deepseek_config(
+            env={
+                "DEEPSEEK_API_KEY": "secret",
+                "RAG_IME_DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+                "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+            }
+        )
+        requests: list[dict[str, object]] = []
+        responses = [
+            {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "sourceDecisions": [
+                                        {
+                                            "sourceRef": "S1",
+                                            "disposition": "remember",
+                                            "reasonCode": "durable_preference",
+                                            "confidence": 0.95,
+                                        }
+                                    ]
+                                }
+                            )
+                        },
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "sourceDecisions": [
+                                        {
+                                            "sourceRef": "S1",
+                                            "disposition": "remember",
+                                            "reasonCode": "durable_preference",
+                                            "confidence": 0.95,
+                                        },
+                                        {
+                                            "sourceRef": "S2",
+                                            "disposition": "not_for_memory",
+                                            "reasonCode": "input_noise_filler",
+                                            "confidence": 0.98,
+                                        },
+                                    ],
+                                    "memoryAtoms": [
+                                        {
+                                            "canonicalText": "用户要求记忆按需召回。",
+                                            "summary": "按需召回",
+                                            "kind": "durable_preference",
+                                            "sourceEventIds": [11],
+                                        }
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            )
+                        },
+                    }
+                ]
+            },
+        ]
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            requests.append(json.loads(request.data.decode("utf-8")))
+            return FakeResponse(responses[len(requests) - 1])
+
+        result = DeepSeekMemoryOrganizer(
+            config,
+            urlopen=fake_urlopen,
+        ).curate_owner_memory(
+            bundle={
+                "inputs": [
+                    {
+                        "sourceRef": "S1",
+                        "sourceKind": "user_final",
+                        "trustClass": "user_claim",
+                        "createdAtMs": 1,
+                        "sourceEventIds": [11],
+                        "text": "记忆只按当前问题召回。",
+                    },
+                    {
+                        "sourceRef": "S2",
+                        "sourceKind": "user_final",
+                        "trustClass": "user_claim",
+                        "createdAtMs": 2,
+                        "sourceEventIds": [12],
+                        "text": "嗯嗯那个这个",
+                    },
+                ],
+                "existingMemoryAtoms": [
+                    {
+                        "atomId": f"atom:{index}",
+                        "canonicalText": f"已有事实 {index}",
+                    }
+                    for index in range(40)
+                ],
+            },
+            project="wisdom-weasel-rag-ime",
+            owner_kind="user",
+            owner_id="default",
+        )
+
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(result["modelDiagnostics"]["finishReason"], "length")
+        self.assertEqual(result["modelDiagnostics"]["retry"]["finishReason"], "stop")
+        self.assertIn(
+            "owner_curation_recovered_with_compact_retry",
+            result["warnings"],
+        )
+        self.assertEqual(len(result["memoryAtoms"]), 1)
+        retry_bundle = json.loads(requests[1]["messages"][1]["content"])["bundle"]
+        self.assertLessEqual(len(retry_bundle["existingMemoryAtoms"]), 8)
 
     def test_memory_organizer_repairs_missing_phrase_pinyin_with_bounded_second_request(self) -> None:
         config = load_deepseek_config(

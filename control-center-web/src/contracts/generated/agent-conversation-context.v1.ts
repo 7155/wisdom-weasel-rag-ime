@@ -13,7 +13,7 @@ export interface AgentConversationContextV1 {
    */
   messages: {
     role: 'user' | 'assistant';
-    sourceKind: 'user_message' | 'assistant_message' | 'room_event';
+    sourceKind: 'user_message' | 'assistant_message' | 'room_event' | 'session_digest';
     text: string;
     occurredAtMs: number;
   }[];

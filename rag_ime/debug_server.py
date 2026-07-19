@@ -117,6 +117,7 @@ from .memory_generator import (
 from .memory_projection import MemoryProjectionWorker
 from .models import MemoryAction
 from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
+from .memory_maintenance_settings import MemoryMaintenanceSettings
 from .memory_ownership import normalize_memory_owner, resolve_visible_memory_owners
 from .owner_memory_curation import OwnerMemoryCurator, owner_memory_curation_status
 from .payloads import action_response_payload, suggestions_response_payload
@@ -571,6 +572,7 @@ class DebugImeService:
                 # remaining executors and provider clients.
                 pass
         resources = (
+            self.active_rag,
             self.knowledge_worker,
             self.management,
             self.pi_provider_auth,
@@ -707,9 +709,29 @@ class DebugImeService:
         self,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        return self.activity_timelines.build_draft(
+        result = self.activity_timelines.build_draft(
             _string(payload.get("date")),
         )
+        timeline = result.get("timeline")
+        if (
+            str(result.get("status") or "") == "draft"
+            and isinstance(timeline, Mapping)
+        ):
+            published = self.activity_timelines.approve(
+                _string(timeline.get("timelineId")),
+                expected_source_event_hash=_string(
+                    timeline.get("sourceEventHash")
+                ),
+                approved_by="system:control-center-auto-publish",
+                confirm_text="approve",
+            )
+            return {
+                **result,
+                "status": "approved",
+                "timeline": published,
+                "autoPublished": True,
+            }
+        return {**result, "autoPublished": False}
 
     def activity_timeline_approve(
         self,
@@ -3360,6 +3382,11 @@ class DebugImeService:
                 requested_owner_id,
             )
         current_ms = int(time.time() * 1000)
+        managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        automatic_enabled = managed.automatic_organization_enabled
+        automatic_interval_ms = (
+            managed.automatic_organization_interval_seconds * 1_000
+        )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             last_event_row = conn.execute(
                 """
@@ -3381,8 +3408,10 @@ class DebugImeService:
                 conn,
                 project=project,
                 current_ms=current_ms,
+                daily_interval_ms=automatic_interval_ms,
                 owner_kind="" if owner_filter is None else owner_filter[0],
                 owner_id="" if owner_filter is None else owner_filter[1],
+                auto_apply=automatic_enabled,
             )
             rows = conn.execute(
                 """
@@ -3443,14 +3472,16 @@ class DebugImeService:
         response = {
             "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
             "ok": True,
-            "policy": "review",
-            "autoApply": False,
-            "scheduledDraftOnly": True,
+            "policy": "auto_governed" if automatic_enabled else "disabled",
+            "autoApply": automatic_enabled,
+            "scheduledDraftOnly": False,
             # The owner-scoped evidence curator is the authoritative scheduled
             # lane. Legacy compile state remains diagnostic only.
-            "due": bool(owner_curation.get("due")),
+            "due": automatic_enabled and bool(owner_curation.get("due")),
             "dueReason": (
-                "owner_daily"
+                "automatic_organization_disabled"
+                if not automatic_enabled
+                else "owner_scheduled"
                 if owner_curation.get("due")
                 else "not_due"
             ),
@@ -3473,9 +3504,12 @@ class DebugImeService:
             "automation": {
                 "minimumNewEvents": 50,
                 "idleThresholdMs": 20 * 60 * 1000,
-                "dailyIntervalMs": 24 * 60 * 60 * 1000,
+                "dailyIntervalMs": automatic_interval_ms,
                 "schedulerPollIntervalMs": 60 * 60 * 1000,
-                "autoApply": False,
+                "enabled": automatic_enabled,
+                "model": managed.automatic_organization_model,
+                "runsPerDay": managed.automatic_organization_runs_per_day,
+                "autoApply": automatic_enabled,
             },
             "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
             "runs": runs,

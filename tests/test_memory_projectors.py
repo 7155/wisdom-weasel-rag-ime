@@ -74,6 +74,24 @@ class MemoryProjectorTests(unittest.TestCase):
         self.assertNotIn("遗留原文", agent.block)
         self.assertIn("[phrase:phrase:保留短语] 保留短语", agent.block)
 
+    def test_ime_projector_deduplicates_topic_and_timeline_surface(self) -> None:
+        topic = _projection_hit(
+            doc_type="book",
+            source_id="topic:rag-retrieval",
+            text="RAG 输入法多路召回方案",
+            surface_hints=("多路召回",),
+        )
+        timeline = _projection_hit(
+            doc_type="timeline",
+            source_id="activity-timeline:2026-07-06",
+            text="2026-07-06 活动时间线",
+            surface_hints=("多路召回",),
+        )
+
+        ime = ImeMemoryProjector().project([topic, timeline], top_k=5)
+
+        self.assertEqual([candidate.text for candidate in ime], ["多路召回"])
+
     def test_local_agent_context_uses_shared_hits_not_legacy_retrieval(self) -> None:
         hit = _memory_hit()
         with tempfile.TemporaryDirectory(prefix="rag-ime-agent-projector-") as tmp:

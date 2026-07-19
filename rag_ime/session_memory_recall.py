@@ -16,7 +16,9 @@ from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .input_event_assembly import recent_complete_input_context
 from .memory_ownership import agent_visible_memory_owners
+from .memory_maintenance_settings import MemoryMaintenanceSettings
 from .text_utils import compact_whitespace, split_sentences, token_terms, truncate_text
+from .timeline_intent import classify_timeline_intent
 
 
 SESSION_MEMORY_RECALL_SCHEMA_VERSION = "rag-ime.session-memory-recall.v1"
@@ -32,10 +34,35 @@ _RELEVANCE_LANES = frozenset(
         "feedback",
     }
 )
-_ACTIVITY_TIMELINE_INTENT_RE = re.compile(
-    r"(?:今天|今日|昨天|昨日|前天|最近|刚才|上周|本周|过去|此前|之前|上次|"
-    r"时间线|进展|做了什么|做过什么|当前在做|接着|继续)"
-)
+_RECALL_DETAIL_PROFILES: dict[str, dict[str, int]] = {
+    "compact": {
+        "maxItems": 9,
+        "maxChars": 6_000,
+        "bookChars": 480,
+        "timelineChars": 650,
+        "atomChars": 520,
+        "bookItems": 2,
+        "atomItems": 6,
+    },
+    "balanced": {
+        "maxItems": 12,
+        "maxChars": 10_000,
+        "bookChars": 800,
+        "timelineChars": 900,
+        "atomChars": 720,
+        "bookItems": 2,
+        "atomItems": 8,
+    },
+    "detailed": {
+        "maxItems": 12,
+        "maxChars": 14_000,
+        "bookChars": 1_400,
+        "timelineChars": 1_400,
+        "atomChars": 900,
+        "bookItems": 3,
+        "atomItems": 10,
+    },
+}
 
 
 class SessionMemoryRecallBuilder:
@@ -110,8 +137,23 @@ class SessionMemoryRecallBuilder:
             session_id=session,
             room_ids=room_ids,
         )
-        bounded_items = max(1, min(int(max_items), 12))
-        bounded_chars = max(1_200, min(int(max_chars), 16_000))
+        managed = MemoryMaintenanceSettings.load(self.db_path)
+        detail_level = managed.recall_detail_level
+        detail_profile = _RECALL_DETAIL_PROFILES[detail_level]
+        bounded_items = max(
+            1,
+            min(
+                int(max_items),
+                detail_profile["maxItems"],
+            ),
+        )
+        bounded_chars = max(
+            1_200,
+            min(
+                int(max_chars),
+                detail_profile["maxChars"],
+            ),
+        )
         generated = int(
             generated_at_ms
             if generated_at_ms is not None
@@ -170,13 +212,23 @@ class SessionMemoryRecallBuilder:
             query_text=query,
             max_items=bounded_items,
             max_chars=bounded_chars,
+            detail_level=detail_level,
+            timeline_allowed=managed.timeline_recall_enabled,
+            timeline_max_items=managed.timeline_max_items,
         )
         activated_tags = _selected_activated_tags(retrieval, selected)
-        temporal_intent = bool(_ACTIVITY_TIMELINE_INTENT_RE.search(query))
+        timeline_intent = classify_timeline_intent(
+            query,
+            enabled=managed.timeline_recall_enabled,
+        )
+        temporal_intent = timeline_intent.requested
         activity_timeline_included = any(
-            item.get("sourceType") == "memory_book"
-            and {"daily", "activity-timeline"}.intersection(
+            item.get("sourceType") == "memory_timeline"
+            or (
+                item.get("sourceType") == "memory_book"
+                and {"daily", "activity-timeline"}.intersection(
                 {tag.casefold() for tag in _string_list(item.get("tags"), 16)}
+            )
             )
             for item in selected
         )
@@ -220,6 +272,7 @@ class SessionMemoryRecallBuilder:
                 "recentCompleteInputUsedForRetrieval": bool(recent_text),
                 "retrievalContextUsed": bool(retrieval_context),
                 "recentConversationCount": len(conversation),
+                "timelineIntent": timeline_intent.as_dict(),
             },
             "retrieval": {
                 "strategy": "vcp_hybrid_book_atom",
@@ -240,6 +293,7 @@ class SessionMemoryRecallBuilder:
                 "embeddingProvider": effective_embedding,
                 "embeddingFallback": embedding_fallback,
                 "temporalIntent": temporal_intent,
+                "timelineIntent": timeline_intent.as_dict(),
                 "activityTimelineIncluded": activity_timeline_included,
                 "vectorFusion": dict(
                     _mapping(retrieval.get("query")).get("vectorFusion")
@@ -268,6 +322,7 @@ class SessionMemoryRecallBuilder:
                 "currentUserMessageWins": True,
                 "rawRecentInputInjected": False,
                 "recentConversationInjected": bool(conversation),
+                "detailLevel": detail_level,
             },
         }
         validate_contract(payload, "session-memory-recall.v1.json")
@@ -317,6 +372,9 @@ def _select_hits(
     query_text: str,
     max_items: int,
     max_chars: int,
+    detail_level: str = "compact",
+    timeline_allowed: bool = True,
+    timeline_max_items: int = 2,
 ) -> tuple[list[dict[str, object]], int]:
     candidates = (
         [dict(item) for item in value if isinstance(item, Mapping)]
@@ -325,16 +383,24 @@ def _select_hits(
     )
     selected: list[dict[str, object]] = []
     seen_sources: set[str] = set()
-    type_counts = {"book": 0, "atom": 0}
+    type_counts = {"book": 0, "atom": 0, "timeline": 0}
     used_chars = 0
     eligible_count = 0
-    activity_timeline_allowed = bool(
-        _ACTIVITY_TIMELINE_INTENT_RE.search(compact_whitespace(query_text))
+    profile = _RECALL_DETAIL_PROFILES.get(
+        detail_level,
+        _RECALL_DETAIL_PROFILES["compact"],
     )
+    timeline_intent = classify_timeline_intent(
+        query_text,
+        enabled=timeline_allowed,
+    )
+    activity_timeline_allowed = timeline_intent.requested
+    precise_timeline_date = _precise_timeline_date(timeline_intent.range)
     preferred_book_sources = _preferred_book_source_ids(
         candidates,
         query_text=query_text,
         activity_timeline_allowed=activity_timeline_allowed,
+        precise_timeline_date=precise_timeline_date,
         limit=2,
     )
     for item in candidates:
@@ -342,20 +408,29 @@ def _select_hits(
         metadata = _mapping(item.get("metadata"))
         lanes = _string_list(metadata.get("lanes"), 16)
         tags = _string_list(item.get("tags"), 16)
-        if doc_type not in {"book", "atom"}:
+        if doc_type not in {"book", "atom", "timeline"}:
             continue
         if bool(metadata.get("archived")):
             continue
         normalized_tags = {tag.casefold() for tag in tags}
+        is_activity_timeline = bool(
+            doc_type == "timeline"
+            or str(metadata.get("derivedArtifactType") or "")
+            == "daily_activity_timeline"
+            or {"daily", "activity-timeline"}.issubset(normalized_tags)
+        )
         if (
-            doc_type == "book"
-            and {"daily", "activity-timeline"}.intersection(normalized_tags)
+            is_activity_timeline
             and not activity_timeline_allowed
         ):
-            # Daily activity Books deliberately summarize many unrelated
-            # inputs. They help temporal/continuation questions, but their
-            # breadth otherwise lets term frequency outrank a focused Topic
-            # Book or Atom.
+            # Timelines summarize broad activity and only enter a retrieval
+            # turn when the user asks a temporal or continuation question.
+            continue
+        if (
+            is_activity_timeline
+            and not precise_timeline_date
+            and not _activity_matches_subject(item, query_text=query_text)
+        ):
             continue
         if not set(lanes).intersection(_RELEVANCE_LANES):
             continue
@@ -363,10 +438,11 @@ def _select_hits(
         source_id = compact_whitespace(str(item.get("source_id") or ""))
         if doc_type == "book" and source_id not in preferred_book_sources:
             continue
-        is_activity_timeline = bool(
-            {"daily", "activity-timeline"}.intersection(normalized_tags)
-        )
-        per_item_chars = 1_400 if doc_type == "book" else 900
+        per_item_chars = {
+            "book": profile["bookChars"],
+            "timeline": profile["timelineChars"],
+            "atom": profile["atomChars"],
+        }[doc_type]
         text = (
             _focused_activity_excerpt(
                 str(item.get("text") or ""),
@@ -378,7 +454,11 @@ def _select_hits(
         )
         if not source_id or not text or source_id in seen_sources:
             continue
-        type_limit = 2 if doc_type == "book" else 10
+        type_limit = {
+            "book": profile["bookItems"],
+            "timeline": max(1, min(int(timeline_max_items), 4)),
+            "atom": profile["atomItems"],
+        }[doc_type]
         if type_counts[doc_type] >= type_limit:
             continue
         if selected and used_chars + len(text) > max_chars:
@@ -394,7 +474,12 @@ def _select_hits(
                 "sourceType": f"memory_{doc_type}",
                 "sourceId": source_id,
                 "title": truncate_text(
-                    str(metadata.get("bookTitle") or metadata.get("kind") or source_id),
+                    str(
+                        metadata.get("bookTitle")
+                        or metadata.get("timelineTitle")
+                        or metadata.get("kind")
+                        or source_id
+                    ),
                     180,
                 ),
                 "text": text,
@@ -429,6 +514,7 @@ def _preferred_book_source_ids(
     *,
     query_text: str,
     activity_timeline_allowed: bool,
+    precise_timeline_date: bool,
     limit: int,
 ) -> set[str]:
     books: list[Mapping[str, object]] = []
@@ -446,7 +532,10 @@ def _preferred_book_source_ids(
         if {"daily", "activity-timeline"}.intersection(tags):
             if not activity_timeline_allowed:
                 continue
-            if not _activity_matches_subject(item, query_text=query_text):
+            if (
+                not precise_timeline_date
+                and not _activity_matches_subject(item, query_text=query_text)
+            ):
                 continue
         books.append(item)
     ranked = sorted(
@@ -455,6 +544,7 @@ def _preferred_book_source_ids(
             item,
             query_text=query_text,
             activity_timeline_allowed=activity_timeline_allowed,
+            precise_timeline_date=precise_timeline_date,
         ),
         reverse=True,
     )
@@ -470,6 +560,7 @@ def _book_relevance_key(
     *,
     query_text: str,
     activity_timeline_allowed: bool,
+    precise_timeline_date: bool,
 ) -> tuple[float, int, float, float]:
     tags = _string_list(item.get("tags"), 16)
     normalized_query = compact_whitespace(query_text).casefold()
@@ -484,7 +575,10 @@ def _book_relevance_key(
         1.0
         if activity_timeline_allowed
         and {"daily", "activity-timeline"}.intersection(normalized_tags)
-        and _activity_matches_subject(item, query_text=query_text)
+        and (
+            precise_timeline_date
+            or _activity_matches_subject(item, query_text=query_text)
+        )
         else 0.0
     )
     raw_scores = _mapping(_mapping(item.get("metadata")).get("rawScores"))
@@ -528,7 +622,11 @@ def _focused_activity_excerpt(
         )
     else:
         chosen = list(range(max(0, len(segments) - 4), len(segments)))
-    excerpt = "；".join(segments[index] for index in chosen)
+    excerpt = "；".join(
+        compact_whitespace(segments[index]).rstrip("；;。")
+        for index in chosen
+        if compact_whitespace(segments[index]).rstrip("；;。")
+    )
     return truncate_text(f"相关时间线片段：{excerpt}", max_chars)
 
 
@@ -545,35 +643,38 @@ def _activity_matches_subject(
         (
             str(item.get("text") or ""),
             str(metadata.get("bookTitle") or ""),
+            str(metadata.get("timelineTitle") or ""),
             " ".join(_string_list(item.get("tags"), 16)),
         )
     ).casefold()
     return any(_subject_term_hits(term, haystack) for term in terms)
 
 
+_SUBJECT_QUERY_NOISE_RE = re.compile(
+    r"(?:今天|今日|昨天|昨日|前天|最近(?:几天)?|近期|这几天|近几天|"
+    r"过去(?:几|[1-9]\d?)天|本周|这周|这个星期|上周|上个星期|"
+    r"本月|这个月|上月|上个月|时间线|活动记录|工作记录|最近工作|"
+    r"daily\s*book|timeline|activity\s*(?:log|history)|recent\s+work|"
+    r"帮我|看一下|看看|查看|我|我们|项目|工作|活动|"
+    r"做到哪里了?|做了什么|做什么|进展(?:如何|怎么样)?|"
+    r"什么|怎么|怎样|如何|哪里|哪儿|主要|当前|现在)",
+    re.IGNORECASE,
+)
+
+
 def _subject_query_terms(value: str) -> list[str]:
-    ignored_terms = {
-        "什么",
-        "怎么",
-        "怎样",
-        "应该",
-        "主要",
-        "最近",
-        "项目",
-        "当前",
-        "现在",
-        "做了",
-        "的是",
-        "我最",
-        "近在",
-        "里主",
-        "要做",
-    }
+    subject = compact_whitespace(_SUBJECT_QUERY_NOISE_RE.sub(" ", value))
     return [
         term.casefold()
-        for term in token_terms(value, max_terms=32)
-        if len(term) >= 2 and term.casefold() not in ignored_terms
+        for term in token_terms(subject, max_terms=32)
+        if len(term) >= 2
     ]
+
+
+def _precise_timeline_date(range_name: str) -> bool:
+    return range_name in {"today", "yesterday", "day_before_yesterday"} or (
+        re.fullmatch(r"(?:20\d{2}-)?\d{1,2}-\d{1,2}", range_name) is not None
+    )
 
 
 def _subject_term_hits(term: str, text: str) -> bool:

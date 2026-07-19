@@ -4,6 +4,7 @@ import json
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -91,13 +92,12 @@ class ActiveRagDebugServerTests(unittest.TestCase):
         validate_contract(blocked, "active-rag-status.v1.json")
 
     def test_debug_service_exposes_active_rag_lifecycle(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            service = DebugImeService(
+        with tempfile.TemporaryDirectory() as temp_dir, closing(DebugImeService(
                 DebugServerConfig(
                     db_path=Path(temp_dir) / "active-rag-debug.sqlite",
                     seed_if_empty=False,
                 )
-            )
+            )) as service:
 
             started = service.active_rag_start(
                 {

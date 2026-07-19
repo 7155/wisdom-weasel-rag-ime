@@ -15,6 +15,7 @@ from .agent_memory_sources import AgentMemorySourceStore
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_book_compiler import (
+    apply_stored_memory_book_run,
     collapse_rime_fragment_run,
     inspect_memory_book_plan,
     memory_book_plan_from_compile_output,
@@ -29,7 +30,7 @@ from .personal_context import (
     local_day_bounds_ms,
 )
 from .sensitive_content import contains_sensitive_content
-from .text_utils import compact_whitespace, stable_text_hash
+from .text_utils import compact_whitespace, stable_text_hash, token_terms
 
 
 OWNER_CURATION_STATUS_SCHEMA_VERSION = "rag-ime.owner-memory-curation-status.v1"
@@ -38,6 +39,7 @@ DEFAULT_DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000
 DEFAULT_INITIAL_SETTLE_MS = 20 * 60 * 1000
 DEFAULT_RUNNING_LEASE_MS = 60 * 60 * 1000
 DEFAULT_MAX_SOURCES = 64
+MAX_EXTERNAL_MODEL_INPUTS_PER_RUN = 8
 
 _OWNER_KINDS = frozenset({"user", "shared", "agent", "session", "room"})
 _ELIGIBLE_DISPOSITIONS = ("pending", "needs_review", "remember")
@@ -72,6 +74,12 @@ _TRANSIENT_USER_COMMAND_RE = re.compile(
     r"[^。！？!?]{0,36}[。！？!?]?$",
     re.IGNORECASE,
 )
+_EXPLICIT_MEMORY_FORGET_RE = re.compile(
+    r"^(?:(?:请|帮我|把)\s*)?(?:忘(?:掉|记)|不要再记|别再记)|"
+    r"(?:忘(?:掉|记)|删除|移除|清除|撤回).{0,20}(?:记忆|事实|偏好|这条)|"
+    r"(?:不要再记|不再记住|别再记)",
+    re.IGNORECASE,
+)
 _QUESTION_SIGNAL_RE = re.compile(
     r"(?:为什么|怎么|如何|是什么|什么是|是否|能否|有没有|哪里|哪个|谁|"
     r"什么时候|多少|几种|哪一|咋)",
@@ -99,6 +107,9 @@ _DURABLE_ATOM_KINDS = frozenset(
         "security_constraint",
         "project_constraint",
     }
+)
+_GENERIC_OWNER_BOOK_TITLE_RE = re.compile(
+    r"^(?:个人长期记忆|共享长期记忆|.+的长期记忆)$"
 )
 
 
@@ -131,6 +142,8 @@ class OwnerMemoryCurator:
         initial_settle_ms: int = DEFAULT_INITIAL_SETTLE_MS,
         running_lease_ms: int = DEFAULT_RUNNING_LEASE_MS,
         max_sources: int = DEFAULT_MAX_SOURCES,
+        auto_apply: bool = False,
+        include_agent_dialogue: bool = True,
     ) -> None:
         self.db_path = Path(db_path)
         self.organizer = organizer
@@ -139,6 +152,8 @@ class OwnerMemoryCurator:
         self.daily_interval_ms = max(60_000, int(daily_interval_ms))
         self.initial_settle_ms = max(0, int(initial_settle_ms))
         self.running_lease_ms = max(60_000, int(running_lease_ms))
+        self.auto_apply = bool(auto_apply)
+        self.include_agent_dialogue = bool(include_agent_dialogue)
         # The provider projection has a hard 64-input contract. Rime commits
         # are coalesced before this limit is applied, so this is a logical
         # utterance cap rather than a low-level event cap.
@@ -170,6 +185,7 @@ class OwnerMemoryCurator:
                 running_lease_ms=self.running_lease_ms,
                 owner_kind=owner_kind,
                 owner_id=owner_id,
+                auto_apply=self.auto_apply,
             )
 
     def run_due(
@@ -252,6 +268,7 @@ class OwnerMemoryCurator:
                     owner_id=owner[1],
                     project=self.project,
                     limit=self.max_sources,
+                    include_agent_dialogue=self.include_agent_dialogue,
                 )
             inputs = [
                 dict(item)
@@ -361,7 +378,7 @@ class OwnerMemoryCurator:
                     for source_id in decision.get("sourceIds") or []
                     if compact_whitespace(str(source_id or ""))
                 ]
-                if needs_review_source_ids:
+                if needs_review_source_ids and not self.auto_apply:
                     with self._connect() as conn:
                         boundary = _boundary_before_sources(
                             conn,
@@ -442,8 +459,16 @@ class OwnerMemoryCurator:
                             plan,
                             supersede_project_drafts=True,
                         )
-                    run_status = "waiting_review"
                     stored_run_id = str(stored.get("runId") or run_id)
+                    if self.auto_apply:
+                        with self._connect() as conn:
+                            applied = apply_stored_memory_book_run(
+                                conn,
+                                run_id=stored_run_id,
+                            )
+                        run_status = str(applied.get("status") or "applied")
+                    else:
+                        run_status = "waiting_review"
                 else:
                     with self._connect() as conn:
                         _store_empty_owner_run(
@@ -487,7 +512,7 @@ class OwnerMemoryCurator:
                 owner_id=owner[1],
                 run_id=stored_run_id,
                 boundary=boundary,
-                status=run_status,
+                status="idle" if run_status in {"applied", "empty"} else run_status,
                 next_due_at_ms=current_ms + self.daily_interval_ms,
                 current_ms=current_ms,
             )
@@ -504,6 +529,7 @@ class OwnerMemoryCurator:
                 "deterministicDecisions": deterministic,
                 "modelDecisions": model_decisions,
                 "reviewRequired": run_status == "waiting_review",
+                "autoApplied": self.auto_apply and run_status == "applied",
                 "diffCount": len(plan.get("diffs") or []) if plan is not None else 0,
             }
         except Exception as exc:
@@ -555,27 +581,57 @@ class OwnerMemoryCurator:
             if not source_ids:
                 continue
             decision = decisions_by_ref.get(source_ref)
+            agent_curated_external = _is_agent_curated_external_source(item)
+            actor_kind = "model"
             if decision is None:
-                disposition = "needs_review"
-                confidence = 0.0
-                effective = "needs_review"
-                reason = "model_decision_missing"
+                if agent_curated_external:
+                    disposition = "remember"
+                    confidence = 0.9
+                    effective = "remember"
+                    reason = "agent_curated_external_memory"
+                    actor_kind = "system"
+                else:
+                    disposition = "needs_review"
+                    confidence = 0.0
+                    effective = "needs_review"
+                    reason = "model_decision_missing"
             else:
                 disposition = compact_whitespace(
                     str(decision.get("disposition") or "")
                 )
+                decision_reason = compact_whitespace(
+                    str(decision.get("reasonCode") or "")
+                )[:120]
                 confidence = _bounded_float(
                     decision.get("confidence"),
                     default=0.0,
                 )
-                if disposition == "not_for_memory" and confidence < 0.9:
+                if (
+                    agent_curated_external
+                    and disposition == "needs_review"
+                    and decision_reason == "model_omitted_source"
+                ):
+                    disposition = "remember"
+                    confidence = 0.9
+                    effective = "remember"
+                    reason = "agent_curated_external_memory"
+                    actor_kind = "system"
+                elif agent_curated_external and disposition == "remember":
+                    confidence = max(confidence, 0.9)
+                    effective = "remember"
+                    reason = decision_reason or "agent_curated_external_memory"
+                elif disposition == "not_for_memory" and confidence < 0.9:
                     effective = "needs_review"
                     reason = "low_confidence_not_for_memory"
                 elif disposition == "remember" and confidence < 0.55:
                     effective = "needs_review"
                     reason = "low_confidence_remember"
-                elif disposition == "remember" and not durable_atom_event_ids.intersection(
-                    _positive_event_ids(item.get("sourceEventIds"))
+                elif (
+                    disposition == "remember"
+                    and not agent_curated_external
+                    and not durable_atom_event_ids.intersection(
+                        _positive_event_ids(item.get("sourceEventIds"))
+                    )
                 ):
                     # Atom-first is a storage invariant, not merely a prompt
                     # preference. A source cannot become remembered evidence
@@ -589,9 +645,7 @@ class OwnerMemoryCurator:
                     "needs_review",
                 }:
                     effective = disposition
-                    reason = compact_whitespace(
-                        str(decision.get("reasonCode") or "")
-                    )[:120]
+                    reason = decision_reason
                 else:
                     effective = "needs_review"
                     reason = "invalid_model_disposition"
@@ -600,7 +654,7 @@ class OwnerMemoryCurator:
                     source_id,
                     disposition=effective,
                     reason_code=reason or "model_curation",
-                    actor_kind="model",
+                    actor_kind=actor_kind,
                     run_id=run_id,
                     metadata={
                         "sourceRef": source_ref,
@@ -649,7 +703,12 @@ class OwnerMemoryCurator:
                 conn,
                 str(row["last_run_id"] or "") if row is not None else "",
             )
-            if row is not None and str(row["status"]) == "waiting_review" and run_status == "draft":
+            if (
+                not self.auto_apply
+                and row is not None
+                and str(row["status"]) == "waiting_review"
+                and run_status == "draft"
+            ):
                 conn.commit()
                 return {"claimed": False, "reason": "draft_pending_review"}
             if (
@@ -806,6 +865,7 @@ def owner_memory_curation_status(
     running_lease_ms: int = DEFAULT_RUNNING_LEASE_MS,
     owner_kind: str = "",
     owner_id: str = "",
+    auto_apply: bool = False,
 ) -> dict[str, object]:
     timestamp = int(time.time() * 1000) if current_ms is None else max(0, int(current_ms))
     scopes = _owner_scope_statuses(
@@ -816,24 +876,34 @@ def owner_memory_curation_status(
         running_lease_ms=max(60_000, int(running_lease_ms)),
         owner_kind=owner_kind,
         owner_id=owner_id,
+        auto_apply=auto_apply,
     )
+    interval_ms = max(60_000, int(daily_interval_ms))
     return {
         "schemaVersion": OWNER_CURATION_STATUS_SCHEMA_VERSION,
         "ok": True,
         "project": compact_whitespace(project),
         "policy": {
-            "cadence": "daily",
-            "dailyIntervalMs": max(60_000, int(daily_interval_ms)),
+            "cadence": (
+                "twice_daily"
+                if interval_ms == 12 * 60 * 60 * 1000
+                else "daily"
+                if interval_ms == 24 * 60 * 60 * 1000
+                else "interval"
+            ),
+            "dailyIntervalMs": interval_ms,
             "sourceKinds": [
                 "user_final",
                 "explicit_memory",
                 "tool_receipt",
                 "session_compaction",
+                "codex_memory_summary",
             ],
             "assistantTurnsRead": True,
             "assistantTurnsAreContextOnly": True,
             "rawScreenshotsRead": False,
-            "semanticWritesRequireReview": True,
+            "semanticWritesRequireReview": not auto_apply,
+            "autoApplyGovernedWrites": bool(auto_apply),
             "sourceForgettingReversible": True,
         },
         "due": any(bool(item["due"]) for item in scopes),
@@ -854,6 +924,7 @@ def _owner_scope_statuses(
     running_lease_ms: int,
     owner_kind: str = "",
     owner_id: str = "",
+    auto_apply: bool = False,
 ) -> list[dict[str, object]]:
     clauses = [
         "s.status = 'active'",
@@ -911,7 +982,11 @@ def _owner_scope_statuses(
         last_run_id = str(cursor["last_run_id"] or "") if cursor is not None else ""
         last_run_status = _run_status(conn, last_run_id)
         stored_status = str(cursor["status"] or "idle") if cursor is not None else "idle"
-        waiting_review = stored_status == "waiting_review" and last_run_status == "draft"
+        waiting_review = (
+            not auto_apply
+            and stored_status == "waiting_review"
+            and last_run_status == "draft"
+        )
         running = (
             stored_status == "running"
             and current_ms - int(cursor["updated_at_ms"] or 0) < running_lease_ms
@@ -971,20 +1046,22 @@ def _agent_conversation_context(
     owner_id: str,
     session_ids: list[str],
     timeline_date: str,
-    max_messages: int = 24,
-    max_chars: int = 4_000,
+    max_messages: int = 10,
+    max_chars: int = 2_000,
 ) -> dict[str, object]:
-    """Return bounded dialogue context without exposing evidence identifiers."""
+    """Return the latest digest plus a small uncompacted dialogue tail."""
 
-    bounded_messages = max(1, min(int(max_messages), 24))
-    char_budget = max(600, min(int(max_chars), 4_000))
+    bounded_messages = max(1, min(int(max_messages), 10))
+    char_budget = max(600, min(int(max_chars), 2_000))
     start_ms, end_ms = local_day_bounds_ms(timeline_date)
     clauses = [
         "project = ?",
         "status = 'active'",
         "occurred_at_ms >= ?",
         "occurred_at_ms < ?",
-        "source_kind IN ('user_message', 'assistant_message', 'room_event')",
+        "source_kind IN ("
+        "'user_message', 'assistant_message', 'room_event', 'session_digest'"
+        ")",
     ]
     params: list[object] = [project, start_ms, end_ms]
     if owner_kind == "agent":
@@ -1003,7 +1080,7 @@ def _agent_conversation_context(
     params.append(80)
     rows = conn.execute(
         f"""
-        SELECT source_kind, content_text, occurred_at_ms
+        SELECT session_id, source_kind, content_text, occurred_at_ms
         FROM agent_memory_evidence
         WHERE {' AND '.join(clauses)}
         ORDER BY occurred_at_ms DESC, evidence_id DESC
@@ -1012,6 +1089,16 @@ def _agent_conversation_context(
         tuple(params),
     ).fetchall()
     rows = list(reversed(rows))
+
+    latest_digest_ms: dict[str, int] = {}
+    for row in rows:
+        if str(row["source_kind"]) != "session_digest":
+            continue
+        session_id = str(row["session_id"] or "")
+        latest_digest_ms[session_id] = max(
+            latest_digest_ms.get(session_id, 0),
+            int(row["occurred_at_ms"] or 0),
+        )
 
     messages: list[dict[str, object]] = []
     deduplicated = 0
@@ -1028,7 +1115,19 @@ def _agent_conversation_context(
             redacted += 1
             continue
         source_kind = str(row["source_kind"])
+        session_id = str(row["session_id"] or "")
+        digest_ms = latest_digest_ms.get(session_id, 0)
+        if source_kind == "session_digest":
+            if occurred_at_ms := int(row["occurred_at_ms"] or 0):
+                if occurred_at_ms != digest_ms:
+                    deduplicated += 1
+                    continue
+        elif digest_ms and int(row["occurred_at_ms"] or 0) <= digest_ms:
+            deduplicated += 1
+            continue
         role = "assistant" if source_kind == "assistant_message" else "user"
+        if source_kind == "session_digest":
+            role = "assistant"
         occurred_at_ms = int(row["occurred_at_ms"] or 0)
         key = (role, normalize_text(text))
         previous = last_seen.get(key)
@@ -1036,7 +1135,8 @@ def _agent_conversation_context(
             deduplicated += 1
             continue
         last_seen[key] = occurred_at_ms
-        bounded_text = text[: min(600, remaining_chars)]
+        per_message_chars = 600 if source_kind == "session_digest" else 320
+        bounded_text = text[: min(per_message_chars, remaining_chars)]
         if not bounded_text:
             continue
         messages.append(
@@ -1085,6 +1185,7 @@ def _build_owner_source_bundle(
     owner_id: str,
     project: str,
     limit: int,
+    include_agent_dialogue: bool = True,
 ) -> dict[str, object]:
     cursor = conn.execute(
         """
@@ -1129,6 +1230,7 @@ def _build_owner_source_bundle(
     ).fetchall()
     raw_inputs: list[dict[str, object]] = []
     for row in rows:
+        source_metadata = _json_mapping(row["metadata_json"])
         raw_inputs.append(
             {
                 "sourceId": str(row["source_id"]),
@@ -1149,6 +1251,17 @@ def _build_owner_source_bundle(
                 "contextGroupLevel": str(row["context_group_level"] or "app"),
                 "sourceMetadataTags": _json_strings(row["tags_json"]),
                 "sessionId": str(row["session_id"] or ""),
+                "sourceOccurredAtMs": int(
+                    source_metadata.get("sourceOccurredAtMs")
+                    or row["created_at_ms"]
+                    or 0
+                ),
+                "externalProvider": compact_whitespace(
+                    str(source_metadata.get("externalProvider") or "")
+                )[:40],
+                "externalTier": compact_whitespace(
+                    str(source_metadata.get("externalTier") or "")
+                )[:80],
             }
         )
     curation_date = (
@@ -1161,7 +1274,10 @@ def _build_owner_source_bundle(
         for item in raw_inputs
         if local_date_for_timestamp(int(item["createdAtMs"])) == curation_date
     ]
-    inputs = _coalesce_owner_inputs(raw_inputs)[:logical_limit]
+    inputs = _bounded_external_model_inputs(
+        _coalesce_owner_inputs(raw_inputs),
+        limit=logical_limit,
+    )
     session_ids = list(
         dict.fromkeys(
             str(item.get("sessionId") or "")
@@ -1174,21 +1290,26 @@ def _build_owner_source_bundle(
         project=project,
         timeline_date=curation_date,
     )
-    conversation_context = _agent_conversation_context(
-        conn,
-        project=project,
-        owner_kind=owner_kind,
-        owner_id=owner_id,
-        session_ids=session_ids,
-        timeline_date=curation_date,
+    conversation_context = (
+        _agent_conversation_context(
+            conn,
+            project=project,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            session_ids=session_ids,
+            timeline_date=curation_date,
+        )
+        if include_agent_dialogue
+        else _empty_agent_conversation_context(curation_date)
     )
 
     books = [
         {
             "bookId": str(row["book_id"]),
+            "bookType": str(row["book_type"]),
             "bookKey": str(row["book_key"]),
             "title": str(row["title"]),
-            "summary": str(row["summary"]),
+            "summary": compact_whitespace(str(row["summary"]))[:800],
             "tags": _json_strings(row["tags_json"]),
             "sourceEventIds": _json_ints(row["source_event_ids_json"]),
             "memoryAtomIds": _json_strings(row["memory_atom_ids_json"]),
@@ -1200,9 +1321,11 @@ def _build_owner_source_bundle(
             FROM memory_books
             WHERE owner_kind = ? AND owner_id = ?
               AND status IN ('active', 'approved', 'archived')
+              AND book_type = 'topic'
               AND (? = '' OR project = ? OR project = '')
-            ORDER BY updated_at_ms DESC
-            LIMIT 4
+            ORDER BY CASE WHEN status = 'archived' THEN 1 ELSE 0 END,
+                     updated_at_ms DESC
+            LIMIT 12
             """,
             (owner_kind, owner_id, project, project),
         ).fetchall()
@@ -1216,12 +1339,25 @@ def _build_owner_source_bundle(
             "tags": [],
             "sourceEventIds": _json_ints(row["source_event_ids_json"]),
             "status": str(row["status"]),
+            "claimKey": str(row["claim_key"] or ""),
+            "lineageId": str(row["lineage_id"] or ""),
+            "claimState": str(row["claim_state"] or "current"),
+            "validFromMs": int(row["valid_from_ms"] or 0),
+            "validToMs": (
+                int(row["valid_to_ms"])
+                if row["valid_to_ms"] is not None
+                else None
+            ),
+            "supersedesId": str(row["supersedes_id"] or ""),
+            "project": str(row["scope_project"] or ""),
+            "app": str(row["scope_app"] or ""),
         }
         for row in conn.execute(
             """
             SELECT *
             FROM memory_atoms
             WHERE owner_kind = ? AND owner_id = ? AND status = 'active'
+              AND claim_state = 'current'
               AND (? = '' OR scope_project = ? OR scope_project = '')
             ORDER BY updated_at_ms DESC
             LIMIT 80
@@ -1263,6 +1399,7 @@ def _build_owner_source_bundle(
                 "eventId": int(item["sourceEventIds"][0]),
                 "sourceEventIds": list(item["sourceEventIds"]),
                 "createdAtMs": item["createdAtMs"],
+                "sourceOccurredAtMs": item["sourceOccurredAtMs"],
                 "text": item["text"],
                 "source": item["sourceKind"],
                 "project": project,
@@ -1341,6 +1478,42 @@ def _coalesce_owner_inputs(
     return result
 
 
+def _bounded_external_model_inputs(
+    inputs: list[dict[str, object]],
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    external_count = 0
+    for item in inputs:
+        if _is_agent_curated_external_source(item):
+            if external_count >= MAX_EXTERNAL_MODEL_INPUTS_PER_RUN:
+                break
+            external_count += 1
+        result.append(item)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _is_agent_curated_external_source(item: Mapping[str, object]) -> bool:
+    provider = compact_whitespace(str(item.get("externalProvider") or ""))
+    metadata_tags = item.get("sourceMetadataTags")
+    tags = {
+        compact_whitespace(str(value)).casefold()
+        for value in metadata_tags
+        if compact_whitespace(str(value))
+    } if isinstance(metadata_tags, list) else set()
+    return (
+        str(item.get("sourceKind") or "") == "session_digest"
+        and (
+            bool(provider)
+            or "external-memory" in tags
+            or "agent-curated" in tags
+        )
+    )
+
+
 def _input_source_ids(item: Mapping[str, object]) -> list[str]:
     candidates = item.get("sourceIds")
     values = candidates if isinstance(candidates, list) else [item.get("sourceId")]
@@ -1409,6 +1582,8 @@ def _durable_atom_rejection_reason(
 def _derived_summary_rejection_reason(summary: str) -> str:
     if not summary:
         return "empty_summary"
+    if contains_sensitive_content(summary):
+        return "sensitive_content"
     if _DERIVED_PROTOCOL_NOISE_RE.search(summary):
         return "workflow_protocol_noise"
     return ""
@@ -1438,6 +1613,32 @@ def _expanded_logical_atom_sources(
     return sorted(expanded), source_texts
 
 
+def _origin_tags_for_event_ids(
+    source_event_ids: object,
+    *,
+    model_inputs: list[dict[str, object]],
+) -> list[str]:
+    selected = _positive_event_ids(source_event_ids)
+    if not selected:
+        return []
+    tags: list[str] = []
+    for model_input in model_inputs:
+        input_ids = _positive_event_ids(model_input.get("sourceEventIds"))
+        if not selected.intersection(input_ids):
+            continue
+        metadata_tags = {
+            compact_whitespace(str(value)).casefold()
+            for value in model_input.get("sourceMetadataTags") or []
+            if compact_whitespace(str(value))
+        }
+        provider = compact_whitespace(
+            str(model_input.get("externalProvider") or "")
+        ).casefold()
+        if provider == "codex" or "codex" in metadata_tags:
+            tags.extend(["Codex", "external-memory"])
+    return list(dict.fromkeys(tags))
+
+
 def _eligible_owner_atom_event_ids(
     compile_output: Mapping[str, object],
     *,
@@ -1449,7 +1650,7 @@ def _eligible_owner_atom_event_ids(
         for event_id in _positive_event_ids(model_input.get("sourceEventIds"))
     }
     eligible: set[int] = set()
-    for item in compile_output.get("memoryAtoms") or []:
+    for item in list(compile_output.get("memoryAtoms") or [])[:6]:
         if not isinstance(item, Mapping):
             continue
         canonical = compact_whitespace(
@@ -1460,7 +1661,7 @@ def _eligible_owner_atom_event_ids(
             model_inputs=model_inputs,
             legal_event_ids=legal_event_ids,
         )
-        if not canonical or not source_ids:
+        if not canonical or contains_sensitive_content(canonical) or not source_ids:
             continue
         if _durable_atom_rejection_reason(
             canonical,
@@ -1470,6 +1671,95 @@ def _eligible_owner_atom_event_ids(
             continue
         eligible.update(source_ids)
     return eligible
+
+
+def _owner_topic_terms(*values: object) -> set[str]:
+    text = " ".join(compact_whitespace(str(value or "")) for value in values)
+    normalized = normalize_text(text)
+    terms = {
+        normalize_text(term)
+        for term in token_terms(text, max_terms=80)
+        if normalize_text(term)
+    }
+    cjk = "".join(re.findall(r"[\u3400-\u9fff]", normalized))
+    if len(cjk) == 1:
+        terms.add(cjk)
+    elif len(cjk) >= 2:
+        terms.update(cjk[index : index + 2] for index in range(len(cjk) - 1))
+    return terms
+
+
+def _owner_topic_similarity(
+    proposed: Mapping[str, object],
+    existing: Mapping[str, object],
+) -> float:
+    proposed_title = normalize_text(str(proposed.get("title") or ""))
+    existing_title = normalize_text(str(existing.get("title") or ""))
+    if proposed_title and proposed_title == existing_title:
+        return 1.0
+    if _GENERIC_OWNER_BOOK_TITLE_RE.fullmatch(
+        compact_whitespace(str(existing.get("title") or ""))
+    ):
+        return 0.0
+    proposed_terms = _owner_topic_terms(
+        proposed.get("title"),
+        *(proposed.get("tags") if isinstance(proposed.get("tags"), list) else []),
+    )
+    existing_terms = _owner_topic_terms(
+        existing.get("title"),
+        *(existing.get("tags") if isinstance(existing.get("tags"), list) else []),
+    )
+    if not proposed_terms or not existing_terms:
+        return 0.0
+    overlap = len(proposed_terms & existing_terms) / len(
+        proposed_terms | existing_terms
+    )
+    if proposed_title and existing_title and (
+        proposed_title in existing_title or existing_title in proposed_title
+    ):
+        overlap = max(overlap, 0.82)
+    return overlap
+
+
+def _match_owner_topic_book(
+    proposed: Mapping[str, object],
+    *,
+    existing_books: list[dict[str, object]],
+    used_book_ids: set[str],
+) -> dict[str, object] | None:
+    requested_id = compact_whitespace(str(proposed.get("bookId") or ""))
+    requested_key = compact_whitespace(str(proposed.get("bookKey") or ""))
+    candidates = [
+        item
+        for item in existing_books
+        if compact_whitespace(str(item.get("bookId") or "")) not in used_book_ids
+    ]
+    for candidate in candidates:
+        if requested_id and requested_id == compact_whitespace(
+            str(candidate.get("bookId") or "")
+        ):
+            return candidate
+        if requested_key and requested_key == compact_whitespace(
+            str(candidate.get("bookKey") or "")
+        ):
+            return candidate
+    ranked = sorted(
+        (
+            (_owner_topic_similarity(proposed, candidate), candidate)
+            for candidate in candidates
+        ),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+    if not ranked or ranked[0][0] < 0.42:
+        return None
+    if (
+        len(ranked) > 1
+        and ranked[0][0] - ranked[1][0] < 0.08
+        and ranked[0][0] < 0.82
+    ):
+        return None
+    return ranked[0][1]
 
 
 def _govern_owner_compile_output(
@@ -1503,13 +1793,21 @@ def _govern_owner_compile_output(
     owner_hash = hashlib.sha256(
         f"{owner_kind}\0{owner_id}\0{project}".encode("utf-8")
     ).hexdigest()[:16]
-    owner_book_id = f"book:owner:{owner_hash}"
-    owner_book_key = f"owner-{owner_hash}"
     bundle_inputs = [
         dict(item)
         for item in bundle.get("inputs") or []
         if isinstance(item, dict)
     ]
+    existing_atoms = [
+        dict(item)
+        for item in bundle.get("existingMemoryAtoms") or []
+        if isinstance(item, dict)
+    ]
+    existing_atoms_by_id = {
+        compact_whitespace(str(item.get("atomId") or "")): item
+        for item in existing_atoms
+        if compact_whitespace(str(item.get("atomId") or ""))
+    }
     atoms: list[dict[str, object]] = []
     atom_ids: list[str] = []
     for item in compile_output.get("memoryAtoms") or []:
@@ -1518,6 +1816,7 @@ def _govern_owner_compile_output(
         canonical = compact_whitespace(
             str(item.get("canonicalText") or item.get("text") or "")
         )
+        summary = compact_whitespace(str(item.get("summary") or ""))[:500]
         source_ids, source_texts = _expanded_logical_atom_sources(
             item.get("sourceEventIds"),
             model_inputs=bundle_inputs,
@@ -1526,6 +1825,7 @@ def _govern_owner_compile_output(
         kind = compact_whitespace(str(item.get("kind") or ""))
         if (
             not canonical
+            or contains_sensitive_content(canonical)
             or not source_ids
             or _durable_atom_rejection_reason(
                 canonical,
@@ -1545,6 +1845,10 @@ def _govern_owner_compile_output(
             )[:8]
             claim_key = f"owner:{owner_hash[:8]}:{kind}:{claim_digest}"
         atom_ids.append(atom_id)
+        origin_tags = _origin_tags_for_event_ids(
+            source_ids,
+            model_inputs=bundle_inputs,
+        )
         atoms.append(
             {
                 **item,
@@ -1552,9 +1856,13 @@ def _govern_owner_compile_output(
                 "canonicalText": canonical,
                 "kind": kind,
                 "claimKey": claim_key,
-                "summary": compact_whitespace(str(item.get("summary") or ""))[:500],
+                "summary": (
+                    ""
+                    if contains_sensitive_content(summary)
+                    else summary
+                ),
                 "sourceEventIds": source_ids,
-                "tags": [],
+                "tags": origin_tags,
                 "semanticGroupIds": [],
                 "directCandidateAllowed": False,
                 "ownerKind": owner_kind,
@@ -1562,8 +1870,75 @@ def _govern_owner_compile_output(
             }
         )
 
-    owner = bundle.get("owner") if isinstance(bundle.get("owner"), Mapping) else {}
-    display_name = compact_whitespace(str(owner.get("displayName") or owner_id))
+    retractions: list[dict[str, object]] = []
+    for item in compile_output.get("memoryRetractions") or []:
+        if not isinstance(item, Mapping):
+            continue
+        target_id = compact_whitespace(str(item.get("targetAtomId") or ""))
+        target = existing_atoms_by_id.get(target_id)
+        if target is None:
+            continue
+        confidence = _bounded_float(item.get("confidence"), default=0.0)
+        if confidence < 0.9:
+            continue
+        source_ids, _source_texts = _expanded_logical_atom_sources(
+            item.get("sourceEventIds"),
+            model_inputs=bundle_inputs,
+            legal_event_ids=legal_event_ids,
+        )
+        explicit_event_ids = {
+            event_id
+            for model_input in bundle_inputs
+            if compact_whitespace(str(model_input.get("sourceKind") or ""))
+            == "user_final"
+            and _explicit_forget_matches_atom(
+                str(model_input.get("text") or ""),
+                canonical_text=str(target.get("canonicalText") or ""),
+            )
+            for event_id in _positive_event_ids(
+                model_input.get("sourceEventIds")
+            )
+            if event_id in source_ids
+        }
+        source_ids = sorted(explicit_event_ids)
+        if not source_ids:
+            continue
+        retractions.append(
+            {
+                "targetAtomId": target_id,
+                "reason": compact_whitespace(
+                    str(item.get("reason") or "explicit_user_forget")
+                )[:240],
+                "sourceEventIds": source_ids,
+                "confidence": confidence,
+                "ownerKind": owner_kind,
+                "ownerId": owner_id,
+                "project": project,
+            }
+        )
+        if len(retractions) >= 4:
+            break
+
+    retracted_ids = {
+        str(item["targetAtomId"])
+        for item in retractions
+    }
+    replaced_claim_keys = {
+        compact_whitespace(str(item.get("claimKey") or ""))
+        for item in atoms
+        if compact_whitespace(str(item.get("claimKey") or ""))
+    }
+    retained_existing_atoms = [
+        item
+        for item in existing_atoms
+        if compact_whitespace(str(item.get("atomId") or ""))
+        not in retracted_ids
+        and (
+            not compact_whitespace(str(item.get("claimKey") or ""))
+            or compact_whitespace(str(item.get("claimKey") or ""))
+            not in replaced_claim_keys
+        )
+    ]
     existing_books = [
         dict(item)
         for item in bundle.get("existingMemoryBooks") or []
@@ -1573,97 +1948,136 @@ def _govern_owner_compile_output(
         dict(item)
         for item in compile_output.get("topicBooks") or []
         if isinstance(item, dict)
-    ]
-    existing_owner_book = next(
-        (
-            item
-            for item in existing_books
-            if compact_whitespace(str(item.get("bookId") or "")) == owner_book_id
-            or compact_whitespace(str(item.get("bookKey") or "")) == owner_book_key
-        ),
-        None,
-    )
-    owner_book_archived = (
-        compact_whitespace(str((existing_owner_book or {}).get("status") or ""))
-        == "archived"
-    )
+    ][:3]
+    current_atom_by_id = {
+        compact_whitespace(str(item.get("atomId") or "")): item
+        for item in [*retained_existing_atoms, *atoms]
+        if compact_whitespace(str(item.get("atomId") or ""))
+    }
+    current_atom_id_set = set(current_atom_by_id)
     books: list[dict[str, object]] = []
-    if proposed_books and atoms and not owner_book_archived:
-        proposed = proposed_books[0]
+    used_existing_book_ids: set[str] = set()
+    for proposed in proposed_books:
+        title = compact_whitespace(str(proposed.get("title") or ""))[:120]
         proposed_summary = compact_whitespace(str(proposed.get("summary") or ""))
+        if (
+            not title
+            or contains_sensitive_content(title)
+            or _GENERIC_OWNER_BOOK_TITLE_RE.fullmatch(title)
+        ):
+            continue
+        existing_book = _match_owner_topic_book(
+            proposed,
+            existing_books=existing_books,
+            used_book_ids=used_existing_book_ids,
+        )
+        if (
+            existing_book is not None
+            and compact_whitespace(str(existing_book.get("status") or ""))
+            == "archived"
+        ):
+            continue
+        existing_book_id = compact_whitespace(
+            str((existing_book or {}).get("bookId") or "")
+        )
+        if existing_book_id:
+            used_existing_book_ids.add(existing_book_id)
         source_ids = _legal_ints(
             proposed.get("sourceEventIds"),
             remembered_event_ids,
-        ) or sorted(remembered_event_ids)
-        if source_ids and not _derived_summary_rejection_reason(proposed_summary):
-            books.append(
-                {
-                    **proposed,
-                    "bookId": owner_book_id,
-                    "bookType": "topic",
-                    "bookKey": owner_book_key,
-                    "title": (
-                        "个人长期记忆"
-                        if owner_kind == "user"
-                        else "共享长期记忆"
-                        if owner_kind == "shared"
-                        else f"{display_name} 的长期记忆"
-                    ),
-                    "summary": proposed_summary[:2400],
-                    "sourceEventIds": source_ids,
-                    "memoryAtomIds": atom_ids,
-                    "tags": [],
-                    "semanticGroupIds": [],
-                    "ownerKind": owner_kind,
-                    "ownerId": owner_id,
-                }
+        )
+        explicit_member_ids = [
+            compact_whitespace(str(value))
+            for value in proposed.get("memoryAtomIds") or []
+            if compact_whitespace(str(value)) in current_atom_id_set
+        ]
+        new_member_ids = [
+            atom_id
+            for atom_id in atom_ids
+            if set(
+                _positive_event_ids(
+                    current_atom_by_id[atom_id].get("sourceEventIds")
+                )
+            ).intersection(source_ids)
+        ]
+        retained_member_ids = [
+            compact_whitespace(str(value))
+            for value in (existing_book or {}).get("memoryAtomIds") or []
+            if compact_whitespace(str(value)) in current_atom_id_set
+        ]
+        member_ids = list(
+            dict.fromkeys(
+                [*retained_member_ids, *explicit_member_ids, *new_member_ids]
             )
-    if not books and atoms and not owner_book_archived:
-        source_ids = sorted(
-            {
-                source_id
-                for atom in atoms
-                for source_id in atom.get("sourceEventIds") or []
-                if isinstance(source_id, int)
-            }
         )
-        previous_summary = compact_whitespace(
-            str((existing_owner_book or {}).get("summary") or "")
+        if not member_ids or not source_ids:
+            continue
+        if not proposed_summary or _derived_summary_rejection_reason(
+            proposed_summary
+        ):
+            proposed_summary = "；".join(
+                compact_whitespace(
+                    str(current_atom_by_id[atom_id].get("canonicalText") or "")
+                )
+                for atom_id in member_ids
+                if compact_whitespace(
+                    str(current_atom_by_id[atom_id].get("canonicalText") or "")
+                )
+            )
+        if not proposed_summary:
+            continue
+        if contains_sensitive_content(proposed_summary):
+            continue
+        topic_digest = stable_text_hash(normalize_text(title)).removeprefix(
+            "sha256:"
+        )[:16]
+        book_id = existing_book_id or f"book:owner:{owner_hash}:topic:{topic_digest}"
+        book_key = (
+            compact_whitespace(str((existing_book or {}).get("bookKey") or ""))
+            or f"owner-{owner_hash}-topic-{topic_digest}"
         )
-        atom_summary = "；".join(
-            str(item["canonicalText"])
-            for item in atoms
-            if normalize_text(str(item["canonicalText"]))
-            not in normalize_text(previous_summary)
-        )
-        merged_summary = "；".join(
-            part
-            for part in (previous_summary, atom_summary)
-            if part
-        )[:2400]
         books.append(
             {
-                "bookId": owner_book_id,
+                **proposed,
+                "bookId": book_id,
                 "bookType": "topic",
-                "bookKey": owner_book_key,
-                "title": (
-                    "个人长期记忆"
-                    if owner_kind == "user"
-                    else "共享长期记忆"
-                    if owner_kind == "shared"
-                    else f"{display_name} 的长期记忆"
-                ),
-                "summary": merged_summary,
+                "bookKey": book_key,
+                "title": title,
+                "summary": proposed_summary[:2400],
                 "sourceEventIds": source_ids,
-                "memoryAtomIds": atom_ids,
-                "tags": [],
-                "queryExpansions": [],
+                "memoryAtomIds": member_ids,
+                "tags": list(
+                    dict.fromkeys(
+                        [
+                            *[
+                                compact_whitespace(str(value))
+                                for value in proposed.get("tags") or []
+                                if compact_whitespace(str(value))
+                                and not contains_sensitive_content(value)
+                            ],
+                            *_origin_tags_for_event_ids(
+                                source_ids,
+                                model_inputs=bundle_inputs,
+                            ),
+                            *[
+                                tag
+                                for atom_id in member_ids
+                                for tag in (
+                                    current_atom_by_id[atom_id].get("tags")
+                                    or []
+                                )
+                                if compact_whitespace(str(tag))
+                            ],
+                        ]
+                    )
+                )[:12],
+                "queryExpansions": [
+                    compact_whitespace(str(value))
+                    for value in proposed.get("queryExpansions") or []
+                    if compact_whitespace(str(value))
+                    and not contains_sensitive_content(value)
+                ][:16],
                 "semanticGroupIds": [],
-                "confidence": min(
-                    (_bounded_float(item.get("confidence"), default=0.5) for item in atoms),
-                    default=0.5,
-                ),
-                "qualityScore": 0.7,
                 "ownerKind": owner_kind,
                 "ownerId": owner_id,
             }
@@ -1681,13 +2095,41 @@ def _govern_owner_compile_output(
             "phraseCandidates": [],
             "negativePhrases": [],
             "supersedes": [],
+            "memoryRetractions": retractions,
         }
     )
     return result
 
 
 def _has_durable_memory(compile_output: Mapping[str, object]) -> bool:
-    return bool(compile_output.get("topicBooks") or compile_output.get("memoryAtoms"))
+    return bool(
+        compile_output.get("topicBooks")
+        or compile_output.get("memoryAtoms")
+        or compile_output.get("memoryRetractions")
+    )
+
+
+def _explicit_forget_matches_atom(
+    source_text: str,
+    *,
+    canonical_text: str,
+) -> bool:
+    request = compact_whitespace(source_text)
+    canonical = compact_whitespace(canonical_text)
+    if (
+        not request
+        or not canonical
+        or _EXPLICIT_MEMORY_FORGET_RE.search(request) is None
+    ):
+        return False
+    request_normalized = normalize_text(request)
+    terms = [
+        term
+        for term in token_terms(canonical, max_terms=32)
+        if len(term) >= 2
+        and term not in {"用户", "项目", "记忆", "事实", "偏好", "当前"}
+    ]
+    return any(normalize_text(term) in request_normalized for term in terms)
 
 
 def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
@@ -1710,6 +2152,8 @@ def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
         return "random_key_input"
     if len(text) <= 80 and _RUNTIME_PROBE_RE.search(text):
         return "runtime_probe"
+    if _EXPLICIT_MEMORY_FORGET_RE.search(text):
+        return None
     if _looks_like_standalone_question(text):
         return "standalone_question_no_durable_claim"
     if (
@@ -1938,6 +2382,14 @@ def _json_strings(value: object) -> list[str]:
         for item in parsed
         if compact_whitespace(str(item))
     ]
+
+
+def _json_mapping(value: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
 
 
 def _json_ints(value: object) -> list[int]:

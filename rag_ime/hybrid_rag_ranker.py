@@ -164,6 +164,8 @@ def _score_features(
 
 
 def _source_type_for_doc(doc_type: str) -> str:
+    if doc_type == "timeline":
+        return "timeline"
     if doc_type == "book":
         return "memory"
     if doc_type == "atom":
@@ -227,6 +229,8 @@ def _half_life_days(
         return _decay_days(decay_settings.get("stablePreferenceHalfLifeDays"), 365.0)
     if doc_type == "phrase":
         return 90.0
+    if doc_type == "timeline":
+        return 14.0
     if doc_type == "book":
         return 30.0 if book_type == "daily" else _decay_days(decay_settings.get("topicBookHalfLifeDays"), 180.0)
     if doc_type == "atom" and "project" in kind:

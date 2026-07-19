@@ -19,6 +19,7 @@ export interface SessionMemoryRecallV1 {
     recentCompleteInputUsedForRetrieval: boolean;
     retrievalContextUsed: boolean;
     recentConversationCount: number;
+    timelineIntent: TimelineIntent;
   };
   retrieval: {
     strategy: 'vcp_hybrid_book_atom';
@@ -33,6 +34,7 @@ export interface SessionMemoryRecallV1 {
     embeddingProvider: string;
     embeddingFallback: boolean;
     temporalIntent: boolean;
+    timelineIntent: TimelineIntent;
     activityTimelineIncluded: boolean;
     vectorFusion: {
       applied: boolean;
@@ -48,7 +50,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -67,7 +69,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -84,60 +86,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-      ]
-    | [
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -156,7 +105,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -173,7 +122,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -190,24 +139,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -226,7 +158,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -243,7 +175,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -260,7 +192,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -277,24 +209,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -313,7 +228,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -330,7 +245,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -347,7 +262,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -364,7 +279,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -381,24 +296,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -417,7 +315,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -434,7 +332,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -451,7 +349,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -468,7 +366,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -485,7 +383,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -502,24 +400,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -538,7 +419,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -555,7 +436,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -572,7 +453,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -589,7 +470,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -606,7 +487,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -623,7 +504,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -640,24 +521,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -676,7 +540,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -693,7 +557,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -710,7 +574,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -727,7 +591,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -744,7 +608,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -761,7 +625,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -778,7 +642,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -795,24 +659,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -831,7 +678,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -848,7 +695,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -865,7 +712,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -882,7 +729,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -899,7 +746,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -916,7 +763,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -933,7 +780,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -950,7 +797,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -967,24 +814,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1003,7 +833,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1020,7 +850,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1037,7 +867,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1054,7 +884,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1071,7 +901,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1088,7 +918,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1105,7 +935,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1122,7 +952,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1139,7 +969,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1156,24 +986,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1192,7 +1005,7 @@ export interface SessionMemoryRecallV1 {
     | [
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1209,7 +1022,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1226,7 +1039,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1243,7 +1056,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1260,7 +1073,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1277,7 +1090,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1294,7 +1107,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1311,7 +1124,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1328,7 +1141,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1345,7 +1158,7 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1362,7 +1175,26 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+      ]
+    | [
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1379,7 +1211,177 @@ export interface SessionMemoryRecallV1 {
         },
         {
           rank: number;
-          sourceType: 'memory_book' | 'memory_atom';
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
           sourceId: string;
           title: string;
           text: string;
@@ -1758,5 +1760,24 @@ export interface SessionMemoryRecallV1 {
     currentUserMessageWins: true;
     rawRecentInputInjected: false;
     recentConversationInjected: boolean;
+    detailLevel: 'compact' | 'balanced' | 'detailed';
   };
+}
+export interface TimelineIntent {
+  requested: boolean;
+  reason: 'none' | 'disabled' | 'exact_date' | 'explicit_timeline' | 'relative_time';
+  /**
+   * @maxItems 8
+   */
+  matched:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
+  range: string;
 }

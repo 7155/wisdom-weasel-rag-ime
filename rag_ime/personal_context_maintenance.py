@@ -6,7 +6,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,7 @@ from .agent_role_book import AgentRoleBookStore
 from .db import apply_database_migrations
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from .memory_maintenance_settings import DEFAULT_MAINTENANCE_MODEL
 from .personal_context import (
     DEFAULT_CONSOLIDATION_INTERVAL_MS,
     PersonalContextConsolidator,
@@ -36,12 +37,16 @@ ConsolidatorFactory = Callable[..., PersonalContextConsolidator]
 @dataclass(frozen=True)
 class PersonalContextMaintenanceConfig:
     enabled: bool = True
+    consolidate_roles: bool = True
+    build_timelines: bool = True
     project: str = ""
     role_id: str = ""
     role_version: str = ""
     min_interval_ms: int = DEFAULT_CONSOLIDATION_INTERVAL_MS
     apply_safe_recent_work: bool = False
+    auto_publish_timelines: bool = False
     batch_limit: int = 500
+    model: str = DEFAULT_MAINTENANCE_MODEL
 
     def normalized(self) -> "PersonalContextMaintenanceConfig":
         project = compact_whitespace(self.project)
@@ -51,12 +56,19 @@ class PersonalContextMaintenanceConfig:
             raise ValueError("role_version requires an explicit role_id")
         return PersonalContextMaintenanceConfig(
             enabled=bool(self.enabled),
+            consolidate_roles=bool(self.consolidate_roles),
+            build_timelines=bool(self.build_timelines),
             project=project,
             role_id=role_id,
             role_version=role_version,
             min_interval_ms=max(0, int(self.min_interval_ms)),
             apply_safe_recent_work=bool(self.apply_safe_recent_work),
+            auto_publish_timelines=bool(self.auto_publish_timelines),
             batch_limit=max(1, min(int(self.batch_limit), 1_000)),
+            model=(
+                compact_whitespace(self.model)
+                or DEFAULT_MAINTENANCE_MODEL
+            ),
         )
 
     @classmethod
@@ -73,6 +85,16 @@ class PersonalContextMaintenanceConfig:
             enabled=_environment_bool(
                 values,
                 "RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED",
+                default=True,
+            ),
+            consolidate_roles=_environment_bool(
+                values,
+                "RAG_IME_MEMORY_DREAMING_ENABLED",
+                default=True,
+            ),
+            build_timelines=_environment_bool(
+                values,
+                "RAG_IME_MEMORY_AUTOMATIC_ORGANIZATION_ENABLED",
                 default=True,
             ),
             project=project or values.get("RAG_IME_PROJECT", ""),
@@ -94,10 +116,19 @@ class PersonalContextMaintenanceConfig:
                 "RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK",
                 default=False,
             ),
+            auto_publish_timelines=_environment_bool(
+                values,
+                "RAG_IME_PERSONAL_CONTEXT_AUTO_PUBLISH_TIMELINES",
+                default=False,
+            ),
             batch_limit=_environment_int(
                 values,
                 "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT",
                 default=500,
+            ),
+            model=values.get(
+                "RAG_IME_MEMORY_DREAMING_MODEL",
+                DEFAULT_MAINTENANCE_MODEL,
             ),
         ).normalized()
 
@@ -163,8 +194,13 @@ class PersonalContextMaintenanceRunner:
         for project, role_id in target_keys:
             before = self._safe_target_status(project, role_id, now_ms=timestamp)
             entry = dict(before)
-            if not self.config.enabled:
+            if not self.config.enabled or not self.config.consolidate_roles:
                 entry["runStatus"] = "disabled"
+                entry["disabledReason"] = (
+                    "maintenance_disabled"
+                    if not self.config.enabled
+                    else "dreaming_disabled"
+                )
                 targets.append(entry)
                 continue
             if before.get("probeError"):
@@ -183,11 +219,15 @@ class PersonalContextMaintenanceRunner:
                 targets.append(entry)
                 continue
             try:
-                target_timeline_id = self._timeline_id_for_target(
-                    project,
-                    role_id,
-                    generated_at_ms=timestamp,
-                    fallback_timeline_id=timeline_ids.get(project, ""),
+                target_timeline_id = (
+                    self._timeline_id_for_target(
+                        project,
+                        role_id,
+                        generated_at_ms=timestamp,
+                        fallback_timeline_id=timeline_ids.get(project, ""),
+                    )
+                    if self.config.build_timelines
+                    else ""
                 )
                 result = self._consolidator(project).run(
                     role_id,
@@ -231,11 +271,15 @@ class PersonalContextMaintenanceRunner:
             "ok": failed_count == 0 and timeline_failed_count == 0,
             "generatedAtMs": timestamp,
             "enabled": self.config.enabled,
+            "dreamingEnabled": self.config.consolidate_roles,
+            "automaticOrganizationEnabled": self.config.build_timelines,
             "draftOnly": not self.config.apply_safe_recent_work,
             "applySafeRecentWork": self.config.apply_safe_recent_work,
+            "autoPublishTimelines": self.config.auto_publish_timelines,
             "force": bool(force),
             "intervalMs": self.config.min_interval_ms,
             "batchLimit": self.config.batch_limit,
+            "model": self.config.model,
             "activityTimelineDate": timeline_date,
             "activityTimelineSummary": {
                 "projectCount": len(timeline_results),
@@ -268,7 +312,7 @@ class PersonalContextMaintenanceRunner:
         timestamp: int,
         target_keys: tuple[tuple[str, str], ...],
     ) -> list[dict[str, object]]:
-        if not self.config.enabled:
+        if not self.config.enabled or not self.config.build_timelines:
             return []
         projects = {project for project, _ in target_keys}
         try:
@@ -297,12 +341,10 @@ class PersonalContextMaintenanceRunner:
         results: list[dict[str, object]] = []
         for project in sorted(projects):
             try:
-                result = DailyActivityTimelineStore(
-                    self.db_path,
-                    project=project,
-                ).build_draft(
+                result = self._build_activity_timeline(
+                    project,
                     timeline_date,
-                    generated_at_ms=timestamp,
+                    timestamp=timestamp,
                 )
                 results.append(result)
             except Exception as exc:
@@ -319,6 +361,41 @@ class PersonalContextMaintenanceRunner:
                     }
                 )
         return results
+
+    def _build_activity_timeline(
+        self,
+        project: str,
+        timeline_date: str,
+        *,
+        timestamp: int,
+    ) -> dict[str, object]:
+        store = DailyActivityTimelineStore(self.db_path, project=project)
+        result = store.build_draft(
+            timeline_date,
+            generated_at_ms=timestamp,
+        )
+        timeline = result.get("timeline")
+        if (
+            self.config.auto_publish_timelines
+            and str(result.get("status") or "") == "draft"
+            and isinstance(timeline, Mapping)
+        ):
+            approved = store.approve(
+                str(timeline.get("timelineId") or ""),
+                expected_source_event_hash=str(
+                    timeline.get("sourceEventHash") or ""
+                ),
+                approved_by="system:memory-maintenance",
+                confirm_text="approve",
+                approved_at_ms=timestamp,
+            )
+            return {
+                **result,
+                "status": "approved",
+                "timeline": approved,
+                "autoPublished": True,
+            }
+        return {**result, "autoPublished": False}
 
     def _timeline_id_for_target(
         self,
@@ -358,12 +435,10 @@ class PersonalContextMaintenanceRunner:
         if evidence is None:
             return fallback_timeline_id
         timeline_date = _local_date(int(evidence["occurred_at_ms"] or 0))
-        result = DailyActivityTimelineStore(
-            self.db_path,
-            project=project,
-        ).build_draft(
+        result = self._build_activity_timeline(
+            project,
             timeline_date,
-            generated_at_ms=generated_at_ms,
+            timestamp=generated_at_ms,
         )
         timeline = result.get("timeline")
         if isinstance(timeline, Mapping):
@@ -384,6 +459,7 @@ class PersonalContextMaintenanceRunner:
             in {"error", "failed"}
             or (
                 self.config.enabled
+                and self.config.consolidate_roles
                 and str(target.get("status") or "") == "unresolved"
             )
         )
@@ -392,10 +468,14 @@ class PersonalContextMaintenanceRunner:
             "ok": failed_count == 0,
             "generatedAtMs": generated_at_ms,
             "enabled": self.config.enabled,
+            "dreamingEnabled": self.config.consolidate_roles,
+            "automaticOrganizationEnabled": self.config.build_timelines,
             "draftOnly": not self.config.apply_safe_recent_work,
             "applySafeRecentWork": self.config.apply_safe_recent_work,
+            "autoPublishTimelines": self.config.auto_publish_timelines,
             "intervalMs": self.config.min_interval_ms,
             "batchLimit": self.config.batch_limit,
+            "model": self.config.model,
             "summary": _summary(targets),
             "targets": targets,
         }
@@ -646,6 +726,7 @@ class PersonalContextMaintenanceRunner:
             config = load_deepseek_config()
         except (OSError, ValueError):
             return None
+        config = replace(config, model=self.config.model)
         if config.api_key:
             self._default_role_book_organizer = DeepSeekMemoryOrganizer(config)
         return self._default_role_book_organizer

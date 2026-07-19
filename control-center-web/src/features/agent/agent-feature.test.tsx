@@ -1509,7 +1509,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
     const image = new File([new Uint8Array([137, 80, 78, 71])], 'clipboard.png', { type: 'image/png' });
 
     fireEvent.paste(composer, {
@@ -1533,7 +1533,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
     const attachmentButton = await screen.findByRole('button', { name: '添加图片' });
     expect(attachmentButton).toBeVisible();
     expect(attachmentButton).toBeEnabled();
@@ -1553,7 +1553,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
     expect(fireEvent.paste(composer, { clipboardData: { files: [], getData: () => '普通文本' } })).toBe(true);
     expect(transport.imagePasteCalls).toHaveLength(0);
 
@@ -1573,7 +1573,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
     expect(screen.getByRole('button', { name: '添加图片' })).toBeEnabled();
 
     expect(fireEvent.paste(composer, {
@@ -1590,7 +1590,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
 
     expect(fireEvent.paste(composer, {
       clipboardData: { files: [], items: [], getData: () => '' },

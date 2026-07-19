@@ -73,10 +73,9 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertTrue(env_vars["RAG_IME_DEEPSEEK_ENV"].endswith("Application Support/RagIme/deepseek.env"))
         self.assertEqual(env_vars["RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY"], "0")
         self.assertEqual(env_vars["RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE"], "0")
-        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_MAINTENANCE_ENABLED"], "1")
-        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_APPLY_SAFE_RECENT_WORK"], "0")
-        self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS"], "86400")
         self.assertEqual(env_vars["RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT"], "500")
+        self.assertNotIn("RAG_IME_OWNER_MEMORY_INTERVAL_SECONDS", env_vars)
+        self.assertNotIn("RAG_IME_PERSONAL_CONTEXT_INTERVAL_SECONDS", env_vars)
         self.assertLess(
             installer.rindex("launchctl enable"),
             installer.rindex("launchctl bootstrap"),
@@ -129,6 +128,9 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertIn('RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"', source)
         self.assertIn("--save-draft", source)
         self.assertIn('"mode": "owner_scoped"', source)
+        self.assertIn("--managed-memory-settings", source)
+        self.assertNotIn("owner_cmd+=(--no-auto-apply)", source)
+        self.assertNotIn("--interval-seconds \"$OWNER_INTERVAL_SECONDS\"", source)
         self.assertIn(
             '"reviewRequired": any(bool(item.get("reviewRequired")) for item in results)',
             source,
@@ -138,6 +140,11 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertIn('if [[ "$APPLY" == "1"', source)
         self.assertIn("personal-context-maintenance-run", source)
         self.assertIn('PERSONAL_CONTEXT_LOG="$OUT_DIR/personal-context-$STAMP.json"', source)
+        self.assertIn("-m rag_ime.codex_memory_source", source)
+        self.assertIn("--managed-memory-settings", source)
+        self.assertIn('CODEX_MEMORY_LOG="$OUT_DIR/codex-memory-$STAMP.json"', source)
+        self.assertIn('"codexMemoryImport": codex_memory', source)
+        self.assertIn('"rawTranscriptImported": False', source)
 
 
 if __name__ == "__main__":

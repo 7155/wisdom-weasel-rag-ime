@@ -11,6 +11,7 @@ from rag_ime.agent_context_runtime import (
     RUNTIME_PROMPT_ENVELOPE_PREFIX,
     AgentContextRuntime,
     compose_runtime_prompt,
+    render_context_items,
 )
 from rag_ime.agent_sessions import AgentSessionStore
 
@@ -228,6 +229,40 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertEqual(envelope["message"], "用户现在的问题")
         self.assertEqual(envelope["sessionContext"], "")
         self.assertEqual(envelope["transientContext"], "<context>异步结果</context>")
+
+    def test_session_memory_renders_independent_timeline_as_timeline(self) -> None:
+        rendered = render_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "retrieval": {"temporalIntent": True},
+                        "items": [
+                            {
+                                "sourceId": "timeline:2026-07-18",
+                                "sourceType": "memory_timeline",
+                                "title": "2026-07-18 活动时间线",
+                                "text": "完成 Timeline 独立索引。",
+                            },
+                            {
+                                "sourceId": "atom:preference",
+                                "sourceType": "memory_atom",
+                                "title": "偏好",
+                                "text": "解释先给结论。",
+                            },
+                        ],
+                    },
+                }
+            ]
+        )
+
+        self.assertIn("### 近期时间线", rendered)
+        self.assertIn("#### 2026-07-18 活动时间线", rendered)
+        self.assertIn("完成 Timeline 独立索引。", rendered)
+        self.assertIn("### 事实与偏好", rendered)
+        self.assertIn("- **偏好**: 解释先给结论。", rendered)
+        self.assertNotIn("- **2026-07-18 活动时间线**", rendered)
 
     def test_maintenance_bounds_terminal_payloads_and_trace_history(self) -> None:
         item = self.runtime.enqueue(

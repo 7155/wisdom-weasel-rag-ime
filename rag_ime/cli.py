@@ -75,6 +75,7 @@ from .memory_generator import (
     generated_memory_context,
     generated_memory_dedupe_tag,
 )
+from .memory_maintenance_settings import MemoryMaintenanceSettings
 from .models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from .payloads import action_response_payload, suggestions_response_payload
 from .personal_context_maintenance import (
@@ -174,6 +175,11 @@ def _add_personal_context_maintenance_parser(
     )
     command.add_argument("--batch-limit", type=int, default=defaults.batch_limit)
     command.add_argument("--report-path", default="")
+    command.add_argument(
+        "--managed-memory-settings",
+        action="store_true",
+        help="Resolve automatic organization and Dream controls from the management settings store.",
+    )
     enabled = command.add_mutually_exclusive_group()
     enabled.add_argument(
         "--enabled",
@@ -1342,15 +1348,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             else "rag-ime.personal-context-maintenance-status.v1"
         )
         try:
-            config = PersonalContextMaintenanceConfig(
-                enabled=bool(args.personal_context_enabled),
-                project=args.project,
-                role_id=args.role_id,
-                role_version=args.role_version,
-                min_interval_ms=max(0, int(args.interval_seconds)) * 1_000,
-                apply_safe_recent_work=bool(args.apply_safe_recent_work),
-                batch_limit=args.batch_limit,
-            ).normalized()
+            if bool(args.managed_memory_settings):
+                managed = MemoryMaintenanceSettings.load(core.db_path)
+                config = PersonalContextMaintenanceConfig(
+                    enabled=(
+                        managed.automatic_organization_enabled
+                        or managed.dreaming_enabled
+                    ),
+                    consolidate_roles=managed.dreaming_enabled,
+                    build_timelines=managed.automatic_organization_enabled,
+                    project=args.project,
+                    role_id=args.role_id,
+                    role_version=args.role_version,
+                    min_interval_ms=(
+                        managed.dreaming_interval_seconds * 1_000
+                    ),
+                    # The consolidator only auto-applies its bounded
+                    # evidence-backed recent-work lane. Identity, capability
+                    # and security proposals remain fail-closed.
+                    apply_safe_recent_work=managed.dreaming_enabled,
+                    auto_publish_timelines=(
+                        managed.automatic_organization_enabled
+                    ),
+                    batch_limit=args.batch_limit,
+                    model=managed.dreaming_model,
+                ).normalized()
+            else:
+                config = PersonalContextMaintenanceConfig(
+                    enabled=bool(args.personal_context_enabled),
+                    project=args.project,
+                    role_id=args.role_id,
+                    role_version=args.role_version,
+                    min_interval_ms=max(0, int(args.interval_seconds)) * 1_000,
+                    apply_safe_recent_work=bool(args.apply_safe_recent_work),
+                    batch_limit=args.batch_limit,
+                ).normalized()
             runner = PersonalContextMaintenanceRunner(
                 core.db_path,
                 config=config,

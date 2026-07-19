@@ -46,7 +46,10 @@ _CREDENTIAL_ASSIGNMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _SECRET_RE = re.compile(
-    r"(?<!REDACTED_)(password|token|api[_ -]?key|bearer|sk-[A-Za-z0-9_-]{8,}|secret|验证码|身份证|手机号)",
+    r"(?<!REDACTED_)(?:"
+    r"bearer\s+[A-Za-z0-9._~+/=-]{8,}|"
+    r"sk-[A-Za-z0-9_-]{8,}"
+    r")",
     re.IGNORECASE,
 )
 _PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
@@ -918,6 +921,36 @@ def memory_book_plan_from_compile_output(
                 "status": "pending",
             }
         )
+    for item in _list_of_dicts(compile_output.get("memoryRetractions")):
+        target_id = compact_whitespace(
+            str(item.get("targetAtomId") or item.get("targetId") or "")
+        )
+        if not target_id:
+            continue
+        source_ids = _positive_ints(item.get("sourceEventIds"))
+        diffs.append(
+            {
+                "op": "retract_memory_atom",
+                "targetId": target_id,
+                "payload": {
+                    "targetAtomId": target_id,
+                    "reason": compact_whitespace(
+                        str(item.get("reason") or "explicit_user_forget")
+                    ),
+                    "sourceEventIds": source_ids,
+                    "confidence": _bounded_float(
+                        item.get("confidence"),
+                        default=0.0,
+                    ),
+                    "project": compact_whitespace(
+                        str(item.get("project") or project)
+                    ),
+                    "ownerKind": normalized_owner_kind,
+                    "ownerId": normalized_owner_id,
+                },
+                "status": "pending",
+            }
+        )
     for item in tag_merges:
         source = compact_whitespace(str(item.get("source") or ""))
         target = compact_whitespace(str(item.get("target") or ""))
@@ -1056,6 +1089,7 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         "phraseCandidates": 0,
         "negativePhrases": 0,
         "supersedes": 0,
+        "retractions": 0,
     }
     diffs = _list_of_dicts(plan.get("diffs"))
     metadata = dict(plan.get("metadata") or {})
@@ -1188,6 +1222,23 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             _validate_required_text(errors, index, op, payload, "oldId")
             _validate_required_text(errors, index, op, payload, "newId")
             _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
+        elif op == "retract_memory_atom":
+            counts["retractions"] += 1
+            _validate_required_text(errors, index, op, payload, "targetAtomId")
+            _validate_required_text(errors, index, op, payload, "reason")
+            _validate_source_ids(
+                errors,
+                index,
+                op,
+                payload.get("sourceEventIds"),
+                legal_source_event_ids=legal_source_event_ids,
+            )
+            confidence = _bounded_float(payload.get("confidence"), default=0.0)
+            if confidence < 0.9:
+                errors.append(
+                    _issue(index, op, "confidence", "retraction_confidence_too_low")
+                )
+            _validate_secret_free(errors, index, op, payload, ("reason",))
         else:
             errors.append(_issue(index, op, "op", "unsupported_op"))
         if op and _looks_like_long_history_sentence(payload):
@@ -1958,6 +2009,8 @@ def _apply_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) -> di
         return _apply_negative_phrase(conn, payload)
     if op == "supersede_memory":
         return _apply_supersede_memory(conn, payload)
+    if op == "retract_memory_atom":
+        return _apply_retract_memory_atom(conn, payload)
     raise ValueError(f"unsupported memory book op: {op}")
 
 
@@ -1978,6 +2031,9 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         for old_row in rollback.get("autoSuperseded", []) or []:
             if isinstance(old_row, dict):
                 _insert_or_replace_dict(conn, "memory_atoms", old_row)
+        for old_book in rollback.get("autoSupersededBooks", []) or []:
+            if isinstance(old_book, dict):
+                _insert_or_replace_dict(conn, "memory_books", old_book)
         for relation in rollback.get("supersessionRollbacks", []) or []:
             if isinstance(relation, dict):
                 _restore_or_delete_row(
@@ -2038,6 +2094,19 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
                 table="memory_supersessions",
                 pk="supersession_id",
                 rollback=relation,
+            )
+    elif op == "retract_memory_atom":
+        atom = rollback.get("atom")
+        if isinstance(atom, dict) and atom:
+            _insert_or_replace_dict(conn, "memory_atoms", atom)
+        for book in rollback.get("books", []) or []:
+            if isinstance(book, dict) and book:
+                _insert_or_replace_dict(conn, "memory_books", book)
+        tombstone_id = int(rollback.get("tombstoneId") or 0)
+        if tombstone_id > 0:
+            conn.execute(
+                "UPDATE memory_tombstones SET active = 0 WHERE id = ?",
+                (tombstone_id,),
             )
 
 
@@ -2444,6 +2513,23 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         member_id=atom_id,
         group_ids=_strings(payload.get("semanticGroupIds")),
     )
+    auto_superseded_books = (
+        _replace_superseded_atoms_in_books(
+            conn,
+            old_atom_ids=[
+                compact_whitespace(str(item.get("id") or ""))
+                for item in auto_superseded
+            ],
+            new_atom_id=atom_id,
+            owner_kind=str(payload.get("ownerKind") or "user"),
+            owner_id=str(payload.get("ownerId") or "default"),
+            timestamp=timestamp,
+        )
+        if auto_superseded
+        and claim_state == "current"
+        and stored_status in {"active", "approved"}
+        else []
+    )
     return {
         "table": "memory_atoms",
         "pk": "id",
@@ -2453,9 +2539,96 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         "previousAliases": previous_aliases,
         "previousAtomTags": previous_atom_tags,
         "autoSuperseded": auto_superseded,
+        "autoSupersededBooks": auto_superseded_books,
         "supersessionRollbacks": supersession_rollbacks,
         **memberships,
     }
+
+
+def _replace_superseded_atoms_in_books(
+    conn: sqlite3.Connection,
+    *,
+    old_atom_ids: list[str],
+    new_atom_id: str,
+    owner_kind: str,
+    owner_id: str,
+    timestamp: int,
+) -> list[dict[str, object]]:
+    old_ids = {
+        compact_whitespace(atom_id)
+        for atom_id in old_atom_ids
+        if compact_whitespace(atom_id)
+    }
+    if not old_ids:
+        return []
+    previous_books: list[dict[str, object]] = []
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM memory_books
+        WHERE owner_kind = ? AND owner_id = ?
+          AND status IN ('active', 'approved')
+        """,
+        (owner_kind, owner_id),
+    ).fetchall()
+    for row in rows:
+        member_ids = _json_list(row["memory_atom_ids_json"])
+        if not old_ids.intersection(member_ids):
+            continue
+        previous_books.append(dict(row))
+        next_member_ids = _unique_strings(
+            [
+                new_atom_id if atom_id in old_ids else atom_id
+                for atom_id in member_ids
+            ],
+            limit=256,
+        )
+        atom_rows = (
+            conn.execute(
+                f"""
+                SELECT id, canonical_text, text
+                FROM memory_atoms
+                WHERE id IN ({','.join('?' for _ in next_member_ids)})
+                  AND status IN ('active', 'approved')
+                  AND claim_state = 'current'
+                """,
+                tuple(next_member_ids),
+            ).fetchall()
+            if next_member_ids
+            else []
+        )
+        atom_text_by_id = {
+            str(atom_row["id"]): compact_whitespace(
+                str(atom_row["canonical_text"] or atom_row["text"] or "")
+            )
+            for atom_row in atom_rows
+        }
+        active_member_ids = [
+            atom_id for atom_id in next_member_ids if atom_id in atom_text_by_id
+        ]
+        summary = "；".join(
+            atom_text_by_id[atom_id]
+            for atom_id in active_member_ids
+            if atom_text_by_id[atom_id]
+        )[:2400]
+        conn.execute(
+            """
+            UPDATE memory_books
+            SET summary = ?, normalized_text = ?,
+                memory_atom_ids_json = ?, updated_at_ms = ?,
+                last_active_at_ms = ?
+            WHERE book_id = ?
+            """,
+            (
+                summary,
+                normalize_text(f"{row['title']} {summary}"),
+                json.dumps(active_member_ids, ensure_ascii=False),
+                timestamp,
+                timestamp,
+                str(row["book_id"]),
+            ),
+        )
+    return previous_books
 
 
 def _apply_tag_edge(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -2909,6 +3082,155 @@ def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]
         (str(relation_rollback["pkValue"]),),
     )
     raise ValueError(f"superseded memory does not exist: {old_id}")
+
+
+def _apply_retract_memory_atom(
+    conn: sqlite3.Connection,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    target_id = compact_whitespace(str(payload.get("targetAtomId") or ""))
+    previous = _row_dict(
+        conn.execute(
+            "SELECT * FROM memory_atoms WHERE id = ?",
+            (target_id,),
+        ).fetchone()
+    )
+    if not previous:
+        raise ValueError(f"memory atom does not exist: {target_id}")
+    _assert_memory_owner_unchanged(previous, payload, target_kind="atom")
+    project = compact_whitespace(str(payload.get("project") or ""))
+    atom_project = compact_whitespace(str(previous.get("scope_project") or ""))
+    if project and atom_project and project != atom_project:
+        raise ValueError("memory atom belongs to another project")
+    if (
+        compact_whitespace(str(previous.get("claim_state") or "current"))
+        != "current"
+        or compact_whitespace(str(previous.get("status") or ""))
+        not in {"active", "approved"}
+    ):
+        raise ValueError("memory atom is no longer current")
+
+    timestamp = now_ms()
+    conn.execute(
+        """
+        UPDATE memory_atoms
+        SET status = 'tombstoned', claim_state = 'retracted',
+            valid_to_ms = ?, updated_at_ms = ?
+        WHERE id = ? AND claim_state = 'current'
+          AND status IN ('active', 'approved')
+        """,
+        (timestamp, timestamp, target_id),
+    )
+    if int(conn.execute("SELECT changes()").fetchone()[0]) != 1:
+        raise ValueError("memory atom changed before retraction")
+
+    tombstone = conn.execute(
+        """
+        INSERT INTO memory_tombstones(
+            created_at_ms, target_type, target_value, reason, active, metadata_json
+        ) VALUES (?, 'memory_id', ?, ?, 1, ?)
+        """,
+        (
+            timestamp,
+            target_id,
+            compact_whitespace(
+                str(payload.get("reason") or "explicit_user_forget")
+            ),
+            json.dumps(
+                {
+                    "source": "memory_book_compile",
+                    "sourceEventIds": _positive_ints(
+                        payload.get("sourceEventIds")
+                    ),
+                    "ownerKind": str(payload.get("ownerKind") or ""),
+                    "ownerId": str(payload.get("ownerId") or ""),
+                    "project": project,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        ),
+    )
+
+    affected_books: list[dict[str, object]] = []
+    for row in conn.execute(
+        """
+        SELECT *
+        FROM memory_books
+        WHERE owner_kind = ? AND owner_id = ?
+          AND status IN ('active', 'approved')
+        """,
+        (
+            str(payload.get("ownerKind") or "user"),
+            str(payload.get("ownerId") or "default"),
+        ),
+    ).fetchall():
+        atom_ids = _json_list(row["memory_atom_ids_json"])
+        if target_id not in atom_ids:
+            continue
+        affected_books.append(dict(row))
+        remaining_ids = [atom_id for atom_id in atom_ids if atom_id != target_id]
+        active_rows = (
+            conn.execute(
+                f"""
+                SELECT id, canonical_text, text
+                FROM memory_atoms
+                WHERE id IN ({','.join('?' for _ in remaining_ids)})
+                  AND status IN ('active', 'approved')
+                  AND claim_state = 'current'
+                ORDER BY updated_at_ms DESC, id ASC
+                """,
+                tuple(remaining_ids),
+            ).fetchall()
+            if remaining_ids
+            else []
+        )
+        active_ids = [str(atom_row["id"]) for atom_row in active_rows]
+        summary = "；".join(
+            compact_whitespace(
+                str(atom_row["canonical_text"] or atom_row["text"] or "")
+            )
+            for atom_row in active_rows
+            if compact_whitespace(
+                str(atom_row["canonical_text"] or atom_row["text"] or "")
+            )
+        )[:2400]
+        if active_ids:
+            conn.execute(
+                """
+                UPDATE memory_books
+                SET summary = ?, normalized_text = ?,
+                    memory_atom_ids_json = ?, updated_at_ms = ?,
+                    last_active_at_ms = ?
+                WHERE book_id = ?
+                """,
+                (
+                    summary,
+                    normalize_text(f"{row['title']} {summary}"),
+                    json.dumps(active_ids, ensure_ascii=False),
+                    timestamp,
+                    timestamp,
+                    str(row["book_id"]),
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE memory_books
+                SET summary = '', normalized_text = '',
+                    memory_atom_ids_json = '[]', status = 'archived',
+                    archived_at_ms = ?, updated_at_ms = ?,
+                    archive_reason = 'empty_after_memory_retraction'
+                WHERE book_id = ?
+                """,
+                (timestamp, timestamp, str(row["book_id"])),
+            )
+
+    return {
+        "atom": previous,
+        "books": affected_books,
+        "tombstoneId": int(tombstone.lastrowid),
+    }
 
 
 def _restore_or_delete_row(conn: sqlite3.Connection, *, table: str, pk: str, rollback: dict[str, object]) -> None:
@@ -3883,6 +4205,12 @@ def _match_existing_topic_book(
             return candidate
         if requested_key and requested_key == compact_whitespace(str(candidate.get("bookKey") or "")):
             return candidate
+    if (
+        compact_whitespace(str((source_bundle or {}).get("schemaVersion") or ""))
+        == "rag-ime.owner-memory-source-bundle.v1"
+        and requested_id.startswith("book:owner:")
+    ):
+        return None
 
     title = compact_whitespace(str(item.get("title") or ""))
     summary = compact_whitespace(str(item.get("summary") or ""))
@@ -4113,13 +4441,24 @@ def _latest_source_event_ms(
     if not source_bundle:
         return 0
     wanted = set(source_ids)
-    values = [
-        _optional_int(event.get("createdAtMs"))
-        for event in _list_of_dicts(source_bundle.get("recentEvents"))
-        if wanted.intersection(
-            _positive_ints(event.get("sourceEventIds") or [event.get("eventId")])
-        )
-    ]
+    values: list[int] = []
+    for collection_name in ("recentEvents", "inputs"):
+        for event in _list_of_dicts(source_bundle.get(collection_name)):
+            event_ids = _positive_ints(
+                event.get("sourceEventIds") or [event.get("eventId")]
+            )
+            if not wanted.intersection(event_ids):
+                continue
+            # External summaries are ingested now so the curation cursor can
+            # see them, but their factual recency is the source occurrence
+            # time. Using ingestion time here could let an old imported fact
+            # supersede a newer local fact.
+            occurred_at_ms = _optional_int(event.get("sourceOccurredAtMs"))
+            created_at_ms = _optional_int(event.get("createdAtMs"))
+            if occurred_at_ms > 0:
+                values.append(occurred_at_ms)
+            elif created_at_ms > 0:
+                values.append(created_at_ms)
     return max(values, default=0)
 
 

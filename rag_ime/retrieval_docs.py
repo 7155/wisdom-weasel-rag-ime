@@ -6,7 +6,7 @@ from typing import Any
 
 from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG
 from .memory_schema_v2 import ensure_memory_v2_schema
-from .text_utils import build_fts_document, compact_whitespace, now_ms
+from .text_utils import build_fts_document, compact_whitespace, now_ms, truncate_text
 
 
 RETRIEVAL_DOCS_REBUILD_SCHEMA_VERSION = "rag-ime.retrieval-docs-rebuild.v1"
@@ -19,6 +19,7 @@ def rebuild_retrieval_docs(
     include_books: bool = True,
     include_atoms: bool = True,
     include_phrases: bool = True,
+    include_timelines: bool = True,
     include_legacy_items: bool = False,
     include_items: bool | None = None,
 ) -> dict[str, object]:
@@ -35,7 +36,7 @@ def rebuild_retrieval_docs(
     # Read every projection type owned by this rebuild, not only enabled types.
     # Otherwise a default rebuild would leave old ``item`` rows (and their FTS
     # and vector projections) alive forever.
-    managed_doc_types = ("item", "phrase", "atom", "book")
+    managed_doc_types = ("item", "phrase", "atom", "book", "timeline")
     type_placeholders = ", ".join("?" for _ in managed_doc_types)
     existing_rows = conn.execute(
         f"""SELECT rowid, doc_id, doc_type, source_id, raw_text, tags_text,
@@ -70,10 +71,11 @@ def rebuild_retrieval_docs(
         include_books=include_books,
         include_atoms=include_atoms,
         include_phrases=include_phrases,
+        include_timelines=include_timelines,
         include_legacy_items=include_legacy_items,
     )
     timestamp = now_ms()
-    counts = {"item": 0, "phrase": 0, "atom": 0, "book": 0}
+    counts = {"item": 0, "phrase": 0, "atom": 0, "book": 0, "timeline": 0}
     active_doc_ids: set[str] = set()
     changed_doc_ids: set[str] = set()
     for doc in docs:
@@ -176,6 +178,7 @@ def rebuild_retrieval_docs(
         "includeBooks": bool(include_books),
         "includeAtoms": bool(include_atoms),
         "includePhrases": bool(include_phrases),
+        "includeTimelines": bool(include_timelines),
         "includeLegacyItems": bool(include_legacy_items),
         # Retain the old result field while callers migrate to the precise name.
         "includeItems": bool(include_legacy_items),
@@ -192,6 +195,7 @@ def expected_retrieval_docs(
     include_books: bool = True,
     include_atoms: bool = True,
     include_phrases: bool = True,
+    include_timelines: bool = True,
     include_legacy_items: bool = False,
 ) -> list[dict[str, object]]:
     """Build the exact governed document set without mutating projections."""
@@ -212,6 +216,14 @@ def expected_retrieval_docs(
         docs.extend(_memory_atom_docs(conn, project=project, tombstones=tombstones))
     if include_books:
         docs.extend(_memory_book_docs(conn, project=project, tombstones=tombstones))
+    if include_timelines:
+        docs.extend(
+            _activity_timeline_docs(
+                conn,
+                project=project,
+                tombstones=tombstones,
+            )
+        )
     return docs
 
 
@@ -384,7 +396,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                archived_at_ms, last_active_at_ms, archive_reason
         FROM memory_books
         WHERE status IN ('active', 'approved', 'archived')
-          AND book_type != 'app_archive'
+          AND book_type NOT IN ('app_archive', 'daily')
           AND archive_reason NOT IN (
               'complete_input_history',
               'superseded_by_curated_baseline',
@@ -447,6 +459,132 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     or _first_event_context_group(conn, source_event_ids),
                     "ownerKind": str(row["owner_kind"] or "user"),
                     "ownerId": str(row["owner_id"] or "default"),
+                },
+            }
+        )
+    return docs
+
+
+def _activity_timeline_docs(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    tombstones: dict[str, set[str]],
+) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT timeline_id, project, timeline_date, status,
+               source_event_ids_json, source_event_hash, segments_json,
+               summary_text, event_count, segment_count, metadata_json,
+               approved_by, approved_at_ms, updated_at_ms
+        FROM daily_activity_timelines
+        WHERE status = 'approved'
+          AND (? = '' OR project = ? OR project = '')
+        ORDER BY timeline_date DESC, updated_at_ms DESC, timeline_id DESC
+        """,
+        (project, project),
+    ).fetchall()
+    docs: list[dict[str, object]] = []
+    for row in rows:
+        timeline_id = compact_whitespace(str(row["timeline_id"] or ""))
+        source_event_ids = _positive_event_ids(
+            tuple(_json_list(row["source_event_ids_json"]))
+        )
+        summary = compact_whitespace(str(row["summary_text"] or ""))
+        if (
+            not timeline_id
+            or not summary
+            or _is_tombstoned(
+                memory_id=timeline_id,
+                text=summary,
+                normalized_text="",
+                source_event_ids=source_event_ids,
+                tombstones=tombstones,
+            )
+            or (
+                source_event_ids
+                and not _source_events_retrievable(conn, source_event_ids)
+            )
+        ):
+            continue
+        segments = _json_objects(row["segments_json"])
+        task_titles = _unique_text(
+            compact_whitespace(str(segment.get("title") or ""))
+            for segment in segments
+        )
+        task_summaries = _unique_text(
+            compact_whitespace(str(segment.get("summary") or ""))
+            for segment in segments
+        )
+        apps = _unique_text(
+            value
+            for segment in segments
+            for value in (
+                [
+                    compact_whitespace(str(item))
+                    for item in segment.get("apps") or []
+                ]
+                if isinstance(segment.get("apps"), list)
+                else [compact_whitespace(str(segment.get("app") or ""))]
+            )
+        )
+        timeline_date = compact_whitespace(str(row["timeline_date"] or ""))
+        title = f"{timeline_date} 活动时间线"
+        raw_text = truncate_text(
+            "。".join(
+                item
+                for item in (title, summary, *task_titles, *task_summaries)
+                if item
+            ),
+            3_200,
+        )
+        stored_metadata = _json_object(row["metadata_json"])
+        docs.append(
+            {
+                "doc_id": f"timeline:{timeline_id}",
+                "doc_type": "timeline",
+                "source_id": timeline_id,
+                "raw_text": raw_text,
+                "tags_text": " ".join(
+                    ["daily", "activity-timeline", timeline_date, *apps]
+                ),
+                "aliases_text": "",
+                "surface_hints_text": " ".join(task_titles),
+                "query_expansions_text": " ".join(
+                    (
+                        "时间线",
+                        "最近工作",
+                        "当天活动",
+                        "做了什么",
+                        timeline_date,
+                    )
+                ),
+                "time_key": f"timeline:{timeline_date}",
+                "project": str(row["project"] or ""),
+                "app": apps[0] if len(apps) == 1 else "multiple" if apps else "",
+                "owner_kind": "user",
+                "owner_id": "default",
+                "metadata": {
+                    **stored_metadata,
+                    "kind": "activity_timeline",
+                    "derivedArtifactType": "daily_activity_timeline",
+                    "timelineId": timeline_id,
+                    "timelineTitle": title,
+                    "timelineDate": timeline_date,
+                    "sourceEventHash": str(row["source_event_hash"] or ""),
+                    "sourceEventIds": source_event_ids,
+                    "taskTitles": task_titles,
+                    "eventCount": int(row["event_count"] or 0),
+                    "segmentCount": int(row["segment_count"] or 0),
+                    "source": "daily_activity_timelines",
+                    "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
+                    "publishedAtMs": int(row["approved_at_ms"] or 0),
+                    "publishedBy": str(row["approved_by"] or ""),
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "maySupportFacts": False,
+                    "corroborationOnly": True,
+                    "shortTerm": True,
                 },
             }
         )
@@ -535,6 +673,25 @@ def _json_object(raw: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _json_objects(raw: object) -> list[dict[str, object]]:
+    try:
+        parsed = json.loads(str(raw or "[]"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [dict(item) for item in parsed if isinstance(item, dict)]
+
+
+def _unique_text(values: Any) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = compact_whitespace(str(value or ""))
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _active_tombstone_sets(conn: sqlite3.Connection) -> dict[str, set[str]]:
@@ -642,12 +799,12 @@ def _source_events_retrievable(
                 FROM (
                     SELECT input_event_id
                     FROM agent_memory_sources
-                    WHERE status = 'active'
-                      AND input_event_id IN ({placeholders})
+                    WHERE input_event_id IN ({placeholders})
                     GROUP BY input_event_id
                     HAVING SUM(
                         CASE
-                            WHEN disposition NOT IN ('not_for_memory', 'expired')
+                            WHEN status = 'active'
+                             AND disposition NOT IN ('not_for_memory', 'expired')
                             THEN 1 ELSE 0
                         END
                     ) = 0
