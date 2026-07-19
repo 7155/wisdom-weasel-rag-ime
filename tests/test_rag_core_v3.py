@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,16 +38,43 @@ class RagCoreV3Tests(unittest.TestCase):
         self.assertEqual(suggestions[0].surface_text, "多路召回")
         self.assertEqual(suggestions[0].metadata["rag_core"], "v3")
 
-    def test_hybrid_core_does_not_surface_daily_book_summary_as_candidate(self) -> None:
+    def test_hybrid_core_surfaces_timeline_task_not_raw_summary(self) -> None:
         event_id = self._record_event("RAG 输入法多路召回方案", tags=("RAG",))
         with self.core._connect() as conn:
-            apply_memory_book_plan(
-                conn,
-                memory_book_plan_from_compile_output(
-                    _book_compile_output(event_id),
-                    project="wisdom-weasel-rag-ime",
-                    provider="deepseek",
-                    model="deepseek-v4-flash",
+            timestamp = now_ms()
+            conn.execute(
+                """
+                INSERT INTO daily_activity_timelines(
+                    timeline_id, project, timeline_date, timezone, status,
+                    source_event_ids_json, source_event_hash, segments_json,
+                    summary_text, event_count, segment_count, approved_book_id,
+                    approved_by, approved_at_ms, metadata_json,
+                    created_at_ms, updated_at_ms
+                ) VALUES (
+                    'activity-timeline:rag-core-v3', 'wisdom-weasel-rag-ime',
+                    '2026-07-06', 'Asia/Shanghai', 'approved', ?, 'eval:rag-core-v3',
+                    ?, ?, 1, 1, '', 'test:auto', ?,
+                    '{"derivedArtifactType":"daily_activity_timeline"}', ?, ?
+                )
+                """,
+                (
+                    json.dumps([event_id]),
+                    json.dumps(
+                        [
+                            {
+                                "title": "多路召回",
+                                "summary": "当天继续完善 RAG 输入法。",
+                                "app": "com.openai.codex",
+                                "apps": ["com.openai.codex"],
+                                "sourceEventIds": [event_id],
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    "用户希望借鉴 VCP 的 BM25、向量、TagMemo 和 Time。",
+                    timestamp,
+                    timestamp,
+                    timestamp,
                 ),
             )
             rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
@@ -94,29 +122,6 @@ class RagCoreV3Tests(unittest.TestCase):
                 )
                 rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
         return event_id
-
-
-def _book_compile_output(event_id: int) -> dict[str, object]:
-    return {
-        "schemaVersion": "rag-ime.memory-book-compile.v1",
-        "dailyBooks": [
-            {
-                "bookKey": "2026-07-06",
-                "title": "RAG 输入法多路召回方案",
-                "summary": "用户希望借鉴 VCP 的 BM25、向量、TagMemo 和 Time。",
-                "tags": ["RAG", "输入法", "VCP"],
-                "surfaceHints": ["多路召回", "TagMemo"],
-                "queryExpansions": ["VCP RAG", "Daily Book"],
-                "sourceEventIds": [event_id],
-                "confidence": 0.86,
-            }
-        ],
-        "memoryAtoms": [],
-        "tagEdges": [],
-        "phraseCandidates": [],
-        "warnings": [],
-    }
-
 
 if __name__ == "__main__":
     unittest.main()

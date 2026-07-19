@@ -17,6 +17,7 @@ class ImeMemoryProjector:
         top_k: int = 5,
     ) -> list[HybridRagCandidate]:
         candidates: list[HybridRagCandidate] = []
+        seen_surfaces: set[str] = set()
         for hit in hits:
             text = _ime_candidate_text(hit)
             if not text or _is_raw_echo(
@@ -25,6 +26,10 @@ class ImeMemoryProjector:
                 committed_tail=committed_tail,
             ):
                 continue
+            surface_key = compact_whitespace(text).casefold()
+            if surface_key in seen_surfaces:
+                continue
+            seen_surfaces.add(surface_key)
             candidates.append(
                 HybridRagCandidate(
                     candidate_id=hit.hit_id,

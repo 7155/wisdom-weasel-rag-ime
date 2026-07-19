@@ -49,13 +49,25 @@ function providerId(request) {
 async function loadPi(request) {
   const packageEntry = requiredString(request, 'packageEntry', 4096);
   const imported = await import(pathToFileURL(packageEntry).href);
-  if (typeof imported.AuthStorage !== 'function' || typeof imported.ModelRegistry !== 'function') {
-    throw new Error('managed Pi package does not export credential services');
-  }
   const agentDir = requiredString(request, 'agentDir', 4096);
-  const auth = imported.AuthStorage.create(`${agentDir}/auth.json`);
-  const registry = imported.ModelRegistry.create(auth, `${agentDir}/models.json`);
-  return { auth, registry };
+  if (
+    typeof imported.AuthStorage === 'function'
+    && typeof imported.ModelRegistry === 'function'
+    && typeof imported.ModelRegistry.create === 'function'
+  ) {
+    const auth = imported.AuthStorage.create(`${agentDir}/auth.json`);
+    const registry = imported.ModelRegistry.create(auth, `${agentDir}/models.json`);
+    return { agentDir, mode: 'legacy', auth, registry };
+  }
+  if (typeof imported.ModelRuntime === 'function' && typeof imported.ModelRuntime.create === 'function') {
+    const runtime = await imported.ModelRuntime.create({
+      authPath: `${agentDir}/auth.json`,
+      modelsPath: `${agentDir}/models.json`,
+      allowModelNetwork: false,
+    });
+    return { agentDir, mode: 'runtime', runtime };
+  }
+  throw new Error('managed Pi package does not export credential services');
 }
 
 async function configuredProviderIds(request) {
@@ -73,7 +85,7 @@ async function configuredProviderIds(request) {
   return ids;
 }
 
-function providerCatalog(auth, registry, configuredIds) {
+function legacyProviderCatalog(auth, registry, configuredIds) {
   const models = registry.getAll();
   const oauthProviders = new Map(auth.getOAuthProviders().map((provider) => [provider.id, provider]));
   const ids = new Set([
@@ -118,66 +130,175 @@ function providerCatalog(auth, registry, configuredIds) {
   return providers;
 }
 
+async function runtimeProviderCatalog(runtime, configuredIds) {
+  const credentialInfo = await runtime.listCredentials();
+  const credentialTypes = new Map(
+    credentialInfo.map((item) => [item.providerId, item.type]),
+  );
+  const runtimeProviders = new Map(
+    runtime.getProviders().map((provider) => [provider.id, provider]),
+  );
+  const availableByProvider = new Map();
+  for (const model of runtime.getAvailableSnapshot()) {
+    const current = availableByProvider.get(model.provider) ?? [];
+    current.push(model);
+    availableByProvider.set(model.provider, current);
+  }
+  const ids = new Set([
+    ...runtimeProviders.keys(),
+    ...credentialTypes.keys(),
+    ...configuredIds,
+  ]);
+  const providers = [];
+  for (const id of [...ids].sort((left, right) => left.localeCompare(right))) {
+    const provider = runtimeProviders.get(id);
+    const models = runtime.getModels(id);
+    const available = availableByProvider.get(id) ?? [];
+    const status = runtime.getProviderAuthStatus(id);
+    providers.push({
+      id,
+      name: provider?.name ?? id,
+      auth: {
+        configured: Boolean(status?.configured || available.length),
+        type: credentialTypes.get(id) ?? '',
+        source: status?.source ?? '',
+        sourceLabel: status?.label ?? '',
+        oauthSupported: Boolean(provider?.auth?.oauth),
+        oauthDeviceCodeSupported: id === 'openai-codex' && Boolean(provider?.auth?.oauth),
+        apiKeySupported: Boolean(provider?.auth?.apiKey),
+      },
+      configuredInCatalog: configuredIds.has(id),
+      modelCount: models.length,
+      availableModelCount: available.length,
+      availableModels: available.slice(0, MAX_MODELS_PER_PROVIDER).map((model) => ({
+        id: model.id,
+        name: model.name,
+        reasoning: Boolean(model.reasoning),
+        imageInput: Array.isArray(model.input) && model.input.includes('image'),
+      })),
+      modelsTruncated: available.length > MAX_MODELS_PER_PROVIDER,
+    });
+  }
+  return providers;
+}
+
 async function catalog(request) {
-  const { auth, registry } = await loadPi(request);
+  const pi = await loadPi(request);
   const configuredIds = await configuredProviderIds(request);
   return {
     event: 'result',
     ok: true,
-    providers: providerCatalog(auth, registry, configuredIds),
-    catalogError: registry.getError() || '',
+    providers: pi.mode === 'runtime'
+      ? await runtimeProviderCatalog(pi.runtime, configuredIds)
+      : legacyProviderCatalog(pi.auth, pi.registry, configuredIds),
+    catalogError: (pi.mode === 'runtime' ? pi.runtime.getError() : pi.registry.getError()) || '',
   };
+}
+
+async function knownProviderIds(request, pi) {
+  const configuredIds = await configuredProviderIds(request);
+  if (pi.mode === 'runtime') {
+    return new Set([
+      ...pi.runtime.getProviders().map((provider) => provider.id),
+      ...configuredIds,
+    ]);
+  }
+  return new Set([
+    ...pi.registry.getAll().map((model) => model.provider),
+    ...pi.auth.getOAuthProviders().map((item) => item.id),
+    ...configuredIds,
+  ]);
+}
+
+async function credentialType(pi, provider) {
+  if (pi.mode === 'runtime') {
+    const item = (await pi.runtime.listCredentials()).find(
+      (credential) => credential.providerId === provider,
+    );
+    return item?.type ?? '';
+  }
+  return pi.auth.get(provider)?.type ?? '';
 }
 
 async function setApiKey(request) {
   const provider = providerId(request);
   const apiKey = requiredString(request, 'apiKey', 16 * 1024);
-  const { auth, registry } = await loadPi(request);
-  const known = new Set([
-    ...registry.getAll().map((model) => model.provider),
-    ...auth.getOAuthProviders().map((item) => item.id),
-    ...(await configuredProviderIds(request)),
-  ]);
+  const pi = await loadPi(request);
+  const known = await knownProviderIds(request, pi);
   if (!known.has(provider)) throw new Error('provider is not in the Pi model catalog');
-  const beforeType = auth.get(provider)?.type ?? '';
-  auth.set(provider, { type: 'api_key', key: apiKey });
-  const errors = auth.drainErrors();
-  if (errors.length) throw errors[0];
+  const beforeType = await credentialType(pi, provider);
+  if (pi.mode === 'runtime') {
+    await pi.runtime.login(provider, 'api_key', {
+      prompt: async () => apiKey,
+      notify: () => {},
+    });
+  } else {
+    pi.auth.set(provider, { type: 'api_key', key: apiKey });
+    const errors = pi.auth.drainErrors();
+    if (errors.length) throw errors[0];
+  }
   return { event: 'result', ok: true, provider, beforeType, authType: 'api_key' };
 }
 
 async function logout(request) {
   const provider = providerId(request);
-  const { auth } = await loadPi(request);
-  const beforeType = auth.get(provider)?.type ?? '';
-  auth.logout(provider);
-  const errors = auth.drainErrors();
-  if (errors.length) throw errors[0];
+  const pi = await loadPi(request);
+  if (!(await knownProviderIds(request, pi)).has(provider)) {
+    throw new Error('provider is not in the Pi model catalog');
+  }
+  const beforeType = await credentialType(pi, provider);
+  if (pi.mode === 'runtime') {
+    await pi.runtime.logout(provider);
+  } else {
+    pi.auth.logout(provider);
+    const errors = pi.auth.drainErrors();
+    if (errors.length) throw errors[0];
+  }
   return { event: 'result', ok: true, provider, beforeType, authType: '' };
 }
 
 async function oauthDeviceCode(request) {
   const provider = providerId(request);
   if (provider !== 'openai-codex') throw new Error('device-code login is unavailable for this provider');
-  const { auth } = await loadPi(request);
-  const oauthProvider = auth.getOAuthProviders().find((item) => item.id === provider);
-  if (!oauthProvider) throw new Error('OAuth provider is unavailable in the managed Pi package');
+  const pi = await loadPi(request);
   emit({ event: 'state', state: 'starting', provider });
-  await auth.login(provider, {
-    onAuth: (info) => emit({ event: 'auth_url', url: info.url, instructions: info.instructions || '' }),
-    onDeviceCode: (info) => emit({
-      event: 'device_code',
-      userCode: info.userCode,
-      verificationUri: info.verificationUri,
-      intervalSeconds: info.intervalSeconds ?? 0,
-      expiresInSeconds: info.expiresInSeconds ?? 0,
-    }),
-    onPrompt: async () => { throw new Error('interactive OAuth input is unavailable'); },
-    onProgress: (message) => emit({ event: 'progress', message: String(message).slice(0, 200) }),
-    onSelect: async () => 'device_code',
-  });
-  const errors = auth.drainErrors();
-  if (errors.length) throw errors[0];
+  if (pi.mode === 'runtime') {
+    const runtimeProvider = pi.runtime.getProvider(provider);
+    if (!runtimeProvider?.auth?.oauth) {
+      throw new Error('OAuth provider is unavailable in the managed Pi package');
+    }
+    await pi.runtime.login(provider, 'oauth', {
+      prompt: async (prompt) => {
+        if (
+          prompt?.type === 'select'
+          && Array.isArray(prompt.options)
+          && prompt.options.some((option) => option.id === 'device_code')
+        ) {
+          return 'device_code';
+        }
+        throw new Error('interactive OAuth input is unavailable');
+      },
+      notify: (event) => emit({ ...event, event: event.type }),
+    });
+  } else {
+    const oauthProvider = pi.auth.getOAuthProviders().find((item) => item.id === provider);
+    if (!oauthProvider) throw new Error('OAuth provider is unavailable in the managed Pi package');
+    await pi.auth.login(provider, {
+      onAuth: (info) => emit({ event: 'auth_url', url: info.url, instructions: info.instructions || '' }),
+      onDeviceCode: (info) => emit({
+        event: 'device_code',
+        userCode: info.userCode,
+        verificationUri: info.verificationUri,
+        intervalSeconds: info.intervalSeconds ?? 0,
+        expiresInSeconds: info.expiresInSeconds ?? 0,
+      }),
+      onPrompt: async () => { throw new Error('interactive OAuth input is unavailable'); },
+      onProgress: (message) => emit({ event: 'progress', message: String(message).slice(0, 200) }),
+      onSelect: async () => 'device_code',
+    });
+    const errors = pi.auth.drainErrors();
+    if (errors.length) throw errors[0];
+  }
   emit({ event: 'completed', ok: true, provider });
 }
 

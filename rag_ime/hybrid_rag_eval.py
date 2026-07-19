@@ -227,6 +227,7 @@ def _seed_case_state(*, core: LocalSqliteCoreClient, case: HybridRagEvalCase) ->
             )
         )
     _apply_memory_book_state(core=core, case=case)
+    _apply_timeline_state(core=core, case=case)
     _apply_item_state(core=core, case=case)
     for feedback in _list_of_dicts(memory_state.get("feedback")):
         core.record_memory_feedback(dict(feedback))
@@ -325,6 +326,87 @@ def _apply_memory_book_state(*, core: LocalSqliteCoreClient, case: HybridRagEval
     )
     with core._connect() as conn:  # type: ignore[attr-defined]
         apply_memory_book_plan(conn, plan)
+
+
+def _apply_timeline_state(*, core: LocalSqliteCoreClient, case: HybridRagEvalCase) -> None:
+    timelines = _list_of_dicts(case.memory_state.get("timelines"))
+    if not timelines:
+        return
+    source_ids = tuple(
+        sorted(
+            {
+                event_id
+                for timeline in timelines
+                for event_id in _positive_ints(timeline.get("sourceEventIds"))
+            }
+            or {1}
+        )
+    )
+    _ensure_source_events(core=core, case=case, ids=source_ids)
+    timestamp = now_ms()
+    with core._connect() as conn:  # type: ignore[attr-defined]
+        for index, timeline in enumerate(timelines, start=1):
+            timeline_date = compact_whitespace(
+                str(timeline.get("timelineDate") or timeline.get("date") or "")
+            )
+            if not timeline_date:
+                continue
+            timeline_id = compact_whitespace(
+                str(
+                    timeline.get("timelineId")
+                    or f"activity-timeline:eval:{case.case_id}:{index}"
+                )
+            )
+            event_ids = _positive_ints(timeline.get("sourceEventIds")) or source_ids
+            summary = compact_whitespace(str(timeline.get("summary") or ""))
+            segments = _list_of_dicts(timeline.get("segments"))
+            if not segments:
+                title = compact_whitespace(
+                    str(timeline.get("taskTitle") or timeline.get("title") or summary)
+                )
+                segments = [
+                    {
+                        "title": title,
+                        "summary": summary,
+                        "app": case.app or "eval",
+                        "apps": [case.app or "eval"],
+                        "sourceEventIds": list(event_ids),
+                    }
+                ]
+            conn.execute(
+                """
+                INSERT INTO daily_activity_timelines(
+                    timeline_id, project, timeline_date, timezone, status,
+                    source_event_ids_json, source_event_hash, segments_json,
+                    summary_text, event_count, segment_count, approved_book_id,
+                    approved_by, approved_at_ms, metadata_json,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, 'Asia/Shanghai', 'approved', ?, ?, ?, ?, ?, ?, '',
+                          'hybrid-rag-eval', ?, ?, ?, ?)
+                """,
+                (
+                    timeline_id,
+                    case.project,
+                    timeline_date,
+                    json.dumps(list(event_ids)),
+                    f"eval:{case.case_id}:{index}",
+                    json.dumps(segments, ensure_ascii=False),
+                    summary,
+                    len(event_ids),
+                    len(segments),
+                    timestamp,
+                    json.dumps(
+                        {
+                            "derivedArtifactType": "daily_activity_timeline",
+                            "automaticPromotion": True,
+                            "explicitApprovalRequired": False,
+                        },
+                        sort_keys=True,
+                    ),
+                    timestamp,
+                    timestamp,
+                ),
+            )
 
 
 def _ensure_source_events(*, core: LocalSqliteCoreClient, case: HybridRagEvalCase, ids: tuple[int, ...]) -> None:

@@ -572,6 +572,7 @@ class DebugImeService:
                 # remaining executors and provider clients.
                 pass
         resources = (
+            self.active_rag,
             self.knowledge_worker,
             self.management,
             self.pi_provider_auth,
