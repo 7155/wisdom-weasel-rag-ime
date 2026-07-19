@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wisdom-weasel.room-tool-invocation-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "receiptId", "manifestId", "manifestHash", "loadReceiptId", "invocationKey", "canonicalCommand", "authorizationState", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-tool-invocation-receipt.v1"},
+    "receiptId": {"type": "string", "minLength": 1},
+    "manifestId": {"type": "string", "minLength": 1},
+    "manifestHash": {"type": "string", "minLength": 64, "maxLength": 64},
+    "loadReceiptId": {"type": "string", "minLength": 1},
+    "invocationKey": {"type": "string", "minLength": 1},
+    "canonicalCommand": {"type": "object"},
+    "authorizationState": {"const": "authorized"},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}
