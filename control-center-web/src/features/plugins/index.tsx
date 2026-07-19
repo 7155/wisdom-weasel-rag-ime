@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  FolderOpen,
   History,
   MessageCircle,
   PackageCheck,
@@ -82,13 +81,11 @@ const operationLabels: Record<string, string> = {
 
 export function PluginsFeature() {
   const navigate = useNavigate();
-  const { catalog, installed, versions, proposals, lifecycle, validate, preview, apply, updateLifecycle, transport } = usePluginCatalog();
+  const { catalog, installed, versions, proposals, lifecycle, validate, preview, apply, updateLifecycle } = usePluginCatalog();
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<ModeFilter>('all');
   const [availability, setAvailability] = useState<AvailabilityFilter>('all');
   const [selectedId, setSelectedId] = useState('');
-  const [pluginSource, setPluginSource] = useState('');
-  const [pluginSourceName, setPluginSourceName] = useState('');
   const [enableAfterInstall, setEnableAfterInstall] = useState(true);
   const [validation, setValidation] = useState<Record<string, unknown>>({});
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
@@ -113,51 +110,8 @@ export function PluginsFeature() {
   const versionItems = arrayRecords(asRecord(versions.data).items);
   const lifecyclePolicies = arrayRecords(asRecord(lifecycle.data).policies);
   const lifecycleEvents = arrayRecords(asRecord(lifecycle.data).recentEvents);
-  const extension = asRecord(validation.extension);
   const pendingSummary = asRecord(pendingChange.summary);
   const lifecyclePending = validate.isPending || preview.isPending || apply.isPending;
-
-  const choosePluginSource = async () => {
-    setLifecycleError('');
-    if (!transport.pickFiles) {
-      setLifecycleError('当前平台不支持选择插件目录。');
-      return;
-    }
-    try {
-      const selected = await transport.pickFiles({ purpose: 'plugin-source', selection: 'directory', maxFiles: 1 });
-      const source = selected[0];
-      if (!source?.path) return;
-      setPluginSource(source.path);
-      setPluginSourceName(source.name);
-      setValidation({});
-      setPendingChange({});
-    } catch (error) {
-      setLifecycleError(errorMessage(error));
-    }
-  };
-
-  const validatePlugin = async () => {
-    setLifecycleError('');
-    try {
-      setValidation(asRecord(await validate.mutateAsync({ sourcePath: pluginSource })));
-      setPendingChange({});
-    } catch (error) {
-      setLifecycleError(errorMessage(error));
-    }
-  };
-
-  const previewInstall = async () => {
-    setLifecycleError('');
-    try {
-      setPendingChange(asRecord(await preview.mutateAsync({
-        action: 'install',
-        validationToken: stringValue(validation.validationToken),
-        enable: enableAfterInstall,
-      })));
-    } catch (error) {
-      setLifecycleError(errorMessage(error));
-    }
-  };
 
   const previewInstalledAction = async (action: 'enable' | 'disable' | 'rollback', pluginId: string) => {
     setLifecycleError('');
@@ -196,8 +150,6 @@ export function PluginsFeature() {
       });
       setPendingChange({});
       setValidation({});
-      setPluginSource('');
-      setPluginSourceName('');
     } catch (error) {
       setLifecycleError(errorMessage(error));
     }
@@ -297,35 +249,18 @@ export function PluginsFeature() {
             </div>
             <div className="plugin-authoring-callout">
               <span className="plugin-authoring-callout__icon"><Sparkles aria-hidden="true" size={18} /></span>
-              <span><strong>让 Agent 制作插件</strong><small>插件制作 Skill 会先确认用途和权限，再生成草稿、校验并提交安装提议。</small></span>
+              <span><strong>让 Agent 制作审阅草稿</strong><small>自定义代码不会直接进入 Pi Runtime；完成源码审查并加入第一方产品目录后，才可在这里安装。</small></span>
               <Button
                 leadingIcon={<MessageCircle size={16} />}
                 onClick={() => navigate({
                   pathname: '/agent',
                   search: new URLSearchParams({
-                    draft: '/skill:rag-ime-plugin-creator 帮我创建一个受管插件。先询问用途和权限边界，再生成草稿、完成校验并提交安装提议；不要绕过控制中心的最终批准。',
+                    draft: '/skill:rag-ime-plugin-creator 帮我创建一个插件审阅草稿。先询问用途和权限边界，再生成并校验草稿；不要声称它已获准执行，也不要绕过第一方目录审查。',
                   }).toString(),
                 })}
-              >交给 Agent 制作</Button>
+              >创建审阅草稿</Button>
             </div>
-            <div className="plugin-lifecycle__install">
-              <div className="plugin-lifecycle__source">
-                <Button disabled={lifecyclePending} leadingIcon={<FolderOpen size={16} />} onClick={() => void choosePluginSource()}>选择插件目录</Button>
-                <span>{pluginSourceName || '尚未选择'}</span>
-              </div>
-              <Switch checked={enableAfterInstall} label="安装后启用" onCheckedChange={setEnableAfterInstall} />
-              <div className="plugin-lifecycle__steps">
-                <Button disabled={!pluginSource || lifecyclePending} leadingIcon={<ShieldCheck size={16} />} loading={validate.isPending} onClick={() => void validatePlugin()} size="small">校验</Button>
-                <Button disabled={!validation.validationToken || lifecyclePending} leadingIcon={<PackageCheck size={16} />} loading={preview.isPending} onClick={() => void previewInstall()} size="small">生成安装预览</Button>
-              </div>
-              {extension.id ? (
-                <div className="plugin-lifecycle__validation">
-                  <strong>{stringValue(extension.displayName, stringValue(extension.id))}</strong>
-                  <span>v{stringValue(extension.version)} · {Number(extension.totalBytes || 0).toLocaleString()} bytes</span>
-                  <StatusBadge label="校验通过" tone="success" />
-                </div>
-              ) : null}
-            </div>
+            <Switch checked={enableAfterInstall} label="目录安装后启用" onCheckedChange={setEnableAfterInstall} />
 
             {proposalItems.length ? (
               <div className="plugin-lifecycle__proposals">

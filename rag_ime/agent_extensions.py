@@ -67,6 +67,11 @@ class AgentExtensionService:
                         if isinstance(item, str)
                     ],
                     "installedVersions": versions,
+                    "rollbackTarget": (
+                        dict(value["rollbackTarget"])
+                        if isinstance(value.get("rollbackTarget"), Mapping)
+                        else None
+                    ),
                 }
             )
         return {"ok": True, "items": items}
@@ -202,6 +207,10 @@ class AgentExtensionService:
                 "digest": str(validation.get("digest") or ""),
                 "validation": dict(validation),
                 "catalog": catalog_selection,
+                # Local/Agent-authored source can be inspected and retained as a
+                # draft, but it must not execute in the in-process Pi Runtime.
+                # Only digest-pinned first-party bundle entries may reach apply.
+                "distribution": "bundled" if catalog_selection else "review_only",
                 "expiresAtMs": expires_at_ms,
             }
             self._prune_locked()
@@ -223,6 +232,11 @@ class AgentExtensionService:
         if action in {"install", "update"}:
             validation_token = str(payload.get("validationToken") or "").strip()
             validation = self._token(validation_token, kind="validation", consume=False)
+            if validation.get("distribution") != "bundled":
+                raise ValueError(
+                    "local and Agent-authored plugins are review-only until they "
+                    "are added to the signed first-party catalog"
+                )
             operation.update(
                 {
                     "sourcePath": str(validation["sourcePath"]),
@@ -237,6 +251,20 @@ class AgentExtensionService:
             if not plugin_id:
                 raise ValueError("plugin action requires pluginId")
             operation["pluginId"] = plugin_id
+            if action == "rollback":
+                installed = self._installed_plugin(plugin_id)
+                target = installed.get("rollbackTarget")
+                if not isinstance(target, Mapping):
+                    raise ValueError("plugin rollback is unavailable")
+                operation.update(
+                    {
+                        "expectedActiveDigest": str(installed.get("digest") or ""),
+                        "targetDigest": str(target.get("digest") or ""),
+                        "targetVersion": str(target.get("version") or ""),
+                    }
+                )
+                if not operation["expectedActiveDigest"] or not operation["targetDigest"]:
+                    raise ValueError("plugin rollback state is incomplete")
         payload_sha256 = _payload_digest(operation)
         preview_token = secrets.token_urlsafe(32)
         expires_at_ms = _now_ms() + _PREVIEW_TTL_MS
@@ -295,7 +323,12 @@ class AgentExtensionService:
                 enabled=action == "enable",
             )
         elif action == "rollback":
-            plugin = self._call("plugin_rollback", str(operation.get("pluginId") or ""))
+            plugin = self._call(
+                "plugin_rollback",
+                str(operation.get("pluginId") or ""),
+                expected_active_digest=str(operation.get("expectedActiveDigest") or ""),
+                target_digest=str(operation.get("targetDigest") or ""),
+            )
         else:
             raise AgentRuntimeError("plugin preview action is invalid")
         with self._lock:
@@ -322,6 +355,23 @@ class AgentExtensionService:
         if not callable(target):
             raise AgentRuntimeError("managed plugin lifecycle requires Pi Runtime protocol v2")
         return target(*args, **kwargs)
+
+    def _installed_plugin(self, plugin_id: str) -> dict[str, object]:
+        plugins = self._call("plugin_list")
+        if not isinstance(plugins, list):
+            raise AgentRuntimeError("Pi Runtime Host returned an invalid plugin list")
+        plugin = next(
+            (
+                dict(value)
+                for value in plugins
+                if isinstance(value, Mapping)
+                and str(value.get("id") or "") == plugin_id
+            ),
+            None,
+        )
+        if plugin is None:
+            raise ValueError("plugin is not installed")
+        return plugin
 
     def _stage_source(self, source: Path) -> Path:
         source = source.expanduser().resolve(strict=True)
@@ -471,6 +521,7 @@ class AgentExtensionService:
             "pluginId": str(operation.get("pluginId") or manifest.get("id") or ""),
             "displayName": str(manifest.get("name") or operation.get("pluginId") or ""),
             "version": str(manifest.get("version") or ""),
+            "targetVersion": str(operation.get("targetVersion") or ""),
             "permissions": list(manifest.get("permissions") or []),
             "enableAfterInstall": operation.get("enable") is True,
         }

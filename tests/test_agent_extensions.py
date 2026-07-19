@@ -51,8 +51,32 @@ class _FakePluginRuntime:
         self.installed[0]["enabled"] = enabled
         return self.installed[0]
 
-    def plugin_rollback(self, plugin_id: str):
-        self.calls.append(("rollback", plugin_id))
+    def plugin_rollback(
+        self,
+        plugin_id: str,
+        *,
+        expected_active_digest: str,
+        target_digest: str,
+    ):
+        self.calls.append(
+            (
+                "rollback",
+                {
+                    "pluginId": plugin_id,
+                    "expectedActiveDigest": expected_active_digest,
+                    "targetDigest": target_digest,
+                },
+            )
+        )
+        if self.installed[0]["digest"] != expected_active_digest:
+            raise ValueError("active digest changed")
+        target = next(
+            value
+            for value in self.installed[0]["installedVersions"]
+            if value["digest"] == target_digest
+        )
+        self.installed[0]["digest"] = target_digest
+        self.installed[0]["version"] = target["version"]
         return self.installed[0]
 
 
@@ -86,7 +110,9 @@ class AgentExtensionServiceTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_install_requires_validation_preview_digest_and_explicit_apply(self) -> None:
-        validation = self.service.validate({"sourcePath": str(self.source)})
+        validation = self.service.validate(
+            {"catalogId": "session-review", "catalogVersion": "1.1.0"}
+        )
         staged = Path(str(self.runtime.calls[0][1]))
         self.assertTrue(staged.is_relative_to((self.root / "managed-inbox").resolve()))
         self.assertNotEqual(staged, self.source)
@@ -125,17 +151,22 @@ class AgentExtensionServiceTests(unittest.TestCase):
             )
 
     def test_enable_disable_and_rollback_also_use_preview(self) -> None:
-        validation = self.service.validate({"sourcePath": str(self.source)})
-        preview = self.service.preview(
-            {"action": "install", "validationToken": validation["validationToken"]}
-        )
-        self.service.apply(
+        self.runtime.installed = [
             {
-                "previewToken": preview["previewToken"],
-                "payloadSha256": preview["payloadSha256"],
-                "confirmText": "apply",
+                "id": "log-helper",
+                "name": "Log Helper",
+                "version": "2.0.0",
+                "description": "Inspect session logs",
+                "digest": "digest-v2",
+                "enabled": True,
+                "permissions": ["session.read"],
+                "installedVersions": [
+                    {"version": "1.0.0", "digest": "digest-v1"},
+                    {"version": "2.0.0", "digest": "digest-v2"},
+                ],
+                "rollbackTarget": {"version": "1.0.0", "digest": "digest-v1"},
             }
-        )
+        ]
 
         disable = self.service.preview({"action": "disable", "pluginId": "log-helper"})
         self.service.apply(
@@ -147,6 +178,65 @@ class AgentExtensionServiceTests(unittest.TestCase):
         )
         self.assertFalse(self.runtime.installed[0]["enabled"])
         self.assertEqual(self.service.list()["items"][0]["displayName"], "Log Helper")
+
+        rollback = self.service.preview({"action": "rollback", "pluginId": "log-helper"})
+        self.assertEqual(rollback["summary"]["targetVersion"], "1.0.0")
+        self.service.apply(
+            {
+                "previewToken": rollback["previewToken"],
+                "payloadSha256": rollback["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        self.assertEqual(self.runtime.installed[0]["version"], "1.0.0")
+        self.assertEqual(
+            self.runtime.calls[-1],
+            (
+                "rollback",
+                {
+                    "pluginId": "log-helper",
+                    "expectedActiveDigest": "digest-v2",
+                    "targetDigest": "digest-v1",
+                },
+            ),
+        )
+
+    def test_rollback_preview_rejects_state_changed_after_review(self) -> None:
+        self.runtime.installed = [
+            {
+                "id": "log-helper",
+                "name": "Log Helper",
+                "version": "2.0.0",
+                "digest": "digest-v2",
+                "enabled": True,
+                "installedVersions": [
+                    {"version": "1.0.0", "digest": "digest-v1"},
+                    {"version": "2.0.0", "digest": "digest-v2"},
+                ],
+                "rollbackTarget": {"version": "1.0.0", "digest": "digest-v1"},
+            }
+        ]
+        rollback = self.service.preview({"action": "rollback", "pluginId": "log-helper"})
+        self.runtime.installed[0]["digest"] = "digest-v3"
+        with self.assertRaisesRegex(ValueError, "active digest changed"):
+            self.service.apply(
+                {
+                    "previewToken": rollback["previewToken"],
+                    "payloadSha256": rollback["payloadSha256"],
+                    "confirmText": "apply",
+                }
+            )
+
+    def test_local_plugin_source_is_review_only_and_cannot_execute(self) -> None:
+        validation = self.service.validate({"sourcePath": str(self.source)})
+        with self.assertRaisesRegex(ValueError, "review-only"):
+            self.service.preview(
+                {
+                    "action": "install",
+                    "validationToken": validation["validationToken"],
+                    "enable": True,
+                }
+            )
 
     def test_rejects_symlinks_and_unsupported_files_before_runtime_validation(self) -> None:
         (self.source / "payload.bin").write_bytes(b"unsafe")

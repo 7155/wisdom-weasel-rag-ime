@@ -39,13 +39,14 @@ describe('PluginsFeature', () => {
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'false');
   });
 
-  it('opens Agent with a bounded plugin-authoring skill request', async () => {
+  it('opens Agent with a review-only plugin-authoring skill request', async () => {
     const user = userEvent.setup();
     renderPlugins();
-    await user.click(await screen.findByRole('button', { name: '交给 Agent 制作' }));
+    await user.click(await screen.findByRole('button', { name: '创建审阅草稿' }));
 
     expect(screen.getByTestId('test-location')).toHaveTextContent('/agent?draft=');
     expect(screen.getByTestId('test-location')).toHaveTextContent('%2Fskill%3Arag-ime-plugin-creator');
+    expect(screen.getByTestId('test-location')).toHaveTextContent('%E4%B8%8D%E8%A6%81%E5%A3%B0%E7%A7%B0%E5%AE%83%E5%B7%B2%E8%8E%B7%E5%87%86%E6%89%A7%E8%A1%8C');
   });
 
   it('filters tools by readable purpose, availability and supported mode', async () => {
@@ -68,14 +69,11 @@ describe('PluginsFeature', () => {
     expect(screen.queryByRole('button', { name: /工作区读取/ })).not.toBeInTheDocument();
   });
 
-  it('validates, previews and explicitly applies a selected plugin directory', async () => {
+  it('validates, previews and explicitly applies a first-party catalog plugin', async () => {
     const user = userEvent.setup();
     const transport = renderPlugins();
-    await user.click(await screen.findByRole('button', { name: '选择插件目录' }));
-    expect(transport.filePickCalls).toEqual([{ purpose: 'plugin-source', selection: 'directory', maxFiles: 1 }]);
-    await user.click(screen.getByRole('button', { name: '校验' }));
-    expect(await screen.findByText('校验通过')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '生成安装预览' }));
+    await user.click(await screen.findByRole('button', { name: '预览安装' }));
+    expect(transport.filePickCalls).toEqual([]);
     expect(await screen.findByText('等待你的批准')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '批准并应用' }));
     await waitFor(() => expect(transport.requests.some((call) => (
