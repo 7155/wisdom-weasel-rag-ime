@@ -1,0 +1,165 @@
+import {
+  CircleCheck,
+  Clock3,
+  FileText,
+  Gauge,
+  LockKeyhole,
+  ShieldCheck,
+  Square,
+  Wrench,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Button } from '@/components/primitives';
+import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
+import './room-kernel-control-plane.css';
+
+export type RootBudgetSummary = {
+  maxDispatches: number;
+  usedDispatches: number;
+  maxTokens: number;
+  usedTokens: number;
+  maxWallTimeMs: number;
+  elapsedMs: number;
+};
+
+export type RuntimeReceiptSummary = {
+  revision: string;
+  status: 'pending' | 'sealed' | 'rejected' | 'missing';
+  contentHash: string;
+};
+
+export type RootStopCommand = {
+  roomId: string;
+  rootId: string;
+  generation: number;
+};
+
+export function RoomKernelControlPlane({
+  budgetsByRootId,
+  capabilityReceiptsByRootId,
+  contextReceiptsByRootId,
+  onRequestStop,
+  projection,
+}: {
+  projection: RoomKernelProjection;
+  budgetsByRootId: Record<string, RootBudgetSummary>;
+  contextReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
+  capabilityReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
+  onRequestStop?: (command: RootStopCommand) => void;
+}) {
+  const roots = Object.values(projection.rootsById).sort((left, right) => (
+    left.updatedAtMs === right.updatedAtMs
+      ? left.rootId.localeCompare(right.rootId)
+      : right.updatedAtMs - left.updatedAtMs
+  ));
+  return <section className="room-kernel-control" aria-label="Room 协作控制面">
+    <header className="room-kernel-control__header"><span><strong>协作控制面</strong><small>{roots.length} 个根任务 · cursor {projection.lastSequence}</small></span>{projection.needsSnapshot ? <b data-state="warning">等待状态快照</b> : <b data-state="healthy">状态已同步</b>}</header>
+    <div className="room-kernel-control__roots">
+      {roots.map((root) => <RootControlSection
+        key={`${root.rootId}:${root.generation}`}
+        root={root}
+        projection={projection}
+        budget={budgetsByRootId[root.rootId]}
+        contextReceipt={contextReceiptsByRootId[root.rootId]}
+        capabilityReceipt={capabilityReceiptsByRootId[root.rootId]}
+        onRequestStop={onRequestStop}
+      />)}
+      {!roots.length ? <p className="room-kernel-control__empty">当前没有根任务。</p> : null}
+    </div>
+  </section>;
+}
+
+function RootControlSection({
+  budget,
+  capabilityReceipt,
+  contextReceipt,
+  onRequestStop,
+  projection,
+  root,
+}: {
+  root: RootProjection;
+  projection: RoomKernelProjection;
+  budget?: RootBudgetSummary;
+  contextReceipt?: RuntimeReceiptSummary;
+  capabilityReceipt?: RuntimeReceiptSummary;
+  onRequestStop?: (command: RootStopCommand) => void;
+}) {
+  const posts = projection.postOrder
+    .map((postId) => projection.postsById[postId])
+    .filter((post) => post?.rootId === root.rootId);
+  const sessions = Object.values(projection.sessionsById)
+    .filter((session) => session.rootId === root.rootId)
+    .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  const receipt = projection.terminalReceiptsByRootId[root.rootId];
+  const stop = projection.runtimeByRootId[root.rootId]?.stopRequest;
+  return <article className="room-kernel-root" data-root-state={root.state}>
+    <header className="room-kernel-root__header">
+      <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root)}</i></span>
+      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={Boolean(stop)} onClick={() => onRequestStop?.({ roomId: projection.roomId, rootId: root.rootId, generation: root.generation })}>{stop ? '正在停止' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
+    </header>
+    <div className="room-kernel-root__summary">
+      <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.ownerParticipantId ?? '等待分派'}</strong></span>
+      <BudgetMetric icon={<Gauge size={14} />} label="Dispatch" used={budget?.usedDispatches} maximum={budget?.maxDispatches} />
+      <BudgetMetric icon={<FileText size={14} />} label="Token" used={budget?.usedTokens} maximum={budget?.maxTokens} />
+      <BudgetMetric icon={<Clock3 size={14} />} label="墙钟" used={budget?.elapsedMs} maximum={budget?.maxWallTimeMs} formatter={durationLabel} />
+    </div>
+    <section className="room-kernel-root__receipts" aria-label={`${root.rootId} 运行回执`}>
+      <ReceiptSummary icon={<LockKeyhole size={14} />} label="Context" receipt={contextReceipt} />
+      <ReceiptSummary icon={<Wrench size={14} />} label="Capability" receipt={capabilityReceipt} />
+      <span><CircleCheck size={14} /><small>Terminal</small><strong>{receipt ? `${receipt.terminalState} · ${receipt.receiptId}` : '等待全链静止'}</strong></span>
+    </section>
+    <div className="room-kernel-root__planes">
+      <section className="room-kernel-posts" aria-label={`${root.rootId} 公开 Posts`}><header><strong>公开 Posts</strong><small>仅显式提交</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorParticipantId ?? '用户'}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开提交。</p>}</section>
+      <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div></dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
+    </div>
+  </article>;
+}
+
+function BudgetMetric({
+  formatter = compactNumber,
+  icon,
+  label,
+  maximum,
+  used,
+}: {
+  icon: ReactNode;
+  label: string;
+  used?: number;
+  maximum?: number;
+  formatter?: (value: number) => string;
+}) {
+  const available = used !== undefined && maximum !== undefined && maximum > 0;
+  const ratio = available ? Math.min(1, Math.max(0, used / maximum)) : 0;
+  return <span>{icon}<small>{label}</small><strong>{available ? `${formatter(used)} / ${formatter(maximum)}` : '未上报'}</strong><i aria-hidden="true"><b style={{ width: `${ratio * 100}%` }} /></i></span>;
+}
+
+function ReceiptSummary({ icon, label, receipt }: { icon: ReactNode; label: string; receipt?: RuntimeReceiptSummary }) {
+  return <span>{icon}<small>{label}</small><strong>{receipt ? `${receiptStatusLabel(receipt.status)} · ${receipt.revision}` : '未上报'}</strong></span>;
+}
+
+function rootStateLabel(root: RootProjection): string {
+  if (root.isFinal) return '已完成并确认';
+  return ({ queued: '排队中', running: '执行中', waiting: '等待中', completed: '已完成，等待终态回执', failed: '失败，等待终态回执', cancelled: '已取消，等待终态回执' } as Record<RootProjection['state'], string>)[root.state];
+}
+
+function sessionStateLabel(value: string): string {
+  return ({ idle: '空闲', queued: '排队中', running: '执行中', completed: '本地已完成', failed: '本地失败', cancelled: '本地已取消' } as Record<string, string>)[value] ?? value;
+}
+
+function receiptStatusLabel(value: RuntimeReceiptSummary['status']): string {
+  return ({ pending: '待封存', sealed: '已封存', rejected: '已拒绝', missing: '缺失' } as const)[value];
+}
+
+function postKindLabel(value: string): string {
+  return ({ user_request: '用户请求', answer: '回答', finding: '发现', decision: '决定', question: '问题', result: '结果', blocker: '阻塞', announcement: '公告' } as Record<string, string>)[value] ?? value;
+}
+
+function compactNumber(value: number): string {
+  return new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+function durationLabel(value: number): string {
+  if (value < 1_000) return `${value}ms`;
+  const seconds = Math.round(value / 1_000);
+  return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
+}
