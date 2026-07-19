@@ -215,7 +215,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..ab58a1372ea4bfb88f4dd4862c4d730a99c309f6
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,1124 @@
+@@ -0,0 +1,1132 @@
 +import AppKit
 +import QuartzCore
 +
@@ -289,8 +289,17 @@ index 0000000000000000000000000000000000000000..ab58a1372ea4bfb88f4dd4862c4d730a
 +    pendingUpdate?.cancel()
 +    ttlDismissWorkItem?.cancel()
 +    generatingTimer?.invalidate()
-+    contextPopover?.close()
-+    panel.orderOut(nil)
++    let popover = contextPopover
++    let window = panel
++    let closeUI = {
++      popover?.close()
++      window.orderOut(nil)
++    }
++    if Thread.isMainThread {
++      closeUI()
++    } else {
++      DispatchQueue.main.async(execute: closeUI)
++    }
 +    if Self.activeOwner === self { Self.activeOwner = nil }
 +  }
 +
@@ -9310,12 +9319,12 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      "focusEpoch": focusEpoch,
 +      "queued": true,
 +    ])
-+    ragImeForegroundContextQueue.async { [weak self] in
-+      guard let self else { return }
++    let provider = ragImeSelectedTextProvider
++    ragImeForegroundContextQueue.async { [weak self, provider] in
 +      // Electron enables its Accessibility tree lazily. This metadata-only
 +      // probe starts that handshake before a post-commit model request, but it
 +      // never reads field values, issues a lease, or changes UI state.
-+      let status = self.ragImeSelectedTextProvider.sensitiveFieldStatus(
++      let status = provider.sensitiveFieldStatus(
 +        sourceAppBundleId: sourceAppBundleId
 +      )
 +      DispatchQueue.main.async { [weak self] in

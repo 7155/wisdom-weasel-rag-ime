@@ -1001,19 +1001,20 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "func resolveRagImeForegroundContextAndSend(",
         )
         self.assertIn("ragImeForegroundContextQueue.async", prewarm)
-        self.assertIn("ragImeSelectedTextProvider.sensitiveFieldStatus(", prewarm)
+        self.assertIn("let provider = ragImeSelectedTextProvider", prewarm)
+        self.assertIn("provider.sensitiveFieldStatus(", prewarm)
 
         controller_start = patch_text.index("diff --git a/sources/SquirrelInputController.swift")
         controller_text = patch_text[controller_start:]
         full_status_calls = [
             line
             for line in controller_text.splitlines()
-            if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line
+            if ".sensitiveFieldStatus(" in line
         ]
         self.assertCountEqual(
             full_status_calls,
             [
-                next(line for line in prewarm.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
+                next(line for line in prewarm.splitlines() if "provider.sensitiveFieldStatus(" in line),
                 next(line for line in probe.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
                 next(line for line in finalized_input.splitlines() if "ragImeSelectedTextProvider.sensitiveFieldStatus(" in line),
             ],
@@ -1433,6 +1434,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("struct RagImeWindowContextSnapshot: Codable", patch_text)
         self.assertIn("func captureWindowContext(", patch_text)
         self.assertIn("AXUIElementCopyMultipleAttributeValues(", patch_text)
+        self.assertIn("DispatchQueue.main.async(execute: closeUI)", patch_text)
+        self.assertIn("let provider = ragImeSelectedTextProvider", patch_text)
+        self.assertIn("let status = provider.sensitiveFieldStatus(", patch_text)
         self.assertIn('captureMode: "accessibility_semantics"', patch_text)
         self.assertIn('reason: "private_browsing_window"', patch_text)
         self.assertIn(
@@ -1544,6 +1548,15 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("INSTALL_LOCK_DIR", source)
         self.assertIn("RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE", source)
         self.assertIn('open -a "$TARGET_APP"', source)
+        self.assertIn("keeping the registered replacement installed", source)
+        self.assertLess(
+            source.index("INSTALL_COMPLETE=1", source.index("install_squirrel_app()")),
+            source.index("if ! restore_input_source_after_install"),
+        )
+        self.assertNotIn(
+            'if ! restore_input_source_after_install && [[ -d "$INSTALL_PREVIOUS_APP" ]]',
+            source,
+        )
         self.assertIn("traceRagImeProcessEvent", source)
         self.assertIn('elif [[ "$PREINSTALL" == "auto" ]]; then', source)
         self.assertIn("if ! deps_ready; then", source)

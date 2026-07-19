@@ -888,10 +888,10 @@ install_squirrel_app() {
     open -a "$TARGET_APP" >/dev/null 2>&1 || true
     sleep 0.75
   fi
-  if ! restore_input_source_after_install && [[ -d "$INSTALL_PREVIOUS_APP" ]]; then
-    return 1
-  fi
   INSTALL_COMPLETE=1
+  if ! restore_input_source_after_install; then
+    printf '[WARN] keeping the registered replacement installed; input-source selection can be retried without rolling back the IMK endpoint\n' >&2
+  fi
 }
 
 if [[ -z "$XCODEBUILD" || ! -x "$XCODEBUILD" ]]; then
