@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-context-entry.v1.json",
+  "title": "Immutable Room Context Ledger entry",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "entryId",
+    "rootId",
+    "roomId",
+    "generation",
+    "sequence",
+    "entryKind",
+    "sourceRef",
+    "contentHash",
+    "content",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-context-entry.v1"},
+    "entryId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "sequence": {"type": "integer", "minimum": 1},
+    "entryKind": {"type": "string", "minLength": 1},
+    "sourceRef": {"type": "string", "minLength": 1},
+    "contentHash": {"type": "string", "minLength": 64},
+    "content": {"type": "string"},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}
