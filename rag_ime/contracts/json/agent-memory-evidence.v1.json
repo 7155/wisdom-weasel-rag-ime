@@ -5,6 +5,8 @@
   "additionalProperties": false,
   "required": [
     "schemaVersion", "evidenceId", "project", "roleId", "sessionId",
+    "ownerKind", "ownerId", "knowledgeDomain", "scopeKind", "scopeId",
+    "visibility", "authorizationRevision", "bindingId", "scopeMode",
     "sourceKind", "sourceId", "idempotencyKey", "text", "textSha256",
     "classification", "maySupportLongTermFact", "provenance", "metadata",
     "privacyClass", "status", "occurredAtMs", "recordedAtMs"
@@ -15,6 +17,15 @@
     "project": {"type": "string"},
     "roleId": {"type": "string"},
     "sessionId": {"type": "string"},
+    "ownerKind": {"type": "string", "minLength": 1},
+    "ownerId": {"type": "string", "minLength": 1},
+    "knowledgeDomain": {"type": "string", "minLength": 1},
+    "scopeKind": {"type": "string", "minLength": 1},
+    "scopeId": {"type": "string"},
+    "visibility": {"type": "string", "minLength": 1},
+    "authorizationRevision": {"type": "string"},
+    "bindingId": {"type": "string"},
+    "scopeMode": {"type": "string", "enum": ["legacy", "authoritative", "quarantined"]},
     "sourceKind": {
       "type": "string",
       "enum": [

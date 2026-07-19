@@ -1222,6 +1222,10 @@ class MemoryGovernanceProposalStore:
                 raise ValueError(f"evidence does not exist: {evidence_id}")
             if str(row["project"]) != self.project or str(row["status"]) != "active":
                 raise ValueError("evidence is tombstoned or belongs to another project")
+            if str(row["scope_mode"] or "legacy") == "authoritative":
+                raise ValueError(
+                    "Room-scoped evidence requires an explicit governed promotion receipt"
+                )
             evidence_role = str(row["role_id"] or "")
             if evidence_role and session_role_id and evidence_role != session_role_id:
                 raise ValueError("evidence belongs to another Agent role")
@@ -1258,6 +1262,7 @@ class MemoryGovernanceProposalStore:
                     "contentSha256": content_sha256,
                     "provenance": provenance,
                     "privacyClass": str(row["privacy_class"]),
+                    "scopeMode": str(row["scope_mode"] or "legacy"),
                     "occurredAtMs": int(row["occurred_at_ms"]),
                 }
             )

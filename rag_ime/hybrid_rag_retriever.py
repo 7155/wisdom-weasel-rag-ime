@@ -13,6 +13,7 @@ from .context_group import ContextGroup, context_group_compatibility
 from .embeddings import EmbeddingProvider, cosine_similarity, embed_query, normalize_vector
 from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery, MemoryHit
 from .hybrid_rag_ranker import rank_hybrid_hits_to_memory_hits
+from .knowledge_scope import KnowledgeCallerContext, scope_sql_predicate
 from .memory_ingest import normalize_text
 from .memory_ownership import resolve_visible_memory_owners, sql_memory_owner_predicate
 from .memory_projectors import ImeMemoryProjector
@@ -103,6 +104,7 @@ def retrieve_hybrid_rag_candidates(
             project=query.project,
             app=query.app,
             visible_owners=visible_owners,
+            knowledge_caller=query.knowledge_caller,
             limit=lane_limit,
         )
     bm25_tags_hits = []
@@ -117,6 +119,7 @@ def retrieve_hybrid_rag_candidates(
             project=query.project,
             app=query.app,
             visible_owners=visible_owners,
+            knowledge_caller=query.knowledge_caller,
             limit=lane_limit,
         )
     tagmemo_hits = []
@@ -131,6 +134,7 @@ def retrieve_hybrid_rag_candidates(
             project=query.project,
             app=query.app,
             visible_owners=visible_owners,
+            knowledge_caller=query.knowledge_caller,
             limit=lane_limit,
         )
     feedback_hits = (
@@ -470,10 +474,16 @@ def _active_docs(
         visible_owners,
         table_alias="memory_retrieval_docs",
     )
+    scope_clause, scope_params = scope_sql_predicate(
+        query.knowledge_caller,
+        table_alias="memory_retrieval_docs",
+    )
     rows = conn.execute(
         f"""
         SELECT doc_id, doc_type, source_id, raw_text, tags_text, aliases_text, surface_hints_text,
                query_expansions_text, time_key, project, app, owner_kind, owner_id,
+               knowledge_domain, scope_kind, scope_id, visibility,
+               authorization_revision, binding_id, scope_mode,
                updated_at_ms, metadata_json
         FROM memory_retrieval_docs
         WHERE status = 'active'
@@ -481,8 +491,9 @@ def _active_docs(
           AND (? = '' OR project = ? OR project = '')
           AND (? = '' OR app = ? OR app = '')
           AND {owner_clause}
+          AND {scope_clause}
         """,
-        (query.project, query.project, query.app, query.app, *owner_params),
+        (query.project, query.project, query.app, query.app, *owner_params, *scope_params),
     ).fetchall()
     current_group = ContextGroup(
         context_group_id=compact_whitespace(query.context_group_id),
@@ -555,6 +566,19 @@ def _active_docs(
         if compatibility <= 0.0:
             continue
         metadata["groupCompatibility"] = compatibility
+        metadata.update(
+            {
+                "ownerKind": str(row["owner_kind"] or ""),
+                "ownerId": str(row["owner_id"] or ""),
+                "knowledgeDomain": str(row["knowledge_domain"] or ""),
+                "scopeKind": str(row["scope_kind"] or ""),
+                "scopeId": str(row["scope_id"] or ""),
+                "visibility": str(row["visibility"] or ""),
+                "authorizationRevision": str(row["authorization_revision"] or ""),
+                "bindingId": str(row["binding_id"] or ""),
+                "scopeMode": str(row["scope_mode"] or "legacy"),
+            }
+        )
         docs.append({
             "doc_id": str(row["doc_id"]),
             "doc_type": str(row["doc_type"]),
@@ -768,6 +792,7 @@ def _rank_fts5_docs(
     project: str,
     app: str,
     visible_owners: tuple[tuple[str, str], ...],
+    knowledge_caller: KnowledgeCallerContext | None = None,
     limit: int,
 ) -> tuple[list[HybridRagHit], str]:
     """Run a column-scoped FTS5 BM25 query, with an explicit safe fallback.
@@ -788,6 +813,7 @@ def _rank_fts5_docs(
         visible_owners,
         table_alias="d",
     )
+    scope_clause, scope_params = scope_sql_predicate(knowledge_caller, table_alias="d")
     try:
         rows = conn.execute(
             f"""
@@ -800,6 +826,7 @@ def _rank_fts5_docs(
               AND (? = '' OR d.project = ? OR d.project = '')
               AND (? = '' OR d.app = ? OR d.app = '')
               AND {owner_clause}
+              AND {scope_clause}
             ORDER BY bm25(memory_retrieval_docs_fts) ASC, d.updated_at_ms DESC
             LIMIT ?
             """,
@@ -810,6 +837,7 @@ def _rank_fts5_docs(
                 app,
                 app,
                 *owner_params,
+                *scope_params,
                 max(1, limit * 8),
             ),
         ).fetchall()
