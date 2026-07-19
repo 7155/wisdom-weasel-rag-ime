@@ -12755,6 +12755,82 @@ export const contractSchemas = {
       }
     }
   },
+  "room-capability-manifest.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.room-capability-manifest.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "manifestId",
+      "bindingId",
+      "roomId",
+      "rootId",
+      "taskId",
+      "dispatchId",
+      "generation",
+      "capabilityRevision",
+      "capabilityEpoch",
+      "tools",
+      "manifestHash",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-capability-manifest.v1"
+      },
+      "manifestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "bindingId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "taskId": {
+        "type": "string"
+      },
+      "dispatchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "capabilityRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "capabilityEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "tools": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "manifestHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "room-commit.v2": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-commit.v2.json",
@@ -14030,6 +14106,120 @@ export const contractSchemas = {
           "failed",
           "cancelled"
         ]
+      }
+    }
+  },
+  "room-tool-disclosure-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.room-tool-disclosure-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "manifestId",
+      "manifestHash",
+      "kind",
+      "query",
+      "toolName",
+      "schemaHash",
+      "items",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-tool-disclosure-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "manifestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "manifestHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "kind": {
+        "enum": [
+          "search",
+          "load"
+        ]
+      },
+      "query": {
+        "type": "string"
+      },
+      "toolName": {
+        "type": "string"
+      },
+      "schemaHash": {
+        "type": "string"
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "room-tool-invocation-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.room-tool-invocation-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "manifestId",
+      "manifestHash",
+      "loadReceiptId",
+      "invocationKey",
+      "canonicalCommand",
+      "authorizationState",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-tool-invocation-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "manifestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "manifestHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "loadReceiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "invocationKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "canonicalCommand": {
+        "type": "object"
+      },
+      "authorizationState": {
+        "const": "authorized"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
       }
     }
   },

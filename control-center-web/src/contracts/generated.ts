@@ -95,6 +95,7 @@ import type { RimeSuggestResponseV1 } from './generated/rime-suggest-response.v1
 import type { RoleBookCurationV1 } from './generated/role-book-curation.v1';
 import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-draft.v1';
 import type { RoomBindingV2 } from './generated/room-binding.v2';
+import type { RoomCapabilityManifestV1 } from './generated/room-capability-manifest.v1';
 import type { RoomCommitV2 } from './generated/room-commit.v2';
 import type { RoomContextEntryV1 } from './generated/room-context-entry.v1';
 import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
@@ -113,6 +114,8 @@ import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
 import type { RoomSkillRecoveryV1 } from './generated/room-skill-recovery.v1';
 import type { RoomSkillSelectionV1 } from './generated/room-skill-selection.v1';
 import type { RoomTaskV2 } from './generated/room-task.v2';
+import type { RoomToolDisclosureReceiptV1 } from './generated/room-tool-disclosure-receipt.v1';
+import type { RoomToolInvocationReceiptV1 } from './generated/room-tool-invocation-receipt.v1';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
@@ -208,6 +211,7 @@ export type {
   RoleBookCurationV1,
   RoleBookRevisionDraftV1,
   RoomBindingV2,
+  RoomCapabilityManifestV1,
   RoomCommitV2,
   RoomContextEntryV1,
   RoomDispatchEnvelopeV2,
@@ -226,6 +230,8 @@ export type {
   RoomSkillRecoveryV1,
   RoomSkillSelectionV1,
   RoomTaskV2,
+  RoomToolDisclosureReceiptV1,
+  RoomToolInvocationReceiptV1,
   SessionMemoryRecallV1,
   UserMemoryDraftV1,
 };
@@ -322,6 +328,7 @@ export interface ContractTypeMap {
   'role-book-curation.v1': RoleBookCurationV1;
   'role-book-revision-draft.v1': RoleBookRevisionDraftV1;
   'room-binding.v2': RoomBindingV2;
+  'room-capability-manifest.v1': RoomCapabilityManifestV1;
   'room-commit.v2': RoomCommitV2;
   'room-context-entry.v1': RoomContextEntryV1;
   'room-dispatch-envelope.v2': RoomDispatchEnvelopeV2;
@@ -340,6 +347,8 @@ export interface ContractTypeMap {
   'room-skill-recovery.v1': RoomSkillRecoveryV1;
   'room-skill-selection.v1': RoomSkillSelectionV1;
   'room-task.v2': RoomTaskV2;
+  'room-tool-disclosure-receipt.v1': RoomToolDisclosureReceiptV1;
+  'room-tool-invocation-receipt.v1': RoomToolInvocationReceiptV1;
   'session-memory-recall.v1': SessionMemoryRecallV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
 }
