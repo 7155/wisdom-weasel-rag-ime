@@ -58,13 +58,13 @@ for line in sys.stdin:
                          "conversationFork": True,
                          "runtimePrimitives": {
                              "continuationEnvelope": "1", "cancelScope": "1",
-                             "sessionContinuationQueue": False,
-                             "sessionCancelOperationRegistry": False,
+                             "sessionContinuationQueue": True,
+                             "sessionCancelOperationRegistry": True,
                              "sessionCancelOperations": {
                                  "provider": True, "tool": True, "retrySleep": True,
                                  "manualCompaction": True, "autoCompaction": True,
-                                 "branchSummary": False, "bashProcess": True,
-                                 "continuationTimer": False},
+                                 "branchSummary": True, "bashProcess": True,
+                                 "continuationTimer": True},
                              "roomTypes": False}}})
     elif method == "completion.once":
         sequence += 1
@@ -404,10 +404,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
             status["capabilities"]["runtimePrimitives"]["continuationEnvelope"],
             "1",
         )
-        self.assertFalse(
+        self.assertTrue(
             status["capabilities"]["runtimePrimitives"][
                 "sessionCancelOperationRegistry"
             ]
+        )
+        self.assertTrue(
+            status["capabilities"]["runtimePrimitives"]["sessionContinuationQueue"]
         )
         self.assertTrue(
             status["capabilities"]["runtimePrimitives"][
@@ -419,6 +422,17 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "sessionCancelOperations"
             ]["bashProcess"]
         )
+        self.assertTrue(
+            status["capabilities"]["runtimePrimitives"][
+                "sessionCancelOperations"
+            ]["branchSummary"]
+        )
+        self.assertTrue(
+            status["capabilities"]["runtimePrimitives"][
+                "sessionCancelOperations"
+            ]["continuationTimer"]
+        )
+        self.assertFalse(status["capabilities"]["runtimePrimitives"]["roomTypes"])
         requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
         opened = [row for row in requests if row["method"] == "session.open"]
         self.assertEqual(len(opened), 2)
