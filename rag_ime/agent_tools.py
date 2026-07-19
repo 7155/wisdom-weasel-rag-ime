@@ -1257,13 +1257,26 @@ class ControlToolGateway:
         if session.get("status") == "archived":
             raise ValueError("archived sessions cannot execute tools")
         tool = str(request["tool"])
+        args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
+        if tool in {"room_state", "room_post", "room_commit"}:
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            result = self.collaboration.execute_room_capability_tool(  # type: ignore[attr-defined]
+                session_id,
+                tool,
+                args,
+                tool_call_id=str(request["toolCallId"]),
+                load_receipt_id=str(request.get("loadReceiptId") or ""),
+            )
+            if result is None:
+                raise ValueError("canonical Room tools require an active RoomBinding")
+            return dict(result)
         spec = _TOOL_SPEC_BY_ID.get(tool)
         if spec is None:
             raise ValueError("tool is not enabled for this session")
         session_modes = tuple(spec.get("sessionModes") or ("assistant", "coordinator"))
         if str(session.get("mode") or "assistant") not in session_modes:
             raise ValueError("tool is not enabled for this session mode")
-        args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
         operation = str(args.get("op") or "")
         if operation not in spec["operations"]:
             raise ValueError(f"unsupported {tool} operation")
@@ -1304,8 +1317,11 @@ class ControlToolGateway:
             else:
                 handler_args = dict(args)
                 handler_args["_sessionId"] = session_id
+                runtime_context = request.get("runtimeContext")
+                if tool == "ime_agents":
+                    handler_args["_toolCallId"] = str(request["toolCallId"])
+                    handler_args["_loadReceiptId"] = str(request.get("loadReceiptId") or "")
                 if tool == "ime_agents" and operation == "delegate":
-                    runtime_context = request.get("runtimeContext")
                     if isinstance(runtime_context, Mapping):
                         handler_args["_runtimeContext"] = dict(runtime_context)
                 if tool == "desktop_semantic":
@@ -1441,6 +1457,21 @@ class ControlToolGateway:
             )
         if operation == "abort":
             return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
+        if (
+            operation in {"room_send", "room_ask", "room_reply", "room_assign", "room_submit"}
+            and callable(getattr(self.collaboration, "execute_room_capability_tool", None))
+        ):
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            canonical = self.collaboration.execute_room_capability_tool(  # type: ignore[attr-defined]
+                session_id,
+                operation,
+                {key: value for key, value in args.items() if not key.startswith("_")},
+                tool_call_id=_bounded_text(args.get("_toolCallId"), maximum=240),
+                load_receipt_id=_bounded_text(args.get("_loadReceiptId"), maximum=240),
+            )
+            if canonical is not None:
+                return dict(canonical)
         if operation in {"room_send", "room_ask", "room_reply"}:
             if self.collaboration is None:
                 raise ValueError("managed room collaboration is unavailable")

@@ -11,6 +11,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from rag_ime.agent_room_kernel import RoomKernelFenceError
+from rag_ime.agent_room_capabilities import ToolAuthorizationError
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     KERNEL_COMMAND_SCHEMA_VERSION,
@@ -348,6 +349,106 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertTrue(self.service.room_kernel_worker_loop.running)
         self.service.room_kernel_worker_loop.close()
         self.assertFalse(self.service.room_kernel_worker_loop.running)
+
+    def test_capability_manifest_cuts_legacy_room_tool_to_one_kernel_path(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        digest = "a" * 64
+        room_binding = {
+            "schemaVersion": "wisdom-weasel.room-binding.v2",
+            "bindingId": "room-binding:service",
+            "rootId": "root:service",
+            "roomId": self.room_id,
+            "participantId": str(self.participant["id"]),
+            "taskId": "task:service",
+            "generation": 0,
+            "protocolRevision": "room-v2",
+            "capabilityRevision": "capability:service-v1",
+            "access": "write",
+        }
+        participant_binding = {
+            "schemaVersion": "wisdom-weasel.room-participant-binding.v2",
+            "bindingId": "participant-binding:service",
+            "sessionId": self.session_id,
+            "personaRef": f"rag-ime-definition://persona/p?version=1&contentHash=sha256:{digest}",
+            "collaborationRoleRef": f"rag-ime-definition://collaboration-role/r?version=1&contentHash=sha256:{digest}",
+            "agentTemplateRef": f"rag-ime-definition://agent-template/t?version=1&contentHash=sha256:{digest}",
+            "collaborationProfileRef": None,
+            "compiledRuntimeProfileRef": {"profileId": "profile:service", "revision": "1", "contentHash": "sha256:abcdef"},
+            "capabilityRevision": "capability:service-v1",
+            "capabilityEpoch": 7,
+            "roomBindingRef": {"bindingId": "room-binding:service", "schemaVersion": "wisdom-weasel.room-binding.v2"},
+        }
+        prompt_receipt = {
+            "schemaVersion": "wisdom-weasel.prompt-compile-receipt.v1",
+            "receiptId": "prompt:service",
+            "plan": {
+                "bindingId": "participant-binding:service",
+                "roomId": self.room_id,
+                "rootId": "root:service",
+                "sessionId": self.session_id,
+                "generation": 0,
+                "capabilityRevision": "capability:service-v1",
+                "capabilityEpoch": 7,
+                "planHash": "b" * 64,
+            },
+            "omittedLayers": [],
+            "producerAudit": [],
+            "createdAtMs": 4,
+        }
+        tools = ("room_state", "room_post", "room_commit")
+        bound = self.service.bind_room_capability_runtime(
+            room_binding=room_binding,
+            participant_binding=participant_binding,
+            prompt_compile_receipt=prompt_receipt,
+            manifest_id="manifest:service",
+            dispatch_id="dispatch:service",
+            user_authorized=tools,
+            template_allowed=tools,
+            role_allowed=tools,
+            profile_allowed=tools,
+            state_allowed=tools,
+            created_at_ms=4,
+        )
+        self.assertEqual(
+            [item["name"] for item in self.service._runtime_tool_manifest({"id": self.session_id})],
+            list(tools),
+        )
+        loaded = self.service.room_capability_tool_load(
+            {"sessionId": self.session_id, "receiptId": "load:service", "toolName": "room_post", "createdAtMs": 5}
+        )["result"]
+        legacy = self.service.execute_room_capability_tool(
+            self.session_id, "room_send", {"content": "deliver", "targetParticipantId": "ignored"},
+            tool_call_id="call:service", load_receipt_id=str(loaded["receiptId"]),
+        )
+        canonical = self.service.execute_room_capability_tool(
+            self.session_id, "room_post", {"content": "deliver"},
+            tool_call_id="call:service", load_receipt_id=str(loaded["receiptId"]),
+        )
+        self.assertEqual(legacy["invocationReceipt"], canonical["invocationReceipt"])
+        self.assertFalse(legacy["result"]["executionPerformed"])
+        self.assertIsNone(self.service.execute_room_capability_tool(
+            "ordinary-session", "room_send", {"content": "ordinary"}, tool_call_id="call:ordinary", load_receipt_id=""
+        ))
+        self.service.apply_room_kernel_command(
+            self.room_id,
+            self._cancel_command(),
+            caller_authorized=True,
+        )
+        with self.assertRaises(RoomKernelFenceError):
+            self.service.execute_room_capability_tool(
+                self.session_id,
+                "room_post",
+                {"content": "late delivery"},
+                tool_call_id="call:after-cancel",
+                load_receipt_id=str(loaded["receiptId"]),
+            )
+        self.service.room_capabilities.revoke_runtime(self.session_id, capability_epoch=8, now_ms=6)
+        with self.assertRaises(ToolAuthorizationError):
+            self.service.room_capabilities.authorize_runtime_invocation(
+                session_id=self.session_id, receipt_id="invoke:revoked", invocation_key="call:revoked",
+                load_receipt_id=str(loaded["receiptId"]), tool_name="room_post", arguments={"content": "no"}, created_at_ms=7,
+            )
 
     def test_real_http_snapshot_command_and_sse_gap_routes(self) -> None:
         wrapper = SimpleNamespace(

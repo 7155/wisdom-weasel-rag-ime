@@ -494,6 +494,8 @@ class PiRuntimeHostManager:
                 "piSkillsEnabled": bool(session.get("piSkillsEnabled", False)),
                 "codexSkillsEnabled": bool(session.get("codexSkillsEnabled", False)),
             }
+            if isinstance(session.get("roomCapability"), Mapping):
+                params["roomCapability"] = dict(session["roomCapability"])
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
             thinking_level = str(session.get("thinkingLevel") or "").strip().lower()

@@ -32,7 +32,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 80,
+                    61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 80,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
@@ -232,7 +232,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
 
                 appended = apply_database_migrations(conn)
-                self.assertEqual(appended.applied_versions, (63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 80))
+                self.assertEqual(appended.applied_versions, (63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 80))
                 self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
@@ -327,7 +327,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (59, 60, 61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 80),
+                (59, 60, 61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 80),
             )
             self.assertEqual(
                 rows["atom:legacy-old"],
@@ -456,7 +456,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 80,
+                    61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 80,
                 ),
             )
             self.assertEqual(
@@ -521,7 +521,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 80),
+                    (61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 80),
                 )
                 self.assertEqual(
                     conn.execute(
@@ -613,7 +613,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 80),
+                    (62, 63, 64, 65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 80),
                 )
                 self.assertEqual(
                     conn.execute(

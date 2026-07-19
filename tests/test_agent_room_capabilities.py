@@ -9,6 +9,7 @@ from rag_ime.agent_room_capabilities import (
     RoomCapabilityManifestStore,
     ToolAuthorizationError,
     normalize_room_tool_command,
+    room_runtime_registry,
 )
 
 
@@ -150,6 +151,62 @@ class RoomCapabilityManifestTests(unittest.TestCase):
                 dispatch_id="dispatch:1", runtime_registry=self._registry(),
                 user_authorized=(), template_allowed=(), role_allowed=(), profile_allowed=(),
                 state_allowed=(), created_at_ms=1,
+            )
+
+    def test_runtime_binding_pins_prompt_profile_manifest_and_revocation(self) -> None:
+        room, participant = self._bindings()
+        manifest, _ = self.store.compile_manifest(
+            manifest_id="manifest:runtime", room_binding=room, participant_binding=participant,
+            dispatch_id="dispatch:1", runtime_registry=room_runtime_registry(),
+            user_authorized=("room_state", "room_post", "room_commit"),
+            template_allowed=("room_state", "room_post", "room_commit"),
+            role_allowed=("room_state", "room_post", "room_commit"),
+            profile_allowed=("room_state", "room_post", "room_commit"),
+            state_allowed=("room_state", "room_post", "room_commit"), created_at_ms=1,
+        )
+        prompt_receipt = {
+            "schemaVersion": "wisdom-weasel.prompt-compile-receipt.v1",
+            "receiptId": "prompt:1",
+            "plan": {
+                "bindingId": participant["bindingId"],
+                "roomId": room["roomId"],
+                "rootId": room["rootId"],
+                "sessionId": participant["sessionId"],
+                "generation": room["generation"],
+                "capabilityRevision": room["capabilityRevision"],
+                "capabilityEpoch": participant["capabilityEpoch"],
+                "planHash": "b" * 64,
+            },
+            "omittedLayers": [],
+            "producerAudit": [],
+            "createdAtMs": 2,
+        }
+        binding, created = self.store.bind_runtime(
+            session_id="session:1",
+            manifest_id=manifest["manifestId"],
+            manifest_hash=manifest["manifestHash"],
+            prompt_compile_receipt=prompt_receipt,
+            compiled_runtime_profile_ref=participant["compiledRuntimeProfileRef"],
+            room_binding=room,
+            participant_binding=participant,
+            surface_manifest_hashes={name: manifest["manifestHash"] for name in ("prompt", "runtime", "gateway", "ui")},
+            created_at_ms=2,
+        )
+        self.assertTrue(created)
+        self.assertEqual(binding["promptCompileReceiptId"], "prompt:1")
+        loaded, _ = self.store.runtime_tool_load(
+            session_id="session:1", receipt_id="load:runtime", tool_name="room_state", created_at_ms=3
+        )
+        invocation, _ = self.store.authorize_runtime_invocation(
+            session_id="session:1", receipt_id="invoke:runtime", invocation_key="call:1",
+            load_receipt_id=loaded["receiptId"], tool_name="room_state", arguments={}, created_at_ms=4,
+        )
+        self.assertEqual(invocation["canonicalCommand"]["capabilityEpoch"], 1)
+        self.store.revoke_runtime("session:1", capability_epoch=2, now_ms=5)
+        with self.assertRaises(ToolAuthorizationError):
+            self.store.authorize_runtime_invocation(
+                session_id="session:1", receipt_id="invoke:stale", invocation_key="call:2",
+                load_receipt_id=loaded["receiptId"], tool_name="room_state", arguments={}, created_at_ms=6,
             )
 
     def _compile(

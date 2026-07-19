@@ -315,6 +315,31 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["piSkillsEnabled"])
         self.assertTrue(opened["params"]["codexSkillsEnabled"])
 
+    def test_room_capability_identity_reaches_session_open_unchanged(self) -> None:
+        self.runtime.stop()
+        capability = {
+            "manifestId": "manifest:1",
+            "manifestHash": "a" * 64,
+            "promptCompileReceiptId": "prompt:1",
+            "promptPlanHash": "b" * 64,
+            "compiledRuntimeProfileRef": {"profileId": "profile:1", "revision": "1", "contentHash": "sha256:abcdef"},
+            "capabilityEpoch": 4,
+        }
+        self.runtime = PiRuntimeHostManager(
+            config=self.runtime.config,
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {"roomCapability": capability},
+            tool_manifest_provider=lambda _session: [],
+        )
+        self.runtime.ensure(str(self.first["id"]))
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        opened = [request for request in requests if request["method"] == "session.open"][-1]
+        self.assertEqual(opened["params"]["roomCapability"], capability)
+
     def test_typed_room_rpc_is_negotiated_and_correlated_across_the_host_process(self) -> None:
         self.runtime.stop()
         self.runtime = PiRuntimeHostManager(

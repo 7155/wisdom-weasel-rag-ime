@@ -7106,6 +7106,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     ),
                 )
                 return
+            if path in {"/api/agent/tool/search", "/api/agent/tool/load"}:
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {"ok": False, "error": "agent capability token required"},
+                    )
+                    return
+                payload = self._read_json()
+                result = (
+                    self.service.agent.room_capability_tool_search(payload)
+                    if path.endswith("/search")
+                    else self.service.agent.room_capability_tool_load(payload)
+                )
+                self._write_json(HTTPStatus.OK, result)
+                return
             if path == "/api/agent/tool/execute":
                 provided = self.headers.get("X-RAG-IME-Agent-Token", "")
                 expected = self.service.agent.tool_token

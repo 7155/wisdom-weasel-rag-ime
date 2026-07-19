@@ -38,6 +38,7 @@ from .agent_room_intercom import (
     AgentRoomIntercomStore,
     AgentRoomTargetBusy,
 )
+from .agent_room_capabilities import RoomCapabilityManifestStore, room_runtime_registry
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
@@ -196,6 +197,8 @@ class AgentService:
         self.room_kernel.initialize()
         self.room_kernel_projection = RoomKernelProjection(db_path)
         self.room_kernel_projection.initialize()
+        self.room_capabilities = RoomCapabilityManifestStore(db_path)
+        self.room_capabilities.initialize()
         self._room_kernel_poll_seconds = room_kernel_poll_seconds
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
@@ -218,6 +221,7 @@ class AgentService:
                 compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
+            session_context_provider=self._runtime_session_context,
         )
         self._bind_room_kernel_runtime()
         initial_configuration = self.configuration_store.snapshot()
@@ -358,10 +362,41 @@ class AgentService:
         self,
         session: Mapping[str, object],
     ) -> list[Mapping[str, object]]:
+        runtime_capability = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
+        if runtime_capability is not None:
+            manifest, _binding = runtime_capability
+            registry = room_runtime_registry()
+            return [
+                {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": registry[str(tool["name"])]["inputSchema"],
+                    "profile": "room-kernel-v2",
+                    "risk": tool["risk"],
+                }
+                for tool in manifest["tools"]
+                if isinstance(tool, Mapping) and tool.get("authorized") is True
+            ]
         provider = self._tool_manifest_provider
         if provider is None:
             return []
         return [dict(item) for item in provider(session)]
+
+    def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
+        bound = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
+        if bound is None:
+            return {}
+        manifest, binding = bound
+        return {
+            "roomCapability": {
+                "manifestId": manifest["manifestId"],
+                "manifestHash": manifest["manifestHash"],
+                "promptCompileReceiptId": binding["promptCompileReceiptId"],
+                "promptPlanHash": binding["promptPlanHash"],
+                "compiledRuntimeProfileRef": binding["compiledRuntimeProfileRef"],
+                "capabilityEpoch": binding["capabilityEpoch"],
+            }
+        }
 
     def runtime_status(self) -> dict[str, object]:
         payload = self.runtime.runtime_status()
@@ -1234,6 +1269,140 @@ class AgentService:
         self.rooms.get(room_id)
         self.room_kernel_projection.sync_room(room_id)
         return self.room_kernel_projection.snapshot(room_id)
+
+    def bind_room_capability_runtime(
+        self,
+        *,
+        room_binding: Mapping[str, object],
+        participant_binding: Mapping[str, object],
+        prompt_compile_receipt: Mapping[str, object],
+        manifest_id: str,
+        dispatch_id: str,
+        user_authorized: Sequence[str],
+        template_allowed: Sequence[str],
+        role_allowed: Sequence[str],
+        profile_allowed: Sequence[str],
+        state_allowed: Sequence[str],
+        created_at_ms: int,
+    ) -> dict[str, object]:
+        session_id = str(participant_binding.get("sessionId") or "")
+        dispatch = self.room_kernel.dispatch(dispatch_id)
+        root = self.room_kernel.root(str(dispatch["rootId"]))
+        if (
+            dispatch.get("targetSessionId") != session_id
+            or dispatch.get("rootId") != room_binding.get("rootId")
+            or dispatch.get("taskId") != room_binding.get("taskId")
+            or int(dispatch.get("generation", -1)) != int(room_binding.get("generation", -2))
+            or int(dispatch.get("capabilityEpoch", -1)) != int(participant_binding.get("capabilityEpoch", -2))
+            or root.get("roomId") != room_binding.get("roomId")
+        ):
+            raise RoomKernelFenceError("Capability binding does not match the canonical Dispatch")
+        compiled_ref = participant_binding.get("compiledRuntimeProfileRef")
+        if not isinstance(compiled_ref, Mapping):
+            raise ValueError("compiledRuntimeProfileRef is required")
+        compiled = self.room_capabilities.compile_manifest(
+            manifest_id=manifest_id,
+            room_binding=room_binding,
+            participant_binding=participant_binding,
+            dispatch_id=str(dispatch["dispatchId"]),
+            runtime_registry=room_runtime_registry(),
+            user_authorized=user_authorized,
+            template_allowed=template_allowed,
+            role_allowed=role_allowed,
+            profile_allowed=profile_allowed,
+            state_allowed=state_allowed,
+            created_at_ms=created_at_ms,
+        )
+        if compiled is None:
+            raise RoomKernelFenceError("Capability Manifest requires canonical bindings")
+        manifest, created = compiled
+        binding, binding_created = self.room_capabilities.bind_runtime(
+            session_id=session_id,
+            manifest_id=str(manifest["manifestId"]),
+            manifest_hash=str(manifest["manifestHash"]),
+            prompt_compile_receipt=prompt_compile_receipt,
+            compiled_runtime_profile_ref=compiled_ref,
+            room_binding=room_binding,
+            participant_binding=participant_binding,
+            surface_manifest_hashes={name: str(manifest["manifestHash"]) for name in ("prompt", "runtime", "gateway", "ui")},
+            created_at_ms=created_at_ms,
+        )
+        return {"manifest": manifest, "binding": binding, "created": created, "bindingCreated": binding_created}
+
+    def room_capability_tool_search(self, payload: Mapping[str, object]) -> dict[str, object]:
+        receipt, _ = self.room_capabilities.runtime_tool_search(
+            session_id=_required_text(payload, "sessionId"),
+            receipt_id=_required_text(payload, "receiptId"),
+            query=str(payload.get("query") or ""),
+            created_at_ms=int(payload.get("createdAtMs") or int(time.time() * 1000)),
+        )
+        return {"ok": True, "result": receipt}
+
+    def room_capability_tool_load(self, payload: Mapping[str, object]) -> dict[str, object]:
+        receipt, _ = self.room_capabilities.runtime_tool_load(
+            session_id=_required_text(payload, "sessionId"),
+            receipt_id=_required_text(payload, "receiptId"),
+            tool_name=_required_text(payload, "toolName"),
+            created_at_ms=int(payload.get("createdAtMs") or int(time.time() * 1000)),
+        )
+        return {"ok": True, "result": receipt}
+
+    def execute_room_capability_tool(
+        self,
+        session_id: str,
+        tool_name: str,
+        args: Mapping[str, object],
+        *,
+        tool_call_id: str,
+        load_receipt_id: str,
+    ) -> dict[str, object] | None:
+        bound = self.room_capabilities.manifest_for_runtime(session_id)
+        if bound is None:
+            return None
+        manifest, binding = bound
+        live = self.room_kernel.session_binding(session_id)
+        if (
+            live is None
+            or live.get("dispatchId") != manifest.get("dispatchId")
+            or live.get("rootId") != manifest.get("rootId")
+            or int(live.get("generation", -1)) != int(manifest.get("generation", -2))
+            or int(binding["capabilityEpoch"]) != int(manifest["capabilityEpoch"])
+        ):
+            raise RoomKernelFenceError("Room tool invocation lost its Dispatch or capability fence")
+        authorized_tool = tool_name
+        authorized_args = dict(args)
+        if tool_name in {"room_send", "room_ask", "room_reply", "send", "ask", "reply"}:
+            authorized_tool = "room_post"
+            authorized_args = {"content": str(args.get("content") or "").strip()}
+        elif tool_name in {"room_assign", "room_submit", "assign", "submit"}:
+            authorized_tool = "room_commit"
+            authorized_args = {
+                "result": str(args.get("result") or args.get("resultSummary") or args.get("objective") or "").strip()
+            }
+        invocation, created = self.room_capabilities.authorize_runtime_invocation(
+            session_id=session_id,
+            receipt_id=f"invoke:{tool_call_id}",
+            invocation_key=tool_call_id,
+            load_receipt_id=load_receipt_id,
+            tool_name=authorized_tool,
+            arguments=authorized_args,
+            created_at_ms=int(time.time() * 1000),
+        )
+        canonical = str(invocation["canonicalCommand"]["tool"])
+        if canonical == "room_state":
+            result = self.room_kernel_snapshot(str(live["roomId"]))
+        else:
+            # Writes remain proposals until the explicit settle bridge owns the
+            # matching RoomCommit. This prevents a tool call from becoming a
+            # second publication or responsibility-transfer path.
+            result = {
+                "accepted": True,
+                "executionPerformed": False,
+                "canonicalTool": canonical,
+                "invocationReceiptId": invocation["receiptId"],
+                "next": "agent_settled_then_room_commit",
+            }
+        return {"ok": True, "created": created, "result": result, "invocationReceipt": invocation}
 
     def apply_room_kernel_command(
         self,
@@ -4854,6 +5023,7 @@ class AgentService:
                 compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
+            session_context_provider=self._runtime_session_context,
         )
         self._bind_room_kernel_runtime()
         self.room_intercom.notify()
@@ -4875,6 +5045,7 @@ class AgentService:
                 compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
+            session_context_provider=self._runtime_session_context,
         )
         self._bind_room_kernel_runtime()
         self.room_intercom.notify()

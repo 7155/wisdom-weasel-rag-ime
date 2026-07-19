@@ -5839,7 +5839,10 @@ export const contractSchemas = {
           "workspace_read",
           "workspace_search",
           "workspace_patch",
-          "workspace_shell"
+          "workspace_shell",
+          "room_state",
+          "room_post",
+          "room_commit"
         ]
       },
       "toolCallId": {
@@ -5848,6 +5851,12 @@ export const contractSchemas = {
       },
       "args": {
         "type": "object"
+      },
+      "roomCapability": {
+        "type": "object"
+      },
+      "loadReceiptId": {
+        "type": "string"
       },
       "runtimeContext": {
         "type": "object",

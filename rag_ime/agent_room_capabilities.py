@@ -27,6 +27,41 @@ LEGACY_ROOM_TOOL_ALIASES = {
 _SURFACES = frozenset({"prompt", "runtime", "gateway", "ui"})
 
 
+def room_runtime_registry() -> dict[str, dict[str, object]]:
+    """Canonical Room-only Provider surface; legacy names never enter the catalog."""
+
+    return {
+        "room_state": {
+            "description": "Read the current canonical Root, Task and Dispatch state.",
+            "risk": "R0",
+            "operation": "room.state",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        "room_post": {
+            "description": "Publish one explicit RoomPost bound to the active Dispatch.",
+            "risk": "R1",
+            "operation": "room.post",
+            "inputSchema": {
+                "type": "object",
+                "required": ["content"],
+                "properties": {"content": {"type": "string", "minLength": 1}},
+                "additionalProperties": False,
+            },
+        },
+        "room_commit": {
+            "description": "Submit a governed continuation or completion proposal for the active Dispatch.",
+            "risk": "R1",
+            "operation": "room.commit",
+            "inputSchema": {
+                "type": "object",
+                "required": ["result"],
+                "properties": {"result": {"type": "string", "minLength": 1}},
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
 class CapabilityManifestConflict(RuntimeError):
     """A manifest, receipt, binding, or consumer surface has drifted."""
 
@@ -305,6 +340,183 @@ class RoomCapabilityManifestStore:
             )
         return payload, True
 
+    def bind_runtime(
+        self,
+        *,
+        session_id: str,
+        manifest_id: str,
+        manifest_hash: str,
+        prompt_compile_receipt: Mapping[str, object],
+        compiled_runtime_profile_ref: Mapping[str, object],
+        room_binding: Mapping[str, object],
+        participant_binding: Mapping[str, object],
+        surface_manifest_hashes: Mapping[str, str],
+        created_at_ms: int,
+    ) -> tuple[dict[str, object], bool]:
+        """Seal the one manifest identity consumed by Prompt, Runtime, Gateway and UI."""
+
+        manifest = self._manifest(manifest_id, manifest_hash)
+        _assert_manifest_context(
+            manifest,
+            _binding_identity(room_binding, participant_binding, str(manifest["dispatchId"])),
+        )
+        self.assert_surface_manifest_hashes(manifest_hash, surface_manifest_hashes)
+        validate_contract(dict(prompt_compile_receipt), "prompt-compile-receipt.v1.json")
+        plan = prompt_compile_receipt.get("plan")
+        if not isinstance(plan, Mapping):
+            raise CapabilityManifestConflict("PromptCompileReceipt has no PromptPlan")
+        if (
+            plan.get("bindingId") != manifest["bindingId"]
+            or plan.get("roomId") != manifest["roomId"]
+            or plan.get("rootId") != manifest["rootId"]
+            or plan.get("sessionId") != session_id
+            or int(plan.get("generation", -1)) != int(manifest["generation"])
+            or plan.get("capabilityRevision") != manifest["capabilityRevision"]
+            or int(plan.get("capabilityEpoch", -1)) != int(manifest["capabilityEpoch"])
+        ):
+            raise CapabilityManifestConflict("PromptCompileReceipt does not match Capability Manifest")
+        profile_id = _required(compiled_runtime_profile_ref.get("profileId"), "profileId")
+        profile_revision = _required(compiled_runtime_profile_ref.get("revision"), "profileRevision")
+        profile_hash = _required(compiled_runtime_profile_ref.get("contentHash"), "profileHash")
+        if participant_binding.get("compiledRuntimeProfileRef") != dict(compiled_runtime_profile_ref):
+            raise CapabilityManifestConflict("CompiledRuntimeProfile ref differs from ParticipantBinding")
+        payload = {
+            "sessionId": _required(session_id, "session_id"),
+            "manifestId": manifest_id,
+            "manifestHash": manifest_hash,
+            "promptCompileReceiptId": _required(prompt_compile_receipt.get("receiptId"), "promptCompileReceiptId"),
+            "promptPlanHash": _required(plan.get("planHash"), "promptPlanHash"),
+            "compiledRuntimeProfileRef": {
+                "profileId": profile_id,
+                "revision": profile_revision,
+                "contentHash": profile_hash,
+            },
+            "capabilityEpoch": int(manifest["capabilityEpoch"]),
+            "state": "active",
+        }
+        timestamp = _non_negative(created_at_ms, "created_at_ms")
+        with self._connect(immediate=True) as conn:
+            existing = conn.execute(
+                "SELECT * FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if existing is not None:
+                stored = _runtime_binding_payload(existing)
+                if stored != payload:
+                    raise CapabilityManifestConflict("Session runtime capability binding changed")
+                return stored, False
+            conn.execute(
+                """INSERT INTO room_v2_capability_runtime_bindings(
+                   session_id, manifest_id, manifest_hash, prompt_compile_receipt_id,
+                   prompt_plan_hash, compiled_profile_id, compiled_profile_revision,
+                   compiled_profile_hash, room_binding_json, participant_binding_json,
+                   capability_epoch, state, created_at_ms, updated_at_ms
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                (
+                    session_id, manifest_id, manifest_hash, payload["promptCompileReceiptId"],
+                    payload["promptPlanHash"], profile_id, profile_revision, profile_hash,
+                    _json(dict(room_binding)), _json(dict(participant_binding)),
+                    payload["capabilityEpoch"], timestamp, timestamp,
+                ),
+            )
+        return payload, True
+
+    def runtime_binding(self, session_id: str, *, active_only: bool = True) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
+                (_required(session_id, "session_id"),),
+            ).fetchone()
+        if row is None or (active_only and str(row["state"]) != "active"):
+            return None
+        return _runtime_binding_payload(row)
+
+    def revoke_runtime(self, session_id: str, *, capability_epoch: int, now_ms: int) -> None:
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT capability_epoch FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
+                (_required(session_id, "session_id"),),
+            ).fetchone()
+            if row is None:
+                return
+            if int(capability_epoch) <= int(row["capability_epoch"]):
+                raise CapabilityManifestConflict("revocation must advance capabilityEpoch")
+            conn.execute(
+                "UPDATE room_v2_capability_runtime_bindings SET state = 'revoked', capability_epoch = ?, updated_at_ms = ? WHERE session_id = ?",
+                (int(capability_epoch), _non_negative(now_ms, "now_ms"), session_id),
+            )
+
+    def manifest_for_runtime(self, session_id: str) -> tuple[dict[str, object], dict[str, object]] | None:
+        binding = self.runtime_binding(session_id)
+        if binding is None:
+            return None
+        return self._manifest(str(binding["manifestId"]), str(binding["manifestHash"])), binding
+
+    def runtime_tool_search(
+        self, *, session_id: str, receipt_id: str, query: str, created_at_ms: int
+    ) -> tuple[dict[str, object], bool]:
+        binding = self.runtime_binding(session_id)
+        if binding is None:
+            raise ToolAuthorizationError("Session has no active Room Capability Manifest")
+        return self.tool_search(
+            receipt_id=receipt_id,
+            manifest_id=str(binding["manifestId"]),
+            manifest_hash=str(binding["manifestHash"]),
+            query=query,
+            created_at_ms=created_at_ms,
+        )
+
+    def runtime_tool_load(
+        self, *, session_id: str, receipt_id: str, tool_name: str, created_at_ms: int
+    ) -> tuple[dict[str, object], bool]:
+        binding = self.runtime_binding(session_id)
+        if binding is None:
+            raise ToolAuthorizationError("Session has no active Room Capability Manifest")
+        return self.tool_load(
+            receipt_id=receipt_id,
+            manifest_id=str(binding["manifestId"]),
+            manifest_hash=str(binding["manifestHash"]),
+            tool_name=tool_name,
+            runtime_registry=room_runtime_registry(),
+            created_at_ms=created_at_ms,
+        )
+
+    def authorize_runtime_invocation(
+        self,
+        *,
+        session_id: str,
+        receipt_id: str,
+        invocation_key: str,
+        load_receipt_id: str,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        created_at_ms: int,
+    ) -> tuple[dict[str, object], bool]:
+        binding = self.runtime_binding(session_id)
+        if binding is None:
+            raise ToolAuthorizationError("Session has no active Room Capability Manifest")
+        manifest = self._manifest(str(binding["manifestId"]), str(binding["manifestHash"]))
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT room_binding_json, participant_binding_json FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        assert row is not None
+        return self.authorize_invocation(
+            receipt_id=receipt_id,
+            invocation_key=invocation_key,
+            manifest_id=str(binding["manifestId"]),
+            manifest_hash=str(binding["manifestHash"]),
+            load_receipt_id=load_receipt_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            room_binding=json.loads(str(row["room_binding_json"])),
+            participant_binding=json.loads(str(row["participant_binding_json"])),
+            dispatch_id=str(manifest["dispatchId"]),
+            surface_manifest_hashes={name: str(binding["manifestHash"]) for name in _SURFACES},
+            created_at_ms=created_at_ms,
+        )
+
     @staticmethod
     def assert_surface_manifest_hashes(
         manifest_hash: str,
@@ -504,6 +716,23 @@ def _invocation_payload(row: sqlite3.Row) -> dict[str, object]:
         "invocationKey": str(row["invocation_key"]),
         "canonicalCommand": command, "authorizationState": str(row["authorization_state"]),
         "createdAtMs": int(row["created_at_ms"]),
+    }
+
+
+def _runtime_binding_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "sessionId": str(row["session_id"]),
+        "manifestId": str(row["manifest_id"]),
+        "manifestHash": str(row["manifest_hash"]),
+        "promptCompileReceiptId": str(row["prompt_compile_receipt_id"]),
+        "promptPlanHash": str(row["prompt_plan_hash"]),
+        "compiledRuntimeProfileRef": {
+            "profileId": str(row["compiled_profile_id"]),
+            "revision": str(row["compiled_profile_revision"]),
+            "contentHash": str(row["compiled_profile_hash"]),
+        },
+        "capabilityEpoch": int(row["capability_epoch"]),
+        "state": str(row["state"]),
     }
 
 
