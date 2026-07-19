@@ -1303,11 +1303,9 @@ class AgentService:
             commit,
             generation=int(settle["generation"]),
             now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
+            post_proposal=proposal if isinstance(proposal, Mapping) else None,
         )
-        post = None
-        if commit.get("action") == "post":
-            assert isinstance(proposal, Mapping)
-            post = self.room_kernel_projection.publish_post(proposal)
+        post = dict(proposal) if isinstance(proposal, Mapping) else None
         self.room_kernel_projection.sync_room(room_id)
         result = {
             "schemaVersion": "wisdom-weasel.room-settle-result.v1",

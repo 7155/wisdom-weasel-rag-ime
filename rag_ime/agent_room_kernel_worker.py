@@ -142,6 +142,7 @@ class RoomKernelWorkerLoop:
         self.on_change = on_change or (lambda: None)
         self.poll_seconds = max(0.01, float(poll_seconds))
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
 
     @property
@@ -152,6 +153,7 @@ class RoomKernelWorkerLoop:
         if self.worker.store.mode != "cohort" or self.running:
             return False
         self._stop.clear()
+        self._wake.clear()
         self._thread = threading.Thread(
             target=self._run,
             name="rag-ime-room-kernel-worker",
@@ -162,13 +164,14 @@ class RoomKernelWorkerLoop:
 
     def close(self) -> None:
         self._stop.set()
+        self._wake.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=max(1.0, self.poll_seconds * 4))
         self._thread = None
 
     def wake(self) -> None:
-        self._stop.wait(0)
+        self._wake.set()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -182,4 +185,5 @@ class RoomKernelWorkerLoop:
                 pass
             if changed:
                 self.on_change()
-            self._stop.wait(self.poll_seconds)
+            self._wake.wait(self.poll_seconds)
+            self._wake.clear()

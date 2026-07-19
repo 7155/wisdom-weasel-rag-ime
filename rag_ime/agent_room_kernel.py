@@ -551,9 +551,18 @@ class RoomKernelStore:
         return receipts
 
     def apply_commit(
-        self, payload: Mapping[str, object], *, generation: int, now_ms: int
+        self,
+        payload: Mapping[str, object],
+        *,
+        generation: int,
+        now_ms: int,
+        post_proposal: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         validate_kernel_contract("roomCommit", payload)
+        if post_proposal is not None:
+            validate_kernel_contract("roomPost", post_proposal)
+        if (payload.get("action") == "post") != (post_proposal is not None):
+            raise RoomKernelFenceError("RoomCommit post action and RoomPost proposal must agree")
         with self._connect(immediate=True) as conn:
             dispatch = self._dispatch_row(conn, str(payload["dispatchId"]))
             root = self._root_row(conn, str(dispatch["root_id"]))
@@ -564,6 +573,21 @@ class RoomKernelStore:
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="duplicate", status="noop", generation=int(root["generation"]), details={"commitId": str(existing["commit_id"])}, now_ms=now_ms)
             if str(dispatch["state"]) != "running":
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "dispatch_not_running", "dispatchId": payload["dispatchId"], "dispatchState": str(dispatch["state"])}, now_ms=now_ms)
+            if post_proposal is not None:
+                if (
+                    post_proposal.get("roomId") != root["room_id"]
+                    or post_proposal.get("rootId") != root["root_id"]
+                    or post_proposal.get("dispatchId") != dispatch["dispatch_id"]
+                    or int(post_proposal.get("generation", -1)) != int(root["generation"])
+                ):
+                    raise RoomKernelFenceError("RoomPost does not match the committing Dispatch")
+                encoded_post = _json(post_proposal)
+                prior_post = conn.execute(
+                    "SELECT payload_json FROM room_kernel_posts WHERE room_id = ? AND idempotency_key = ?",
+                    (post_proposal["roomId"], post_proposal["idempotencyKey"]),
+                ).fetchone()
+                if prior_post is not None and str(prior_post["payload_json"]) != encoded_post:
+                    raise RoomKernelFenceError("RoomPost idempotency key was rebound")
             conn.execute(
                 """INSERT INTO room_kernel_commits(
                    commit_id, root_id, dispatch_id, generation, payload_json, created_at_ms
@@ -580,6 +604,18 @@ class RoomKernelStore:
             conn.execute("UPDATE room_kernel_roots SET budget_remaining = ?, budget_reserved = ?, covered_criteria_json = ?, updated_at_ms = ? WHERE root_id = ?", (remaining, reserved, _json(sorted(covered)), int(now_ms), root["root_id"]))
             if str(payload["action"]) == "complete":
                 conn.execute("UPDATE room_kernel_tasks SET state = 'completed', updated_at_ms = ? WHERE task_id = ?", (int(now_ms), dispatch["task_id"]))
+            if post_proposal is not None and prior_post is None:
+                conn.execute(
+                    """INSERT INTO room_kernel_posts(
+                       post_id, room_id, root_id, generation, idempotency_key,
+                       payload_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        post_proposal["postId"], post_proposal["roomId"],
+                        post_proposal["rootId"], post_proposal["generation"],
+                        post_proposal["idempotencyKey"], encoded_post,
+                        post_proposal["createdAtMs"],
+                    ),
+                )
             return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="accepted", status="applied", generation=generation, details={"commitId": payload["commitId"]}, now_ms=now_ms)
 
     def cancel_target(
