@@ -10,7 +10,10 @@ from unittest.mock import patch
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.hybrid_rag_models import HybridRagQuery
-from rag_ime.hybrid_rag_retriever import retrieve_hybrid_rag_candidates
+from rag_ime.hybrid_rag_retriever import (
+    _semantic_query_vector,
+    retrieve_hybrid_rag_candidates,
+)
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
 from rag_ime.memory_ownership import agent_visible_memory_owners
@@ -40,6 +43,29 @@ class HybridRagRetrieverTests(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+
+    def test_semantic_query_blends_user_task_and_compaction_summary_80_20(self) -> None:
+        class Provider:
+            fingerprint = "test:blend"
+
+            def embed(self, text: str) -> list[float]:
+                return {
+                    "用户当前任务": [1.0, 0.0],
+                    "压缩摘要": [0.0, 1.0],
+                }[text]
+
+        vector, metadata = _semantic_query_vector(
+            Provider(),
+            "用户当前任务",
+            context_text="压缩摘要",
+            context_weight=0.2,
+        )
+
+        self.assertTrue(metadata["applied"])
+        self.assertEqual(metadata["queryWeight"], 0.8)
+        self.assertEqual(metadata["contextWeight"], 0.2)
+        self.assertAlmostEqual(vector[0], 0.9701425, places=6)
+        self.assertAlmostEqual(vector[1], 0.2425356, places=6)
 
     def test_bm25_raw_exact_keyword_hit(self) -> None:
         self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG", "检索"))

@@ -677,6 +677,9 @@ class AgentSessionStore:
                 """
                 WITH latest AS (
                     SELECT event_id, sequence, item_id, title, status, created_at_ms,
+                           MIN(sequence) OVER (
+                               PARTITION BY item_id
+                           ) AS first_sequence,
                            ROW_NUMBER() OVER (
                                PARTITION BY item_id ORDER BY sequence DESC
                            ) AS row_number
@@ -686,14 +689,7 @@ class AgentSessionStore:
                 SELECT event_id, sequence, item_id, title, status, created_at_ms
                 FROM latest
                 WHERE row_number = 1
-                ORDER BY
-                    CASE status
-                        WHEN 'in_progress' THEN 0
-                        WHEN 'pending' THEN 1
-                        ELSE 2
-                    END,
-                    sequence,
-                    item_id
+                ORDER BY first_sequence, item_id
                 LIMIT ?
                 """,
                 (session_id, bounded_limit),

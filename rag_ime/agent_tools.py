@@ -272,8 +272,8 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "agent_plan",
         "domain": "planning",
-        "displayName": "当前回合计划",
-        "description": "维护当前 Agent Session 的有界执行清单；它不修改用户的每日规划",
+        "displayName": "任务执行清单",
+        "description": "维护跨回合与压缩保留的 Session 执行清单；它不修改用户的每日规划",
         "operations": ("list", "update"),
         "resultPresentation": "tool_result",
     },

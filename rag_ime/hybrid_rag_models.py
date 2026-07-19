@@ -21,6 +21,11 @@ class HybridRagQuery:
     enabled_lanes: tuple[tuple[str, bool], ...] = ()
     lane_weights: tuple[tuple[str, float], ...] = ()
     visible_owners: tuple[tuple[str, str], ...] = ()
+    # Vector-only context never enters BM25/TagMemo terms. This lets a caller
+    # bias semantic retrieval with a compacted conversation summary without
+    # turning that summary into a second lexical query.
+    vector_context_text: str = ""
+    vector_context_weight: float = 0.0
 
 
 @dataclass(frozen=True)

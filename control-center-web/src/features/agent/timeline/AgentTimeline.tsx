@@ -83,6 +83,10 @@ export function AgentTimeline({
       .filter((item): item is AgentMessageProjection => item?.role === 'assistant') ?? [];
     return messagePreview(messages.at(-1));
   })));
+  const timelineComponents = useMemo(() => ({
+    ScrollSeekPlaceholder: AgentTurnTombstone,
+    Footer: AgentTimelineScrollFooter,
+  }), []);
   useEffect(() => {
     const lastIndex = Math.max(0, turnOrder.length - 1);
     setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
@@ -198,12 +202,7 @@ export const agentScrollSeekConfiguration = {
   exit: (velocity) => Math.abs(velocity) < 120,
 } satisfies ScrollSeekConfiguration;
 
-const timelineComponents = {
-  ScrollSeekPlaceholder: AgentTurnTombstone,
-  Footer: AgentTimelineFooter,
-};
-
-function AgentTimelineFooter() {
+function AgentTimelineScrollFooter() {
   return <div className="agent-timeline__footer-space" aria-hidden="true" />;
 }
 
@@ -567,7 +566,10 @@ function ActivityGroupView({
   onRequestPermission?: () => void;
 }) {
   const compactions = activities.filter((activity) => activity.kind === 'context_compaction');
-  const ordinary = activities.filter((activity) => activity.kind !== 'context_compaction');
+  const ordinary = activities.filter((activity) => (
+    activity.kind !== 'context_compaction'
+    && (!isAgentPlanActivity(activity) || activity.status === 'failed')
+  ));
   return (
     <>
       {compactions.map((activity) => <ContextCompactionNotice key={activity.id} activity={activity} />)}
@@ -582,6 +584,10 @@ function ActivityGroupView({
       ) : null}
     </>
   );
+}
+
+function isAgentPlanActivity(activity: AgentActivityProjection): boolean {
+  return text(activity.payload.toolId ?? activity.payload.toolName) === 'agent_plan';
 }
 
 function ContextCompactionNotice({ activity }: { activity: AgentActivityProjection }) {

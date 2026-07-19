@@ -35,6 +35,7 @@ import {
 import type { AgentActivityProjection, AgentProjectionState, AgentTurnStatus } from '@/contracts/agent-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import { useAgentLiveStore } from '../state/live-store';
+import { AgentPlanCard } from '../timeline/AgentPlanCard';
 import { publicToolResultView } from '../timeline/public-tool-result';
 import { ContextRuntimeSections } from './ContextRuntimePanel';
 
@@ -58,6 +59,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   const contentReady = useDeferredStatusContent(open);
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
+  const panelStatus = statusPanelLabel(projection, view);
   const subagents = useQuery({
     queryKey: ['agent', 'status-panel', 'subagents', sessionId],
     queryFn: ({ signal }) => transport.request({
@@ -86,28 +88,40 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
       tabIndex={-1}
     >
       <header>
-        <span><strong>状态</strong><small>{view.turn ? turnStatusLabel(view.turn.status) : '等待新回合'}</small></span>
+        <span><strong>状态</strong><small>{panelStatus}</small></span>
         <IconButton icon={<PanelRightClose size={17} />} label="收起状态面板" onClick={onClose} tooltip />
       </header>
       {contentReady ? <div className="agent-status-panel__body">
-        <StatusSection icon={ListChecks} title="当前回合" count={view.tasks.length}>
-          {view.turn ? (
-            <div className="agent-status-turn" data-state={view.turn.status}>
-              <TurnStateIcon status={view.turn.status} />
-              <span><strong>{turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
-            </div>
-          ) : <EmptyLine>还没有可展示的回合状态</EmptyLine>}
-          {view.tasks.length ? (
-            <ol className="agent-status-tasks">
-              {view.tasks.map((task) => (
-                <li key={task.id} data-state={task.status}>
-                  <TaskStateIcon status={task.status} />
-                  <span>{task.label}</span>
-                </li>
-              ))}
-            </ol>
-          ) : null}
-        </StatusSection>
+        {projection?.plan.items.length ? (
+          <>
+            <AgentPlanCard plan={projection.plan} />
+            {view.turn ? (
+              <div className="agent-status-turn agent-plan-turn-summary" data-state={view.turn.status}>
+                <TurnStateIcon status={view.turn.status} />
+                <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <StatusSection icon={ListChecks} title="执行进度" count={view.tasks.length}>
+            {view.turn ? (
+              <div className="agent-status-turn" data-state={view.turn.status}>
+                <TurnStateIcon status={view.turn.status} />
+                <span><strong>{turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
+              </div>
+            ) : <EmptyLine>还没有可展示的回合状态</EmptyLine>}
+            {view.tasks.length ? (
+              <ol className="agent-status-tasks">
+                {view.tasks.map((task) => (
+                  <li key={task.id} data-state={task.status}>
+                    <TaskStateIcon status={task.status} />
+                    <span>{task.label}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </StatusSection>
+        )}
 
         <StatusSection icon={MessagesSquare} title="消息队列" count={(projection?.messageQueue.steering.length ?? 0) + (projection?.messageQueue.followUp.length ?? 0)}>
           <MessageQueueView projection={projection} />
@@ -524,16 +538,21 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
   const turn = [...projection.turnOrder].reverse()
     .map((id) => projection.turnsById[id])
     .find((item) => item && (item.messageIds.length > 0 || item.activityIds.length > 0));
-  if (!turn) return { tasks: [], tools: [], files: [], artifacts: [], attachmentCount: 0 };
+  const durableTasks: StatusPanelProjection['tasks'] = projection.plan.items.slice(0, 100).map((item) => ({
+    id: `agent-plan:${item.id}`,
+    label: item.title,
+    status: taskStatus(item.status),
+  }));
+  if (!turn) return { tasks: durableTasks, tools: [], files: [], artifacts: [], attachmentCount: 0 };
   const messages = turn.messageIds.map((id) => projection.messagesById[id]).filter(Boolean);
-  const tasks: StatusPanelProjection['tasks'] = [];
+  const tasks: StatusPanelProjection['tasks'] = [...durableTasks];
   const files: StatusPanelProjection['files'] = [];
   const artifacts: StatusPanelProjection['artifacts'] = [];
   const attachmentIds = new Set<string>();
   for (const message of messages) {
     message.attachments.forEach((id) => attachmentIds.add(id));
     for (const block of message.blocks) {
-      if (block.type === 'task_plan') {
+      if (block.type === 'task_plan' && tasks.length === 0) {
         const items = Array.isArray(block.data.items) ? block.data.items : Array.isArray(block.data.tasks) ? block.data.tasks : [];
         items.slice(0, 12).forEach((item, index) => {
           const value = record(item);
@@ -557,18 +576,11 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
   }
   const tools = turn.activityIds
     .map((id) => projection.activitiesById[id])
-    .filter((activity): activity is AgentActivityProjection => Boolean(activity && activity.kind.startsWith('tool_')));
-  for (const activity of tools) {
-    if (text(activity.payload.toolId ?? activity.payload.toolName) !== 'agent_plan') continue;
-    planItemsFromActivity(activity).slice(0, 12).forEach((item, index) => {
-      const value = record(item);
-      tasks.push({
-        id: `agent-plan:${text(value.id ?? value.itemId) || index}`,
-        label: publicText(value.title ?? value.label, `步骤 ${index + 1}`),
-        status: taskStatus(text(value.status)),
-      });
-    });
-  }
+    .filter((activity): activity is AgentActivityProjection => Boolean(
+      activity
+      && activity.kind.startsWith('tool_')
+      && text(activity.payload.toolId ?? activity.payload.toolName) !== 'agent_plan',
+    ));
   return {
     turn,
     tasks: uniqueBy(tasks, (item) => item.id),
@@ -577,21 +589,6 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
     artifacts: uniqueBy(artifacts, (item) => item.name),
     attachmentCount: attachmentIds.size,
   };
-}
-
-function planItemsFromActivity(activity: AgentActivityProjection): unknown[] {
-  const payload = record(activity.payload);
-  const result = record(payload.result ?? payload.partialResult);
-  const details = record(result.details);
-  const detailResult = record(details.result);
-  const directResult = record(result.result);
-  const layers = [detailResult, directResult, details, result, payload];
-  for (const layer of layers) {
-    if (Array.isArray(layer.items)) return layer.items;
-    const plan = record(layer.plan);
-    if (Array.isArray(plan.items)) return plan.items;
-  }
-  return [];
 }
 
 function subagentRuns(value: unknown): AgentSubagentRunV1[] {
@@ -626,6 +623,19 @@ function isSubagentRun(value: unknown): value is AgentSubagentRunV1 {
     && Number.isFinite(usage.turnCount)
     && Number.isFinite(usage.toolCount)
     && Number.isFinite(usage.totalTokens);
+}
+
+function statusPanelLabel(
+  projection: AgentProjectionState | undefined,
+  view: StatusPanelProjection,
+): string {
+  const plan = projection?.plan;
+  if (plan?.items.length) {
+    if (plan.counts.completed === plan.counts.total) return '计划已完成';
+    if (plan.counts.inProgress > 0) return `执行中 · ${plan.counts.completed}/${plan.counts.total}`;
+    return `待执行 · ${plan.counts.completed}/${plan.counts.total}`;
+  }
+  return view.turn ? turnStatusLabel(view.turn.status) : '等待新回合';
 }
 
 function turnProgressLabel(view: StatusPanelProjection): string {

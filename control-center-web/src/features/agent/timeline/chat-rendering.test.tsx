@@ -9,6 +9,7 @@ import {
   agentScrollSeekConfiguration,
   interleavedTurnEntries,
 } from './AgentTimeline';
+import { AgentPlanCard } from './AgentPlanCard';
 import {
   AgentBlock,
   AgentBlocks,
@@ -25,6 +26,37 @@ afterEach(() => {
 });
 
 describe('Agent chat rendering', () => {
+  it('renders the session plan as a compact live checklist', () => {
+    const { container, rerender } = render(
+      <AgentPlanCard plan={{
+        revision: 3,
+        items: [
+          { id: 'step-1', title: '核对上下文链路', status: 'completed', sequence: 1, updatedAtMs: 1 },
+          { id: 'step-2', title: '实现执行清单', status: 'in_progress', sequence: 2, updatedAtMs: 2 },
+          { id: 'step-3', title: '运行真实验收', status: 'pending', sequence: 3, updatedAtMs: 3 },
+        ],
+        counts: { total: 3, pending: 1, inProgress: 1, completed: 1 },
+      }} />,
+    );
+
+    expect(screen.getByRole('region', { name: '会话执行计划' })).toHaveTextContent('第 2 / 3 步 · 1 项已完成');
+    expect(container.querySelectorAll('li[data-state="completed"]')).toHaveLength(1);
+    expect(container.querySelectorAll('li[data-state="in_progress"]')).toHaveLength(1);
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '33');
+
+    rerender(<AgentPlanCard plan={{
+      revision: 4,
+      items: [
+        { id: 'step-1', title: '核对上下文链路', status: 'completed', sequence: 1, updatedAtMs: 1 },
+        { id: 'step-2', title: '实现执行清单', status: 'completed', sequence: 4, updatedAtMs: 4 },
+        { id: 'step-3', title: '运行真实验收', status: 'completed', sequence: 5, updatedAtMs: 5 },
+      ],
+      counts: { total: 3, pending: 0, inProgress: 0, completed: 3 },
+    }} />);
+    expect(screen.getByRole('region', { name: '会话执行计划' })).toHaveTextContent('3 / 3 项已完成');
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+  });
+
   it('uses authoritative event sequence before message clock drift', () => {
     const before = { ...assistantMessage('session-1', 'turn-1', '调用前', 120), timelineSequence: 8 };
     const after = { ...assistantMessage('session-1', 'turn-1', '调用后', 80), id: 'turn-1:assistant:segment:10', timelineSequence: 10 };

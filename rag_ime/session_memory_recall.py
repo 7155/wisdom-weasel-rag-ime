@@ -21,6 +21,7 @@ from .text_utils import compact_whitespace, split_sentences, token_terms, trunca
 
 SESSION_MEMORY_RECALL_SCHEMA_VERSION = "rag-ime.session-memory-recall.v1"
 _BOOTSTRAP_DEDUPE_VERSION = "v3"
+_REFRESH_DEDUPE_VERSION = "v4"
 _RELEVANCE_LANES = frozenset(
     {
         "bm25_raw",
@@ -60,6 +61,15 @@ class SessionMemoryRecallBuilder:
     def dedupe_key(session_id: str) -> str:
         return f"memory-bootstrap:{compact_whitespace(session_id)}:{_BOOTSTRAP_DEDUPE_VERSION}"
 
+    @staticmethod
+    def refresh_dedupe_key(session_id: str, recall_id: str) -> str:
+        material = compact_whitespace(recall_id) or "unknown"
+        digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+        return (
+            f"memory-bootstrap:{compact_whitespace(session_id)}:"
+            f"{_REFRESH_DEDUPE_VERSION}:{digest}"
+        )
+
     def build(
         self,
         session_id: str,
@@ -67,8 +77,15 @@ class SessionMemoryRecallBuilder:
         role_id: str,
         query_text: str,
         room_ids: Sequence[str] = (),
-        max_items: int = 10,
-        max_chars: int = 10_000,
+        trigger: str = "first_user_prompt",
+        retrieval_context_text: str = "",
+        vector_context_text: str = "",
+        vector_context_weight: float = 0.0,
+        recent_messages: Sequence[Mapping[str, object]] = (),
+        planning_context: Mapping[str, object] | None = None,
+        task_context: Mapping[str, object] | None = None,
+        max_items: int = 12,
+        max_chars: int = 14_000,
         generated_at_ms: int | None = None,
     ) -> dict[str, object]:
         session = compact_whitespace(session_id)
@@ -78,6 +95,14 @@ class SessionMemoryRecallBuilder:
             raise ValueError("session_id must not be empty")
         if not query:
             raise ValueError("query_text must not be empty")
+        normalized_trigger = compact_whitespace(trigger).lower()
+        if normalized_trigger not in {
+            "first_user_prompt",
+            "compaction",
+            "room_task",
+            "subagent_task",
+        }:
+            raise ValueError("unsupported Session memory recall trigger")
 
         visible_owners = agent_visible_memory_owners(
             project=self.project,
@@ -104,15 +129,19 @@ class SessionMemoryRecallBuilder:
                 reserved_tokens=500,
             )
             recent_text = _tail_text(str(recent.get("rendered") or ""), 2_400)
+            retrieval_context = _tail_text(retrieval_context_text, 4_000)
+            lexical_context = _joined_context(recent_text, retrieval_context, maximum=5_600)
             hybrid_query = HybridRagQuery(
                 query_text=query,
-                raw_input=recent_text,
-                committed_tail=_tail_text(recent_text, 800),
+                raw_input=lexical_context,
+                committed_tail=_tail_text(lexical_context, 800),
                 project=self.project,
-                input_mode="agent_session_bootstrap",
+                input_mode=f"agent_session_{normalized_trigger}",
                 top_k=max(24, bounded_items * 4),
                 latency_budget_ms=2_500,
                 visible_owners=visible_owners,
+                vector_context_text=_tail_text(vector_context_text, 6_000),
+                vector_context_weight=vector_context_weight,
             )
             requested_embedding = str(
                 getattr(self.embedding_provider, "fingerprint", "none") or "none"
@@ -153,10 +182,20 @@ class SessionMemoryRecallBuilder:
         )
         source_ids = [str(item["sourceId"]) for item in selected]
         query_sha256 = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        vector_context = _tail_text(vector_context_text, 6_000)
+        conversation = _normalized_recent_messages(recent_messages)
+        plan = _normalized_plan(planning_context)
+        task = _normalized_task(task_context)
         recall_material = json.dumps(
             {
                 "sessionId": session,
+                "trigger": normalized_trigger,
                 "querySha256": query_sha256,
+                "vectorContextSha256": (
+                    hashlib.sha256(vector_context.encode("utf-8")).hexdigest()
+                    if vector_context
+                    else ""
+                ),
                 "sourceIds": source_ids,
             },
             ensure_ascii=False,
@@ -173,12 +212,14 @@ class SessionMemoryRecallBuilder:
             "project": self.project,
             "roleId": role,
             "generatedAtMs": max(0, generated),
-            "trigger": "first_user_prompt",
+            "trigger": normalized_trigger,
             "query": {
                 "preview": truncate_text(query, 240),
                 "sha256": query_sha256,
                 "recentCompleteInputCount": len(recent.get("records") or []),
                 "recentCompleteInputUsedForRetrieval": bool(recent_text),
+                "retrievalContextUsed": bool(retrieval_context),
+                "recentConversationCount": len(conversation),
             },
             "retrieval": {
                 "strategy": "vcp_hybrid_book_atom",
@@ -200,8 +241,19 @@ class SessionMemoryRecallBuilder:
                 "embeddingFallback": embedding_fallback,
                 "temporalIntent": temporal_intent,
                 "activityTimelineIncluded": activity_timeline_included,
+                "vectorFusion": dict(
+                    _mapping(retrieval.get("query")).get("vectorFusion")
+                    if isinstance(
+                        _mapping(retrieval.get("query")).get("vectorFusion"),
+                        Mapping,
+                    )
+                    else {}
+                ),
             },
             "items": selected,
+            "recentConversation": conversation,
+            "plan": plan,
+            "task": task,
             "sourceIds": source_ids,
             "budget": {
                 "maxItems": bounded_items,
@@ -215,6 +267,7 @@ class SessionMemoryRecallBuilder:
                 "evidenceOnly": True,
                 "currentUserMessageWins": True,
                 "rawRecentInputInjected": False,
+                "recentConversationInjected": bool(conversation),
             },
         }
         validate_contract(payload, "session-memory-recall.v1.json")
@@ -222,16 +275,24 @@ class SessionMemoryRecallBuilder:
             "session_id": session,
             "source_kind": "memory_bootstrap",
             "source_id": str(payload["recallId"]),
-            "title": "首问相关个人记忆",
+            "title": (
+                "压缩后任务上下文"
+                if normalized_trigger == "compaction"
+                else "任务相关个人记忆"
+            ),
             "summary": (
-                f"首问与最近完整输入从角色可见 Book/Atom 中召回 {len(selected)} 条证据。"
+                f"当前任务从角色可见 Book/Atom 中召回 {len(selected)} 条证据。"
             ),
             "payload": payload,
             "lane": "fact",
             # Provider calls are stateless: high-priority memory must be
             # re-projected on every turn and restored after Runtime restart.
             "lifecycle": "persistent",
-            "dedupe_key": self.dedupe_key(session),
+            "dedupe_key": (
+                self.dedupe_key(session)
+                if normalized_trigger == "first_user_prompt"
+                else self.refresh_dedupe_key(session, str(payload["recallId"]))
+            ),
         }
 
     @contextmanager
@@ -317,7 +378,7 @@ def _select_hits(
         )
         if not source_id or not text or source_id in seen_sources:
             continue
-        type_limit = 2 if doc_type == "book" else 8
+        type_limit = 2 if doc_type == "book" else 10
         if type_counts[doc_type] >= type_limit:
             continue
         if selected and used_chars + len(text) > max_chars:
@@ -544,6 +605,102 @@ def _selected_activated_tags(
         )
         if tag.casefold() in selected_tags
     ][:16]
+
+
+def _joined_context(*values: str, maximum: int) -> str:
+    joined = "\n".join(
+        compact_whitespace(value)
+        for value in values
+        if compact_whitespace(value)
+    )
+    return _tail_text(joined, maximum)
+
+
+def _normalized_recent_messages(
+    values: Sequence[Mapping[str, object]],
+    *,
+    limit: int = 8,
+    max_chars: int = 5_000,
+) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    used = 0
+    for value in reversed(list(values)):
+        role = compact_whitespace(str(value.get("role") or "")).lower()
+        if role not in {"user", "assistant"}:
+            continue
+        text = _message_text(value)
+        if not text:
+            continue
+        text = truncate_text(text, min(1_200, max_chars))
+        if normalized and used + len(text) > max_chars:
+            break
+        normalized.append({"role": role, "text": text})
+        used += len(text)
+        if len(normalized) >= max(1, int(limit)):
+            break
+    normalized.reverse()
+    return normalized
+
+
+def _message_text(value: Mapping[str, object]) -> str:
+    direct = compact_whitespace(str(value.get("text") or ""))
+    if direct:
+        return direct
+    content = value.get("content")
+    if isinstance(content, str):
+        return compact_whitespace(content)
+    if not isinstance(content, (list, tuple)):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, Mapping):
+            continue
+        if str(block.get("type") or "").lower() not in {"text", "output_text"}:
+            continue
+        text = compact_whitespace(str(block.get("text") or ""))
+        if text:
+            parts.append(text)
+    return compact_whitespace("\n".join(parts))
+
+
+def _normalized_plan(value: Mapping[str, object] | None) -> list[dict[str, str]]:
+    if not isinstance(value, Mapping):
+        return []
+    items = value.get("items")
+    if not isinstance(items, (list, tuple)):
+        return []
+    result: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        status = compact_whitespace(str(item.get("status") or "pending")).lower()
+        if status not in {"pending", "in_progress"}:
+            continue
+        title = truncate_text(str(item.get("title") or ""), 240)
+        if title:
+            result.append({"status": status, "title": title})
+        if len(result) >= 8:
+            break
+    return result
+
+
+def _normalized_task(value: Mapping[str, object] | None) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, object] = {}
+    for source_key, target_key, maximum in (
+        ("kind", "kind", 40),
+        ("objective", "objective", 1_200),
+        ("expectedOutput", "expectedOutput", 800),
+        ("state", "state", 40),
+    ):
+        text = truncate_text(str(value.get(source_key) or ""), maximum)
+        if text:
+            result[target_key] = text
+    criteria = _string_list(value.get("acceptanceCriteria"), 8)
+    if criteria:
+        result["acceptanceCriteria"] = [truncate_text(item, 300) for item in criteria]
+    return result
 
 
 def _tail_text(value: str, maximum: int) -> str:

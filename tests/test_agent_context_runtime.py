@@ -153,6 +153,36 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertEqual([item["itemId"] for item in items], [legacy["itemId"]])
         self.assertEqual(self.runtime.materialize(self.session_id)["itemIds"], [])
 
+    def test_persistent_memory_context_is_atomically_superseded(self) -> None:
+        original = self.runtime.enqueue(
+            session_id=self.session_id,
+            source_kind="memory_bootstrap",
+            source_id="recall:first",
+            lane="fact",
+            lifecycle="persistent",
+            dedupe_key=f"memory-bootstrap:{self.session_id}:v3",
+            title="初始记忆",
+            payload={"content": "初始正文"},
+        )
+
+        refreshed = self.runtime.replace_active(
+            session_id=self.session_id,
+            source_kind="memory_bootstrap",
+            source_id="recall:compaction",
+            lane="fact",
+            lifecycle="persistent",
+            dedupe_key=f"memory-bootstrap:{self.session_id}:v4:summary",
+            title="压缩后记忆",
+            payload={"content": "压缩后正文"},
+        )
+
+        active = self.runtime.materialize(self.session_id)
+        self.assertEqual(active["itemIds"], [refreshed["itemId"]])
+        self.assertIn("压缩后正文", active["prompt"])
+        self.assertNotIn("初始正文", active["prompt"])
+        expired = self.runtime.list_items(self.session_id, status="expired")
+        self.assertEqual([item["itemId"] for item in expired], [original["itemId"]])
+
     def test_trace_is_a_public_dag_without_raw_prompt_or_paths(self) -> None:
         trace_id = self.runtime.begin_trace(self.session_id, source_kind="user")
         input_node = self.runtime.add_trace_node(

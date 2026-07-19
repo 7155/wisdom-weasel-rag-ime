@@ -371,6 +371,10 @@ describe('Agent experience', () => {
 
     const statusPanel = await screen.findByLabelText('当前对话状态');
     await waitFor(() => expect(within(statusPanel).getByText('研究员')).toBeInTheDocument());
+    const planPanel = await within(statusPanel).findByRole('region', { name: '会话执行计划' });
+    expect(planPanel).toHaveTextContent('第 2 / 3 步 · 1 项已完成');
+    expect(within(statusPanel).getByText('执行中 · 1/3')).toBeInTheDocument();
+    expect(document.querySelector('.agent-timeline .agent-plan-card')).not.toBeInTheDocument();
     expect(within(statusPanel).getByText('规划员')).toBeInTheDocument();
     expect(within(statusPanel).getByText('审阅者')).toBeInTheDocument();
     expect(within(statusPanel).getByText('执行者')).toBeInTheDocument();

@@ -7027,6 +7027,24 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(HTTPStatus.OK, self.service.agent_tools.execute(self._read_json()))
                 return
+            if path == "/api/agent/tool/context-refresh":
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": "agent capability token required",
+                        },
+                    )
+                    return
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.refresh_session_context(self._read_json()),
+                )
+                return
             if path == "/api/agent/tool/approval-result":
                 provided = self.headers.get("X-RAG-IME-Agent-Token", "")
                 expected = self.service.agent.tool_token

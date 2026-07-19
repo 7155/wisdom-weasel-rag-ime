@@ -141,6 +141,11 @@ class AgentService:
         self._room_turn_by_session_turn: dict[tuple[str, str], str] = {}
         self._room_topic_by_room_turn: dict[str, str] = {}
         self._room_user_priority_sessions: set[str] = set()
+        self._recall_state_lock = RLock()
+        self._last_recall_query_by_session: dict[str, str] = {}
+        self._recent_recall_messages_by_session: dict[
+            str, list[dict[str, object]]
+        ] = {}
         self.runtime_factory.apply_policy(
             runtime_policy_from_configuration(
                 self.configuration_store.snapshot()["configuration"]
@@ -2586,6 +2591,11 @@ class AgentService:
             "resumeToken": f"{session_id}:{last_sequence}" if last_sequence else "",
             "telemetry": dict(telemetry) if isinstance(telemetry, Mapping) else None,
             "messageQueue": dict(message_queue) if isinstance(message_queue, Mapping) else None,
+            # The execution plan is append-only and durable in SQLite. Include
+            # its latest projection explicitly so reopening a Session or
+            # restoring after compaction never depends on the bounded tool
+            # event replay window.
+            "plan": self.sessions.agent_plan(session_id),
         }
 
     def import_media(
@@ -2783,6 +2793,7 @@ class AgentService:
         delivery: str = "prompt",
     ) -> dict[str, object]:
         session = self._ensure_session_role_book(session_id)
+        self._remember_recall_query(session_id, checkpoint_text)
         memory_bootstrap = self._ensure_memory_bootstrap(
             session,
             query_text=checkpoint_text,
@@ -3127,9 +3138,9 @@ class AgentService:
                 session_id,
                 current_dedupe_key=dedupe_key,
             )
-            existing = self.context_runtime.item_by_dedupe_key(
+            existing = self.context_runtime.active_item(
                 session_id,
-                dedupe_key,
+                source_kind="memory_bootstrap",
             )
             if existing is not None:
                 return {
@@ -3138,26 +3149,46 @@ class AgentService:
                     "sessionId": session_id,
                     "status": "ready",
                     "itemId": str(existing.get("itemId") or ""),
-                    "dedupeKey": dedupe_key,
+                    "dedupeKey": "active-memory-context",
                     "queryAware": True,
                     "priority": "developer",
                     "lifecycle": "session",
                     "expiredLegacyItems": expired_legacy,
                 }
-            room_ids: tuple[str, ...] = ()
-            participant = self.rooms.participant_for_session(
-                session_id,
-                active_only=False,
+            room_ids = self._memory_room_ids(session_id)
+            recent_messages = self._recent_recall_messages(session_id)
+            trigger = self._memory_trigger_for_session(session_id)
+            task_context = self._memory_task_context(session_id)
+            task_objective = _bounded_text(
+                task_context.get("objective"),
+                maximum=4_000,
             )
-            if isinstance(participant, Mapping):
-                room_id = str(participant.get("roomId") or "").strip()
-                if room_id:
-                    room_ids = (room_id,)
+            recall_query = _bounded_text(query_text, maximum=8_000)
+            if trigger == "subagent_task" and task_objective:
+                recall_query = task_objective
+            elif trigger == "room_task" and task_objective:
+                recall_query = _bounded_text(
+                    f"{recall_query}\n任务目标：{task_objective}",
+                    maximum=8_000,
+                )
+            semantic_context = (
+                _last_assistant_recall_text(recent_messages) or task_objective
+            )
             specification = self.memory_bootstrap.build(
                 session_id,
                 role_id=role_id,
-                query_text=query_text,
+                query_text=recall_query,
                 room_ids=room_ids,
+                trigger=trigger,
+                retrieval_context_text=_bounded_text(
+                    f"{_recall_message_text(recent_messages)}\n{task_objective}",
+                    maximum=6_000,
+                ),
+                vector_context_text=semantic_context,
+                vector_context_weight=0.2 if semantic_context else 0.0,
+                recent_messages=recent_messages,
+                planning_context=self.sessions.agent_plan(session_id),
+                task_context=task_context,
             )
             item = self.context_runtime.enqueue(
                 **specification
@@ -3192,6 +3223,223 @@ class AgentService:
             "lifecycle": "session",
             "expiredLegacyItems": expired_legacy,
         }
+
+    def refresh_session_context(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Build the model-visible Session context for start/compaction hooks."""
+
+        session_id = _required_text(payload, "sessionId")
+        session = self._ensure_session_role_book(session_id)
+        trigger_value = str(payload.get("trigger") or "session_start").strip().lower()
+        is_compaction = trigger_value == "compaction"
+        recent_messages = _recall_messages(payload.get("recentMessages"))
+        if recent_messages:
+            self._replace_recent_recall_messages(session_id, recent_messages)
+        else:
+            recent_messages = self._recent_recall_messages(session_id)
+        summary = _bounded_text(payload.get("summary"), maximum=8_000)
+        fallback_query = _bounded_text(payload.get("queryText"), maximum=8_000)
+        query = self._memory_recall_query(session_id, fallback=fallback_query)
+        if not query:
+            query = _last_user_recall_text(recent_messages)
+        task_context = self._memory_task_context(session_id)
+        task_objective = _bounded_text(
+            task_context.get("objective"),
+            maximum=4_000,
+        )
+        if str(task_context.get("kind") or "") == "subagent" and task_objective:
+            query = task_objective
+        elif str(task_context.get("kind") or "") == "room_work_item" and task_objective:
+            query = _bounded_text(
+                f"{query}\n任务目标：{task_objective}",
+                maximum=8_000,
+            )
+        if not query:
+            query = task_objective
+        if not query:
+            query = "继续当前 Session 的任务"
+        trigger = (
+            "compaction"
+            if is_compaction
+            else self._memory_trigger_for_session(session_id)
+        )
+        specification = self.memory_bootstrap.build(
+            session_id,
+            role_id=str(session.get("roleId") or ""),
+            query_text=query,
+            room_ids=self._memory_room_ids(session_id),
+            trigger=trigger,
+            retrieval_context_text=_bounded_text(
+                (
+                    f"{_recall_message_text(recent_messages)}\n"
+                    f"{str(task_context.get('objective') or '')}"
+                ),
+                maximum=6_000,
+            ),
+            vector_context_text=summary if is_compaction else _last_assistant_recall_text(recent_messages),
+            vector_context_weight=(
+                0.2
+                if (summary if is_compaction else _last_assistant_recall_text(recent_messages))
+                else 0.0
+            ),
+            recent_messages=recent_messages,
+            planning_context=self.sessions.agent_plan(session_id),
+            task_context=task_context,
+        )
+        item = self.context_runtime.replace_active(**specification)
+        rendered = render_context_items(
+            [
+                {
+                    "sourceKind": specification["source_kind"],
+                    "title": specification["title"],
+                    "summary": specification["summary"],
+                    "payload": specification["payload"],
+                }
+            ]
+        )
+        recall_payload = (
+            specification.get("payload")
+            if isinstance(specification.get("payload"), Mapping)
+            else {}
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
+            "ok": True,
+            "result": {
+                "sessionId": session_id,
+                "trigger": trigger,
+                "sessionContext": rendered,
+                "itemId": str(item.get("itemId") or ""),
+                "recallId": str(recall_payload.get("recallId") or ""),
+                "sourceCount": len(recall_payload.get("items") or []),
+                "recentConversationCount": len(recent_messages),
+            },
+        }
+
+    def _memory_trigger_for_session(self, session_id: str) -> str:
+        delegation = getattr(self, "delegation", None)
+        if delegation is not None and delegation.owns_session(session_id):
+            return "subagent_task"
+        if self.rooms.participant_for_session(session_id, active_only=False) is not None:
+            return "room_task"
+        return "first_user_prompt"
+
+    def _memory_room_ids(self, session_id: str) -> tuple[str, ...]:
+        participant = self.rooms.participant_for_session(session_id, active_only=False)
+        if not isinstance(participant, Mapping):
+            return ()
+        room_id = str(participant.get("roomId") or "").strip()
+        return (room_id,) if room_id else ()
+
+    def _memory_task_context(self, session_id: str) -> dict[str, object]:
+        delegation = getattr(self, "delegation", None)
+        if delegation is not None:
+            run = delegation.store.run_for_child_session(session_id)
+            if isinstance(run, Mapping):
+                return {
+                    "kind": "subagent",
+                    "objective": str(run.get("task") or ""),
+                    "expectedOutput": "按受管子任务预算返回可验证结果",
+                    "state": str(run.get("state") or ""),
+                }
+        participant = self.rooms.participant_for_session(session_id, active_only=False)
+        if not isinstance(participant, Mapping):
+            return {}
+        room_id = str(participant.get("roomId") or "")
+        participant_id = str(participant.get("id") or "")
+        try:
+            room = self.rooms.get(room_id)
+        except (KeyError, ValueError):
+            return {}
+        candidates = [
+            item
+            for item in room.get("workItems", [])
+            if isinstance(item, Mapping)
+            and str(item.get("state") or "")
+            in {"queued", "active", "review", "blocked"}
+            and participant_id
+            in {
+                str(item.get("accountableParticipantId") or ""),
+                str(item.get("currentOwnerParticipantId") or ""),
+                str(item.get("offeredToParticipantId") or ""),
+            }
+        ]
+        if not candidates:
+            return {}
+        work = max(candidates, key=lambda item: int(item.get("updatedAtMs") or 0))
+        return {
+            "kind": "room_work_item",
+            "objective": str(work.get("objective") or ""),
+            "expectedOutput": str(work.get("expectedOutput") or ""),
+            "acceptanceCriteria": list(work.get("acceptanceCriteria") or []),
+            "state": str(work.get("state") or ""),
+        }
+
+    def _remember_recall_query(self, session_id: str, query_text: str) -> None:
+        query = _bounded_text(query_text, maximum=8_000)
+        if not query:
+            return
+        with self._recall_state_lock:
+            self._last_recall_query_by_session[session_id] = query
+
+    def _memory_recall_query(self, session_id: str, *, fallback: str = "") -> str:
+        task = self._memory_task_context(session_id)
+        if str(task.get("kind") or "") == "subagent":
+            objective = _bounded_text(task.get("objective"), maximum=8_000)
+            if objective:
+                return objective
+        with self._recall_state_lock:
+            cached = self._last_recall_query_by_session.get(session_id, "")
+        return cached or _bounded_text(fallback, maximum=8_000)
+
+    def _replace_recent_recall_messages(
+        self,
+        session_id: str,
+        messages: Sequence[Mapping[str, object]],
+    ) -> None:
+        normalized = _recall_messages(messages)
+        with self._recall_state_lock:
+            self._recent_recall_messages_by_session[session_id] = normalized
+
+    def _append_recent_recall_message(
+        self,
+        session_id: str,
+        message: Mapping[str, object],
+    ) -> None:
+        normalized = _recall_messages([message])
+        if not normalized:
+            return
+        with self._recall_state_lock:
+            current = list(
+                self._recent_recall_messages_by_session.get(session_id, [])
+            )
+            current.extend(normalized)
+            self._recent_recall_messages_by_session[session_id] = current[-8:]
+
+    def _recent_recall_messages(self, session_id: str) -> list[dict[str, object]]:
+        with self._recall_state_lock:
+            cached = list(
+                self._recent_recall_messages_by_session.get(session_id, [])
+            )
+        if cached:
+            return cached
+        snapshot_provider = getattr(self.runtime, "session_snapshot", None)
+        if not callable(snapshot_provider):
+            return []
+        try:
+            snapshot = snapshot_provider(session_id)
+        except Exception:
+            return []
+        messages = _recall_messages(
+            snapshot.get("messages")
+            if isinstance(snapshot, Mapping)
+            else None
+        )
+        if messages:
+            self._replace_recent_recall_messages(session_id, messages)
+        return messages
 
     def _record_user_evidence_safely(
         self,
@@ -3290,6 +3538,7 @@ class AgentService:
         return {"schemaVersion": "rag-ime.agent-abort.v1", "ok": True, "sessionId": session_id}
 
     def compact(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._recent_recall_messages(session_id)
         result = dict(
             self.runtime.compact(session_id, str(payload.get("instructions") or ""))
         )
@@ -3298,12 +3547,39 @@ class AgentService:
                 self._checkpoint_runtime_compaction(session_id, result, "manual")
             )
         maintenance = self._probe_memory_maintenance(session_id, trigger="compaction")
+        if result.get("contextRefreshApplied") is True:
+            context_refresh = {
+                "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
+                "ok": True,
+                "result": {
+                    "sessionId": session_id,
+                    "trigger": "compaction",
+                    "status": "runtime_applied",
+                }
+            }
+        else:
+            try:
+                context_refresh = self.refresh_session_context(
+                    {
+                        "sessionId": session_id,
+                        "trigger": "compaction",
+                        "summary": _compaction_summary(result),
+                        "recentMessages": self._recent_recall_messages(session_id),
+                    }
+                )
+            except Exception as exc:
+                context_refresh = {
+                    "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
+                    "ok": False,
+                    "error": _public_error(exc),
+                }
         return {
             "schemaVersion": "rag-ime.agent-compact.v1",
             "ok": True,
             "sessionId": session_id,
             "result": result,
             "memoryMaintenance": maintenance,
+            "contextRefresh": context_refresh,
         }
 
     def _checkpoint_runtime_compaction(
@@ -4032,6 +4308,9 @@ class AgentService:
             metrics=_runtime_event_metrics(event),
         )
         if event.event_type == "message_completed":
+            message = event.payload.get("message")
+            if isinstance(message, Mapping):
+                self._append_recent_recall_message(event.session_id, message)
             # Evidence capture is a secondary, fail-closed journal write. It
             # never changes the user-visible event or promotes text to memory.
             self._record_assistant_evidence_safely(event)
@@ -4962,6 +5241,81 @@ def _tool_event_identity(event: Mapping[str, object]) -> tuple[str, str]:
     if not isinstance(payload, Mapping):
         return "", ""
     return str(payload.get("toolCallId") or ""), event_type
+
+
+def _recall_messages(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        text = _recall_message_body(item)
+        if not text:
+            continue
+        result.append({"role": role, "text": text[:1_200]})
+    return result[-8:]
+
+
+def _recall_message_body(message: Mapping[str, object]) -> str:
+    direct = " ".join(str(message.get("text") or "").split())
+    if direct:
+        return direct
+    content = message.get("content")
+    if isinstance(content, str):
+        return " ".join(content.split())
+    if not isinstance(content, (list, tuple)):
+        content = message.get("blocks")
+    if not isinstance(content, (list, tuple)):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, Mapping):
+            continue
+        if str(block.get("type") or "").lower() not in {"text", "output_text"}:
+            continue
+        data = block.get("data") if isinstance(block.get("data"), Mapping) else {}
+        text = " ".join(
+            str(block.get("text") or data.get("text") or "").split()
+        )
+        if text:
+            parts.append(text)
+    return "\n".join(parts)[:1_200]
+
+
+def _recall_message_text(messages: Sequence[Mapping[str, object]]) -> str:
+    return "\n".join(
+        f"{str(item.get('role') or '')}: {str(item.get('text') or '')}"
+        for item in messages[-8:]
+        if str(item.get("text") or "").strip()
+    )[:6_000]
+
+
+def _last_user_recall_text(messages: Sequence[Mapping[str, object]]) -> str:
+    for item in reversed(messages):
+        if str(item.get("role") or "") == "user":
+            return _bounded_text(item.get("text"), maximum=4_000)
+    return ""
+
+
+def _last_assistant_recall_text(messages: Sequence[Mapping[str, object]]) -> str:
+    for item in reversed(messages):
+        if str(item.get("role") or "") == "assistant":
+            return _bounded_text(item.get("text"), maximum=4_000)
+    return ""
+
+
+def _compaction_summary(result: Mapping[str, object]) -> str:
+    direct = _bounded_text(result.get("summary"), maximum=8_000)
+    if direct:
+        return direct
+    nested = result.get("result")
+    if isinstance(nested, Mapping):
+        return _bounded_text(nested.get("summary"), maximum=8_000)
+    return ""
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

@@ -20,7 +20,7 @@ _LANES = frozenset({"result", "status", "notification", "room", "schedule", "fac
 _LIFECYCLES = frozenset({"once", "turn", "until_ack", "persistent"})
 _DISPOSITIONS = frozenset({"included", "omitted", "redacted", "failed"})
 _MAX_ITEM_PAYLOAD_BYTES = 64 * 1024
-_MAX_MATERIALIZED_CHARS = 12_000
+_MAX_MATERIALIZED_CHARS = 32_000
 _MAX_TRACE_NODES = 64
 _TERMINAL_ITEM_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000
 _TRACE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000
@@ -146,6 +146,123 @@ class AgentContextRuntime:
         if row is None:  # pragma: no cover - protected by the transaction
             raise RuntimeError("context item was not persisted")
         return _public_item(row)
+
+    def replace_active(
+        self,
+        *,
+        session_id: str,
+        source_kind: str,
+        title: str,
+        summary: str = "",
+        payload: Mapping[str, object] | None = None,
+        source_id: str = "",
+        lane: str = "notification",
+        lifecycle: str = "once",
+        dedupe_key: str = "",
+        available_at_ms: int | None = None,
+        expires_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Atomically supersede the active item for one derived context source."""
+
+        session = _required_text(session_id, "sessionId", 240)
+        source = _required_text(source_kind, "sourceKind", 80)
+        normalized_lane = _required_text(lane, "lane", 24).lower()
+        if normalized_lane not in _LANES:
+            raise ValueError("unsupported context item lane")
+        normalized_lifecycle = _required_text(lifecycle, "lifecycle", 24).lower()
+        if normalized_lifecycle not in _LIFECYCLES:
+            raise ValueError("unsupported context item lifecycle")
+        normalized_title = _required_text(title, "title", 160)
+        normalized_summary = _bounded_text(summary, 1_000)
+        normalized_payload = dict(payload or {})
+        payload_json = json.dumps(
+            normalized_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(payload_json.encode("utf-8")) > _MAX_ITEM_PAYLOAD_BYTES:
+            raise ValueError("context item payload exceeds 64 KiB")
+        normalized_dedupe = _required_text(dedupe_key, "dedupeKey", 240)
+        now = _now_ms()
+        available = max(0, int(available_at_ms if available_at_ms is not None else now))
+        expires = int(expires_at_ms) if expires_at_ms is not None else None
+        if expires is not None and expires <= available:
+            raise ValueError("context item expiry must be after availability")
+        item_id = f"context-item:{uuid.uuid4()}"
+        with self._connect(immediate=True) as conn:
+            self._maintain_if_due(conn, now)
+            existing = conn.execute(
+                """
+                SELECT * FROM agent_context_items
+                WHERE session_id = ? AND dedupe_key = ?
+                """,
+                (session, normalized_dedupe),
+            ).fetchone()
+            if existing is not None:
+                return _public_item(existing)
+            conn.execute(
+                """
+                UPDATE agent_context_items
+                SET status = 'expired', updated_at_ms = ?
+                WHERE session_id = ? AND source_kind = ?
+                  AND status IN ('pending', 'delivered', 'consumed')
+                """,
+                (now, session, source),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_context_items(
+                    item_id, session_id, source_kind, source_id, lane, lifecycle,
+                    status, dedupe_key, title, summary, payload_json,
+                    available_at_ms, expires_at_ms, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    session,
+                    source,
+                    _bounded_text(source_id, 240),
+                    normalized_lane,
+                    normalized_lifecycle,
+                    normalized_dedupe,
+                    normalized_title,
+                    normalized_summary,
+                    payload_json,
+                    available,
+                    expires,
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM agent_context_items WHERE item_id = ?",
+                (item_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover
+            raise RuntimeError("replacement context item was not persisted")
+        return _public_item(row)
+
+    def active_item(
+        self,
+        session_id: str,
+        *,
+        source_kind: str,
+    ) -> dict[str, object] | None:
+        session = _required_text(session_id, "sessionId", 240)
+        source = _required_text(source_kind, "sourceKind", 80)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_context_items
+                WHERE session_id = ? AND source_kind = ?
+                  AND status IN ('pending', 'delivered')
+                ORDER BY created_at_ms DESC, item_id DESC
+                LIMIT 1
+                """,
+                (session, source),
+            ).fetchone()
+        return _public_item(row) if row is not None else None
 
     def materialize(
         self,
@@ -410,8 +527,11 @@ class AgentContextRuntime:
                   AND source_kind = 'memory_bootstrap'
                   AND status IN ('pending', 'delivered', 'consumed')
                   AND (
-                    COALESCE(dedupe_key, '') <> ?
-                    OR payload_json LIKE '%"queryFree":true%'
+                    payload_json LIKE '%"queryFree":true%'
+                    OR (
+                      COALESCE(dedupe_key, '') <> ?
+                      AND COALESCE(dedupe_key, '') NOT LIKE '%:v4:%'
+                    )
                   )
                 """,
                 (now, session, current_dedupe),
@@ -809,7 +929,48 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
         if isinstance(payload.get("retrieval"), Mapping)
         else {}
     )
-    lines = ["", "## Session 记忆"]
+    lines: list[str] = []
+    task = payload.get("task") if isinstance(payload.get("task"), Mapping) else {}
+    if task:
+        lines.extend(["", "## 当前任务"])
+        objective = compact_whitespace(str(task.get("objective") or ""))
+        expected = compact_whitespace(str(task.get("expectedOutput") or ""))
+        criteria = _context_string_list(task.get("acceptanceCriteria"))
+        if objective:
+            lines.append(objective)
+        if expected:
+            lines.append(f"预期产物：{expected}")
+        if criteria:
+            lines.append("验收条件：" + "；".join(criteria))
+
+    plan = payload.get("plan") if isinstance(payload.get("plan"), list) else []
+    if plan:
+        lines.extend(["", "## 当前计划"])
+        for item in plan:
+            if not isinstance(item, Mapping):
+                continue
+            status = compact_whitespace(str(item.get("status") or "pending"))
+            title = compact_whitespace(str(item.get("title") or ""))
+            if title:
+                marker = "进行中" if status == "in_progress" else "待办"
+                lines.append(f"- [{marker}] {title}")
+
+    conversation = (
+        payload.get("recentConversation")
+        if isinstance(payload.get("recentConversation"), list)
+        else []
+    )
+    if conversation:
+        lines.extend(["", "## 最近对话"])
+        for message in conversation:
+            if not isinstance(message, Mapping):
+                continue
+            role = "用户" if message.get("role") == "user" else "Agent"
+            text = str(message.get("text") or "").strip()
+            if text:
+                lines.append(f"- **{role}**：{text}")
+
+    lines.extend(["", "## Session 记忆"])
     recalled = payload.get("items") if isinstance(payload.get("items"), list) else []
     if not recalled:
         lines.append("没有召回到与当前问题相关的已治理记忆。")

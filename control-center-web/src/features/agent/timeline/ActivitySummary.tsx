@@ -401,7 +401,7 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   if (toolId.includes('runtime') || toolId.includes('workspace')) {
     return { title: '运行环境', kind: 'runtime', icon: toolId.includes('workspace') ? TerminalSquare : Database };
   }
-  if (toolId.includes('planning') || toolId === 'agent_plan') return { title: toolId === 'agent_plan' ? '当前回合计划' : '规划', kind: 'tool', icon: Bot };
+  if (toolId.includes('planning') || toolId === 'agent_plan') return { title: toolId === 'agent_plan' ? '任务执行清单' : '规划', kind: 'tool', icon: Bot };
   return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
 }
 

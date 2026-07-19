@@ -25,7 +25,9 @@
     "project": {"type": "string"},
     "roleId": {"type": "string"},
     "generatedAtMs": {"type": "integer", "minimum": 0},
-    "trigger": {"const": "first_user_prompt"},
+    "trigger": {
+      "enum": ["first_user_prompt", "compaction", "room_task", "subagent_task"]
+    },
     "query": {
       "type": "object",
       "additionalProperties": false,
@@ -33,13 +35,17 @@
         "preview",
         "sha256",
         "recentCompleteInputCount",
-        "recentCompleteInputUsedForRetrieval"
+        "recentCompleteInputUsedForRetrieval",
+        "retrievalContextUsed",
+        "recentConversationCount"
       ],
       "properties": {
         "preview": {"type": "string"},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "recentCompleteInputCount": {"type": "integer", "minimum": 0},
-        "recentCompleteInputUsedForRetrieval": {"type": "boolean"}
+        "recentCompleteInputUsedForRetrieval": {"type": "boolean"},
+        "retrievalContextUsed": {"type": "boolean"},
+        "recentConversationCount": {"type": "integer", "minimum": 0, "maximum": 8}
       }
     },
     "retrieval": {
@@ -55,7 +61,8 @@
         "embeddingProvider",
         "embeddingFallback",
         "temporalIntent",
-        "activityTimelineIncluded"
+        "activityTimelineIncluded",
+        "vectorFusion"
       ],
       "properties": {
         "strategy": {"const": "vcp_hybrid_book_atom"},
@@ -78,7 +85,17 @@
         "embeddingProvider": {"type": "string"},
         "embeddingFallback": {"type": "boolean"},
         "temporalIntent": {"type": "boolean"},
-        "activityTimelineIncluded": {"type": "boolean"}
+        "activityTimelineIncluded": {"type": "boolean"},
+        "vectorFusion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applied", "queryWeight", "contextWeight"],
+          "properties": {
+            "applied": {"type": "boolean"},
+            "queryWeight": {"type": "number", "minimum": 0, "maximum": 1},
+            "contextWeight": {"type": "number", "minimum": 0, "maximum": 0.5}
+          }
+        }
       }
     },
     "items": {
@@ -119,6 +136,47 @@
         }
       }
     },
+    "recentConversation": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "text"],
+        "properties": {
+          "role": {"enum": ["user", "assistant"]},
+          "text": {"type": "string", "minLength": 1, "maxLength": 1200}
+        }
+      }
+    },
+    "plan": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "title"],
+        "properties": {
+          "status": {"enum": ["pending", "in_progress"]},
+          "title": {"type": "string", "minLength": 1, "maxLength": 240}
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "maxLength": 40},
+        "objective": {"type": "string", "maxLength": 1200},
+        "expectedOutput": {"type": "string", "maxLength": 800},
+        "state": {"type": "string", "maxLength": 40},
+        "acceptanceCriteria": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
     "sourceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "budget": {
       "type": "object",
@@ -139,14 +197,16 @@
         "lifecycle",
         "evidenceOnly",
         "currentUserMessageWins",
-        "rawRecentInputInjected"
+        "rawRecentInputInjected",
+        "recentConversationInjected"
       ],
       "properties": {
         "priority": {"const": "developer"},
         "lifecycle": {"const": "session"},
         "evidenceOnly": {"const": true},
         "currentUserMessageWins": {"const": true},
-        "rawRecentInputInjected": {"const": false}
+        "rawRecentInputInjected": {"const": false},
+        "recentConversationInjected": {"type": "boolean"}
       }
     }
   }

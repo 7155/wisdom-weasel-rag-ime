@@ -47,7 +47,7 @@ const toolLabels: Record<string, string> = {
   ime_runtime: '诊断与运行时',
   ime_configuration: '历史与配置',
   ime_agents: '多 Agent 协作',
-  agent_plan: '当前回合计划',
+  agent_plan: '任务执行清单',
   read: '读取文件',
   read_file: '读取文件',
   write: '写入文件',

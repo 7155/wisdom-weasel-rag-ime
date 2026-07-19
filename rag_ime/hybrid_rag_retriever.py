@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
 from .context_group import ContextGroup, context_group_compatibility
-from .embeddings import EmbeddingProvider, cosine_similarity, embed_query
+from .embeddings import EmbeddingProvider, cosine_similarity, embed_query, normalize_vector
 from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery, MemoryHit
 from .hybrid_rag_ranker import rank_hybrid_hits_to_memory_hits
 from .memory_ingest import normalize_text
@@ -76,7 +76,16 @@ def retrieve_hybrid_rag_candidates(
         load_retrieval_doc_vectors(conn, embedding_provider.fingerprint, (str(doc["doc_id"]) for doc in docs))
         if vector_available and embedding_provider is not None else {}
     )
-    query_vector = embed_query(embedding_provider, expansion.primary_query) if vectors and embedding_provider else []
+    query_vector, vector_fusion = (
+        _semantic_query_vector(
+            embedding_provider,
+            expansion.primary_query,
+            context_text=query.vector_context_text,
+            context_weight=query.vector_context_weight,
+        )
+        if vectors and embedding_provider
+        else ([], {"applied": False, "queryWeight": 1.0, "contextWeight": 0.0})
+    )
     # SQLite connections are thread-affine by default. Complete SQL-backed
     # lanes here; CPU-only scoring lanes then run in parallel.
     lexical_lane_meta: dict[str, str] = {}
@@ -201,6 +210,7 @@ def retrieve_hybrid_rag_candidates(
             ],
             "timelineRequested": timeline_requested,
             "recentTimelineRequested": _recent_timeline_requested(query),
+            "vectorFusion": vector_fusion,
         },
         "lanes": {
             name: {
@@ -247,6 +257,56 @@ def retrieve_hybrid_rag_candidates(
         # explicit command. A query is now strictly read-only.
         "reactivatedBookIds": [],
         "historicalBookIds": historical_book_ids,
+    }
+
+
+def _semantic_query_vector(
+    embedding_provider: EmbeddingProvider,
+    query_text: str,
+    *,
+    context_text: str = "",
+    context_weight: float = 0.0,
+) -> tuple[list[float], dict[str, object]]:
+    """Return a normalized query/context blend for semantic lanes only."""
+
+    primary = embed_query(embedding_provider, query_text)
+    bounded_context_weight = (
+        min(0.5, max(0.0, float(context_weight)))
+        if math.isfinite(float(context_weight))
+        else 0.0
+    )
+    normalized_context = compact_whitespace(context_text)
+    if not primary or not normalized_context or bounded_context_weight <= 0.0:
+        return list(primary), {
+            "applied": False,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0,
+        }
+    context = embed_query(embedding_provider, normalized_context)
+    if not context or len(context) != len(primary):
+        return list(primary), {
+            "applied": False,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0,
+        }
+    query_weight = 1.0 - bounded_context_weight
+    blended = normalize_vector(
+        [
+            query_weight * float(query_value)
+            + bounded_context_weight * float(context_value)
+            for query_value, context_value in zip(primary, context, strict=True)
+        ]
+    )
+    if not blended:
+        return list(primary), {
+            "applied": False,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0,
+        }
+    return blended, {
+        "applied": True,
+        "queryWeight": query_weight,
+        "contextWeight": bounded_context_weight,
     }
 
 

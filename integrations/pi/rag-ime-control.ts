@@ -772,6 +772,7 @@ const toolSpecs: ToolSpec[] = [
     guidelines: [
       "只能使用 catalog 返回的固定 Agent；单批最多两个任务、最大深度 2，不得请求加载市场自定义代码。",
       "fresh 只携带任务，fork 继承当前会话上下文；涉及当前讨论的复核或规划时才使用 fork。",
+      "用户明确要求先规划再执行时，优先委派只读 planner：它只返回带依赖、风险、产物和验收证据的方案；用户确认后再把可执行步骤写入 agent_plan，不能把规划结果当作已经执行。",
       "子 Agent 是临时执行单元，结果交回当前会话，不要把它描述成长期群聊成员。",
       "Room 通信前先调用 room_mailbox 获取受信的 participantId；send 是通知，ask 要求对方随后用 room_reply 关联回复。",
       "clientMessageId 必须由当前回合稳定生成，重试时保持不变；不要在参数里伪造 sourceSessionId 或 sourceParticipantId。",
@@ -780,17 +781,19 @@ const toolSpecs: ToolSpec[] = [
   },
   {
     name: "agent_plan",
-    label: "当前回合计划",
-    description: "维护当前 Agent Session 的有界执行清单，不修改用户的每日规划。",
+    label: "任务执行清单",
+    description: "维护跨回合与压缩保留的当前 Session 执行清单，不修改用户的每日规划。",
     operations: ["list", "update"],
     progress: {
-      list: "正在读取当前回合计划",
-      update: "正在更新当前回合计划",
+      list: "正在读取任务执行清单",
+      update: "正在更新任务执行清单",
     },
     guidelines: [
-      "这是当前 Session 的执行清单，不是用户的长期记忆或每日计划；不要把这里的更新描述成修改了用户规划。",
-      "开始复杂任务时先 list；创建计划项时提供 title 和 status，后续用返回的 itemId 更新同一项。",
-      "同一时间只能有一个 in_progress；完成当前项后再推进下一项，避免用重复标题创建新项。",
+      "这是当前 Session 的执行清单，不是用户的长期记忆、每日计划，也不是只读 Plan 模式；不要把这里的更新描述成修改了用户规划。",
+      "仅在任务包含至少三个清晰动作、用户给出多项要求，或工作需要跨回合验证时使用；简单问答和单步操作不要为了展示进度而建清单。",
+      "开始复杂任务时先 list；若为空，建立 3 到 7 个结果导向的计划项，并立即把第一项设为 in_progress。后续必须用返回的 itemId 更新同一项，不能用近似标题重复创建。",
+      "同一时间只能有一个 in_progress。只有验收证据已经成立才能标 completed；随后再推进下一项，命令已运行不等于任务已完成。",
+      "Room WorkItem 和子 Agent 任务应以各自 objective、expectedOutput、acceptanceCriteria 为边界；压缩或恢复后先延续已有清单，不要重新规划一套冲突步骤。",
     ],
     parameterSchema: {
       oneOf: [

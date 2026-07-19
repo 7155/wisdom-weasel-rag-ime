@@ -134,9 +134,32 @@
 .agent-new-task-dialog__projects [role='radio'] small,
 .agent-new-task-dialog__picked small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-new-task-dialog__projects > .ui-button { justify-self: start; }
-.agent-timeline { position: relative; display: grid; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
+.agent-timeline { position: relative; display: grid; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .agent-timeline > div:first-child { height: 100%; }
 .agent-timeline__footer-space { height: calc(var(--agent-composer-clearance-base) + var(--agent-composer-extra-height)); }
+.agent-plan-card { width: 100%; max-width: 100%; box-sizing: border-box; padding: 13px 14px 14px; overflow: hidden; border-bottom: 1px solid var(--color-border); background: transparent; }
+.agent-plan-card > header { display: grid; min-height: 24px; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 6px; color: var(--color-text-secondary); }
+.agent-plan-card > header > span { display: grid; width: 18px; height: 18px; place-items: center; color: var(--color-accent); }
+.agent-plan-card[data-state='completed'] > header > span { color: var(--color-success); }
+.agent-plan-card > header strong { overflow: hidden; color: var(--color-text); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.agent-plan-card > header small { color: var(--color-text-tertiary); font-size: 12px; }
+.agent-plan-card > ol { display: grid; max-height: min(360px, 44vh); margin: 8px 0 0; padding: 4px 0; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--color-border) 86%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--color-surface) 82%, transparent); list-style: none; scrollbar-gutter: stable; }
+.agent-plan-card > ol > li { position: relative; display: grid; min-height: 34px; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 7px; padding: 7px 9px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+.agent-plan-card > ol > li + li::before { position: absolute; top: 0; right: 9px; left: 36px; height: 1px; background: color-mix(in srgb, var(--color-border) 62%, transparent); content: ''; }
+.agent-plan-card > ol > li[data-state='in_progress'] { background: color-mix(in srgb, var(--color-accent-soft) 72%, var(--color-surface)); box-shadow: inset 2px 0 0 var(--color-accent); color: var(--color-text); font-weight: 650; }
+.agent-plan-card > ol > li[data-state='completed'] { color: var(--color-text-tertiary); }
+.agent-plan-card__label { min-width: 0; overflow-wrap: anywhere; }
+.agent-plan-card__state { display: grid; width: 18px; height: 18px; place-items: center; margin-top: 1px; color: var(--color-text-tertiary); }
+.agent-plan-card li[data-state='completed'] .agent-plan-card__state { color: var(--color-success); }
+.agent-plan-card li[data-state='in_progress'] .agent-plan-card__state { color: var(--color-accent); }
+.agent-plan-card li[data-state='in_progress'] .agent-plan-card__state svg { animation: agent-status-spin 1.2s linear infinite; }
+.agent-plan-card > footer { display: grid; gap: 6px; padding: 9px 1px 0; color: var(--color-text-tertiary); font-size: 12px; }
+.agent-plan-card__progress-copy { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-plan-card__progress-copy > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-plan-card__progress-copy > strong { flex: none; color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.agent-plan-card > footer > div[role='progressbar'] { height: 4px; overflow: hidden; border-radius: 2px; background: color-mix(in srgb, var(--color-border) 88%, var(--color-surface)); }
+.agent-plan-card > footer > div[role='progressbar'] > i { display: block; height: 100%; border-radius: inherit; background: var(--color-accent); transition: width var(--duration-panel) var(--ease-standard); }
+.agent-plan-card[data-state='completed'] > footer > div[role='progressbar'] > i { background: var(--color-success); }
 .agent-turn-tombstone { box-sizing: border-box; margin-inline: 14px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); opacity: .72; contain: strict; }
 .agent-turn { width: min(100%, 1040px); box-sizing: border-box; margin: 0 auto; padding: 12px 42px 4px 24px; }
 .agent-conversation-nav { position: absolute; z-index: 4; top: 14px; right: 3px; bottom: calc(var(--agent-composer-clearance-base) + var(--agent-composer-extra-height) + 8px); width: 34px; min-height: 120px; }
@@ -677,6 +700,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-status-turn > span { display: grid; min-width: 0; gap: 1px; }
 .agent-status-turn strong { font-size: 13px; }
 .agent-status-turn small { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.35; }
+.agent-plan-turn-summary { padding: 8px 14px 10px; border-bottom: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-subtle) 28%, transparent); }
 .agent-status-tasks { display: grid; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
 .agent-status-tasks li { display: grid; grid-template-columns: 17px minmax(0, 1fr); align-items: start; gap: 6px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.4; }
 .agent-status-tasks li > svg { margin-top: 2px; color: var(--color-text-tertiary); }
@@ -958,6 +982,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-status-turn[data-state='queued'] > svg,
   .agent-status-turn[data-state='running'] > svg,
   .agent-status-tasks li[data-state='running'] > svg,
+  .agent-plan-card li[data-state='in_progress'] .agent-plan-card__state svg,
   .agent-status-subagent[data-state='running'] .agent-status-subagent__state svg,
   .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
   .agent-status-empty[data-animated] > svg,
@@ -983,6 +1008,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 :root[data-reduce-motion='true'] .agent-status-turn[data-state='queued'] > svg,
 :root[data-reduce-motion='true'] .agent-status-turn[data-state='running'] > svg,
 :root[data-reduce-motion='true'] .agent-status-tasks li[data-state='running'] > svg,
+:root[data-reduce-motion='true'] .agent-plan-card li[data-state='in_progress'] .agent-plan-card__state svg,
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='running'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-empty[data-animated] > svg,

@@ -11,12 +11,14 @@ export interface SessionMemoryRecallV1 {
   project: string;
   roleId: string;
   generatedAtMs: number;
-  trigger: 'first_user_prompt';
+  trigger: 'first_user_prompt' | 'compaction' | 'room_task' | 'subagent_task';
   query: {
     preview: string;
     sha256: string;
     recentCompleteInputCount: number;
     recentCompleteInputUsedForRetrieval: boolean;
+    retrievalContextUsed: boolean;
+    recentConversationCount: number;
   };
   retrieval: {
     strategy: 'vcp_hybrid_book_atom';
@@ -32,6 +34,11 @@ export interface SessionMemoryRecallV1 {
     embeddingFallback: boolean;
     temporalIntent: boolean;
     activityTimelineIncluded: boolean;
+    vectorFusion: {
+      applied: boolean;
+      queryWeight: number;
+      contextWeight: number;
+    };
   };
   /**
    * @maxItems 12
@@ -1388,6 +1395,355 @@ export interface SessionMemoryRecallV1 {
           evidenceEventIds: number[];
         },
       ];
+  /**
+   * @maxItems 8
+   */
+  recentConversation?:
+    | []
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ]
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ]
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ]
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ]
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ]
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ]
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ]
+    | [
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+        {
+          role: 'user' | 'assistant';
+          text: string;
+        },
+      ];
+  /**
+   * @maxItems 8
+   */
+  plan?:
+    | []
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+        {
+          status: 'pending' | 'in_progress';
+          title: string;
+        },
+      ];
+  task?: {
+    kind?: string;
+    objective?: string;
+    expectedOutput?: string;
+    state?: string;
+    /**
+     * @maxItems 8
+     */
+    acceptanceCriteria?:
+      | []
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string]
+      | [string, string, string, string, string]
+      | [string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string]
+      | [string, string, string, string, string, string, string, string];
+  };
   sourceIds: string[];
   budget: {
     maxItems: number;
@@ -1401,5 +1757,6 @@ export interface SessionMemoryRecallV1 {
     evidenceOnly: true;
     currentUserMessageWins: true;
     rawRecentInputInjected: false;
+    recentConversationInjected: boolean;
   };
 }

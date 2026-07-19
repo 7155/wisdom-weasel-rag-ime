@@ -254,6 +254,14 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
     resumeToken: `${sessionId}:12`,
     status: 'idle',
     liveEvents: [],
+    plan: {
+      revision: 6,
+      items: [
+        { id: 'preview-plan-1', title: '核对当前上下文与任务边界', status: 'completed', sequence: 1, updatedAtMs: previewNow - 170_000 },
+        { id: 'preview-plan-2', title: '实现会话内可见的执行清单', status: 'in_progress', sequence: 4, updatedAtMs: previewNow - 36_000 },
+        { id: 'preview-plan-3', title: '验证压缩恢复与真实运行链路', status: 'pending', sequence: 5, updatedAtMs: previewNow - 30_000 },
+      ],
+    },
     messages: [
       message(sessionId, userTurn, 'user-architecture', 'user', [
         block('user-text', 'text', { text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。' }),

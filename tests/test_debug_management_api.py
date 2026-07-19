@@ -1874,6 +1874,40 @@ class DebugManagementApiTests(unittest.TestCase):
             with urlopen(allowed_tool_request, timeout=5) as response:
                 tool_result = json.loads(response.read().decode("utf-8"))
 
+            context_refresh_body = json.dumps(
+                {
+                    "schemaVersion": "rag-ime.agent-session-context-refresh-request.v1",
+                    "sessionId": session_id,
+                    "trigger": "session_start",
+                    "queryText": "验证 Session 记忆注入",
+                    "recentMessages": [
+                        {"role": "user", "text": "验证 Session 记忆注入"},
+                    ],
+                }
+            ).encode("utf-8")
+            denied_context_refresh = Request(
+                f"{base_url}/tool/context-refresh",
+                data=context_refresh_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as denied_refresh_context:
+                urlopen(denied_context_refresh, timeout=5)
+            self.assertEqual(denied_refresh_context.exception.code, 403)
+            denied_refresh_context.exception.close()
+
+            allowed_context_refresh = Request(
+                f"{base_url}/tool/context-refresh",
+                data=context_refresh_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+                },
+                method="POST",
+            )
+            with urlopen(allowed_context_refresh, timeout=5) as response:
+                context_refresh = json.loads(response.read().decode("utf-8"))
+
             approval = self.service.agent.sessions.create_approval(
                 session_id=session_id,
                 tool_name="ime_input",
@@ -2028,6 +2062,9 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(deep_search["turnId"], "turn:http:deep")
         self.assertTrue(tool_result["ok"])
         self.assertEqual(tool_result["operation"], "catalog")
+        self.assertTrue(context_refresh["ok"])
+        self.assertEqual(context_refresh["result"]["trigger"], "first_user_prompt")
+        self.assertIn("## Session 记忆", context_refresh["result"]["sessionContext"])
         self.assertEqual(approvals["items"][0]["approvalId"], approval["approvalId"])
         self.assertEqual(decision["approval"]["state"], "rejected")
         self.assertEqual(approval_result["approval"]["state"], "rejected")

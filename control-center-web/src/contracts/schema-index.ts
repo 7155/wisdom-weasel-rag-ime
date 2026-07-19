@@ -11253,7 +11253,12 @@ export const contractSchemas = {
         "minimum": 0
       },
       "trigger": {
-        "const": "first_user_prompt"
+        "enum": [
+          "first_user_prompt",
+          "compaction",
+          "room_task",
+          "subagent_task"
+        ]
       },
       "query": {
         "type": "object",
@@ -11262,7 +11267,9 @@ export const contractSchemas = {
           "preview",
           "sha256",
           "recentCompleteInputCount",
-          "recentCompleteInputUsedForRetrieval"
+          "recentCompleteInputUsedForRetrieval",
+          "retrievalContextUsed",
+          "recentConversationCount"
         ],
         "properties": {
           "preview": {
@@ -11278,6 +11285,14 @@ export const contractSchemas = {
           },
           "recentCompleteInputUsedForRetrieval": {
             "type": "boolean"
+          },
+          "retrievalContextUsed": {
+            "type": "boolean"
+          },
+          "recentConversationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8
           }
         }
       },
@@ -11294,7 +11309,8 @@ export const contractSchemas = {
           "embeddingProvider",
           "embeddingFallback",
           "temporalIntent",
-          "activityTimelineIncluded"
+          "activityTimelineIncluded",
+          "vectorFusion"
         ],
         "properties": {
           "strategy": {
@@ -11349,6 +11365,30 @@ export const contractSchemas = {
           },
           "activityTimelineIncluded": {
             "type": "boolean"
+          },
+          "vectorFusion": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "applied",
+              "queryWeight",
+              "contextWeight"
+            ],
+            "properties": {
+              "applied": {
+                "type": "boolean"
+              },
+              "queryWeight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "contextWeight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 0.5
+              }
+            }
           }
         }
       },
@@ -11437,6 +11477,86 @@ export const contractSchemas = {
           }
         }
       },
+      "recentConversation": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "text"
+          ],
+          "properties": {
+            "role": {
+              "enum": [
+                "user",
+                "assistant"
+              ]
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1200
+            }
+          }
+        }
+      },
+      "plan": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "title"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "pending",
+                "in_progress"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        }
+      },
+      "task": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "objective": {
+            "type": "string",
+            "maxLength": 1200
+          },
+          "expectedOutput": {
+            "type": "string",
+            "maxLength": 800
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        }
+      },
       "sourceIds": {
         "type": "array",
         "items": {
@@ -11480,7 +11600,8 @@ export const contractSchemas = {
           "lifecycle",
           "evidenceOnly",
           "currentUserMessageWins",
-          "rawRecentInputInjected"
+          "rawRecentInputInjected",
+          "recentConversationInjected"
         ],
         "properties": {
           "priority": {
@@ -11497,6 +11618,9 @@ export const contractSchemas = {
           },
           "rawRecentInputInjected": {
             "const": false
+          },
+          "recentConversationInjected": {
+            "type": "boolean"
           }
         }
       }

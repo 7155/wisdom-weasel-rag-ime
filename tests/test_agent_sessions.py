@@ -272,6 +272,43 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(promoted["plan"]["counts"]["inProgress"], 1)
         self.assertEqual(promoted["plan"]["counts"]["completed"], 1)
 
+    def test_agent_plan_keeps_creation_order_when_item_status_changes(self) -> None:
+        session = self.store.create(title="stable plan", created_at_ms=100)
+        session_id = str(session["id"])
+        first = self.store.update_agent_plan_item(
+            session_id,
+            title="读取现状",
+            status="pending",
+            updated_at_ms=200,
+        )
+        second = self.store.update_agent_plan_item(
+            session_id,
+            title="实现界面",
+            status="pending",
+            updated_at_ms=300,
+        )
+        self.store.update_agent_plan_item(
+            session_id,
+            item_id=str(first["event"]["itemId"]),
+            status="completed",
+            updated_at_ms=400,
+        )
+        plan = self.store.update_agent_plan_item(
+            session_id,
+            item_id=str(second["event"]["itemId"]),
+            status="in_progress",
+            updated_at_ms=500,
+        )["plan"]
+
+        self.assertEqual(
+            [item["title"] for item in plan["items"]],
+            ["读取现状", "实现界面"],
+        )
+        self.assertEqual(
+            [item["status"] for item in plan["items"]],
+            ["completed", "in_progress"],
+        )
+
     def test_unknown_mode_and_status_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "assistant or coordinator"):
             self.store.create(title="bad", mode="admin")

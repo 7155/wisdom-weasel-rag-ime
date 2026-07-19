@@ -191,6 +191,54 @@ describe('AgentEventReducer', () => {
     expect(recovered.status).toBe('waiting');
   });
 
+  it('restores the durable plan and advances it from live agent_plan results', () => {
+    const restored = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      plan: {
+        revision: 2,
+        items: [
+          { id: 'step-1', title: '核对现状', status: 'completed', sequence: 1, updatedAtMs: 10 },
+          { id: 'step-2', title: '实现清单', status: 'in_progress', sequence: 2, updatedAtMs: 20 },
+        ],
+      },
+    });
+
+    expect(restored.plan.counts).toEqual({
+      total: 2,
+      pending: 0,
+      inProgress: 1,
+      completed: 1,
+    });
+
+    const advanced = reduceAgentEvent(
+      restored,
+      agentEvent(1, 'tool_finished', {
+        toolCallId: 'plan-update',
+        toolName: 'agent_plan',
+        result: {
+          details: {
+            result: {
+              plan: {
+                revision: 3,
+                items: [
+                  { id: 'step-1', title: '核对现状', status: 'completed', sequence: 1, updatedAtMs: 10 },
+                  { id: 'step-2', title: '实现清单', status: 'completed', sequence: 3, updatedAtMs: 30 },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    ).state;
+
+    expect(advanced.plan.revision).toBe(3);
+    expect(advanced.plan.items.map((item) => item.status)).toEqual(['completed', 'completed']);
+    expect(advanced.plan.counts.completed).toBe(2);
+  });
+
   it('uses the authoritative idle snapshot status to recover a stale aborting turn', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [],

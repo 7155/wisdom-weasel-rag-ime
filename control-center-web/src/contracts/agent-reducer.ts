@@ -79,11 +79,33 @@ export interface AgentProjectionState {
   diagnostics: ProjectionDiagnostic[];
   telemetry?: AgentSessionTelemetryV1;
   messageQueue: AgentMessageQueue;
+  plan: AgentPlanProjection;
 }
 
 export interface AgentMessageQueue {
   steering: string[];
   followUp: string[];
+}
+
+export type AgentPlanItemStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface AgentPlanItemProjection {
+  id: string;
+  title: string;
+  status: AgentPlanItemStatus;
+  sequence: number;
+  updatedAtMs: number;
+}
+
+export interface AgentPlanProjection {
+  revision: number;
+  items: AgentPlanItemProjection[];
+  counts: {
+    total: number;
+    pending: number;
+    inProgress: number;
+    completed: number;
+  };
 }
 
 export type ProjectionDisposition =
@@ -106,6 +128,7 @@ export interface AgentSnapshot {
   status?: string;
   telemetry?: unknown;
   messageQueue?: unknown;
+  plan?: unknown;
 }
 
 export interface OptimisticAgentMessageInput {
@@ -137,6 +160,7 @@ export function createAgentProjection(sessionId: string): AgentProjectionState {
     diagnostics: [],
     telemetry: undefined,
     messageQueue: { steering: [], followUp: [] },
+    plan: emptyAgentPlan(),
   };
 }
 
@@ -376,6 +400,7 @@ export function applyAgentSnapshot(
   next.status = snapshot.status ?? state.status;
   next.telemetry = parseTelemetry(snapshot.telemetry) ?? state.telemetry;
   next.messageQueue = parseMessageQueue(snapshot.messageQueue);
+  next.plan = parseAgentPlan(snapshot.plan) ?? state.plan;
 
   const serverClientIds = new Set<string>();
   for (const rawMessage of snapshot.messages) {
@@ -475,6 +500,7 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
     ...(payload.telemetry === undefined ? {} : { telemetry: payload.telemetry }),
     ...(payload.messageQueue === undefined ? {} : { messageQueue: payload.messageQueue }),
+    ...(payload.plan === undefined ? {} : { plan: payload.plan }),
   };
 }
 
@@ -755,6 +781,7 @@ function upsertActivity(
   };
   if (!previous) state.activityOrder.push(id);
   state.activitiesById[id] = activity;
+  updateAgentPlanFromActivity(state, activityPayload);
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
 }
@@ -1012,6 +1039,11 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
       steering: [...state.messageQueue.steering],
       followUp: [...state.messageQueue.followUp],
     },
+    plan: {
+      ...state.plan,
+      items: state.plan.items.map((item) => ({ ...item })),
+      counts: { ...state.plan.counts },
+    },
     ...(state.gap ? { gap: { ...state.gap } } : {}),
   };
 }
@@ -1047,6 +1079,78 @@ function parseMessageQueue(value: unknown): AgentMessageQueue {
       ? source.followUp.filter((item): item is string => typeof item === 'string')
       : [],
   };
+}
+
+function emptyAgentPlan(): AgentPlanProjection {
+  return {
+    revision: 0,
+    items: [],
+    counts: {
+      total: 0,
+      pending: 0,
+      inProgress: 0,
+      completed: 0,
+    },
+  };
+}
+
+export function parseAgentPlan(value: unknown): AgentPlanProjection | undefined {
+  const source = record(value);
+  if (!Array.isArray(source.items)) return undefined;
+  const items = source.items.slice(0, 100).flatMap((rawItem, index): AgentPlanItemProjection[] => {
+    const item = record(rawItem);
+    const title = text(item.title ?? item.label).replace(/\s+/g, ' ').trim().slice(0, 240);
+    const status = text(item.status);
+    if (!title || !['pending', 'in_progress', 'completed'].includes(status)) return [];
+    const id = text(item.id ?? item.itemId).trim().slice(0, 160) || `plan-item:${index + 1}`;
+    return [{
+      id,
+      title,
+      status: status as AgentPlanItemStatus,
+      sequence: integer(item.sequence),
+      updatedAtMs: integer(item.updatedAtMs ?? item.createdAtMs),
+    }];
+  });
+  const completed = items.filter((item) => item.status === 'completed').length;
+  const inProgress = items.filter((item) => item.status === 'in_progress').length;
+  return {
+    revision: integer(source.revision),
+    items,
+    counts: {
+      total: items.length,
+      pending: items.length - completed - inProgress,
+      inProgress,
+      completed,
+    },
+  };
+}
+
+function updateAgentPlanFromActivity(
+  state: AgentProjectionState,
+  payload: Record<string, unknown>,
+): void {
+  const toolId = text(payload.toolId ?? payload.toolName);
+  if (toolId !== 'agent_plan') return;
+  const carrier = record(payload.result ?? payload.partialResult);
+  const details = record(carrier.details);
+  const candidates = [
+    record(record(details.result).plan),
+    record(record(carrier.result).plan),
+    record(details.plan),
+    record(carrier.plan),
+    record(payload.plan),
+    record(details.result),
+    record(carrier.result),
+    details,
+    carrier,
+    payload,
+  ];
+  for (const candidate of candidates) {
+    const plan = parseAgentPlan(candidate);
+    if (!plan) continue;
+    state.plan = plan;
+    return;
+  }
 }
 
 function text(value: unknown): string {

@@ -205,6 +205,81 @@ class SessionMemoryRecallTests(unittest.TestCase):
             ["atom:pi-context"],
         )
 
+    def test_compaction_refresh_injects_task_plan_and_recent_dialogue_without_debug_metadata(self) -> None:
+        event_id = self._record_input("压缩后继续完成 Session RAG 上下文")
+        provider = HashingEmbeddingProvider(dimensions=16)
+        with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    {
+                        "memoryAtoms": [
+                            {
+                                "atomId": "atom:session-rag",
+                                "kind": "project_requirement",
+                                "canonicalText": "Session 压缩后重新召回与当前任务相关的记忆。",
+                                "aliases": ["Session RAG"],
+                                "tags": ["Session", "RAG"],
+                                "sourceEventIds": [event_id],
+                                "confidence": 0.95,
+                                "qualityScore": 0.95,
+                            }
+                        ]
+                    },
+                    project=PROJECT,
+                    provider="test",
+                    model="test",
+                ),
+            )
+            rebuild_retrieval_docs(conn, project=PROJECT)
+            rebuild_retrieval_doc_vectors(conn, provider, project=PROJECT)
+
+        specification = SessionMemoryRecallBuilder(
+            self.db_path,
+            project=PROJECT,
+            embedding_provider=provider,
+        ).build(
+            self.session_id,
+            role_id="role-a",
+            query_text="继续实现 Session RAG",
+            trigger="compaction",
+            vector_context_text="已经完成召回基础链路，下一步验证压缩刷新",
+            vector_context_weight=0.2,
+            recent_messages=[
+                {"role": "user", "text": "继续完成这个功能"},
+                {"role": "assistant", "text": "我已经接通基础召回"},
+            ],
+            planning_context={
+                "items": [
+                    {"status": "in_progress", "title": "验证压缩后的上下文刷新"}
+                ]
+            },
+            task_context={
+                "kind": "subagent",
+                "objective": "完成 Session 压缩后的 RAG 刷新",
+                "expectedOutput": "代码与测试",
+                "acceptanceCriteria": ["Provider 请求中出现新上下文"],
+            },
+        )
+        payload = specification["payload"]
+        self.assertEqual(payload["trigger"], "compaction")
+        self.assertEqual(
+            payload["retrieval"]["vectorFusion"],
+            {"applied": True, "queryWeight": 0.8, "contextWeight": 0.2},
+        )
+        self.context_runtime.replace_active(**specification)
+        rendered = str(self.context_runtime.materialize(self.session_id)["prompt"])
+        self.assertIn("## 当前任务", rendered)
+        self.assertIn("完成 Session 压缩后的 RAG 刷新", rendered)
+        self.assertIn("## 当前计划", rendered)
+        self.assertIn("验证压缩后的上下文刷新", rendered)
+        self.assertIn("## 最近对话", rendered)
+        self.assertIn("我已经接通基础召回", rendered)
+        self.assertIn("Session 压缩后重新召回", rendered)
+        self.assertNotIn("vectorFusion", rendered)
+        self.assertNotIn("score=", rendered)
+        self.assertNotIn("sourceId", rendered)
+
     def test_topic_book_quota_prefers_query_tags_and_vector_relevance(self) -> None:
         def book(
             source_id: str,
