@@ -32,6 +32,10 @@ export function useControlTransport(): ControlTransport {
   return transport;
 }
 
+export function useOptionalControlTransport(): ControlTransport | null {
+  return useContext(ControlTransportContext);
+}
+
 export function createConfiguredControlTransport(): ControlTransport {
   const requested = import.meta.env.VITE_CONTROL_TRANSPORT ?? detectTransport();
   if (requested === 'native') {

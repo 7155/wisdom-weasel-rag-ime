@@ -81,7 +81,7 @@ createRoot(document.getElementById('root')!).render(<RoomKernelControlPlane
     return {
       schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1', receiptId: `fixture:${command.commandId}`,
       rootId: command.rootId, commandId: command.commandId, receiptKind: 'root_cancelled', status: 'applied',
-      generation: command.generation, details: {}, createdAtMs: Date.now(),
+      generation: command.generation + 1, details: {}, createdAtMs: Date.now(),
     };
   })}
 />);
