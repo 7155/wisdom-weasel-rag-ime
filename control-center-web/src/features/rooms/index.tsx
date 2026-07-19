@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, AtSign, BriefcaseBusiness, ExternalLink, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, PanelRightOpen, Plus, Send, Settings2, ShieldCheck, Sparkles, UsersRound } from 'lucide-react';
+import { Archive, ArchiveRestore, AtSign, BriefcaseBusiness, ExternalLink, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, PanelRightOpen, Plus, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, UsersRound } from 'lucide-react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
@@ -118,7 +118,6 @@ export function RoomsFeature() {
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const [routingPolicy, setRoutingPolicy] = useState<RoomRoutingPolicy>('moderator');
   const [moderatorRoleId, setModeratorRoleId] = useState('');
-  const [invitedParticipantId, setInvitedParticipantId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState('');
   const [settingsAvatar, setSettingsAvatar] = useState('members');
@@ -128,6 +127,11 @@ export function RoomsFeature() {
   const [settingsModeratorParticipantId, setSettingsModeratorParticipantId] = useState('');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState('');
+  const [memberSavingRoleId, setMemberSavingRoleId] = useState('');
+  const [memberRemovingId, setMemberRemovingId] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmTitle, setDeleteConfirmTitle] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const [topicsOpen, setTopicsOpen] = useState(false);
   const [topicTitle, setTopicTitle] = useState('');
   const [topicSummary, setTopicSummary] = useState('');
@@ -293,25 +297,25 @@ export function RoomsFeature() {
   }, [selectedId, transport]);
 
   const room = rooms.find((item) => item.id === selectedId);
+  const activeParticipants = room?.participants.filter((participant) => participant.status === 'active') ?? [];
   const visibleTurnOrder = projection.roomId === selectedId ? projection.turnOrder : [];
   const roomCanSend = room?.status === 'active';
   const activeWork = room?.workItems?.find((work) => ['blocked', 'review', 'active', 'queued'].includes(work.state));
-  const hasManualMention = Boolean(room && room.routingPolicy === 'manual_mentions' && room.participants.some((participant) => draft.includes(`@${participant.displayName}`)));
-  const hasInvite = Boolean(room && room.routingPolicy === 'invite_only' && room.participants.some((participant) => participant.id === invitedParticipantId));
+  const addressedParticipant = roomMentionedParticipant(activeParticipants, draft);
+  const requiresAddress = room?.routingPolicy === 'manual_mentions' || room?.routingPolicy === 'invite_only';
   const canSend = Boolean(
     roomCanSend
     && draft.trim()
-    && (room?.routingPolicy !== 'manual_mentions' || hasManualMention)
-    && (room?.routingPolicy !== 'invite_only' || hasInvite),
+    && (!requiresAddress || addressedParticipant),
   );
   async function send(): Promise<void> {
     const message = draft.trim();
     if (!room || room.status !== 'active' || !message) return;
-    if (room.routingPolicy === 'manual_mentions' && !hasManualMention) {
+    if (room.routingPolicy === 'manual_mentions' && !addressedParticipant) {
       setError('请先选择一位参与角色。');
       return;
     }
-    if (room.routingPolicy === 'invite_only' && !hasInvite) {
+    if (room.routingPolicy === 'invite_only' && !addressedParticipant) {
       setError('请先邀请一位角色发言。');
       return;
     }
@@ -330,10 +334,9 @@ export function RoomsFeature() {
         body: {
           message,
           clientMessageId,
-          ...(room.routingPolicy === 'invite_only' ? { participantIds: [invitedParticipantId] } : {}),
+          ...(addressedParticipant ? { participantIds: [addressedParticipant.id] } : {}),
         },
       });
-      setInvitedParticipantId('');
     }
     catch (requestError) {
       setProjection((current) => {
@@ -344,20 +347,6 @@ export function RoomsFeature() {
       setDraft(message);
       setError(publicErrorText(requestError, '消息暂时未发送，请稍后重试。'));
     }
-  }
-  function addressParticipant(displayName: string): void {
-    setDraft((current) => {
-      let message = current.trimStart();
-      for (const participant of room?.participants ?? []) {
-        const mention = `@${participant.displayName}`;
-        if (message.startsWith(mention)) {
-          message = message.slice(mention.length).trimStart();
-          break;
-        }
-      }
-      return `@${displayName}${message ? ` ${message}` : ' '}`;
-    });
-    setError('');
   }
   function beginCreateRoom(): void {
     const eligiblePersonas = personas.filter((persona) => persona.selectableModes.includes('coordinator'));
@@ -546,11 +535,76 @@ export function RoomsFeature() {
       if (!updated) throw new Error('服务端没有返回更新后的 Room。');
       setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
       setSettingsOpen(false);
-      setInvitedParticipantId('');
     } catch (requestError) {
       setSettingsError(publicErrorText(requestError, 'Room 设置暂时无法保存，请稍后重试。'));
     } finally {
       setSettingsSaving(false);
+    }
+  }
+  async function addRoomParticipant(persona: AgentPersonaV1): Promise<void> {
+    if (!room || room.status !== 'active' || memberSavingRoleId || activeParticipants.length >= 4) return;
+    setMemberSavingRoleId(persona.roleId);
+    setSettingsError('');
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.participant.add',
+        params: { roomId: room.id },
+        body: {
+          roleId: persona.roleId,
+          roleVersion: persona.version,
+          collaborationRole: persona.roleId === 'hermes-v1' ? 'researcher' : 'executor',
+        },
+      });
+      const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
+      if (!updated) throw new Error('服务端没有返回新增成员后的 Room。');
+      setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (requestError) {
+      setSettingsError(publicErrorText(requestError, '角色暂时无法加入 Room，请稍后重试。'));
+    } finally {
+      setMemberSavingRoleId('');
+    }
+  }
+  async function removeRoomParticipant(participant: RoomParticipant): Promise<void> {
+    if (!room || room.status !== 'active' || memberRemovingId) return;
+    setMemberRemovingId(participant.id);
+    setSettingsError('');
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.participant.remove',
+        params: { roomId: room.id },
+        body: { participantId: participant.id },
+      });
+      const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
+      if (!updated) throw new Error('服务端没有返回移除成员后的 Room。');
+      setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setSettingsModeratorParticipantId(updated.moderatorParticipantId);
+    } catch (requestError) {
+      setSettingsError(publicErrorText(requestError, '角色暂时无法移出 Room；请先完成或转交她名下的工作。'));
+    } finally {
+      setMemberRemovingId('');
+    }
+  }
+  async function deleteRoomPermanently(): Promise<void> {
+    if (!room || room.status !== 'archived' || deleting || deleteConfirmTitle !== room.title) return;
+    setDeleting(true);
+    setSettingsError('');
+    try {
+      await transport.request({
+        pathId: 'agent.room.delete',
+        params: { roomId: room.id },
+        body: { confirmTitle: deleteConfirmTitle },
+      });
+      const nextRooms = rooms.filter((item) => item.id !== room.id);
+      setRooms(nextRooms);
+      setSelectedId(nextRooms[0]?.id ?? '');
+      setDeleteOpen(false);
+      setSettingsOpen(false);
+      setDeleteConfirmTitle('');
+    } catch (requestError) {
+      setSettingsError(publicErrorText(requestError, 'Room 暂时无法永久删除；请确认已归档且没有未完成责任。'));
+      setDeleteOpen(false);
+    } finally {
+      setDeleting(false);
     }
   }
   async function createTopic(): Promise<void> {
@@ -646,7 +700,7 @@ export function RoomsFeature() {
     setPolicyLoading(true);
     try {
       const [sessionResponse, toolResponse] = await Promise.all([
-        transport.request({ pathId: 'agent.sessions.list', query: { includeInternal: true, limit: 500 } }),
+        transport.request({ pathId: 'agent.sessions.list', query: { includeArchived: true, includeInternal: true, limit: 500 } }),
         transport.request({ pathId: 'agent.tools.list', query: { sessionId: participant.sessionId } }),
       ]);
       const session = agentSessionItems(sessionResponse).find((item) => item.id === participant.sessionId);
@@ -715,10 +769,10 @@ export function RoomsFeature() {
     <main className="rooms-feature" data-route-id="rooms" data-status-open={statusOpen}>
       <aside className="rooms-rail">
         <header><span><strong>Rooms</strong><small>多 Agent 协作</small></span><div className="rooms-rail-actions"><IconButton label={includeArchived ? '隐藏已归档 Room' : '显示已归档 Room'} icon={includeArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />} aria-pressed={includeArchived} onClick={() => setIncludeArchived((current) => !current)} tooltip /><IconButton disabled={catalogLoading || creating} label="新建 Room" icon={<MessageSquarePlus size={17} />} onClick={beginCreateRoom} tooltip /></div></header>
-        <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => { setSelectedId(item.id); setInvitedParticipantId(''); }}>{roomAvatarIcon(item)}<span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
+        <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => { setSelectedId(item.id); setDraft(''); setError(''); }}>{roomAvatarIcon(item)}<span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.filter((participant) => participant.status === 'active').map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
       </aside>
       <section className="room-workspace">
-        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建群聊' : room.status === 'archived' ? '已归档' : `${room.roomKind === 'roleplay' ? '角色群聊' : roomPathName(room)} · ${routingPolicyLabel(room.routingPolicy)}`}</small></span><div className="room-header-actions"><div className="room-participants">{room?.participants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label="Room 设置" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 状态栏' : '展开 Room 状态'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
+        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建群聊' : room.status === 'archived' ? '已归档' : `${room.roomKind === 'roleplay' ? '角色群聊' : roomPathName(room)} · ${routingPolicyLabel(room.routingPolicy)}`}</small></span><div className="room-header-actions"><div className="room-participants">{activeParticipants.map((participant) => <button type="button" key={participant.id} aria-label={`配置 ${participant.displayName} 的权限`} onClick={() => void openParticipantPolicy(participant)}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b><ShieldCheck size={13} /></button>)}</div>{room ? <IconButton label="Room 设置" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 状态栏' : '展开 Room 状态'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
         {room ? <div className="room-context-bar">
           <div className="room-topic-tabs" aria-label="Room 话题">
             <MessagesSquare size={14} />
@@ -738,7 +792,15 @@ export function RoomsFeature() {
         <div className="room-timeline">
           {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} />} /> : <p className="room-empty">{snapshotLoading ? '正在读取 Room 对话…' : '还没有对话，发一条消息开始协作。'}</p> : <p className="room-empty">{catalogLoading ? '正在读取 Rooms…' : '选择一个 Room，或新建协作 Room。'}</p>}
         </div>
-        <div className="room-composer-shell">{roomCanSend && ['manual_mentions', 'invite_only'].includes(room?.routingPolicy ?? '') ? <div className="room-mention-bar" aria-label={room?.routingPolicy === 'invite_only' ? '邀请发言角色' : '指派参与角色'}>{room?.routingPolicy === 'invite_only' ? <MessageSquarePlus size={14} /> : <AtSign size={14} />}{room?.participants.map((participant) => <button type="button" key={participant.id} aria-pressed={room.routingPolicy === 'invite_only' ? invitedParticipantId === participant.id : draft.trimStart().startsWith(`@${participant.displayName}`)} onClick={() => { if (room.routingPolicy === 'invite_only') { setInvitedParticipantId(participant.id); setError(''); } else addressParticipant(participant.displayName); }}>{participant.displayName}</button>)}</div> : null}<div className="room-composer"><textarea rows={2} value={draft} disabled={!roomCanSend} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={!room ? '先选择或新建 Room' : room.status === 'archived' ? '恢复 Room 后继续交流' : room.routingPolicy === 'manual_mentions' ? '先选择一位角色，再输入消息…' : room.routingPolicy === 'invite_only' ? '先邀请一位角色发言…' : room.roomKind === 'roleplay' ? '向群聊发送消息…' : '向 Room 发消息…'} aria-label="Room 消息" /><IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!canSend} onClick={() => void send()} tooltip /></div></div>
+        <RoomComposer
+          room={room}
+          personas={personas}
+          draft={draft}
+          addressedParticipantId={addressedParticipant?.id ?? ''}
+          canSend={canSend}
+          onDraftChange={(value) => { setDraft(value); setError(''); }}
+          onSend={() => void send()}
+        />
       </section>
       <button className="agent-status-backdrop room-status-backdrop" aria-label="关闭 Room 状态" disabled={!statusOpen} onClick={() => setStatusOpen(false)} type="button" />
       <RoomStatusPanel room={room} projection={projection} open={statusOpen} onClose={() => setStatusOpen(false)} />
@@ -771,7 +833,7 @@ export function RoomsFeature() {
         <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={(createRoomKind === 'collaboration' && !workspaceRoots.length) || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>创建 Room</Button></DialogFooter>
       </DialogContent>
     </Dialog>
-    <Dialog open={settingsOpen} onOpenChange={(open) => { if (!settingsSaving) { setSettingsOpen(open); if (!open) setSettingsError(''); } }}>
+    <Dialog open={settingsOpen} onOpenChange={(open) => { if (!settingsSaving && !memberSavingRoleId && !memberRemovingId && !deleting) { setSettingsOpen(open); if (!open) setSettingsError(''); } }}>
       <DialogContent className="room-settings-dialog">
         <DialogHeader><DialogTitle>Room 设置</DialogTitle><DialogDescription>共同设定、发言路由和角色权限彼此独立；修改后只影响后续回合。</DialogDescription></DialogHeader>
         <form id="room-settings-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void saveRoomSettings(); }}>
@@ -782,11 +844,16 @@ export function RoomsFeature() {
           </div>
           <label className="room-create-field"><span>简介</span><input maxLength={500} value={settingsDescription} onChange={(event) => setSettingsDescription(event.target.value)} aria-label="Room 设置简介" /></label>
           <fieldset><legend>发言方式</legend><div className="room-routing-options">{routingPolicyOptions(room?.roomKind ?? 'collaboration').map((option) => <label key={option.value}><input type="radio" name="room-settings-routing" checked={settingsRoutingPolicy === option.value} onChange={() => setSettingsRoutingPolicy(option.value)} /><span><strong>{option.label}</strong><small>{option.detail}</small></span></label>)}</div></fieldset>
-          {settingsRoutingPolicy === 'moderator' ? <label className="room-create-field"><span>主持人</span><Select aria-label="Room 设置主持人" onValueChange={setSettingsModeratorParticipantId} options={(room?.participants ?? []).map((participant) => ({ value: participant.id, label: participant.displayName }))} value={settingsModeratorParticipantId} /></label> : null}
+          {settingsRoutingPolicy === 'moderator' ? <label className="room-create-field"><span>主持人</span><Select aria-label="Room 设置主持人" onValueChange={setSettingsModeratorParticipantId} options={activeParticipants.map((participant) => ({ value: participant.id, label: participant.displayName }))} value={settingsModeratorParticipantId} /></label> : null}
+          <fieldset className="room-member-manager"><legend>参与角色 <small>{activeParticipants.length}/4</small></legend><p>新角色从加入时刻开始接收消息，不会重放此前完整聊天；历史只通过话题摘要、共享产物和责任账本按需进入上下文。</p><div>{personas.filter((persona) => persona.selectableModes.includes(room?.roomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const participant = activeParticipants.find((item) => item.roleId === persona.roleId && item.roleVersion === persona.version); const isRequiredModerator = room?.routingPolicy === 'moderator' && participant?.id === room.moderatorParticipantId; const removeDisabled = !participant || room?.status !== 'active' || activeParticipants.length <= 2 || isRequiredModerator || Boolean(memberRemovingId) || Boolean(memberSavingRoleId); return <article key={`${persona.roleId}:${persona.version}`} data-active={Boolean(participant)}><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}</strong><small>{participant ? `${roomParticipantRoleLabel(participant)} · 已加入` : persona.tagline}</small></span>{participant ? <IconButton label={`将 ${persona.displayName} 移出 Room`} icon={memberRemovingId === participant.id ? <LoaderCircle className="ui-spin" size={15} /> : <UserMinus size={15} />} disabled={removeDisabled} onClick={() => void removeRoomParticipant(participant)} tooltip /> : <IconButton label={`邀请 ${persona.displayName} 加入 Room`} icon={memberSavingRoleId === persona.roleId ? <LoaderCircle className="ui-spin" size={15} /> : <UserPlus size={15} />} disabled={room?.status !== 'active' || activeParticipants.length >= 4 || Boolean(memberRemovingId) || Boolean(memberSavingRoleId)} onClick={() => void addRoomParticipant(persona)} tooltip />}</article>; })}</div></fieldset>
           <label className="room-create-field"><span>共同设定</span><textarea maxLength={8000} rows={5} value={settingsScenarioPrompt} onChange={(event) => setSettingsScenarioPrompt(event.target.value)} aria-label="Room 设置共同设定" /></label>
         </form>
+        <section className="room-danger-zone"><span><strong>永久删除</strong><small>{room?.status === 'archived' ? '删除 Room、对话审计和专属 Agent Session，不可恢复。' : '为防止误删，必须先归档 Room 并清空未完成责任。'}</small></span><Button variant="danger" leadingIcon={<Trash2 size={15} />} disabled={room?.status !== 'archived' || settingsSaving || deleting} onClick={() => { setDeleteConfirmTitle(''); setDeleteOpen(true); }}>删除 Room</Button></section>
         <DialogFooter><Button variant="quiet" disabled={settingsSaving} onClick={() => setSettingsOpen(false)}>取消</Button><Button type="submit" form="room-settings-form" variant="primary" loading={settingsSaving} disabled={!settingsTitle.trim()}>保存设置</Button></DialogFooter>
       </DialogContent>
+    </Dialog>
+    <Dialog open={deleteOpen} onOpenChange={(open) => { if (!deleting) { setDeleteOpen(open); if (!open) setDeleteConfirmTitle(''); } }}>
+      <DialogContent><DialogHeader><DialogTitle>永久删除这个 Room？</DialogTitle><DialogDescription>这会删除“{room?.title}”的消息、协作审计和专属 Agent Session。请输入完整 Room 名称确认。</DialogDescription></DialogHeader><label className="room-create-field"><span>Room 名称</span><input autoComplete="off" value={deleteConfirmTitle} onChange={(event) => setDeleteConfirmTitle(event.target.value)} aria-label="输入 Room 名称确认永久删除" /></label><DialogFooter><Button variant="quiet" disabled={deleting} onClick={() => setDeleteOpen(false)}>取消</Button><Button variant="danger" leadingIcon={<Trash2 size={15} />} loading={deleting} disabled={!room || deleteConfirmTitle !== room.title} onClick={() => void deleteRoomPermanently()}>永久删除</Button></DialogFooter></DialogContent>
     </Dialog>
     <Dialog open={topicsOpen} onOpenChange={(open) => { if (!topicSaving) { setTopicsOpen(open); if (!open) { setTopicError(''); setTopicEditingId(''); setTopicTitle(''); setTopicSummary(''); } } }}>
       <DialogContent className="room-topics-dialog">
@@ -818,6 +885,158 @@ export function RoomsFeature() {
       </DialogContent>
     </Dialog>
   </>;
+}
+
+interface RoomMentionDraft {
+  start: number;
+  end: number;
+  query: string;
+}
+
+function RoomComposer({
+  room,
+  personas,
+  draft,
+  addressedParticipantId,
+  canSend,
+  onDraftChange,
+  onSend,
+}: {
+  room?: RoomSummary;
+  personas: AgentPersonaV1[];
+  draft: string;
+  addressedParticipantId: string;
+  canSend: boolean;
+  onDraftChange: (value: string) => void;
+  onSend: () => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [mention, setMention] = useState<RoomMentionDraft>();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const roomCanSend = room?.status === 'active';
+  const participants = room?.participants.filter((participant) => participant.status === 'active') ?? [];
+  const mentionCandidates = mention
+    ? participants.filter((participant) => roomMentionMatches(participant, mention.query))
+    : [];
+
+  useEffect(() => {
+    setMention(undefined);
+    setActiveIndex(0);
+  }, [room?.id]);
+
+  function syncMention(value: string, caret: number | null): void {
+    const next = activeRoomMention(value, caret ?? value.length);
+    setMention(next);
+    setActiveIndex(0);
+  }
+
+  function chooseParticipant(participant: RoomParticipant, currentMention = mention): void {
+    let next: string;
+    let caret: number;
+    if (currentMention) {
+      const inserted = `@${participant.displayName} `;
+      const suffix = draft.slice(currentMention.end).replace(/^ /, '');
+      next = `${draft.slice(0, currentMention.start)}${inserted}${suffix}`;
+      caret = currentMention.start + inserted.length;
+    } else {
+      const body = stripLeadingRoomMention(draft, participants);
+      next = `@${participant.displayName}${body ? ` ${body}` : ' '}`;
+      caret = `@${participant.displayName} `.length;
+    }
+    onDraftChange(next);
+    setMention(undefined);
+    setActiveIndex(0);
+    queueMicrotask(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(caret, caret);
+    });
+  }
+
+  return <div className="room-composer-shell">
+    {roomCanSend && participants.length ? <div className="room-mention-bar" aria-label="点名 Room 角色">
+      <span className="room-mention-bar__label"><AtSign size={14} />点名</span>
+      {participants.map((participant) => <button
+        type="button"
+        key={participant.id}
+        aria-label={participant.displayName}
+        aria-pressed={addressedParticipantId === participant.id}
+        onClick={() => chooseParticipant(participant, undefined)}
+      >
+        <PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId && item.version === participant.roleVersion)} size="small" />
+        <span>{participant.displayName}</span>
+      </button>)}
+      <small>输入 @ 也可选择</small>
+    </div> : null}
+    <div className="room-composer-wrap">
+      {mention && mentionCandidates.length ? <div id="room-mention-menu" className="room-mention-menu" role="listbox" aria-label="选择 Room 角色">
+        <header><AtSign size={14} /><span><strong>点名角色</strong><small>继续输入可筛选</small></span></header>
+        {mentionCandidates.map((participant, index) => <button
+          type="button"
+          id={`room-mention-${participant.id}`}
+          role="option"
+          aria-selected={index === activeIndex}
+          key={participant.id}
+          onMouseDown={(event) => { event.preventDefault(); chooseParticipant(participant); }}
+        >
+          <PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId && item.version === participant.roleVersion)} size="small" />
+          <span><strong>{participant.displayName}</strong><small>{roomParticipantRoleLabel(participant)}</small></span>
+          <kbd>{index === activeIndex ? 'Enter' : `@${participant.displayName}`}</kbd>
+        </button>)}
+      </div> : null}
+      <div className="room-composer">
+        <textarea
+          ref={textareaRef}
+          rows={2}
+          maxLength={8_000}
+          value={draft}
+          disabled={!roomCanSend}
+          onChange={(event) => {
+            onDraftChange(event.target.value);
+            syncMention(event.target.value, event.target.selectionStart);
+          }}
+          onClick={(event) => syncMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onKeyUp={(event) => {
+            if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) {
+              syncMention(event.currentTarget.value, event.currentTarget.selectionStart);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (mention && mentionCandidates.length) {
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                setActiveIndex((current) => (
+                  current + (event.key === 'ArrowDown' ? 1 : -1) + mentionCandidates.length
+                ) % mentionCandidates.length);
+                return;
+              }
+              if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                chooseParticipant(mentionCandidates[activeIndex] ?? mentionCandidates[0]);
+                return;
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setMention(undefined);
+                return;
+              }
+            }
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              onSend();
+            }
+          }}
+          placeholder={roomComposerPlaceholder(room)}
+          aria-label="Room 消息"
+          aria-autocomplete="list"
+          aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
+          aria-expanded={Boolean(mention && mentionCandidates.length)}
+          aria-activedescendant={mention && mentionCandidates.length ? `room-mention-${mentionCandidates[activeIndex]?.id}` : undefined}
+        />
+        <IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!canSend} onClick={onSend} tooltip />
+      </div>
+    </div>
+  </div>;
 }
 
 export function RoomTurn({ turnId, room, projection, personas }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState; personas: AgentPersonaV1[] }) {
@@ -947,6 +1166,59 @@ function agentSessionItems(value: unknown): AgentSessionPolicySummary[] { const 
 function agentSessionValue(value: unknown): AgentSessionPolicySummary | undefined { const item = record(value); if (typeof item.id !== 'string' || !['assistant', 'coordinator'].includes(String(item.mode))) return undefined; return { id: item.id, mode: item.mode as AgentSessionPolicySummary['mode'], status: String(item.status ?? ''), toolProfileVersion: String(item.toolProfileVersion || 'control-center-v1'), toolAllowlistMode: item.toolAllowlistMode === 'explicit' ? 'explicit' : 'profile', allowedTools: Array.isArray(item.allowedTools) ? item.allowedTools.map(String) : [], workspaceRoots: Array.isArray(item.workspaceRoots) ? item.workspaceRoots.map(String) : [] }; }
 function roomToolItems(value: unknown): RoomToolPolicyItem[] { const source = record(value); return (Array.isArray(source.items) ? source.items : []).flatMap((value) => { const item = record(value); if (typeof item.id !== 'string' || typeof item.displayName !== 'string') return []; const profileOperations = record(item.profileOperations); return [{ id: item.id, displayName: item.displayName, description: String(item.description ?? ''), sessionModes: Array.isArray(item.sessionModes) ? item.sessionModes.map(String) : [], operations: Array.isArray(item.operations) ? item.operations.map(String) : [], profileOperations: Object.fromEntries(Object.entries(profileOperations).map(([profile, operations]) => [profile, Array.isArray(operations) ? operations.map(String) : []])), enabled: item.enabled === true }]; }); }
 function toolAvailableForPolicy(tool: RoomToolPolicyItem, mode: string, profile: string): boolean { return tool.sessionModes.includes(mode) && (tool.profileOperations[profile] ?? []).length > 0; }
+function activeRoomMention(value: string, caret: number): RoomMentionDraft | undefined {
+  const boundedCaret = Math.max(0, Math.min(caret, value.length));
+  const beforeCaret = value.slice(0, boundedCaret);
+  const start = beforeCaret.lastIndexOf('@');
+  if (start < 0) return undefined;
+  const previous = start > 0 ? value[start - 1] : '';
+  if (previous && !/[\s([{（【「『，。！？、,:：；;]/u.test(previous)) return undefined;
+  const query = value.slice(start + 1, boundedCaret);
+  if (query.length > 80 || /\s/u.test(query)) return undefined;
+  return { start, end: boundedCaret, query };
+}
+function roomMentionMatches(participant: RoomParticipant, query: string): boolean {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return true;
+  return participant.displayName.toLocaleLowerCase().includes(needle)
+    || participant.roleId.toLocaleLowerCase().includes(needle);
+}
+function roomMentionedParticipant(participants: RoomParticipant[], value: string): RoomParticipant | undefined {
+  for (const participant of participants) {
+    const token = `@${participant.displayName}`;
+    let offset = value.indexOf(token);
+    while (offset >= 0) {
+      const previous = offset > 0 ? value[offset - 1] : '';
+      const next = value[offset + token.length] ?? '';
+      const startsAtBoundary = !previous || /[\s([{（【「『，。！？、,:：；;]/u.test(previous);
+      const endsAtBoundary = !next || /[\s)\]}）】」』，。！？、,.!?:：；;]/u.test(next);
+      if (startsAtBoundary && endsAtBoundary) return participant;
+      offset = value.indexOf(token, offset + token.length);
+    }
+  }
+  return undefined;
+}
+function stripLeadingRoomMention(value: string, participants: RoomParticipant[]): string {
+  const body = value.trimStart();
+  for (const participant of participants) {
+    const token = `@${participant.displayName}`;
+    if (body.startsWith(token)) return body.slice(token.length).trimStart();
+  }
+  return body;
+}
+function roomParticipantRoleLabel(participant: RoomParticipant): string {
+  if (participant.collaborationRole === 'coordinator') return '主持协调';
+  if (participant.collaborationRole === 'researcher') return '调研与核对';
+  if (participant.collaborationRole === 'executor') return '执行与交付';
+  return participant.roleId;
+}
+function roomComposerPlaceholder(room?: RoomSummary): string {
+  if (!room) return '先选择或新建 Room';
+  if (room.status === 'archived') return '恢复 Room 后继续交流';
+  if (room.routingPolicy === 'manual_mentions') return '输入 @ 点名一位角色，再描述任务…';
+  if (room.routingPolicy === 'invite_only') return '输入 @ 邀请一位角色发言…';
+  return room.roomKind === 'roleplay' ? '向群聊发送消息，输入 @ 可点名…' : '向 Room 发消息，输入 @ 可点名…';
+}
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function uniquePaths(values: string[]): string[] { return values.map((value) => value.trim()).filter((value, index, all) => value.startsWith('/') && all.indexOf(value) === index).slice(0, 12); }
 function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }

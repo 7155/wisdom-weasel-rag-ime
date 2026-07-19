@@ -7394,6 +7394,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
                 )
+            elif agent_room_id and room_action == "participants":
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.add_room_participant(agent_room_id, payload),
+                )
             elif agent_room_id and room_action == "topics":
                 self._write_json(
                     HTTPStatus.CREATED,
@@ -7751,6 +7756,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if room_id and not room_action:
                 self._write_json(HTTPStatus.OK, self.service.agent.update_room(room_id, self._read_json()))
                 return
+            if room_id and room_action == "participants":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.remove_room_participant(room_id, self._read_json()),
+                )
+                return
             if room_id and room_action == "topics":
                 self._write_json(
                     HTTPStatus.OK,
@@ -7776,7 +7787,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             path = parsed.path
-            security_error = self._management_post_security_error(path, require_json=False)
+            room_id, room_action = agent_room_route(path)
+            security_error = self._management_post_security_error(
+                path,
+                require_json=bool(room_id and not room_action),
+            )
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
@@ -7788,6 +7803,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.OK,
                     self._knowledge_control().delete_document(knowledge_parts[0], knowledge_parts[2]),
+                )
+                return
+            if room_id and not room_action:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.delete_room(room_id, self._read_json()),
                 )
                 return
             session_id, action = agent_session_route(path)

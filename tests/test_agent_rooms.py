@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import stat
 import tempfile
 import unittest
@@ -228,6 +229,63 @@ class AgentRoomTests(unittest.TestCase):
             ["新消息"],
         )
 
+    def test_joining_participant_starts_at_current_room_watermark(self) -> None:
+        room = self.store.create(
+            title="长期协作",
+            routing_policy="manual_mentions",
+            participants=[
+                self._participant("zhiyou-v1", "智鼬·此刻"),
+                self._participant("hermes-v1", "智鼬·初识"),
+            ],
+        )
+        room_id = str(room["id"])
+        topic_id = str(room["activeTopicId"])
+        for sequence in range(30):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="user_message",
+                payload={"text": f"加入前的消息 {sequence}"},
+                turn_id=f"turn:old:{sequence}",
+                topic_id=topic_id,
+            )
+        session = self.sessions.create(
+            title="智鼬·未来 room session",
+            role_id="vcp-v1",
+            role_version="1",
+        )
+
+        participant = self.store.add_participant(
+            room_id,
+            session_id=str(session["id"]),
+            role_id="vcp-v1",
+            role_version="1",
+            display_name="智鼬·未来",
+        )
+
+        unread = self.store.unread_public_messages(
+            room_id,
+            str(participant["id"]),
+            topic_id=topic_id,
+        )
+        self.assertEqual(unread["items"], [])
+        self.assertEqual(unread["omittedCount"], 0)
+        self.store.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "加入后的第一条消息"},
+            turn_id="turn:new",
+            topic_id=topic_id,
+        )
+        next_unread = self.store.unread_public_messages(
+            room_id,
+            str(participant["id"]),
+            topic_id=topic_id,
+        )
+        self.assertEqual(
+            [item["payload"]["text"] for item in next_unread["items"]],
+            ["加入后的第一条消息"],
+        )
+
     def test_empty_room_snapshot_has_zero_cursor(self) -> None:
         room = self.store.create(
             title="空房间",
@@ -390,6 +448,299 @@ class AgentRoomServiceTests(unittest.TestCase):
                 }
             )
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_existing_room_can_add_future_without_replaying_old_history(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "长期项目 Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        for sequence in range(40):
+            self.service.rooms.append_event(
+                room_id=str(room["id"]),
+                event_type="user_message",
+                payload={"text": f"不可重放的旧消息 {sequence} " + "旧" * 500},
+                turn_id=f"turn:old:{sequence}",
+                topic_id=str(room["activeTopicId"]),
+            )
+
+        added = self.service.add_room_participant(
+            str(room["id"]),
+            {"roleId": "vcp-v1", "roleVersion": "1"},
+        )
+        future = added["participant"]
+        self.assertEqual(future["displayName"], "智鼬·未来")
+        self.assertEqual(len([p for p in added["room"]["participants"] if p["status"] == "active"]), 3)
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:future:first"},
+        ) as prompt:
+            self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "@智鼬·未来 请从现在开始接手规划",
+                    "participantIds": [str(future["id"])],
+                },
+            )
+
+        rendered = prompt.call_args.args[1]["message"]
+        self.assertIn("请从现在开始接手规划", rendered)
+        self.assertNotIn("不可重放的旧消息", rendered)
+        self.assertLessEqual(len(rendered), 24_000)
+
+    def test_existing_member_room_context_is_bounded_by_count_and_characters(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "上下文预算 Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        for sequence in range(30):
+            self.service.rooms.append_event(
+                room_id=str(room["id"]),
+                event_type="user_message",
+                payload={"text": f"历史编号-{sequence:02d}-" + "长" * 700},
+                turn_id=f"turn:history:{sequence}",
+                topic_id=str(room["activeTopicId"]),
+            )
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:bounded"},
+        ) as prompt:
+            self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "@智鼬·此刻 继续当前任务",
+                    "participantIds": [str(target["id"])],
+                },
+            )
+
+        rendered = prompt.call_args.args[1]["message"]
+        self.assertLessEqual(len(rendered), 24_000)
+        self.assertIn("历史编号-29", rendered)
+        self.assertNotIn("历史编号-00", rendered)
+        self.assertIn("较早未读消息已越过本次上下文窗口", rendered)
+
+    def test_room_rejects_oversized_message_instead_of_silently_truncating_it(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "消息边界 Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+
+        with self.assertRaisesRegex(ValueError, "must not exceed 8000"):
+            self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "@智鼬·此刻 " + "超" * 8_000,
+                    "participantIds": [str(target["id"])],
+                },
+            )
+
+        events = self.service.rooms.list_events(str(room["id"]))
+        self.assertFalse(any(value["eventType"] == "user_message" for value in events))
+
+    def test_active_room_repairs_a_missing_participant_session(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "旧 Room Session 修复",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][0]
+        old_session_id = str(participant["sessionId"])
+        # Simulate a legacy/manual database mutation that bypassed FK checks.
+        with sqlite3.connect(self.service.sessions.db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute("DELETE FROM agent_sessions WHERE id = ?", (old_session_id,))
+
+        snapshot = self.service.room_snapshot(str(room["id"]))
+        repaired = next(
+            value
+            for value in snapshot["room"]["participants"]
+            if value["id"] == participant["id"]
+        )
+        self.assertNotEqual(repaired["sessionId"], old_session_id)
+        repaired_session = self.service.sessions.get(str(repaired["sessionId"]))
+        self.assertEqual(repaired_session["roleId"], participant["roleId"])
+        self.assertEqual(repaired_session["status"], "idle")
+
+    def test_active_room_restores_legacy_archived_participant_sessions(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "旧 Room 归档修复",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        session_id = str(room["participants"][0]["sessionId"])
+        self.service.sessions.archive(session_id, archived=True)
+
+        self.service.room_snapshot(str(room["id"]))
+
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
+
+    def test_removed_member_is_archived_and_not_restored_by_room_snapshot(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "成员生命周期",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        future = next(value for value in room["participants"] if value["roleId"] == "vcp-v1")
+
+        removed = self.service.remove_room_participant(
+            str(room["id"]),
+            {"participantId": future["id"]},
+        )
+        self.assertEqual(removed["participant"]["status"], "removed")
+        self.assertEqual(self.service.sessions.get(str(future["sessionId"]))["status"], "archived")
+        snapshot = self.service.room_snapshot(str(room["id"]))
+        self.assertTrue(snapshot["ok"])
+        self.assertEqual(self.service.sessions.get(str(future["sessionId"]))["status"], "archived")
+        self.assertEqual(
+            [value["roleId"] for value in snapshot["room"]["participants"] if value["status"] == "active"],
+            ["zhiyou-v1", "hermes-v1"],
+        )
+
+    def test_removing_member_clears_inactive_routing_pointers(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "路由指针生命周期",
+                "routingPolicy": "moderator",
+                "moderatorRoleId": "vcp-v1",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        future = next(value for value in room["participants"] if value["roleId"] == "vcp-v1")
+        self.service.update_room(
+            str(room["id"]),
+            {
+                "routingPolicy": "natural",
+                "routingConfig": {
+                    "naturalJitter": 0.04,
+                    "fallbackParticipantId": future["id"],
+                },
+            },
+        )
+
+        removed = self.service.remove_room_participant(
+            str(room["id"]),
+            {"participantId": future["id"]},
+        )
+
+        self.assertEqual(removed["room"]["moderatorParticipantId"], "")
+        self.assertEqual(removed["room"]["routingConfig"]["fallbackParticipantId"], "")
+        with self.assertRaisesRegex(ValueError, "requires an active moderator"):
+            self.service.update_room(
+                str(room["id"]),
+                {"routingPolicy": "moderator"},
+            )
+
+    def test_permanent_room_delete_requires_archive_and_exact_title(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "可永久删除 Room",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        session_ids = [str(value["sessionId"]) for value in room["participants"]]
+        with self.assertRaisesRegex(ValueError, "archive the Room"):
+            self.service.delete_room(room_id, {"confirmTitle": room["title"]})
+        self.service.update_room(room_id, {"archived": True})
+        with self.assertRaisesRegex(ValueError, "exactly match"):
+            self.service.delete_room(room_id, {"confirmTitle": "写错了"})
+
+        deleted = self.service.delete_room(room_id, {"confirmTitle": room["title"]})
+
+        self.assertEqual(deleted["deletedSessionIds"], session_ids)
+        self.assertEqual(self.service.list_rooms({"includeArchived": True})["items"], [])
+        self.assertEqual(self.service.list_sessions({"includeArchived": True, "includeInternal": True})["items"], [])
+
+    def test_permanent_room_delete_tolerates_a_legacy_missing_session(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "缺失 Session 的旧 Room",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        missing_session_id = str(room["participants"][0]["sessionId"])
+        self.service.update_room(room_id, {"archived": True})
+        with sqlite3.connect(self.service.sessions.db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute(
+                "DELETE FROM agent_sessions WHERE id = ?",
+                (missing_session_id,),
+            )
+
+        deleted = self.service.delete_room(
+            room_id,
+            {"confirmTitle": room["title"]},
+        )
+
+        missing_cleanup = next(
+            item
+            for item in deleted["sessionCleanup"]
+            if item["sessionId"] == missing_session_id
+        )
+        self.assertTrue(missing_cleanup["alreadyMissing"])
+        self.assertEqual(
+            self.service.list_rooms({"includeArchived": True})["items"],
+            [],
+        )
 
     def test_natural_room_uses_pinned_role_book_as_advisory_profile(self) -> None:
         role = self.service.personas.resolve("hermes-v1", "1")

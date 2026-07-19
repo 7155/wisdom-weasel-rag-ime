@@ -222,7 +222,7 @@ describe('Rooms experience', () => {
     });
   });
 
-  it('sends an invite-only turn with a structured participant id instead of a text prefix', async () => {
+  it('sends an invite-only turn with a visible mention and structured participant id', async () => {
     const invitedRoom = {
       ...roomSummary('room-invite', '点名茶话会'),
       roomKind: 'roleplay' as const,
@@ -246,14 +246,45 @@ describe('Rooms experience', () => {
     await user.type(composer, '说说你的看法');
     expect(screen.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '智鼬·初识' }));
+    expect(composer).toHaveValue('@智鼬·初识 说说你的看法');
     await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
-      message: '说说你的看法',
+      message: '@智鼬·初识 说说你的看法',
       participantIds: ['room-invite:p2'],
     });
-    expect(composer).not.toHaveValue(expect.stringContaining('@智鼬·初识'));
+    expect(composer).toHaveValue('');
+  });
+
+  it('opens an avatar mention menu when typing at-sign and routes the chosen Agent', async () => {
+    const invitedRoom = {
+      ...roomSummary('room-mention', '点名协作'),
+      routingPolicy: 'invite_only' as const,
+    };
+    const snapshot = roomSnapshot('room-mention', [], '点名协作');
+    snapshot.room.routingPolicy = 'invite_only';
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [invitedRoom] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': snapshot,
+      'agent.room.message': { ok: true },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    await user.type(composer, '@初');
+    expect(await screen.findByRole('option', { name: /智鼬·初识/ })).toBeInTheDocument();
+    await user.keyboard('{Enter}');
+    expect(composer).toHaveValue('@智鼬·初识 ');
+
+    await user.type(composer, '核对记忆召回{Enter}');
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
+      message: '@智鼬·初识 核对记忆召回',
+      participantIds: ['room-mention:p2'],
+    });
   });
 
   it('saves Room settings as future-turn configuration without changing its kind', async () => {
@@ -302,6 +333,83 @@ describe('Rooms experience', () => {
       },
     });
     expect(request?.body).not.toHaveProperty('roomKind');
+  });
+
+  it('adds 智鼬·未来 to an existing Room and can remove the member again', async () => {
+    const initial = roomSummary('room-members', '成员管理 Room');
+    const futurePersona = previewPersonas.find((persona) => persona.roleId === 'vcp-v1')!;
+    const futureParticipant = {
+      id: 'room-members:p3', sessionId: 'room-members:s3', roleId: 'vcp-v1', roleVersion: '1',
+      displayName: '智鼬·未来', collaborationRole: 'executor' as const, status: 'active', ordinal: 2,
+    };
+    const withFuture = { ...initial, participants: [...initial.participants, futureParticipant] };
+    const afterRemoval = {
+      ...initial,
+      participants: [...initial.participants, { ...futureParticipant, status: 'removed' }],
+    };
+    let addCompleted = false;
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [initial] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot(initial.id, [], initial.title),
+      'agent.room.participant.add': () => {
+        addCompleted = true;
+        return { ok: true, room: withFuture, participant: futureParticipant };
+      },
+      'agent.room.participant.remove': { ok: true, room: afterRemoval, participant: { ...futureParticipant, status: 'removed' } },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
+    const invite = screen.getByRole('button', { name: `邀请 ${futurePersona.displayName} 加入 Room` });
+    expect(invite).toBeEnabled();
+    expect(screen.getByText(/不会重放此前完整聊天/)).toBeInTheDocument();
+    await user.click(invite);
+
+    await waitFor(() => expect(addCompleted).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.room.participant.add')?.request).toMatchObject({
+      params: { roomId: initial.id },
+      body: { roleId: 'vcp-v1', roleVersion: '1', collaborationRole: 'executor' },
+    });
+    const remove = await screen.findByRole('button', { name: '将 智鼬·未来 移出 Room' });
+    expect(remove).toBeEnabled();
+    await user.click(remove);
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.remove')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.room.participant.remove')?.request).toMatchObject({
+      params: { roomId: initial.id },
+      body: { participantId: 'room-members:p3' },
+    });
+  });
+
+  it('permanently deletes only an archived Room after exact-title confirmation', async () => {
+    const room = { ...roomSummary('room-delete', '废弃协作 Room'), status: 'archived' };
+    const snapshot = roomSnapshot(room.id, [], room.title);
+    snapshot.room.status = 'archived';
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': snapshot,
+      'agent.room.delete': { ok: true, roomId: room.id },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
+    await user.click(screen.getByRole('button', { name: '删除 Room' }));
+    const confirm = screen.getByRole('textbox', { name: '输入 Room 名称确认永久删除' });
+    const submit = screen.getByRole('button', { name: '永久删除' });
+    expect(submit).toBeDisabled();
+    await user.type(confirm, room.title);
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.delete')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.room.delete')?.request).toMatchObject({
+      params: { roomId: room.id },
+      body: { confirmTitle: room.title },
+    });
+    expect(screen.queryByRole('button', { name: `打开 Room：${room.title}` })).not.toBeInTheDocument();
   });
 
   it('creates an independent topic and adds a workspace-scoped shared artifact', async () => {
@@ -447,6 +555,7 @@ describe('Rooms experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
       message: '@智鼬·初识 核对角色创建契约',
+      participantIds: ['room-a:p2'],
     });
   });
 
@@ -612,6 +721,7 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '配置 智鼬 的权限' }));
     expect(await screen.findByRole('dialog', { name: '智鼬的运行权限' })).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'agent.sessions.list').at(-1)?.request.query).toEqual({ includeArchived: true, includeInternal: true, limit: 500 });
     expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query).toEqual({ sessionId: 'room-a:s1' });
     await user.click(screen.getByRole('radio', { name: '协调者' }));
     await user.click(screen.getByRole('radio', { name: '只读' }));
@@ -785,7 +895,10 @@ describe('Rooms experience', () => {
 
     expect(screen.getByText('责任账本')).toBeInTheDocument();
     expect(screen.getByText('核对多端网关回放边界')).toBeInTheDocument();
-    expect(screen.getByText(/待验收 · 智鼬·初识 · 第 1 次修订/)).toBeInTheDocument();
+    expect(screen.getByText(/待验收 · A 最终负责：智鼬 · R 当前执行：智鼬·初识 · 第 1 次修订/)).toBeInTheDocument();
+    expect(screen.getByText('责任边界')).toBeInTheDocument();
+    expect(screen.getByText('A · 最终验收')).toBeInTheDocument();
+    expect(screen.getByText('责任深度 3 · 根任务分派 6 · 最多返修 2 次')).toBeInTheDocument();
     expect(screen.getByText('调研者 · 已加入')).toBeInTheDocument();
     expect(screen.queryByText(/只读调研/)).not.toBeInTheDocument();
   });

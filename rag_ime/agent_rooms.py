@@ -237,6 +237,317 @@ class AgentRoomStore:
                 raise AgentRoomNotFound(room_id)
         return self.get(room_id)
 
+    def add_participant(
+        self,
+        room_id: str,
+        *,
+        session_id: str,
+        role_id: str,
+        role_version: str,
+        display_name: str,
+        collaboration_role: str = "executor",
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Join a participant without replaying the Room's pre-join transcript."""
+
+        room = self.get(room_id)
+        if str(room.get("status") or "") != "active":
+            raise ValueError("agent room is archived")
+        active = [
+            value
+            for value in room.get("participants", [])
+            if isinstance(value, Mapping) and value.get("status") == "active"
+        ]
+        if len(active) >= 4:
+            raise ValueError("agent room accepts at most four active participants")
+        normalized_role_id = _required_text_value(role_id, "role_id", 63)
+        normalized_role_version = _required_text_value(
+            role_version,
+            "role_version",
+            40,
+        )
+        if any(
+            str(value.get("roleId") or "") == normalized_role_id
+            and str(value.get("roleVersion") or "") == normalized_role_version
+            for value in active
+        ):
+            raise ValueError("this role is already active in the Room")
+        normalized_collaboration_role = str(collaboration_role or "executor").strip()
+        if normalized_collaboration_role not in {"coordinator", "executor", "researcher"}:
+            raise ValueError("unsupported room collaboration role")
+        participant_id = f"participant:{uuid.uuid4()}"
+        timestamp = _timestamp(created_at_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            room_row = conn.execute(
+                "SELECT status FROM agent_rooms WHERE id = ?",
+                (room_id,),
+            ).fetchone()
+            if room_row is None:
+                raise AgentRoomNotFound(room_id)
+            if str(room_row["status"]) != "active":
+                raise ValueError("agent room is archived")
+            active_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM agent_room_participants
+                WHERE room_id = ? AND participant_status = 'active'
+                """,
+                (room_id,),
+            ).fetchone()
+            if int(active_count[0] if active_count is not None else 0) >= 4:
+                raise ValueError("agent room accepts at most four active participants")
+            duplicate = conn.execute(
+                """
+                SELECT 1 FROM agent_room_participants
+                WHERE room_id = ? AND participant_status = 'active'
+                  AND role_id = ? AND role_version = ?
+                LIMIT 1
+                """,
+                (room_id, normalized_role_id, normalized_role_version),
+            ).fetchone()
+            if duplicate is not None:
+                raise ValueError("this role is already active in the Room")
+            ordinal_row = conn.execute(
+                "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM agent_room_participants WHERE room_id = ?",
+                (room_id,),
+            ).fetchone()
+            ordinal = int(ordinal_row[0] if ordinal_row is not None else 0)
+            conn.execute(
+                """
+                INSERT INTO agent_room_participants(
+                    id, room_id, session_id, role_id, role_version, display_name,
+                    collaboration_role, participant_status, ordinal, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    participant_id,
+                    room_id,
+                    _required_text_value(session_id, "session_id", 320),
+                    normalized_role_id,
+                    normalized_role_version,
+                    _required_text_value(display_name, "display_name", 40),
+                    normalized_collaboration_role,
+                    ordinal,
+                    timestamp,
+                ),
+            )
+            topic_rows = conn.execute(
+                "SELECT id FROM agent_room_topics WHERE room_id = ?",
+                (room_id,),
+            ).fetchall()
+            topic_ids = ["", *(str(value["id"]) for value in topic_rows)]
+            for topic_id in dict.fromkeys(topic_ids):
+                sequence_row = conn.execute(
+                    """
+                    SELECT COALESCE(MAX(sequence), 0) FROM agent_room_events
+                    WHERE room_id = ? AND topic_id = ?
+                    """,
+                    (room_id, topic_id),
+                ).fetchone()
+                sequence = int(sequence_row[0] if sequence_row is not None else 0)
+                conn.execute(
+                    """
+                    INSERT INTO agent_room_delivery_cursors(
+                        room_id, participant_id, topic_id, last_sequence, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (room_id, participant_id, topic_id, sequence, timestamp),
+                )
+            conn.execute(
+                "UPDATE agent_rooms SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, room_id),
+            )
+        return self.participant(participant_id)
+
+    def remove_participant(
+        self,
+        room_id: str,
+        participant_id: str,
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Soft-remove a member while preserving message and work audit identity."""
+
+        room = self.get(room_id)
+        if str(room.get("status") or "") != "active":
+            raise ValueError("agent room is archived")
+        participant = self.participant(participant_id)
+        if str(participant.get("roomId") or "") != room_id:
+            raise ValueError("participant does not belong to this Room")
+        if str(participant.get("status") or "") != "active":
+            return participant
+        active = [
+            value
+            for value in room.get("participants", [])
+            if isinstance(value, Mapping) and value.get("status") == "active"
+        ]
+        if len(active) <= 2:
+            raise ValueError("agent room requires at least two active participants")
+        if (
+            str(room.get("routingPolicy") or "") == "moderator"
+            and str(room.get("moderatorParticipantId") or "") == participant_id
+        ):
+            raise ValueError("change the Room moderator before removing this participant")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            room_row = conn.execute(
+                """
+                SELECT routing_policy, moderator_participant_id, routing_config_json
+                FROM agent_rooms WHERE id = ?
+                """,
+                (room_id,),
+            ).fetchone()
+            if room_row is None:
+                raise AgentRoomNotFound(room_id)
+            if (
+                str(room_row["routing_policy"]) == "moderator"
+                and str(room_row["moderator_participant_id"] or "") == participant_id
+            ):
+                raise ValueError("change the Room moderator before removing this participant")
+            active_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM agent_room_participants
+                WHERE room_id = ? AND participant_status = 'active'
+                """,
+                (room_id,),
+            ).fetchone()
+            if int(active_count[0] if active_count is not None else 0) <= 2:
+                raise ValueError("agent room requires at least two active participants")
+            open_work = conn.execute(
+                """
+                SELECT COUNT(*) FROM agent_room_work_items
+                WHERE room_id = ? AND state IN ('queued', 'active', 'review', 'blocked')
+                  AND (
+                    accountable_participant_id = ?
+                    OR current_owner_participant_id = ?
+                    OR offered_to_participant_id = ?
+                    OR created_by_participant_id = ?
+                  )
+                """,
+                (room_id, participant_id, participant_id, participant_id, participant_id),
+            ).fetchone()
+            if int(open_work[0] if open_work is not None else 0) > 0:
+                raise ValueError(
+                    "participant still owns open Room work; complete or reassign it first"
+                )
+            timestamp = _timestamp(updated_at_ms)
+            conn.execute(
+                """
+                UPDATE agent_room_participants
+                SET participant_status = 'removed'
+                WHERE id = ? AND room_id = ?
+                """,
+                (participant_id, room_id),
+            )
+            moderator_id = str(room_row["moderator_participant_id"] or "")
+            routing_config = normalize_routing_config(
+                json.loads(str(room_row["routing_config_json"] or "{}"))
+            )
+            if moderator_id == participant_id:
+                moderator_id = ""
+            if str(routing_config.get("fallbackParticipantId") or "") == participant_id:
+                routing_config["fallbackParticipantId"] = ""
+            conn.execute(
+                """
+                UPDATE agent_rooms
+                SET moderator_participant_id = ?, routing_config_json = ?, updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (
+                    moderator_id,
+                    json.dumps(
+                        routing_config,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    timestamp,
+                    room_id,
+                ),
+            )
+        return self.participant(participant_id)
+
+    def rebind_participant_session(
+        self,
+        room_id: str,
+        participant_id: str,
+        *,
+        expected_session_id: str,
+        session_id: str,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Repair one active participant whose first-class Session was lost."""
+
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """
+                UPDATE agent_room_participants
+                SET session_id = ?
+                WHERE id = ? AND room_id = ? AND participant_status = 'active'
+                  AND session_id = ?
+                """,
+                (
+                    _required_text_value(session_id, "session_id", 320),
+                    participant_id,
+                    room_id,
+                    expected_session_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Room participant Session changed while it was being repaired")
+            conn.execute(
+                "UPDATE agent_rooms SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, room_id),
+            )
+        return self.participant(participant_id)
+
+    def delete(self, room_id: str) -> dict[str, object]:
+        """Permanently delete an archived Room and its Room-owned audit graph."""
+
+        room = self.get(room_id)
+        if str(room.get("status") or "") != "archived":
+            raise ValueError("archive the Room before permanently deleting it")
+        session_ids = [
+            str(value.get("sessionId") or "")
+            for value in room.get("participants", [])
+            if isinstance(value, Mapping) and str(value.get("sessionId") or "")
+        ]
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            room_state = conn.execute(
+                "SELECT status, room_file FROM agent_rooms WHERE id = ?",
+                (room_id,),
+            ).fetchone()
+            if room_state is None:
+                raise AgentRoomNotFound(room_id)
+            if str(room_state["status"]) != "archived":
+                raise ValueError("archive the Room before permanently deleting it")
+            open_work = conn.execute(
+                """
+                SELECT COUNT(*) FROM agent_room_work_items
+                WHERE room_id = ? AND state IN ('queued', 'active', 'review', 'blocked')
+                """,
+                (room_id,),
+            ).fetchone()
+            if int(open_work[0] if open_work is not None else 0) > 0:
+                raise ValueError(
+                    "complete or cancel open Room work before permanently deleting it"
+                )
+            room_file = Path(str(room_state["room_file"]))
+            cursor = conn.execute("DELETE FROM agent_rooms WHERE id = ?", (room_id,))
+            if cursor.rowcount != 1:
+                raise AgentRoomNotFound(room_id)
+        try:
+            root = self.room_dir.expanduser().resolve(strict=False)
+            candidate = room_file.expanduser().resolve(strict=False)
+            if candidate.parent == root and candidate.is_file() and not candidate.is_symlink():
+                candidate.unlink()
+        except OSError:
+            pass
+        return {"roomId": room_id, "title": str(room.get("title") or ""), "sessionIds": session_ids}
+
     def update_config(
         self,
         room_id: str,
@@ -259,6 +570,11 @@ class AgentRoomStore:
         if unknown:
             raise ValueError(f"unsupported agent room configuration fields: {', '.join(sorted(unknown))}")
         current = self.get(room_id)
+        active_participant_ids = {
+            str(item["id"])
+            for item in current["participants"]
+            if isinstance(item, Mapping) and item.get("status") == "active"
+        }
         updates: dict[str, object] = {}
         if "title" in values:
             title = " ".join(str(values.get("title") or "").split())[:120]
@@ -279,24 +595,28 @@ class AgentRoomStore:
             policy = normalize_routing_policy(values.get("routingPolicy"))
             updates["routing_mode"] = policy
             updates["routing_policy"] = _legacy_policy(policy)
-            if policy == "moderator" and not (
-                str(values.get("moderatorParticipantId") or "")
-                or str(current.get("moderatorParticipantId") or "")
-            ):
-                raise ValueError("moderated room requires a moderator participant")
+            if policy == "moderator":
+                moderator_id = (
+                    str(values.get("moderatorParticipantId") or "")
+                    or str(current.get("moderatorParticipantId") or "")
+                )
+                if moderator_id not in active_participant_ids:
+                    raise ValueError("moderated room requires an active moderator participant")
         if "routingConfig" in values:
+            routing_config = normalize_routing_config(values.get("routingConfig"))
+            fallback_id = str(routing_config.get("fallbackParticipantId") or "")
+            if fallback_id and fallback_id not in active_participant_ids:
+                raise ValueError("fallbackParticipantId must identify an active room participant")
             updates["routing_config_json"] = json.dumps(
-                normalize_routing_config(values.get("routingConfig")),
+                routing_config,
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
             )
         if "moderatorParticipantId" in values:
             moderator_id = str(values.get("moderatorParticipantId") or "").strip()
-            if moderator_id and moderator_id not in {
-                str(item["id"]) for item in current["participants"] if isinstance(item, Mapping)
-            }:
-                raise ValueError("moderatorParticipantId must identify one room participant")
+            if moderator_id and moderator_id not in active_participant_ids:
+                raise ValueError("moderatorParticipantId must identify one active room participant")
             updates["moderator_participant_id"] = moderator_id
         if "activeTopicId" in values:
             topic_id = str(values.get("activeTopicId") or "").strip()
@@ -1383,6 +1703,15 @@ def _required_text(payload: Mapping[str, object], key: str) -> str:
     if not value:
         raise ValueError(f"missing required field: {key}")
     return value
+
+
+def _required_text_value(value: object, field: str, maximum: int) -> str:
+    normalized = " ".join(str(value or "").split())
+    if not normalized:
+        raise ValueError(f"{field} must not be empty")
+    if len(normalized) > maximum:
+        raise ValueError(f"{field} must not exceed {maximum} characters")
+    return normalized
 
 
 def _timestamp(value: int | None) -> int:

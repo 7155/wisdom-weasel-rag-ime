@@ -10,6 +10,7 @@ import {
   Paperclip,
   PanelRightClose,
   Radar,
+  ShieldCheck,
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
@@ -61,6 +62,14 @@ export function RoomStatusPanel({
           {workItems.length ? <div className="room-status-work">{workItems.slice(0, 8).map((work) => <RoomWorkRow key={work.id} room={room} work={work} />)}</div> : <RoomStatusEmpty>当前 Room 还没有责任交接</RoomStatusEmpty>}
         </RoomStatusSection>
 
+        <RoomStatusSection count={3} icon={ShieldCheck} title="责任边界">
+          <div className="agent-status-files">
+            <RoomStatusRow detail="普通消息、@ 和询问都不会转移最终责任" icon={ShieldCheck} title="A · 最终验收" />
+            <RoomStatusRow detail="只有目标接受正式分派后才切换当前执行者" icon={GitBranch} title="R · 当前执行" />
+            <RoomStatusRow detail="责任深度 3 · 根任务分派 6 · 最多返修 2 次" icon={ListChecks} title="防循环上限" />
+          </div>
+        </RoomStatusSection>
+
         <RoomStatusSection count={activities.length} icon={GitBranch} title="关键步骤">
           {activities.length ? <div className="room-status-activities">{activities.slice(-8).map((activity) => {
             const participant = room?.participants.find((item) => item.id === activity.participantId);
@@ -84,8 +93,8 @@ export function RoomStatusPanel({
           {room?.workspaceRoots?.length ? <div className="agent-status-files">{room.workspaceRoots.map((path) => <RoomStatusRow detail={path} icon={FolderKanban} key={path} title={pathName(path)} />)}</div> : <RoomStatusEmpty>{room?.roomKind === 'roleplay' ? '角色群聊不绑定项目路径' : '这个旧 Room 尚未绑定项目路径'}</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={room?.participants.length ?? 0} icon={Bot} title="协作成员上下文">
-          {room?.participants.length ? <div className="room-status-participants">{room.participants.map((participant) => <RoomParticipantTelemetry key={participant.id} participant={participant} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
+        <RoomStatusSection count={room?.participants.filter((participant) => participant.status === 'active').length ?? 0} icon={Bot} title="协作成员上下文">
+          {room?.participants.some((participant) => participant.status === 'active') ? <div className="room-status-participants">{room.participants.filter((participant) => participant.status === 'active').map((participant) => <RoomParticipantTelemetry key={participant.id} participant={participant} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
         </RoomStatusSection>
 
         {room ? (
@@ -150,8 +159,9 @@ function RoomStatusRow({ icon: Icon, title, detail }: { icon: LucideIcon; title:
 function RoomWorkRow({ room, work }: { room?: RoomSummary; work: RoomWorkItem }) {
   const ownerId = work.offeredToParticipantId || work.currentOwnerParticipantId;
   const owner = room?.participants.find((participant) => participant.id === ownerId)?.displayName ?? '待接收';
+  const accountable = room?.participants.find((participant) => participant.id === work.accountableParticipantId)?.displayName ?? '未指定';
   const blocker = text(work.blocker.reason);
-  return <div className="room-status-work__item" data-state={work.state}><RoomWorkIcon work={work} /><span><strong>{work.objective}</strong><small>{roomWorkStateLabel(work.state)} · {owner}{work.revision ? ` · 第 ${work.revision} 次修订` : ''}{blocker ? ` · ${blocker}` : ''}</small></span></div>;
+  return <div className="room-status-work__item" data-state={work.state}><RoomWorkIcon work={work} /><span><strong>{work.objective}</strong><small>{roomWorkStateLabel(work.state)} · A 最终负责：{accountable} · R 当前执行：{owner}{work.revision ? ` · 第 ${work.revision} 次修订` : ''}{blocker ? ` · ${blocker}` : ''}</small></span></div>;
 }
 
 function RoomStatusEmpty({ children }: { children: ReactNode }) {

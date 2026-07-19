@@ -130,6 +130,7 @@ def agent_room_route(path: str) -> tuple[str, str]:
         "events",
         "messages",
         "snapshot",
+        "participants",
         "topics",
         "artifacts",
     }:

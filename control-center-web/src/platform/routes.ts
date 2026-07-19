@@ -384,6 +384,27 @@ export const CONTROL_ROUTES = {
       'moderatorParticipantId',
     ],
   },
+  'agent.room.participant.add': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/participants',
+    params: { roomId: null },
+    body: ['roleId', 'roleVersion', 'collaborationRole'],
+    requiredBody: ['roleId'],
+  },
+  'agent.room.participant.remove': {
+    method: 'PATCH',
+    path: '/api/agent/rooms/:roomId/participants',
+    params: { roomId: null },
+    body: ['participantId'],
+    requiredBody: ['participantId'],
+  },
+  'agent.room.delete': {
+    method: 'DELETE',
+    path: '/api/agent/rooms/:roomId',
+    params: { roomId: null },
+    body: ['confirmTitle'],
+    requiredBody: ['confirmTitle'],
+  },
   'agent.room.message': {
     method: 'POST',
     path: '/api/agent/rooms/:roomId/messages',

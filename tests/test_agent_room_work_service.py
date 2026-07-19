@@ -211,6 +211,78 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_http_routes_add_remove_and_permanently_delete_room_membership(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "HTTP 成员生命周期",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        wrapper = SimpleNamespace(
+            agent=self.service,
+            management_security_settings=lambda: {
+                "postRequiresJson": True,
+                "sameOriginOnly": True,
+                "requireToken": False,
+            },
+        )
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = wrapper
+        Handler.static_dir = self.root
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        room_path = quote(str(room["id"]), safe="")
+        base = f"http://127.0.0.1:{server.server_port}/api/agent/rooms/{room_path}"
+        try:
+            add = Request(
+                f"{base}/participants",
+                data=json.dumps({"roleId": "vcp-v1", "roleVersion": "1"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(add, timeout=5) as response:
+                added = json.load(response)
+            participant_id = str(added["participant"]["id"])
+            self.assertEqual(added["participant"]["displayName"], "智鼬·未来")
+
+            remove = Request(
+                f"{base}/participants",
+                data=json.dumps({"participantId": participant_id}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="PATCH",
+            )
+            with urlopen(remove, timeout=5) as response:
+                removed = json.load(response)
+            self.assertEqual(removed["participant"]["status"], "removed")
+
+            self.service.update_room(str(room["id"]), {"archived": True})
+            delete = Request(
+                base,
+                data=json.dumps({"confirmTitle": room["title"]}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="DELETE",
+            )
+            with urlopen(delete, timeout=5) as response:
+                deleted = json.load(response)
+            self.assertEqual(deleted["roomId"], room["id"])
+            self.assertNotIn(
+                room["id"],
+                [value["id"] for value in self.service.list_rooms({"includeArchived": True})["items"]],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_create_and_reassign_reject_participants_outside_the_room(self) -> None:
         owner = self.participants[0]
         second_room = self.service.create_room(
@@ -254,6 +326,48 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                     "targetParticipantId": outsider["id"],
                 },
             )
+
+    def test_active_room_snapshot_repairs_legacy_archived_participant_sessions(
+        self,
+    ) -> None:
+        session_id = str(self.participants[0]["sessionId"])
+        self.service.sessions.archive(session_id, archived=True)
+
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "archived")
+        snapshot = self.service.room_snapshot(str(self.room["id"]))
+
+        self.assertTrue(snapshot["ok"])
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
+
+    def test_restoring_room_repairs_participant_sessions_archived_while_room_was_closed(
+        self,
+    ) -> None:
+        room_id = str(self.room["id"])
+        session_ids = [str(value["sessionId"]) for value in self.participants]
+
+        archived = self.service.update_room(room_id, {"archived": True})
+        self.assertEqual(archived["room"]["status"], "archived")
+        self.assertEqual(
+            [self.service.sessions.get(value)["status"] for value in session_ids],
+            ["idle"] * len(session_ids),
+        )
+        self.service.update_session(session_ids[0], {"archived": True})
+        self.assertEqual(self.service.sessions.get(session_ids[0])["status"], "archived")
+
+        restored = self.service.update_room(room_id, {"archived": False})
+        self.assertEqual(restored["room"]["status"], "active")
+        self.assertEqual(
+            [self.service.sessions.get(value)["status"] for value in session_ids],
+            ["idle"] * len(session_ids),
+        )
+
+    def test_room_participant_session_cannot_be_archived_directly(self) -> None:
+        session_id = str(self.participants[0]["sessionId"])
+
+        with self.assertRaisesRegex(ValueError, "cannot be archived directly"):
+            self.service.update_session(session_id, {"archived": True})
+
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
 
     def test_create_idempotency_rejects_changed_task_constraints(self) -> None:
         owner, accountable, _ = self.participants
