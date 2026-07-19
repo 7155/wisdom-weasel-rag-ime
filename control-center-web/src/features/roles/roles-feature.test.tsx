@@ -39,6 +39,32 @@ describe('Roles experience', () => {
     await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining(['agent.roles.list', 'agent.subagents.templates'])));
   });
 
+  it('separates the four Agent Definition layers and keeps new catalogs read only', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.subagents.templates': { ok: true, items: previewTemplates },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    expect(await screen.findByRole('radio', { name: '角色' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '协作岗位' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '角色书' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Agent 模板' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: '协作岗位' }));
+    expect(screen.getAllByText('研究员')).not.toHaveLength(0);
+    expect(screen.getByText('提交发现、证据和未解决缺口')).toBeInTheDocument();
+    expect(screen.getByText(/协作岗位 · 只读基线/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /创建协作岗位/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: '角色书' }));
+    expect(screen.getAllByText('证据研究与独立复核')).toHaveLength(2);
+    expect(screen.getByText('研究员 · 审查员')).toBeInTheDocument();
+    expect(screen.getByText('只能收窄已授权能力')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /启用角色书/ })).not.toBeInTheDocument();
+  });
+
   it('creates a Session with the selected Persona and navigates to it', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({ routes: {
@@ -131,7 +157,7 @@ describe('Roles experience', () => {
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     await screen.findByText(persona.tagline);
-    await user.click(screen.getByRole('radio', { name: '角色书' }));
+    await user.click(screen.getByRole('button', { name: '查看成长档案' }));
     const lesson = await screen.findByRole('checkbox', { name: /工具返回缺失字段时先验证边界契约/ });
     const previewButton = screen.getByRole('button', { name: '预览启用' });
     expect(previewButton).toBeDisabled();
@@ -147,7 +173,7 @@ describe('Roles experience', () => {
     await user.click(screen.getByRole('checkbox', { name: /下一轮发布前完成端到端回归/ }));
     await user.click(previewButton);
 
-    const dialog = await screen.findByRole('dialog', { name: '启用角色书修订' });
+    const dialog = await screen.findByRole('dialog', { name: '启用成长档案修订' });
     expect(dialog).toHaveTextContent('R1 确认');
     expect(dialog).toHaveTextContent('采用 1 条能力证据');
     expect(dialog).toHaveTextContent('沟通时先给出具体例子');

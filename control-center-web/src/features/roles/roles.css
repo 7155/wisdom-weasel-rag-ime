@@ -38,6 +38,20 @@
 .role-runtime-defaults > .ui-button { justify-self: end; }
 .role-runtime-defaults > p { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--color-text-tertiary); font-size: 13px; line-height: 1.5; }
 .template-list { display: grid; align-content: start; gap: 5px; }
+.definition-list { display: grid; align-content: start; gap: 5px; }
+.definition-list > button { display: grid; min-height: 70px; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid transparent; border-radius: var(--radius-2); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.definition-list > button:hover { background: var(--color-surface-hover); }
+.definition-list > button[aria-current='true'] { border-color: var(--color-border); background: var(--color-surface); }
+.definition-list > button > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: var(--radius-2); background: var(--color-success-soft); color: var(--color-success); }
+.definition-list > button > div { display: grid; min-width: 0; gap: 3px; }
+.definition-list strong { font-size: 13px; }
+.definition-list small { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.definition-inspector { align-content: start; }
+.definition-responsibilities { display: grid; gap: 7px; border-top: 1px solid var(--color-border); padding-top: 14px; }
+.definition-responsibilities header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.definition-responsibilities header strong { font-size: 13px; }
+.definition-responsibilities header small { color: var(--color-text-tertiary); font-size: 13px; }
+.definition-responsibilities p { margin: 0; border-left: 2px solid var(--color-border-strong); padding-left: 9px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
 .template-list > button { display: grid; min-height: 66px; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid transparent; border-radius: var(--radius-2); background: transparent; text-align: left; cursor: pointer; }
 .template-list > button:hover { background: var(--color-surface-hover); }
 .template-list > button[aria-current='true'] { border-color: var(--color-border); background: var(--color-surface); }

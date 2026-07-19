@@ -6616,6 +6616,359 @@ export const contractSchemas = {
       }
     }
   },
+  "collaboration-profile.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.collaboration-profile.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "profileId",
+      "version",
+      "displayName",
+      "summary",
+      "collaborationRoleRefs",
+      "capabilityRequests",
+      "requiredGateIds",
+      "promptGuidance",
+      "trustTier"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.collaboration-profile.v1"
+      },
+      "profileId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+      },
+      "version": {
+        "type": "string",
+        "pattern": "^[1-9][0-9]{0,5}$"
+      },
+      "displayName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "collaborationRoleRefs": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}@[1-9][0-9]{0,5}$"
+        }
+      },
+      "capabilityRequests": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "rag",
+            "memory",
+            "planning",
+            "review",
+            "control",
+            "delegation"
+          ]
+        }
+      },
+      "requiredGateIds": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,80}$"
+        }
+      },
+      "promptGuidance": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      },
+      "trustTier": {
+        "type": "string",
+        "enum": [
+          "builtin",
+          "signed",
+          "local-untrusted"
+        ]
+      }
+    }
+  },
+  "collaboration-role.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.collaboration-role.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "roleId",
+      "version",
+      "displayName",
+      "summary",
+      "responsibilities",
+      "entryConditions",
+      "exitConditions",
+      "allowedCommitDecisions",
+      "capabilityRestrictions"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.collaboration-role.v1"
+      },
+      "roleId": {
+        "type": "string",
+        "enum": [
+          "coordinator",
+          "researcher",
+          "implementer",
+          "reviewer",
+          "specialist"
+        ]
+      },
+      "version": {
+        "type": "string",
+        "const": "1"
+      },
+      "displayName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      },
+      "responsibilities": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "entryConditions": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "exitConditions": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "allowedCommitDecisions": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 4,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "dispatch",
+            "wait",
+            "blocked",
+            "complete"
+          ]
+        }
+      },
+      "capabilityRestrictions": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "rag",
+            "memory",
+            "planning",
+            "review",
+            "control",
+            "delegation"
+          ]
+        }
+      }
+    }
+  },
+  "compiled-agent-runtime-profile.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.compiled-agent-runtime-profile.v1",
+    "$defs": {
+      "definitionRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "id",
+          "version",
+          "contentHash"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "persona",
+              "collaboration-role",
+              "agent-template",
+              "collaboration-profile"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,5}$"
+          },
+          "contentHash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "compilerVersion",
+      "personaRef",
+      "collaborationRoleRef",
+      "templateRef",
+      "collaborationProfileRef",
+      "effectiveCapabilities",
+      "rejectedCapabilities",
+      "capabilityRevision",
+      "promptPlanRevision",
+      "skillPolicyRevision",
+      "contextPolicyRevision",
+      "contentHash"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.compiled-agent-runtime-profile.v1"
+      },
+      "compilerVersion": {
+        "type": "string",
+        "const": "agent-definition-compiler-v1"
+      },
+      "personaRef": {
+        "$ref": "#/$defs/definitionRef"
+      },
+      "collaborationRoleRef": {
+        "$ref": "#/$defs/definitionRef"
+      },
+      "templateRef": {
+        "$ref": "#/$defs/definitionRef"
+      },
+      "collaborationProfileRef": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/definitionRef"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "effectiveCapabilities": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "rag",
+            "memory",
+            "planning",
+            "review",
+            "control",
+            "delegation"
+          ]
+        }
+      },
+      "rejectedCapabilities": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "rag",
+            "memory",
+            "planning",
+            "review",
+            "control",
+            "delegation"
+          ]
+        }
+      },
+      "capabilityRevision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "promptPlanRevision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "skillPolicyRevision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "contextPolicyRevision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "contentHash": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      }
+    }
+  },
   "control-tool-manifest.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.control-tool-manifest.v1",

@@ -52,6 +52,9 @@ import type { AgentToolResultV1 } from './generated/agent-tool-result.v1';
 import type { AgentWorkflowStateV1 } from './generated/agent-workflow-state.v1';
 import type { AssistantCandidateActionV1 } from './generated/assistant-candidate-action.v1';
 import type { AssistantOverlayV1 } from './generated/assistant-overlay.v1';
+import type { CollaborationProfileV1 } from './generated/collaboration-profile.v1';
+import type { CollaborationRoleV1 } from './generated/collaboration-role.v1';
+import type { CompiledAgentRuntimeProfileV1 } from './generated/compiled-agent-runtime-profile.v1';
 import type { ControlToolManifestV1 } from './generated/control-tool-manifest.v1';
 import type { DailyActivityTimelineV1 } from './generated/daily-activity-timeline.v1';
 import type { DailyConversationDigestV1 } from './generated/daily-conversation-digest.v1';
@@ -138,6 +141,9 @@ export type {
   AgentWorkflowStateV1,
   AssistantCandidateActionV1,
   AssistantOverlayV1,
+  CollaborationProfileV1,
+  CollaborationRoleV1,
+  CompiledAgentRuntimeProfileV1,
   ControlToolManifestV1,
   DailyActivityTimelineV1,
   DailyConversationDigestV1,
@@ -225,6 +231,9 @@ export interface ContractTypeMap {
   'agent-workflow-state.v1': AgentWorkflowStateV1;
   'assistant-candidate-action.v1': AssistantCandidateActionV1;
   'assistant-overlay.v1': AssistantOverlayV1;
+  'collaboration-profile.v1': CollaborationProfileV1;
+  'collaboration-role.v1': CollaborationRoleV1;
+  'compiled-agent-runtime-profile.v1': CompiledAgentRuntimeProfileV1;
   'control-tool-manifest.v1': ControlToolManifestV1;
   'daily-activity-timeline.v1': DailyActivityTimelineV1;
   'daily-conversation-digest.v1': DailyConversationDigestV1;
