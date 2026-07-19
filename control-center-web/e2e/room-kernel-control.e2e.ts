@@ -15,13 +15,20 @@ test('Room control plane stays readable and target Stop remains reachable', asyn
   expect(overflow.document).toBeLessThanOrEqual(1);
   expect(overflow.body).toBeLessThanOrEqual(1);
 
-  await page.getByRole('button', { name: '停止' }).first().click();
+  const stopButton = page.getByRole('button', { name: '停止' }).first();
+  await stopButton.focus();
+  await page.keyboard.press('Enter');
   const stop = await page.locator('body').getAttribute('data-last-stop');
-  expect(JSON.parse(stop ?? '{}')).toEqual({
+  expect(JSON.parse(stop ?? '{}')).toMatchObject({
+    schemaVersion: 'wisdom-weasel.room-kernel-command.v1',
+    commandKind: 'cancel_root',
     roomId: 'room-kernel-qa',
     rootId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
+    targetKind: 'root',
+    targetId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
     generation: 3,
   });
+  await expect(plane).toContainText('root_cancelled/applied');
 
   await page.screenshot({ path: test.info().outputPath('room-kernel-control.png'), fullPage: true });
 });

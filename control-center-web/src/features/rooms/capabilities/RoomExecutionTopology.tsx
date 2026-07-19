@@ -8,7 +8,7 @@ export function RoomExecutionTopology({
   roots,
   tasksByRootId,
 }: {
-  roots: RootProjection[];
+  roots: Array<Pick<RootProjection, 'rootId' | 'generation' | 'state' | 'isFinal'>>;
   tasksByRootId: Record<string, RoomTaskProjectionFixture[]>;
   dispatchesByRootId: Record<string, RoomDispatchProjectionFixture[]>;
 }) {

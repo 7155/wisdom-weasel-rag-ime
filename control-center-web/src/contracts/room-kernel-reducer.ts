@@ -1,24 +1,14 @@
-/**
- * Temporary Room V2 projection fixtures. These types intentionally do not
- * duplicate lane A's wire schemas; the reducer will consume generated v2
- * contracts after the merge window.
- */
+import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
+import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
+import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
+import type { RoomPostV2 } from './generated/room-post.v2';
+import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
+import type { RoomTaskV2 } from './generated/room-task.v2';
+import { parseContract } from './validators';
 
-export type RootState = 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 export type SessionState = 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
-export type RoomPostProjection = {
-  postId: string;
-  roomId: string;
-  rootId: string | null;
-  sequence: number;
-  authorParticipantId: string | null;
-  kind: 'user_request' | 'answer' | 'finding' | 'decision' | 'question' | 'result' | 'blocker' | 'announcement';
-  visibility: 'room' | 'participants';
-  content: string;
-  createdAtMs: number;
-};
-
+/** Session is a private inspector read model. It is never promoted to a RoomPost. */
 export type PrivateSessionProjection = {
   sessionId: string;
   rootId: string | null;
@@ -27,34 +17,10 @@ export type PrivateSessionProjection = {
   updatedAtMs: number;
 };
 
-export type RootTerminalReceiptProjection = {
-  receiptId: string;
-  rootId: string;
-  generation: number;
-  terminalState: Extract<RootState, 'completed' | 'failed' | 'cancelled'>;
-  quiescent: boolean;
-  acceptancePassed: boolean;
-};
-
-export type RootProjection = {
-  rootId: string;
-  generation: number;
-  state: RootState;
-  ownerParticipantId: string | null;
+export type RootProjection = RoomRootExecutionV2 & {
+  /** Computed by the adapter from an authoritative, matching terminal receipt. */
   isFinal: boolean;
   updatedAtMs: number;
-};
-
-export type RootStopRequestProjection = {
-  generation: number;
-  idempotencyKey: string;
-  requestedAtMs: number;
-  state: 'requested' | 'acknowledged';
-};
-
-export type RootRuntimeProjection = {
-  generation: number;
-  stopRequest: RootStopRequestProjection | null;
 };
 
 export type RoomKernelDiagnostic = {
@@ -69,314 +35,239 @@ export type RoomKernelProjection = {
   snapshotHash: string;
   needsSnapshot: boolean;
   gap: { expectedSequence: number; receivedSequence: number } | null;
-  postsById: Record<string, RoomPostProjection>;
+  rootsById: Record<string, RootProjection>;
+  tasksById: Record<string, RoomTaskV2>;
+  dispatchesById: Record<string, RoomDispatchEnvelopeV2>;
+  postsById: Record<string, RoomPostV2>;
   postOrder: string[];
   sessionsById: Record<string, PrivateSessionProjection>;
-  rootsById: Record<string, RootProjection>;
-  terminalReceiptsByRootId: Record<string, RootTerminalReceiptProjection>;
-  runtimeByRootId: Record<string, RootRuntimeProjection>;
+  receiptsById: Record<string, RoomKernelReceiptV1>;
+  terminalReceiptByRootId: Record<string, RoomKernelReceiptV1>;
+  cancelReceiptByRootId: Record<string, RoomKernelReceiptV1>;
   diagnostics: RoomKernelDiagnostic[];
 };
 
-export type RoomKernelEventFixture = {
-  schemaVersion: 'room-kernel-ui-fixture.v1';
-  eventId: string;
-  roomId: string;
-  sequence: number;
-  eventType:
-    | 'post_published'
-    | 'session_state_changed'
-    | 'root_state_changed'
-    | 'root_terminal_receipt'
-    | 'root_stop_acknowledged'
-    | 'legacy_message_completed'
-    | 'legacy_turn_completed';
-  createdAtMs: number;
-  payload: Record<string, unknown>;
-};
-
-export type RoomKernelSnapshotFixture = {
-  schemaVersion: 'room-kernel-ui-fixture.v1';
+export type RoomKernelSnapshot = {
   roomId: string;
   lastSequence: number;
   snapshotHash: string;
-  roots: Array<Omit<RootProjection, 'isFinal' | 'updatedAtMs'>>;
-  sessions: Array<Omit<PrivateSessionProjection, 'updatedAtMs'>>;
-  posts: RoomPostProjection[];
-  terminalReceipts: RootTerminalReceiptProjection[];
+  roots: RoomRootExecutionV2[];
+  tasks: RoomTaskV2[];
+  dispatches: RoomDispatchEnvelopeV2[];
+  posts: RoomPostV2[];
+  sessions: PrivateSessionProjection[];
+  receipts: RoomKernelReceiptV1[];
 };
 
 export type RoomKernelReduction = {
   state: RoomKernelProjection;
-  disposition: 'applied' | 'ignored-foreign' | 'ignored-duplicate' | 'ignored-snapshot-pending' | 'snapshot-required';
+  disposition: 'applied' | 'ignored-duplicate' | 'ignored-snapshot-pending' | 'snapshot-required';
 };
 
 export function createRoomKernelProjection(roomId: string): RoomKernelProjection {
   return {
-    roomId,
+    roomId: requiredText(roomId, 'roomId'),
     lastSequence: 0,
     snapshotHash: '',
     needsSnapshot: false,
     gap: null,
+    rootsById: {},
+    tasksById: {},
+    dispatchesById: {},
     postsById: {},
     postOrder: [],
     sessionsById: {},
-    rootsById: {},
-    terminalReceiptsByRootId: {},
-    runtimeByRootId: {},
+    receiptsById: {},
+    terminalReceiptByRootId: {},
+    cancelReceiptByRootId: {},
     diagnostics: [],
   };
 }
 
 export function reduceRoomKernelEvent(
   state: RoomKernelProjection,
-  event: RoomKernelEventFixture,
+  input: RoomEventEnvelopeV2,
 ): RoomKernelReduction {
-  if (event.roomId !== state.roomId) return { state, disposition: 'ignored-foreign' };
+  const event = parseContract('room-event-envelope.v2', input);
   if (event.sequence <= state.lastSequence) return { state, disposition: 'ignored-duplicate' };
   if (state.needsSnapshot) return { state, disposition: 'ignored-snapshot-pending' };
   if (state.lastSequence > 0 && event.sequence !== state.lastSequence + 1) {
     return {
-      state: {
-        ...state,
-        needsSnapshot: true,
-        gap: { expectedSequence: state.lastSequence + 1, receivedSequence: event.sequence },
-      },
+      state: { ...state, needsSnapshot: true, gap: { expectedSequence: state.lastSequence + 1, receivedSequence: event.sequence } },
       disposition: 'snapshot-required',
     };
   }
 
   const next = cloneProjection(state);
   next.lastSequence = event.sequence;
-  switch (event.eventType) {
-    case 'post_published':
-      applyPost(next, event.payload.post);
-      break;
-    case 'session_state_changed':
-      applySessionState(next, event.payload, event.createdAtMs, event.eventId);
-      break;
-    case 'root_state_changed':
-      applyRootState(next, event.payload, event.createdAtMs, event.eventId);
-      break;
-    case 'root_terminal_receipt':
-      applyTerminalReceipt(next, event.payload.receipt, event.eventId);
-      break;
-    case 'root_stop_acknowledged':
-      applyStopAcknowledged(next, event.payload, event.eventId);
-      break;
-    case 'legacy_message_completed':
-    case 'legacy_turn_completed':
-      appendDiagnostic(next, {
-        eventId: event.eventId,
-        kind: 'legacy-private-event',
-        summary: `${event.eventType} is not a RoomPost or Root terminal receipt`,
-      });
-      break;
+  const eventId = `${event.entityKind}:${event.entityId}:${event.sequence}`;
+  try {
+    applyCanonicalEvent(next, event, eventId);
+  } catch (error) {
+    appendDiagnostic(next, { eventId, kind: 'invalid-event', summary: publicError(error) });
   }
   return { state: next, disposition: 'applied' };
 }
 
 export function applyRoomKernelSnapshot(
   state: RoomKernelProjection,
-  snapshot: RoomKernelSnapshotFixture,
+  snapshot: RoomKernelSnapshot,
 ): RoomKernelProjection {
   if (snapshot.roomId !== state.roomId) throw new TypeError('Room snapshot belongs to another Room');
   const next = createRoomKernelProjection(state.roomId);
   next.lastSequence = nonNegativeInteger(snapshot.lastSequence, 'lastSequence');
   next.snapshotHash = requiredText(snapshot.snapshotHash, 'snapshotHash');
-  for (const root of snapshot.roots) {
-    const rootId = requiredText(root.rootId, 'rootId');
-    const generation = nonNegativeInteger(root.generation, 'generation');
-    next.rootsById[rootId] = {
-      ...root,
-      rootId,
-      generation,
-      ownerParticipantId: optionalText(root.ownerParticipantId),
-      isFinal: false,
-      updatedAtMs: 0,
-    };
-    next.runtimeByRootId[rootId] = { generation, stopRequest: null };
-  }
-  for (const session of snapshot.sessions) {
-    const sessionId = requiredText(session.sessionId, 'sessionId');
-    next.sessionsById[sessionId] = { ...session, sessionId, updatedAtMs: 0 };
-  }
+  for (const root of snapshot.roots) applyRoot(next, root, 0, 'snapshot');
+  for (const task of snapshot.tasks) applyTask(next, task, 'snapshot');
+  for (const dispatch of snapshot.dispatches) applyDispatch(next, dispatch, 'snapshot');
   for (const post of snapshot.posts) applyPost(next, post);
-  for (const receipt of snapshot.terminalReceipts) applyTerminalReceipt(next, receipt, 'snapshot');
+  for (const session of snapshot.sessions) applySession(next, session, 'snapshot');
+  for (const receipt of snapshot.receipts) applyReceipt(next, receipt, 'snapshot');
   return next;
 }
 
-export function requestRootStop(
-  state: RoomKernelProjection,
-  request: {
-    rootId: string;
-    generation: number;
-    idempotencyKey: string;
-    requestedAtMs: number;
-  },
-): RoomKernelProjection {
-  const rootId = requiredText(request.rootId, 'rootId');
-  const root = state.rootsById[rootId];
-  if (!root) throw new TypeError('Cannot Stop an unknown Root');
-  if (root.generation !== request.generation) throw new TypeError('Stop generation does not match Root');
-  if (root.isFinal) throw new TypeError('Cannot Stop a final Root');
-  const runtime = state.runtimeByRootId[rootId] ?? { generation: root.generation, stopRequest: null };
-  if (runtime.stopRequest?.idempotencyKey === request.idempotencyKey) return state;
-  if (runtime.stopRequest?.state === 'requested') throw new TypeError('Root already has a pending Stop');
-  const next = cloneProjection(state);
-  next.runtimeByRootId[rootId] = {
-    generation: root.generation,
-    stopRequest: {
-      generation: root.generation,
-      idempotencyKey: requiredText(request.idempotencyKey, 'idempotencyKey'),
-      requestedAtMs: nonNegativeInteger(request.requestedAtMs, 'requestedAtMs'),
-      state: 'requested',
-    },
-  };
-  return next;
+function applyCanonicalEvent(state: RoomKernelProjection, event: RoomEventEnvelopeV2, eventId: string): void {
+  if (event.eventKind === 'legacy_message_completed' || event.eventKind === 'legacy_turn_completed') {
+    appendDiagnostic(state, {
+      eventId,
+      kind: 'legacy-private-event',
+      summary: `${event.eventKind} is private and cannot publish a RoomPost`,
+    });
+    return;
+  }
+  switch (`${event.entityKind}:${event.eventKind}`) {
+    case 'root:upserted':
+    case 'root:state_changed':
+      applyRoot(state, event.payload.root, event.occurredAtMs, eventId);
+      return;
+    case 'root:kernel_receipt':
+      applyReceipt(state, event.payload.receipt, eventId);
+      return;
+    case 'task:upserted':
+    case 'task:state_changed':
+      applyTask(state, event.payload.task, eventId);
+      return;
+    case 'dispatch:upserted':
+    case 'dispatch:state_changed':
+      applyDispatch(state, event.payload.dispatch, eventId);
+      return;
+    case 'post:published':
+      applyPost(state, event.payload.post);
+      return;
+    case 'binding:session_projection':
+      applySession(state, event.payload.session, eventId);
+      return;
+    default:
+      throw new TypeError(`Unsupported Room kernel event: ${event.entityKind}:${event.eventKind}`);
+  }
+}
+
+function applyRoot(state: RoomKernelProjection, value: unknown, updatedAtMs: number, eventId: string): void {
+  const root = parseContract('room-root-execution.v2', value);
+  if (root.roomId !== state.roomId) throw new TypeError('Root belongs to another Room');
+  const current = state.rootsById[root.rootId];
+  if (current && root.generation < current.generation) {
+    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Stale Root projection ignored' });
+    return;
+  }
+  if (current && root.generation === current.generation && updatedAtMs < current.updatedAtMs) {
+    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Out-of-order Root projection ignored' });
+    return;
+  }
+  if (!current || root.generation !== current.generation) {
+    delete state.terminalReceiptByRootId[root.rootId];
+    delete state.cancelReceiptByRootId[root.rootId];
+  }
+  state.rootsById[root.rootId] = { ...root, isFinal: false, updatedAtMs };
+  reconcileFinal(state, root.rootId);
+}
+
+function applyTask(state: RoomKernelProjection, value: unknown, eventId: string): void {
+  const task = parseContract('room-task.v2', value);
+  const root = state.rootsById[task.rootId];
+  if (!root) throw new TypeError('Task has no projected Root');
+  const current = state.tasksById[task.taskId];
+  if (current && task.revision < current.revision) {
+    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Stale Task revision ignored' });
+    return;
+  }
+  state.tasksById[task.taskId] = task;
+}
+
+function applyDispatch(state: RoomKernelProjection, value: unknown, eventId: string): void {
+  const dispatch = parseContract('room-dispatch-envelope.v2', value);
+  const root = state.rootsById[dispatch.rootId];
+  if (!root || dispatch.generation !== root.generation) {
+    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Dispatch generation does not match Root' });
+    return;
+  }
+  state.dispatchesById[dispatch.dispatchId] = dispatch;
 }
 
 function applyPost(state: RoomKernelProjection, value: unknown): void {
-  const post = record(value);
-  const postId = requiredText(post.postId, 'postId');
-  const roomId = requiredText(post.roomId, 'post.roomId');
-  if (roomId !== state.roomId) throw new TypeError('RoomPost belongs to another Room');
-  const visibility = post.visibility;
-  if (visibility !== 'room' && visibility !== 'participants') {
-    throw new TypeError('RoomPost visibility is invalid');
-  }
-  const kind = post.kind;
-  if (!isPostKind(kind)) throw new TypeError('RoomPost kind is invalid');
-  const projection: RoomPostProjection = {
-    postId,
-    roomId,
-    rootId: optionalText(post.rootId),
-    sequence: nonNegativeInteger(post.sequence, 'post.sequence'),
-    authorParticipantId: optionalText(post.authorParticipantId),
-    kind,
-    visibility,
-    content: requiredText(post.content, 'post.content'),
-    createdAtMs: nonNegativeInteger(post.createdAtMs, 'post.createdAtMs'),
-  };
-  if (!state.postsById[postId]) state.postOrder.push(postId);
-  state.postsById[postId] = projection;
+  const post = parseContract('room-post.v2', value);
+  if (post.roomId !== state.roomId) throw new TypeError('RoomPost belongs to another Room');
+  const root = state.rootsById[post.rootId];
+  if (!root || post.generation !== root.generation) throw new TypeError('RoomPost generation does not match Root');
+  if (!state.postsById[post.postId]) state.postOrder.push(post.postId);
+  state.postsById[post.postId] = post;
 }
 
-function applySessionState(
-  state: RoomKernelProjection,
-  payload: Record<string, unknown>,
-  createdAtMs: number,
-  eventId: string,
-): void {
-  try {
-    const sessionId = requiredText(payload.sessionId, 'sessionId');
-    const generation = nonNegativeInteger(payload.generation, 'generation');
-    const current = state.sessionsById[sessionId];
-    if (current && generation < current.generation) {
-      appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Stale Session state ignored' });
-      return;
-    }
-    const sessionState = payload.state;
-    if (!isSessionState(sessionState)) throw new TypeError('Session state is invalid');
-    state.sessionsById[sessionId] = {
-      sessionId,
-      rootId: optionalText(payload.rootId),
-      generation,
-      state: sessionState,
-      updatedAtMs: createdAtMs,
-    };
-  } catch (error) {
-    appendDiagnostic(state, { eventId, kind: 'invalid-event', summary: publicError(error) });
+function applySession(state: RoomKernelProjection, value: unknown, eventId: string): void {
+  const session = privateSession(value);
+  const root = session.rootId ? state.rootsById[session.rootId] : undefined;
+  if (root && session.generation !== root.generation) {
+    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Session generation does not match Root' });
+    return;
   }
+  const current = state.sessionsById[session.sessionId];
+  if (current && (session.generation < current.generation || session.updatedAtMs < current.updatedAtMs)) {
+    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Stale Session projection ignored' });
+    return;
+  }
+  state.sessionsById[session.sessionId] = session;
 }
 
-function applyRootState(
-  state: RoomKernelProjection,
-  payload: Record<string, unknown>,
-  createdAtMs: number,
-  eventId: string,
-): void {
-  try {
-    const rootId = requiredText(payload.rootId, 'rootId');
-    const generation = nonNegativeInteger(payload.generation, 'generation');
-    const current = state.rootsById[rootId];
-    if (current && generation < current.generation) {
-      appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Stale Root state ignored' });
-      return;
-    }
-    const rootState = payload.state;
-    if (!isRootState(rootState)) throw new TypeError('Root state is invalid');
-    const generationChanged = current?.generation !== generation;
-    state.rootsById[rootId] = {
-      rootId,
-      generation,
-      state: rootState,
-      ownerParticipantId: optionalText(payload.ownerParticipantId),
-      isFinal: generationChanged ? false : current?.isFinal ?? false,
-      updatedAtMs: createdAtMs,
-    };
-    if (generationChanged) {
-      delete state.terminalReceiptsByRootId[rootId];
-      state.runtimeByRootId[rootId] = { generation, stopRequest: null };
-    }
-  } catch (error) {
-    appendDiagnostic(state, { eventId, kind: 'invalid-event', summary: publicError(error) });
+function applyReceipt(state: RoomKernelProjection, value: unknown, eventId: string): void {
+  const receipt = parseContract('room-kernel-receipt.v1', value);
+  if (!receipt.rootId) return;
+  const root = state.rootsById[receipt.rootId];
+  if (!root || receipt.generation !== root.generation) {
+    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Kernel receipt generation does not match Root' });
+    return;
   }
+  state.receiptsById[receipt.receiptId] = receipt;
+  if (receipt.receiptKind === 'terminal') state.terminalReceiptByRootId[receipt.rootId] = receipt;
+  if (receipt.receiptKind === 'root_cancelled' || receipt.receiptKind === 'target_cancelled') {
+    state.cancelReceiptByRootId[receipt.rootId] = receipt;
+  }
+  reconcileFinal(state, receipt.rootId);
 }
 
-function applyTerminalReceipt(
-  state: RoomKernelProjection,
-  value: unknown,
-  eventId: string,
-): void {
-  const receipt = record(value);
-  const rootId = optionalText(receipt.rootId);
-  const root = rootId ? state.rootsById[rootId] : undefined;
-  const generation = integer(receipt.generation);
-  if (!rootId || !root || generation === null || generation !== root.generation) {
-    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Unmatched Root terminal receipt ignored' });
-    return;
-  }
-  const terminalState = receipt.terminalState;
-  if (!isTerminalState(terminalState) || receipt.quiescent !== true) {
-    appendDiagnostic(state, { eventId, kind: 'invalid-event', summary: 'Root terminal receipt is incomplete' });
-    return;
-  }
-  if (terminalState === 'completed' && receipt.acceptancePassed !== true) {
-    appendDiagnostic(state, { eventId, kind: 'invalid-event', summary: 'Completed Root has no acceptance receipt' });
-    return;
-  }
-  const projection: RootTerminalReceiptProjection = {
-    receiptId: requiredText(receipt.receiptId, 'receiptId'),
-    rootId,
-    generation,
-    terminalState,
-    quiescent: true,
-    acceptancePassed: receipt.acceptancePassed === true,
-  };
-  state.terminalReceiptsByRootId[rootId] = projection;
-  state.rootsById[rootId] = { ...root, state: terminalState, isFinal: true };
+function reconcileFinal(state: RoomKernelProjection, rootId: string): void {
+  const root = state.rootsById[rootId];
+  if (!root) return;
+  const receipt = state.terminalReceiptByRootId[rootId];
+  const terminal = Boolean(
+    receipt
+      && receipt.status === 'applied'
+      && receipt.generation === root.generation
+      && root.terminalReceiptId === receipt.receiptId
+      && ['completed', 'failed', 'cancelled', 'cancelled_with_unknowns'].includes(root.state),
+  );
+  state.rootsById[rootId] = { ...root, isFinal: terminal };
 }
 
-function applyStopAcknowledged(
-  state: RoomKernelProjection,
-  payload: Record<string, unknown>,
-  eventId: string,
-): void {
-  const rootId = optionalText(payload.rootId);
-  const generation = integer(payload.generation);
-  const runtime = rootId ? state.runtimeByRootId[rootId] : undefined;
-  if (!rootId || generation === null || !runtime || runtime.generation !== generation) {
-    appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Unmatched Stop acknowledgement ignored' });
-    return;
-  }
-  if (!runtime.stopRequest || runtime.stopRequest.idempotencyKey !== payload.idempotencyKey) {
-    appendDiagnostic(state, { eventId, kind: 'invalid-event', summary: 'Stop acknowledgement has no request' });
-    return;
-  }
-  state.runtimeByRootId[rootId] = {
-    ...runtime,
-    stopRequest: { ...runtime.stopRequest, state: 'acknowledged' },
+function privateSession(value: unknown): PrivateSessionProjection {
+  const item = record(value);
+  const sessionState = item.state;
+  if (!isSessionState(sessionState)) throw new TypeError('Session state is invalid');
+  return {
+    sessionId: requiredText(item.sessionId, 'sessionId'),
+    rootId: optionalText(item.rootId),
+    generation: nonNegativeInteger(item.generation, 'generation'),
+    state: sessionState,
+    updatedAtMs: nonNegativeInteger(item.updatedAtMs, 'updatedAtMs'),
   };
 }
 
@@ -384,15 +275,15 @@ function cloneProjection(state: RoomKernelProjection): RoomKernelProjection {
   return {
     ...state,
     gap: state.gap ? { ...state.gap } : null,
+    rootsById: { ...state.rootsById },
+    tasksById: { ...state.tasksById },
+    dispatchesById: { ...state.dispatchesById },
     postsById: { ...state.postsById },
     postOrder: [...state.postOrder],
     sessionsById: { ...state.sessionsById },
-    rootsById: { ...state.rootsById },
-    terminalReceiptsByRootId: { ...state.terminalReceiptsByRootId },
-    runtimeByRootId: Object.fromEntries(Object.entries(state.runtimeByRootId).map(([rootId, runtime]) => [
-      rootId,
-      { ...runtime, stopRequest: runtime.stopRequest ? { ...runtime.stopRequest } : null },
-    ])),
+    receiptsById: { ...state.receiptsById },
+    terminalReceiptByRootId: { ...state.terminalReceiptByRootId },
+    cancelReceiptByRootId: { ...state.cancelReceiptByRootId },
     diagnostics: [...state.diagnostics],
   };
 }
@@ -403,9 +294,7 @@ function appendDiagnostic(state: RoomKernelProjection, diagnostic: RoomKernelDia
 }
 
 function record(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function requiredText(value: unknown, field: string): string {
@@ -424,27 +313,10 @@ function nonNegativeInteger(value: unknown, field: string): number {
   return Number(value);
 }
 
-function integer(value: unknown): number | null {
-  return Number.isInteger(value) ? Number(value) : null;
-}
-
 function publicError(error: unknown): string {
   return error instanceof Error ? error.message : 'Invalid Room event';
 }
 
-function isRootState(value: unknown): value is RootState {
-  return ['queued', 'running', 'waiting', 'completed', 'failed', 'cancelled'].includes(String(value));
-}
-
-function isTerminalState(value: unknown): value is RootTerminalReceiptProjection['terminalState'] {
-  return ['completed', 'failed', 'cancelled'].includes(String(value));
-}
-
 function isSessionState(value: unknown): value is SessionState {
   return ['idle', 'queued', 'running', 'completed', 'failed', 'cancelled'].includes(String(value));
-}
-
-function isPostKind(value: unknown): value is RoomPostProjection['kind'] {
-  return ['user_request', 'answer', 'finding', 'decision', 'question', 'result', 'blocker', 'announcement']
-    .includes(String(value));
 }
