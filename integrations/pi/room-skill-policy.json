@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "wisdom-weasel.room-skill-policy.v1",
+  "policyId": "room-core-v1",
+  "version": 1,
+  "hashRule": "sha256-skill-body-utf8-v1",
+  "skills": [
+    {
+      "skillId": "room-requirement-clarification",
+      "stages": ["requirements"],
+      "risk": "medium",
+      "nextCandidates": ["room-solution-convergence"]
+    },
+    {
+      "skillId": "room-solution-convergence",
+      "stages": ["solution"],
+      "risk": "medium",
+      "nextCandidates": ["room-implementation-planning"]
+    },
+    {
+      "skillId": "room-implementation-planning",
+      "stages": ["planning"],
+      "risk": "medium",
+      "nextCandidates": ["room-test-driven-implementation"]
+    },
+    {
+      "skillId": "room-test-driven-implementation",
+      "stages": ["implementation"],
+      "risk": "medium",
+      "nextCandidates": ["room-delivery-self-check"]
+    },
+    {
+      "skillId": "room-systematic-debugging",
+      "stages": ["debugging"],
+      "risk": "high",
+      "nextCandidates": ["room-test-driven-implementation", "room-delivery-self-check"]
+    },
+    {
+      "skillId": "room-delivery-self-check",
+      "stages": ["self-check", "review"],
+      "risk": "medium",
+      "nextCandidates": ["room-independent-vision-review", "room-structured-handoff", "room-delivery-closure"]
+    },
+    {
+      "skillId": "room-independent-vision-review",
+      "stages": ["vision-review", "review"],
+      "risk": "high",
+      "nextCandidates": ["room-review-feedback-resolution", "room-delivery-closure"]
+    },
+    {
+      "skillId": "room-review-feedback-resolution",
+      "stages": ["feedback"],
+      "risk": "high",
+      "nextCandidates": ["room-independent-vision-review"]
+    },
+    {
+      "skillId": "room-structured-handoff",
+      "stages": ["handoff"],
+      "risk": "medium",
+      "nextCandidates": []
+    },
+    {
+      "skillId": "room-delivery-closure",
+      "stages": ["closure"],
+      "risk": "high",
+      "nextCandidates": []
+    }
+  ]
+}

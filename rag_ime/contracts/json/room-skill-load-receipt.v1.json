@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-skill-load-receipt.v1.json",
+  "title": "Pinned Room native Skill load receipt",
+  "type": "object",
+  "required": [
+    "schemaVersion", "receiptId", "rootId", "taskId", "dispatchId",
+    "sessionId", "skillId", "skillHash", "hashRule", "catalogRevision",
+    "policyId", "policyVersion", "loadReason", "capabilityEpoch",
+    "idempotencyKey", "state", "sourceReceiptId", "createdAtMs", "revokedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-skill-load-receipt.v1"},
+    "receiptId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "taskId": {"type": "string", "minLength": 1},
+    "dispatchId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "skillId": {"type": "string", "minLength": 1},
+    "skillHash": {"type": "string", "minLength": 64},
+    "hashRule": {"const": "sha256-skill-body-utf8-v1"},
+    "catalogRevision": {"type": "string", "minLength": 64},
+    "policyId": {"type": "string", "minLength": 1},
+    "policyVersion": {"type": "integer", "minimum": 1},
+    "loadReason": {"enum": ["stage_required", "model_selected", "compaction_restore"]},
+    "capabilityEpoch": {"type": "integer", "minimum": 0},
+    "idempotencyKey": {"type": "string", "minLength": 1},
+    "state": {"enum": ["active", "revoked"]},
+    "sourceReceiptId": {"type": "string"},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "revokedAtMs": {"type": ["integer", "null"], "minimum": 0}
+  },
+  "additionalProperties": false
+}
