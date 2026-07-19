@@ -32,6 +32,7 @@ export interface AgentRoomWorkItemV1 {
   offeredToParticipantId: string;
   createdByParticipantId: string;
   clientMessageId: string;
+  assignmentKey: string;
   state: 'queued' | 'active' | 'review' | 'blocked' | 'done' | 'failed' | 'cancelled';
   depth: number;
   revision: number;

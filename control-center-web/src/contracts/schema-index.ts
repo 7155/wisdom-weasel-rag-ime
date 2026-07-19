@@ -4143,6 +4143,7 @@ export const contractSchemas = {
       "offeredToParticipantId",
       "createdByParticipantId",
       "clientMessageId",
+      "assignmentKey",
       "state",
       "depth",
       "revision",
@@ -4217,6 +4218,11 @@ export const contractSchemas = {
         "minLength": 1
       },
       "clientMessageId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "assignmentKey": {
         "type": "string",
         "minLength": 1,
         "maxLength": 200
@@ -7688,6 +7694,48 @@ export const contractSchemas = {
           "maySupportFacts": {
             "type": "boolean",
             "const": false
+          },
+          "source": {
+            "$ref": "#/$defs/activitySource"
+          },
+          "ref": {
+            "$ref": "#/$defs/activityRef"
+          }
+        }
+      },
+      "activitySource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "activity_timeline"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "activityRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "timeline"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
           }
         }
       },

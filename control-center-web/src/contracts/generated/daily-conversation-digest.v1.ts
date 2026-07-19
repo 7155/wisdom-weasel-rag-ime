@@ -304,6 +304,16 @@ export interface ActivityContext {
   redactedEventCount: number;
   corroborationOnly: true;
   maySupportFacts: false;
+  source?: ActivitySource;
+  ref?: ActivityRef;
+}
+export interface ActivitySource {
+  type: 'activity_timeline';
+  id: string;
+}
+export interface ActivityRef {
+  type: 'timeline';
+  id: string;
 }
 export interface DigestItem {
   evidenceId: string;

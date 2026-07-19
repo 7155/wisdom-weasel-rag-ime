@@ -19,6 +19,7 @@
     "offeredToParticipantId",
     "createdByParticipantId",
     "clientMessageId",
+    "assignmentKey",
     "state",
     "depth",
     "revision",
@@ -52,6 +53,7 @@
     "offeredToParticipantId": {"type": "string"},
     "createdByParticipantId": {"type": "string", "minLength": 1},
     "clientMessageId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "assignmentKey": {"type": "string", "minLength": 1, "maxLength": 200},
     "state": {
       "type": "string",
       "enum": ["queued", "active", "review", "blocked", "done", "failed", "cancelled"]
