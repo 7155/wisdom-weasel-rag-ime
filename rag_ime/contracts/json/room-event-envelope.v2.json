@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-event-envelope.v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "entityKind", "entityId", "eventKind", "sequence", "occurredAtMs", "payload"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-event-envelope.v2"},
+    "entityKind": {"type": "string", "enum": ["root", "task", "dispatch", "commit", "post", "binding"]},
+    "entityId": {"type": "string", "minLength": 1},
+    "eventKind": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "occurredAtMs": {"type": "integer", "minimum": 0},
+    "payload": {"type": "object"}
+  }
+}

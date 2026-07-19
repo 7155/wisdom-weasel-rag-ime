@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-task.v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taskId", "rootId", "parentTaskId", "ownerParticipantId", "assigneeParticipantId", "objective", "expectedOutput", "requirementItemIds", "acceptanceCriterionIds", "revision", "state"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-task.v2"},
+    "taskId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "parentTaskId": {"type": ["string", "null"]},
+    "ownerParticipantId": {"type": "string", "minLength": 1},
+    "assigneeParticipantId": {"type": ["string", "null"]},
+    "objective": {"type": "string", "minLength": 1},
+    "expectedOutput": {"type": "string", "minLength": 1},
+    "requirementItemIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "acceptanceCriterionIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "revision": {"type": "integer", "minimum": 0},
+    "state": {"type": "string", "enum": ["pending", "active", "review", "waiting", "blocked", "completed", "failed", "cancelled"]}
+  }
+}

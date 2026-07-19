@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "wisdom-weasel.room-v2-baseline.v1",
+  "baselineCommit": "519094e04638afff7a0c675f9d902ddec892ff85",
+  "capturedAt": "2026-07-19T22:15:00+08:00",
+  "status": "source-refreshed-contract-fixture",
+  "scenarios": [
+    {
+      "id": "ordinary-assistant",
+      "mode": "assistant",
+      "roomBinding": null,
+      "sessionKind": "conversation",
+      "defaultToolProfile": "control-center-v1",
+      "defaultShellPolicy": "assistant-no-shell-v1",
+      "roomWritesExpected": false
+    },
+    {
+      "id": "ordinary-coordinator",
+      "mode": "coordinator",
+      "roomBinding": null,
+      "sessionKind": "conversation",
+      "defaultToolProfile": "control-center-v1",
+      "defaultShellPolicy": "coordinator-per-command-v1",
+      "roomWritesExpected": false
+    },
+    {
+      "id": "collaboration-room-participant",
+      "mode": "coordinator",
+      "roomBinding": "legacy-room-membership",
+      "sessionKind": "conversation",
+      "defaultToolProfile": "persona-default",
+      "defaultShellPolicy": "coordinator-per-command-v1",
+      "roomWritesExpected": true,
+      "legacyHazards": [
+        "message_completed_is_automatically_projected_to_participant_message",
+        "room_prompt_contains_assign_submit_and_at_routing_instructions"
+      ]
+    },
+    {
+      "id": "roleplay-room-participant",
+      "mode": "assistant",
+      "roomBinding": "legacy-room-membership",
+      "sessionKind": "conversation",
+      "defaultToolProfile": "persona-default",
+      "defaultShellPolicy": "assistant-no-shell-v1",
+      "roomWritesExpected": true,
+      "legacyHazards": [
+        "message_completed_is_automatically_projected_to_participant_message"
+      ]
+    },
+    {
+      "id": "readonly-delegated-agent",
+      "mode": "assistant",
+      "roomBinding": null,
+      "sessionKind": "subagent_runtime",
+      "defaultToolProfile": "subagent-readonly-v1",
+      "defaultShellPolicy": "assistant-no-shell-v1",
+      "roomWritesExpected": false
+    }
+  ],
+  "cutoverGates": [
+    "ordinary_agents_keep_roomBindingRef_null_and_do_not_write_room_state",
+    "kernel_cohort_disables_legacy_message_completed_publication",
+    "kernel_cohort_disables_free_text_at_execution",
+    "context_delivery_is_acknowledged_only_after_provider_receipt",
+    "transient_context_is_not_persisted_as_an_ordinary_user_message",
+    "knowledge_is_not_authoritative_until_scope_and_owner_are_validated"
+  ],
+  "sourceEvidence": [
+    "rag_ime/agent_sessions.py:AgentSessionStore.create",
+    "rag_ime/agent_service.py:AgentService.create_room",
+    "rag_ime/agent_service.py:AgentService._mirror_event_to_room",
+    "rag_ime/agent_service.py:_room_event_projection",
+    "rag_ime/agent_service.py:_room_participant_prompt",
+    "rag_ime/agent_room_routing.py:parse_mentions",
+    "tests/test_agent_rooms.py:test_roleplay_room_uses_invites_scenario_and_topic_scoped_recent_context"
+  ]
+}

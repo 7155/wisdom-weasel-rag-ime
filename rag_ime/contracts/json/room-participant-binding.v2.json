@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-participant-binding.v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "bindingId", "sessionId", "personaRef", "collaborationRoleRef", "agentTemplateRef", "collaborationProfileRef", "compiledRuntimeProfileRef", "capabilityRevision", "capabilityEpoch", "roomBindingRef"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-participant-binding.v2"},
+    "bindingId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "personaRef": {"type": "string", "minLength": 1},
+    "collaborationRoleRef": {"type": "string", "minLength": 1},
+    "agentTemplateRef": {"type": "string", "minLength": 1},
+    "collaborationProfileRef": {"type": ["string", "null"]},
+    "compiledRuntimeProfileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileId", "revision", "contentHash"],
+      "properties": {
+        "profileId": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "contentHash": {"type": "string", "pattern": "^sha256:[0-9a-f]{6,}$"}
+      }
+    },
+    "capabilityRevision": {"type": "string", "minLength": 1},
+    "capabilityEpoch": {"type": "integer", "minimum": 0},
+    "roomBindingRef": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["bindingId", "schemaVersion"],
+      "properties": {
+        "bindingId": {"type": "string", "minLength": 1},
+        "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-binding.v2"}
+      }
+    }
+  }
+}
