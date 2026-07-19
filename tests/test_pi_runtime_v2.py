@@ -4,6 +4,7 @@ import json
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from rag_ime.agent_events import AgentEventHub
@@ -65,7 +66,7 @@ for line in sys.stdin:
                                  "manualCompaction": True, "autoCompaction": True,
                                  "branchSummary": True, "bashProcess": True,
                                  "continuationTimer": True},
-                             "roomTypes": False}}})
+                             "roomTypes": os.environ.get("TEST_ROOM_TYPES") == "1"}}})
     elif method == "completion.once":
         sequence += 1
         write({
@@ -176,6 +177,24 @@ for line in sys.stdin:
         })
     elif method == "session.close":
         result(request, {"closed": sessions.pop(session_id, None) is not None})
+    elif method == "room.dispatch":
+        if params.get("message") == "crash-host-after-room-dispatch":
+            os._exit(23)
+        result(request, {
+            "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+            "receiptKind": "dispatch_accepted", "status": "accepted",
+            "rootId": params["rootId"], "dispatchId": params["dispatchId"],
+            "generation": params["generation"], "sessionId": session_id,
+            "delivery": "prompt", "turnId": "room-turn-" + params["dispatchId"],
+        })
+    elif method == "room.cancel":
+        result(request, {
+            "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+            "receiptKind": "cancel_applied", "status": "applied",
+            "rootId": params["rootId"], "generation": params["generation"],
+            "sessionId": session_id, "cancelledContinuationIds": [],
+            "activeRunAborted": False,
+        })
     elif method == "plugins.list":
         result(request, {"plugins": []})
     else:
@@ -295,6 +314,66 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["noContextFiles"])
         self.assertTrue(opened["params"]["piSkillsEnabled"])
         self.assertTrue(opened["params"]["codexSkillsEnabled"])
+
+    def test_typed_room_rpc_is_negotiated_and_correlated_across_the_host_process(self) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        payload = {
+            "targetSessionId": session_id,
+            "rootId": "root:cross-process",
+            "dispatchId": "dispatch:cross-process",
+            "generation": 4,
+            "idempotencyKey": "cross-process-key",
+        }
+
+        receipt = self.runtime.dispatch_room(
+            payload,
+            message="Execute the bounded Room task.",
+            lease_token="lease-token:cross-process",
+        )
+        cancelled = self.runtime.cancel_room(
+            session_id=session_id,
+            root_id="root:cross-process",
+            generation=5,
+        )
+
+        self.assertTrue(
+            self.runtime.runtime_status()["capabilities"]["runtimePrimitives"]["roomTypes"]
+        )
+        self.assertEqual(receipt["turnId"], "room-turn-dispatch:cross-process")
+        self.assertEqual(cancelled["receiptKind"], "cancel_applied")
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        methods = [item["method"] for item in requests]
+        self.assertEqual(methods[:3], ["hello", "session.open", "room.dispatch"])
+        self.assertEqual(methods[-1], "room.cancel")
+        delivered = next(item for item in requests if item["method"] == "room.dispatch")
+        self.assertEqual(delivered["params"]["leaseToken"], "lease-token:cross-process")
+
+        crashed_payload = dict(payload)
+        crashed_payload.update(
+            {"dispatchId": "dispatch:crashed-host", "idempotencyKey": "crashed-host-key"}
+        )
+        with self.assertRaises(PiRuntimeError):
+            self.runtime.dispatch_room(
+                crashed_payload,
+                message="crash-host-after-room-dispatch",
+                lease_token="lease-token:crashed-host",
+            )
+        self.assertEqual(self.runtime.runtime_status()["status"], "faulted")
 
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
         raw_messages = [

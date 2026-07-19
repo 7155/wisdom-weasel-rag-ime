@@ -46,6 +46,13 @@ from .pi_runtime import (
 _PROTOCOL_VERSION = "2"
 
 
+def _room_generation(value: object) -> int:
+    generation = _integer(value)
+    if generation < 0:
+        raise ValueError("Room generation must be non-negative")
+    return generation
+
+
 def _runtime_primitive_capabilities(value: object) -> dict[str, object]:
     source = _mapping(value)
     operations = _mapping(source.get("sessionCancelOperations"))
@@ -77,7 +84,7 @@ def _runtime_primitive_capabilities(value: object) -> dict[str, object]:
                 "continuationTimer",
             )
         },
-        "roomTypes": False,
+        "roomTypes": bool(source.get("roomTypes")),
     }
 
 
@@ -253,6 +260,15 @@ class PiRuntimeHostClient:
         error = protocol_error or self.diagnostic_error()
         self._fail_pending(PiRuntimeError(error or "Pi Runtime Host exited"))
         self.on_exit(exit_code, error)
+        stderr_thread = self._stderr_thread
+        if stderr_thread is not None and stderr_thread is not threading.current_thread():
+            stderr_thread.join(timeout=1)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+        with self._lock:
+            if self._process is process:
+                self._process = None
 
     def _read_stderr(self) -> None:
         process = self._process
@@ -1114,6 +1130,84 @@ class PiRuntimeHostManager:
             timer.daemon = True
             state.abort_timer = timer
             timer.start()
+
+    def dispatch_room(
+        self,
+        payload: Mapping[str, object],
+        *,
+        message: str,
+        lease_token: str,
+    ) -> dict[str, object]:
+        """Deliver one Kernel-leased Dispatch through Pi's typed Room RPC."""
+
+        session_id = str(payload.get("targetSessionId") or "").strip()
+        root_id = str(payload.get("rootId") or "").strip()
+        dispatch_id = str(payload.get("dispatchId") or "").strip()
+        idempotency_key = str(payload.get("idempotencyKey") or "").strip()
+        if not all((session_id, root_id, dispatch_id, idempotency_key, message.strip(), lease_token.strip())):
+            raise ValueError("Room dispatch requires target, identity, message, and lease token")
+        generation = _integer(payload.get("generation"))
+        if generation < 0:
+            raise ValueError("Room dispatch generation must be non-negative")
+        self.ensure(session_id)
+        client = self._require_client()
+        with self._lock:
+            negotiated = _runtime_primitive_capabilities(
+                self._host_capabilities.get("runtimePrimitives")
+            )
+        if not negotiated["roomTypes"]:
+            raise PiRuntimeError("Pi Runtime Host did not negotiate typed Room RPC")
+        result = client.send(
+            "room.dispatch",
+            {
+                "sessionId": session_id,
+                "rootId": root_id,
+                "dispatchId": dispatch_id,
+                "generation": generation,
+                "idempotencyKey": idempotency_key,
+                "leaseToken": lease_token,
+                "message": message,
+            },
+        )
+        if (
+            result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
+            or result.get("rootId") != root_id
+            or result.get("dispatchId") != dispatch_id
+            or int(result.get("generation", -1)) != generation
+            or result.get("status") != "accepted"
+        ):
+            raise PiRuntimeError("Pi Runtime Host returned an invalid Room dispatch receipt")
+        return dict(result)
+
+    def cancel_room(
+        self,
+        *,
+        session_id: str,
+        root_id: str,
+        generation: int,
+    ) -> dict[str, object]:
+        self.ensure(session_id)
+        with self._lock:
+            negotiated = _runtime_primitive_capabilities(
+                self._host_capabilities.get("runtimePrimitives")
+            )
+        if not negotiated["roomTypes"]:
+            raise PiRuntimeError("Pi Runtime Host did not negotiate typed Room RPC")
+        result = self._require_client().send(
+            "room.cancel",
+            {
+                "sessionId": session_id,
+                "rootId": str(root_id).strip(),
+                "generation": _room_generation(generation),
+            },
+        )
+        if (
+            result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
+            or result.get("receiptKind") != "cancel_applied"
+            or result.get("rootId") != root_id
+        ):
+            raise PiRuntimeError("Pi Runtime Host returned an invalid Room cancellation receipt")
+        return dict(result)
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
         self.ensure(session_id)

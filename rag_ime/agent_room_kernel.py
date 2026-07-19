@@ -359,6 +359,78 @@ class RoomKernelStore:
                 receipts.append(self._receipt(conn, root_id=str(lease["root_id"]), command_id=None, receipt_kind="dispatch_unknown", status="unknown", generation=int(lease["generation"]), details={"dispatchId": dispatch_id, "deadLetterId": dead_id}, now_ms=now_ms))
         return receipts
 
+    def accept_runtime_receipt(
+        self,
+        *,
+        lease_token: str,
+        runtime_receipt: Mapping[str, object],
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Fence the cross-process ACK before work is considered running."""
+
+        with self._connect(immediate=True) as conn:
+            lease = conn.execute(
+                "SELECT * FROM room_kernel_leases WHERE lease_token = ?",
+                (lease_token,),
+            ).fetchone()
+            if lease is None or str(lease["state"]) != "active":
+                raise RoomKernelFenceError("runtime receipt references an inactive lease")
+            root = self._root_row(conn, str(lease["root_id"]))
+            dispatch = self._dispatch_row(conn, str(lease["dispatch_id"]))
+            generation = int(lease["generation"])
+            if generation != int(root["generation"]) or generation != int(dispatch["generation"]):
+                raise RoomKernelFenceError("runtime receipt generation is stale")
+            if (
+                runtime_receipt.get("schemaVersion")
+                != "wisdom-weasel.room-runtime-receipt.v1"
+                or runtime_receipt.get("receiptKind") != "dispatch_accepted"
+                or runtime_receipt.get("status") != "accepted"
+                or runtime_receipt.get("rootId") != lease["root_id"]
+                or runtime_receipt.get("dispatchId") != lease["dispatch_id"]
+                or int(runtime_receipt.get("generation", -1)) != generation
+            ):
+                raise RoomKernelFenceError("runtime receipt does not match the leased Dispatch")
+            conn.execute(
+                "UPDATE room_kernel_dispatches SET state = 'running', updated_at_ms = ? WHERE dispatch_id = ? AND state = 'leased'",
+                (int(now_ms), lease["dispatch_id"]),
+            )
+            conn.execute(
+                "UPDATE room_kernel_outbox SET state = 'running', updated_at_ms = ? WHERE dispatch_id = ? AND state = 'leased'",
+                (int(now_ms), lease["dispatch_id"]),
+            )
+            return self._receipt(
+                conn,
+                root_id=str(lease["root_id"]),
+                command_id=None,
+                receipt_kind="runtime_accepted",
+                status="applied",
+                generation=generation,
+                details={
+                    "dispatchId": str(lease["dispatch_id"]),
+                    "leaseId": str(lease["lease_id"]),
+                    "runtimeReceipt": dict(runtime_receipt),
+                },
+                now_ms=now_ms,
+            )
+
+    def active_runtime_targets(self, root_id: str) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT d.dispatch_id, d.target_session_id, d.generation
+                   FROM room_kernel_dispatches d
+                   WHERE d.root_id = ? AND d.state IN ('leased','running','retry_wait','timer_wait')
+                   ORDER BY d.dispatch_id""",
+                (root_id,),
+            ).fetchall()
+            return [
+                {
+                    "dispatchId": str(row["dispatch_id"]),
+                    "sessionId": str(row["target_session_id"]),
+                    "generation": int(row["generation"]),
+                }
+                for row in rows
+            ]
+
     def apply_commit(
         self, payload: Mapping[str, object], *, generation: int, now_ms: int
     ) -> dict[str, object]:
