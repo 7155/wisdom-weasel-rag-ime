@@ -27,9 +27,15 @@ class AgentExtensionService:
         *,
         runtime_provider: Callable[[], AgentRuntimeDriver],
         inbox_root: str | Path,
+        catalog_path: str | Path | None = None,
     ) -> None:
         self._runtime_provider = runtime_provider
         self.inbox_root = Path(inbox_root).expanduser().resolve(strict=False)
+        self.catalog_path = (
+            Path(catalog_path).expanduser().resolve(strict=False)
+            if catalog_path is not None
+            else Path(__file__).with_name("plugin_catalog.json")
+        )
         self._lock = RLock()
         self._tokens: dict[str, dict[str, object]] = {}
         self._proposals: dict[str, dict[str, object]] = {}
@@ -65,6 +71,89 @@ class AgentExtensionService:
             )
         return {"ok": True, "items": items}
 
+    def catalog(self) -> dict[str, object]:
+        document = self._catalog_document()
+        runtime_available = True
+        try:
+            installed = {
+                str(item.get("id") or ""): item
+                for item in self.list()["items"]
+                if isinstance(item, Mapping)
+            }
+        except AgentRuntimeError:
+            installed = {}
+            runtime_available = False
+        entries: list[dict[str, object]] = []
+        for raw_entry in document.get("entries") or []:
+            if not isinstance(raw_entry, Mapping):
+                continue
+            versions = [
+                dict(value)
+                for value in raw_entry.get("versions") or []
+                if isinstance(value, Mapping)
+            ]
+            versions.sort(
+                key=lambda value: _version_key(str(value.get("version") or "")),
+                reverse=True,
+            )
+            plugin_id = str(raw_entry.get("id") or "")
+            current = installed.get(plugin_id)
+            current_version = str(current.get("version") or "") if current else ""
+            latest_version = str(versions[0].get("version") or "") if versions else ""
+            source = dict(raw_entry.get("source") or {})
+            entries.append(
+                {
+                    "id": plugin_id,
+                    "displayName": str(raw_entry.get("displayName") or plugin_id),
+                    "description": str(raw_entry.get("description") or ""),
+                    "publisher": str(raw_entry.get("publisher") or ""),
+                    "source": source,
+                    "permissions": [
+                        str(value)
+                        for value in raw_entry.get("permissions") or []
+                        if isinstance(value, str)
+                    ],
+                    "compatibility": dict(raw_entry.get("compatibility") or {}),
+                    "security": dict(raw_entry.get("security") or {}),
+                    "versions": [
+                        {
+                            "version": str(value.get("version") or ""),
+                            "releasedAt": str(value.get("releasedAt") or ""),
+                            "notes": str(value.get("notes") or ""),
+                        }
+                        for value in versions
+                    ],
+                    "latestVersion": latest_version,
+                    "installedVersion": current_version,
+                    "installed": current is not None,
+                    "enabled": bool(current and current.get("enabled") is True),
+                    "updateAvailable": bool(
+                        current_version
+                        and latest_version
+                        and _version_key(latest_version) > _version_key(current_version)
+                    ),
+                    "installState": (
+                        "review_only"
+                        if source.get("kind") == "review_only" or not versions
+                        else "update_available"
+                        if current_version
+                        and _version_key(latest_version) > _version_key(current_version)
+                        else "installed"
+                        if current_version
+                        else "available"
+                    ),
+                    "actionable": source.get("kind") == "bundled" and bool(versions),
+                }
+            )
+        return {
+            "schemaVersion": "rag-ime.plugin-catalog.v1",
+            "ok": True,
+            "catalogVersion": str(document.get("catalogVersion") or ""),
+            "distribution": "bundled_only",
+            "runtimeAvailable": runtime_available,
+            "items": entries,
+        }
+
     def create_draft(self, payload: Mapping[str, object]) -> dict[str, object]:
         manifest = payload.get("manifest")
         files = payload.get("files")
@@ -90,9 +179,17 @@ class AgentExtensionService:
 
     def validate(self, payload: Mapping[str, object]) -> dict[str, object]:
         source_path = str(payload.get("sourcePath") or "").strip()
-        if not source_path:
-            raise ValueError("plugin validation requires sourcePath")
-        staged = self._stage_source(Path(source_path))
+        catalog_id = str(payload.get("catalogId") or "").strip()
+        catalog_version = str(payload.get("catalogVersion") or "").strip()
+        catalog_selection: dict[str, str] = {}
+        if catalog_id:
+            source, resolved_version = self._catalog_source(catalog_id, catalog_version)
+            staged = self._stage_source(source)
+            catalog_selection = {"catalogId": catalog_id, "catalogVersion": resolved_version}
+        elif source_path:
+            staged = self._stage_source(Path(source_path))
+        else:
+            raise ValueError("plugin validation requires sourcePath or catalogId")
         validation = self._call("plugin_validate", str(staged))
         if not isinstance(validation, Mapping):
             raise AgentRuntimeError("Pi Runtime Host returned an invalid plugin validation")
@@ -104,6 +201,7 @@ class AgentExtensionService:
                 "sourcePath": str(staged),
                 "digest": str(validation.get("digest") or ""),
                 "validation": dict(validation),
+                "catalog": catalog_selection,
                 "expiresAtMs": expires_at_ms,
             }
             self._prune_locked()
@@ -114,14 +212,15 @@ class AgentExtensionService:
             "checks": ["manifest", "entry", "path-boundary", "size-limit", "content-digest"],
             "warnings": [],
             "extension": self._public_validation(validation),
+            "catalog": catalog_selection,
         }
 
     def preview(self, payload: Mapping[str, object]) -> dict[str, object]:
         action = str(payload.get("action") or "install").strip().lower()
-        if action not in {"install", "enable", "disable", "rollback"}:
+        if action not in {"install", "update", "enable", "disable", "rollback"}:
             raise ValueError("unsupported plugin action")
         operation: dict[str, object] = {"action": action}
-        if action == "install":
+        if action in {"install", "update"}:
             validation_token = str(payload.get("validationToken") or "").strip()
             validation = self._token(validation_token, kind="validation", consume=False)
             operation.update(
@@ -130,6 +229,7 @@ class AgentExtensionService:
                     "expectedDigest": str(validation["digest"]),
                     "enable": payload.get("enable") is True,
                     "manifest": dict(validation["validation"]),
+                    "catalog": dict(validation.get("catalog") or {}),
                 }
             )
         else:
@@ -179,7 +279,7 @@ class AgentExtensionService:
         if not isinstance(operation, Mapping):
             raise AgentRuntimeError("plugin preview is invalid")
         action = str(operation.get("action") or "")
-        if action == "install":
+        if action in {"install", "update"}:
             plugin = self._call(
                 "plugin_install",
                 {
@@ -269,6 +369,52 @@ class AgentExtensionService:
             shutil.rmtree(temporary, ignore_errors=True)
             raise
 
+    def _catalog_document(self) -> dict[str, object]:
+        document = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict) or document.get("schemaVersion") != "rag-ime.plugin-catalog.v1":
+            raise ValueError("managed plugin catalog is invalid")
+        return document
+
+    def _catalog_source(self, catalog_id: str, version: str) -> tuple[Path, str]:
+        entry = next(
+            (
+                value
+                for value in self._catalog_document().get("entries") or []
+                if isinstance(value, Mapping) and str(value.get("id") or "") == catalog_id
+            ),
+            None,
+        )
+        if not isinstance(entry, Mapping):
+            raise ValueError("plugin catalog item does not exist")
+        source = entry.get("source")
+        if not isinstance(source, Mapping) or source.get("kind") != "bundled":
+            raise ValueError("plugin catalog item is available for review only")
+        versions = [
+            value for value in entry.get("versions") or [] if isinstance(value, Mapping)
+        ]
+        versions.sort(
+            key=lambda value: _version_key(str(value.get("version") or "")),
+            reverse=True,
+        )
+        selected = next(
+            (
+                value
+                for value in versions
+                if not version or str(value.get("version") or "") == version
+            ),
+            None,
+        )
+        if not isinstance(selected, Mapping):
+            raise ValueError("plugin catalog version does not exist")
+        relative = Path(str(selected.get("sourcePath") or ""))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("plugin catalog source path is invalid")
+        root = self.catalog_path.parent.resolve(strict=True)
+        resolved = (root / relative).resolve(strict=True)
+        if not _is_within(resolved, root):
+            raise ValueError("plugin catalog source escapes the product bundle")
+        return resolved, str(selected.get("version") or "")
+
     def _token(self, token: str, *, kind: str, consume: bool) -> dict[str, object]:
         if not token:
             raise ValueError(f"plugin {kind} token is required")
@@ -350,3 +496,10 @@ def _is_within(path: Path, root: Path) -> bool:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _version_key(value: str) -> tuple[int, ...]:
+    parts = value.split(".")
+    if not parts or any(not part.isdigit() for part in parts):
+        return ()
+    return tuple(int(part) for part in parts)

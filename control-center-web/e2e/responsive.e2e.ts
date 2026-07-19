@@ -34,7 +34,7 @@ test('production-shaped fixture stays bounded and records a viewport screenshot'
 test('plugin catalog keeps readable columns for long capability lists', async ({ page }) => {
   await page.goto('/#/plugins');
   const rows = page.locator('.plugins-list__item');
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(7);
   await expectNoHorizontalPageOverflow(page);
 
   const measurements = await rows.evaluateAll((items) => items.map((item) => {

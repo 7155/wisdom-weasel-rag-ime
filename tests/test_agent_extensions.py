@@ -153,6 +153,74 @@ class AgentExtensionServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported plugin source file"):
             self.service.validate({"sourcePath": str(self.source)})
 
+    def test_bundled_catalog_exposes_version_history_and_uses_the_same_apply_gate(self) -> None:
+        catalog = self.service.catalog()
+        item = next(value for value in catalog["items"] if value["id"] == "session-review")
+        self.assertEqual(item["latestVersion"], "1.1.0")
+        self.assertEqual([value["version"] for value in item["versions"]], ["1.1.0", "1.0.0"])
+        self.assertTrue(item["actionable"])
+
+        validation = self.service.validate(
+            {"catalogId": "session-review", "catalogVersion": "1.1.0"}
+        )
+        self.assertEqual(validation["catalog"]["catalogVersion"], "1.1.0")
+        preview = self.service.preview(
+            {
+                "action": "install",
+                "validationToken": validation["validationToken"],
+                "enable": True,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "confirmText=apply"):
+            self.service.apply(
+                {
+                    "previewToken": preview["previewToken"],
+                    "payloadSha256": preview["payloadSha256"],
+                    "confirmText": "install",
+                }
+            )
+
+    def test_review_only_catalog_item_cannot_be_validated_for_install(self) -> None:
+        with self.assertRaisesRegex(ValueError, "review only"):
+            self.service.validate({"catalogId": "community-catalog-preview"})
+
+    def test_catalog_update_is_detected_and_reuses_digest_bound_install_apply(self) -> None:
+        self.runtime.installed = [
+            {
+                "id": "session-review",
+                "name": "Session Review",
+                "version": "1.0.0",
+                "enabled": True,
+                "installedVersions": [{"version": "1.0.0", "digest": "old"}],
+            }
+        ]
+        item = next(
+            value
+            for value in self.service.catalog()["items"]
+            if value["id"] == "session-review"
+        )
+        self.assertTrue(item["updateAvailable"])
+
+        validation = self.service.validate(
+            {"catalogId": "session-review", "catalogVersion": "1.1.0"}
+        )
+        preview = self.service.preview(
+            {
+                "action": "update",
+                "validationToken": validation["validationToken"],
+                "enable": True,
+            }
+        )
+        receipt = self.service.apply(
+            {
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        self.assertEqual(receipt["receipt"]["action"], "update")
+        self.assertEqual(self.runtime.calls[-1][0], "install")
+
 
 if __name__ == "__main__":
     unittest.main()

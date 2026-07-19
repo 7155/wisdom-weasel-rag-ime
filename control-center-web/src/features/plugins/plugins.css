@@ -211,6 +211,46 @@ main[data-route-id='plugins'] .plugins-count {
   gap: var(--space-4);
 }
 
+.plugin-catalog {
+  display: grid;
+  border-block: 1px solid var(--color-border);
+}
+
+.plugin-catalog__row {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 14px 10px;
+  border-bottom: 1px solid var(--color-border);
+  grid-template-columns: minmax(190px, .8fr) minmax(280px, 1.4fr) auto;
+}
+
+.plugin-catalog__row:last-child { border-bottom: 0; }
+.plugin-catalog__identity,
+.plugin-catalog__facts,
+.plugin-catalog__action,
+.lifecycle-policy__title,
+.lifecycle-policy__limits { display: grid; min-width: 0; }
+.plugin-catalog__identity { gap: 3px; }
+.plugin-catalog__identity strong { font-size: 14px; }
+.plugin-catalog__identity small,
+.plugin-catalog__identity > span { color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; }
+.plugin-catalog__facts { gap: 5px; }
+.plugin-catalog__facts > span,
+.lifecycle-policy__limits > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.plugin-catalog__facts svg,
+.lifecycle-policy__limits svg { flex: 0 0 auto; color: var(--color-text-tertiary); }
+.plugin-catalog__action { justify-items: end; gap: var(--space-2); }
+
 .plugin-authoring-callout {
   display: grid;
   min-width: 0;
@@ -338,11 +378,58 @@ main[data-route-id='plugins'] .plugins-count {
   gap: var(--space-3);
 }
 
+.lifecycle-hooks {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-5);
+  grid-template-columns: minmax(0, 1.45fr) minmax(260px, .75fr);
+}
+
+.lifecycle-hooks__policies,
+.lifecycle-hooks__audit { display: grid; min-width: 0; align-content: start; }
+.lifecycle-hooks__policies { border-block: 1px solid var(--color-border); }
+.lifecycle-policy {
+  display: grid;
+  min-width: 0;
+  min-height: 74px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--color-border);
+  grid-template-columns: minmax(150px, .8fr) minmax(230px, 1.2fr) auto;
+}
+.lifecycle-policy:last-child { border-bottom: 0; }
+.lifecycle-policy__title { gap: 2px; }
+.lifecycle-policy__title strong { font-size: 13px; }
+.lifecycle-policy__title small { color: var(--color-text-secondary); font-size: 13px; line-height: 1.4; }
+.lifecycle-policy__limits {
+  gap: 5px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.lifecycle-hooks__audit { gap: var(--space-2); }
+.lifecycle-hooks__audit h3 { margin: 0 0 2px; font-size: 13px; }
+.lifecycle-audit {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 48px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.lifecycle-audit > span { display: grid; min-width: 0; gap: 2px; }
+.lifecycle-audit strong { font-size: 13px; }
+.lifecycle-audit small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+
 @media (max-width: 980px) {
   .plugins-filters { grid-template-columns: minmax(210px, 1fr) minmax(130px, 170px); }
   .plugins-mode-filter { grid-column: 1 / -1; }
   .plugins-mode-filter .ui-segmented { width: fit-content; }
   .plugins-browser[data-detail-open='true'] { grid-template-columns: minmax(280px, .9fr) minmax(340px, 1.1fr); }
+  .plugin-catalog__row { grid-template-columns: minmax(180px, .8fr) minmax(240px, 1.2fr); }
+  .plugin-catalog__action { grid-column: 1 / -1; grid-template-columns: auto auto; justify-content: end; }
+  .lifecycle-hooks { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
@@ -363,6 +450,11 @@ main[data-route-id='plugins'] .plugins-count {
   .installed-plugin { align-items: start; grid-template-columns: minmax(0, 1fr) auto; }
   .installed-plugin__actions { grid-column: 1 / -1; }
   .plugin-lifecycle__approval { align-items: flex-start; flex-direction: column; }
+  .plugin-catalog__row,
+  .lifecycle-policy { align-items: start; grid-template-columns: 1fr; }
+  .plugin-catalog__action { grid-column: auto; justify-content: stretch; justify-items: stretch; }
+  .plugin-catalog__action .ui-button { width: 100%; }
+  .lifecycle-policy__limits { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 420px) {

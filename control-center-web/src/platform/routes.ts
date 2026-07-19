@@ -496,6 +496,7 @@ export const CONTROL_ROUTES = {
   },
   'agent.tools.list': { method: 'GET', path: '/api/agent/tools', query: ['sessionId'] },
   'agent.extensions.list': { method: 'GET', path: '/api/agent/extensions' },
+  'agent.extensions.catalog': { method: 'GET', path: '/api/agent/extensions/catalog' },
   'agent.extensions.create': {
     method: 'POST',
     path: '/api/agent/extensions/drafts',
@@ -506,8 +507,7 @@ export const CONTROL_ROUTES = {
   'agent.extensions.validate': {
     method: 'POST',
     path: '/api/agent/extensions/validate',
-    body: ['sourcePath'],
-    requiredBody: ['sourcePath'],
+    body: ['sourcePath', 'catalogId', 'catalogVersion'],
   },
   'agent.extensions.preview': {
     method: 'POST',
@@ -520,6 +520,17 @@ export const CONTROL_ROUTES = {
     path: '/api/agent/extensions/apply',
     body: ['previewToken', 'payloadSha256', 'confirmText'],
     requiredBody: ['previewToken', 'payloadSha256', 'confirmText'],
+  },
+  'agent.lifecycleHooks.get': {
+    method: 'GET',
+    path: '/api/agent/lifecycle-hooks',
+    query: ['limit'],
+  },
+  'agent.lifecycleHooks.update': {
+    method: 'PATCH',
+    path: '/api/agent/lifecycle-hooks',
+    body: ['eventType', 'enabled', 'action', 'tokenLimit', 'cooldownSeconds'],
+    requiredBody: ['eventType'],
   },
   'agent.approvals.list': {
     method: 'GET',

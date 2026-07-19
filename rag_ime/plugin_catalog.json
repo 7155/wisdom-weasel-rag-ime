@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "rag-ime.plugin-catalog.v1",
+  "catalogVersion": "2026.07.19",
+  "entries": [
+    {
+      "id": "session-review",
+      "displayName": "Session Review",
+      "description": "Summarizes evidenced session outcomes for an explicit user review.",
+      "publisher": "Wisdom Weasel",
+      "source": {
+        "kind": "bundled",
+        "label": "Product bundle",
+        "url": "https://github.com/7155/wisdom-weasel-rag-ime"
+      },
+      "permissions": ["session.read"],
+      "compatibility": {
+        "runtimeProtocol": "2",
+        "product": ">=0.1.0"
+      },
+      "security": {
+        "reviewed": true,
+        "networkAccess": false,
+        "notes": "Read-only session access; installation still requires digest-bound explicit approval."
+      },
+      "versions": [
+        {
+          "version": "1.1.0",
+          "sourcePath": "bundled_plugins/session-review/1.1.0",
+          "releasedAt": "2026-07-19",
+          "notes": "Adds bounded evidence labels to the review output."
+        },
+        {
+          "version": "1.0.0",
+          "sourcePath": "bundled_plugins/session-review/1.0.0",
+          "releasedAt": "2026-07-18",
+          "notes": "Initial first-party read-only review action."
+        }
+      ]
+    },
+    {
+      "id": "community-catalog-preview",
+      "displayName": "Community catalog preview",
+      "description": "A review-only placeholder for future signed remote distribution.",
+      "publisher": "Wisdom Weasel",
+      "source": {
+        "kind": "review_only",
+        "label": "Not distributed",
+        "url": ""
+      },
+      "permissions": [],
+      "compatibility": {
+        "runtimeProtocol": "2",
+        "product": "future"
+      },
+      "security": {
+        "reviewed": false,
+        "networkAccess": false,
+        "notes": "No source artifact is available; this entry cannot be installed."
+      },
+      "versions": []
+    }
+  ]
+}

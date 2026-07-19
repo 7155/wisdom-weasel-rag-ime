@@ -31,6 +31,7 @@ from .active_rag_service import (
 )
 from .activity_timeline import DailyActivityTimelineStore
 from .agent_extensions import AgentExtensionService
+from .agent_lifecycle_hooks import AgentLifecycleHookService
 from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvider
 from .agent_role_book_control import AgentRoleBookControlService
 from .agent_service import AgentService, agent_service_from_settings
@@ -485,6 +486,8 @@ class DebugImeService:
                 / "inbox"
             ),
         )
+        self.agent_lifecycle_hooks = AgentLifecycleHookService(config.db_path)
+        self.agent_lifecycle_hooks.initialize()
         self.browser_control = BrowserControlService(
             config.db_path,
             extension_root=os.environ.get("RAG_IME_BROWSER_EXTENSION_DIR") or None,
@@ -6322,8 +6325,24 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/agent/extensions":
             self._write_json(HTTPStatus.OK, self.service.agent_extensions.list())
             return
+        if parsed.path == "/api/agent/extensions/catalog":
+            self._write_json(HTTPStatus.OK, self.service.agent_extensions.catalog())
+            return
         if parsed.path == "/api/agent/extensions/proposals":
             self._write_json(HTTPStatus.OK, self.service.agent_extensions.proposals())
+            return
+        if parsed.path == "/api/agent/lifecycle-hooks":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent_lifecycle_hooks.snapshot(
+                    limit=_bounded_int(
+                        _query_first(query, "limit"),
+                        default=30,
+                        minimum=1,
+                        maximum=100,
+                    )
+                ),
+            )
             return
         if parsed.path == "/api/agent/roles":
             self._write_json(HTTPStatus.OK, self.service.agent.list_roles())
@@ -7027,6 +7046,24 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._write_json(HTTPStatus.OK, self.service.agent_tools.execute(self._read_json()))
                 return
+            if path == "/api/agent/tool/lifecycle-event":
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.agent-lifecycle-event-result.v1",
+                            "ok": False,
+                            "error": "agent capability token required",
+                        },
+                    )
+                    return
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent_lifecycle_hooks.record_event(self._read_json()),
+                )
+                return
             if path == "/api/agent/tool/context-refresh":
                 provided = self.headers.get("X-RAG-IME-Agent-Token", "")
                 expected = self.service.agent.tool_token
@@ -7628,6 +7665,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             knowledge_parts = _knowledge_route_parts(path)
+            if path == "/api/agent/lifecycle-hooks":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent_lifecycle_hooks.update_policy(self._read_json()),
+                )
+                return
             if knowledge_parts is not None:
                 if len(knowledge_parts) != 1:
                     self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})

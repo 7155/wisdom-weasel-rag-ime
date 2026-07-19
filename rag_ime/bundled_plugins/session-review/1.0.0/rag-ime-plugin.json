@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "session-review",
+  "name": "Session Review",
+  "version": "1.0.0",
+  "description": "Review evidenced session outcomes.",
+  "entry": "index.ts",
+  "permissions": ["session.read"]
+}

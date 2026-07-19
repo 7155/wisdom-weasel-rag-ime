@@ -87,6 +87,23 @@ describe('PluginsFeature', () => {
       && call.request.body.previewToken === 'preview-token'
     ))).toBe(true));
   });
+
+  it('shows governed versions and lifecycle policies, and can toggle a hook', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins();
+    expect(await screen.findByText('Session Review')).toBeInTheDocument();
+    expect(screen.getByText('v1.1.0 · 2 个版本')).toBeInTheDocument();
+    expect(screen.getByText('下一轮记忆复盘建议')).toBeInTheDocument();
+    await user.click(screen.getByRole('switch', { name: '已启用' }));
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.lifecycleHooks.update'
+      && typeof call.request.body === 'object'
+      && call.request.body !== null
+      && !Array.isArray(call.request.body)
+      && call.request.body.eventType === 'project_complete'
+      && call.request.body.enabled === false
+    ))).toBe(true));
+  });
 });
 
 function renderPlugins() {
@@ -101,7 +118,30 @@ function renderPlugins() {
     routes: {
       'agent.tools.list': { ok: true, items: toolItems() },
       'agent.extensions.list': { ok: true, items: [] },
+      'agent.extensions.catalog': {
+        ok: true,
+        items: [{
+          id: 'session-review',
+          displayName: 'Session Review',
+          description: '基于事实审阅会话结果',
+          publisher: 'Wisdom Weasel',
+          source: { kind: 'bundled', label: 'Product bundle' },
+          permissions: ['session.read'],
+          security: { notes: '只读会话权限' },
+          versions: [{ version: '1.1.0' }, { version: '1.0.0' }],
+          latestVersion: '1.1.0',
+          installed: false,
+          updateAvailable: false,
+          actionable: true,
+        }],
+      },
       'agent.extensions.proposals': { ok: true, items: [] },
+      'agent.lifecycleHooks.get': {
+        ok: true,
+        policies: [{ eventType: 'project_complete', enabled: true, action: 'memory_review_suggestion', tokenLimit: 256, cooldownSeconds: 300 }],
+        recentEvents: [],
+      },
+      'agent.lifecycleHooks.update': { ok: true },
       'agent.extensions.validate': {
         ok: true,
         validationToken: 'validation-token',

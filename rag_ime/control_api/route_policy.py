@@ -92,11 +92,14 @@ class ControlPathId(str, Enum):
     AGENT_PERSONAL_CONTEXT_OBSERVABILITY = "agent.personalContext.observability"
     AGENT_TOOLS_LIST = "agent.tools.list"
     AGENT_EXTENSIONS_LIST = "agent.extensions.list"
+    AGENT_EXTENSIONS_CATALOG = "agent.extensions.catalog"
     AGENT_EXTENSIONS_CREATE = "agent.extensions.create"
     AGENT_EXTENSIONS_PROPOSALS = "agent.extensions.proposals"
     AGENT_EXTENSIONS_VALIDATE = "agent.extensions.validate"
     AGENT_EXTENSIONS_PREVIEW = "agent.extensions.preview"
     AGENT_EXTENSIONS_APPLY = "agent.extensions.apply"
+    AGENT_LIFECYCLE_HOOKS_GET = "agent.lifecycleHooks.get"
+    AGENT_LIFECYCLE_HOOKS_UPDATE = "agent.lifecycleHooks.update"
     AGENT_APPROVALS_LIST = "agent.approvals.list"
     AGENT_APPROVAL_GET = "agent.approval.get"
     AGENT_APPROVAL_DECIDE = "agent.approval.decide"
@@ -713,11 +716,14 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_PERSONAL_CONTEXT_OBSERVABILITY, ControlMethod.GET, "/api/agent/personal-context/observability", "/control/v1/agent/personal-context/observability", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "roleId", "limit"}),
         _route(ControlPathId.AGENT_TOOLS_LIST, ControlMethod.GET, "/api/agent/tools", "/control/v1/agent/tools", query={"sessionId"}),
         _route(ControlPathId.AGENT_EXTENSIONS_LIST, ControlMethod.GET, "/api/agent/extensions", "/control/v1/agent/extensions"),
+        _route(ControlPathId.AGENT_EXTENSIONS_CATALOG, ControlMethod.GET, "/api/agent/extensions/catalog", "/control/v1/agent/extensions/catalog"),
         _route(ControlPathId.AGENT_EXTENSIONS_CREATE, ControlMethod.POST, "/api/agent/extensions/drafts", "/control/v1/agent/extensions/drafts", body={"draftId", "manifest", "files"}, required_body={"draftId", "manifest", "files"}),
         _route(ControlPathId.AGENT_EXTENSIONS_PROPOSALS, ControlMethod.GET, "/api/agent/extensions/proposals", "/control/v1/agent/extensions/proposals"),
-        _route(ControlPathId.AGENT_EXTENSIONS_VALIDATE, ControlMethod.POST, "/api/agent/extensions/validate", "/control/v1/agent/extensions/validate", body={"sourcePath"}, required_body={"sourcePath"}),
+        _route(ControlPathId.AGENT_EXTENSIONS_VALIDATE, ControlMethod.POST, "/api/agent/extensions/validate", "/control/v1/agent/extensions/validate", body={"sourcePath", "catalogId", "catalogVersion"}),
         _route(ControlPathId.AGENT_EXTENSIONS_PREVIEW, ControlMethod.POST, "/api/agent/extensions/preview", "/control/v1/agent/extensions/preview", body={"action", "validationToken", "pluginId", "enable"}, required_body={"action"}),
         _route(ControlPathId.AGENT_EXTENSIONS_APPLY, ControlMethod.POST, "/api/agent/extensions/apply", "/control/v1/agent/extensions/apply", body={"previewToken", "payloadSha256", "confirmText"}, required_body={"previewToken", "payloadSha256", "confirmText"}),
+        _route(ControlPathId.AGENT_LIFECYCLE_HOOKS_GET, ControlMethod.GET, "/api/agent/lifecycle-hooks", "/control/v1/agent/lifecycle-hooks", query={"limit"}),
+        _route(ControlPathId.AGENT_LIFECYCLE_HOOKS_UPDATE, ControlMethod.PATCH, "/api/agent/lifecycle-hooks", "/control/v1/agent/lifecycle-hooks", body={"eventType", "enabled", "action", "tokenLimit", "cooldownSeconds"}, required_body={"eventType"}),
         _route(ControlPathId.AGENT_APPROVALS_LIST, ControlMethod.GET, "/api/agent/approvals", "/control/v1/agent/approvals", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, query={"sessionId", "state", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_APPROVAL_GET, ControlMethod.GET, "/api/agent/approvals/{approvalId}", "/control/v1/agent/approvals/{approvalId}", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, params=_APPROVAL),
         _route(ControlPathId.AGENT_APPROVAL_DECIDE, ControlMethod.POST, "/api/agent/approvals/{approvalId}/decision", "/control/v1/agent/approvals/{approvalId}/decision", scopes=[ControlScope.AGENT_APPROVE], remote_safe=True, params=_APPROVAL, body={"decision", "payloadSha256"}, required_body={"decision", "payloadSha256"}, remote_body={"decision", "payloadSha256"}, remote_body_values={"decision": {"approve", "reject"}}),

@@ -2080,6 +2080,73 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(updated["session"]["title"], "深度检索")
         self.assertEqual(deleted["sessionId"], session_id)
 
+    def test_lifecycle_hook_http_routes_require_runtime_token_and_keep_policy_product_owned(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
+        body = json.dumps(
+            {
+                "schemaVersion": "rag-ime.agent-lifecycle-event.v1",
+                "eventId": "http-lifecycle-1",
+                "eventType": "tool_failed",
+                "sessionId": "session-http",
+                "payload": {
+                    "facts": [{"text": "Tool timed out", "evidence": "timeout receipt"}]
+                },
+            }
+        ).encode("utf-8")
+        try:
+            denied = Request(
+                f"{base_url}/tool/lifecycle-event",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as denied_context:
+                urlopen(denied, timeout=5)
+            self.assertEqual(denied_context.exception.code, 403)
+            denied_context.exception.close()
+
+            allowed = Request(
+                f"{base_url}/tool/lifecycle-event",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+                },
+                method="POST",
+            )
+            with urlopen(allowed, timeout=5) as response:
+                event = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/lifecycle-hooks?limit=5", timeout=5) as response:
+                snapshot = json.loads(response.read().decode("utf-8"))
+
+            update = Request(
+                f"{base_url}/lifecycle-hooks",
+                data=json.dumps({"eventType": "idle", "enabled": False}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="PATCH",
+            )
+            with urlopen(update, timeout=5) as response:
+                updated = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(event["result"]["status"], "suggested")
+        self.assertIn("Tool timed out", event["result"]["nextTurnContext"])
+        self.assertFalse(event["guardrails"]["writesLongTermMemory"])
+        self.assertEqual(snapshot["recentEvents"][0]["eventId"], "http-lifecycle-1")
+        idle = next(value for value in updated["policies"] if value["eventType"] == "idle")
+        self.assertFalse(idle["enabled"])
+
     def test_agent_persona_http_create_persists_and_rejects_private_fields(self) -> None:
         class Handler(DebugRequestHandler):
             pass

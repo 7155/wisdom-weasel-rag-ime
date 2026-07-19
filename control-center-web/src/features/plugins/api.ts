@@ -5,7 +5,9 @@ export const pluginQueryKeys = {
   root: ['plugins'] as const,
   catalog: () => [...pluginQueryKeys.root, 'catalog'] as const,
   installed: () => [...pluginQueryKeys.root, 'installed'] as const,
+  versions: () => [...pluginQueryKeys.root, 'versions'] as const,
   proposals: () => [...pluginQueryKeys.root, 'proposals'] as const,
+  lifecycle: () => [...pluginQueryKeys.root, 'lifecycle'] as const,
 };
 
 export function usePluginCatalog() {
@@ -20,6 +22,11 @@ export function usePluginCatalog() {
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.list', signal }),
     staleTime: 5_000,
   });
+  const versions = useQuery({
+    queryKey: pluginQueryKeys.versions(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.catalog', signal }),
+    staleTime: 30_000,
+  });
   const proposals = useQuery({
     queryKey: pluginQueryKeys.proposals(),
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.proposals', signal }),
@@ -27,7 +34,7 @@ export function usePluginCatalog() {
   });
   const queryClient = useQueryClient();
   const validate = useMutation({
-    mutationFn: (body: { sourcePath: string }) => transport.request({ pathId: 'agent.extensions.validate', body }),
+    mutationFn: (body: { sourcePath?: string; catalogId?: string; catalogVersion?: string }) => transport.request({ pathId: 'agent.extensions.validate', body }),
   });
   const preview = useMutation({
     mutationFn: (body: { action: string; validationToken?: string; pluginId?: string; enable?: boolean }) => (
@@ -43,8 +50,22 @@ export function usePluginCatalog() {
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.installed() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.proposals() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog() }),
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.versions() }),
       ]);
     },
   });
-  return { catalog, installed, proposals, validate, preview, apply, transport };
+  const lifecycle = useQuery({
+    queryKey: pluginQueryKeys.lifecycle(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'agent.lifecycleHooks.get', query: { limit: 20 }, signal }),
+    staleTime: 5_000,
+  });
+  const updateLifecycle = useMutation({
+    mutationFn: (body: { eventType: string; enabled?: boolean; tokenLimit?: number; cooldownSeconds?: number }) => (
+      transport.request({ pathId: 'agent.lifecycleHooks.update', body })
+    ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.lifecycle() });
+    },
+  });
+  return { catalog, installed, versions, proposals, lifecycle, validate, preview, apply, updateLifecycle, transport };
 }

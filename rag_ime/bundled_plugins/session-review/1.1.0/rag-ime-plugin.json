@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "session-review",
+  "name": "Session Review",
+  "version": "1.1.0",
+  "description": "Review evidenced session outcomes with bounded evidence labels.",
+  "entry": "index.ts",
+  "permissions": ["session.read"]
+}

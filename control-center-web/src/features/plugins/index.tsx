@@ -2,7 +2,9 @@ import {
   Boxes,
   CheckCircle2,
   ChevronRight,
+  Clock3,
   FolderOpen,
+  History,
   MessageCircle,
   PackageCheck,
   PanelRightClose,
@@ -11,6 +13,7 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  ShieldAlert,
   Sparkles,
   Wrench,
 } from 'lucide-react';
@@ -79,7 +82,7 @@ const operationLabels: Record<string, string> = {
 
 export function PluginsFeature() {
   const navigate = useNavigate();
-  const { catalog, installed, proposals, validate, preview, apply, transport } = usePluginCatalog();
+  const { catalog, installed, versions, proposals, lifecycle, validate, preview, apply, updateLifecycle, transport } = usePluginCatalog();
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<ModeFilter>('all');
   const [availability, setAvailability] = useState<AvailabilityFilter>('all');
@@ -107,6 +110,9 @@ export function PluginsFeature() {
   const confirmationCount = items.filter((item) => stringValue(item.riskLevel, 'R0') !== 'R0').length;
   const installedItems = arrayRecords(asRecord(installed.data).items);
   const proposalItems = arrayRecords(asRecord(proposals.data).items);
+  const versionItems = arrayRecords(asRecord(versions.data).items);
+  const lifecyclePolicies = arrayRecords(asRecord(lifecycle.data).policies);
+  const lifecycleEvents = arrayRecords(asRecord(lifecycle.data).recentEvents);
   const extension = asRecord(validation.extension);
   const pendingSummary = asRecord(pendingChange.summary);
   const lifecyclePending = validate.isPending || preview.isPending || apply.isPending;
@@ -157,6 +163,24 @@ export function PluginsFeature() {
     setLifecycleError('');
     try {
       setPendingChange(asRecord(await preview.mutateAsync({ action, pluginId })));
+    } catch (error) {
+      setLifecycleError(errorMessage(error));
+    }
+  };
+
+  const previewCatalogAction = async (item: ToolRecord) => {
+    setLifecycleError('');
+    try {
+      const validationResult = asRecord(await validate.mutateAsync({
+        catalogId: stringValue(item.id),
+        catalogVersion: stringValue(item.latestVersion),
+      }));
+      setValidation(validationResult);
+      setPendingChange(asRecord(await preview.mutateAsync({
+        action: item.updateAvailable === true ? 'update' : 'install',
+        validationToken: stringValue(validationResult.validationToken),
+        enable: item.installed === true ? item.enabled === true : enableAfterInstall,
+      })));
     } catch (error) {
       setLifecycleError(errorMessage(error));
     }
@@ -236,11 +260,41 @@ export function PluginsFeature() {
         </ManagementSection>
 
         <ManagementSection
-          description="所有变更先校验、再预览，只有你明确批准后才会写入受管目录。"
-          title="受管插件"
+          description="第一方版本来自产品内置目录。目录只负责发现，安装和更新仍必须经过校验、摘要绑定预览和你的明确批准。"
+          title="插件版本中心"
           trailing={<StatusBadge label={`${installedItems.length} 个已安装`} tone="neutral" />}
         >
           <div className="plugin-lifecycle">
+            <div className="plugin-catalog" aria-label="受管插件目录">
+              {versionItems.map((item) => {
+                const security = asRecord(item.security);
+                const source = asRecord(item.source);
+                return (
+                  <article className="plugin-catalog__row" key={stringValue(item.id)}>
+                    <span className="plugin-catalog__identity">
+                      <strong>{stringValue(item.displayName, stringValue(item.id))}</strong>
+                      <small>{stringValue(item.publisher)} · {stringValue(source.label)}</small>
+                      <span>{stringValue(item.description)}</span>
+                    </span>
+                    <span className="plugin-catalog__facts">
+                      <span><ShieldCheck size={14} />{stringArray(item.permissions).join('、') || '无需额外权限'}</span>
+                      <span><History size={14} />v{stringValue(item.latestVersion, '未发布')} · {arrayRecords(item.versions).length} 个版本</span>
+                      <span><ShieldAlert size={14} />{stringValue(security.notes, '尚无安全说明')}</span>
+                    </span>
+                    <span className="plugin-catalog__action">
+                      <StatusBadge {...catalogStateBadge(item)} />
+                      <Button
+                        disabled={item.actionable !== true || (item.installed === true && item.updateAvailable !== true) || lifecyclePending}
+                        leadingIcon={<PackageCheck size={15} />}
+                        loading={validate.isPending || preview.isPending}
+                        onClick={() => void previewCatalogAction(item)}
+                        size="small"
+                      >{item.updateAvailable === true ? '预览更新' : item.installed === true ? '已安装' : item.actionable === true ? '预览安装' : '仅供审阅'}</Button>
+                    </span>
+                  </article>
+                );
+              })}
+            </div>
             <div className="plugin-authoring-callout">
               <span className="plugin-authoring-callout__icon"><Sparkles aria-hidden="true" size={18} /></span>
               <span><strong>让 Agent 制作插件</strong><small>插件制作 Skill 会先确认用途和权限，再生成草稿、校验并提交安装提议。</small></span>
@@ -328,6 +382,44 @@ export function PluginsFeature() {
             </div>
           </div>
         </ManagementSection>
+
+        <ManagementSection
+          description="Hook 只记录事实和生成下一轮可消费的复盘建议，不会直接写入长期记忆，也不会扩大工具、Plan、Goal 或审批权限。"
+          title="生命周期自动化"
+          trailing={<StatusBadge label={`${lifecyclePolicies.filter((item) => item.enabled === true).length}/${lifecyclePolicies.length} 已启用`} tone="neutral" />}
+        >
+          <div className="lifecycle-hooks">
+            <div className="lifecycle-hooks__policies">
+              {lifecyclePolicies.map((policy) => (
+                <article className="lifecycle-policy" key={stringValue(policy.eventType)}>
+                  <span className="lifecycle-policy__title">
+                    <strong>{lifecycleEventLabel(stringValue(policy.eventType))}</strong>
+                    <small>{lifecycleActionLabel(stringValue(policy.action))}</small>
+                  </span>
+                  <span className="lifecycle-policy__limits">
+                    <span><Sparkles size={14} />{Number(policy.tokenLimit || 0)} Token 上限</span>
+                    <span><Clock3 size={14} />{cooldownLabel(Number(policy.cooldownSeconds || 0))}</span>
+                  </span>
+                  <Switch
+                    checked={policy.enabled === true}
+                    disabled={updateLifecycle.isPending}
+                    label={policy.enabled === true ? '已启用' : '已停用'}
+                    onCheckedChange={(enabled) => void updateLifecycle.mutateAsync({ eventType: stringValue(policy.eventType), enabled })}
+                  />
+                </article>
+              ))}
+            </div>
+            <div className="lifecycle-hooks__audit">
+              <h3>最近状态</h3>
+              {lifecycleEvents.length ? lifecycleEvents.slice(0, 8).map((event) => (
+                <div className="lifecycle-audit" key={stringValue(event.eventId)}>
+                  <span><strong>{lifecycleEventLabel(stringValue(event.eventType))}</strong><small>{stringValue(event.sessionId)}</small></span>
+                  <StatusBadge {...lifecycleStatusBadge(event)} />
+                </div>
+              )) : <EmptyState description="Pi Runtime 上报事件后，幂等审计会显示在这里。" icon={History} title="还没有 Hook 事件" />}
+            </div>
+          </div>
+        </ManagementSection>
       </QueryState>
     </ManagementPage>
   );
@@ -348,5 +440,10 @@ function modeLabel(mode: string): string { if (mode === 'assistant') return '日
 function availabilityBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } { switch (stringValue(item.availability).toLowerCase()) { case 'online': return { label: '当前可用', tone: 'success' }; case 'unconfigured': return { label: '待配置', tone: 'warning' }; case 'disabled': return { label: '已停用', tone: 'neutral' }; case 'offline': return { label: '暂时离线', tone: 'danger' }; default: return { label: '状态未知', tone: 'warning' }; } }
 function availabilityDescription(item: ToolRecord): string { switch (stringValue(item.availability).toLowerCase()) { case 'online': return '已连接，可以在支持的场景中使用'; case 'unconfigured': return '需要先完成相关服务配置'; case 'disabled': return '当前已停用，不会被 Agent 调用'; case 'offline': return '连接暂时不可用，请稍后刷新'; default: return '尚未取得可靠的可用状态'; } }
 function confirmationLabel(riskLevel: string): string { if (riskLevel === 'R0') return '只读能力可以直接使用'; if (riskLevel === 'R1') return '更改内容前会先请你确认'; if (riskLevel === 'R2') return '涉及本机操作，需要你明确授权'; return '敏感操作会额外说明影响并再次确认'; }
-function pluginActionLabel(action: string): string { if (action === 'install') return '安装插件'; if (action === 'enable') return '启用插件'; if (action === 'disable') return '停用插件'; if (action === 'rollback') return '回滚插件'; return '变更插件'; }
+function pluginActionLabel(action: string): string { if (action === 'install') return '安装插件'; if (action === 'update') return '更新插件'; if (action === 'enable') return '启用插件'; if (action === 'disable') return '停用插件'; if (action === 'rollback') return '回滚插件'; return '变更插件'; }
+function catalogStateBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'neutral' } { if (item.updateAvailable === true) return { label: '有更新', tone: 'warning' }; if (item.installed === true) return { label: '已是最新', tone: 'success' }; if (item.actionable === true) return { label: '可安装', tone: 'neutral' }; return { label: '仅供审阅', tone: 'neutral' }; }
+function lifecycleEventLabel(value: string): string { return ({ session_start: '会话开始', turn_end: '轮次结束', compaction: '上下文压缩', project_complete: '项目完成', tool_failed: '工具失败', idle: '进入空闲' } as Record<string, string>)[value] ?? value; }
+function lifecycleActionLabel(value: string): string { return ({ audit_only: '仅审计', context_checkpoint: '下一轮上下文检查点', memory_review_suggestion: '下一轮记忆复盘建议' } as Record<string, string>)[value] ?? value; }
+function cooldownLabel(seconds: number): string { if (!seconds) return '无冷却'; if (seconds >= 60) return `${Math.round(seconds / 60)} 分钟冷却`; return `${seconds} 秒冷却`; }
+function lifecycleStatusBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'neutral' } { const status = stringValue(item.status); if (status === 'suggested') return { label: '待下一轮复盘', tone: 'warning' }; if (status === 'recorded') return { label: '已记录', tone: 'success' }; if (status === 'skipped') return { label: '无事实已跳过', tone: 'neutral' }; if (status === 'cooldown') return { label: '冷却中', tone: 'neutral' }; return { label: status === 'disabled' ? '策略停用' : status, tone: 'neutral' }; }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : '插件操作失败。'; }

@@ -30,11 +30,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 64,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 60)
+            self.assertEqual(status["currentVersion"], 64)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -102,6 +102,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("memory_governance_proposals", tables)
             self.assertIn("memory_atom_evidence_links", tables)
             self.assertIn("memory_legacy_atom_migration_audit", tables)
+            self.assertIn("agent_lifecycle_hook_policies", tables)
+            self.assertIn("agent_lifecycle_hook_events", tables)
             room_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_rooms)")
             }
@@ -259,7 +261,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
                 }
 
-            self.assertEqual(result.applied_versions, (59, 60))
+            self.assertEqual(result.applied_versions, (59, 60, 64))
             self.assertEqual(
                 rows["atom:legacy-old"],
                 (
@@ -386,7 +388,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 result.applied_versions,
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 64,
                 ),
             )
             self.assertEqual(
