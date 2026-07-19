@@ -2063,6 +2063,9 @@ function featureTransport(
       'agent.tools.list': toolRoute,
       'agent.runtime.get': runtimeRoute,
       'agent.session.snapshot': snapshotRoute,
+      'agent.session.workflow.get': workflowRouteFixture(),
+      'agent.session.plan.mutate': workflowRouteFixture(),
+      'agent.session.goal.mutate': workflowRouteFixture(),
       'agent.session.models': modelCatalog,
       'agent.session.commands': commandCatalog(),
       'agent.session.prompt': promptRoute,
@@ -2102,6 +2105,49 @@ function featureTransport(
       'knowledge.database.apply': { ok: true },
     },
   });
+}
+
+function workflowRouteFixture() {
+  return {
+    schemaVersion: 'rag-ime.agent-workflow-state.v1',
+    ok: true,
+    sessionId: 'session-preview',
+    plan: {
+      schemaVersion: 'rag-ime.agent-plan.v2',
+      id: 'plan:preview',
+      sessionId: 'session-preview',
+      revision: 4,
+      title: '控制中心迁移',
+      status: 'executing',
+      actor: 'agent',
+      note: '',
+      updatedAtMs: Date.now(),
+      editable: false,
+      actApproved: true,
+      items: [
+        { id: 'plan:item:1', title: '核对现状', status: 'completed', position: 1, sequence: 1, updatedAtMs: Date.now() },
+        { id: 'plan:item:2', title: '接入前端', status: 'in_progress', position: 2, sequence: 2, updatedAtMs: Date.now() },
+        { id: 'plan:item:3', title: '运行验收', status: 'pending', position: 3, sequence: 3, updatedAtMs: Date.now() },
+      ],
+      counts: { total: 3, pending: 1, inProgress: 1, completed: 1 },
+    },
+    goal: {
+      schemaVersion: 'rag-ime.agent-goal.v1',
+      sessionId: 'session-preview',
+      configured: false,
+      goalId: '',
+      revision: 0,
+      objective: '',
+      status: 'cleared',
+      budget: { tokenLimit: null, timeLimitMs: null },
+      usage: { tokens: 0, elapsedMs: 0 },
+      remaining: { tokens: null, timeMs: null },
+      budgetExceeded: false,
+      completionAudit: null,
+      updatedAtMs: 0,
+    },
+    actGate: { allowed: true, reason: 'approved', message: 'Plan 已批准，可以执行。' },
+  };
 }
 
 function subagentListFixture() {

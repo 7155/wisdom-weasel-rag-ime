@@ -262,7 +262,10 @@ function Overview({
             variant="danger"
             disabled={!capabilities.abort.available}
             loading={pendingAction === 'abort'}
-            onClick={() => void onControl('abort')}
+            onClick={() => {
+              if (!confirmDestructive('确定停止这个子 Agent 吗？当前运行会被中止。')) return;
+              void onControl('abort');
+            }}
             title={capabilities.abort.reason}
           >
             <OctagonX size={14} />停止
@@ -388,10 +391,20 @@ function TabButton({
   onClick: () => void;
 }) {
   return (
-    <button type="button" role="tab" aria-selected={active} onClick={onClick}>
+    <button
+      type="button"
+      role="tab"
+      aria-label={typeof children === 'string' ? children : undefined}
+      aria-selected={active}
+      onClick={onClick}
+    >
       {icon}<span>{children}</span>{count > 0 ? <i>{count}</i> : null}
     </button>
   );
+}
+
+function confirmDestructive(message: string): boolean {
+  return typeof window === 'undefined' || window.confirm(message);
 }
 
 function RunState({ state }: { state: AgentSubagentRunV1['state'] }) {

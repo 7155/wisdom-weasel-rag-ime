@@ -38,6 +38,7 @@ from .pi_runtime import (
     _public_usage,
     _redact_mapping,
     _redact_runtime_text,
+    _ui_confirmation_value,
 )
 
 
@@ -247,6 +248,7 @@ class _HostedSessionState:
     final_error: str = ""
     pending_approvals: dict[str, str] = field(default_factory=dict)
     pending_reviews: dict[str, str] = field(default_factory=dict)
+    pending_ui_requests: dict[str, dict[str, object]] = field(default_factory=dict)
     abort_timer: threading.Timer | None = field(default=None, repr=False)
     abort_requested_turn_id: str = ""
     retired_turn_ids: set[str] = field(default_factory=set)
@@ -833,7 +835,7 @@ class PiRuntimeHostManager:
             return
         if state.turn_id:
             raise PiRuntimeError("conversation forks are unavailable during an Agent turn")
-        if state.pending_approvals or state.pending_reviews:
+        if state.pending_approvals or state.pending_reviews or state.pending_ui_requests:
             raise PiRuntimeError("conversation forks are unavailable while user input is pending")
 
     @staticmethod
@@ -1147,6 +1149,68 @@ class PiRuntimeHostManager:
             turn_id=turn_id,
         )
 
+    def resolve_ui_request(
+        self,
+        session_id: str,
+        request_id: str,
+        *,
+        response: Mapping[str, object],
+    ) -> dict[str, object]:
+        normalized_request_id = str(request_id or "").strip()
+        with self._lock:
+            state = self._states.get(session_id)
+            request = state.pending_ui_requests.get(normalized_request_id) if state else None
+            review_run_id = (
+                next(
+                    (
+                        run_id
+                        for run_id, pending_id in state.pending_reviews.items()
+                        if pending_id == normalized_request_id
+                    ),
+                    "",
+                )
+                if state
+                else ""
+            )
+            if request is None and review_run_id:
+                request = {"requestId": normalized_request_id, "method": "confirm"}
+        if request is None:
+            raise PiRuntimeError("UI request is no longer pending")
+        method = str(request.get("method") or "")
+        resolved: dict[str, object] = {"cancelled": True}
+        if response.get("cancelled") is not True:
+            value = str(response.get("value") or "")
+            if method == "confirm":
+                confirmed = response.get("confirmed")
+                if not isinstance(confirmed, bool):
+                    confirmed = _ui_confirmation_value(value)
+                resolved = {"confirmed": confirmed}
+            else:
+                if method == "select":
+                    options = [str(item) for item in request.get("options") or []]
+                    if options and value not in options:
+                        raise PiRuntimeError("UI response is not one of the offered options")
+                resolved = {"value": value}
+        result = self._require_client().send(
+            "ui.resolve",
+            {
+                "sessionId": session_id,
+                "requestId": normalized_request_id,
+                "response": resolved,
+            },
+        )
+        with self._lock:
+            if state:
+                state.pending_ui_requests.pop(normalized_request_id, None)
+                if review_run_id:
+                    state.pending_reviews.pop(review_run_id, None)
+        return {
+            "requestId": normalized_request_id,
+            "resolved": True,
+            "method": method,
+            "host": dict(result),
+        }
+
     def plugin_list(self) -> list[dict[str, object]]:
         return [dict(value) for value in self._require_host_result("plugins.list").get("plugins") or [] if isinstance(value, Mapping)]
 
@@ -1159,16 +1223,39 @@ class PiRuntimeHostManager:
     def plugin_install(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self._require_host_result("plugins.install", {**dict(payload), "approvalToken": self.config.tool_gateway_token})
 
-    def plugin_enable(self, plugin_id: str, *, enabled: bool) -> dict[str, object]:
+    def plugin_enable(
+        self,
+        plugin_id: str,
+        *,
+        enabled: bool,
+        expected_active_digest: str,
+        expected_enabled: bool,
+    ) -> dict[str, object]:
         return self._require_host_result(
             "plugins.enable" if enabled else "plugins.disable",
-            {"pluginId": plugin_id, "approvalToken": self.config.tool_gateway_token},
+            {
+                "pluginId": plugin_id,
+                "approvalToken": self.config.tool_gateway_token,
+                "expectedActiveDigest": expected_active_digest,
+                "expectedEnabled": expected_enabled,
+            },
         )
 
-    def plugin_rollback(self, plugin_id: str) -> dict[str, object]:
+    def plugin_rollback(
+        self,
+        plugin_id: str,
+        *,
+        expected_active_digest: str,
+        target_digest: str,
+    ) -> dict[str, object]:
         return self._require_host_result(
             "plugins.rollback",
-            {"pluginId": plugin_id, "approvalToken": self.config.tool_gateway_token},
+            {
+                "pluginId": plugin_id,
+                "expectedActiveDigest": expected_active_digest,
+                "targetDigest": target_digest,
+                "approvalToken": self.config.tool_gateway_token,
+            },
         )
 
     def _require_host_result(
@@ -1390,6 +1477,7 @@ class PiRuntimeHostManager:
                     state.abort_requested_turn_id = ""
                     state.pending_approvals.clear()
                     state.pending_reviews.clear()
+                    state.pending_ui_requests.clear()
                     self._status = "ready"
                     self._schedule_idle_locked()
             if aborted:
@@ -1492,15 +1580,34 @@ class PiRuntimeHostManager:
             )
             return
         if method in {"select", "confirm", "input", "editor"}:
+            safe: dict[str, object] = {
+                "requestId": request_id,
+                "method": method,
+                "title": title[:160],
+                "message": str(raw.get("message") or "")[:500],
+            }
+            if isinstance(raw.get("options"), list):
+                safe["options"] = [
+                    str(value)[:240] for value in raw["options"][:100]
+                ]
+            for field, maximum in (
+                ("placeholder", 500),
+                ("prefill", 4_000),
+                ("defaultValue", 4_000),
+            ):
+                if raw.get(field) is not None:
+                    safe[field] = str(raw.get(field) or "")[:maximum]
+            if raw.get("timeout") is not None:
+                try:
+                    safe["timeout"] = max(0, int(raw["timeout"]))
+                except (TypeError, ValueError):
+                    pass
+            with self._lock:
+                state.pending_ui_requests[request_id] = dict(safe)
             self.events.publish(
                 session_id,
                 "user_input_required",
-                {
-                    "requestId": request_id,
-                    "method": method,
-                    "title": title[:160],
-                    "message": str(raw.get("message") or "")[:500],
-                },
+                safe,
                 turn_id=turn_id,
             )
 
@@ -1517,6 +1624,7 @@ class PiRuntimeHostManager:
             state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
             state.pending_reviews.clear()
+            state.pending_ui_requests.clear()
             self._last_error = message
             self._status = "ready" if self._client is not None and self._client.running else "faulted"
             self._schedule_idle_locked()
@@ -1562,6 +1670,7 @@ class PiRuntimeHostManager:
             state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
             state.pending_reviews.clear()
+            state.pending_ui_requests.clear()
             self._status = "ready"
             self._schedule_idle_locked()
             self.sessions.set_status(session_id, "idle")

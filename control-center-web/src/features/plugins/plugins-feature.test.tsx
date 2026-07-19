@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
-import { MockControlTransport } from '@/test/mock-transport';
+import type { ControlPathId } from '@/platform/routes';
+import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { PluginsFeature } from '.';
 
 afterEach(cleanup);
@@ -92,7 +93,7 @@ describe('PluginsFeature', () => {
     expect(await screen.findByText('Session Review')).toBeInTheDocument();
     expect(screen.getByText('v1.1.0 · 2 个版本')).toBeInTheDocument();
     expect(screen.getByText('下一轮记忆复盘建议')).toBeInTheDocument();
-    await user.click(screen.getByRole('switch', { name: '已启用' }));
+    await user.click(screen.getByRole('switch', { name: '项目完成：已启用' }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'agent.lifecycleHooks.update'
       && typeof call.request.body === 'object'
@@ -102,9 +103,89 @@ describe('PluginsFeature', () => {
       && call.request.body.enabled === false
     ))).toBe(true));
   });
+
+  it('does not disguise plugin query failures as empty installed or proposal states', async () => {
+    renderPlugins({
+      'agent.extensions.catalog': () => {
+        throw new Error('catalog unavailable');
+      },
+    });
+
+    expect(await screen.findByText('读取失败')).toBeVisible();
+    expect(screen.getByText('暂时无法读取这部分内容，请稍后重试。')).toBeVisible();
+    expect(screen.queryByText('还没有受管插件')).not.toBeInTheDocument();
+  });
+
+  it('refreshes catalog, installed versions, proposals and lifecycle together', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins();
+    await screen.findByText('Session Review');
+    const tracked: ControlPathId[] = [
+      'agent.tools.list',
+      'agent.extensions.list',
+      'agent.extensions.catalog',
+      'agent.extensions.proposals',
+      'agent.lifecycleHooks.get',
+    ];
+    const before = new Map(tracked.map((pathId) => [
+      pathId,
+      transport.requests.filter((call) => call.request.pathId === pathId).length,
+    ]));
+
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+
+    await waitFor(() => {
+      for (const pathId of tracked) {
+        expect(transport.requests.filter((call) => call.request.pathId === pathId).length)
+          .toBeGreaterThan(before.get(pathId) ?? 0);
+      }
+    });
+  });
+
+  it('surfaces lifecycle hook mutation failures without hiding the current policy', async () => {
+    const user = userEvent.setup();
+    renderPlugins({
+      'agent.lifecycleHooks.update': () => {
+        throw new Error('Hook 更新被拒绝');
+      },
+    });
+
+    await user.click(await screen.findByRole('switch', { name: '项目完成：已启用' }));
+    expect(await screen.findByText('Hook 更新失败')).toBeVisible();
+    expect(screen.getByText('Hook 更新被拒绝')).toBeVisible();
+    expect(screen.getByText('下一轮记忆复盘建议')).toBeVisible();
+  });
+
+  it('shows the reviewed plugin version, capabilities and enabled state before apply', async () => {
+    const user = userEvent.setup();
+    renderPlugins({
+      'agent.extensions.proposals': {
+        ok: true,
+        items: [{
+          proposalId: 'proposal-disable',
+          previewToken: 'preview-disable',
+          payloadSha256: 'b'.repeat(64),
+          summary: {
+            action: 'disable',
+            pluginId: 'session-review',
+            displayName: 'Session Review',
+            version: '1.1.0',
+            permissions: ['session.read'],
+            expectedEnabled: true,
+            expectedActiveDigest: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          },
+        }],
+      },
+    });
+
+    await user.click(await screen.findByRole('button', { name: /Session Review/ }));
+    expect(screen.getByText('v1.1.0 · 能力声明：session.read · 当前已启用 · 摘要 0123456789ab…cdef')).toBeVisible();
+  });
 });
 
-function renderPlugins() {
+function renderPlugins(
+  overrides: Partial<Record<ControlPathId, MockRouteHandler>> = {},
+) {
   const transport = new MockControlTransport({
     pickedFiles: [{
       id: 'plugin-source-1',
@@ -152,6 +233,7 @@ function renderPlugins() {
         summary: { action: 'install', pluginId: 'guided-plugin', displayName: 'Guided Plugin' },
       },
       'agent.extensions.apply': { ok: true, receipt: { receiptId: 'plugin:install:test' } },
+      ...overrides,
     },
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });

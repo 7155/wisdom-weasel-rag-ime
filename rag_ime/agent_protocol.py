@@ -16,6 +16,7 @@ AGENT_EVENT_TYPES = frozenset(
         "status_changed",
         "session_configuration_changed",
         "message_queue_updated",
+        "workflow_changed",
         "tool_started",
         "tool_progress",
         "tool_finished",

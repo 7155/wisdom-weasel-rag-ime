@@ -20,7 +20,8 @@
       "security": {
         "reviewed": true,
         "networkAccess": false,
-        "notes": "Read-only session access; installation still requires digest-bound explicit approval."
+        "enforcement": "first_party_source_review",
+        "notes": "First-party source reviewed with no network code. Pi extensions run in-process, so this is a reviewed capability declaration rather than an OS sandbox."
       },
       "versions": [
         {

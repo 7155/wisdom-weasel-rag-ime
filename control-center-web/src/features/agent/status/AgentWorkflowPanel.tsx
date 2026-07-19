@@ -77,8 +77,36 @@ export function AgentWorkflowPanel({
     },
   });
 
+  if (workflowQuery.isPending && !workflowQuery.data && !fallbackPlan && !fallbackGoal && !fallbackActGate) {
+    return (
+      <div className="agent-workflow-panel" aria-label="任务工作流">
+        <section className="agent-workflow-section">
+          <p role="status">正在读取实时 Plan 与 Goal</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (workflowQuery.error && !workflowQuery.data) {
+    return (
+      <div className="agent-workflow-panel" aria-label="任务工作流">
+        <section className="agent-workflow-section">
+          <p className="agent-workflow-error" role="alert">
+            暂时无法读取实时 Plan 与 Goal。为避免把本地快照误当成当前状态，工作流操作已暂停。
+          </p>
+          <Button size="small" onClick={() => void workflowQuery.refetch()}>重新读取</Button>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="agent-workflow-panel" aria-label="任务工作流">
+      {workflowQuery.error ? (
+        <p className="agent-workflow-error" role="alert">
+          实时工作流刷新失败，当前显示上一次确认的状态。
+        </p>
+      ) : null}
       <PlanReview
         plan={workflow.plan}
         gate={workflow.actGate}
@@ -203,7 +231,18 @@ function PlanReview({
               <Button size="small" variant="quiet" leadingIcon={<RotateCcw size={15} />} loading={pending} onClick={() => mutate({ action: 'return_to_draft', expectedRevision: plan.revision })}>退回修改</Button>
             ) : null}
             {['approved', 'executing'].includes(plan.status) ? (
-              <Button size="small" variant="quiet" leadingIcon={<X size={15} />} loading={pending} onClick={() => mutate({ action: 'cancel', expectedRevision: plan.revision })}>取消执行</Button>
+              <Button
+                size="small"
+                variant="quiet"
+                leadingIcon={<X size={15} />}
+                loading={pending}
+                onClick={() => {
+                  if (!confirmDestructive('确定取消当前 Plan 的执行吗？')) return;
+                  void mutate({ action: 'cancel', expectedRevision: plan.revision });
+                }}
+              >
+                取消执行
+              </Button>
             ) : null}
             {['completed', 'cancelled'].includes(plan.status) ? (
               <Button size="small" leadingIcon={<RotateCcw size={15} />} loading={pending} onClick={() => mutate({ action: 'reset', expectedRevision: plan.revision, title: '执行计划', items: [] })}>新建 Plan</Button>
@@ -314,7 +353,17 @@ function GoalMode({
             {goal.status === 'active' ? <Button size="small" variant="quiet" leadingIcon={<CirclePause size={15} />} loading={pending} onClick={() => mutate({ action: 'pause', expectedRevision: goal.revision })}>暂停</Button> : null}
             {goal.status === 'paused' ? <Button size="small" leadingIcon={<CirclePlay size={15} />} loading={pending} onClick={() => mutate({ action: 'resume', expectedRevision: goal.revision })}>恢复</Button> : null}
             {['active', 'paused'].includes(goal.status) ? <Button size="small" variant="primary" leadingIcon={<ShieldCheck size={15} />} onClick={() => setAuditing(true)}>完成审计</Button> : null}
-            <Button size="small" variant="quiet" loading={pending} onClick={() => mutate({ action: 'clear', expectedRevision: goal.revision })}>清除</Button>
+            <Button
+              size="small"
+              variant="quiet"
+              loading={pending}
+              onClick={() => {
+                if (!confirmDestructive('确定清除当前 Goal、预算和进度吗？')) return;
+                void mutate({ action: 'clear', expectedRevision: goal.revision });
+              }}
+            >
+              清除
+            </Button>
           </div> : null}
         </div>
       ) : null}
@@ -465,4 +514,8 @@ function formatDuration(value: number): string {
 
 function publicError(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 240) : '操作失败，请刷新后重试。';
+}
+
+function confirmDestructive(message: string): boolean {
+  return typeof window === 'undefined' || window.confirm(message);
 }

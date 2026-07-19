@@ -209,7 +209,7 @@ class PiRuntimeConfig:
             debug_context_dir=(
                 Path(debug_context_value).expanduser()
                 if debug_context_value
-                else app_support / "Agent" / "debug-context"
+                else None
             ),
             debug_context_max_bytes=_env_int(
                 "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES",
@@ -626,12 +626,24 @@ class PiRpcClient:
             raise PiRuntimeError(str(response.get("error") or f"Pi RPC command failed: {request.get('type')}"))
         return response
 
-    def respond_extension_ui(self, request_id: str, *, confirmed: bool) -> None:
+    def respond_extension_ui(
+        self,
+        request_id: str,
+        *,
+        confirmed: bool | None = None,
+        value: str | None = None,
+        cancelled: bool = False,
+    ) -> None:
         request = {
             "type": "extension_ui_response",
             "id": str(request_id),
-            "confirmed": bool(confirmed),
         }
+        if cancelled:
+            request["cancelled"] = True
+        elif confirmed is not None:
+            request["confirmed"] = bool(confirmed)
+        else:
+            request["value"] = str(value or "")
         with self._lock:
             process = self._process
             if process is None or process.poll() is not None or process.stdin is None:
@@ -766,6 +778,7 @@ class PiRuntimeManager:
         self._intentional_stop = False
         self._pending_approval_requests: dict[str, str] = {}
         self._pending_review_requests: dict[str, str] = {}
+        self._pending_ui_requests: dict[str, dict[str, object]] = {}
         self._last_pi_entry_id = ""
         # Pi emits one assistant message before every tool call. The product UI
         # presents those messages as one Agent turn, not as a stack of avatars.
@@ -1217,6 +1230,7 @@ class PiRuntimeManager:
                             self._stream_pi_message_id = ""
                             self._pending_approval_requests.clear()
                             self._pending_review_requests.clear()
+                            self._pending_ui_requests.clear()
                             self._last_pi_entry_id = ""
                             self._status = "stopped" if self.config.enabled else "disabled"
                             self._intentional_stop = True
@@ -1242,7 +1256,11 @@ class PiRuntimeManager:
     def _require_quiescent_fork_locked(self) -> None:
         if self._active_turn_id:
             raise PiRuntimeError("conversation forks are unavailable during an Agent turn")
-        if self._pending_approval_requests or self._pending_review_requests:
+        if (
+            self._pending_approval_requests
+            or self._pending_review_requests
+            or self._pending_ui_requests
+        ):
             raise PiRuntimeError("conversation forks are unavailable while user input is pending")
 
     @staticmethod
@@ -1620,6 +1638,7 @@ class PiRuntimeManager:
             self._status = "stopped" if self.config.enabled else "disabled"
             self._pending_approval_requests.clear()
             self._pending_review_requests.clear()
+            self._pending_ui_requests.clear()
             self._last_pi_entry_id = ""
         if client is not None:
             client.stop()
@@ -1790,12 +1809,33 @@ class PiRuntimeManager:
                 return
             if method not in {"select", "confirm", "input", "editor"}:
                 return
-            safe = {
+            safe: dict[str, object] = {
                 "requestId": request_id,
                 "method": method,
                 "title": title[:160],
                 "message": str(raw.get("message") or "")[:500],
             }
+            if isinstance(raw.get("options"), list):
+                safe["options"] = [
+                    str(value)[:240] for value in raw["options"][:100]
+                ]
+            for field, maximum in (
+                ("placeholder", 500),
+                ("prefill", 4_000),
+                ("defaultValue", 4_000),
+            ):
+                if raw.get(field) is not None:
+                    safe[field] = str(raw.get(field) or "")[:maximum]
+            if raw.get("timeout") is not None:
+                try:
+                    safe["timeout"] = max(0, int(raw["timeout"]))
+                except (TypeError, ValueError):
+                    pass
+            with self._lock:
+                if self._client is not client or self._active_session_id != session_id:
+                    client.respond_extension_ui(request_id, cancelled=True)
+                    return
+                self._pending_ui_requests[request_id] = dict(safe)
             self.events.publish(session_id, "user_input_required", safe, turn_id=turn_id)
             return
         if event_type == "agent_end":
@@ -1839,6 +1879,7 @@ class PiRuntimeManager:
                 self._stream_pi_message_id = ""
                 self._pending_approval_requests.clear()
                 self._pending_review_requests.clear()
+                self._pending_ui_requests.clear()
                 self._schedule_idle_locked()
             self.sessions.set_status(session_id, "idle", message_count=len(messages), last_message_preview=preview)
             return
@@ -1931,6 +1972,65 @@ class PiRuntimeManager:
             turn_id=turn_id,
         )
 
+    def resolve_ui_request(
+        self,
+        session_id: str,
+        request_id: str,
+        *,
+        response: Mapping[str, object],
+    ) -> dict[str, object]:
+        normalized_request_id = str(request_id or "").strip()
+        with self._lock:
+            if (
+                self._active_session_id != session_id
+                or self._client is None
+                or not self._client.running
+            ):
+                raise PiRuntimeError("UI request is no longer attached to an active Pi session")
+            request = self._pending_ui_requests.get(normalized_request_id)
+            review_run_id = next(
+                (
+                    run_id
+                    for run_id, pending_id in self._pending_review_requests.items()
+                    if pending_id == normalized_request_id
+                ),
+                "",
+            )
+            if request is None and review_run_id:
+                request = {"requestId": normalized_request_id, "method": "confirm"}
+            if request is None:
+                raise PiRuntimeError("UI request is no longer pending")
+            client = self._client
+        method = str(request.get("method") or "")
+        cancelled = response.get("cancelled") is True
+        value = str(response.get("value") or "")
+        if method == "confirm" and not cancelled:
+            confirmed = response.get("confirmed")
+            if not isinstance(confirmed, bool):
+                confirmed = _ui_confirmation_value(value)
+            client.respond_extension_ui(
+                normalized_request_id,
+                confirmed=confirmed,
+            )
+        elif method == "select" and not cancelled:
+            options = [str(item) for item in request.get("options") or []]
+            if options and value not in options:
+                raise PiRuntimeError("UI response is not one of the offered options")
+            client.respond_extension_ui(normalized_request_id, value=value)
+        elif cancelled:
+            client.respond_extension_ui(normalized_request_id, cancelled=True)
+        else:
+            client.respond_extension_ui(normalized_request_id, value=value)
+        with self._lock:
+            self._pending_ui_requests.pop(normalized_request_id, None)
+            if review_run_id:
+                self._pending_review_requests.pop(review_run_id, None)
+        return {
+            "requestId": normalized_request_id,
+            "resolved": True,
+            "method": method,
+        }
+
     def _handle_process_exit(
         self,
         client: PiRpcClient,
@@ -1955,6 +2055,7 @@ class PiRuntimeManager:
                 self._last_error = _redact_runtime_text(error or f"Pi exited with code {exit_code}")
             self._pending_approval_requests.clear()
             self._pending_review_requests.clear()
+            self._pending_ui_requests.clear()
             self._last_pi_entry_id = ""
         if session_id:
             self.sessions.set_status(session_id, "idle" if intentional else "faulted")
@@ -1976,6 +2077,7 @@ class PiRuntimeManager:
             self._last_error = safe_error
             self._pending_approval_requests.clear()
             self._pending_review_requests.clear()
+            self._pending_ui_requests.clear()
             self._schedule_idle_locked()
         self.events.publish(session_id, "turn_failed", {"error": safe_error}, turn_id=turn_id)
 
@@ -2645,6 +2747,44 @@ def _configured_model_ids(provider: Mapping[str, object] | None) -> list[str]:
         for model_id in [str(value.get("id") or "").strip()]
         if model_id
     ]
+
+
+def _ui_confirmation_value(value: object) -> bool:
+    normalized = str(value or "").strip().lower()
+    affirmative = (
+        "yes",
+        "y",
+        "true",
+        "confirm",
+        "confirmed",
+        "allow",
+        "approve",
+        "是",
+        "确认",
+        "同意",
+        "允许",
+        "批准",
+        "保留",
+    )
+    negative = (
+        "no",
+        "n",
+        "false",
+        "cancel",
+        "deny",
+        "reject",
+        "否",
+        "取消",
+        "不同意",
+        "拒绝",
+        "不允许",
+        "删除",
+    )
+    if any(normalized == item or normalized.startswith(f"{item}，") or normalized.startswith(f"{item},") for item in affirmative):
+        return True
+    if any(normalized == item or normalized.startswith(f"{item}，") or normalized.startswith(f"{item},") for item in negative):
+        return False
+    raise PiRuntimeError("confirm UI response must explicitly approve or reject the request")
 
 
 def _env_bool(name: str, default: bool) -> bool:

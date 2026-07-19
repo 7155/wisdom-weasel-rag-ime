@@ -630,9 +630,10 @@ class WorkspaceHarness:
         decoded = output.decode("utf-8", errors="replace")
         for pattern, replacement in _OUTPUT_REDACTIONS:
             decoded = pattern.sub(replacement, decoded)
+        succeeded = int(exit_code) == 0 and not timed_out and not output_limited
         return {
             "schemaVersion": "rag-ime.workspace-command-receipt.v1",
-            "mutationApplied": True,
+            "mutationApplied": succeeded,
             "summary": (
                 "命令执行超时"
                 if timed_out

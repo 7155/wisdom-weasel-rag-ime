@@ -388,11 +388,8 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("test-secret", repr(config))
         child = config.child_environment()
         self.assertEqual(child["DEEPSEEK_API_KEY"], "test-secret")
-        self.assertEqual(
-            child["RAG_IME_PI_DEBUG_CONTEXT_DIR"],
-            str(self.root / "support" / "Agent" / "debug-context"),
-        )
-        self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "1073741824")
+        self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_DIR", child)
+        self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES", child)
         self.assertNotIn("RAG_IME_DEEPSEEK_API_KEY", child)
         config.prepare_agent_config()
         models_path = config.agent_dir / "models.json"
@@ -406,6 +403,32 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertTrue(provider["compat"]["supportsUsageInStreaming"])
         self.assertEqual(provider["compat"]["thinkingFormat"], "deepseek")
         self.assertNotIn("modelOverrides", provider)
+
+    def test_debug_context_persistence_requires_explicit_opt_in(self) -> None:
+        debug_directory = self.root / "private-debug-context"
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RAG_IME_APP_SUPPORT_DIR": str(self.root / "support"),
+                "RAG_IME_PI_EXECUTABLE": str(self.fake_pi),
+                "RAG_IME_PI_ENABLED": "1",
+                "RAG_IME_PI_DEBUG_CONTEXT_DIR": str(debug_directory),
+                "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": "65536",
+            },
+            clear=True,
+        ), mock.patch(
+            "rag_ime.pi_runtime.load_deepseek_config",
+            return_value=DeepSeekConfig(
+                api_base_url="https://gateway.example/v1",
+                api_key="test-secret",
+                model="deepseek-v4-flash",
+            ),
+        ):
+            config = PiRuntimeConfig.from_environment()
+
+        child = config.child_environment()
+        self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_DIR"], str(debug_directory))
+        self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "65536")
 
     def test_native_deepseek_endpoint_keeps_native_thinking_contract(self) -> None:
         provider = _deepseek_pi_provider(

@@ -21,8 +21,8 @@ INSERT OR IGNORE INTO agent_lifecycle_hook_policies(
     ('turn_end', 1, 'audit_only', 128, 0, 0),
     ('compaction', 1, 'context_checkpoint', 256, 60, 0),
     ('project_complete', 1, 'memory_review_suggestion', 256, 300, 0),
-    ('tool_failed', 1, 'memory_review_suggestion', 192, 120, 0),
-    ('idle', 1, 'memory_review_suggestion', 128, 900, 0);
+    ('tool_failed', 1, 'audit_only', 0, 120, 0),
+    ('idle', 1, 'audit_only', 0, 900, 0);
 
 CREATE TABLE IF NOT EXISTS agent_lifecycle_hook_events (
     event_id TEXT PRIMARY KEY,

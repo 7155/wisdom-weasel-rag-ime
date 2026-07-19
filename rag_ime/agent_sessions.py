@@ -1066,6 +1066,24 @@ class AgentSessionStore:
             raise ValueError(f"Act Gate blocked workspace mutation ({reason}): {message}")
         return state
 
+    def require_goal_execution(self, session_id: str) -> dict[str, object]:
+        """Reject new cost-incurring work while a configured Goal cannot run."""
+
+        state = self.workflow_state(session_id)
+        goal = state["goal"] if isinstance(state.get("goal"), Mapping) else {}
+        if goal.get("configured") is not True:
+            return state
+        status = str(goal.get("status") or "")
+        if status == "paused":
+            raise ValueError(
+                "Goal execution blocked (goal_paused): 当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。"
+            )
+        if goal.get("budgetExceeded") is True:
+            raise ValueError(
+                "Goal execution blocked (goal_budget_exhausted): Goal 的 Token 或时间预算已经耗尽。"
+            )
+        return state
+
     def begin_agent_plan_execution(self, session_id: str) -> dict[str, object]:
         state = self.require_workspace_act(session_id)
         plan = state["plan"] if isinstance(state.get("plan"), Mapping) else {}

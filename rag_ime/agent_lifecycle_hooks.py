@@ -22,7 +22,7 @@ _ACTIONS = {"audit_only", "context_checkpoint", "memory_review_suggestion"}
 
 
 class AgentLifecycleHookService:
-    """Durable, suggestion-only lifecycle boundary for the managed Agent runtime."""
+    """Durable, governed lifecycle boundary for the managed Agent runtime."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -92,8 +92,11 @@ class AgentLifecycleHookService:
             action = str(payload["action"] or "")
             if action not in _ACTIONS:
                 raise ValueError("unsupported lifecycle hook action")
-            if event_type in {"project_complete", "tool_failed", "idle"} and action != "memory_review_suggestion":
-                raise ValueError("review lifecycle events must remain suggestion-only")
+            if event_type == "project_complete" and action == "context_checkpoint":
+                raise ValueError(
+                    "project completion may be audited or proposed for memory review, "
+                    "but not injected as an implicit checkpoint"
+                )
             changes.append("action = ?")
             values.append(action)
         if not changes:

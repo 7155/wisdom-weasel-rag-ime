@@ -29,14 +29,23 @@ final class GlobalVoiceHotkey {
     func start() -> Bool {
         if eventTap != nil || globalMouseMonitor != nil { return true }
         configuration = VoiceHotkeyConfigStore.read()
-        if AXIsProcessTrusted(), startEventTap() {
+
+        // The default middle-mouse hotkey never needs a filtering event tap.
+        // A stalled filter can delay every keyboard event in the login session,
+        // while this passive monitor cannot block input in other applications.
+        if configuration.choice == .middleMouse {
+            return startPassiveMiddleMouseMonitor()
+        }
+
+        if AXIsProcessTrusted(), startListenOnlyEventTap() {
             monitoringMode = .eventTap
             return true
         }
-        guard configuration.choice == .middleMouse else {
-            monitoringMode = .unavailable
-            return false
-        }
+        monitoringMode = .unavailable
+        return false
+    }
+
+    private func startPassiveMiddleMouseMonitor() -> Bool {
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.otherMouseDown, .otherMouseUp]
         ) { [weak self] event in
@@ -50,18 +59,16 @@ final class GlobalVoiceHotkey {
         return globalMouseMonitor != nil
     }
 
-    private func startEventTap() -> Bool {
+    private func startListenOnlyEventTap() -> Bool {
         let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
             | (CGEventMask(1) << CGEventType.keyUp.rawValue)
             | (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
-            | (CGEventMask(1) << CGEventType.otherMouseDown.rawValue)
-            | (CGEventMask(1) << CGEventType.otherMouseUp.rawValue)
             | (CGEventMask(1) << CGEventType.tapDisabledByTimeout.rawValue)
             | (CGEventMask(1) << CGEventType.tapDisabledByUserInput.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,
+            options: .listenOnly,
             eventsOfInterest: mask,
             callback: voiceHotkeyEventCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
@@ -117,13 +124,13 @@ final class GlobalVoiceHotkey {
         if keyCode == 53, type == .keyDown, pressed {
             cancelActivePress()
             DispatchQueue.main.async { [weak self] in self?.onCancel?() }
-            return nil
+            return Unmanaged.passUnretained(event)
         }
 
         if let suppressedChoice = suppressedReleaseChoice,
            isRelease(of: suppressedChoice, type: type, keyCode: keyCode, mouseButton: mouseButton, flags: event.flags) {
             suppressedReleaseChoice = nil
-            return nil
+            return Unmanaged.passUnretained(event)
         }
 
         if configuration.choice == .middleMouse {
@@ -136,7 +143,7 @@ final class GlobalVoiceHotkey {
             } else if type == .otherMouseUp, pressed, activeChoice == .middleMouse {
                 finishPress()
             }
-            return nil
+            return Unmanaged.passUnretained(event)
         }
 
         if configuration.choice == .rightOption {
@@ -148,7 +155,7 @@ final class GlobalVoiceHotkey {
             } else if pressed, activeChoice == .rightOption {
                 finishPress()
             }
-            return nil
+            return Unmanaged.passUnretained(event)
         }
 
         guard keyCode == 49 else { return Unmanaged.passUnretained(event) }
@@ -156,11 +163,11 @@ final class GlobalVoiceHotkey {
             if !pressed {
                 beginPress(.optionSpace)
             }
-            return nil
+            return Unmanaged.passUnretained(event)
         }
         if type == .keyUp, pressed, activeChoice == .optionSpace {
             finishPress()
-            return nil
+            return Unmanaged.passUnretained(event)
         }
         return Unmanaged.passUnretained(event)
     }

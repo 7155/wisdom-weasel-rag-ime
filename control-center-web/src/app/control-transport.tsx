@@ -5,6 +5,7 @@ import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/rou
 import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { previewPersonas } from '@/features/agent/preview-data';
+import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 
 const ControlTransportContext = createContext<ControlTransport | null>(null);
 
@@ -58,6 +59,10 @@ function createPreviewTransport(): MockControlTransport {
   let nextWakeScheduleId = 1;
   let previewEvidenceDisposition = 'not_for_memory';
   let previewMemoryRunStatus = 'draft';
+  let previewWorkflow = previewWorkflowState('session-preview');
+  let previewInstalledExtensions = previewInstalledExtensionItems();
+  let previewExtensionChange: Record<string, unknown> = {};
+  let previewLifecyclePolicies = previewLifecyclePolicyItems();
   const previewTimelineStatuses = new Map<string, string>();
   const previewMemorySelections = new Map<number, boolean>([[1, true], [2, false], [3, true]]);
   const sessions: Record<string, unknown>[] = [
@@ -70,6 +75,119 @@ function createPreviewTransport(): MockControlTransport {
       .filter((pathId) => !controlRoute(pathId).subscription)
       .map((pathId) => [pathId, previewResponse(pathId)]),
   ) as Partial<Record<ControlPathId, MockRouteHandler>>;
+  routes['agent.session.workflow.get'] = (request: ControlRequest) => {
+    previewWorkflow = withPreviewWorkflowSession(
+      previewWorkflow,
+      stringValue(record(request.params).sessionId) || 'session-preview',
+    );
+    return previewWorkflow;
+  };
+  routes['agent.session.plan.mutate'] = (request: ControlRequest) => {
+    previewWorkflow = mutatePreviewPlan(
+      withPreviewWorkflowSession(
+        previewWorkflow,
+        stringValue(record(request.params).sessionId) || 'session-preview',
+      ),
+      record(request.body),
+    );
+    return previewWorkflow;
+  };
+  routes['agent.session.goal.mutate'] = (request: ControlRequest) => {
+    previewWorkflow = mutatePreviewGoal(
+      withPreviewWorkflowSession(
+        previewWorkflow,
+        stringValue(record(request.params).sessionId) || 'session-preview',
+      ),
+      record(request.body),
+    );
+    return previewWorkflow;
+  };
+  routes['agent.extensions.list'] = () => ({ ok: true, items: previewInstalledExtensions });
+  routes['agent.extensions.catalog'] = () => ({
+    ok: true,
+    items: previewExtensionCatalogItems(previewInstalledExtensions),
+  });
+  routes['agent.extensions.proposals'] = () => ({
+    ok: true,
+    items: [previewExtensionProposal()],
+  });
+  routes['agent.extensions.validate'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const pluginId = stringValue(body.catalogId) || 'session-review';
+    return {
+      ok: true,
+      validationToken: `validation:${pluginId}:preview`,
+      extension: {
+        id: pluginId,
+        displayName: pluginId === 'session-review' ? 'Session Review' : pluginId,
+        version: stringValue(body.catalogVersion) || '1.1.0',
+        totalBytes: 18_432,
+      },
+    };
+  };
+  routes['agent.extensions.preview'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const action = stringValue(body.action) || 'install';
+    const validationToken = stringValue(body.validationToken);
+    const tokenPluginId = validationToken.split(':')[1] || '';
+    const pluginId = stringValue(body.pluginId) || tokenPluginId || 'session-review';
+    previewExtensionChange = {
+      action,
+      pluginId,
+      displayName: pluginId === 'session-review' ? 'Session Review' : pluginId,
+      enable: body.enable !== false,
+    };
+    return {
+      ok: true,
+      previewToken: `preview:${action}:${pluginId}`,
+      payloadSha256: 'c'.repeat(64),
+      summary: previewExtensionChange,
+    };
+  };
+  routes['agent.extensions.apply'] = (request: ControlRequest) => {
+    if (!stringValue(previewExtensionChange.pluginId)
+      && stringValue(record(request.body).previewToken) === 'proposal-preview-token') {
+      previewExtensionChange = {
+        action: 'install',
+        pluginId: 'session-review',
+        displayName: 'Session Review',
+        enable: true,
+      };
+    }
+    previewInstalledExtensions = applyPreviewExtensionChange(
+      previewInstalledExtensions,
+      previewExtensionChange,
+    );
+    return {
+      ok: true,
+      receipt: {
+        receiptId: `plugin:${stringValue(previewExtensionChange.action) || 'apply'}:preview`,
+      },
+    };
+  };
+  routes['agent.lifecycleHooks.get'] = () => ({
+    ok: true,
+    policies: previewLifecyclePolicies,
+    recentEvents: previewLifecycleEventItems(),
+  });
+  routes['agent.lifecycleHooks.update'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const eventType = stringValue(body.eventType);
+    previewLifecyclePolicies = previewLifecyclePolicies.map((policy) => (
+      stringValue(policy.eventType) === eventType
+        ? { ...policy, ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}) }
+        : policy
+    ));
+    return { ok: true, policies: previewLifecyclePolicies };
+  };
+  routes['agent.subagent.console'] = (request: ControlRequest) =>
+    previewSubagentConsole(stringValue(record(request.params).runId));
+  routes['agent.subagent.control'] = (request: ControlRequest) => ({
+    ok: true,
+    replayed: false,
+    action: stringValue(record(request.body).action),
+    clientActionId: stringValue(record(request.body).clientActionId),
+  });
   routes['memory.summary'] = () => previewMemorySummary(previewTimelineStatuses);
   routes['memory.activityTimeline.get'] = (request: ControlRequest) => {
     const date = stringValue(record(request.query).date) || new Date().toISOString().slice(0, 10);
@@ -1552,6 +1670,420 @@ function previewKnowledgeBase(): Record<string, unknown> {
   };
 }
 
+function previewWorkflowState(sessionId: string): AgentWorkflowStateV1 {
+  const now = Date.now();
+  return {
+    schemaVersion: 'rag-ime.agent-workflow-state.v1',
+    ok: true,
+    sessionId,
+    plan: {
+      schemaVersion: 'rag-ime.agent-plan.v2',
+      id: `plan:${sessionId}`,
+      sessionId,
+      revision: 2,
+      title: '完成 Agent 工作流与前端验收',
+      status: 'review',
+      actor: 'agent',
+      note: '等待用户批准后再进入 Act。',
+      updatedAtMs: now,
+      editable: false,
+      actApproved: false,
+      items: [
+        {
+          id: 'preview-plan:1',
+          title: '核对 Plan、Goal 与 Subagent 契约',
+          status: 'completed',
+          position: 1,
+          sequence: 1,
+          updatedAtMs: now - 60_000,
+        },
+        {
+          id: 'preview-plan:2',
+          title: '完成前端交互与 Preview Transport',
+          status: 'in_progress',
+          position: 2,
+          sequence: 2,
+          updatedAtMs: now,
+        },
+        {
+          id: 'preview-plan:3',
+          title: '运行聚焦测试并核对真实 Payload',
+          status: 'pending',
+          position: 3,
+          sequence: 3,
+          updatedAtMs: now,
+        },
+      ],
+      counts: { total: 3, pending: 1, inProgress: 1, completed: 1 },
+    },
+    goal: {
+      schemaVersion: 'rag-ime.agent-goal.v1',
+      sessionId,
+      configured: true,
+      goalId: `goal:${sessionId}`,
+      revision: 1,
+      objective: '在明确预算内完成 Agent 工作流，并留下可复现的验证证据。',
+      status: 'active',
+      budget: { tokenLimit: 48_000, timeLimitMs: 3_600_000 },
+      usage: { tokens: 14_600, elapsedMs: 1_080_000 },
+      remaining: { tokens: 33_400, timeMs: 2_520_000 },
+      budgetExceeded: false,
+      completionAudit: null,
+      updatedAtMs: now,
+    },
+    actGate: {
+      allowed: false,
+      reason: 'plan_not_approved',
+      message: 'Plan 正在等待审阅。',
+    },
+  };
+}
+
+function withPreviewWorkflowSession(
+  workflow: AgentWorkflowStateV1,
+  sessionId: string,
+): AgentWorkflowStateV1 {
+  if (workflow.sessionId === sessionId) return workflow;
+  return {
+    ...workflow,
+    sessionId,
+    plan: {
+      ...workflow.plan,
+      id: `plan:${sessionId}`,
+      sessionId,
+    },
+    goal: {
+      ...workflow.goal,
+      sessionId,
+      goalId: workflow.goal.configured ? `goal:${sessionId}` : '',
+    },
+  };
+}
+
+function mutatePreviewPlan(
+  workflow: AgentWorkflowStateV1,
+  body: Record<string, unknown>,
+): AgentWorkflowStateV1 {
+  const action = stringValue(body.action);
+  const now = Date.now();
+  if (action === 'reset') {
+    const plan = {
+      ...workflow.plan,
+      revision: workflow.plan.revision + 1,
+      title: stringValue(body.title) || '执行计划',
+      status: 'draft' as const,
+      note: '',
+      updatedAtMs: now,
+      editable: true,
+      actApproved: false,
+      items: [],
+      counts: { total: 0, pending: 0, inProgress: 0, completed: 0 },
+    };
+    return { ...workflow, plan, actGate: previewActGate(plan.status, workflow.goal) };
+  }
+  let status = workflow.plan.status;
+  if (action === 'submit_review') status = 'review';
+  if (action === 'approve') status = 'approved';
+  if (action === 'return_to_draft' || action === 'save') status = 'draft';
+  if (action === 'cancel') status = 'cancelled';
+  const requestedItems: AgentWorkflowStateV1['plan']['items'] = Array.isArray(body.items)
+    ? body.items.map((item, index) => {
+      const value = record(item);
+      const itemStatus = stringValue(value.status);
+      return {
+        id: stringValue(value.id) || `preview-plan:${now}:${index + 1}`,
+        title: stringValue(value.title) || `步骤 ${index + 1}`,
+        status: (itemStatus === 'completed' || itemStatus === 'in_progress'
+          ? itemStatus
+          : 'pending') as AgentWorkflowStateV1['plan']['items'][number]['status'],
+        position: index + 1,
+        sequence: index + 1,
+        updatedAtMs: now,
+      };
+    })
+    : workflow.plan.items;
+  const items = requestedItems.map((item, index) => ({
+    ...item,
+    position: index + 1,
+    sequence: index + 1,
+  }));
+  const plan = {
+    ...workflow.plan,
+    revision: workflow.plan.revision + 1,
+    title: stringValue(body.title) || workflow.plan.title,
+    status,
+    note: stringValue(body.note) || workflow.plan.note,
+    updatedAtMs: now,
+    editable: status === 'draft',
+    actApproved: status === 'approved' || status === 'executing' || status === 'completed',
+    items,
+    counts: {
+      total: items.length,
+      pending: items.filter((item) => item.status === 'pending').length,
+      inProgress: items.filter((item) => item.status === 'in_progress').length,
+      completed: items.filter((item) => item.status === 'completed').length,
+    },
+  };
+  return { ...workflow, plan, actGate: previewActGate(plan.status, workflow.goal) };
+}
+
+function mutatePreviewGoal(
+  workflow: AgentWorkflowStateV1,
+  body: Record<string, unknown>,
+): AgentWorkflowStateV1 {
+  const action = stringValue(body.action);
+  if (action === 'clear') {
+    const empty = previewWorkflowState(workflow.sessionId).goal;
+    const goal = {
+      ...empty,
+      configured: false,
+      goalId: '',
+      revision: workflow.goal.revision + 1,
+      objective: '',
+      status: 'cleared' as const,
+      budget: { tokenLimit: null, timeLimitMs: null },
+      usage: { tokens: 0, elapsedMs: 0 },
+      remaining: { tokens: null, timeMs: null },
+      completionAudit: null,
+    };
+    return { ...workflow, goal, actGate: previewActGate(workflow.plan.status, goal) };
+  }
+  const now = Date.now();
+  let status = workflow.goal.status;
+  if (action === 'set' || action === 'update' || action === 'resume') status = 'active';
+  if (action === 'pause') status = 'paused';
+  if (action === 'complete') status = 'completed';
+  const tokenLimit = optionalPreviewNumber(body.tokenBudget, workflow.goal.budget.tokenLimit);
+  const timeLimitMs = optionalPreviewNumber(body.timeBudgetMs, workflow.goal.budget.timeLimitMs);
+  const evidence = Array.isArray(body.evidence)
+    ? body.evidence.map((item) => {
+      const value = record(item);
+      const kind = stringValue(value.kind);
+      return {
+        kind: ['test', 'artifact', 'commit', 'receipt', 'note'].includes(kind) ? kind : 'note',
+        summary: stringValue(value.summary) || 'Preview evidence',
+        reference: stringValue(value.reference) || 'preview',
+      };
+    })
+    : [];
+  const goal: AgentWorkflowStateV1['goal'] = {
+    ...workflow.goal,
+    configured: true,
+    goalId: workflow.goal.goalId || `goal:${workflow.sessionId}`,
+    revision: workflow.goal.revision + 1,
+    objective: stringValue(body.objective) || workflow.goal.objective || 'Preview Goal',
+    status,
+    budget: { tokenLimit, timeLimitMs },
+    remaining: {
+      tokens: tokenLimit === null ? null : Math.max(0, tokenLimit - workflow.goal.usage.tokens),
+      timeMs: timeLimitMs === null ? null : Math.max(0, timeLimitMs - workflow.goal.usage.elapsedMs),
+    },
+    completionAudit: action === 'complete'
+      ? {
+        auditId: `goal-audit:${now}`,
+        summary: stringValue(body.summary) || 'Preview Goal 已完成。',
+        evidence: (evidence.length ? evidence : [{
+          kind: 'note',
+          summary: 'Preview 完成回执',
+          reference: 'preview',
+        }]) as NonNullable<AgentWorkflowStateV1['goal']['completionAudit']>['evidence'],
+        completedBy: 'user',
+        createdAtMs: now,
+      }
+      : workflow.goal.completionAudit,
+    updatedAtMs: now,
+  };
+  return { ...workflow, goal, actGate: previewActGate(workflow.plan.status, goal) };
+}
+
+function previewActGate(
+  planStatus: AgentWorkflowStateV1['plan']['status'],
+  goal: AgentWorkflowStateV1['goal'],
+): AgentWorkflowStateV1['actGate'] {
+  if (goal.status === 'paused') {
+    return { allowed: false, reason: 'goal_paused', message: 'Goal 已暂停。' };
+  }
+  if (goal.status === 'completed') {
+    return { allowed: false, reason: 'goal_completed', message: 'Goal 已完成。' };
+  }
+  if (goal.budgetExceeded) {
+    return { allowed: false, reason: 'goal_budget_exhausted', message: 'Goal 预算已用尽。' };
+  }
+  if (planStatus === 'approved' || planStatus === 'executing') {
+    return { allowed: true, reason: 'approved', message: 'Plan 已批准，可以进入 Act。' };
+  }
+  return {
+    allowed: false,
+    reason: planStatus === 'draft' ? 'plan_required' : 'plan_not_approved',
+    message: planStatus === 'draft' ? '请先提交 Plan 审阅。' : 'Plan 正在等待审阅。',
+  };
+}
+
+function optionalPreviewNumber(value: unknown, fallback: number | null): number | null {
+  if (value === null) return null;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function previewInstalledExtensionItems(): Record<string, unknown>[] {
+  return [{
+    id: 'timeline-inspector',
+    displayName: 'Timeline Inspector',
+    version: '1.0.0',
+    enabled: true,
+    rollbackAvailable: true,
+  }];
+}
+
+function previewExtensionCatalogItems(
+  installed: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const isInstalled = installed.some((item) => stringValue(item.id) === 'session-review');
+  return [{
+    id: 'session-review',
+    displayName: 'Session Review',
+    description: '在项目完成时整理可核验事实，并生成下一轮可消费的复盘建议。',
+    publisher: 'Wisdom Weasel',
+    source: { kind: 'bundled', label: 'Product bundle' },
+    permissions: ['session.read', 'memory.review'],
+    security: { notes: '仅生成审阅建议，不直接写入长期记忆。' },
+    versions: [{ version: '1.1.0' }, { version: '1.0.0' }],
+    latestVersion: '1.1.0',
+    installed: isInstalled,
+    updateAvailable: false,
+    actionable: true,
+    enabled: isInstalled,
+  }];
+}
+
+function previewExtensionProposal(): Record<string, unknown> {
+  return {
+    proposalId: 'proposal:preview-session-review',
+    previewToken: 'proposal-preview-token',
+    payloadSha256: 'd'.repeat(64),
+    summary: {
+      action: 'install',
+      pluginId: 'session-review',
+      displayName: 'Session Review',
+    },
+  };
+}
+
+function applyPreviewExtensionChange(
+  installed: Record<string, unknown>[],
+  change: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const action = stringValue(change.action);
+  const pluginId = stringValue(change.pluginId);
+  if (!pluginId) return installed;
+  const existing = installed.find((item) => stringValue(item.id) === pluginId);
+  if (action === 'install' || action === 'update') {
+    const next = {
+      id: pluginId,
+      displayName: stringValue(change.displayName) || pluginId,
+      version: '1.1.0',
+      enabled: change.enable !== false,
+      rollbackAvailable: action === 'update',
+    };
+    return existing
+      ? installed.map((item) => stringValue(item.id) === pluginId ? next : item)
+      : [...installed, next];
+  }
+  if (!existing) return installed;
+  if (action === 'enable' || action === 'disable') {
+    return installed.map((item) => stringValue(item.id) === pluginId
+      ? { ...item, enabled: action === 'enable' }
+      : item);
+  }
+  return installed;
+}
+
+function previewLifecyclePolicyItems(): Record<string, unknown>[] {
+  return [
+    ['session_start', false, 'audit_only', 0, 0],
+    ['turn_end', false, 'audit_only', 0, 0],
+    ['compaction', true, 'context_checkpoint', 192, 60],
+    ['project_complete', true, 'memory_review_suggestion', 256, 300],
+    ['tool_failed', true, 'context_checkpoint', 128, 60],
+    ['idle', false, 'memory_review_suggestion', 160, 1_800],
+  ].map(([eventType, enabled, action, tokenLimit, cooldownSeconds]) => ({
+    eventType,
+    enabled,
+    action,
+    tokenLimit,
+    cooldownSeconds,
+  }));
+}
+
+function previewLifecycleEventItems(): Record<string, unknown>[] {
+  return [{
+    eventId: 'lifecycle:preview-project-complete',
+    eventType: 'project_complete',
+    sessionId: 'session-preview',
+    status: 'suggested',
+    createdAtMs: Date.now() - 120_000,
+  }];
+}
+
+function previewSubagentConsole(runId: string): Record<string, unknown> {
+  const batch = previewSubagentBatch();
+  const runs = Array.isArray(batch.runs) ? batch.runs.map(record) : [];
+  const run = runs.find((item) => stringValue(item.id) === runId) ?? runs[0] ?? {};
+  const running = stringValue(run.state) === 'running';
+  return {
+    schemaVersion: 'rag-ime.agent-subagent-console.v1',
+    ok: true,
+    run,
+    capabilities: {
+      steer: { available: running, reason: running ? '' : '任务已经结束' },
+      retry: { available: !running, reason: running ? '等待当前任务结束' : '' },
+      resume: { available: !running, reason: running ? '任务仍在运行' : '' },
+      abort: { available: running, reason: running ? '' : '任务已经结束' },
+      reply: { available: true, reason: '' },
+    },
+    conversation: {
+      availability: 'available',
+      source: 'active_runtime',
+      items: [
+        {
+          id: 'preview-subagent:user',
+          role: 'user',
+          createdAtMs: Date.now() - 70_000,
+          blocks: [{ type: 'text', data: { text: stringValue(run.task) } }],
+        },
+        {
+          id: 'preview-subagent:assistant',
+          role: 'assistant',
+          createdAtMs: Date.now() - 12_000,
+          blocks: [{ type: 'text', data: { text: '已完成契约核对，正在补齐前端验证证据。' } }],
+        },
+      ],
+    },
+    activity: [
+      {
+        id: 'preview-subagent:activity:1',
+        eventType: 'tool_started',
+        createdAtMs: Date.now() - 40_000,
+        payload: { toolName: 'read' },
+      },
+      {
+        id: 'preview-subagent:activity:2',
+        eventType: running ? 'checkpoint' : 'completed',
+        createdAtMs: Date.now() - 8_000,
+        payload: { summary: running ? '已保存一次可恢复进度' : '任务已经交付' },
+      },
+    ],
+    inbox: [{
+      id: 'preview-subagent:inbox:1',
+      kind: 'progress',
+      title: '前端核对进度',
+      message: 'Preview fixture 已接通，等待主 Agent 验收。',
+      status: 'recorded',
+      createdAtMs: Date.now() - 8_000,
+    }],
+    controls: [],
+  };
+}
+
 function previewSubagentBatch(): Record<string, unknown> {
   const now = Date.now();
   const budget = {
@@ -1683,6 +2215,27 @@ function previewContextTrace(
 
 function previewDebugContext(sessionId: string, turnId: string): Record<string, unknown> {
   const now = Date.now() - 17_000;
+  const systemPrompt = [
+    'You are the local RagIme coding agent. Follow the current role and workspace policy.',
+    '<rag-ime-context type="workflow_control">',
+    'Plan 正在审阅；未批准前不得进入 Act。',
+    '</rag-ime-context>',
+    '<rag-ime-context type="goal">',
+    '目标：完成 Agent 工作流并留下可复现验证证据。',
+    '</rag-ime-context>',
+    '<rag-ime-context type="lifecycle_hook">',
+    '项目完成时只生成记忆复盘建议，不直接写入长期记忆。',
+    '</rag-ime-context>',
+  ].join('\n');
+  const skills = [{
+    name: 'context-inspector',
+    description: 'Inspect the final provider context',
+  }];
+  const providerTools = [{
+    type: 'function',
+    name: 'memory_search',
+    description: 'Search approved memory',
+  }];
   return {
     schemaVersion: 'rag-ime.pi-debug-context-response.v1',
     sessionId,
@@ -1707,8 +2260,8 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
       capturedAtMs: now,
       updatedAtMs: now + 120,
       prompt: '<rag-ime-user-query>检查当前上下文与缓存命中情况</rag-ime-user-query>',
-      systemPrompt: 'You are the local RagIme coding agent. Follow the current role and workspace policy.',
-      systemPromptOptions: { cwd: '/Volumes/work/project', enabledTools: ['read', 'grep'] },
+      systemPrompt,
+      systemPromptOptions: { cwd: '/Volumes/work/project', enabledTools: ['read', 'grep'], skills },
       model: { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2', api: 'responses' },
       activeTools: ['read', 'grep', 'memory_search'],
       toolSchemas: [
@@ -1728,9 +2281,10 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
         capturedAtMs: now + 120,
         payload: {
           model: 'gpt-5.2',
-          instructions: 'You are the local RagIme coding agent.',
+          instructions: systemPrompt,
           input: [{ role: 'user', content: [{ type: 'input_text', text: '检查当前上下文与缓存命中情况' }] }],
-          tools: [{ type: 'function', name: 'memory_search' }],
+          tools: providerTools,
+          metadata: { skills },
         },
       }],
       modelCalls: [
@@ -1742,7 +2296,7 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
           completedAtMs: now + 210,
           contextMessages: [{ role: 'user', content: [{ type: 'text', text: '检查当前上下文与缓存命中情况' }] }],
           contextDelta: { commonPrefixMessages: 0, removedMessageCount: 0, addedMessageCount: 1, addedMessages: [{ role: 'user', content: '检查当前上下文与缓存命中情况' }] },
-          providerExchanges: [{ index: 1, capturedAtMs: now + 120, status: 200, headers: { 'x-request-id': 'preview-1' }, payload: { model: 'gpt-5.2', input: [{ role: 'user', content: '检查当前上下文与缓存命中情况' }] } }],
+          providerExchanges: [{ index: 1, capturedAtMs: now + 120, status: 200, headers: { 'x-request-id': 'preview-1' }, payload: { model: 'gpt-5.2', instructions: systemPrompt, input: [{ role: 'user', content: '检查当前上下文与缓存命中情况' }], tools: providerTools, metadata: { skills } } }],
           assistantMessage: { role: 'assistant', content: [{ type: 'toolCall', id: 'tool-preview-read', name: 'memory_search', arguments: { query: '上下文缓存' } }] },
         },
         {
@@ -1757,7 +2311,7 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
             { role: 'toolResult', content: [{ type: 'text', text: '缓存命中 90%' }] },
           ],
           contextDelta: { baseCallIndex: 1, commonPrefixMessages: 1, removedMessageCount: 0, addedMessageCount: 2, addedMessages: [{ role: 'assistant', content: [{ type: 'toolCall', id: 'tool-preview-read', name: 'memory_search' }] }, { role: 'toolResult', content: '缓存命中 90%' }] },
-          providerExchanges: [{ index: 2, capturedAtMs: now + 300, status: 200, headers: { 'x-request-id': 'preview-2' }, payload: { model: 'gpt-5.2', input: [{ role: 'tool', content: '缓存命中 90%' }] } }],
+          providerExchanges: [{ index: 2, capturedAtMs: now + 300, status: 200, headers: { 'x-request-id': 'preview-2' }, payload: { model: 'gpt-5.2', instructions: systemPrompt, input: [{ role: 'tool', content: '缓存命中 90%' }], tools: providerTools, metadata: { skills } } }],
           assistantMessage: { role: 'assistant', content: [{ type: 'text', text: '当前缓存命中率为 90%。' }] },
         },
       ],

@@ -24,7 +24,7 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
                     "RAG_IME_SQUIRREL_INPUT_SOURCE_ID": "im.rag-ime.inputmethod.RagIme.Hans",
                     "RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID": "im.rag-ime.inputmethod.RagIme.Hant",
                     "RAG_IME_SQUIRREL_DISPLAY_NAME": "RAG-IME",
-                    "RAG_IME_SQUIRREL_CONNECTION_NAME": "RagIme_Connection",
+                    "RAG_IME_SQUIRREL_CONNECTION_NAME": "im.rag-ime.inputmethod.RagIme_Connection",
                 },
                 check=True,
                 text=True,
@@ -38,7 +38,10 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
         self.assertEqual(info["CFBundleIdentifier"], "im.rag-ime.inputmethod.RagIme")
         self.assertEqual(info["CFBundleName"], "RAG-IME")
         self.assertEqual(info["TISInputSourceID"], "im.rag-ime.inputmethod.RagIme")
-        self.assertEqual(info["InputMethodConnectionName"], "RagIme_Connection")
+        self.assertEqual(
+            info["InputMethodConnectionName"],
+            "im.rag-ime.inputmethod.RagIme_Connection",
+        )
         self.assertFalse(info["SUEnableAutomaticChecks"])
         self.assertFalse(info["SUAutomaticallyUpdate"])
         modes = info["ComponentInputModeDict"]["tsInputModeListKey"]
@@ -55,6 +58,28 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
         self.assertNotIn("im.rime.inputmethod.Squirrel.Hans", strings)
         self.assertEqual(strings["im.rag-ime.inputmethod.RagIme.Hans"], "RAG-IME - Simplified")
         self.assertEqual(strings["im.rag-ime.inputmethod.RagIme.Hant"], "RAG-IME - Traditional")
+
+    def test_rejects_connection_name_that_does_not_match_bundle_identifier(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-brand-squirrel-") as tmp:
+            app = _write_fake_squirrel_app(Path(tmp) / "Squirrel.app")
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "brand_squirrel_app.sh"), str(app)],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_SQUIRREL_CONNECTION_NAME": "Squirrel_Connection",
+                },
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 64)
+        self.assertIn(
+            "InputMethodConnectionName must match <CFBundleIdentifier>_Connection",
+            result.stderr,
+        )
 
     def test_default_brand_uses_wisdom_weasel_name(self) -> None:
         root = Path(__file__).resolve().parents[1]

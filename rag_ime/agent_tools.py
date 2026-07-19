@@ -505,15 +505,18 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     },
                 },
             },
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op"],
-                "properties": {
-                    "op": {"enum": ["submit_review", "complete", "cancel"]},
-                    "note": {"type": "string", "maxLength": 600},
-                },
-            },
+            *[
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op"],
+                    "properties": {
+                        "op": {"const": operation},
+                        "note": {"type": "string", "maxLength": 600},
+                    },
+                }
+                for operation in ("submit_review", "complete", "cancel")
+            ],
         ],
     },
     "desktop_semantic": {
@@ -1648,7 +1651,13 @@ class ControlToolGateway:
             self.sessions.require_workspace_act(str(approval.get("sessionId") or ""))
         if (tool, operation) == ("workspace_shell", "run"):
             result = self._apply_workspace_command(approval)
-            self._mark_workspace_execution_started(approval)
+            if (
+                result.get("mutationApplied") is True
+                and _safe_int(result.get("exitCode")) == 0
+                and result.get("timedOut") is not True
+                and result.get("outputLimited") is not True
+            ):
+                self._mark_workspace_execution_started(approval)
             return result
         if (tool, operation) == ("workspace_patch", "apply"):
             result = self._apply_workspace_patch(approval)

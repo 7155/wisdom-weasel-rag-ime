@@ -583,6 +583,7 @@ class AgentDelegationStore:
         kind: str,
         title: str,
         message: str,
+        request_payload: Mapping[str, object] | None = None,
         turn_id: str = "",
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
@@ -592,14 +593,20 @@ class AgentDelegationStore:
         bounded_request_id = _bounded_text(request_id, maximum=180, required=True)
         inbox_id = f"subagent-inbox:{uuid.uuid4()}"
         initial_status = "observed" if kind == "progress" else "pending"
+        envelope_json = json.dumps(
+            {"request": dict(request_payload or {})},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO agent_subagent_inbox(
                     id, run_id, parent_session_id, child_session_id, turn_id,
                     request_id, kind, title, message, status,
-                    created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    response_json, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(run_id, request_id) DO UPDATE SET
                     title = excluded.title,
                     message = excluded.message,
@@ -616,6 +623,7 @@ class AgentDelegationStore:
                     _bounded_text(title, maximum=160),
                     _bounded_text(message, maximum=500),
                     initial_status,
+                    envelope_json,
                     now,
                     now,
                 ),
@@ -652,6 +660,24 @@ class AgentDelegationStore:
     ) -> dict[str, object]:
         now = _timestamp(resolved_at_ms)
         with self._connect() as conn:
+            previous = conn.execute(
+                "SELECT * FROM agent_subagent_inbox WHERE id = ? AND run_id = ?",
+                (inbox_id, run_id),
+            ).fetchone()
+            previous_envelope = (
+                _json_mapping(previous["response_json"]) if previous is not None else {}
+            )
+            response_json = json.dumps(
+                {
+                    "request": dict(previous_envelope.get("request") or {})
+                    if isinstance(previous_envelope.get("request"), Mapping)
+                    else {},
+                    "response": dict(response),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             cursor = conn.execute(
                 """
                 UPDATE agent_subagent_inbox
@@ -660,12 +686,7 @@ class AgentDelegationStore:
                 WHERE id = ? AND run_id = ? AND status = 'pending'
                 """,
                 (
-                    json.dumps(
-                        dict(response),
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
+                    response_json,
                     now,
                     now,
                     inbox_id,
@@ -1210,6 +1231,7 @@ class AgentDelegationCoordinator:
 
     def delegate(self, parent_session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         parent = self.sessions.get(parent_session_id)
+        self.sessions.require_goal_execution(parent_session_id)
         parent_run = self.store.run_for_child_session(parent_session_id)
         if parent.get("status") == "archived" and parent_run is None:
             raise ValueError("archived sessions cannot delegate tasks")
@@ -1516,6 +1538,8 @@ class AgentDelegationCoordinator:
 
         try:
             result: dict[str, object]
+            if action != "abort":
+                self.sessions.require_goal_execution(parent_session_id)
             if action == "steer":
                 if not message:
                     raise ValueError("steer message is required")
@@ -1542,20 +1566,23 @@ class AgentDelegationCoordinator:
                 if pending is None:
                     raise ValueError("delegated inbox item is no longer pending")
                 active = self._active_run(run_id)
-                delivery = dict(
-                    active.runtime.prompt(
+                resolution = dict(
+                    active.runtime.resolve_ui_request(
                         active.child_session_id,
-                        message,
-                        client_message_id=client_action_id,
-                        delivery="steer",
+                        str(pending.get("requestId") or ""),
+                        response={"value": message},
                     )
                 )
                 replied = self.store.reply_inbox(
                     run_id=run_id,
                     inbox_id=inbox_id,
-                    response={"message": message, "delivery": "steer"},
+                    response={
+                        "message": message,
+                        "requestId": str(pending.get("requestId") or ""),
+                        "resolution": resolution,
+                    },
                 )
-                result = {"delivery": delivery, "inbox": replied}
+                result = {"resolution": resolution, "inbox": replied}
             elif action == "abort":
                 result = self.abort(parent_session_id, {"runId": run_id})
             elif action == "retry":
@@ -1895,6 +1922,21 @@ class AgentDelegationCoordinator:
                             event.payload.get("message") or "",
                             maximum=500,
                         ),
+                        request_payload={
+                            key: event.payload[key]
+                            for key in (
+                                "requestId",
+                                "requestKind",
+                                "method",
+                                "options",
+                                "placeholder",
+                                "prefill",
+                                "defaultValue",
+                                "timeout",
+                                "runId",
+                            )
+                            if key in event.payload
+                        },
                         turn_id=event.turn_id,
                         created_at_ms=event.created_at_ms,
                     )
@@ -2486,6 +2528,24 @@ def _safe_runtime_artifact_payload(event: AgentEventEnvelope) -> dict[str, objec
             else "",
             "usage": dict(usage) if isinstance(usage, Mapping) else {},
         }
+    if event.event_type == "user_input_required":
+        return {
+            key: event.payload[key]
+            for key in (
+                "requestId",
+                "requestKind",
+                "method",
+                "title",
+                "message",
+                "options",
+                "placeholder",
+                "prefill",
+                "defaultValue",
+                "timeout",
+                "runId",
+            )
+            if key in event.payload
+        }
     if event.event_type in {"turn_completed", "turn_failed"}:
         return {
             "status": str(event.payload.get("status") or "")[:80],
@@ -2521,6 +2581,13 @@ def _control_payload(row: sqlite3.Row) -> dict[str, object]:
 
 
 def _inbox_payload(row: sqlite3.Row) -> dict[str, object]:
+    envelope = _json_mapping(row["response_json"])
+    request = envelope.get("request")
+    response = envelope.get("response")
+    if not isinstance(request, Mapping):
+        request = {}
+    if not isinstance(response, Mapping):
+        response = envelope if "request" not in envelope else {}
     return {
         "id": str(row["id"]),
         "runId": str(row["run_id"]),
@@ -2530,7 +2597,8 @@ def _inbox_payload(row: sqlite3.Row) -> dict[str, object]:
         "message": str(row["message"] or ""),
         "status": str(row["status"]),
         "turnId": str(row["turn_id"] or ""),
-        "response": _json_mapping(row["response_json"]),
+        "request": dict(request),
+        "response": dict(response),
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
         "resolvedAtMs": (

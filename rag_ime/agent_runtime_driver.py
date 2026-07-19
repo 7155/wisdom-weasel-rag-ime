@@ -151,6 +151,14 @@ class AgentRuntimeDriver(Protocol):
         resolution_state: str = "",
     ) -> None: ...
 
+    def resolve_ui_request(
+        self,
+        session_id: str,
+        request_id: str,
+        *,
+        response: Mapping[str, object],
+    ) -> dict[str, object]: ...
+
     def stop(self) -> None: ...
 
 

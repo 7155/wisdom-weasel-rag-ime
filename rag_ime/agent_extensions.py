@@ -59,7 +59,9 @@ class AgentExtensionService:
                     "digest": str(value.get("digest") or ""),
                     "enabled": value.get("enabled") is True,
                     "installed": True,
-                    "rollbackAvailable": len(versions) > 1,
+                    "rollbackAvailable": isinstance(
+                        value.get("rollbackTarget"), Mapping
+                    ),
                     "updateAvailable": False,
                     "permissions": [
                         str(item)
@@ -219,7 +221,15 @@ class AgentExtensionService:
             "validationToken": token,
             "expiresAtMs": expires_at_ms,
             "checks": ["manifest", "entry", "path-boundary", "size-limit", "content-digest"],
-            "warnings": [],
+            "distribution": "bundled" if catalog_selection else "review_only",
+            "warnings": (
+                []
+                if catalog_selection
+                else [
+                    "自定义插件只完成源码草稿校验，不会被加载执行；"
+                    "需先进入第一方产品目录。"
+                ]
+            ),
             "extension": self._public_validation(validation),
             "catalog": catalog_selection,
         }
@@ -251,8 +261,27 @@ class AgentExtensionService:
             if not plugin_id:
                 raise ValueError("plugin action requires pluginId")
             operation["pluginId"] = plugin_id
+            installed = self._installed_plugin(plugin_id)
+            operation.update(
+                {
+                    "expectedActiveDigest": str(installed.get("digest") or ""),
+                    "expectedEnabled": installed.get("enabled") is True,
+                    "displayName": str(
+                        installed.get("displayName")
+                        or installed.get("name")
+                        or plugin_id
+                    ),
+                    "version": str(installed.get("version") or ""),
+                    "permissions": [
+                        str(value)
+                        for value in installed.get("permissions") or []
+                        if isinstance(value, str)
+                    ],
+                }
+            )
+            if not operation["expectedActiveDigest"]:
+                raise ValueError("plugin active state is incomplete")
             if action == "rollback":
-                installed = self._installed_plugin(plugin_id)
                 target = installed.get("rollbackTarget")
                 if not isinstance(target, Mapping):
                     raise ValueError("plugin rollback is unavailable")
@@ -321,6 +350,10 @@ class AgentExtensionService:
                 "plugin_enable",
                 str(operation.get("pluginId") or ""),
                 enabled=action == "enable",
+                expected_active_digest=str(
+                    operation.get("expectedActiveDigest") or ""
+                ),
+                expected_enabled=operation.get("expectedEnabled") is True,
             )
         elif action == "rollback":
             plugin = self._call(
@@ -519,11 +552,22 @@ class AgentExtensionService:
         return {
             "action": action,
             "pluginId": str(operation.get("pluginId") or manifest.get("id") or ""),
-            "displayName": str(manifest.get("name") or operation.get("pluginId") or ""),
-            "version": str(manifest.get("version") or ""),
+            "displayName": str(
+                manifest.get("name")
+                or operation.get("displayName")
+                or operation.get("pluginId")
+                or ""
+            ),
+            "version": str(manifest.get("version") or operation.get("version") or ""),
             "targetVersion": str(operation.get("targetVersion") or ""),
-            "permissions": list(manifest.get("permissions") or []),
+            "permissions": list(
+                manifest.get("permissions") or operation.get("permissions") or []
+            ),
             "enableAfterInstall": operation.get("enable") is True,
+            "expectedEnabled": operation.get("expectedEnabled"),
+            "expectedActiveDigest": str(
+                operation.get("expectedActiveDigest") or ""
+            ),
         }
 
 

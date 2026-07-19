@@ -378,6 +378,17 @@ main[data-route-id='plugins'] .plugins-count {
   gap: var(--space-3);
 }
 
+.plugin-lifecycle__approval > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.plugin-lifecycle__approval small {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
 .lifecycle-hooks {
   display: grid;
   min-width: 0;

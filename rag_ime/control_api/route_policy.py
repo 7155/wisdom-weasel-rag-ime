@@ -60,6 +60,9 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_CONTEXT_TRACES_LIST = "agent.session.contextTraces.list"
     AGENT_SESSION_CONTEXT_TRACE_GET = "agent.session.contextTrace.get"
     AGENT_SESSION_DEBUG_CONTEXT_GET = "agent.session.debugContext.get"
+    AGENT_SESSION_WORKFLOW_GET = "agent.session.workflow.get"
+    AGENT_SESSION_PLAN_MUTATE = "agent.session.plan.mutate"
+    AGENT_SESSION_GOAL_MUTATE = "agent.session.goal.mutate"
     AGENT_ARTIFACT_GET = "agent.artifact.get"
     AGENT_MEDIA_LIST = "agent.media.list"
     AGENT_DEEP_SEARCH = "agent.deep-search"
@@ -685,6 +688,9 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_CONTEXT_TRACES_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-traces", "/control/v1/agent/sessions/{sessionId}/context-traces", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"limit"}),
         _route(ControlPathId.AGENT_SESSION_CONTEXT_TRACE_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-traces/{traceId}", "/control/v1/agent/sessions/{sessionId}/context-traces/{traceId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_CONTEXT_TRACE),
         _route(ControlPathId.AGENT_SESSION_DEBUG_CONTEXT_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/debug-context", None, params=_SESSION, query={"turnId"}),
+        _route(ControlPathId.AGENT_SESSION_WORKFLOW_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workflow", "/control/v1/agent/sessions/{sessionId}/workflow", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
+        _route(ControlPathId.AGENT_SESSION_PLAN_MUTATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/plan", "/control/v1/agent/sessions/{sessionId}/plan", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"action", "expectedRevision", "title", "items", "note"}, required_body={"action"}, remote_body={"action", "expectedRevision", "title", "items", "note"}),
+        _route(ControlPathId.AGENT_SESSION_GOAL_MUTATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/goal", "/control/v1/agent/sessions/{sessionId}/goal", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"action", "expectedRevision", "objective", "tokenBudget", "timeBudgetMs", "summary", "evidence"}, required_body={"action"}, remote_body={"action", "expectedRevision", "objective", "tokenBudget", "timeBudgetMs", "summary", "evidence"}),
         _route(ControlPathId.AGENT_ARTIFACT_GET, ControlMethod.GET, "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ARTIFACT, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_MEDIA_LIST, ControlMethod.GET, "/api/agent/media", "/control/v1/agent/media", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_DEEP_SEARCH, ControlMethod.POST, "/api/agent/deep-search", "/control/v1/agent/deep-search", body={"query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"}, required_body={"query", "privacyDisposition"}),

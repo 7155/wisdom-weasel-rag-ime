@@ -21,8 +21,8 @@ MANAGED_RUNTIME_POINTER="$APP_SUPPORT_DIR/PiRuntime/current.json"
 WEB_SOURCE_DIR="$ROOT/control-center-web/dist"
 WEB_INSTALL_DIR="$APP_CODE_DIR/control-center-web/dist"
 ALLOWED_LOGINS="${RAG_IME_REMOTE_ALLOWED_LOGINS:-}"
-DEBUG_CONTEXT_DIR="${RAG_IME_PI_DEBUG_CONTEXT_DIR:-/Volumes/undo 4t/Archives/RagIme/debug-context}"
-DEBUG_CONTEXT_MAX_BYTES="${RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES:-1073741824}"
+DEBUG_CONTEXT_DIR="${RAG_IME_PI_DEBUG_CONTEXT_DIR:-}"
+DEBUG_CONTEXT_MAX_BYTES="${RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES:-67108864}"
 WEB_SOURCE_BACKUP=""
 WEB_SOURCE_PRESENT=0
 
@@ -115,7 +115,7 @@ if [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
 fi
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR"
-if [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
+if [[ -n "$DEBUG_CONTEXT_DIR" && "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
   mkdir -p "$DEBUG_CONTEXT_DIR"
   chmod 700 "$DEBUG_CONTEXT_DIR"
 fi
@@ -155,12 +155,16 @@ environment.update({
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_PI_ENABLED": "1",
     "RAG_IME_PI_VERSION": "0.80.7",
-    "RAG_IME_PI_DEBUG_CONTEXT_DIR": os.environ["DEBUG_CONTEXT_DIR"],
-    "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": os.environ["DEBUG_CONTEXT_MAX_BYTES"],
     "RAG_IME_AGENT_GATEWAY_ENABLED": "1",
     "RAG_IME_AGENT_GATEWAY_WEB_DIST": os.environ["WEB_INSTALL_DIR"],
     "RAG_IME_AGENT_TOOL_URL": f"http://127.0.0.1:{os.environ['PORT']}/api/agent/tool/execute",
 })
+if os.environ["DEBUG_CONTEXT_DIR"]:
+    environment["RAG_IME_PI_DEBUG_CONTEXT_DIR"] = os.environ["DEBUG_CONTEXT_DIR"]
+    environment["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"] = os.environ["DEBUG_CONTEXT_MAX_BYTES"]
+else:
+    environment.pop("RAG_IME_PI_DEBUG_CONTEXT_DIR", None)
+    environment.pop("RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES", None)
 if os.environ["ALLOWED_LOGINS"]:
     environment["RAG_IME_REMOTE_ALLOWED_LOGINS"] = os.environ["ALLOWED_LOGINS"]
 else:

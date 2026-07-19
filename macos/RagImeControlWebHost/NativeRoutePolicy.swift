@@ -141,6 +141,9 @@ final class NativeRoutePolicy {
                 query: ["turnId"],
                 requiresGateway: true
             ),
+            "agent.session.workflow.get": route("GET", "/api/agent/sessions/{sessionId}/workflow", "/control/v1/agent/sessions/{sessionId}/workflow", remoteSafe: true),
+            "agent.session.plan.mutate": route("POST", "/api/agent/sessions/{sessionId}/plan", "/control/v1/agent/sessions/{sessionId}/plan", remoteSafe: true, bodyKeys: ["action", "expectedRevision", "title", "items", "note"], requiredBodyKeys: ["action"]),
+            "agent.session.goal.mutate": route("POST", "/api/agent/sessions/{sessionId}/goal", "/control/v1/agent/sessions/{sessionId}/goal", remoteSafe: true, bodyKeys: ["action", "expectedRevision", "objective", "tokenBudget", "timeBudgetMs", "summary", "evidence"], requiredBodyKeys: ["action"]),
             "agent.artifact.get": route("GET", "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.media.list": route("GET", "/api/agent/media", "/control/v1/agent/media", query: ["sessionId", "limit"], requiredQuery: ["sessionId"], remoteSafe: true),
             "agent.deep-search": route("POST", "/api/agent/deep-search", "/control/v1/agent/deep-search", bodyKeys: ["query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"], requiredBodyKeys: ["query", "privacyDisposition"]),

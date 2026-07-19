@@ -28,13 +28,28 @@ describe('ContextXraySections', () => {
     await user.click(screen.getByRole('button', { name: /查看上下文透视/ }));
 
     const layers = await screen.findByRole('list', { name: '上下文分层指标' });
-    for (const label of ['System', 'Role Book', 'Session Memory', 'Timeline', 'Skills', 'Tools', 'History', 'Tool Results']) {
+    for (const label of [
+      'System',
+      'Role Book',
+      'Workflow Control',
+      'Goal',
+      'Lifecycle Hook',
+      'Session Memory',
+      'Timeline',
+      'Skills',
+      'Tools',
+      'History',
+      'Tool Results',
+    ]) {
       expect(within(layers).getByText(label)).toBeVisible();
     }
-    expect(within(layers).getAllByText('已接收')).toHaveLength(8);
+    expect(within(layers).getAllByText('已接收')).toHaveLength(11);
     expect(screen.getByText('68%')).toBeVisible();
     expect(screen.getByText('12.0K → 4.2K')).toBeVisible();
     expect(screen.queryByText('ROLE_BOOK_PRIVATE_TEXT')).not.toBeInTheDocument();
+    expect(screen.queryByText('WORKFLOW_CONTROL_PRIVATE_TEXT')).not.toBeInTheDocument();
+    expect(screen.queryByText('GOAL_PRIVATE_TEXT')).not.toBeInTheDocument();
+    expect(screen.queryByText('LIFECYCLE_HOOK_PRIVATE_TEXT')).not.toBeInTheDocument();
     expect(screen.queryByText('PRIVATE_TOOL_RESULT')).not.toBeInTheDocument();
     expect(transport.requests).toContainEqual(expect.objectContaining({
       pathId: 'agent.session.debugContext.get',
@@ -98,6 +113,15 @@ function debugResponse(): Record<string, unknown> {
     '<agent-role-book>',
     'ROLE_BOOK_PRIVATE_TEXT',
     '</agent-role-book>',
+    '<rag-ime-context priority="developer" type="workflow_control">',
+    'WORKFLOW_CONTROL_PRIVATE_TEXT',
+    '</rag-ime-context>',
+    '<rag-ime-context type="goal" lifecycle="session">',
+    'GOAL_PRIVATE_TEXT',
+    '</rag-ime-context>',
+    '<rag-ime-context source="runtime" type="lifecycle_hook">',
+    'LIFECYCLE_HOOK_PRIVATE_TEXT',
+    '</rag-ime-context>',
     '<rag-ime-context type="session_memory" current_time="2026-07-19T10:00:00+08:00">',
     sessionMemory,
     '</rag-ime-context>',

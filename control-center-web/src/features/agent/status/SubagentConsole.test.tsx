@@ -1,13 +1,16 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import { SubagentConsoleDialog } from './SubagentConsole';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('SubagentConsoleDialog', () => {
   it('shows real console data and sends an idempotent steer command without optimistic state', async () => {
@@ -30,6 +33,9 @@ describe('SubagentConsoleDialog', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('执行 Agent控制台')).toBeVisible();
     expect(within(dialog).getByText('1.2K')).toBeVisible();
+    for (const label of ['概览', '对话', '活动', '收件箱']) {
+      expect(within(dialog).getByRole('tab', { name: label })).toHaveAttribute('aria-label', label);
+    }
     await user.click(within(dialog).getByRole('tab', { name: /收件箱/ }));
     expect(within(dialog).getByText('保留兼容层？')).toBeVisible();
     await user.click(within(dialog).getByRole('tab', { name: '概览' }));
@@ -76,6 +82,32 @@ describe('SubagentConsoleDialog', () => {
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('tab', { name: '对话' }));
     expect(within(dialog).getByText('当前运行没有可确认的公开对话快照')).toBeVisible();
+  });
+
+  it('requires confirmation before stopping a running subagent', async () => {
+    const run = sampleRun();
+    const transport = new StubControlTransport('mock', {
+      'agent.subagent.console': consoleSnapshot(run),
+      'agent.subagent.control': { ok: true, replayed: false },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={queryClient}>
+          <SubagentConsoleDialog run={run} sessionId="session-parent" triggerLabel="停止测试" />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: '停止测试' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /停止/ }));
+    expect(transport.requests.filter((request) => request.pathId === 'agent.subagent.control')).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: /停止/ }));
+    expect(transport.requests.filter((request) => request.pathId === 'agent.subagent.control')).toHaveLength(1);
+    expect(confirm).toHaveBeenCalledTimes(2);
   });
 });
 

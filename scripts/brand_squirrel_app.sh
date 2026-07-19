@@ -16,7 +16,8 @@ else
 fi
 HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DEFAULT_HANS_DISPLAY_NAME}"
 HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DEFAULT_HANT_DISPLAY_NAME}"
-CONNECTION_NAME="${RAG_IME_SQUIRREL_CONNECTION_NAME:-RagIme_Connection}"
+EXPECTED_CONNECTION_NAME="${BUNDLE_ID}_Connection"
+CONNECTION_NAME="${RAG_IME_SQUIRREL_CONNECTION_NAME:-$EXPECTED_CONNECTION_NAME}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
 
 if [[ -z "$APP" ]]; then
@@ -32,6 +33,13 @@ fi
 if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   echo "python3 is required to brand Squirrel.app" >&2
   exit 3
+fi
+
+if [[ "$CONNECTION_NAME" != "$EXPECTED_CONNECTION_NAME" ]]; then
+  echo "InputMethodConnectionName must match <CFBundleIdentifier>_Connection" >&2
+  echo "expected: $EXPECTED_CONNECTION_NAME" >&2
+  echo "received: $CONNECTION_NAME" >&2
+  exit 64
 fi
 
 "$PYTHON_EXECUTABLE" - \

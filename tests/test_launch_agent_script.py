@@ -335,6 +335,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
                             "RAG_IME_PI_NODE": "/source/node",
                             "RAG_IME_PI_EXTENSION": "/source/rag-ime-control.ts",
                             "RAG_IME_PI_PROTOCOL_VERSION": "1",
+                            "RAG_IME_PI_DEBUG_CONTEXT_DIR": "/stale/debug-context",
+                            "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": "1073741824",
                             "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
                         },
                     },
@@ -359,18 +361,31 @@ class LaunchAgentScriptTests(unittest.TestCase):
             gateway_plist = launch_agents / "com.rag-ime.agent-gateway.plist"
             with gateway_plist.open("rb") as handle:
                 payload = plistlib.load(handle)
+            opt_in_directory = home / "private-debug-context"
+            opt_in_result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_agent_gateway_launch_agent.sh")],
+                cwd=root,
+                env={
+                    **env,
+                    "RAG_IME_PI_DEBUG_CONTEXT_DIR": str(opt_in_directory),
+                    "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": "65536",
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            with gateway_plist.open("rb") as handle:
+                opt_in_payload = plistlib.load(handle)
 
         self.assertIn("dry-run", result.stdout)
+        self.assertIn("dry-run", opt_in_result.stdout)
         self.assertEqual(payload["Label"], "com.rag-ime.agent-gateway")
         self.assertIn("agent-gateway", payload["ProgramArguments"])
         launch_env = payload["EnvironmentVariables"]
         self.assertEqual(launch_env["RAG_IME_PI_ENABLED"], "1")
         self.assertEqual(launch_env["RAG_IME_PI_VERSION"], "0.80.7")
-        self.assertEqual(
-            launch_env["RAG_IME_PI_DEBUG_CONTEXT_DIR"],
-            "/Volumes/undo 4t/Archives/RagIme/debug-context",
-        )
-        self.assertEqual(launch_env["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "1073741824")
+        self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_DIR", launch_env)
+        self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES", launch_env)
         self.assertEqual(launch_env["RAG_IME_AGENT_TOOL_URL"], "http://127.0.0.1:8768/api/agent/tool/execute")
         self.assertEqual(launch_env["RAG_IME_REMOTE_ALLOWED_LOGINS"], "owner@example.com")
         self.assertIn("--web-dist", payload["ProgramArguments"])
@@ -383,6 +398,9 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertNotIn("RAG_IME_PI_NODE", launch_env)
         self.assertNotIn("RAG_IME_PI_EXTENSION", launch_env)
         self.assertNotIn("RAG_IME_PI_PROTOCOL_VERSION", launch_env)
+        opt_in_env = opt_in_payload["EnvironmentVariables"]
+        self.assertEqual(opt_in_env["RAG_IME_PI_DEBUG_CONTEXT_DIR"], str(opt_in_directory))
+        self.assertEqual(opt_in_env["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "65536")
 
     def test_restart_runtime_script_defaults_to_foreground_rag_profile(self) -> None:
         root = Path(__file__).resolve().parents[1]

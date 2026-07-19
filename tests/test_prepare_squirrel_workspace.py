@@ -46,6 +46,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle\n"
             "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens\n"
             "  // captureWindowContext AXUIElementCopyMultipleAttributeValues\n"
+            "  // AXManualAccessibility AXUIElementGetPid\n"
             "}\n",
             encoding="utf-8",
         )
@@ -274,6 +275,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle",
                         "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens",
                         "  // captureWindowContext AXUIElementCopyMultipleAttributeValues",
+                        "  // AXManualAccessibility AXUIElementGetPid",
                         "}",
                     ]
                 )

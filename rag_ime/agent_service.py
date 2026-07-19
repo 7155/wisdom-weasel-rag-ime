@@ -2759,6 +2759,7 @@ class AgentService:
             else message
         )
         if not client_message_id:
+            self.sessions.require_goal_execution(session_id)
             return self._prompt_with_checkpoint(
                 session_id=session_id,
                 message=message,
@@ -2783,6 +2784,7 @@ class AgentService:
         if claim.replay_response is not None:
             return {**claim.replay_response, "idempotentReplay": True}
         try:
+            self.sessions.require_goal_execution(session_id)
             response = self._prompt_with_checkpoint(
                 session_id=session_id,
                 message=message,

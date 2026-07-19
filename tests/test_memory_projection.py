@@ -36,6 +36,11 @@ class MemoryProjectionTests(unittest.TestCase):
             embedding_provider=self.provider,
         )
         self.core.initialize()
+        # Migration 0061 intentionally enqueues one catalog rebuild for
+        # upgraded production databases. Projection tests start from an empty
+        # queue so each assertion only observes the event created by that test.
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("DELETE FROM memory_projection_outbox")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

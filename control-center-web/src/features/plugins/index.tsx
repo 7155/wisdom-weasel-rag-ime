@@ -37,6 +37,7 @@ import {
   StatusBadge,
   arrayRecords,
   asRecord,
+  publicErrorText,
   stringValue,
 } from '@/features/overview/management-ui';
 import { usePluginCatalog } from './api';
@@ -81,7 +82,18 @@ const operationLabels: Record<string, string> = {
 
 export function PluginsFeature() {
   const navigate = useNavigate();
-  const { catalog, installed, versions, proposals, lifecycle, validate, preview, apply, updateLifecycle } = usePluginCatalog();
+  const {
+    catalog,
+    installed,
+    versions,
+    proposals,
+    lifecycle,
+    validate,
+    preview,
+    apply,
+    updateLifecycle,
+    refreshAll,
+  } = usePluginCatalog();
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<ModeFilter>('all');
   const [availability, setAvailability] = useState<AvailabilityFilter>('all');
@@ -90,6 +102,7 @@ export function PluginsFeature() {
   const [validation, setValidation] = useState<Record<string, unknown>>({});
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
   const [lifecycleError, setLifecycleError] = useState('');
+  const [hookError, setHookError] = useState('');
   const items = arrayRecords(asRecord(catalog.data).items);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
@@ -112,6 +125,10 @@ export function PluginsFeature() {
   const lifecycleEvents = arrayRecords(asRecord(lifecycle.data).recentEvents);
   const pendingSummary = asRecord(pendingChange.summary);
   const lifecyclePending = validate.isPending || preview.isPending || apply.isPending;
+  const pluginQueriesPending = installed.isPending || versions.isPending || proposals.isPending;
+  const pluginQueryError = firstError(installed.error, versions.error, proposals.error);
+  const refreshing = catalog.isFetching || installed.isFetching || versions.isFetching
+    || proposals.isFetching || lifecycle.isFetching;
 
   const previewInstalledAction = async (action: 'enable' | 'disable' | 'rollback', pluginId: string) => {
     setLifecycleError('');
@@ -154,15 +171,25 @@ export function PluginsFeature() {
       setLifecycleError(errorMessage(error));
     }
   };
+
+  const updateHook = async (eventType: string, enabled: boolean) => {
+    setHookError('');
+    try {
+      await updateLifecycle.mutateAsync({ eventType, enabled });
+    } catch (error) {
+      setHookError(errorMessage(error));
+    }
+  };
+
   return (
     <ManagementPage
-      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={() => void catalog.refetch()} size="small">刷新</Button>}
+      actions={<Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>}
       description="查看已经连接到本机 Agent 的工具，以及它们适合的使用方式。"
       eyebrow="TOOLS"
       routeId="plugins"
       title="插件与工具"
     >
-      <QueryState error={catalog.error as Error | null} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
+      <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection title="目录状态">
           <MetricStrip items={[
             { label: '工具', value: items.length, detail: '已连接', icon: Wrench },
@@ -210,11 +237,17 @@ export function PluginsFeature() {
             </div>
           ) : <EmptyState description={items.length ? '没有工具符合当前筛选。' : '本机 Agent 尚未提供可用工具。'} icon={Search} title="没有匹配项" />}
         </ManagementSection>
+      </QueryState>
 
-        <ManagementSection
-          description="第一方版本来自产品内置目录。目录只负责发现，安装和更新仍必须经过校验、摘要绑定预览和你的明确批准。"
-          title="插件版本中心"
-          trailing={<StatusBadge label={`${installedItems.length} 个已安装`} tone="neutral" />}
+      <ManagementSection
+        description="第一方版本来自产品内置目录。目录只负责发现，安装和更新仍必须经过校验、摘要绑定预览和你的明确批准。"
+        title="插件版本中心"
+        trailing={<StatusBadge label={pluginQueryError ? '状态不可用' : `${installedItems.length} 个已安装`} tone={pluginQueryError ? 'warning' : 'neutral'} />}
+      >
+        <QueryState
+          error={pluginQueryError}
+          isPending={pluginQueriesPending}
+          onRetry={() => void Promise.all([installed.refetch(), versions.refetch(), proposals.refetch()])}
         >
           <div className="plugin-lifecycle">
             <div className="plugin-catalog" aria-label="受管插件目录">
@@ -229,7 +262,7 @@ export function PluginsFeature() {
                       <span>{stringValue(item.description)}</span>
                     </span>
                     <span className="plugin-catalog__facts">
-                      <span><ShieldCheck size={14} />{stringArray(item.permissions).join('、') || '无需额外权限'}</span>
+                      <span><ShieldCheck size={14} />能力声明：{stringArray(item.permissions).join('、') || '无额外能力'}</span>
                       <span><History size={14} />v{stringValue(item.latestVersion, '未发布')} · {arrayRecords(item.versions).length} 个版本</span>
                       <span><ShieldAlert size={14} />{stringValue(security.notes, '尚无安全说明')}</span>
                     </span>
@@ -280,7 +313,21 @@ export function PluginsFeature() {
             {pendingChange.previewToken ? (
               <InlineNotice title="等待你的批准" tone="warning">
                 <div className="plugin-lifecycle__approval">
-                  <span>{pluginActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}</span>
+                  <span>
+                    {pluginActionLabel(stringValue(pendingSummary.action))}：{stringValue(pendingSummary.displayName, stringValue(pendingSummary.pluginId))}
+                    <small>
+                      {stringValue(pendingSummary.version) ? `v${stringValue(pendingSummary.version)} · ` : ''}
+                      {stringArray(pendingSummary.permissions).length
+                        ? `能力声明：${stringArray(pendingSummary.permissions).join('、')}`
+                        : '无额外能力'}
+                      {typeof pendingSummary.expectedEnabled === 'boolean'
+                        ? ` · 当前${pendingSummary.expectedEnabled ? '已启用' : '已停用'}`
+                        : ''}
+                      {stringValue(pendingSummary.expectedActiveDigest)
+                        ? ` · 摘要 ${shortDigest(stringValue(pendingSummary.expectedActiveDigest))}`
+                        : ''}
+                    </small>
+                  </span>
                   <div>
                     <Button disabled={lifecyclePending} onClick={() => setPendingChange({})} size="small" variant="quiet">取消</Button>
                     <Button leadingIcon={<ShieldCheck size={16} />} loading={apply.isPending} onClick={() => void applyPendingChange()} size="small" variant="primary">批准并应用</Button>
@@ -316,12 +363,18 @@ export function PluginsFeature() {
               )) : <EmptyState description="选择一个插件目录开始校验。" icon={PackageCheck} title="还没有受管插件" />}
             </div>
           </div>
-        </ManagementSection>
+        </QueryState>
+      </ManagementSection>
 
-        <ManagementSection
-          description="Hook 只记录事实和生成下一轮可消费的复盘建议，不会直接写入长期记忆，也不会扩大工具、Plan、Goal 或审批权限。"
-          title="生命周期自动化"
-          trailing={<StatusBadge label={`${lifecyclePolicies.filter((item) => item.enabled === true).length}/${lifecyclePolicies.length} 已启用`} tone="neutral" />}
+      <ManagementSection
+        description="Hook 只记录事实和生成下一轮可消费的复盘建议，不会直接写入长期记忆，也不会扩大工具、Plan、Goal 或审批权限。"
+        title="生命周期自动化"
+        trailing={<StatusBadge label={lifecycle.error ? '状态不可用' : `${lifecyclePolicies.filter((item) => item.enabled === true).length}/${lifecyclePolicies.length} 已启用`} tone={lifecycle.error ? 'warning' : 'neutral'} />}
+      >
+        <QueryState
+          error={asError(lifecycle.error)}
+          isPending={lifecycle.isPending}
+          onRetry={() => void lifecycle.refetch()}
         >
           <div className="lifecycle-hooks">
             <div className="lifecycle-hooks__policies">
@@ -338,8 +391,8 @@ export function PluginsFeature() {
                   <Switch
                     checked={policy.enabled === true}
                     disabled={updateLifecycle.isPending}
-                    label={policy.enabled === true ? '已启用' : '已停用'}
-                    onCheckedChange={(enabled) => void updateLifecycle.mutateAsync({ eventType: stringValue(policy.eventType), enabled })}
+                    label={`${lifecycleEventLabel(stringValue(policy.eventType))}：${policy.enabled === true ? '已启用' : '已停用'}`}
+                    onCheckedChange={(enabled) => void updateHook(stringValue(policy.eventType), enabled)}
                   />
                 </article>
               ))}
@@ -353,9 +406,10 @@ export function PluginsFeature() {
                 </div>
               )) : <EmptyState description="Pi Runtime 上报事件后，幂等审计会显示在这里。" icon={History} title="还没有 Hook 事件" />}
             </div>
+            {hookError ? <InlineNotice title="Hook 更新失败" tone="danger">{hookError}</InlineNotice> : null}
           </div>
-        </ManagementSection>
-      </QueryState>
+        </QueryState>
+      </ManagementSection>
     </ManagementPage>
   );
 }
@@ -381,4 +435,7 @@ function lifecycleEventLabel(value: string): string { return ({ session_start: '
 function lifecycleActionLabel(value: string): string { return ({ audit_only: '仅审计', context_checkpoint: '下一轮上下文检查点', memory_review_suggestion: '下一轮记忆复盘建议' } as Record<string, string>)[value] ?? value; }
 function cooldownLabel(seconds: number): string { if (!seconds) return '无冷却'; if (seconds >= 60) return `${Math.round(seconds / 60)} 分钟冷却`; return `${seconds} 秒冷却`; }
 function lifecycleStatusBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'neutral' } { const status = stringValue(item.status); if (status === 'suggested') return { label: '待下一轮复盘', tone: 'warning' }; if (status === 'recorded') return { label: '已记录', tone: 'success' }; if (status === 'skipped') return { label: '无事实已跳过', tone: 'neutral' }; if (status === 'cooldown') return { label: '冷却中', tone: 'neutral' }; return { label: status === 'disabled' ? '策略停用' : status, tone: 'neutral' }; }
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : '插件操作失败。'; }
+function errorMessage(error: unknown): string { return publicErrorText(error, '插件操作失败，请稍后重试。'); }
+function asError(error: unknown): Error | null { return error instanceof Error ? error : error ? new Error('暂时无法读取这部分内容。') : null; }
+function firstError(...errors: unknown[]): Error | null { return errors.map(asError).find((error): error is Error => Boolean(error)) ?? null; }
+function shortDigest(value: string): string { return value.length > 16 ? `${value.slice(0, 12)}…${value.slice(-4)}` : value; }

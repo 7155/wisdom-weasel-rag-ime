@@ -443,6 +443,8 @@ class AgentSessionStoreTests(unittest.TestCase):
             {"action": "pause", "expectedRevision": usage["revision"]},
         )["workflow"]
         self.assertEqual(paused["actGate"]["reason"], "goal_paused")
+        with self.assertRaisesRegex(ValueError, "goal_paused"):
+            self.store.require_goal_execution(session_id)
         resumed = self.store.mutate_agent_goal(
             session_id,
             {"action": "resume", "expectedRevision": paused["goal"]["revision"]},
@@ -457,6 +459,8 @@ class AgentSessionStoreTests(unittest.TestCase):
         )
         self.assertTrue(exhausted["goal"]["budgetExceeded"])
         self.assertEqual(exhausted["actGate"]["reason"], "goal_budget_exhausted")
+        with self.assertRaisesRegex(ValueError, "goal_budget_exhausted"):
+            self.store.require_goal_execution(session_id)
 
         expanded = self.store.mutate_agent_goal(
             session_id,

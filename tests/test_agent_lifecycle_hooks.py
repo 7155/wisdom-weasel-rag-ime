@@ -40,8 +40,8 @@ class AgentLifecycleHookServiceTests(unittest.TestCase):
             1,
         )
 
-    def test_event_without_facts_is_skipped_and_policy_can_be_toggled(self) -> None:
-        skipped = self.service.record_event(
+    def test_tool_failure_without_facts_is_audit_only_and_policy_can_be_toggled(self) -> None:
+        recorded = self.service.record_event(
             {
                 "schemaVersion": "rag-ime.agent-lifecycle-event.v1",
                 "eventId": "event-empty",
@@ -50,9 +50,10 @@ class AgentLifecycleHookServiceTests(unittest.TestCase):
                 "payload": {"facts": []},
             }
         )
-        self.assertEqual(skipped["result"]["status"], "skipped")
-        self.assertEqual(skipped["result"]["reason"], "no_facts")
-        self.assertEqual(skipped["result"]["nextTurnContext"], "")
+        self.assertEqual(recorded["result"]["status"], "recorded")
+        self.assertEqual(recorded["result"]["reason"], "")
+        self.assertEqual(recorded["result"]["nextTurnContext"], "")
+        self.assertFalse(recorded["guardrails"]["writesLongTermMemory"])
 
         snapshot = self.service.update_policy(
             {"eventType": "idle", "enabled": False, "tokenLimit": 64}
@@ -62,7 +63,7 @@ class AgentLifecycleHookServiceTests(unittest.TestCase):
         self.assertEqual(idle["tokenLimit"], 64)
 
     def test_review_hooks_cannot_be_changed_to_a_direct_action(self) -> None:
-        with self.assertRaisesRegex(ValueError, "suggestion-only"):
+        with self.assertRaisesRegex(ValueError, "not injected as an implicit checkpoint"):
             self.service.update_policy(
                 {"eventType": "project_complete", "action": "context_checkpoint"}
             )

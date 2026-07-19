@@ -522,6 +522,8 @@ require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXStringForRange
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "RagImeForegroundContextResolver" "delayed IMK to Accessibility foreground context resolver"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "captureWindowContext" "bounded Accessibility window semantic capture"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "AXUIElementCopyMultipleAttributeValues" "batched Accessibility attribute reads"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "AXManualAccessibility" "Electron Accessibility tree activation fallback"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "AXUIElementGetPid" "focused Accessibility element app-identity guard"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_app_bundle_missing" "missing app identity privacy fail-closed guard"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "isSensitive: false, reason: \"privacy_unknown_ax_not_trusted\"" "optional accessibility metadata fallback"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "privacy_unknown_focused_element_missing" "missing focused element privacy fail-closed guard"

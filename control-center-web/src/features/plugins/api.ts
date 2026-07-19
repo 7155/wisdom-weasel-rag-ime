@@ -67,5 +67,26 @@ export function usePluginCatalog() {
       await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.lifecycle() });
     },
   });
-  return { catalog, installed, versions, proposals, lifecycle, validate, preview, apply, updateLifecycle, transport };
+  const refreshAll = async () => {
+    await Promise.all([
+      catalog.refetch(),
+      installed.refetch(),
+      versions.refetch(),
+      proposals.refetch(),
+      lifecycle.refetch(),
+    ]);
+  };
+  return {
+    catalog,
+    installed,
+    versions,
+    proposals,
+    lifecycle,
+    validate,
+    preview,
+    apply,
+    updateLifecycle,
+    refreshAll,
+    transport,
+  };
 }

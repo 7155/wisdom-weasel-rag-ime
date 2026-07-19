@@ -52,4 +52,118 @@ describe('ControlTransportProvider', () => {
     expect(entity).toMatchObject({ schemaVersion: 'rag-ime.memory-entity.v1', entityId: 'agent-runtime' });
     expect(status).toMatchObject({ pendingDraftCount: 1 });
   });
+
+  it('provides interactive workflow, plugin, lifecycle and subagent preview fixtures', async () => {
+    const transport = createConfiguredControlTransport();
+    const workflow = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.session.workflow.get',
+      params: { sessionId: 'session-preview' },
+    });
+    const approved = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.session.plan.mutate',
+      params: { sessionId: 'session-preview' },
+      body: { action: 'approve', expectedRevision: 2 },
+    });
+    const pausedGoal = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.session.goal.mutate',
+      params: { sessionId: 'session-preview' },
+      body: { action: 'pause', expectedRevision: 1 },
+    });
+    const installed = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.extensions.list',
+    });
+    const catalog = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.extensions.catalog',
+    });
+    const proposals = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.extensions.proposals',
+    });
+    const hooks = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.lifecycleHooks.get',
+      query: { limit: 20 },
+    });
+    await transport.request<Record<string, unknown>>({
+      pathId: 'agent.lifecycleHooks.update',
+      body: { eventType: 'project_complete', enabled: false },
+    });
+    const updatedHooks = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.lifecycleHooks.get',
+      query: { limit: 20 },
+    });
+    const validation = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.extensions.validate',
+      body: { catalogId: 'session-review', catalogVersion: '1.1.0' },
+    });
+    const extensionPreview = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.extensions.preview',
+      body: {
+        action: 'install',
+        validationToken: String(validation.validationToken),
+        enable: true,
+      },
+    });
+    await transport.request<Record<string, unknown>>({
+      pathId: 'agent.extensions.apply',
+      body: {
+        previewToken: String(extensionPreview.previewToken),
+        payloadSha256: String(extensionPreview.payloadSha256),
+        confirmText: 'apply',
+      },
+    });
+    const installedAfterApply = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.extensions.list',
+    });
+    const consoleSnapshot = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.subagent.console',
+      params: { runId: 'subagent-run:research' },
+      query: { sessionId: 'session-preview' },
+    });
+    const controlReceipt = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.subagent.control',
+      params: { runId: 'subagent-run:research' },
+      body: {
+        sessionId: 'session-preview',
+        action: 'steer',
+        clientActionId: 'preview-control-1',
+        message: '继续核对前端',
+      },
+    });
+
+    expect(workflow).toMatchObject({
+      schemaVersion: 'rag-ime.agent-workflow-state.v1',
+      plan: { status: 'review' },
+      goal: { configured: true },
+    });
+    expect(approved).toMatchObject({
+      plan: { status: 'approved' },
+      actGate: { allowed: true },
+    });
+    expect(pausedGoal).toMatchObject({
+      goal: { status: 'paused' },
+      actGate: { allowed: false, reason: 'goal_paused' },
+    });
+    expect(installed.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'timeline-inspector' }),
+    ]));
+    expect(catalog.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'session-review', actionable: true }),
+    ]));
+    expect(proposals.items).toHaveLength(1);
+    expect(hooks.policies).toHaveLength(6);
+    expect(updatedHooks.policies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventType: 'project_complete', enabled: false }),
+    ]));
+    expect(installedAfterApply.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'session-review', enabled: true }),
+    ]));
+    expect(consoleSnapshot).toMatchObject({
+      schemaVersion: 'rag-ime.agent-subagent-console.v1',
+      capabilities: { steer: { available: true } },
+    });
+    expect(controlReceipt).toMatchObject({
+      ok: true,
+      replayed: false,
+      clientActionId: 'preview-control-1',
+    });
+  });
 });

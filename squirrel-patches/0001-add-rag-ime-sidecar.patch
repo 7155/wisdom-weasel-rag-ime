@@ -1410,7 +1410,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd89ab24c66
 --- /dev/null
 +++ b/sources/RagImeSelectedTextProvider.swift
-@@ -0,0 +1,1122 @@
+@@ -0,0 +1,1156 @@
 +//
 +//  RagImeSelectedTextProvider.swift
 +//  Squirrel
@@ -1698,6 +1698,8 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +    "password", "1password", "bitwarden", "lastpass", "dashlane", "keepass", "enpass",
 +    "bank", "banking", "privatebrowser", "torbrowser",
 +  ]
++  private static let focusedElementMessagingTimeout: Float = 0.12
++  private static let electronAccessibilityWarmupSeconds: TimeInterval = 0.04
 +
 +  func fastSensitiveFieldStatus(sourceAppBundleId: String = "") -> RagImeSensitiveFieldStatus {
 +    if IsSecureEventInputEnabled() {
@@ -1988,7 +1990,7 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +      path: String,
 +      appPid: Int
 +    ) -> RagImeFocusedElementResolution {
-+      _ = AXUIElementSetMessagingTimeout(root, 0.06)
++      _ = AXUIElementSetMessagingTimeout(root, Self.focusedElementMessagingTimeout)
 +      var focusedObject: AnyObject?
 +      let result = AXUIElementCopyAttributeValue(
 +        root,
@@ -2007,7 +2009,18 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +        )
 +      }
 +      let focusedElement = unsafeBitCast(focusedObject, to: AXUIElement.self)
-+      _ = AXUIElementSetMessagingTimeout(focusedElement, 0.06)
++      var focusedPid: pid_t = 0
++      let pidResult = AXUIElementGetPid(focusedElement, &focusedPid)
++      guard pidResult == .success, Int(focusedPid) == appPid else {
++        return RagImeFocusedElementResolution(
++          element: nil,
++          resolverPath: "\(path)_pid_mismatch",
++          errorCode: Int(pidResult.rawValue),
++          appPid: appPid,
++          reason: "privacy_unknown_front_app_mismatch"
++        )
++      }
++      _ = AXUIElementSetMessagingTimeout(focusedElement, Self.focusedElementMessagingTimeout)
 +      return RagImeFocusedElementResolution(
 +        element: focusedElement,
 +        resolverPath: path,
@@ -2022,15 +2035,36 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +    let appScoped = copyFocusedElement(from: appRoot, path: "application", appPid: appPid)
 +    if appScoped.element != nil { return appScoped }
 +
-+    // Electron can briefly omit the application-scoped focus while handing the
-+    // editor between renderer processes. Keep the system-wide lookup only as a
-+    // compatibility fallback, never as the primary privacy authority.
++    // Chromium/Electron exposes its AX tree lazily. Electron documents
++    // AXManualAccessibility as the third-party switch for this exact case.
++    // Enabling the tree does not authorize text capture: secure-input, role and
++    // metadata checks below still have to produce a positive privacy decision.
++    let manualAccessibilityResult = AXUIElementSetAttributeValue(
++      appRoot,
++      "AXManualAccessibility" as CFString,
++      kCFBooleanTrue
++    )
++    if manualAccessibilityResult == .success {
++      Thread.sleep(forTimeInterval: Self.electronAccessibilityWarmupSeconds)
++      let warmedAppScoped = copyFocusedElement(
++        from: appRoot,
++        path: "application_after_manual_accessibility",
++        appPid: appPid
++      )
++      if warmedAppScoped.element != nil { return warmedAppScoped }
++    }
++
++    // Keep the system-wide lookup only as a compatibility fallback. The PID
++    // check in copyFocusedElement prevents a focus race from authorizing text
++    // belonging to a different frontmost application.
 +    let systemWide = AXUIElementCreateSystemWide()
 +    let fallback = copyFocusedElement(from: systemWide, path: "system_wide_fallback", appPid: appPid)
 +    if fallback.element != nil { return fallback }
 +    return RagImeFocusedElementResolution(
 +      element: nil,
-+      resolverPath: "application_then_system_wide",
++      resolverPath: manualAccessibilityResult == .success
++        ? "application_manual_accessibility_then_system_wide"
++        : "application_then_system_wide",
 +      errorCode: fallback.errorCode == Int(AXError.success.rawValue)
 +        ? appScoped.errorCode
 +        : fallback.errorCode,
@@ -5613,7 +5647,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +  private let ragImeForegroundContextResolver = RagImeForegroundContextResolver()
 +  private let ragImeForegroundContextQueue = DispatchQueue(label: "im.rime.inputmethod.Squirrel.rag-ime-foreground-context")
 +  private var ragImeForegroundCaptureToken: UUID?
-+  private let ragImeForegroundCaptureTimeoutMs: Int = 220
++  private let ragImeForegroundCaptureTimeoutMs: Int = 480
 +  private let ragImePrivacyProbeMaximumAttempts: Int = 5
 +  private let ragImePrivacyProbeRetryDelaysMs: [Int] = [30, 90, 240, 600]
 +  private var ragImePrivacyPrewarmLastScheduledAt: Date = .distantPast
@@ -5714,7 +5748,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
  
      switch event.type {
      case .flagsChanged:
-@@ -76,230 +179,6184 @@ final class SquirrelInputController: IMKInputController {
+@@ -76,230 +179,6200 @@ final class SquirrelInputController: IMKInputController {
          _ = processKey(rimeKeycode, modifiers: rimeModifiers)
        }
  
@@ -6673,6 +6707,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +          "reason": status.reason,
 +          "source": source,
 +          "frontAppBundleId": currentApp,
++          "resolverPath": status.resolverPath,
++          "axErrorCode": status.axErrorCode,
++          "appPid": status.appPid,
 +        ])
 +      } else {
 +        ragImePrivacyDisposition = disposition
@@ -6680,9 +6717,22 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      return true
 +    }
 +    if disposition == "unknown" {
++      let changed = ragImePrivacyDisposition != disposition || ragImeSensitiveFieldReason != status.reason
 +      ragImePrivacyDisposition = "unknown"
 +      ragImeSensitiveFieldReason = status.reason
 +      invalidateRagImePrivacyLease(reason: status.reason)
++      if changed {
++        traceRagImeFrontendEvent("sensitive_field_suppressed", fields: [
++          "sensitiveField": status.isSensitive,
++          "privacyDisposition": disposition,
++          "reason": status.reason,
++          "source": source,
++          "frontAppBundleId": currentApp,
++          "resolverPath": status.resolverPath,
++          "axErrorCode": status.axErrorCode,
++          "appPid": status.appPid,
++        ])
++      }
 +      traceRagImePrivacyDiagnostic("privacy_probe_deferred", fields: [
 +        "decision": "transient_unknown",
 +        "reason": status.reason,
@@ -12060,7 +12110,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
  
    func onChordTimer(_: Timer) {
      var processedKeys = false
-@@ -359,7 +6416,12 @@ private extension SquirrelInputController {
+@@ -359,7 +6432,12 @@ private extension SquirrelInputController {
      schemaId = ""
  
      if session != 0 {
@@ -12073,7 +12123,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
      }
    }
  
-@@ -426,15 +6488,39 @@ private extension SquirrelInputController {
+@@ -426,15 +6504,39 @@ private extension SquirrelInputController {
    func rimeConsumeCommittedText() {
      var commitText = RimeCommit.rimeStructInit()
      if rimeAPI.get_commit(session, &commitText) {
@@ -12115,7 +12165,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +6532,7 @@ private extension SquirrelInputController {
+@@ -446,6 +6548,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -12123,7 +12173,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +6545,14 @@ private extension SquirrelInputController {
+@@ -458,13 +6561,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -12139,7 +12189,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -525,11 +6613,11 @@ private extension SquirrelInputController {
+@@ -525,11 +6629,11 @@ private extension SquirrelInputController {
          comments.append(candidate.comment.map { String(cString: $0) } ?? "")
        }
        var labels = [String]()
@@ -12152,7 +12202,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
          for i in 0..<pageSize {
            labels.append(select_labels[i].map { String(cString: $0) } ?? "")
          }
-@@ -537,22 +6625,79 @@ private extension SquirrelInputController {
+@@ -537,22 +6641,79 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -12237,7 +12287,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
    }
  
    func show(preedit: String, selRange: NSRange, caretPos: Int) {
-@@ -578,15 +6723,35 @@ private extension SquirrelInputController {
+@@ -578,15 +6739,35 @@ private extension SquirrelInputController {
    }
  
    // swiftlint:disable:next function_parameter_count

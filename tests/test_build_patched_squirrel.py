@@ -452,6 +452,11 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "AXUIElementCreateApplication(frontmostApp.processIdentifier)",
             patch_text,
         )
+        self.assertIn('"AXManualAccessibility" as CFString', patch_text)
+        self.assertIn("application_after_manual_accessibility", patch_text)
+        self.assertIn("AXUIElementGetPid(focusedElement", patch_text)
+        self.assertIn('reason: "privacy_unknown_front_app_mismatch"', patch_text)
+        self.assertIn("private let ragImeForegroundCaptureTimeoutMs: Int = 480", patch_text)
         self.assertIn(
             'RagImeSensitiveFieldStatus(isSensitive: true, reason: "secure_event_input")',
             patch_text,
@@ -1511,9 +1516,14 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("configuration=Debug", result.stdout)
         self.assertIn("list_command=", result.stdout)
         self.assertIn("build_command=", result.stdout)
-        self.assertIn("CODE_SIGNING_ALLOWED=NO build", result.stdout)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", result.stdout)
+        self.assertIn("INFOPLIST_KEY_LSRegisterProhibited=YES", result.stdout)
         self.assertIn("enable_pref_repair=0", result.stdout)
         self.assertIn("auto_select=0", result.stdout)
+        self.assertIn(
+            "connection_name=im.rime.inputmethod.Squirrel_Connection",
+            result.stdout,
+        )
 
     def test_branded_install_pref_repair_and_auto_select_are_explicit(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1522,13 +1532,17 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR", source)
         self.assertIn("RAG_IME_SQUIRREL_AUTO_SELECT", source)
         self.assertIn('if bool_true "$ENABLE_PREF_REPAIR"', source)
-        self.assertIn('if bool_true "$AUTO_SELECT"', source)
+        self.assertIn('bool_true "$AUTO_SELECT"', source)
         self.assertIn("preference repair is disabled", source)
-        self.assertIn("not selecting branded input source automatically", source)
+        self.assertIn("input-source selection is deferred", source)
         self.assertIn("audit_canonical_squirrel_bundles.py", source)
         self.assertIn("--preinstall", source)
         self.assertIn('pkill -f "$TARGET_APP/Contents/MacOS/Squirrel"', source)
-        self.assertIn("killall imklaunchagent TextInputMenuAgent TextInputSwitcher", source)
+        self.assertNotIn("killall imklaunchagent TextInputMenuAgent TextInputSwitcher", source)
+        self.assertIn("handoff_active_squirrel_input_source", source)
+        self.assertIn("atomically installed final signed Squirrel.app", source)
+        self.assertIn("INSTALL_LOCK_DIR", source)
+        self.assertIn("RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE", source)
         self.assertIn('open -a "$TARGET_APP"', source)
         self.assertIn("traceRagImeProcessEvent", source)
         self.assertIn('elif [[ "$PREINSTALL" == "auto" ]]; then', source)
@@ -1559,7 +1573,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                         "  echo '  Squirrel'",
                         "  exit 0",
                         "fi",
-                        "if [[ \"$1\" == \"-project\" && \"$*\" == *' CODE_SIGNING_ALLOWED=NO build'* ]]; then",
+                        "if [[ \"$1\" == \"-project\" && \"$*\" == *'CODE_SIGNING_ALLOWED=NO'* && \"$*\" == *' build'* ]]; then",
                         "  echo 'Build succeeded'",
                         "  exit 0",
                         "fi",
@@ -1591,7 +1605,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("[OK] xcodebuild build succeeded", result.stdout)
         self.assertIn("-list", xcodebuild_log)
         self.assertIn("-scheme Squirrel", xcodebuild_log)
-        self.assertIn("CODE_SIGNING_ALLOWED=NO build", xcodebuild_log)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", xcodebuild_log)
+        self.assertIn("INFOPLIST_KEY_LSRegisterProhibited=YES", xcodebuild_log)
 
     def test_install_action_copies_app_and_installs_rag_config(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1621,7 +1636,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                         "  if [[ \"$previous\" == \"-derivedDataPath\" ]]; then derived=\"$arg\"; fi",
                         "  previous=\"$arg\"",
                         "done",
-                        "if [[ \"$*\" == *' CODE_SIGNING_ALLOWED=NO build'* ]]; then",
+                        "if [[ \"$*\" == *'CODE_SIGNING_ALLOWED=NO'* && \"$*\" == *' build'* ]]; then",
                         "  mkdir -p \"$derived/Build/Products/Release/Squirrel.app/Contents/MacOS\"",
                         "  mkdir -p \"$derived/Build/Products/Release/Squirrel.app/Contents/SharedSupport\"",
                         "  printf 'schema_list:\\n  - schema: luna_pinyin\\n' > \"$derived/Build/Products/Release/Squirrel.app/Contents/SharedSupport/default.yaml\"",
@@ -1674,12 +1689,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                 ["bash", str(root / "scripts" / "build_patched_squirrel.sh"), "install"],
                 cwd=root,
                 env=install_env,
-                check=True,
+                check=False,
                 text=True,
                 capture_output=True,
             )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
-            self.assertIn("[OK] installed patched Squirrel.app", result.stdout)
+            self.assertIn("[OK] atomically installed final signed Squirrel.app", result.stdout)
             self.assertIn("archived noncanonical input method app", result.stdout)
             self.assertIn("canonical input method bundle enforced", result.stdout)
             self.assertTrue((install_dir / "Squirrel.app" / "Contents" / "MacOS" / "Squirrel").is_file())
@@ -1766,6 +1782,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             "// privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed\n"
             "// privacy_unknown_text_field_metadata_missing sensitive_application_bundle\n"
             "// RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens\n"
+            '// AXManualAccessibility AXUIElementGetPid focused element app identity\n'
         ),
         encoding="utf-8",
     )

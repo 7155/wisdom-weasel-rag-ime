@@ -138,6 +138,7 @@ class _InteractiveRuntime(_CompletingRuntime):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.deliveries: list[tuple[str, str]] = []
+        self.ui_resolutions: list[tuple[str, dict[str, object]]] = []
         self.session_id = ""
         self.__class__.instances.append(self)
 
@@ -159,10 +160,17 @@ class _InteractiveRuntime(_CompletingRuntime):
                     "method": "confirm",
                     "title": "选择实现路径",
                     "message": "是否保留兼容层？",
+                    "options": ["是", "否"],
+                    "defaultValue": "否",
                 },
                 turn_id="turn:interactive",
             )
         return {"accepted": True, "turnId": "turn:interactive", "delivery": delivery}
+
+    def resolve_ui_request(self, session_id, request_id, *, response):
+        self.session_id = session_id
+        self.ui_resolutions.append((request_id, dict(response)))
+        return {"requestId": request_id, "resolved": True}
 
     def messages(self, session_id):
         return [
@@ -187,6 +195,12 @@ class _InteractiveRuntime(_CompletingRuntime):
                 "createdAtMs": 1,
             }
         ]
+
+
+class _RejectingUiRuntime(_InteractiveRuntime):
+    def resolve_ui_request(self, session_id, request_id, *, response):
+        del session_id, request_id, response
+        raise RuntimeError("UI resolution ACK failed")
 
 
 class _ResumeRuntime(_CompletingRuntime):
@@ -328,6 +342,45 @@ class AgentDelegationTests(unittest.TestCase):
                 str(self.parent["id"]),
                 {"agent": "market-shell-agent", "task": "执行任意命令"},
             )
+        coordinator.close()
+
+    def test_paused_or_exhausted_parent_goal_blocks_new_delegation(self) -> None:
+        goal = self.sessions.mutate_agent_goal(
+            str(self.parent["id"]),
+            {
+                "action": "set",
+                "objective": "在预算内完成委派",
+                "tokenBudget": 5,
+            },
+        )["workflow"]["goal"]
+        paused = self.sessions.mutate_agent_goal(
+            str(self.parent["id"]),
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )["workflow"]["goal"]
+        coordinator = self.coordinator()
+        with self.assertRaisesRegex(ValueError, "goal_paused"):
+            coordinator.delegate(
+                str(self.parent["id"]),
+                {"agent": "worker", "task": "不应启动", "contextMode": "fresh"},
+            )
+        resumed = self.sessions.mutate_agent_goal(
+            str(self.parent["id"]),
+            {"action": "resume", "expectedRevision": paused["revision"]},
+        )["workflow"]["goal"]
+        self.sessions.record_agent_goal_usage(
+            str(self.parent["id"]),
+            idempotency_key="delegate-gate:usage",
+            turn_id="turn:delegate-gate",
+            event_id="event:delegate-gate",
+            token_delta=5,
+            elapsed_delta_ms=0,
+        )
+        with self.assertRaisesRegex(ValueError, "goal_budget_exhausted"):
+            coordinator.delegate(
+                str(self.parent["id"]),
+                {"agent": "worker", "task": "仍不应启动", "contextMode": "fresh"},
+            )
+        self.assertGreaterEqual(resumed["revision"], goal["revision"])
         coordinator.close()
 
     def test_default_templates_do_not_stop_on_fixed_turn_or_tool_counts(self) -> None:
@@ -888,6 +941,8 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(console["conversation"]["source"], "active_runtime")
         self.assertTrue(console["capabilities"]["steer"]["available"])
         self.assertEqual(console["inbox"][0]["kind"], "need_decision")
+        self.assertEqual(console["inbox"][0]["request"]["options"], ["是", "否"])
+        self.assertEqual(console["inbox"][0]["request"]["defaultValue"], "否")
         self.assertEqual(console["run"]["usage"]["toolCount"], 1)
 
         first = coordinator.control(
@@ -937,12 +992,49 @@ class AgentDelegationTests(unittest.TestCase):
             },
         )
         self.assertEqual(coordinator.store.list_inbox(run_id)[0]["status"], "replied")
+        self.assertEqual(
+            _InteractiveRuntime.instances[0].ui_resolutions,
+            [("request:choice", {"value": "是，保留兼容层。"})],
+        )
+        self.assertNotIn(
+            ("steer", "是，保留兼容层。"),
+            _InteractiveRuntime.instances[0].deliveries,
+        )
         coordinator.control(
             str(self.parent["id"]),
             run_id,
             {"action": "abort", "clientActionId": "action:abort"},
         )
         _wait_until(lambda: coordinator.store.get_run(run_id)["state"] == "aborted")
+        coordinator.close()
+
+    def test_reply_stays_pending_when_runtime_does_not_ack_ui_resolution(self) -> None:
+        coordinator = self.coordinator(_RejectingUiRuntime)
+        response = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "agent": "worker",
+                "task": "核对 ACK 顺序",
+                "contextMode": "fresh",
+                "wait": False,
+            },
+        )
+        run_id = str(response["batch"]["runs"][0]["id"])
+        _wait_until(lambda: len(coordinator.store.list_inbox(run_id)) == 1)
+        inbox_id = str(coordinator.store.list_inbox(run_id)[0]["id"])
+
+        with self.assertRaisesRegex(RuntimeError, "ACK failed"):
+            coordinator.control(
+                str(self.parent["id"]),
+                run_id,
+                {
+                    "action": "reply",
+                    "clientActionId": "reply:no-ack",
+                    "inboxId": inbox_id,
+                    "message": "是",
+                },
+            )
+        self.assertEqual(coordinator.store.list_inbox(run_id)[0]["status"], "pending")
         coordinator.close()
 
     def test_resume_continues_the_retained_child_session(self) -> None:

@@ -7,8 +7,10 @@ import {
   CircleHelp,
   Clock3,
   Database,
+  Flag,
   History,
   Layers3,
+  ListChecks,
   Minimize2,
   PackageOpen,
   ScanSearch,
@@ -28,6 +30,9 @@ import './ContextXrayPanel.css';
 type ContextLayerId =
   | 'system'
   | 'role-book'
+  | 'workflow-control'
+  | 'goal'
+  | 'lifecycle-hook'
   | 'session-memory'
   | 'timeline'
   | 'skills'
@@ -77,6 +82,9 @@ interface LayerSource {
 const layerIcons: Record<ContextLayerId, LucideIcon> = {
   system: Layers3,
   'role-book': BookUser,
+  'workflow-control': ListChecks,
+  goal: Flag,
+  'lifecycle-hook': Sparkles,
   'session-memory': Brain,
   timeline: Clock3,
   skills: Sparkles,
@@ -87,7 +95,10 @@ const layerIcons: Record<ContextLayerId, LucideIcon> = {
 
 const roleBookPattern = /<agent-role-book\b[^>]*>([\s\S]*?)<\/agent-role-book>/giu;
 const managedContextPattern = /<rag-ime-context\b[^>]*>([\s\S]*?)<\/rag-ime-context>/giu;
-const sessionMemoryPattern = /<rag-ime-context\s+type=["']session_memory["'][^>]*>([\s\S]*?)<\/rag-ime-context>/giu;
+const sessionMemoryPattern = typedContextPattern('session_memory');
+const workflowControlPattern = typedContextPattern('workflow_control');
+const goalPattern = typedContextPattern('goal');
+const lifecycleHookPattern = typedContextPattern('lifecycle_hook');
 const timelineSectionPattern = /(?:^|\n)###\s+近期时间线\s*\n([\s\S]*?)(?=\n###\s+|\s*$)/giu;
 
 export function ContextXraySections({
@@ -311,6 +322,9 @@ function contextLayerSources(
   latestCall: DebugModelCall | undefined,
 ): LayerSource[] {
   const roleBooks = captures(systemPrompt, roleBookPattern);
+  const workflowControls = captures(systemPrompt, workflowControlPattern);
+  const goals = captures(systemPrompt, goalPattern);
+  const lifecycleHooks = captures(systemPrompt, lifecycleHookPattern);
   const sessionBlocks = captures(systemPrompt, sessionMemoryPattern);
   const sessionContent = sessionBlocks.join('\n');
   const timelines = captures(sessionContent, timelineSectionPattern);
@@ -352,6 +366,30 @@ function contextLayerSources(
       contentIdentifiers(systemWithoutManagedLayers),
     ),
     layer('role-book', 'Role Book', '<agent-role-book>', roleBooks.join('\n'), Boolean(systemPrompt)),
+    layer(
+      'workflow-control',
+      'Workflow Control',
+      'type="workflow_control"',
+      workflowControls.join('\n'),
+      Boolean(systemPrompt),
+      contentIdentifiers(workflowControls.join('\n')),
+    ),
+    layer(
+      'goal',
+      'Goal',
+      'type="goal"',
+      goals.join('\n'),
+      Boolean(systemPrompt),
+      contentIdentifiers(goals.join('\n')),
+    ),
+    layer(
+      'lifecycle-hook',
+      'Lifecycle Hook',
+      'type="lifecycle_hook"',
+      lifecycleHooks.join('\n'),
+      Boolean(systemPrompt),
+      contentIdentifiers(lifecycleHooks.join('\n')),
+    ),
     layer(
       'session-memory',
       'Session Memory',
@@ -438,6 +476,13 @@ function contentIdentifiers(value: string): string[] {
 function captures(value: string, pattern: RegExp): string[] {
   pattern.lastIndex = 0;
   return [...value.matchAll(pattern)].map((match) => (match[1] ?? '').trim()).filter(Boolean);
+}
+
+function typedContextPattern(type: string): RegExp {
+  return new RegExp(
+    `<rag-ime-context\\b(?=[^>]*\\btype=["']${type}["'])[^>]*>([\\s\\S]*?)<\\/rag-ime-context>`,
+    'giu',
+  );
 }
 
 function isToolResultMessage(value: unknown): boolean {

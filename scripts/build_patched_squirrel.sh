@@ -20,11 +20,15 @@ SKIP_CODESIGN="${RAG_IME_SQUIRREL_SKIP_CODESIGN:-0}"
 CODESIGN_IDENTITY="${RAG_IME_SQUIRREL_CODESIGN_IDENTITY:--}"
 ENABLE_PREF_REPAIR="${RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR:-0}"
 AUTO_SELECT="${RAG_IME_SQUIRREL_AUTO_SELECT:-0}"
+HANDOFF_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_HANDOFF_INPUT_SOURCE_ID:-com.apple.keylayout.ABC}"
+ALLOW_SOURCE_ROOT_CHANGE="${RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE:-0}"
 CANONICALIZE_INPUT_METHODS="${RAG_IME_SQUIRREL_CANONICALIZE_INPUT_METHODS:-1}"
 CANONICAL_INPUT_METHOD_ALIASES="${RAG_IME_SQUIRREL_CANONICAL_INPUT_METHOD_ALIASES:-RAG-IME.app:RagIme.app:Squirrel.app}"
 CANONICAL_QUARANTINE_DIR="${RAG_IME_SQUIRREL_CANONICAL_QUARANTINE_DIR:-$HOME/Library/Application Support/RagIme/disabled-input-method-backups}"
 SYSTEM_INPUT_METHOD_DIR="${RAG_IME_SQUIRREL_SYSTEM_INPUT_METHOD_DIR:-/Library/Input Methods}"
 LSREGISTER="${RAG_IME_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
+CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
+SELECT_INPUT_SOURCE_SCRIPT="${RAG_IME_SELECT_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/select_macos_input_source.sh}"
 DEFAULT_BUNDLE_ID="im.rime.inputmethod.Squirrel"
 BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
@@ -33,18 +37,21 @@ if [[ "$BUNDLE_ID" == "$DEFAULT_BUNDLE_ID" && "$INSTALL_APP_NAME" == "Squirrel" 
   DEFAULT_DISPLAY_NAME="智鼬输入法"
   DEFAULT_HANS_DISPLAY_NAME="智鼬输入法"
   DEFAULT_HANT_DISPLAY_NAME="智鼬输入法（繁体）"
-  DEFAULT_CONNECTION_NAME="Squirrel_Connection"
 else
   DEFAULT_DISPLAY_NAME="$INSTALL_APP_NAME"
   DEFAULT_HANS_DISPLAY_NAME="$INSTALL_APP_NAME - Simplified"
   DEFAULT_HANT_DISPLAY_NAME="$INSTALL_APP_NAME - Traditional"
-  DEFAULT_CONNECTION_NAME="RagIme_Connection"
 fi
+DEFAULT_CONNECTION_NAME="${BUNDLE_ID}_Connection"
 DISPLAY_NAME="${RAG_IME_SQUIRREL_DISPLAY_NAME:-$DEFAULT_DISPLAY_NAME}"
 HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DEFAULT_HANS_DISPLAY_NAME}"
 HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DEFAULT_HANT_DISPLAY_NAME}"
 CONNECTION_NAME="${RAG_IME_SQUIRREL_CONNECTION_NAME:-$DEFAULT_CONNECTION_NAME}"
-BUILD_SETTINGS_EXTRA="${RAG_IME_SQUIRREL_BUILD_SETTINGS:-CODE_SIGNING_ALLOWED=NO}"
+# Xcode otherwise runs RegisterWithLaunchServices for the DerivedData app before
+# the script can unregister it, briefly creating a second Squirrel identity.
+BUILD_SETTINGS_EXTRA="${RAG_IME_SQUIRREL_BUILD_SETTINGS:-CODE_SIGNING_ALLOWED=NO INFOPLIST_KEY_LSRegisterProhibited=YES}"
+lock_name="${BUNDLE_ID//[^A-Za-z0-9_.-]/_}"
+INSTALL_LOCK_DIR="${RAG_IME_SQUIRREL_INSTALL_LOCK_DIR:-${TMPDIR:-/tmp}/rag-ime-squirrel-install-${UID:-$(id -u)}-$lock_name.lock}"
 
 extra_build_settings=()
 if [[ -n "$BUILD_SETTINGS_EXTRA" ]]; then
@@ -69,15 +76,18 @@ Environment:
   RAG_IME_SQUIRREL_INSTALL_APP_NAME installed app bundle name (default: Squirrel)
   RAG_IME_SQUIRREL_BUNDLE_ID     app/input-source bundle prefix (default: im.rime.inputmethod.Squirrel)
   RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: 智鼬输入法)
-  RAG_IME_SQUIRREL_CONNECTION_NAME input method connection name (default: Squirrel_Connection or RagIme_Connection)
+  RAG_IME_SQUIRREL_CONNECTION_NAME input method connection name (must be <bundle id>_Connection)
   RAG_IME_SQUIRREL_PREINSTALL    auto|1|0, run Squirrel action-install when dependencies are missing
   RAG_IME_SQUIRREL_NO_DOWNLOAD   set no_download=1 for action-install
-  RAG_IME_SQUIRREL_BUILD_SETTINGS extra xcodebuild settings (default: CODE_SIGNING_ALLOWED=NO)
+  RAG_IME_SQUIRREL_BUILD_SETTINGS extra xcodebuild settings (default: unsigned and LaunchServices-prohibited)
   RAG_IME_SQUIRREL_CODESIGN_IDENTITY codesign identity after copy (default: - for ad-hoc)
   RAG_IME_SQUIRREL_SKIP_CODESIGN skip post-copy codesign
   RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip user-data bootstrap and Squirrel scripts/postinstall after install
   RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR allow direct HIToolbox/inputsource plist repair after branded install
   RAG_IME_SQUIRREL_AUTO_SELECT select the branded input source after install
+  RAG_IME_SQUIRREL_HANDOFF_INPUT_SOURCE_ID temporary source selected while replacing an active Squirrel bundle
+  RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE allow a different checkout to replace the installed build marker owner
+  RAG_IME_SQUIRREL_INSTALL_LOCK_DIR atomic install lock directory
   RAG_IME_SQUIRREL_CANONICALIZE_INPUT_METHODS quarantine old RAG-IME/RagIme/Squirrel aliases before install
   RAG_IME_SQUIRREL_CANONICAL_INPUT_METHOD_ALIASES colon-separated app names to keep unique in install dir
   RAG_IME_SQUIRREL_SYSTEM_INPUT_METHOD_DIR system Input Methods directory scanned for same-bundle conflicts
@@ -130,6 +140,9 @@ codesign_identity=$CODESIGN_IDENTITY
 skip_codesign=$SKIP_CODESIGN
 enable_pref_repair=$ENABLE_PREF_REPAIR
 auto_select=$AUTO_SELECT
+handoff_input_source_id=$HANDOFF_INPUT_SOURCE_ID
+allow_source_root_change=$ALLOW_SOURCE_ROOT_CHANGE
+install_lock_dir=$INSTALL_LOCK_DIR
 canonicalize_input_methods=$CANONICALIZE_INPUT_METHODS
 canonical_input_method_aliases=$CANONICAL_INPUT_METHOD_ALIASES
 canonical_quarantine_dir=$CANONICAL_QUARANTINE_DIR
@@ -371,6 +384,8 @@ require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXSt
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "RagImeForegroundContextResolver" "delayed IMK to Accessibility foreground context resolver"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "captureWindowContext" "bounded Accessibility window semantic capture"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "AXUIElementCopyMultipleAttributeValues" "batched Accessibility attribute reads"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "AXManualAccessibility" "Electron Accessibility tree activation fallback"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "AXUIElementGetPid" "focused Accessibility element app-identity guard"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_app_bundle_missing" "missing app identity privacy fail-closed guard"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "isSensitive: false, reason: \"privacy_unknown_ax_not_trusted\"" "optional accessibility metadata fallback"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_focused_element_missing" "missing focused element privacy fail-closed guard"
@@ -527,7 +542,7 @@ should_brand_app() {
     "$INPUT_SOURCE_ID" != "$DEFAULT_BUNDLE_ID.Hans" ||
     "$HANT_INPUT_SOURCE_ID" != "$DEFAULT_BUNDLE_ID.Hant" ||
     "$DISPLAY_NAME" != "Squirrel" ||
-    "$CONNECTION_NAME" != "Squirrel_Connection" ]]
+    "$CONNECTION_NAME" != "${DEFAULT_BUNDLE_ID}_Connection" ]]
 }
 
 canonicalize_input_method_bundles() {
@@ -571,21 +586,142 @@ canonicalize_input_method_bundles() {
   done
 
   if [[ "$moved_count" -gt 0 ]]; then
-    killall TextInputMenuAgent TextInputSwitcher imklaunchagent cfprefsd >/dev/null 2>&1 || true
-    printf '[OK] canonical input method bundle enforced: %s\n' "$TARGET_APP"
+    printf '[OK] canonical input method bundle enforced without restarting macOS input services: %s\n' "$TARGET_APP"
+  fi
+}
+
+current_input_source_id() {
+  local output
+  output="$(RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" \
+    "$CHECK_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID" 2>/dev/null || true)"
+  printf '%s\n' "$output" |
+    sed -n 's/.* current=\([^[:space:]]*\).*/\1/p' |
+    tail -n 1
+}
+
+verify_install_source_owner() {
+  local marker="$TARGET_APP/Contents/Resources/rag-ime-build-marker.json"
+  local installed_root=""
+  [[ -f "$marker" ]] || return 0
+  installed_root="$("$PYTHON_BIN" - "$marker" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    print("")
+else:
+    print(str(payload.get("repoRoot") or ""))
+PY
+)"
+  if [[ -n "$installed_root" && "$installed_root" != "$ROOT" ]] &&
+    ! bool_true "$ALLOW_SOURCE_ROOT_CHANGE"; then
+    echo "installed Squirrel is owned by a different checkout: $installed_root" >&2
+    echo "refusing a cross-worktree overwrite that would invalidate live IMK clients" >&2
+    echo "set RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=1 only for an intentional owner handoff" >&2
+    exit 73
+  fi
+}
+
+INSTALL_STAGING_APP=""
+INSTALL_PREVIOUS_APP=""
+INSTALL_SWAP_COMPLETE=0
+INSTALL_COMPLETE=0
+INSTALL_RESTORE_INPUT_SOURCE=""
+
+cleanup_install_transaction() {
+  local status=$?
+  trap - EXIT
+  if [[ "$status" -ne 0 && "$INSTALL_SWAP_COMPLETE" == "1" &&
+    -n "$INSTALL_PREVIOUS_APP" && -d "$INSTALL_PREVIOUS_APP" ]]; then
+    pkill -f "$TARGET_APP/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
+    rm -rf "$TARGET_APP"
+    mv "$INSTALL_PREVIOUS_APP" "$TARGET_APP" || true
+    "$LSREGISTER" -f -R -trusted "$TARGET_APP" >/dev/null 2>&1 || true
+    open -a "$TARGET_APP" >/dev/null 2>&1 || true
+    printf '[WARN] restored the previous Squirrel bundle after an incomplete install\n' >&2
+  fi
+  if [[ "$status" -ne 0 && -n "$INSTALL_RESTORE_INPUT_SOURCE" ]]; then
+    "$SELECT_INPUT_SOURCE_SCRIPT" "$INSTALL_RESTORE_INPUT_SOURCE" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$INSTALL_STAGING_APP" ]]; then
+    rm -rf "$INSTALL_STAGING_APP"
+  fi
+  if [[ "$INSTALL_COMPLETE" == "1" && -n "$INSTALL_PREVIOUS_APP" ]]; then
+    rm -rf "$INSTALL_PREVIOUS_APP"
+  fi
+  rm -rf "$INSTALL_LOCK_DIR"
+  return "$status"
+}
+
+begin_install_transaction() {
+  if ! mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
+    local owner="unknown"
+    [[ -f "$INSTALL_LOCK_DIR/pid" ]] && owner="$(cat "$INSTALL_LOCK_DIR/pid" 2>/dev/null || printf unknown)"
+    if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" >/dev/null 2>&1; then
+      rm -rf "$INSTALL_LOCK_DIR"
+      mkdir "$INSTALL_LOCK_DIR"
+      printf '[WARN] recovered stale Squirrel install lock owned by exited pid %s\n' "$owner" >&2
+    else
+      echo "another Squirrel install transaction is active (pid=$owner): $INSTALL_LOCK_DIR" >&2
+      exit 73
+    fi
+  fi
+  printf '%s\n' "$$" >"$INSTALL_LOCK_DIR/pid"
+  trap cleanup_install_transaction EXIT
+}
+
+handoff_active_squirrel_input_source() {
+  local current_source
+  current_source="$(current_input_source_id)"
+  if [[ "$current_source" == "$BUNDLE_ID".* ]]; then
+    if [[ "$HANDOFF_INPUT_SOURCE_ID" == "$current_source" ]]; then
+      echo "temporary handoff source must differ from the active Squirrel source: $current_source" >&2
+      return 1
+    fi
+    if ! "$SELECT_INPUT_SOURCE_SCRIPT" "$HANDOFF_INPUT_SOURCE_ID" >/dev/null 2>&1; then
+      echo "could not switch away from active Squirrel before bundle replacement" >&2
+      echo "refusing to invalidate live application input channels; select another input source and retry" >&2
+      return 1
+    fi
+    INSTALL_RESTORE_INPUT_SOURCE="$current_source"
+    printf '[OK] handed active input source to %s before replacing Squirrel\n' "$HANDOFF_INPUT_SOURCE_ID"
+  fi
+}
+
+restore_input_source_after_install() {
+  local restore_source="$INSTALL_RESTORE_INPUT_SOURCE"
+  local output=""
+  if [[ -z "$restore_source" ]] && bool_true "$AUTO_SELECT"; then
+    restore_source="$INPUT_SOURCE_ID"
+  fi
+  if [[ -z "$restore_source" ]]; then
+    printf '[INFO] preserved the previously selected non-Squirrel input source\n'
+    return 0
+  fi
+  if output="$("$SELECT_INPUT_SOURCE_SCRIPT" "$restore_source" 2>&1)"; then
+    printf '[OK] restored input source after the new IMK endpoint started: %s\n' "$output"
+  else
+    printf '[WARN] could not restore input source %s after install: %s\n' "$restore_source" "$output" >&2
+    return 1
   fi
 }
 
 run_branded_postinstall() {
   local app="$1"
   local output
+  local registration_confirmed=0
 
   if output="$(RAG_IME_SQUIRREL_APP="$app" \
     RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
     RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
     RAG_IME_SQUIRREL_AUTO_SELECT=0 \
+    RAG_IME_SQUIRREL_BUNDLE_REPLACED=1 \
     "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" 2>&1)"; then
     printf '[OK] branded macOS input source enabled for real use: %s\n' "$output"
+    registration_confirmed=1
   else
     printf '[WARN] branded macOS input source not confirmed after install: %s\n' "$output" >&2
     if bool_true "$ENABLE_PREF_REPAIR"; then
@@ -595,6 +731,7 @@ run_branded_postinstall() {
         "$ROOT/scripts/enable_squirrel_hitoolbox_input_source.sh" >/dev/null 2>&1 || true
       if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
         printf '[OK] branded macOS input source enabled after HIToolbox repair: %s\n' "$output"
+        registration_confirmed=1
       else
         printf '[WARN] branded macOS input source still needs manual System Settings add: %s\n' "$output" >&2
       fi
@@ -604,15 +741,11 @@ run_branded_postinstall() {
     fi
   fi
 
-  if bool_true "$AUTO_SELECT"; then
-    if output="$("$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID" 2>&1)"; then
-      printf '[OK] selected branded input source: %s\n' "$output"
-    else
-      printf '[WARN] branded input source was not selected automatically: %s\n' "$output" >&2
-    fi
-  else
-    printf '[INFO] not selecting branded input source automatically; use the macOS input menu after System Settings adds %s.\n' "$HANS_DISPLAY_NAME"
+  if [[ "$registration_confirmed" != "1" ]]; then
+    echo "refusing to keep an unregistered replacement; the install transaction will restore the previous bundle" >&2
+    return 1
   fi
+  printf '[INFO] input-source selection is deferred until the final signed app has opened.\n'
 }
 
 install_squirrel_app() {
@@ -621,8 +754,9 @@ install_squirrel_app() {
     exit 1
   fi
 
-  sign_target_app() {
+  sign_app() {
     local phase="$1"
+    local app="$2"
     if bool_true "$SKIP_CODESIGN"; then
       printf '[WARN] skipped Squirrel %s codesign; input source registration may fail\n' "$phase" >&2
       return 0
@@ -635,12 +769,12 @@ install_squirrel_app() {
         # outer bundle with the stable requirement. Applying the outer
         # requirement recursively would leave existing nested signatures
         # sealed against pre-bootstrap binaries.
-        codesign --force --deep --sign - "$TARGET_APP"
+        codesign --force --deep --sign - "$app"
         codesign --force --sign - \
           --requirements "=designated => identifier \"$BUNDLE_ID\"" \
-          "$TARGET_APP"
+          "$app"
       else
-        codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
+        codesign --force --deep --sign "$CODESIGN_IDENTITY" "$app"
       fi
       printf '[OK] %s signed patched Squirrel.app with identity: %s\n' "$phase" "$CODESIGN_IDENTITY"
     else
@@ -648,18 +782,8 @@ install_squirrel_app() {
     fi
   }
 
-  final_registration_check() {
-    if should_brand_app; then
-      RAG_IME_SQUIRREL_APP="$TARGET_APP" \
-        RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
-        RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
-        RAG_IME_SQUIRREL_AUTO_SELECT=0 \
-        "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" >/dev/null 2>&1 || true
-    else
-      ensure_squirrel_input_source_enabled "$TARGET_APP"
-    fi
-  }
-
+  begin_install_transaction
+  verify_install_source_owner
   mkdir -p "$INSTALL_DIR"
   "$PYTHON_BIN" "$ROOT/scripts/audit_canonical_squirrel_bundles.py" \
     --preinstall \
@@ -669,25 +793,24 @@ install_squirrel_app() {
     --bundle-id "$BUNDLE_ID" >/dev/null
   printf '[OK] no conflicting same-bundle Squirrel app found before install\n'
   canonicalize_input_method_bundles
-  # Replacing a live IMK bundle leaves macOS connected to the old executable.
-  # Stop it first so a source cannot appear in Settings yet refuse switching.
-  pkill -f "$TARGET_APP/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
-  killall imklaunchagent TextInputMenuAgent TextInputSwitcher >/dev/null 2>&1 || true
-  sleep 0.5
-  rm -rf "$TARGET_APP"
-  cp -R "$PRODUCT_APP" "$TARGET_APP"
-  mkdir -p "$TARGET_APP/Contents/Resources"
-  cp "$ROOT/macos/Shared/Assets/CompanionStates/"*.png "$TARGET_APP/Contents/Resources/"
+
+  # Build, brand, bootstrap and seal a hidden staging bundle. LaunchServices
+  # never sees a partially modified or multiply signed canonical input method.
+  INSTALL_STAGING_APP="$INSTALL_DIR/.${INSTALL_APP_NAME}.installing.$$"
+  INSTALL_PREVIOUS_APP="$INSTALL_DIR/.${INSTALL_APP_NAME}.previous.$$"
+  rm -rf "$INSTALL_STAGING_APP" "$INSTALL_PREVIOUS_APP"
+  cp -R "$PRODUCT_APP" "$INSTALL_STAGING_APP"
+  mkdir -p "$INSTALL_STAGING_APP/Contents/Resources"
+  cp "$ROOT/macos/Shared/Assets/CompanionStates/"*.png "$INSTALL_STAGING_APP/Contents/Resources/"
   "$ROOT/scripts/support/build_input_menu_icon.sh" \
-    "$TARGET_APP/Contents/Resources/RagImeInputMenuIcon.png"
-  /usr/libexec/PlistBuddy -c "Delete :LSRegisterProhibited" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || true
-  "$ROOT/scripts/support/build_app_icon.sh" "$TARGET_APP/Contents/Resources/RagImeIcon.icns"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile RagImeIcon" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || \
-    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string RagImeIcon" "$TARGET_APP/Contents/Info.plist"
-  printf '[OK] installed patched Squirrel.app: %s\n' "$TARGET_APP"
+    "$INSTALL_STAGING_APP/Contents/Resources/RagImeInputMenuIcon.png"
+  /usr/libexec/PlistBuddy -c "Delete :LSRegisterProhibited" "$INSTALL_STAGING_APP/Contents/Info.plist" >/dev/null 2>&1 || true
+  "$ROOT/scripts/support/build_app_icon.sh" "$INSTALL_STAGING_APP/Contents/Resources/RagImeIcon.icns"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile RagImeIcon" "$INSTALL_STAGING_APP/Contents/Info.plist" >/dev/null 2>&1 || \
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string RagImeIcon" "$INSTALL_STAGING_APP/Contents/Info.plist"
 
   if should_brand_app; then
-    RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+    RAG_IME_SQUIRREL_APP="$INSTALL_STAGING_APP" \
       RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
       RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
       RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID="$HANT_INPUT_SOURCE_ID" \
@@ -695,47 +818,80 @@ install_squirrel_app() {
       RAG_IME_SQUIRREL_HANS_DISPLAY_NAME="$HANS_DISPLAY_NAME" \
       RAG_IME_SQUIRREL_HANT_DISPLAY_NAME="$HANT_DISPLAY_NAME" \
       RAG_IME_SQUIRREL_CONNECTION_NAME="$CONNECTION_NAME" \
-      "$ROOT/scripts/brand_squirrel_app.sh" "$TARGET_APP"
+      "$ROOT/scripts/brand_squirrel_app.sh" "$INSTALL_STAGING_APP"
     printf '[OK] branded patched Squirrel.app as %s (%s)\n' "$DISPLAY_NAME" "$BUNDLE_ID"
   fi
 
-  write_rag_ime_build_marker "$TARGET_APP"
+  write_rag_ime_build_marker "$INSTALL_STAGING_APP"
 
-  sign_target_app "initial"
+  sign_app "initial" "$INSTALL_STAGING_APP"
 
   RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
     RAG_IME_SQUIRREL_CONFIG_SNIPPET="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" \
-    RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+    RAG_IME_SQUIRREL_APP="$INSTALL_STAGING_APP" \
     RAG_IME_SQUIRREL_DEPLOY=0 \
     "$ROOT/scripts/install_squirrel_rag_config.sh"
   printf '[OK] installed RAG-IME Squirrel config\n'
 
   if bool_true "$SKIP_POSTINSTALL"; then
     printf '[WARN] skipped Squirrel user-data bootstrap and postinstall; input source may need manual registration\n' >&2
-    sign_target_app "final"
-    return 0
-  fi
-
-  RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
-    RAG_IME_SQUIRREL_APP="$TARGET_APP" \
-    "$ROOT/scripts/bootstrap_squirrel_user_data.sh"
-
-  if should_brand_app; then
-    run_branded_postinstall "$TARGET_APP"
-  elif [[ -f "$SQUIRREL_WORKDIR/scripts/postinstall" ]]; then
-    (cd "$SQUIRREL_WORKDIR" && DSTROOT="$INSTALL_DIR" bash scripts/postinstall)
-    printf '[OK] Squirrel postinstall completed\n'
-    ensure_squirrel_input_source_enabled "$TARGET_APP"
   else
-    printf '[WARN] Squirrel postinstall script not found; input source may need manual registration\n' >&2
+    RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
+      RAG_IME_SQUIRREL_APP="$INSTALL_STAGING_APP" \
+      "$ROOT/scripts/bootstrap_squirrel_user_data.sh"
   fi
 
-  # Squirrel postinstall can generate bundled SharedSupport/build files inside
-  # the app after the first signature. Seal the final bundle state and refresh
-  # registration again so System Settings does not hide an invalid app bundle.
-  sign_target_app "final"
-  final_registration_check
-  open -a "$TARGET_APP" >/dev/null 2>&1 || true
+  # Bootstrap can generate SharedSupport/build files inside the staged bundle.
+  # Seal that final state before the canonical path changes.
+  sign_app "final" "$INSTALL_STAGING_APP"
+
+  # Changing the selected input source forces every open application to close
+  # its old IMK channel before the canonical bundle changes. After the new
+  # signed bundle is registered, branded postinstall restarts only
+  # imklaunchagent once so it cannot retain the old connection-name cache.
+  # TextInputMenuAgent and cfprefsd remain untouched.
+  handoff_active_squirrel_input_source
+  pkill -f "$TARGET_APP/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
+  for ((attempt = 0; attempt < 40; attempt++)); do
+    if ! pgrep -f "$TARGET_APP/Contents/MacOS/Squirrel" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.05
+  done
+  if pgrep -f "$TARGET_APP/Contents/MacOS/Squirrel" >/dev/null 2>&1; then
+    echo "old Squirrel process did not exit; refusing to replace its live bundle" >&2
+    return 1
+  fi
+
+  if [[ -d "$TARGET_APP" ]]; then
+    mv "$TARGET_APP" "$INSTALL_PREVIOUS_APP"
+  fi
+  mv "$INSTALL_STAGING_APP" "$TARGET_APP"
+  INSTALL_STAGING_APP=""
+  INSTALL_SWAP_COMPLETE=1
+  printf '[OK] atomically installed final signed Squirrel.app: %s\n' "$TARGET_APP"
+
+  if ! bool_true "$SKIP_POSTINSTALL"; then
+    if should_brand_app; then
+      run_branded_postinstall "$TARGET_APP"
+    elif [[ -f "$SQUIRREL_WORKDIR/scripts/postinstall" ]]; then
+      (cd "$SQUIRREL_WORKDIR" && DSTROOT="$INSTALL_DIR" bash scripts/postinstall)
+      printf '[OK] Squirrel postinstall completed\n'
+      sign_app "postinstall" "$TARGET_APP"
+      ensure_squirrel_input_source_enabled "$TARGET_APP"
+    else
+      printf '[WARN] Squirrel postinstall script not found; input source may need manual registration\n' >&2
+    fi
+  fi
+
+  if ! bool_true "$SKIP_POSTINSTALL" || [[ -n "$INSTALL_RESTORE_INPUT_SOURCE" ]] || bool_true "$AUTO_SELECT"; then
+    open -a "$TARGET_APP" >/dev/null 2>&1 || true
+    sleep 0.75
+  fi
+  if ! restore_input_source_after_install && [[ -d "$INSTALL_PREVIOUS_APP" ]]; then
+    return 1
+  fi
+  INSTALL_COMPLETE=1
 }
 
 if [[ -z "$XCODEBUILD" || ! -x "$XCODEBUILD" ]]; then

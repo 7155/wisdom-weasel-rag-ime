@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import shutil
 import tempfile
@@ -30,11 +31,12 @@ class DatabaseMigrationTests(unittest.TestCase):
                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 62, 63, 64,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+                    61, 62, 63, 64, 65,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 64)
+            self.assertEqual(status["currentVersion"], 65)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -181,6 +183,47 @@ class DatabaseMigrationTests(unittest.TestCase):
                 }.issubset(persona_columns)
             )
 
+    def test_production_0062_history_stays_immutable_and_workflow_migrations_append(self) -> None:
+        expected_history = {
+            61: (
+                "separate_activity_timeline_index",
+                "fd7b2767870341e6551d232819d10edfab5a68b1e70ac89957e4672059a19b7c",
+            ),
+            62: (
+                "retire_owner_umbrella_topic_books",
+                "54207aee24349ffe2598b791208aa793500094c71dd317f3d68a678cda400baf",
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="rag-ime-production-0062-") as temporary:
+            migrations_0062 = Path(temporary) / "migrations"
+            migrations_0062.mkdir()
+            for source in DEFAULT_MIGRATIONS_DIR.glob("*.sql"):
+                version = int(source.name.split("_", 1)[0])
+                if version <= 62:
+                    shutil.copy2(source, migrations_0062 / source.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                initial = apply_database_migrations(conn, migrations_dir=migrations_0062)
+                self.assertEqual(initial.current_version, 62)
+                for version, (name, checksum) in expected_history.items():
+                    source = next(migrations_0062.glob(f"{version:04d}_*.sql"))
+                    self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), checksum)
+                    self.assertEqual(
+                        conn.execute(
+                            "SELECT name, checksum FROM schema_migrations WHERE version = ?",
+                            (version,),
+                        ).fetchone(),
+                        (name, checksum),
+                    )
+
+                appended = apply_database_migrations(conn)
+                self.assertEqual(appended.applied_versions, (63, 64, 65))
+                self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+                status = migration_status(conn)
+                self.assertTrue(status["ok"])
+                self.assertEqual(status["currentVersion"], 65)
+
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
             migrations_0058 = Path(temporary) / "migrations"
@@ -267,7 +310,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
                 }
 
-            self.assertEqual(result.applied_versions, (59, 60, 62, 63, 64))
+            self.assertEqual(result.applied_versions, (59, 60, 61, 62, 63, 64, 65))
             self.assertEqual(
                 rows["atom:legacy-old"],
                 (
@@ -394,7 +437,8 @@ class DatabaseMigrationTests(unittest.TestCase):
                 result.applied_versions,
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
-                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 62, 63, 64,
+                    51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+                    61, 62, 63, 64, 65,
                 ),
             )
             self.assertEqual(

@@ -326,6 +326,45 @@ class AgentServiceTests(unittest.TestCase):
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
         )
 
+    def test_paused_or_exhausted_goal_blocks_provider_prompt_before_runtime(self) -> None:
+        session_id = str(
+            self.service.create_session({"title": "goal gated provider"})["session"]["id"]
+        )
+        goal = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {
+                "action": "set",
+                "objective": "在预算内完成实现",
+                "tokenBudget": 10,
+            },
+        )["workflow"]["goal"]
+        paused = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+        )["workflow"]["goal"]
+        with patch.object(self.service, "_prompt_with_checkpoint") as provider:
+            with self.assertRaisesRegex(ValueError, "goal_paused"):
+                self.service.prompt(session_id, {"message": "继续执行"})
+            provider.assert_not_called()
+
+        resumed = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {"action": "resume", "expectedRevision": paused["revision"]},
+        )["workflow"]["goal"]
+        exhausted = self.service.sessions.record_agent_goal_usage(
+            session_id,
+            idempotency_key="goal-gate:usage",
+            turn_id="turn:goal-gate",
+            event_id="event:goal-gate",
+            token_delta=10,
+            elapsed_delta_ms=0,
+        )["goal"]
+        self.assertGreaterEqual(exhausted["revision"], resumed["revision"])
+        with patch.object(self.service, "_prompt_with_checkpoint") as provider:
+            with self.assertRaisesRegex(ValueError, "goal_budget_exhausted"):
+                self.service.prompt(session_id, {"message": "继续执行"})
+            provider.assert_not_called()
+
     def test_new_session_keeps_query_aware_bootstrap_in_each_provider_prompt(self) -> None:
         created = self.service.create_session({"title": "个人上下文"})
         session = created["session"]

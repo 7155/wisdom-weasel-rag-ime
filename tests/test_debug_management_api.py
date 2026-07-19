@@ -2143,7 +2143,9 @@ class DebugManagementApiTests(unittest.TestCase):
                 "eventType": "tool_failed",
                 "sessionId": "session-http",
                 "payload": {
-                    "facts": [{"text": "Tool timed out", "evidence": "timeout receipt"}]
+                    "facts": [],
+                    "auditOnly": True,
+                    "reason": "tool_failure_is_not_a_durable_memory_fact",
                 },
             }
         ).encode("utf-8")
@@ -2186,8 +2188,8 @@ class DebugManagementApiTests(unittest.TestCase):
             thread.join(timeout=2)
             server.server_close()
 
-        self.assertEqual(event["result"]["status"], "suggested")
-        self.assertIn("Tool timed out", event["result"]["nextTurnContext"])
+        self.assertEqual(event["result"]["status"], "recorded")
+        self.assertEqual(event["result"]["nextTurnContext"], "")
         self.assertFalse(event["guardrails"]["writesLongTermMemory"])
         self.assertEqual(snapshot["recentEvents"][0]["eventId"], "http-lifecycle-1")
         idle = next(value for value in updated["policies"] if value["eventType"] == "idle")

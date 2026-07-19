@@ -46,8 +46,30 @@ class _FakePluginRuntime:
         self.installed = [plugin]
         return plugin
 
-    def plugin_enable(self, plugin_id: str, *, enabled: bool):
-        self.calls.append(("enable", {"pluginId": plugin_id, "enabled": enabled}))
+    def plugin_enable(
+        self,
+        plugin_id: str,
+        *,
+        enabled: bool,
+        expected_active_digest: str,
+        expected_enabled: bool,
+    ):
+        self.calls.append(
+            (
+                "enable",
+                {
+                    "pluginId": plugin_id,
+                    "enabled": enabled,
+                    "expectedActiveDigest": expected_active_digest,
+                    "expectedEnabled": expected_enabled,
+                },
+            )
+        )
+        if (
+            self.installed[0]["digest"] != expected_active_digest
+            or self.installed[0]["enabled"] is not expected_enabled
+        ):
+            raise ValueError("plugin state changed")
         self.installed[0]["enabled"] = enabled
         return self.installed[0]
 
@@ -169,6 +191,8 @@ class AgentExtensionServiceTests(unittest.TestCase):
         ]
 
         disable = self.service.preview({"action": "disable", "pluginId": "log-helper"})
+        self.assertEqual(disable["summary"]["version"], "2.0.0")
+        self.assertEqual(disable["summary"]["permissions"], ["session.read"])
         self.service.apply(
             {
                 "previewToken": disable["previewToken"],
@@ -177,6 +201,18 @@ class AgentExtensionServiceTests(unittest.TestCase):
             }
         )
         self.assertFalse(self.runtime.installed[0]["enabled"])
+        self.assertEqual(
+            self.runtime.calls[-1],
+            (
+                "enable",
+                {
+                    "pluginId": "log-helper",
+                    "enabled": False,
+                    "expectedActiveDigest": "digest-v2",
+                    "expectedEnabled": True,
+                },
+            ),
+        )
         self.assertEqual(self.service.list()["items"][0]["displayName"], "Log Helper")
 
         rollback = self.service.preview({"action": "rollback", "pluginId": "log-helper"})
@@ -200,6 +236,31 @@ class AgentExtensionServiceTests(unittest.TestCase):
                 },
             ),
         )
+
+    def test_enable_disable_preview_rejects_state_changed_after_review(self) -> None:
+        self.runtime.installed = [
+            {
+                "id": "log-helper",
+                "name": "Log Helper",
+                "version": "2.0.0",
+                "digest": "digest-v2",
+                "enabled": True,
+                "permissions": ["session.read"],
+                "installedVersions": [
+                    {"version": "2.0.0", "digest": "digest-v2"},
+                ],
+            }
+        ]
+        disable = self.service.preview({"action": "disable", "pluginId": "log-helper"})
+        self.runtime.installed[0]["enabled"] = False
+        with self.assertRaisesRegex(ValueError, "plugin state changed"):
+            self.service.apply(
+                {
+                    "previewToken": disable["previewToken"],
+                    "payloadSha256": disable["payloadSha256"],
+                    "confirmText": "apply",
+                }
+            )
 
     def test_rollback_preview_rejects_state_changed_after_review(self) -> None:
         self.runtime.installed = [

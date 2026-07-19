@@ -1316,6 +1316,66 @@ class ControlToolGatewayTests(unittest.TestCase):
             gateway.apply_approval(decided)
         self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
 
+    def test_failed_timeout_or_limited_shell_receipt_does_not_start_plan_execution(self) -> None:
+        cases = (
+            {"mutationApplied": False, "exitCode": 1, "timedOut": False, "outputLimited": False},
+            {"mutationApplied": False, "exitCode": -15, "timedOut": True, "outputLimited": False},
+            {"mutationApplied": False, "exitCode": -15, "timedOut": False, "outputLimited": True},
+        )
+        for index, receipt_fields in enumerate(cases):
+            with self.subTest(receipt=receipt_fields):
+                workspace = Path(self.tmp.name) / f"workspace-unsuccessful-{index}"
+                workspace.mkdir()
+                coordinator = self.store.create(
+                    title=f"coordinator unsuccessful {index}",
+                    mode="coordinator",
+                    workspace_roots=[str(workspace)],
+                    created_at_ms=10 + index,
+                )
+                self._approve_plan(str(coordinator["id"]))
+
+                def execute(_prepared, fields=receipt_fields):
+                    return {
+                        "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                        "summary": "command did not complete successfully",
+                        "output": "",
+                        "undoAvailable": False,
+                        **fields,
+                    }
+
+                gateway = ControlToolGateway(
+                    sessions=self.store,
+                    management=self.management,
+                    core=_Core(),
+                    project="wisdom-weasel-rag-ime",
+                    facade=_Facade(),
+                    workspace_harness=WorkspaceHarness(executor=execute),
+                )
+                prepared = gateway.execute(
+                    {
+                        **self._tool_call(
+                            "workspace_shell",
+                            "run",
+                            command="false",
+                            cwd=str(workspace),
+                        ),
+                        "sessionId": coordinator["id"],
+                    }
+                )["result"]
+                approval = prepared["approval"]
+                decided = self.store.decide_approval(
+                    approval["approvalId"],
+                    approved=True,
+                    payload_sha256=approval["payloadSha256"],
+                )
+
+                result = gateway.apply_approval(decided)
+                self.assertFalse(result["mutationApplied"])
+                self.assertEqual(
+                    self.store.agent_plan(str(coordinator["id"]))["status"],
+                    "approved",
+                )
+
     def test_task_action_requires_native_approval_then_returns_rollback_receipt(self) -> None:
         prepared = self.gateway.execute(
             self._tool_call(
