@@ -26,7 +26,7 @@ describe('RoomKernelControlPlane', () => {
   it('sends canonical room root generation command through fixture transport and displays receipt', async () => {
     const handler = vi.fn((command) => receipt({
       receiptId: 'cancel-root-a', commandId: command.commandId, rootId: command.rootId,
-      generation: command.generation, receiptKind: 'root_cancelled',
+      generation: command.generation + 1, receiptKind: 'root_cancelled',
     }));
     const transport = createFixtureRoomKernelCommandTransport(handler);
     renderPlane(projection(), transport);
@@ -43,7 +43,7 @@ describe('RoomKernelControlPlane', () => {
   it('targets the keyboard-selected concurrent Root only', async () => {
     const handler = vi.fn((command) => receipt({
       receiptId: `cancel-${command.rootId}`, commandId: command.commandId, rootId: command.rootId,
-      generation: command.generation, receiptKind: 'root_cancelled',
+      generation: command.generation + 1, receiptKind: 'root_cancelled',
     }));
     renderPlane(projection(), createFixtureRoomKernelCommandTransport(handler));
     const buttons = screen.getAllByRole('button', { name: '停止' });

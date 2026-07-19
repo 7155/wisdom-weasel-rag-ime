@@ -15,6 +15,9 @@ PARTICIPANT_BINDING_SCHEMA_VERSION = "wisdom-weasel.room-participant-binding.v2"
 LEGACY_REF_SCHEMA_VERSION = "wisdom-weasel.room-legacy-ref.v1"
 KERNEL_COMMAND_SCHEMA_VERSION = "wisdom-weasel.room-kernel-command.v1"
 KERNEL_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-kernel-receipt.v1"
+ROOM_POST_SCHEMA_VERSION = "wisdom-weasel.room-post.v2"
+ROOM_SETTLE_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-settle-receipt.v1"
+ROOM_SETTLE_RESULT_SCHEMA_VERSION = "wisdom-weasel.room-settle-result.v1"
 
 CONTRACT_FILES = {
     "rootExecution": "room-root-execution.v2.json",
@@ -27,6 +30,9 @@ CONTRACT_FILES = {
     "legacyRef": "room-legacy-ref.v1.json",
     "kernelCommand": "room-kernel-command.v1.json",
     "kernelReceipt": "room-kernel-receipt.v1.json",
+    "roomPost": "room-post.v2.json",
+    "roomSettleReceipt": "room-settle-receipt.v1.json",
+    "roomSettleResult": "room-settle-result.v1.json",
 }
 
 

@@ -116,7 +116,7 @@ function RootControlSection({
   return <article className="room-kernel-root" data-root-state={root.state}>
     <header className="room-kernel-root__header">
       <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root)}</i></span>
-      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending} title={commandTransport ? '向 fixture transport 发送带 generation 的取消命令' : '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
+      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending} title={commandTransport ? '提交带 generation 的取消命令' : '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
     </header>
     <div className="room-kernel-root__summary">
       <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.owner || '等待分派'}</strong></span>

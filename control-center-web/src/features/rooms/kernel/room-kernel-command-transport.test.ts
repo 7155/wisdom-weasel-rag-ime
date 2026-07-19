@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
-import { buildCancelRootCommand, createFixtureRoomKernelCommandTransport } from './room-kernel-command-transport';
+import { buildCancelRootCommand, createFixtureRoomKernelCommandTransport, createHttpRoomKernelCommandTransport } from './room-kernel-command-transport';
 
 describe('Room kernel fixture command transport', () => {
   it('builds a generated typed cancel command bound to Room Root generation', () => {
@@ -28,6 +28,23 @@ describe('Room kernel fixture command transport', () => {
       commandId: command.commandId, rootId: command.rootId, generation: command.generation, ...override,
     }));
     await expect(transport.execute(command)).rejects.toThrow(/does not match/);
+  });
+
+  it('posts a production command to the canonical Room route and accepts the fenced next generation', async () => {
+    const command = buildCancelRootCommand(
+      { roomId: 'room:a', rootId: 'root-a', generation: 7 },
+      { commandId: 'command-7', sourceId: 'test', createdAtMs: 10 },
+    );
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(receipt({
+      commandId: command.commandId, rootId: command.rootId, generation: 8,
+    })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const transport = createHttpRoomKernelCommandTransport(fetcher as typeof fetch);
+
+    await expect(transport.execute(command)).resolves.toMatchObject({ generation: 8 });
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/agent/rooms/room%3Aa/kernel/commands',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 });
 

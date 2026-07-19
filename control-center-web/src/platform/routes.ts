@@ -1,7 +1,7 @@
 import type { GeneratedContractName } from '@/contracts/generated';
 
 export type ControlHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
-export type ControlStreamKind = 'agent' | 'room' | 'control' | 'observation';
+export type ControlStreamKind = 'agent' | 'room' | 'kernel' | 'control' | 'observation';
 
 export interface ControlRouteDefinition {
   method: ControlHttpMethod;
@@ -419,6 +419,27 @@ export const CONTROL_ROUTES = {
     query: ['lastEventId'],
     requiredQuery: ['lastEventId'],
     subscription: 'room',
+  },
+  'agent.room.kernel.snapshot': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/kernel/snapshot',
+    params: { roomId: null },
+  },
+  'agent.room.kernel.events': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/kernel/events',
+    params: { roomId: null },
+    query: ['lastEventId'],
+    requiredQuery: ['lastEventId'],
+    subscription: 'kernel',
+  },
+  'agent.room.kernel.command': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/kernel/commands',
+    params: { roomId: null },
+    body: ['schemaVersion', 'commandId', 'rootId', 'roomId', 'commandKind', 'targetKind', 'targetId', 'sourceKind', 'sourceId', 'idempotencyKey', 'generation', 'payload', 'createdAtMs'],
+    requiredBody: ['schemaVersion', 'commandId', 'roomId', 'commandKind', 'sourceKind', 'sourceId', 'idempotencyKey', 'generation', 'payload', 'createdAtMs'],
+    responseContract: 'room-kernel-receipt.v1',
   },
   'agent.room.topics': {
     method: 'GET',

@@ -13537,6 +13537,83 @@ export const contractSchemas = {
       }
     }
   },
+  "room-settle-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-settle-receipt.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "settleReceiptId",
+      "eventKind",
+      "status",
+      "dispatchId",
+      "sessionId",
+      "generation",
+      "capabilityEpoch",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-settle-receipt.v1"
+      },
+      "settleReceiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "eventKind": {
+        "const": "agent_settled"
+      },
+      "status": {
+        "const": "settled"
+      },
+      "dispatchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "capabilityEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "room-settle-result.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-settle-result.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receipt",
+      "post"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-settle-result.v1"
+      },
+      "receipt": {
+        "type": "object"
+      },
+      "post": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    }
+  },
   "room-shadow-observation.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-shadow-observation.v1.json",

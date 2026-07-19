@@ -42,6 +42,7 @@ from .agent_routes import (
     agent_context_trace_route,
     agent_media_route,
     agent_room_route,
+    agent_room_kernel_route,
     agent_room_work_route,
     agent_session_route,
     agent_subagent_route,
@@ -5913,6 +5914,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         )
         context_trace_session_id, context_trace_id = agent_context_trace_route(parsed.path)
         agent_room_id, room_action = agent_room_route(parsed.path)
+        kernel_room_id, kernel_action = agent_room_kernel_route(parsed.path)
         (
             room_work_room_id,
             room_work_item_id,
@@ -5925,6 +5927,17 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query or "")
             self._stream_agent_room_events(
                 agent_room_id,
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                ),
+            )
+            return
+        if kernel_room_id and kernel_action == "events":
+            query = parse_qs(parsed.query or "")
+            self._stream_agent_room_kernel_events(
+                kernel_room_id,
                 after_event_id=(
                     self.headers.get("Last-Event-ID", "")
                     or _query_first(query, "afterEventId")
@@ -6299,6 +6312,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "limit": _query_first(query, "limit"),
                     }
                 ),
+            )
+            return
+        if kernel_room_id and kernel_action == "snapshot":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_kernel_snapshot(kernel_room_id),
             )
             return
         if agent_room_id and room_action == "snapshot":
@@ -7277,6 +7296,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             agent_session_id, agent_action = agent_session_route(path)
             context_session_id, context_item_id, context_item_action = agent_context_item_route(path)
             agent_room_id, room_action = agent_room_route(path)
+            kernel_room_id, kernel_action = agent_room_kernel_route(path)
             (
                 room_work_room_id,
                 room_work_item_id,
@@ -7399,6 +7419,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/agent/rooms":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_room(payload))
+            elif kernel_room_id and kernel_action == "commands":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.apply_room_kernel_command(
+                        kernel_room_id, payload, caller_authorized=True
+                    ),
+                )
+            elif kernel_room_id and kernel_action == "settle":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.settle_room_kernel_dispatch(
+                        kernel_room_id, payload, caller_authorized=True
+                    ),
+                )
             elif path == "/api/agent/subagents/runs":
                 session_id = str(payload.pop("sessionId", ""))
                 self._write_json(
@@ -8039,6 +8073,24 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
 
     def _stream_agent_room_events(self, room_id: str, *, after_event_id: str = "") -> None:
         stream = self.service.agent.subscribe_room_events(
+            room_id,
+            after_event_id=after_event_id,
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _stream_agent_room_kernel_events(self, room_id: str, *, after_event_id: str = "") -> None:
+        stream = self.service.agent.subscribe_room_kernel_events(
             room_id,
             after_event_id=after_event_id,
         )

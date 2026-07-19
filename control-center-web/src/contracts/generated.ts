@@ -105,6 +105,8 @@ import type { RoomLegacyRefV1 } from './generated/room-legacy-ref.v1';
 import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
+import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
+import type { RoomSettleResultV1 } from './generated/room-settle-result.v1';
 import type { RoomShadowObservationV1 } from './generated/room-shadow-observation.v1';
 import type { RoomSkillLoadReceiptV1 } from './generated/room-skill-load-receipt.v1';
 import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
@@ -216,6 +218,8 @@ export type {
   RoomParticipantBindingV2,
   RoomPostV2,
   RoomRootExecutionV2,
+  RoomSettleReceiptV1,
+  RoomSettleResultV1,
   RoomShadowObservationV1,
   RoomSkillLoadReceiptV1,
   RoomSkillPolicyV1,
@@ -328,6 +332,8 @@ export interface ContractTypeMap {
   'room-participant-binding.v2': RoomParticipantBindingV2;
   'room-post.v2': RoomPostV2;
   'room-root-execution.v2': RoomRootExecutionV2;
+  'room-settle-receipt.v1': RoomSettleReceiptV1;
+  'room-settle-result.v1': RoomSettleResultV1;
   'room-shadow-observation.v1': RoomShadowObservationV1;
   'room-skill-load-receipt.v1': RoomSkillLoadReceiptV1;
   'room-skill-policy.v1': RoomSkillPolicyV1;

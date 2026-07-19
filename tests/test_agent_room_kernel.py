@@ -183,7 +183,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(receipt["receiptKind"], "panic")
         self.assertEqual(receipt["details"]["rootCount"], 1)
         self.assertEqual(receipt["commandId"], "command:panic")
-        self.assertEqual(duplicate["receiptKind"], "duplicate")
+        self.assertEqual(duplicate, receipt)
         self.assertEqual(self.store.root("root:1")["state"], "cancelled")
 
     def test_root_final_requires_quiescence_acceptance_and_terminal_receipt(self) -> None:
@@ -191,6 +191,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.store.enqueue_dispatch(dispatch("dispatch:done", key="done"), now_ms=10)
         early = self.store.finalize_root("root:1", now_ms=11)
         self.assertEqual(early["status"], "rejected")
+        self.store.set_dispatch_wait_state("dispatch:done", "running", now_ms=11)
 
         applied = self.store.apply_commit(
             commit("commit:done", "dispatch:done", coverage=("ac:1",)),

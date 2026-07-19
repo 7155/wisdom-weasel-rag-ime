@@ -39,6 +39,10 @@ from .agent_room_intercom import (
     AgentRoomTargetBusy,
 )
 from .agent_room_work import AgentRoomWorkStore
+from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
+from .agent_room_kernel_contracts import validate_kernel_contract
+from .agent_room_kernel_projection import RoomKernelProjection
+from .agent_room_kernel_worker import RoomKernelWorker, RoomKernelWorkerLoop
 from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
@@ -104,6 +108,8 @@ class AgentService:
         memory_embedding_provider: EmbeddingProvider | None = None,
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
+        room_kernel_mode: KernelMode = "off",
+        room_kernel_poll_seconds: float = 0.25,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = str(project or "")
@@ -186,6 +192,11 @@ class AgentService:
         self.rooms.initialize()
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
+        self.room_kernel = RoomKernelStore(db_path, mode=room_kernel_mode)
+        self.room_kernel.initialize()
+        self.room_kernel_projection = RoomKernelProjection(db_path)
+        self.room_kernel_projection.initialize()
+        self._room_kernel_poll_seconds = room_kernel_poll_seconds
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
         self._remove_observation_room_observer = self.room_events.add_observer(
@@ -208,6 +219,7 @@ class AgentService:
             ),
             purpose="interactive",
         )
+        self._bind_room_kernel_runtime()
         initial_configuration = self.configuration_store.snapshot()
         if (
             initial_configuration["sync"]["state"] != "synchronized"
@@ -1217,6 +1229,93 @@ class AgentService:
         room = self.rooms.get(room_id)
         self._restore_legacy_room_participant_sessions(room)
         return self.rooms.snapshot(room_id)
+
+    def room_kernel_snapshot(self, room_id: str) -> dict[str, object]:
+        self.rooms.get(room_id)
+        self.room_kernel_projection.sync_room(room_id)
+        return self.room_kernel_projection.snapshot(room_id)
+
+    def apply_room_kernel_command(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+        *,
+        caller_authorized: bool = False,
+    ) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Kernel control requires an authorized control caller")
+        self.rooms.get(room_id)
+        if str(payload.get("roomId") or "") != room_id:
+            raise RoomKernelFenceError("control command path Room does not match payload")
+        result = self.room_kernel_worker.apply_control_command(payload)
+        self.room_kernel_projection.sync_room(room_id)
+        return dict(result["kernelReceipt"])
+
+    def settle_room_kernel_dispatch(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+        *,
+        caller_authorized: bool = False,
+    ) -> dict[str, object]:
+        """Explicit Session-settle bridge; message completion alone is never a Commit."""
+
+        if not caller_authorized:
+            raise PermissionError("Room Kernel settle requires an authorized runtime caller")
+        self.rooms.get(room_id)
+        settle = payload.get("settleReceipt")
+        commit = payload.get("commit")
+        if not isinstance(settle, Mapping) or not isinstance(commit, Mapping):
+            raise ValueError("settleReceipt and commit are required")
+        if settle.get("eventKind") != "agent_settled" or settle.get("status") != "settled":
+            raise RoomKernelFenceError("only an agent_settled receipt can bridge a RoomCommit")
+        validate_kernel_contract("roomSettleReceipt", settle)
+        validate_kernel_contract("roomCommit", commit)
+        dispatch = self.room_kernel.dispatch(str(commit.get("dispatchId") or ""))
+        root = self.room_kernel.root(str(dispatch["rootId"]))
+        if (
+            root.get("roomId") != room_id
+            or settle.get("dispatchId") != dispatch.get("dispatchId")
+            or settle.get("sessionId") != dispatch.get("targetSessionId")
+            or int(settle.get("generation", -1)) != int(dispatch["generation"])
+            or int(settle.get("generation", -1)) != int(root["generation"])
+            or int(settle.get("capabilityEpoch", -1)) != int(dispatch["capabilityEpoch"])
+        ):
+            raise RoomKernelFenceError("settle receipt does not match Dispatch fences")
+        if dispatch.get("state") != "running":
+            raise RoomKernelFenceError("only a running Dispatch can settle")
+        proposal = commit.get("postProposal")
+        if commit.get("action") == "post":
+            if not isinstance(proposal, Mapping):
+                raise RoomKernelFenceError("post action requires an explicit RoomPost proposal")
+            validate_kernel_contract("roomPost", proposal)
+            if (
+                proposal.get("roomId") != room_id
+                or proposal.get("rootId") != root.get("rootId")
+                or proposal.get("dispatchId") != dispatch.get("dispatchId")
+                or int(proposal.get("generation", -1)) != int(root["generation"])
+                or proposal.get("publicationSource") != {"kind": "room_commit", "ref": commit.get("commitId")}
+            ):
+                raise RoomKernelFenceError("RoomPost proposal does not match the settled Commit")
+        elif proposal is not None:
+            raise RoomKernelFenceError("non-post Commit cannot publish a RoomPost")
+        receipt = self.room_kernel.apply_commit(
+            commit,
+            generation=int(settle["generation"]),
+            now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
+        )
+        post = None
+        if commit.get("action") == "post":
+            assert isinstance(proposal, Mapping)
+            post = self.room_kernel_projection.publish_post(proposal)
+        self.room_kernel_projection.sync_room(room_id)
+        result = {
+            "schemaVersion": "wisdom-weasel.room-settle-result.v1",
+            "receipt": receipt,
+            "post": post,
+        }
+        validate_kernel_contract("roomSettleResult", result)
+        return result
 
     def room_work_items(
         self,
@@ -2376,6 +2475,21 @@ class AgentService:
     ) -> Iterator[bytes]:
         self.rooms.get(room_id)
         return self.room_events.subscribe(
+            room_id,
+            after_event_id=after_event_id,
+            heartbeat_seconds=heartbeat_seconds,
+        )
+
+    def subscribe_room_kernel_events(
+        self,
+        room_id: str,
+        *,
+        after_event_id: str = "",
+        heartbeat_seconds: float = 10.0,
+    ) -> Iterator[bytes]:
+        self.rooms.get(room_id)
+        self.room_kernel_projection.sync_room(room_id)
+        return self.room_kernel_projection.subscribe(
             room_id,
             after_event_id=after_event_id,
             heartbeat_seconds=heartbeat_seconds,
@@ -4686,7 +4800,32 @@ class AgentService:
             heartbeat_seconds=heartbeat_seconds,
         )
 
+    def _bind_room_kernel_runtime(self) -> None:
+        prior = getattr(self, "room_kernel_worker_loop", None)
+        if prior is not None:
+            prior.close()
+        if self.room_kernel.mode == "cohort" and (
+            not callable(getattr(self.runtime, "dispatch_room", None))
+            or not callable(getattr(self.runtime, "cancel_room", None))
+        ):
+            raise RuntimeError("Room Kernel cohort requires typed Pi Room RPC")
+        self.room_kernel_worker = RoomKernelWorker(
+            self.room_kernel,
+            self.runtime,  # type: ignore[arg-type]
+        )
+        self.room_kernel_worker_loop = RoomKernelWorkerLoop(
+            self.room_kernel_worker,
+            on_change=self._sync_all_room_kernel_projections,
+            poll_seconds=self._room_kernel_poll_seconds,
+        )
+        self.room_kernel_worker_loop.start()
+
+    def _sync_all_room_kernel_projections(self) -> None:
+        for room_id in self.room_kernel.room_ids():
+            self.room_kernel_projection.sync_room(room_id)
+
     def close(self) -> None:
+        self.room_kernel_worker_loop.close()
         self._remove_observation_room_observer()
         self.observations.close()
         self._remove_wake_observer()
@@ -4696,6 +4835,7 @@ class AgentService:
         self.runtime.stop()
 
     def reconfigure_runtime(self, config: PiRuntimeConfig) -> dict[str, object]:
+        self.room_kernel_worker_loop.close()
         self.runtime.stop()
         config = replace(
             config,
@@ -4717,10 +4857,12 @@ class AgentService:
             ),
             purpose="interactive",
         )
+        self._bind_room_kernel_runtime()
         self.room_intercom.notify()
         return self.runtime_status()
 
     def _apply_runtime_policy(self, policy: AgentRuntimePolicy) -> dict[str, object]:
+        self.room_kernel_worker_loop.close()
         self.runtime.stop()
         self.runtime_factory.apply_policy(policy)
         self.delegation.refresh_runtime_factory()
@@ -4736,6 +4878,7 @@ class AgentService:
             ),
             purpose="interactive",
         )
+        self._bind_room_kernel_runtime()
         self.room_intercom.notify()
         return self.runtime.runtime_status()
 
@@ -4776,6 +4919,15 @@ class AgentService:
             room_id=str(participant.get("roomId") or "") if participant is not None else "",
         )
         if participant is None:
+            return
+        kernel_binding = self.room_kernel.session_binding(event.session_id)
+        if self.room_kernel.mode == "cohort" and kernel_binding is not None:
+            # Canonical Room Sessions publish status metadata only. Text,
+            # reasoning, tool traces, and audio remain private until a fenced
+            # RoomCommit explicitly proposes a RoomPost.
+            self.room_kernel_projection.sync_room(
+                str(kernel_binding["roomId"]), now_ms=event.created_at_ms
+            )
             return
         mapped_type, public_data = _room_event_projection(event)
         room_turn_id = self._room_turn_for_event(event)
@@ -5117,6 +5269,7 @@ def agent_service_from_environment(
         ),
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
+        room_kernel_mode=_room_kernel_mode_from_environment(),
     )
 
 
@@ -5170,7 +5323,15 @@ def agent_service_from_settings(
         ),
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
+        room_kernel_mode=_room_kernel_mode_from_environment(),
     )
+
+
+def _room_kernel_mode_from_environment() -> KernelMode:
+    value = os.environ.get("RAG_IME_ROOM_KERNEL_MODE", "off").strip().lower()
+    if value not in {"off", "shadow", "cohort", "test"}:
+        return "off"
+    return value  # type: ignore[return-value]
 
 
 def _room_event_projection(event: AgentEventEnvelope) -> tuple[str, dict[str, object]]:

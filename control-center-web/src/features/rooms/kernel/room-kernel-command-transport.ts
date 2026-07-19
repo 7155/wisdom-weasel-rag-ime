@@ -1,6 +1,7 @@
 import type { RoomKernelCommandV1 } from '@/contracts/generated/room-kernel-command.v1';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import { parseContract } from '@/contracts/validators';
+import type { ControlTransport, JsonValue } from '@/platform/transport';
 
 export type RootStopTarget = {
   roomId: string;
@@ -9,8 +10,30 @@ export type RootStopTarget = {
 };
 
 export interface RoomKernelCommandTransport {
-  readonly kind: 'fixture';
+  readonly kind: 'fixture' | 'http' | 'control';
   execute(command: RoomKernelCommandV1): Promise<RoomKernelReceiptV1>;
+}
+
+export function createControlRoomKernelCommandTransport(
+  transport: ControlTransport,
+): RoomKernelCommandTransport {
+  return {
+    kind: 'control',
+    async execute(input) {
+      const command = parseContract('room-kernel-command.v1', input);
+      const payload = await transport.request({
+        pathId: 'agent.room.kernel.command',
+        params: { roomId: command.roomId },
+        body: command as unknown as JsonValue,
+        responseContract: 'room-kernel-receipt.v1',
+      });
+      const receipt = parseContract('room-kernel-receipt.v1', payload);
+      if (receipt.commandId !== command.commandId) throw new TypeError('Kernel receipt does not match command');
+      if (receipt.rootId !== command.rootId) throw new TypeError('Kernel receipt does not match Root');
+      validateReceiptGeneration(command, receipt);
+      return receipt;
+    },
+  };
 }
 
 export function buildCancelRootCommand(
@@ -35,7 +58,7 @@ export function buildCancelRootCommand(
   return parseContract('room-kernel-command.v1', command);
 }
 
-/** Explicit test/demo transport. Production remains read-only until a backend command route exists. */
+/** Explicit test/demo transport. Production uses the authenticated HTTP command route below. */
 export function createFixtureRoomKernelCommandTransport(
   handler: (command: RoomKernelCommandV1) => RoomKernelReceiptV1 | Promise<RoomKernelReceiptV1>,
 ): RoomKernelCommandTransport {
@@ -46,8 +69,41 @@ export function createFixtureRoomKernelCommandTransport(
       const receipt = parseContract('room-kernel-receipt.v1', await handler(command));
       if (receipt.commandId !== command.commandId) throw new TypeError('Kernel receipt does not match command');
       if (receipt.rootId !== command.rootId) throw new TypeError('Kernel receipt does not match Root');
-      if (receipt.generation !== command.generation) throw new TypeError('Kernel receipt generation does not match command');
+      validateReceiptGeneration(command, receipt);
       return receipt;
     },
   };
+}
+
+export function createHttpRoomKernelCommandTransport(
+  fetcher: typeof fetch = fetch,
+): RoomKernelCommandTransport {
+  return {
+    kind: 'http',
+    async execute(input) {
+      const command = parseContract('room-kernel-command.v1', input);
+      const response = await fetcher(
+        `/api/agent/rooms/${encodeURIComponent(command.roomId)}/kernel/commands`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(command),
+        },
+      );
+      if (!response.ok) throw new Error(`Room Kernel command failed (${response.status})`);
+      const receipt = parseContract('room-kernel-receipt.v1', await response.json());
+      if (receipt.commandId !== command.commandId) throw new TypeError('Kernel receipt does not match command');
+      if (receipt.rootId !== command.rootId) throw new TypeError('Kernel receipt does not match Root');
+      validateReceiptGeneration(command, receipt);
+      return receipt;
+    },
+  };
+}
+
+function validateReceiptGeneration(
+  command: RoomKernelCommandV1,
+  receipt: RoomKernelReceiptV1,
+): void {
+  const expected = command.commandKind === 'cancel_root' ? command.generation + 1 : command.generation;
+  if (receipt.generation !== expected) throw new TypeError('Kernel receipt generation does not match command transition');
 }

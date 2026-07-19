@@ -16,7 +16,7 @@ from .agent_room_kernel_contracts import (
 from .db import apply_database_migrations
 
 
-KernelMode = Literal["off", "shadow", "test"]
+KernelMode = Literal["off", "shadow", "cohort", "test"]
 _ACTIVE_DISPATCH_STATES = ("pending", "leased", "running", "retry_wait", "timer_wait")
 _TERMINAL_TASK_STATES = ("completed", "failed", "cancelled")
 
@@ -34,8 +34,8 @@ class RoomKernelStore:
     """
 
     def __init__(self, db_path: str | Path, *, mode: KernelMode = "shadow") -> None:
-        if mode not in {"off", "shadow", "test"}:
-            raise ValueError("Room Kernel mode must be off, shadow, or test")
+        if mode not in {"off", "shadow", "cohort", "test"}:
+            raise ValueError("Room Kernel mode must be off, shadow, cohort, or test")
         self.db_path = Path(db_path)
         self.mode = mode
 
@@ -163,7 +163,12 @@ class RoomKernelStore:
                        payload_json, created_at_ms) VALUES (?, ?, ?, ?, 'dispatch', ?, ?)""",
                     (command_id, root_id, command["roomId"], idempotency_key, _json(command), int(now_ms)),
                 )
-                self._enqueue_dispatch(conn, dispatch, shadow_only=True, now_ms=now_ms)
+                self._enqueue_dispatch(
+                    conn,
+                    dispatch,
+                    shadow_only=self.mode not in {"cohort", "test"},
+                    now_ms=now_ms,
+                )
             conn.execute(
                 """INSERT INTO room_kernel_compatibility_refs(
                    source_kind, source_id, command_id, observed_at_ms)
@@ -203,14 +208,14 @@ class RoomKernelStore:
         *,
         now_ms: int,
     ) -> tuple[dict[str, object], bool]:
-        """Exercise the isolated core. Delivery is available only in test mode."""
+        """Enqueue through the canonical outbox; only cohort/test can lease it."""
 
         validate_kernel_contract("dispatchEnvelope", payload)
         with self._connect(immediate=True) as conn:
             return self._enqueue_dispatch(
                 conn,
                 payload,
-                shadow_only=self.mode != "test",
+                shadow_only=self.mode not in {"cohort", "test"},
                 now_ms=now_ms,
             )
 
@@ -306,7 +311,7 @@ class RoomKernelStore:
             )
 
     def lease_next(self, *, now_ms: int, ttl_ms: int) -> dict[str, object] | None:
-        if self.mode != "test":
+        if self.mode not in {"cohort", "test"}:
             return None
         with self._connect(immediate=True) as conn:
             row = conn.execute(
@@ -413,14 +418,29 @@ class RoomKernelStore:
                 now_ms=now_ms,
             )
 
-    def active_runtime_targets(self, root_id: str) -> list[dict[str, object]]:
+    def active_runtime_targets(
+        self,
+        root_id: str,
+        *,
+        target_kind: str = "root",
+        target_id: str = "",
+    ) -> list[dict[str, object]]:
         with self._connect() as conn:
+            clauses = ["d.root_id = ?", "d.state IN ('leased','running','retry_wait','timer_wait')"]
+            values: list[object] = [root_id]
+            if target_kind == "dispatch":
+                clauses.append("d.dispatch_id = ?")
+                values.append(_required(target_id, "target_id"))
+            elif target_kind == "task":
+                clauses.append("d.task_id = ?")
+                values.append(_required(target_id, "target_id"))
+            elif target_kind != "root":
+                raise ValueError("runtime target kind must be root, task, or dispatch")
             rows = conn.execute(
                 """SELECT d.dispatch_id, d.target_session_id, d.generation
                    FROM room_kernel_dispatches d
-                   WHERE d.root_id = ? AND d.state IN ('leased','running','retry_wait','timer_wait')
-                   ORDER BY d.dispatch_id""",
-                (root_id,),
+                   WHERE """ + " AND ".join(clauses) + " ORDER BY d.dispatch_id",
+                values,
             ).fetchall()
             return [
                 {
@@ -431,6 +451,105 @@ class RoomKernelStore:
                 for row in rows
             ]
 
+    def room_active_runtime_targets(self, room_id: str) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT d.dispatch_id, d.root_id, d.target_session_id, d.generation
+                   FROM room_kernel_dispatches d
+                   JOIN room_kernel_roots r ON r.root_id = d.root_id
+                   WHERE r.room_id = ?
+                     AND d.state IN ('leased','running','retry_wait','timer_wait')
+                   ORDER BY d.root_id, d.dispatch_id""",
+                (room_id,),
+            ).fetchall()
+            return [
+                {
+                    "dispatchId": str(row["dispatch_id"]),
+                    "rootId": str(row["root_id"]),
+                    "sessionId": str(row["target_session_id"]),
+                    "generation": int(row["generation"]),
+                }
+                for row in rows
+            ]
+
+    def session_binding(self, session_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT d.dispatch_id, d.root_id, d.generation, d.state, r.room_id
+                   FROM room_kernel_dispatches d
+                   JOIN room_kernel_roots r ON r.root_id = d.root_id
+                   WHERE d.target_session_id = ?
+                     AND d.state IN ('pending','leased','running','retry_wait','timer_wait')
+                   ORDER BY d.updated_at_ms DESC, d.dispatch_id DESC LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "roomId": str(row["room_id"]),
+                "rootId": str(row["root_id"]),
+                "dispatchId": str(row["dispatch_id"]),
+                "generation": int(row["generation"]),
+                "state": str(row["state"]),
+            }
+
+    def room_ids(self) -> list[str]:
+        with self._connect() as conn:
+            return [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT room_id FROM room_kernel_roots ORDER BY room_id"
+                ).fetchall()
+            ]
+
+    def mark_runtime_cancel_unknown(
+        self,
+        *,
+        root_id: str,
+        dispatch_ids: list[str],
+        reason: str,
+        now_ms: int,
+    ) -> list[dict[str, object]]:
+        receipts: list[dict[str, object]] = []
+        with self._connect(immediate=True) as conn:
+            root = self._root_row(conn, root_id)
+            for dispatch_id in sorted(set(dispatch_ids)):
+                dispatch = self._dispatch_row(conn, dispatch_id)
+                if str(dispatch["root_id"]) != root_id:
+                    raise RoomKernelFenceError("unknown cancellation target belongs to another Root")
+                conn.execute(
+                    "UPDATE room_kernel_dispatches SET state = 'unknown', updated_at_ms = ? WHERE dispatch_id = ?",
+                    (int(now_ms), dispatch_id),
+                )
+                conn.execute(
+                    "UPDATE room_kernel_outbox SET state = 'dead_letter', updated_at_ms = ? WHERE dispatch_id = ?",
+                    (int(now_ms), dispatch_id),
+                )
+                dead_id = f"dead-letter:{dispatch_id}:cancel"
+                conn.execute(
+                    """INSERT OR IGNORE INTO room_kernel_dead_letters(
+                       dead_letter_id, root_id, dispatch_id, reason_code, payload_json, created_at_ms
+                       ) VALUES (?, ?, ?, 'runtime_cancel_result_unknown', ?, ?)""",
+                    (dead_id, root_id, dispatch_id, _json({"reason": reason}), int(now_ms)),
+                )
+                receipts.append(
+                    self._receipt(
+                        conn,
+                        root_id=root_id,
+                        command_id=None,
+                        receipt_kind="dispatch_unknown",
+                        status="unknown",
+                        generation=int(root["generation"]),
+                        details={"dispatchId": dispatch_id, "deadLetterId": dead_id, "reason": reason},
+                        now_ms=now_ms,
+                    )
+                )
+            conn.execute(
+                "UPDATE room_kernel_roots SET state = 'cancelled_with_unknowns', updated_at_ms = ? WHERE root_id = ?",
+                (int(now_ms), root_id),
+            )
+        return receipts
+
     def apply_commit(
         self, payload: Mapping[str, object], *, generation: int, now_ms: int
     ) -> dict[str, object]:
@@ -440,11 +559,11 @@ class RoomKernelStore:
             root = self._root_row(conn, str(dispatch["root_id"]))
             if generation != int(root["generation"]) or generation != int(dispatch["generation"]):
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "stale_generation", "dispatchId": payload["dispatchId"]}, now_ms=now_ms)
-            if str(dispatch["state"]) in {"cancelled", "unknown", "dead_letter", "failed"}:
-                return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "dispatch_not_committable", "dispatchId": payload["dispatchId"]}, now_ms=now_ms)
             existing = conn.execute("SELECT commit_id FROM room_kernel_commits WHERE dispatch_id = ?", (payload["dispatchId"],)).fetchone()
             if existing is not None:
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="duplicate", status="noop", generation=int(root["generation"]), details={"commitId": str(existing["commit_id"])}, now_ms=now_ms)
+            if str(dispatch["state"]) != "running":
+                return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "dispatch_not_running", "dispatchId": payload["dispatchId"], "dispatchState": str(dispatch["state"])}, now_ms=now_ms)
             conn.execute(
                 """INSERT INTO room_kernel_commits(
                    commit_id, root_id, dispatch_id, generation, payload_json, created_at_ms
@@ -492,10 +611,27 @@ class RoomKernelStore:
                 (command["roomId"], command["idempotencyKey"]),
             ).fetchone()
             if existing is not None:
-                generation = 0
-                if command.get("rootId") is not None:
-                    generation = int(self._root_row(conn, str(command["rootId"]))["generation"])
-                return self._receipt(conn, root_id=str(command["rootId"]) if command.get("rootId") is not None else None, command_id=str(existing["command_id"]), receipt_kind="duplicate", status="noop", generation=generation, details={"idempotencyKey": command["idempotencyKey"]}, now_ms=int(command["createdAtMs"]))
+                receipt = conn.execute(
+                    """SELECT payload_json FROM room_kernel_receipts
+                       WHERE command_id = ? ORDER BY created_at_ms, receipt_id LIMIT 1""",
+                    (existing["command_id"],),
+                ).fetchone()
+                if receipt is not None:
+                    return json.loads(str(receipt["payload_json"]))
+                raise RoomKernelFenceError("duplicate command is missing its authoritative receipt")
+            if kind != "panic":
+                root_id = _required(command.get("rootId"), "rootId")
+                root = self._root_row(conn, root_id)
+                if str(root["room_id"]) != str(command["roomId"]):
+                    raise RoomKernelFenceError("control command Room does not match Root")
+                if int(command["generation"]) != int(root["generation"]):
+                    raise RoomKernelFenceError("control command generation is stale")
+                if kind == "cancel_root" and (
+                    command.get("targetKind") != "root" or command.get("targetId") != root_id
+                ):
+                    raise RoomKernelFenceError("cancel_root target does not match Root")
+                if kind == "cancel_target" and command.get("targetKind") not in {"task", "dispatch"}:
+                    raise RoomKernelFenceError("cancel_target requires a task or dispatch target")
             conn.execute(
                 """INSERT INTO room_kernel_commands(
                    command_id, root_id, room_id, idempotency_key, command_kind,

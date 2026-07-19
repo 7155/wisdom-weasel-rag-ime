@@ -417,6 +417,8 @@ function parseStreamEvent(streamKind: ControlStreamKind, item: ParsedSseEvent): 
       return parseAgentEvent(payload);
     case 'room':
       return parseRoomEvent(payload);
+    case 'kernel':
+      return payload;
     case 'control':
       return payload;
     case 'observation':
@@ -435,7 +437,10 @@ function streamResumeToken(event: unknown, sseId: string, fallback: string): str
 }
 
 function isSnapshotRequired(event: unknown): boolean {
-  return isRecord(event) && event.eventType === 'snapshot_required';
+  return isRecord(event) && (
+    event.eventType === 'snapshot_required'
+    || event.reason === 'event_replay_gap'
+  );
 }
 
 function assertKnowledgeDocumentImportInput(

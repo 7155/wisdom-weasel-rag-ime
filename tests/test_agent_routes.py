@@ -9,6 +9,7 @@ from rag_ime.agent_routes import (
     agent_context_trace_route,
     agent_media_route,
     agent_room_route,
+    agent_room_kernel_route,
     agent_room_work_route,
     agent_session_route,
     agent_wake_schedule_route,
@@ -169,6 +170,20 @@ class AgentRouteTests(unittest.TestCase):
                 "/api/agent/rooms/room%3A123/work-items"
             ),
             ("room:123", "", "collection"),
+        )
+
+    def test_room_kernel_routes_are_strict(self) -> None:
+        self.assertEqual(
+            agent_room_kernel_route("/api/agent/rooms/room%3A123/kernel/snapshot"),
+            ("room:123", "snapshot"),
+        )
+        self.assertEqual(
+            agent_room_kernel_route("/api/agent/rooms/room:123/kernel/commands"),
+            ("room:123", "commands"),
+        )
+        self.assertEqual(
+            agent_room_kernel_route("/api/agent/rooms/room:123/kernel/unknown"),
+            ("", ""),
         )
         self.assertEqual(
             agent_room_work_route(
