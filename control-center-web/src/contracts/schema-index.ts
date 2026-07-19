@@ -11701,6 +11701,170 @@ export const contractSchemas = {
       }
     }
   },
+  "prompt-compile-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.prompt-compile-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "plan",
+      "omittedLayers",
+      "producerAudit",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.prompt-compile-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "plan": {
+        "type": "object"
+      },
+      "omittedLayers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "producerAudit": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "prompt-plan.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.prompt-plan.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "bindingId",
+      "roomId",
+      "rootId",
+      "sessionId",
+      "journalId",
+      "generation",
+      "sessionEpoch",
+      "contextEpoch",
+      "capabilityRevision",
+      "capabilityEpoch",
+      "skillPolicyRevision",
+      "contextPolicyRevision",
+      "layers",
+      "stablePrefixHash",
+      "projectionHash",
+      "throughSequence",
+      "sealedProjectionRefs",
+      "dynamicTailRefs",
+      "planHash"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.prompt-plan.v1"
+      },
+      "bindingId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "journalId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sessionEpoch": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "contextEpoch": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "capabilityRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "capabilityEpoch": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "skillPolicyRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "contextPolicyRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "layers": {
+        "type": "array",
+        "minItems": 6,
+        "maxItems": 6,
+        "items": {
+          "type": "object"
+        }
+      },
+      "stablePrefixHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "projectionHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "throughSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sealedProjectionRefs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "dynamicTailRefs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "planHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      }
+    }
+  },
   "provider-projection-journal.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/provider-projection-journal.v1.json",

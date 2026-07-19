@@ -84,6 +84,8 @@ import type { ObservationEventV1 } from './generated/observation-event.v1';
 import type { ObservationSnapshotV1 } from './generated/observation-snapshot.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
 import type { PiRuntimeManifestV1 } from './generated/pi-runtime-manifest.v1';
+import type { PromptCompileReceiptV1 } from './generated/prompt-compile-receipt.v1';
+import type { PromptPlanV1 } from './generated/prompt-plan.v1';
 import type { ProviderProjectionJournalV1 } from './generated/provider-projection-journal.v1';
 import type { ProviderProjectionReceiptV1 } from './generated/provider-projection-receipt.v1';
 import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
@@ -193,6 +195,8 @@ export type {
   ObservationSnapshotV1,
   OverlayConfigV1,
   PiRuntimeManifestV1,
+  PromptCompileReceiptV1,
+  PromptPlanV1,
   ProviderProjectionJournalV1,
   ProviderProjectionReceiptV1,
   RimeRankSelectionV1,
@@ -303,6 +307,8 @@ export interface ContractTypeMap {
   'observation-snapshot.v1': ObservationSnapshotV1;
   'overlay-config.v1': OverlayConfigV1;
   'pi-runtime-manifest.v1': PiRuntimeManifestV1;
+  'prompt-compile-receipt.v1': PromptCompileReceiptV1;
+  'prompt-plan.v1': PromptPlanV1;
   'provider-projection-journal.v1': ProviderProjectionJournalV1;
   'provider-projection-receipt.v1': ProviderProjectionReceiptV1;
   'rime-rank-selection.v1': RimeRankSelectionV1;
