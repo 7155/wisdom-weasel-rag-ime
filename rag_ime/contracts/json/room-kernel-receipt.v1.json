@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-kernel-receipt.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "receiptId", "rootId", "commandId", "receiptKind", "status", "generation", "details", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-kernel-receipt.v1"},
+    "receiptId": {"type": "string", "minLength": 1},
+    "rootId": {"type": ["string", "null"]},
+    "commandId": {"type": ["string", "null"]},
+    "receiptKind": {"type": "string", "enum": ["accepted", "duplicate", "rejected", "target_cancelled", "root_cancelled", "panic", "dispatch_unknown", "dead_letter", "terminal"]},
+    "status": {"type": "string", "enum": ["applied", "noop", "rejected", "unknown"]},
+    "generation": {"type": "integer", "minimum": 0},
+    "details": {"type": "object"},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

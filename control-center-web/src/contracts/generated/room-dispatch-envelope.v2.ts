@@ -11,6 +11,9 @@ export interface RoomDispatchEnvelopeV2 {
   taskId: string;
   parentDispatchId: string | null;
   generation: number;
+  hopCount: number;
+  depth: number;
+  budgetCost: number;
   targetSessionId: string;
   targetParticipantId: string;
   triggerId: string;
@@ -19,5 +22,15 @@ export interface RoomDispatchEnvelopeV2 {
   attempt: number;
   capabilityEpoch: number;
   runtimeProfileRevision: string;
-  state: 'pending' | 'leased' | 'running' | 'committed' | 'unknown' | 'failed' | 'cancelled';
+  state:
+    | 'pending'
+    | 'leased'
+    | 'running'
+    | 'retry_wait'
+    | 'timer_wait'
+    | 'committed'
+    | 'unknown'
+    | 'dead_letter'
+    | 'failed'
+    | 'cancelled';
 }

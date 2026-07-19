@@ -13,6 +13,8 @@ EVENT_ENVELOPE_SCHEMA_VERSION = "wisdom-weasel.room-event-envelope.v2"
 ROOM_BINDING_SCHEMA_VERSION = "wisdom-weasel.room-binding.v2"
 PARTICIPANT_BINDING_SCHEMA_VERSION = "wisdom-weasel.room-participant-binding.v2"
 LEGACY_REF_SCHEMA_VERSION = "wisdom-weasel.room-legacy-ref.v1"
+KERNEL_COMMAND_SCHEMA_VERSION = "wisdom-weasel.room-kernel-command.v1"
+KERNEL_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-kernel-receipt.v1"
 
 CONTRACT_FILES = {
     "rootExecution": "room-root-execution.v2.json",
@@ -23,6 +25,8 @@ CONTRACT_FILES = {
     "roomBinding": "room-binding.v2.json",
     "participantBinding": "room-participant-binding.v2.json",
     "legacyRef": "room-legacy-ref.v1.json",
+    "kernelCommand": "room-kernel-command.v1.json",
+    "kernelReceipt": "room-kernel-receipt.v1.json",
 }
 
 

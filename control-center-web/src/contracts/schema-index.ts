@@ -1886,6 +1886,15 @@ export const contractSchemas = {
       "project",
       "roleId",
       "sessionId",
+      "ownerKind",
+      "ownerId",
+      "knowledgeDomain",
+      "scopeKind",
+      "scopeId",
+      "visibility",
+      "authorizationRevision",
+      "bindingId",
+      "scopeMode",
       "sourceKind",
       "sourceId",
       "idempotencyKey",
@@ -1917,6 +1926,43 @@ export const contractSchemas = {
       },
       "sessionId": {
         "type": "string"
+      },
+      "ownerKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "ownerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "knowledgeDomain": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeId": {
+        "type": "string"
+      },
+      "visibility": {
+        "type": "string",
+        "minLength": 1
+      },
+      "authorizationRevision": {
+        "type": "string"
+      },
+      "bindingId": {
+        "type": "string"
+      },
+      "scopeMode": {
+        "type": "string",
+        "enum": [
+          "legacy",
+          "authoritative",
+          "quarantined"
+        ]
       },
       "sourceKind": {
         "type": "string",
@@ -2262,6 +2308,13 @@ export const contractSchemas = {
       "status",
       "ownerKind",
       "ownerId",
+      "knowledgeDomain",
+      "scopeKind",
+      "scopeId",
+      "visibility",
+      "authorizationRevision",
+      "bindingId",
+      "scopeMode",
       "roleId",
       "roleVersion",
       "sourceKind",
@@ -2332,6 +2385,35 @@ export const contractSchemas = {
       "ownerId": {
         "type": "string",
         "minLength": 1
+      },
+      "knowledgeDomain": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeId": {
+        "type": "string"
+      },
+      "visibility": {
+        "type": "string",
+        "minLength": 1
+      },
+      "authorizationRevision": {
+        "type": "string"
+      },
+      "bindingId": {
+        "type": "string"
+      },
+      "scopeMode": {
+        "type": "string",
+        "enum": [
+          "legacy",
+          "authoritative",
+          "quarantined"
+        ]
       },
       "roleId": {
         "type": "string"
@@ -12654,6 +12736,9 @@ export const contractSchemas = {
       "taskId",
       "parentDispatchId",
       "generation",
+      "hopCount",
+      "depth",
+      "budgetCost",
       "targetSessionId",
       "targetParticipantId",
       "triggerId",
@@ -12688,6 +12773,18 @@ export const contractSchemas = {
         ]
       },
       "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "hopCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "depth": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "budgetCost": {
         "type": "integer",
         "minimum": 0
       },
@@ -12737,8 +12834,11 @@ export const contractSchemas = {
           "pending",
           "leased",
           "running",
+          "retry_wait",
+          "timer_wait",
           "committed",
           "unknown",
+          "dead_letter",
           "failed",
           "cancelled"
         ]
@@ -12793,6 +12893,171 @@ export const contractSchemas = {
       },
       "payload": {
         "type": "object"
+      }
+    }
+  },
+  "room-kernel-command.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-kernel-command.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "commandId",
+      "rootId",
+      "roomId",
+      "commandKind",
+      "targetKind",
+      "targetId",
+      "sourceKind",
+      "sourceId",
+      "idempotencyKey",
+      "generation",
+      "payload",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-kernel-command.v1"
+      },
+      "commandId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "commandKind": {
+        "type": "string",
+        "enum": [
+          "dispatch",
+          "commit",
+          "settle",
+          "cancel_target",
+          "cancel_root",
+          "panic",
+          "reconcile"
+        ]
+      },
+      "targetKind": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "root",
+          "task",
+          "dispatch",
+          null
+        ]
+      },
+      "targetId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "sourceKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "idempotencyKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "payload": {
+        "type": "object"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "room-kernel-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-kernel-receipt.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "rootId",
+      "commandId",
+      "receiptKind",
+      "status",
+      "generation",
+      "details",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-kernel-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "commandId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "receiptKind": {
+        "type": "string",
+        "enum": [
+          "accepted",
+          "duplicate",
+          "rejected",
+          "target_cancelled",
+          "root_cancelled",
+          "panic",
+          "dispatch_unknown",
+          "dead_letter",
+          "terminal"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "applied",
+          "noop",
+          "rejected",
+          "unknown"
+        ]
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "details": {
+        "type": "object"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
       }
     }
   },

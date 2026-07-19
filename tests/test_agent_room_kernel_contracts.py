@@ -9,6 +9,8 @@ from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     EVENT_ENVELOPE_SCHEMA_VERSION,
     LEGACY_REF_SCHEMA_VERSION,
+    KERNEL_COMMAND_SCHEMA_VERSION,
+    KERNEL_RECEIPT_SCHEMA_VERSION,
     PARTICIPANT_BINDING_SCHEMA_VERSION,
     ROOM_BINDING_SCHEMA_VERSION,
     ROOM_COMMIT_SCHEMA_VERSION,
@@ -89,6 +91,16 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "https://wisdom-weasel.local/contracts/room-legacy-ref.v1.json",
                 LEGACY_REF_SCHEMA_VERSION,
             ),
+            "kernelCommand": (
+                "room-kernel-command.v1.json",
+                "https://wisdom-weasel.local/contracts/room-kernel-command.v1.json",
+                KERNEL_COMMAND_SCHEMA_VERSION,
+            ),
+            "kernelReceipt": (
+                "room-kernel-receipt.v1.json",
+                "https://wisdom-weasel.local/contracts/room-kernel-receipt.v1.json",
+                KERNEL_RECEIPT_SCHEMA_VERSION,
+            ),
         }
 
         self.assertEqual(CONTRACT_FILES, {key: value[0] for key, value in expected.items()})
@@ -145,6 +157,9 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "taskId": "task:1",
                 "parentDispatchId": None,
                 "generation": 0,
+                "hopCount": 0,
+                "depth": 0,
+                "budgetCost": 1,
                 "targetSessionId": "session:worker",
                 "targetParticipantId": "participant:worker",
                 "triggerId": "post:1",

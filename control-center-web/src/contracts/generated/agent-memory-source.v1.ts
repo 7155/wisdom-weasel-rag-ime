@@ -16,6 +16,13 @@ export interface AgentMemorySourceV1 {
   status: 'active' | 'superseded' | 'archived' | 'tombstoned';
   ownerKind: 'user' | 'shared' | 'agent' | 'session' | 'room';
   ownerId: string;
+  knowledgeDomain: string;
+  scopeKind: string;
+  scopeId: string;
+  visibility: string;
+  authorizationRevision: string;
+  bindingId: string;
+  scopeMode: 'legacy' | 'authoritative' | 'quarantined';
   roleId: string;
   roleVersion: string;
   sourceKind:
