@@ -140,11 +140,8 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertIn('if [[ "$APPLY" == "1"', source)
         self.assertIn("personal-context-maintenance-run", source)
         self.assertIn('PERSONAL_CONTEXT_LOG="$OUT_DIR/personal-context-$STAMP.json"', source)
-        self.assertIn("-m rag_ime.codex_memory_source", source)
-        self.assertIn("--managed-memory-settings", source)
-        self.assertIn('CODEX_MEMORY_LOG="$OUT_DIR/codex-memory-$STAMP.json"', source)
-        self.assertIn('"codexMemoryImport": codex_memory', source)
-        self.assertIn('"rawTranscriptImported": False', source)
+        self.assertNotIn("-m rag_ime.codex_memory_source", source)
+        self.assertNotIn("codexMemoryImport", source)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ from .text_utils import compact_whitespace
 
 
 DEFAULT_MAINTENANCE_MODEL = "deepseek-v4-flash"
-DEFAULT_CODEX_MEMORY_ROOT = "~/.codex/memories"
 SECONDS_PER_DAY = 24 * 60 * 60
 
 
@@ -24,10 +23,6 @@ class MemoryMaintenanceSettings:
     dreaming_enabled: bool = True
     dreaming_model: str = DEFAULT_MAINTENANCE_MODEL
     dreaming_runs_per_day: int = 2
-    codex_memory_enabled: bool = False
-    codex_memory_root: str = DEFAULT_CODEX_MEMORY_ROOT
-    codex_memory_lookback_days: int = 90
-    codex_memory_include_rollout_summaries: bool = True
     recall_detail_level: str = "compact"
     timeline_recall_enabled: bool = True
     timeline_max_items: int = 2
@@ -40,8 +35,6 @@ class MemoryMaintenanceSettings:
         memory = _mapping(settings.get("memory"))
         automatic = _mapping(memory.get("automaticOrganization"))
         dreaming = _mapping(memory.get("dreaming"))
-        external_sources = _mapping(memory.get("externalSources"))
-        codex_memory = _mapping(external_sources.get("codexMemory"))
         recall = _mapping(memory.get("recall"))
         return cls(
             automatic_organization_enabled=bool(automatic.get("enabled", True)),
@@ -57,17 +50,6 @@ class MemoryMaintenanceSettings:
             dreaming_enabled=bool(dreaming.get("enabled", True)),
             dreaming_model=_maintenance_model(dreaming.get("model")),
             dreaming_runs_per_day=_runs_per_day(dreaming.get("runsPerDay")),
-            codex_memory_enabled=bool(codex_memory.get("enabled", False)),
-            codex_memory_root=_memory_root(codex_memory.get("path")),
-            codex_memory_lookback_days=_bounded_int(
-                codex_memory.get("lookbackDays"),
-                default=90,
-                minimum=1,
-                maximum=90,
-            ),
-            codex_memory_include_rollout_summaries=bool(
-                codex_memory.get("includeRolloutSummaries", True)
-            ),
             recall_detail_level=_detail_level(recall.get("detailLevel")),
             timeline_recall_enabled=bool(recall.get("timelineEnabled", True)),
             timeline_max_items=_bounded_int(
@@ -106,17 +88,6 @@ class MemoryMaintenanceSettings:
                 "runsPerDay": self.dreaming_runs_per_day,
                 "intervalSeconds": self.dreaming_interval_seconds,
             },
-            "externalSources": {
-                "codexMemory": {
-                    "enabled": self.codex_memory_enabled,
-                    "path": self.codex_memory_root,
-                    "lookbackDays": self.codex_memory_lookback_days,
-                    "includeRolloutSummaries": (
-                        self.codex_memory_include_rollout_summaries
-                    ),
-                    "rawTranscriptImported": False,
-                }
-            },
             "recall": {
                 "detailLevel": self.recall_detail_level,
                 "timelineEnabled": self.timeline_recall_enabled,
@@ -138,11 +109,6 @@ def _maintenance_model(value: object) -> str:
     if not model.casefold().replace("_", "-").startswith("deepseek-v4"):
         return DEFAULT_MAINTENANCE_MODEL
     return model
-
-
-def _memory_root(value: object) -> str:
-    root = str(value or DEFAULT_CODEX_MEMORY_ROOT).strip()
-    return root[:1_024] or DEFAULT_CODEX_MEMORY_ROOT
 
 
 def _runs_per_day(value: object) -> int:

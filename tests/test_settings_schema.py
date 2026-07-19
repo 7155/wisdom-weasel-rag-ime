@@ -15,7 +15,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertIn("rag", section_ids)
         self.assertIn("models", section_ids)
         self.assertIn("activeRag", section_ids)
-        self.assertIn("externalMemorySources", section_ids)
+        self.assertNotIn("externalMemorySources", section_ids)
         self.assertIn("agent", section_ids)
         self.assertIn("pinyin", section_ids)
         self.assertIn("privacy", section_ids)
@@ -70,13 +70,7 @@ class SettingsSchemaTests(unittest.TestCase):
         )
         self.assertTrue(defaults["memory"]["dreaming"]["enabled"])
         self.assertEqual(defaults["memory"]["dreaming"]["runsPerDay"], 2)
-        self.assertFalse(
-            defaults["memory"]["externalSources"]["codexMemory"]["enabled"]
-        )
-        self.assertEqual(
-            defaults["memory"]["externalSources"]["codexMemory"]["lookbackDays"],
-            90,
-        )
+        self.assertNotIn("externalSources", defaults["memory"])
         self.assertEqual(defaults["memory"]["recall"]["detailLevel"], "compact")
 
         fields = {field["key"]: field for section in settings_schema()["sections"] for field in section["fields"]}
@@ -97,13 +91,8 @@ class SettingsSchemaTests(unittest.TestCase):
             fields["memory.dreaming.enabled"]["label"],
             "记忆做梦",
         )
-        self.assertEqual(
-            fields["memory.externalSources.codexMemory.enabled"]["label"],
-            "读取 Codex 记忆",
-        )
-        self.assertEqual(
-            fields["memory.externalSources.codexMemory.lookbackDays"]["max"],
-            90,
+        self.assertFalse(
+            any(key.startswith("memory.externalSources.codexMemory") for key in fields)
         )
 
     def test_flatten_roundtrip(self) -> None:

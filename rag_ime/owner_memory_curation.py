@@ -897,7 +897,6 @@ def owner_memory_curation_status(
                 "explicit_memory",
                 "tool_receipt",
                 "session_compaction",
-                "codex_memory_summary",
             ],
             "assistantTurnsRead": True,
             "assistantTurnsAreContextOnly": True,

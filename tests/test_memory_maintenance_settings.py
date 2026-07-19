@@ -28,10 +28,6 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         self.assertEqual(settings.dreaming_model, "deepseek-v4-flash")
         self.assertEqual(settings.automatic_organization_interval_seconds, 43_200)
         self.assertEqual(settings.dreaming_interval_seconds, 43_200)
-        self.assertFalse(settings.codex_memory_enabled)
-        self.assertEqual(settings.codex_memory_root, "~/.codex/memories")
-        self.assertEqual(settings.codex_memory_lookback_days, 90)
-        self.assertTrue(settings.codex_memory_include_rollout_summaries)
         self.assertEqual(settings.recall_detail_level, "compact")
         self.assertEqual(settings.timeline_max_items, 2)
 
@@ -41,10 +37,6 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
                 "memory.automaticOrganization.enabled": False,
                 "memory.automaticOrganization.runsPerDay": 4,
                 "memory.dreaming.runsPerDay": 1,
-                "memory.externalSources.codexMemory.enabled": True,
-                "memory.externalSources.codexMemory.path": "~/custom-codex-memory",
-                "memory.externalSources.codexMemory.lookbackDays": 60,
-                "memory.externalSources.codexMemory.includeRolloutSummaries": False,
                 "memory.recall.detailLevel": "balanced",
                 "memory.recall.timelineEnabled": False,
             }
@@ -55,10 +47,6 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         self.assertFalse(settings.automatic_organization_enabled)
         self.assertEqual(settings.automatic_organization_interval_seconds, 21_600)
         self.assertEqual(settings.dreaming_interval_seconds, 86_400)
-        self.assertTrue(settings.codex_memory_enabled)
-        self.assertEqual(settings.codex_memory_root, "~/custom-codex-memory")
-        self.assertEqual(settings.codex_memory_lookback_days, 60)
-        self.assertFalse(settings.codex_memory_include_rollout_summaries)
         self.assertEqual(settings.recall_detail_level, "balanced")
         self.assertFalse(settings.timeline_recall_enabled)
 
@@ -67,13 +55,6 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
             self.store.update_settings(
                 {"memory.dreaming.model": "deepseek-v3"}
             )
-
-    def test_codex_memory_window_cannot_exceed_three_months(self) -> None:
-        with self.assertRaisesRegex(ValueError, "<= 90"):
-            self.store.update_settings(
-                {"memory.externalSources.codexMemory.lookbackDays": 91}
-            )
-
 
 if __name__ == "__main__":
     unittest.main()

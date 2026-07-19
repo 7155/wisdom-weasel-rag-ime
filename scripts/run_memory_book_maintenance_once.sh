@@ -137,48 +137,10 @@ VALIDATE_LOG="$OUT_DIR/memory-book-$STAMP.validate.json"
 APPLY_LOG="$OUT_DIR/memory-book-$STAMP.apply.json"
 OWNER_CURATION_LOG="$OUT_DIR/owner-memory-$STAMP.json"
 PERSONAL_CONTEXT_LOG="$OUT_DIR/personal-context-$STAMP.json"
-CODEX_MEMORY_LOG="$OUT_DIR/codex-memory-$STAMP.json"
 
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export RAG_IME_DEEPSEEK_REASONING_EFFORT="${RAG_IME_DEEPSEEK_REASONING_EFFORT:-low}"
 export RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"
-
-# External Codex memory is imported before owner curation. The importer only
-# follows the curated Markdown indexes and stores Session IDs as provenance;
-# raw Codex JSONL transcripts are never read.
-CODEX_MEMORY_STATUS=0
-set +e
-"$PYTHON_EXECUTABLE" -m rag_ime.codex_memory_source \
-  --db-path "$DB_PATH" \
-  --project "$PROJECT" \
-  --managed-memory-settings >"$CODEX_MEMORY_LOG"
-CODEX_MEMORY_STATUS=$?
-set -e
-if [[ ! -s "$CODEX_MEMORY_LOG" ]]; then
-  "$PYTHON_EXECUTABLE" - "$CODEX_MEMORY_LOG" "$CODEX_MEMORY_STATUS" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-Path(sys.argv[1]).write_text(
-    json.dumps(
-        {
-            "schemaVersion": "rag-ime.codex-memory-import.v1",
-            "ok": False,
-            "enabled": True,
-            "available": False,
-            "skipped": False,
-            "error": "codex_memory_import_process_failed",
-            "exitCode": int(sys.argv[2]),
-            "rawTranscriptImported": False,
-        },
-        ensure_ascii=False,
-        indent=2,
-    ) + "\n",
-    encoding="utf-8",
-)
-PY
-fi
 
 # Timeline construction follows Automatic Organization, while cross-Session
 # consolidation follows Dream. Both controls are read from management settings
@@ -240,7 +202,7 @@ set -e
 # governance.
 if [[ "$LEGACY_MAINTENANCE" != "1" && "$LEGACY_MAINTENANCE" != "true" && "$LEGACY_MAINTENANCE" != "TRUE" && "$LEGACY_MAINTENANCE" != "yes" ]]; then
   set +e
-  "$PYTHON_EXECUTABLE" - "$OWNER_CURATION_LOG" "$OWNER_CURATION_STATUS" "$PERSONAL_CONTEXT_LOG" "$PERSONAL_CONTEXT_STATUS" "$CODEX_MEMORY_LOG" "$CODEX_MEMORY_STATUS" <<'PY'
+  "$PYTHON_EXECUTABLE" - "$OWNER_CURATION_LOG" "$OWNER_CURATION_STATUS" "$PERSONAL_CONTEXT_LOG" "$PERSONAL_CONTEXT_STATUS" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -250,8 +212,6 @@ owner_path = Path(sys.argv[1])
 owner_status = int(sys.argv[2])
 personal_context_path = Path(sys.argv[3])
 personal_context_status = int(sys.argv[4])
-codex_memory_path = Path(sys.argv[5])
-codex_memory_status = int(sys.argv[6])
 try:
     owner_curation = json.loads(owner_path.read_text(encoding="utf-8"))
 except Exception as exc:
@@ -260,10 +220,6 @@ try:
     personal_context = json.loads(personal_context_path.read_text(encoding="utf-8"))
 except Exception as exc:
     personal_context = {"ok": False, "error": str(exc), "targets": []}
-try:
-    codex_memory = json.loads(codex_memory_path.read_text(encoding="utf-8"))
-except Exception as exc:
-    codex_memory = {"ok": False, "error": str(exc)}
 results = [
     item
     for item in owner_curation.get("results", [])
@@ -284,8 +240,6 @@ payload = {
     "ok": (
         owner_status == 0
         and bool(owner_curation.get("ok"))
-        and codex_memory_status == 0
-        and bool(codex_memory.get("ok"))
     ),
     "generatedAt": datetime.now(timezone.utc).isoformat(),
     "mode": "owner_scoped",
@@ -313,9 +267,6 @@ payload = {
     "personalContextLog": str(personal_context_path),
     "personalContextMaintenance": personal_context,
     "personalContextMaintenanceExitCode": personal_context_status,
-    "codexMemoryLog": str(codex_memory_path),
-    "codexMemoryImport": codex_memory,
-    "codexMemoryImportExitCode": codex_memory_status,
 }
 print(json.dumps(payload, ensure_ascii=False, indent=2))
 raise SystemExit(0 if payload["ok"] else 1)

@@ -681,22 +681,6 @@ def _validated_setting_value(
         model_id = normalized.partition("/")[2] if "/" in normalized else normalized
         if not model_id.strip().lower().replace("_", "-").startswith("deepseek-v4"):
             raise ValueError(f"setting {key} must use a DeepSeek V4 model")
-    if (
-        key == "memory.externalSources.codexMemory.path"
-        and isinstance(normalized, str)
-    ):
-        normalized = normalized.strip()
-        if (
-            not normalized
-            or len(normalized) > 1_024
-            or "\x00" in normalized
-            or "\n" in normalized
-            or "\r" in normalized
-        ):
-            raise ValueError(
-                "setting memory.externalSources.codexMemory.path "
-                "must be a local directory path"
-            )
     if isinstance(normalized, (int, float)) and not isinstance(normalized, bool):
         minimum = field.get("min")
         maximum = field.get("max")

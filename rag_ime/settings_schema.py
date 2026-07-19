@@ -110,14 +110,6 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "model": "deepseek-v4-flash",
             "runsPerDay": 2,
         },
-        "externalSources": {
-            "codexMemory": {
-                "enabled": False,
-                "path": "~/.codex/memories",
-                "lookbackDays": 90,
-                "includeRolloutSummaries": True,
-            }
-        },
         "recall": {
             "detailLevel": "compact",
             "timelineEnabled": True,
@@ -350,16 +342,6 @@ SETTINGS_SCHEMA: dict[str, object] = {
             ],
         },
         {
-            "id": "externalMemorySources",
-            "label": "外部记忆源",
-            "fields": [
-                {"key": "memory.externalSources.codexMemory.enabled", "type": "boolean", "label": "读取 Codex 记忆", "default": False},
-                {"key": "memory.externalSources.codexMemory.path", "type": "string", "label": "Codex 记忆目录", "default": "~/.codex/memories"},
-                {"key": "memory.externalSources.codexMemory.lookbackDays", "type": "integer", "label": "读取最近天数", "default": 90},
-                {"key": "memory.externalSources.codexMemory.includeRolloutSummaries", "type": "boolean", "label": "读取 Session 整理摘要", "default": True},
-            ],
-        },
-        {
             "id": "knowledgeLibrary",
             "label": "文档知识库",
             "fields": [
@@ -569,26 +551,6 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
         "min": 1,
         "max": 6,
         "unit": "次/天",
-    },
-    "memory.externalSources.codexMemory.enabled": {
-        "description": "只读 Codex 的顶层记忆索引和已整理 Session 摘要，并交给同一 Atom/Topic Book 治理链；关闭后停止同步，已有治理产物保留且可删除，不会读取原始对话 JSONL",
-        "applyMode": "next_maintenance_run",
-    },
-    "memory.externalSources.codexMemory.path": {
-        "description": "Codex 分层记忆目录；只允许读取 memory_summary.md、MEMORY.md 和 rollout_summaries 下的 Markdown",
-        "applyMode": "next_maintenance_run",
-        "validation": "必须是本机目录；不会跟随目录外的链接",
-    },
-    "memory.externalSources.codexMemory.lookbackDays": {
-        "description": "只跟随顶层索引导入此时间窗内的已整理 Session 摘要；硬上限为最近三个月",
-        "applyMode": "next_maintenance_run",
-        "min": 1,
-        "max": 90,
-        "unit": "天",
-    },
-    "memory.externalSources.codexMemory.includeRolloutSummaries": {
-        "description": "读取近三个月的 rollout summary，并只保存 thread/session 索引；完整原始对话不会进入证据账本",
-        "applyMode": "next_maintenance_run",
     },
     "memory.recall.detailLevel": {
         "description": "compact 只注入主题摘要和最相关 Atom；balanced 与 detailed 逐步放宽片段预算",
