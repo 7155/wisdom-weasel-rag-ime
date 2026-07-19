@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.collaboration-role.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "roleId", "version", "displayName", "summary", "responsibilities", "entryConditions", "exitConditions", "allowedCommitDecisions", "capabilityRestrictions"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.collaboration-role.v1"},
+    "roleId": {"type": "string", "enum": ["coordinator", "researcher", "implementer", "reviewer", "specialist"]},
+    "version": {"type": "string", "const": "1"},
+    "displayName": {"type": "string", "minLength": 1, "maxLength": 40},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 180},
+    "responsibilities": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 160}},
+    "entryConditions": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 160}},
+    "exitConditions": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 160}},
+    "allowedCommitDecisions": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"type": "string", "enum": ["dispatch", "wait", "blocked", "complete"]}},
+    "capabilityRestrictions": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "enum": ["rag", "memory", "planning", "review", "control", "delegation"]}}
+  }
+}
