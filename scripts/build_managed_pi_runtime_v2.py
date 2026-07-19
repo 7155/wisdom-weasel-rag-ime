@@ -82,6 +82,16 @@ def _default_node() -> str:
     return shutil.which("node") or ""
 
 
+def _default_pi_worktree(parent: Path | None = None) -> Path:
+    workspace_root = parent or ROOT.parent
+    canonical = workspace_root / "pi"
+    legacy = workspace_root / "pi-rag-ime-runtime"
+    for candidate in (canonical, legacy):
+        if (candidate / "packages" / "rag-ime-runtime-host").is_dir():
+            return candidate
+    return canonical
+
+
 def _node_relocation_error(node: Path) -> str:
     if sys.platform != "darwin":
         return ""
@@ -238,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--pi-worktree",
-        default=str(ROOT.parent / "pi-rag-ime-runtime"),
+        default=str(_default_pi_worktree()),
     )
     parser.add_argument("--output", default="")
     parser.add_argument(

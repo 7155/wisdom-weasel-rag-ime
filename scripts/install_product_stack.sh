@@ -70,6 +70,7 @@ required=(--require control --require sidecar --require squirrel)
 
 if [[ "$INCLUDE_PI" == "auto" ]]; then
   if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]] \
+    || [[ -d "$ROOT/../pi/packages/rag-ime-runtime-host" ]] \
     || [[ -d "$ROOT/../pi-rag-ime-runtime/packages/rag-ime-runtime-host" ]]; then
     INCLUDE_PI=1
   else

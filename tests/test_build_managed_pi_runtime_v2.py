@@ -8,11 +8,25 @@ from pathlib import Path
 from scripts.build_managed_pi_runtime_v2 import (
     ROOT,
     _copy_product_skills,
+    _default_pi_worktree,
     _runtime_host_banner,
 )
 
 
 class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
+    def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:
+            workspace = Path(temporary)
+            canonical = workspace / "pi"
+            legacy = workspace / "pi-rag-ime-runtime"
+            (canonical / "packages" / "rag-ime-runtime-host").mkdir(parents=True)
+            (legacy / "packages" / "rag-ime-runtime-host").mkdir(parents=True)
+
+            self.assertEqual(_default_pi_worktree(workspace), canonical)
+
+            (canonical / "packages" / "rag-ime-runtime-host").rmdir()
+            self.assertEqual(_default_pi_worktree(workspace), legacy)
+
     def test_payload_version_and_manifest_are_bound_to_the_product_commit(self) -> None:
         script = (ROOT / "scripts" / "build_managed_pi_runtime_v2.py").read_text(
             encoding="utf-8"
