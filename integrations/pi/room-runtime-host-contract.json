@@ -3,13 +3,15 @@
   "sourceRepository": "https://github.com/earendil-works/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "692bb0e878772129766b9eb837a8caa57f48e0e7",
+  "minimumHandlersCommit": "42e6a92d65a2ff052ecac8cacd55358c479b54ce",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"
   ],
   "handlerSources": {
     "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
-    "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts"
+    "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
+    "providerContextHook": "packages/coding-agent/src/core/sdk.ts",
+    "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts"
   }
 }

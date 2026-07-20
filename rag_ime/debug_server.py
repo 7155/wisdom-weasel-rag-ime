@@ -1501,7 +1501,7 @@ class DebugImeService:
                 maximum=86_400,
             ),
             "sessionDefaults.resumeLastSession": bool(pi.get("resumeLastSession")),
-            "sessionDefaults.roleId": _string(pi.get("defaultRoleId")) or "zhiyou-v1",
+            "sessionDefaults.roleId": _string(pi.get("defaultRoleId")) or "vcp-v1",
             "sessionDefaults.toolProfileVersion": (
                 _string(pi.get("toolProfile")) or "control-center-v1"
             ),

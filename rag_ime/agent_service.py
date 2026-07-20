@@ -6478,7 +6478,7 @@ def agent_service_from_settings(
         configuration_defaults=default_agent_configuration(
             enabled=runtime_config.enabled,
             idle_timeout_seconds=runtime_config.idle_timeout_seconds,
-            role_id=str(pi.get("defaultRoleId") or "zhiyou-v1"),
+            role_id=str(pi.get("defaultRoleId") or "vcp-v1"),
             role_version="1",
             model_profile=default_model_profile,
             tool_profile_version=str(pi.get("toolProfile") or "control-center-v1"),
