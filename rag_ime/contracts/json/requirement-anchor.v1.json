@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wisdom-weasel.requirement-anchor.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "anchorId", "rootId", "rootSequence", "originalContentSha256", "originalByteLength", "createdBy", "authenticity", "provenance", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.requirement-anchor.v1"},
+    "anchorId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "rootSequence": {"type": "integer", "minimum": 1},
+    "originalContentSha256": {"type": "string", "minLength": 64, "maxLength": 64},
+    "originalByteLength": {"type": "integer", "minimum": 1},
+    "createdBy": {"type": "string", "minLength": 1},
+    "authenticity": {"enum": ["original_user_bytes", "legacy_quarantined"]},
+    "provenance": {"type": "object"},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

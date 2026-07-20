@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wisdom-weasel.typed-verification-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "receiptId", "rootId", "catalogRevisionId", "receiptType", "sourceCommit", "environment", "commandOrAction", "exitStatus", "outputHash", "artifactHash", "verifier", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.typed-verification-receipt.v1"},
+    "receiptId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "catalogRevisionId": {"type": "string", "minLength": 1},
+    "receiptType": {"enum": ["test", "build", "install", "evidence"]},
+    "sourceCommit": {"type": "string", "minLength": 1},
+    "environment": {"type": "string", "minLength": 1},
+    "commandOrAction": {"type": "string", "minLength": 1},
+    "exitStatus": {"type": "integer"},
+    "outputHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifactHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "verifier": {"type": "string", "minLength": 1},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

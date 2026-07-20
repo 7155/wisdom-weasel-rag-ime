@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wisdom-weasel.delivery-gate-observation.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "gateReceiptId", "rootId", "catalogRevisionId", "targetCommit", "mode", "gateStatus", "enforcementApplied", "blindReviewStatus", "reasons", "proofMatrix", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.delivery-gate-observation.v1"},
+    "gateReceiptId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "catalogRevisionId": {"type": "string", "minLength": 1},
+    "targetCommit": {"type": "string", "minLength": 1},
+    "mode": {"const": "observe_warn"},
+    "gateStatus": {"enum": ["observed_pass", "warn_blocked"]},
+    "enforcementApplied": {"const": false},
+    "blindReviewStatus": {"enum": ["pending", "passed", "failed", "unavailable"]},
+    "reasons": {"type": "array", "items": {"type": "string"}},
+    "proofMatrix": {"type": "array", "items": {"type": "object"}},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}
