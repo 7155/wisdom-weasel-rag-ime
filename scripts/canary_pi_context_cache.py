@@ -182,7 +182,26 @@ def main() -> int:
                 raise RuntimeError("cache evidence is unavailable")
             row = dict(evidence[-1])
             calls = context.get("modelCalls")
-            provider_context = calls[-1].get("providerContext") if isinstance(calls, list) and calls else None
+            call_rows = [item for item in calls if isinstance(item, dict)] if isinstance(calls, list) else []
+            request_index = int(row.get("requestIndex") or 0)
+            selected_call = next(
+                (item for item in call_rows if int(item.get("index") or 0) == request_index),
+                next((item for item in reversed(call_rows) if isinstance(item.get("providerContext"), dict)), {}),
+            )
+            provider_context = selected_call.get("providerContext")
+            assistant = selected_call.get("assistantMessage")
+            call_summaries = [
+                {
+                    "index": int(item.get("index") or 0),
+                    "hasProviderContext": isinstance(item.get("providerContext"), dict),
+                    "providerExchangeCount": len(item.get("providerExchanges") or []),
+                    "contextMessageCount": len(item.get("contextMessages") or []),
+                    "completedAtMs": item.get("completedAtMs"),
+                }
+                for item in call_rows
+            ]
+            provider_request_count = len(context.get("providerRequests") or [])
+            provider_receipt_count = len(context.get("providerRequestReceipts") or [])
             provider_context_bytes = json.dumps(
                 provider_context,
                 ensure_ascii=False,
@@ -194,6 +213,38 @@ def main() -> int:
                 if isinstance(provider_context, dict)
                 else ""
             )
+            usage_total = sum(
+                int(row.get(key) or 0)
+                for key in ("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens")
+            )
+            if (
+                not isinstance(provider_context, dict)
+                or not system_prompt
+                or provider_request_count <= 0
+                or provider_receipt_count <= 0
+                or usage_total <= 0
+            ):
+                checkpoint(
+                    f"{session_id}.turn-{index}.hard_gate_failed",
+                    failure="missing Provider context/system prompt or real usage",
+                    providerContextAvailable=isinstance(provider_context, dict),
+                    providerContextBytes=len(provider_context_bytes),
+                    providerContextSha256=hashlib.sha256(provider_context_bytes).hexdigest(),
+                    systemPromptBytes=len(system_prompt.encode("utf-8")),
+                    systemPromptSha256=hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+                    usage={
+                        "inputTokens": int(row.get("inputTokens") or 0),
+                        "outputTokens": int(row.get("outputTokens") or 0),
+                        "cacheReadTokens": int(row.get("cacheReadTokens") or 0),
+                        "cacheWriteTokens": int(row.get("cacheWriteTokens") or 0),
+                    },
+                    assistantStopReason=(assistant.get("stopReason") if isinstance(assistant, dict) else None),
+                    assistantError=(assistant.get("errorMessage") if isinstance(assistant, dict) else None),
+                    modelCalls=call_summaries,
+                    providerRequestCount=provider_request_count,
+                    providerRequestReceiptCount=provider_receipt_count,
+                )
+                raise RuntimeError("real Provider context/usage hard gate failed")
             return {
                 "turn": index,
                 "turnId": turn_id,
@@ -261,8 +312,12 @@ def main() -> int:
             checkpoint("cache-control.open", stableTurns=stable)
             control = run_turn("cache-control", 1)
             checkpoint("cache-control.turn-1.receipt", stableTurns=stable, changedPrefixControl=control)
-            provider_cache_fields_reported = all(
+            provider_usage_reported = all(
                 row.get("capability") == "reported" for row in [*stable, control]
+            )
+            provider_cache_fields_reported = any(
+                int(row.get("cacheReadTokens") or 0) > 0 or int(row.get("cacheWriteTokens") or 0) > 0
+                for row in [*stable, control]
             )
             stable_hit_proven = any(int(row.get("cacheReadTokens") or 0) > 0 for row in stable[1:])
             control_prefix_different = control["systemPromptSha256"] != stable[0]["systemPromptSha256"]
@@ -271,9 +326,11 @@ def main() -> int:
             stable_cache_read = max(int(row.get("cacheReadTokens") or 0) for row in stable[1:])
             control_cache_read = int(control.get("cacheReadTokens") or 0)
             changed_prefix_miss_observed = (
-                provider_cache_fields_reported and stable_hit_proven and control_cache_read < stable_cache_read
+                provider_usage_reported
+                and stable_hit_proven
+                and control_cache_read < stable_cache_read
             )
-            if not provider_cache_fields_reported:
+            if not provider_usage_reported or not provider_cache_fields_reported:
                 status = "unsupported"
             elif not control_prefix_different:
                 status = "failed"
@@ -291,6 +348,7 @@ def main() -> int:
                         "stableTurns": stable,
                         "changedPrefixControl": control,
                         "providerCacheFieldsReported": provider_cache_fields_reported,
+                        "providerUsageReported": provider_usage_reported,
                         "stableHitProven": stable_hit_proven,
                         "controlPrefixDifferent": control_prefix_different,
                         "changedPrefixMissObserved": changed_prefix_miss_observed,
@@ -304,7 +362,7 @@ def main() -> int:
             evidence_state.update(report)
             emit_evidence(report)
         finally:
-            if evidence_state.get("lastCompletedStage") != "complete":
+            if evidence_state.get("lastCompletedStage") != "complete" and "failure" not in evidence_state:
                 checkpoint("shutdown_requested")
             process.stdin.close()
             if process.poll() is None:

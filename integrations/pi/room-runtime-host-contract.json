@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/earendil-works/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "42e6a92d65a2ff052ecac8cacd55358c479b54ce",
+  "minimumHandlersCommit": "c4752416150b715b5079549024efd0299fa259e5",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"

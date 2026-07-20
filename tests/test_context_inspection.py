@@ -8,6 +8,7 @@ from rag_ime.context_inspection import inspect_context_sequence, replay_context_
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "room_context_inspection" / "replay.jsonl"
+REAL_CANARY = FIXTURE.parent / "real-provider-canary-failed.v1.json"
 
 
 def snapshot(
@@ -90,6 +91,17 @@ class ContextInspectionTests(unittest.TestCase):
         self.assertIn("old-generation", replay["ignoredEventIds"])
         self.assertIn("post-2", replay["ignoredEventIds"])
         self.assertTrue(replay["recoveredFromTruncatedTail"])
+
+    def test_real_provider_failure_fixture_never_claims_cache_support_or_hit(self) -> None:
+        evidence = json.loads(REAL_CANARY.read_text(encoding="utf-8"))
+
+        self.assertTrue(evidence["providerContextAvailable"])
+        self.assertGreater(evidence["systemPromptBytes"], 8_000)
+        self.assertEqual(evidence["assistantStopReason"], "error")
+        self.assertFalse(evidence["providerUsageReported"])
+        self.assertFalse(evidence["providerCacheFieldsReported"])
+        self.assertFalse(evidence["stableHitProven"])
+        self.assertEqual(evidence["verdict"], "inconclusive_provider_unreachable")
 
 
 if __name__ == "__main__":
