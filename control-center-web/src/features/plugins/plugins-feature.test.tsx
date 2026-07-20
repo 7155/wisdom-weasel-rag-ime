@@ -27,6 +27,9 @@ describe('PluginsFeature', () => {
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'true');
     expect(detail).toHaveTextContent('敏感操作会额外说明影响并再次确认');
     expect(detail).toHaveTextContent('恢复备份');
+    expect(detail).toHaveTextContent('边界未提供，暂不向模型披露');
+    expect(detail).toHaveTextContent('未提供，禁止前端推断');
+    expect(screen.getAllByText('未投影').length).toBeGreaterThanOrEqual(5);
 
     expect(document.body).not.toHaveTextContent('ime_configuration');
     expect(document.body).not.toHaveTextContent('restore_apply');
