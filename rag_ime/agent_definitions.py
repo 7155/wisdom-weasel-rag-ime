@@ -19,6 +19,11 @@ class CollaborationRoleManifest:
     exit_conditions: tuple[str, ...]
     allowed_commit_decisions: tuple[str, ...]
     capability_restrictions: tuple[CapabilityId, ...]
+    operating_prompt: str
+
+    @property
+    def system_prompt(self) -> str:
+        return self.operating_prompt.strip()
 
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -48,6 +53,16 @@ class CollaborationProfileManifest:
     required_gate_ids: tuple[str, ...]
     prompt_guidance: tuple[str, ...]
     trust_tier: str = "builtin"
+
+    @property
+    def system_prompt(self) -> str:
+        guidance = "\n".join(f"- {item}" for item in self.prompt_guidance)
+        return (
+            f"协作 Profile：{self.display_name}。{self.summary}\n"
+            f"适用岗位：{', '.join(self.collaboration_role_refs)}。\n"
+            f"执行覆盖层：\n{guidance}\n"
+            "只使用已授权能力和可见证据；收工前明确已交付、已交接、等待或阻塞。"
+        )
 
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -79,6 +94,7 @@ _COLLABORATION_ROLES = (
         exit_conditions=("任务已交接、等待、阻塞升级或满足完成条件",),
         allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
         capability_restrictions=_ALL_CAPABILITIES,
+        operating_prompt="""你是协调者，负责维护原始需求、任务边界、负责人和交付状态。适用于多步骤或多 Agent 任务。先固定原始需求与中文验收条件，再决定直接处理还是按研究、实施、审查等岗位分派。工具和证据只用于核对与编排，不替专业岗位捏造结论。需要交接时必须写明任务编号、接收者、输入证据、权限、预期产物与验收条件；收到结果后负责整合验收。收工前明确已交付、已交接、等待或阻塞。边界：不替专业岗位作无证据判断，不让同一触发重复开火。""",
     ),
     CollaborationRoleManifest(
         role_id="researcher",
@@ -90,6 +106,7 @@ _COLLABORATION_ROLES = (
         exit_conditions=("材料性发现已提交或证据缺口已报告",),
         allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
         capability_restrictions=("delegation", "memory", "rag"),
+        operating_prompt="""你是研究员，负责查找、核对和压缩证据。适用于历史输入、Topic Book、项目资料与近期记录的事实调查。先定义问题和完成标准，再用只读工具取回最少但足够的材料，区分事实、推断、冲突和缺口。发现足够材料后提交来源、结论、缺口和下一步；需要实施或复核时主动交接并写清验收条件。收工前明确已交付、已交接、等待或阻塞。边界：不写状态，不把命中或模型记忆当事实。""",
     ),
     CollaborationRoleManifest(
         role_id="implementer",
@@ -101,6 +118,7 @@ _COLLABORATION_ROLES = (
         exit_conditions=("产物已验证、交接、等待或报告阻塞",),
         allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
         capability_restrictions=("control", "delegation", "memory", "rag"),
+        operating_prompt="""你是实施者，负责把明确方案变成真实、可验证的产物。适用于已给出边界、权限和验收条件的修改任务。先核对依赖和已有工作，再使用受控工具完成最小正确改动；以差异、测试和工具回执作为证据。完成后主动把改动、验证、剩余风险交给审查员或协调者；缺权限或输入时提交可操作阻塞。收工前明确已交付、已交接、等待或阻塞。边界：不扩大范围，不绕审批，不以自报完成代替验收。""",
     ),
     CollaborationRoleManifest(
         role_id="reviewer",
@@ -112,6 +130,7 @@ _COLLABORATION_ROLES = (
         exit_conditions=("复核结论和证据已提交",),
         allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
         capability_restrictions=("delegation", "memory", "rag", "review"),
+        operating_prompt="""你是审查员，负责独立复核产物是否满足原始需求和验收条件。适用于计划、代码、证据或运行结果审查。使用只读工具检查真实差异、测试、取消路径和剩余风险；发现按严重度优先，每项给出位置、影响和证据。存在问题时交回实施者并附修复验收条件；通过时说明通过范围与未验证项。收工前明确已交付、已交接、等待或阻塞。边界：不修改被审对象，不把风格偏好包装成缺陷。""",
     ),
     CollaborationRoleManifest(
         role_id="specialist",
@@ -123,6 +142,7 @@ _COLLABORATION_ROLES = (
         exit_conditions=("专业判断和适用边界已提交",),
         allowed_commit_decisions=("wait", "blocked", "complete"),
         capability_restrictions=("memory", "rag"),
+        operating_prompt="""你是领域专家，负责在一个明确专业边界内给出可追溯判断。适用于需要特定领域知识、术语或约束核对的任务。先声明适用范围和关键假设，再用允许的知识与记忆工具核验证据，输出判断、依据、不确定性和适用边界。判断足以支持下一步时交给规划、实施或审查岗位并给出验收提示；证据不足时报告缺口。收工前明确已交付、已交接、等待或阻塞。边界：不越界替代用户或高风险专业决策。""",
     ),
 )
 
@@ -137,7 +157,12 @@ _COLLABORATION_PROFILES = (
         ),
         capability_requests=_ALL_CAPABILITIES,
         required_gate_ids=("settle-decision-required",),
-        prompt_guidance=("收工前必须明确交接、等待、阻塞或完成决定",),
+        prompt_guidance=(
+            "原始需求永久保留，派生任务目录可以修订",
+            "每次交接写明任务编号、接收者、证据、产物与中文验收条件",
+            "使用已授权工具核对结果，Agent 自报完成不能替代验收",
+            "适合通用 Room；不用于绕过能力、审批、深度或取消边界",
+        ),
     ),
     CollaborationProfileManifest(
         profile_id="evidence-review",
@@ -147,7 +172,12 @@ _COLLABORATION_PROFILES = (
         collaboration_role_refs=("researcher@1", "reviewer@1"),
         capability_requests=("delegation", "memory", "rag", "review"),
         required_gate_ids=("evidence-required", "peer-review-required"),
-        prompt_guidance=("先区分事实、推断和缺口", "复核结论必须引用可见证据"),
+        prompt_guidance=(
+            "适用于证据研究后需要独立复核的任务，不用于直接写入或跳过实施",
+            "研究员先区分事实、推断、冲突和缺口，提交来源可追溯的证据包",
+            "审查员从原始需求独立复核，发现必须引用可见证据",
+            "研究充分后主动交审查员；未通过时带修复验收条件交回，不得静默断链",
+        ),
     ),
 )
 

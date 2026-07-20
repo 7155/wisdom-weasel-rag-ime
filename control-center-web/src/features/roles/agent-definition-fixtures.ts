@@ -68,6 +68,10 @@ export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
 
 export const collaborationProfileCatalog: CollaborationProfileCatalogItem[] = [
   {
+    profileId: 'standard-room', displayName: '标准 Room 协作',
+    summary: '所有 Room 角色共享的最小治理基线，固定原始需求、交接单和收工决定。',
+  },
+  {
     profileId: 'evidence-review', displayName: '证据研究与独立复核',
     summary: '研究员先提交可追溯发现，审查员再按同一需求独立复核。',
   },

@@ -3025,6 +3025,7 @@ export const contractSchemas = {
       "traits",
       "visualProfile",
       "defaults",
+      "runtimeCharacteristics",
       "safetyPolicyVersion",
       "selectableModes"
     ],
@@ -3136,6 +3137,58 @@ export const contractSchemas = {
               "xhigh",
               "max"
             ]
+          }
+        }
+      },
+      "runtimeCharacteristics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intelligence",
+          "speed",
+          "context",
+          "suitableTasks",
+          "unsuitableTasks",
+          "isDefault"
+        ],
+        "properties": {
+          "intelligence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "speed": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "context": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "suitableTasks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "unsuitableTasks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "isDefault": {
+            "type": "boolean"
           }
         }
       },
@@ -12430,6 +12483,14 @@ export const contractSchemas = {
           "2"
         ]
       },
+      "runtimeMethods": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
+      },
       "platform": {
         "type": "string",
         "minLength": 1
@@ -12486,6 +12547,14 @@ export const contractSchemas = {
           "package": {
             "type": "string",
             "minLength": 1
+          },
+          "sourceContractSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "handlersCommit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
           }
         }
       },
@@ -12518,7 +12587,34 @@ export const contractSchemas = {
           }
         }
       }
-    }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "runtimeProtocolVersion": {
+              "const": "2"
+            }
+          },
+          "required": [
+            "runtimeProtocolVersion"
+          ]
+        },
+        "then": {
+          "required": [
+            "runtimeMethods"
+          ],
+          "properties": {
+            "source": {
+              "required": [
+                "sourceContractSha256",
+                "handlersCommit"
+              ]
+            }
+          }
+        }
+      }
+    ]
   },
   "prompt-compile-receipt.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -13626,6 +13722,7 @@ export const contractSchemas = {
             "enum": [
               "not_configured",
               "no_conversation_evidence",
+              "no_eligible_evidence",
               "unsupported",
               "completed",
               "failed"
@@ -13884,6 +13981,12 @@ export const contractSchemas = {
         "minLength": 1
       },
       "postProposal": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "continuation": {
         "type": [
           "object",
           "null"
@@ -14286,6 +14389,8 @@ export const contractSchemas = {
           "runtime_accepted",
           "dispatch_unknown",
           "dead_letter",
+          "settle_retry_required",
+          "settle_blocked",
           "terminal"
         ]
       },
@@ -14793,6 +14898,36 @@ export const contractSchemas = {
       "capabilityEpoch": {
         "type": "integer",
         "minimum": 0
+      },
+      "resourceUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inputTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outputTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolCost": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "repairCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       },
       "createdAtMs": {
         "type": "integer",

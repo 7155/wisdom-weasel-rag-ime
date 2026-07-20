@@ -19,6 +19,8 @@ export interface RoomKernelReceiptV1 {
     | 'runtime_accepted'
     | 'dispatch_unknown'
     | 'dead_letter'
+    | 'settle_retry_required'
+    | 'settle_blocked'
     | 'terminal';
   status: 'applied' | 'noop' | 'rejected' | 'unknown';
   generation: number;

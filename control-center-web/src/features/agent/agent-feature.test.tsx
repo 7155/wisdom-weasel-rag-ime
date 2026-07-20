@@ -336,7 +336,7 @@ describe('Agent experience', () => {
     useAgentLiveStore.getState().applyEvents(sessionId, events);
     const turnId = `${sessionId}:turn-media`;
     render(<TooltipProvider><AgentTurn sessionId={sessionId} turnId={turnId} persona={previewPersonas[0]} onApprovalDecision={() => {}} /></TooltipProvider>);
-    expect(screen.getAllByAltText('智鼬·此刻头像')).toHaveLength(1);
+    expect(screen.getAllByAltText('智鼬·未来头像')).toHaveLength(1);
     expect(document.querySelectorAll('.agent-activity')).toHaveLength(1);
     expect(document.querySelector('.agent-user-message')).toBeInTheDocument();
     expect(screen.queryByText(/do-not-render/)).not.toBeInTheDocument();

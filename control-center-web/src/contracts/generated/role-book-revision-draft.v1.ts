@@ -114,7 +114,13 @@ export interface RoleBookRevisionDraftV1 {
     reviewRequiredFields: ('traits' | 'capabilities' | 'lessonsAndLimits' | 'activeCommitments')[];
   };
   proposalDiagnostics: {
-    status: 'not_configured' | 'no_conversation_evidence' | 'unsupported' | 'completed' | 'failed';
+    status:
+      | 'not_configured'
+      | 'no_conversation_evidence'
+      | 'no_eligible_evidence'
+      | 'unsupported'
+      | 'completed'
+      | 'failed';
     provider: string;
     inputChars: number;
     acceptedProposalCount: number;

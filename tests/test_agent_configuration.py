@@ -28,6 +28,14 @@ class AgentConfigurationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_product_default_starts_new_work_with_future_sol_max_profile(self) -> None:
+        configuration = default_agent_configuration()
+        self.assertEqual(configuration["sessionDefaults"]["roleId"], "vcp-v1")
+        self.assertEqual(
+            configuration["sessionDefaults"]["modelProfile"],
+            "gpt/gpt-5.6-sol",
+        )
+
     def test_configuration_is_revisioned_and_rejects_stale_writers(self) -> None:
         initial = self.store.snapshot()
         update = self.store.update(
