@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "rag-ime.session-recall-effect-fixtures.v1",
+  "topK": 1,
+  "weights": [0.0, 0.1, 0.2, 0.3, 0.5],
+  "cases": [
+    {"id":"fact-current","metric":"factHit","query":[1,0,0],"summary":[0,1,0],"expected":"fact","candidates":[{"id":"fact","vector":[1,0,0],"text":"当前事实：Room 只接受 Kernel 派发。"},{"id":"wrong-old-topic","vector":[0.6,0.4,0],"text":"旧主题：自由 @ 路由。"},{"id":"cross-scope","vector":[0,0,1],"text":"其他角色私有事实。"}]},
+    {"id":"preference-current","metric":"preferenceHit","query":[1,0,0],"summary":[0,1,0],"expected":"preference","candidates":[{"id":"preference","vector":[1,0,0],"text":"用户偏好：只注入有用正文。"},{"id":"wrong-old-topic","vector":[0.6,0.4,0],"text":"旧偏好：附完整调试元数据。"},{"id":"cross-scope","vector":[0,0,1],"text":"其他角色偏好。"}]},
+    {"id":"project-current","metric":"projectHit","query":[1,0,0],"summary":[0,1,0],"expected":"project","candidates":[{"id":"project","vector":[1,0,0],"text":"当前项目：Room V2 重构。"},{"id":"wrong-old-topic","vector":[0.6,0.4,0],"text":"旧项目：IME 候选训练。"},{"id":"cross-scope","vector":[0,0,1],"text":"其他项目私有实现。"}]},
+    {"id":"task-current","metric":"taskHit","query":[1,0,0],"summary":[0,1,0],"expected":"task","candidates":[{"id":"task","vector":[1,0,0],"text":"当前任务：验证压缩召回。"},{"id":"wrong-old-topic","vector":[0.6,0.4,0],"text":"旧任务：开发语音输出。"},{"id":"cross-scope","vector":[0,0,1],"text":"评审 Agent 的任务。"}]},
+    {"id":"compaction-recovery-a","metric":"compactionForgettingRecovery","query":[1,0,0],"summary":[0,1,0],"expected":"recovery","candidates":[{"id":"query-only-distractor","vector":[1,0,0],"text":"只匹配最新短句。"},{"id":"recovery","vector":[0.8,0.2,0],"text":"压缩前保留：原始需求必须永久保留。"},{"id":"cross-scope","vector":[0,0,1],"text":"其他角色压缩摘要。"}]},
+    {"id":"compaction-recovery-b","metric":"compactionForgettingRecovery","query":[1,0,0],"summary":[0,1,0],"expected":"recovery","candidates":[{"id":"query-only-distractor","vector":[1,0,0],"text":"继续处理。"},{"id":"recovery","vector":[0.8,0.2,0],"text":"压缩前保留：禁止自动提升摘要为长期记忆。"},{"id":"cross-scope","vector":[0,0,1],"text":"其他 Room 的任务。"}]}
+  ]
+}

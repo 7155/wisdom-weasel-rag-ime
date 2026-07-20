@@ -13,6 +13,7 @@ from unittest.mock import patch
 from rag_ime.agent_protocol import AgentEventEnvelope
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
+from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 
@@ -647,10 +648,18 @@ class AgentServiceTests(unittest.TestCase):
             compacted["contextRefresh"]["result"]["status"],
             "runtime_applied",
         )
-        digest = compacted["result"]["memoryCheckpoint"]["conversationDigest"]
-        self.assertTrue(digest["stored"])
-        self.assertEqual(digest["evidence"]["sourceKind"], "session_digest")
-        self.assertEqual(digest["evidence"]["text"], "压缩后摘要")
+        checkpoint = compacted["result"]["memoryCheckpoint"]
+        self.assertFalse(checkpoint["stored"])
+        self.assertEqual(checkpoint["status"], "session_context_only")
+        self.assertFalse(checkpoint["longTermMemoryEligible"])
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM agent_memory_sources WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()[0],
+                0,
+            )
 
     def test_room_work_item_drives_start_and_compaction_context(self) -> None:
         room = self.service.create_room(
@@ -681,16 +690,26 @@ class AgentServiceTests(unittest.TestCase):
         )["workItem"]
         session_id = str(owner["sessionId"])
 
-        started = self.service.refresh_session_context(
-            {
-                "sessionId": session_id,
-                "trigger": "session_start",
-                "queryText": "@Hermes 继续处理",
-                "recentMessages": [
-                    {"role": "user", "text": "@Hermes 继续处理"},
-                ],
-            }
-        )
+        with patch.object(
+            self.service.memory_bootstrap,
+            "build",
+            wraps=self.service.memory_bootstrap.build,
+        ) as start_build:
+            started = self.service.refresh_session_context(
+                {
+                    "sessionId": session_id,
+                    "trigger": "session_start",
+                    "queryText": "@Hermes 继续处理",
+                    "recentMessages": [
+                        {"role": "user", "text": "@Hermes 继续处理"},
+                    ],
+                }
+            )
+        start_query = start_build.call_args.kwargs["query_text"]
+        self.assertNotIn("@Hermes", start_query)
+        self.assertIn("继续处理", start_query)
+        self.assertIn(str(work["objective"]), start_query)
+        self.assertEqual(start_build.call_args.kwargs["vector_context_weight"], 0.0)
         start_context = started["result"]["sessionContext"]
         self.assertEqual(started["result"]["trigger"], "room_task")
         self.assertIn(str(work["objective"]), start_context)
@@ -702,17 +721,25 @@ class AgentServiceTests(unittest.TestCase):
             title="核验 Room Provider Payload",
             status="in_progress",
         )
-        compacted = self.service.refresh_session_context(
-            {
-                "sessionId": session_id,
-                "trigger": "compaction",
-                "summary": "已完成 Room 任务检索设计，正在核验真实载荷。",
-                "recentMessages": [
-                    {"role": "user", "text": "按 WorkItem 继续"},
-                    {"role": "assistant", "text": "已经完成第一阶段"},
-                ],
-            }
-        )
+        with patch.object(
+            self.service.memory_bootstrap,
+            "build",
+            wraps=self.service.memory_bootstrap.build,
+        ) as compact_build:
+            compacted = self.service.refresh_session_context(
+                {
+                    "sessionId": session_id,
+                    "trigger": "compaction",
+                    "summary": "已完成 Room 任务检索设计，正在核验真实载荷。",
+                    "recentMessages": [
+                        {"role": "user", "text": "按 WorkItem 继续"},
+                        {"role": "assistant", "text": "已经完成第一阶段"},
+                    ],
+                }
+            )
+        self.assertEqual(compact_build.call_args.kwargs["vector_context_weight"], 0.2)
+        self.assertIn("按 WorkItem 继续", compact_build.call_args.kwargs["query_text"])
+        self.assertIn(str(work["objective"]), compact_build.call_args.kwargs["query_text"])
         compacted_context = compacted["result"]["sessionContext"]
         self.assertEqual(compacted["result"]["trigger"], "compaction")
         self.assertIn(str(work["objective"]), compacted_context)
@@ -723,7 +750,7 @@ class AgentServiceTests(unittest.TestCase):
             compacted["result"]["itemId"],
         )
 
-    def test_subagent_task_is_the_primary_recall_query(self) -> None:
+    def test_subagent_task_is_combined_with_live_user_query(self) -> None:
         session = self.service.create_session({"title": "受管子任务"})["session"]
         session_id = str(session["id"])
         delegated_run = {
@@ -755,13 +782,45 @@ class AgentServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(refreshed["result"]["trigger"], "subagent_task")
-        self.assertEqual(
-            build.call_args.kwargs["query_text"],
-            delegated_run["task"],
-        )
+        recall_query = build.call_args.kwargs["query_text"]
+        self.assertIn("帮忙看一下", recall_query)
+        self.assertIn(delegated_run["task"], recall_query)
+        self.assertEqual(build.call_args.kwargs["vector_context_weight"], 0.0)
         self.assertIn(
             delegated_run["task"],
             refreshed["result"]["sessionContext"],
+        )
+
+    def test_session_context_refresh_fails_closed_on_room_generation_change(self) -> None:
+        session = self.service.create_session({"title": "召回代际栅栏"})["session"]
+        session_id = str(session["id"])
+        before = {
+            "manifestId": "manifest:1",
+            "manifestHash": "a" * 64,
+            "capabilityEpoch": 3,
+            "state": "active",
+        }
+        after = {**before, "capabilityEpoch": 4, "state": "revoked"}
+
+        with patch.object(
+            self.service.room_capabilities,
+            "runtime_binding",
+            side_effect=[before, after],
+        ):
+            with self.assertRaisesRegex(RoomKernelFenceError, "changed"):
+                self.service.refresh_session_context(
+                    {
+                        "sessionId": session_id,
+                        "trigger": "compaction",
+                        "queryText": "继续当前任务",
+                        "summary": "旧代际压缩摘要",
+                    }
+                )
+
+        self.assertIsNone(
+            self.service.context_runtime.active_item(
+                session_id, source_kind="memory_bootstrap"
+            )
         )
 
     def test_next_prompt_repairs_first_query_bootstrap_failure(self) -> None:

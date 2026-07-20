@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -98,6 +99,7 @@ from .personal_context import (
     PersonalContextConsolidator,
 )
 from .session_memory_recall import SessionMemoryRecallBuilder
+from .session_recall_policy import session_recall_policy
 from .text_utils import compact_whitespace
 
 _RECOVERABLE_GOVERNED_MEMORY_OPERATIONS = frozenset(
@@ -4657,17 +4659,7 @@ class AgentService:
                 task_context.get("objective"),
                 maximum=4_000,
             )
-            recall_query = _bounded_text(query_text, maximum=8_000)
-            if trigger == "subagent_task" and task_objective:
-                recall_query = task_objective
-            elif trigger == "room_task" and task_objective:
-                recall_query = _bounded_text(
-                    f"{recall_query}\n任务目标：{task_objective}",
-                    maximum=8_000,
-                )
-            semantic_context = (
-                _last_assistant_recall_text(recent_messages) or task_objective
-            )
+            recall_query = _task_aware_recall_query(query_text, task_objective)
             specification = self.memory_bootstrap.build(
                 session_id,
                 role_id=role_id,
@@ -4678,8 +4670,10 @@ class AgentService:
                     f"{_recall_message_text(recent_messages)}\n{task_objective}",
                     maximum=6_000,
                 ),
-                vector_context_text=semantic_context,
-                vector_context_weight=0.2 if semantic_context else 0.0,
+                # Session start is grounded by the current user input and the
+                # explicit task objective. Old assistant prose must not bias it.
+                vector_context_text="",
+                vector_context_weight=session_recall_policy().start_summary_weight,
                 recent_messages=recent_messages,
                 planning_context=self.sessions.agent_plan(session_id),
                 task_context=task_context,
@@ -4735,29 +4729,34 @@ class AgentService:
             recent_messages = self._recent_recall_messages(session_id)
         summary = _bounded_text(payload.get("summary"), maximum=8_000)
         fallback_query = _bounded_text(payload.get("queryText"), maximum=8_000)
-        query = self._memory_recall_query(session_id, fallback=fallback_query)
+        latest_user = _last_user_recall_text(recent_messages)
+        query = (
+            latest_user
+            if is_compaction and latest_user
+            else self._memory_recall_query(session_id, fallback=fallback_query)
+        )
         if not query:
-            query = _last_user_recall_text(recent_messages)
+            query = latest_user
         task_context = self._memory_task_context(session_id)
         task_objective = _bounded_text(
             task_context.get("objective"),
             maximum=4_000,
         )
-        if str(task_context.get("kind") or "") == "subagent" and task_objective:
-            query = task_objective
-        elif str(task_context.get("kind") or "") == "room_work_item" and task_objective:
-            query = _bounded_text(
-                f"{query}\n任务目标：{task_objective}",
-                maximum=8_000,
-            )
-        if not query:
-            query = task_objective
+        query = _task_aware_recall_query(query, task_objective)
         if not query:
             query = "继续当前 Session 的任务"
         trigger = (
             "compaction"
             if is_compaction
             else self._memory_trigger_for_session(session_id)
+        )
+        binding_before = self.room_capabilities.runtime_binding(
+            session_id, active_only=False
+        )
+        summary_weight = (
+            session_recall_policy().compaction_summary_weight
+            if is_compaction and summary
+            else 0.0
         )
         specification = self.memory_bootstrap.build(
             session_id,
@@ -4772,16 +4771,23 @@ class AgentService:
                 ),
                 maximum=6_000,
             ),
-            vector_context_text=summary if is_compaction else _last_assistant_recall_text(recent_messages),
-            vector_context_weight=(
-                0.2
-                if (summary if is_compaction else _last_assistant_recall_text(recent_messages))
-                else 0.0
-            ),
+            vector_context_text=summary if is_compaction else "",
+            vector_context_weight=summary_weight,
             recent_messages=recent_messages,
             planning_context=self.sessions.agent_plan(session_id),
             task_context=task_context,
         )
+        binding_after = self.room_capabilities.runtime_binding(
+            session_id, active_only=False
+        )
+        if _room_recall_fence(binding_before) != _room_recall_fence(binding_after):
+            raise RoomKernelFenceError(
+                "Room generation/capability changed while Session context was rebuilding"
+            )
+        if binding_after is not None and str(binding_after.get("state") or "") == "revoked":
+            raise RoomKernelFenceError(
+                "Room Session context refresh was cancelled before projection"
+            )
         item = self.context_runtime.replace_active(**specification)
         rendered = render_context_items(
             [
@@ -4866,6 +4872,45 @@ class AgentService:
                     "expectedOutput": "按受管子任务预算返回可验证结果",
                     "state": str(run.get("state") or ""),
                 }
+        runtime_identity = self.room_capabilities.runtime_identity(session_id)
+        if isinstance(runtime_identity, Mapping):
+            task_id = str(runtime_identity.get("taskId") or "")
+            dispatch_id = str(runtime_identity.get("dispatchId") or "")
+            try:
+                task = self.room_kernel.task(task_id)
+            except (KeyError, ValueError):
+                task = {}
+            requirement_texts: list[str] = []
+            requirement_binding = (
+                self.room_requirements.dispatch_binding(dispatch_id)
+                if dispatch_id
+                else None
+            )
+            if isinstance(requirement_binding, Mapping):
+                for anchor_id in requirement_binding.get("anchorRefs") or []:
+                    try:
+                        original = self.room_requirements.original_bytes(
+                            str(anchor_id)
+                        ).decode("utf-8")
+                    except (KeyError, UnicodeDecodeError, ValueError):
+                        continue
+                    bounded = _bounded_text(original, maximum=2_000)
+                    if bounded:
+                        requirement_texts.append(bounded)
+            if task:
+                criteria = [
+                    str(value)
+                    for value in task.get("acceptanceCriterionIds") or []
+                    if str(value).strip()
+                ]
+                return {
+                    "kind": "room_kernel_task",
+                    "objective": str(task.get("objective") or ""),
+                    "expectedOutput": str(task.get("expectedOutput") or ""),
+                    "acceptanceCriteria": criteria,
+                    "originalRequirements": requirement_texts,
+                    "state": str(task.get("state") or ""),
+                }
         participant = self.rooms.participant_for_session(session_id, active_only=False)
         if not isinstance(participant, Mapping):
             return {}
@@ -4907,11 +4952,6 @@ class AgentService:
             self._last_recall_query_by_session[session_id] = query
 
     def _memory_recall_query(self, session_id: str, *, fallback: str = "") -> str:
-        task = self._memory_task_context(session_id)
-        if str(task.get("kind") or "") == "subagent":
-            objective = _bounded_text(task.get("objective"), maximum=8_000)
-            if objective:
-                return objective
         with self._recall_state_lock:
             cached = self._last_recall_query_by_session.get(session_id, "")
         return cached or _bounded_text(fallback, maximum=8_000)
@@ -5110,54 +5150,31 @@ class AgentService:
         result: Mapping[str, object],
         trigger: str,
     ) -> Mapping[str, object]:
-        try:
-            checkpoint = dict(self.memory_sources.checkpoint_compaction(
-                session_id=session_id,
-                result=result,
-                trigger=trigger,
-            ))
-            summary = _compaction_summary(result)
-            if summary:
-                session = self.sessions.get(session_id)
-                digest_material = json.dumps(
-                    {
-                        "sessionId": session_id,
-                        "summary": summary,
-                        "firstKeptEntryId": str(
-                            result.get("firstKeptEntryId") or ""
-                        ),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-                checkpoint["conversationDigest"] = (
-                    self.memory_evidence.record_session_digest(
-                        session_id=session_id,
-                        digest_id=(
-                            "compaction:"
-                            + hashlib.sha256(
-                                digest_material.encode("utf-8")
-                            ).hexdigest()[:32]
-                        ),
-                        text=summary,
-                        role_id=str(session.get("roleId") or ""),
-                        metadata={
-                            "trigger": compact_whitespace(trigger) or "automatic",
-                            "firstKeptEntryId": str(
-                                result.get("firstKeptEntryId") or ""
-                            ),
-                        },
-                    )
-                )
-            return checkpoint
-        except Exception as exc:
-            return {
-                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
-                "ok": False,
-                "stored": False,
-                "status": "checkpoint_failed",
-                "error": _public_error(exc),
-            }
+        summary = _compaction_summary(result)
+        material = json.dumps(
+            {
+                "sessionId": session_id,
+                "summary": summary,
+                "firstKeptEntryId": str(result.get("firstKeptEntryId") or ""),
+                "trigger": compact_whitespace(trigger) or "automatic",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        # Pi's Session JSONL is the authoritative compaction checkpoint. A
+        # lossy summary may guide the immediate post-compaction recall, but it
+        # is not evidence and must never silently enter long-term memory.
+        return {
+            "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+            "ok": True,
+            "stored": False,
+            "status": "session_context_only",
+            "summarySha256": hashlib.sha256(summary.encode("utf-8")).hexdigest()
+            if summary
+            else "",
+            "checkpointKey": hashlib.sha256(material.encode("utf-8")).hexdigest()[:32],
+            "longTermMemoryEligible": False,
+        }
 
     def _probe_memory_maintenance(self, session_id: str, *, trigger: str) -> dict[str, object]:
         if self._memory_maintenance_probe is None:
@@ -7032,6 +7049,32 @@ def _provider_display_name(provider: str) -> str:
         "xai": "xAI",
     }
     return known.get(provider.lower(), provider)
+
+
+def _task_aware_recall_query(user_text: object, task_objective: object) -> str:
+    """Keep the live user request primary while retaining the assigned task."""
+
+    user = _bounded_text(user_text, maximum=6_000)
+    # An @ token in recalled text is searchable content, never authority to
+    # select or wake another Agent. Room Kernel owns that decision.
+    user = re.sub(r"(^|\s)@[\w.\-\u4e00-\u9fff]+(?=\s|$)", " ", user).strip()
+    objective = _bounded_text(task_objective, maximum=3_000)
+    if not objective:
+        return user
+    if objective in user:
+        return _bounded_text(user, maximum=8_000)
+    return _bounded_text(f"{user}\n任务目标：{objective}", maximum=8_000)
+
+
+def _room_recall_fence(binding: Mapping[str, object] | None) -> tuple[object, ...]:
+    if binding is None:
+        return ()
+    return (
+        str(binding.get("manifestId") or ""),
+        str(binding.get("manifestHash") or ""),
+        int(binding.get("capabilityEpoch") or 0),
+        str(binding.get("state") or ""),
+    )
 
 
 def _merge_snapshot_tool_events(

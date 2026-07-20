@@ -724,6 +724,10 @@ class RoomKernelServiceTests(unittest.TestCase):
             self.session_id, active_only=False
         )
         self.assertEqual(prepared["state"], "prepared")
+        task_context = self.service._memory_task_context(self.session_id)
+        self.assertEqual(task_context["kind"], "room_kernel_task")
+        self.assertEqual(task_context["objective"], "Execute a bounded service test.")
+        self.assertEqual(task_context["expectedOutput"], "A typed receipt.")
         with self.assertRaises(KeyError):
             self.service.room_kernel.lease("dispatch:service")
         self.assertEqual(self.factory.runtime.dispatched, [])
@@ -753,6 +757,35 @@ class RoomKernelServiceTests(unittest.TestCase):
         projected = next(item for item in snapshot["sessions"] if item["sessionId"] == self.session_id)
         self.assertEqual(projected["capabilityManifest"]["manifestHash"], first["manifestHash"])
         self.assertEqual(projected["capabilityManifest"]["status"], "active")
+
+    def test_room_session_recall_uses_immutable_original_requirement(self) -> None:
+        original = "原始需求永久保留；Room Agent 只能按自己的 Task 召回。"
+        self.service.room_requirements.append_anchor(
+            anchor_id="requirement-anchor:service",
+            root_id="root:service",
+            original_content=original,
+            created_by="user:local",
+            provenance={"surface": "test"},
+            created_at_ms=2,
+        )
+        dispatch = self._dispatch()
+        self.service.room_kernel.enqueue_dispatch(dispatch, now_ms=3)
+        self.service._prepare_managed_room_dispatch(dispatch, 3)
+
+        task_context = self.service._memory_task_context(self.session_id)
+
+        self.assertEqual(task_context["kind"], "room_kernel_task")
+        self.assertEqual(task_context["originalRequirements"], [original])
+        refreshed = self.service.refresh_session_context(
+            {
+                "sessionId": self.session_id,
+                "trigger": "session_start",
+                "queryText": "继续自己的任务",
+                "recentMessages": [{"role": "user", "text": "继续自己的任务"}],
+            }
+        )
+        self.assertIn("原始需求（不可改写）", refreshed["result"]["sessionContext"])
+        self.assertIn(original, refreshed["result"]["sessionContext"])
 
     def test_room_binding_rejects_legacy_intercom_before_it_can_enqueue(self) -> None:
         dispatch = self._dispatch()
