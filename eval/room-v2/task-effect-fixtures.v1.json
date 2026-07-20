@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "wisdom-weasel.room-task-effect-fixtures.v1",
+  "contextCases": [
+    {
+      "id": "knowledge-result-with-audit-noise",
+      "entryKind": "knowledge_receipt",
+      "content": {
+        "objective": "验证 Room 取消传播",
+        "relevance": 0.97,
+        "rank": 1,
+        "scoreBreakdown": {"vector": 0.8},
+        "internalId": "row:4",
+        "contentHash": "sha256:secret",
+        "debugReason": "vector lane",
+        "sources": [{"title": "取消设计", "path": "docs/cancel.md", "sourceId": "chunk:2"}]
+      },
+      "expectedIncludes": ["验证 Room 取消传播", "取消设计", "docs/cancel.md"],
+      "forbiddenTerms": ["relevance", "rank", "score", "internalId", "contentHash", "debugReason", "row:4", "chunk:2"]
+    }
+  ],
+  "cases": [
+    {"id":"research","request":"核对现有 Room 状态并整理证据，不修改任何内容。","stage":"research","expectedSkills":[],"forbiddenSkills":["room-test-driven-implementation"],"toolQuery":"Read the current","expectedTools":["room_state"],"expectedPromptTerms":[]},
+    {"id":"planning","request":"把已经批准的方案拆成有依赖和验收证据的实施计划。","stage":"planning","expectedSkills":["room-implementation-planning"],"forbiddenSkills":["room-solution-convergence"],"toolQuery":"Read the current","expectedTools":["room_state"],"expectedPromptTerms":["dependencies","verification"]},
+    {"id":"implementation","request":"按明确验收条件先写失败测试，再完成最小实现。","stage":"implementation","expectedSkills":["room-test-driven-implementation"],"forbiddenSkills":["room-systematic-debugging"],"toolQuery":"Submit a governed","expectedTools":["room_commit"],"expectedPromptTerms":["failing test","regression"]},
+    {"id":"review","request":"由未参与实现的人独立核对需求、真实路径与高风险反例。","stage":"vision-review","expectedSkills":["room-independent-vision-review"],"forbiddenSkills":["room-delivery-self-check"],"toolQuery":"Read the current","expectedTools":["room_state"],"expectedPromptTerms":["independent verdict","required fixes"]},
+    {"id":"clarification","request":"停止是否覆盖已经运行的子 Agent 会改变安全验收，需要澄清。","stage":"requirements","expectedSkills":["room-requirement-clarification"],"forbiddenSkills":["room-implementation-planning"],"toolQuery":"Publish one explicit","expectedTools":["room_post"],"expectedPromptTerms":["open questions","readiness status"]},
+    {"id":"evidence-delivery","request":"把测试、审阅与剩余风险证据公开交付后申请收口。","stage":"closure","expectedSkills":["room-delivery-closure"],"forbiddenSkills":["room-structured-handoff"],"toolQuery":"Publish one explicit","expectedTools":["room_post"],"expectedPromptTerms":["ready_to_close","not_ready"]},
+    {"id":"blocked","request":"当前没有合格接手者，提交明确阻塞与最小下一动作。","stage":"handoff","expectedSkills":["room-structured-handoff"],"forbiddenSkills":["room-delivery-closure"],"toolQuery":"Submit a governed","expectedTools":["room_commit"],"expectedPromptTerms":["blockers","next action"]},
+    {"id":"handoff","request":"把已完成证据、剩余工作和下一动作交给新的所有者。","stage":"handoff","expectedSkills":["room-structured-handoff"],"forbiddenSkills":["room-delivery-closure"],"toolQuery":"Publish one explicit","expectedTools":["room_post"],"expectedPromptTerms":["remaining work","next action"]},
+    {"id":"ordinary-chat","request":"你好，今天先聊聊思路，不启动 Room 工作。","stage":"conversation","expectedSkills":[],"forbiddenSkills":["room-requirement-clarification","room-structured-handoff"],"toolQuery":"ordinary conversation","expectedTools":[],"expectedPromptTerms":[]},
+    {"id":"self-check-not-review","request":"我是实现者，收工前逐项核对测试、交接和阻塞。","stage":"self-check","expectedSkills":["room-delivery-self-check"],"forbiddenSkills":["room-independent-vision-review"],"toolQuery":"Read the current","expectedTools":["room_state"],"expectedPromptTerms":["settle recommendation","blocked"]},
+    {"id":"debug-not-implement","request":"服务健康但旧客户端仍失败，先复现和定位未知原因。","stage":"debugging","expectedSkills":["room-systematic-debugging"],"forbiddenSkills":["room-test-driven-implementation"],"toolQuery":"Read the current","expectedTools":["room_state"],"expectedPromptTerms":["confirmed cause","remaining hypotheses"]},
+    {"id":"solution-not-plan","request":"两条架构路径都可行，先比较可逆性和失效隔离再决策。","stage":"solution","expectedSkills":["room-solution-convergence"],"forbiddenSkills":["room-implementation-planning"],"toolQuery":"Read the current","expectedTools":["room_state"],"expectedPromptTerms":["selected approach","rejected alternatives"]},
+    {"id":"feedback-not-review","request":"正式复核已有三条 finding，逐条修复并保留复核证据。","stage":"feedback","expectedSkills":["room-review-feedback-resolution"],"forbiddenSkills":["room-independent-vision-review"],"toolQuery":"Submit a governed","expectedTools":["room_commit"],"expectedPromptTerms":["per-finding status","required re-review"]},
+    {"id":"unclear-trivial-not-trigger","request":"按钮颜色已有设计系统默认值，直接继续，不要打断用户。","stage":"conversation","expectedSkills":[],"forbiddenSkills":["room-requirement-clarification"],"toolQuery":"ordinary conversation","expectedTools":[],"expectedPromptTerms":[]}
+  ]
+}

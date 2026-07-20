@@ -3,7 +3,9 @@ name: room-independent-vision-review
 description: Independently review whether a delivery solves the intended user problem and satisfies architecture, safety, and acceptance constraints.
 when:
   - 交付需要独立角色按愿景和约束复核
-does: 独立发现偏航、缺口和失控风险。
+  - 独立愿景复核
+does: 独立输出偏航、缺口、失控风险和复核结论。
+output: 独立 verdict、按严重度排序的 findings、证据和必修项。
 notFor:
   - 实施者自己的收工检查
 ---

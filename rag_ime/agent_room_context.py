@@ -702,6 +702,7 @@ def _projection_item_payload(item: sqlite3.Row, entry: sqlite3.Row) -> dict[str,
         "contextEntryId": str(item["context_entry_id"]),
         "contentHash": str(item["content_hash"]),
         "content": bytes(entry["content_bytes"]).decode("utf-8"),
+        "entryKind": str(entry["entry_kind"]),
         "state": str(item["state"]),
     }
 
@@ -712,6 +713,7 @@ def _joined_projection_item_payload(row: sqlite3.Row) -> dict[str, object]:
         "contextEntryId": str(row["context_entry_id"]),
         "contentHash": str(row["content_hash"]),
         "content": bytes(row["content_bytes"]).decode("utf-8"),
+        "entryKind": str(row["entry_kind"]),
         "state": str(row["state"]),
     }
 

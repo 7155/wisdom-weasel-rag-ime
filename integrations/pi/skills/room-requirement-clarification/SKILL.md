@@ -3,7 +3,9 @@ name: room-requirement-clarification
 description: Clarify material ambiguity while preserving the user's original requirement as immutable evidence and recording only revisable derived requirements.
 when:
   - 关键歧义会改变范围、约束或验收
-does: 保留原文并产出可追溯的澄清项。
+  - 需求澄清
+does: 保留原文并输出可追溯的澄清项与就绪状态。
+output: 来源不变的澄清结果、假设、开放问题和就绪状态。
 notFor:
   - 需求清楚且能安全继续
 ---

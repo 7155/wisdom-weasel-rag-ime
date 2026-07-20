@@ -3,7 +3,9 @@ name: room-systematic-debugging
 description: Reproduce and localize an unknown failure with evidence before changing production behavior, then verify the smallest supported fix.
 when:
   - 未知故障需要复现、定位和验证
-does: 建立证据链并定位最小故障边界。
+  - 未知故障定位与系统调试
+does: 建立证据链并输出最小故障边界与验证结果。
+output: 复现证据、已确认原因或剩余假设、修复验证和回归覆盖。
 notFor:
   - 普通实现或已知机械改动
 ---

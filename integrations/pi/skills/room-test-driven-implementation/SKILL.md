@@ -3,7 +3,9 @@ name: room-test-driven-implementation
 description: Implement one bounded change from observable behavior, adding a failing test first and preserving existing contracts outside the approved scope.
 when:
   - 明确变更需要从失败测试开始实现
-does: 以红绿重构闭环交付受限改动。
+  - 测试驱动实现
+does: 以红绿重构输出受限改动及测试证据。
+output: 失败测试、实现与回归证据、契约影响和剩余风险。
 notFor:
   - 未知故障尚未定位
 ---
