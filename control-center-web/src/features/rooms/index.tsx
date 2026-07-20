@@ -37,6 +37,7 @@ import { roleItems } from '@/features/agent/types';
 import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomStatusPanel } from './RoomStatusPanel';
 import { RoomKernelLivePanel } from './kernel/RoomKernelLivePanel';
+import { createRoomRuntimeLedger } from './room-runtime-ledger';
 import './rooms.css';
 
 export interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; collaborationRole?: 'coordinator' | 'executor' | 'researcher'; status: string; ordinal: number; }
@@ -101,7 +102,7 @@ export function RoomsFeature() {
   const [personas, setPersonas] = useState<AgentPersonaV1[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [projection, setProjection] = useState<RoomProjectionState>(() => createRoomProjection(''));
-  const projectionRef = useRef(projection);
+  const roomRuntimeLedgerRef = useRef(createRoomRuntimeLedger());
   const roomRailTriggerRef = useRef<HTMLButtonElement>(null);
   const roomRailCloseRef = useRef<HTMLButtonElement>(null);
   const roomRailRef = useRef<HTMLElement>(null);
@@ -235,6 +236,7 @@ export function RoomsFeature() {
 
   useEffect(() => {
     if (!selectedId) {
+      setProjection(createRoomProjection(''));
       setSnapshotLoading(false);
       return;
     }
@@ -243,9 +245,9 @@ export function RoomsFeature() {
     let reloadQueued = false;
     let unsubscribe: (() => void) | undefined;
     let snapshotController: AbortController | undefined;
-    const empty = createRoomProjection(selectedId);
-    projectionRef.current = empty;
-    setProjection(empty);
+    const runtimeLedger = roomRuntimeLedgerRef.current;
+    const cached = runtimeLedger.getOrCreate(selectedId).projection;
+    setProjection(cached);
     setSnapshotLoading(true);
 
     const scheduleSnapshotReload = () => {
@@ -257,15 +259,15 @@ export function RoomsFeature() {
       });
     };
     const batcher = createRoomDeltaBatcher((events) => {
-      if (!active || projectionRef.current.roomId !== selectedId) return;
-      let next = projectionRef.current;
+      if (!active) return;
+      let next = runtimeLedger.getOrCreate(selectedId).projection;
       let snapshotRequired = false;
       for (const event of events) {
         const reduced = reduceRoomEvent(next, event);
         next = reduced.state;
         snapshotRequired ||= reduced.disposition === 'snapshot-required';
       }
-      projectionRef.current = next;
+      runtimeLedger.replace(selectedId, next);
       setProjection(next);
       if (snapshotRequired) scheduleSnapshotReload();
     });
@@ -285,11 +287,9 @@ export function RoomsFeature() {
         });
         if (!active || requestGeneration !== generation) return;
         const snapshot = parseRoomEventSnapshot(value);
-        const base = projectionRef.current.roomId === selectedId
-          ? projectionRef.current
-          : createRoomProjection(selectedId);
+        const base = runtimeLedger.getOrCreate(selectedId).projection;
         const next = replayRoomEventSnapshot(base, snapshot);
-        projectionRef.current = next;
+        runtimeLedger.replace(selectedId, next);
         setProjection(next);
         setSnapshotLoading(false);
         const snapshotRoom = snapshot.room as unknown as RoomSummary;
@@ -355,11 +355,13 @@ export function RoomsFeature() {
     const message = draft.trim();
     if (!room || room.status !== 'active' || !message) return;
     const clientMessageId = `room-web-${crypto.randomUUID()}`;
-    setProjection((current) => {
-      const next = appendOptimisticRoomMessage(current, { clientMessageId, text: message, nowMs: Date.now() });
-      projectionRef.current = next;
-      return next;
-    });
+    const runtimeLedger = roomRuntimeLedgerRef.current;
+    const optimistic = appendOptimisticRoomMessage(
+      runtimeLedger.getOrCreate(room.id).projection,
+      { clientMessageId, text: message, nowMs: Date.now() },
+    );
+    runtimeLedger.replace(room.id, optimistic);
+    setProjection(optimistic);
     setDraft('');
     setError('');
     try {
@@ -376,11 +378,10 @@ export function RoomsFeature() {
       });
     }
     catch (requestError) {
-      setProjection((current) => {
-        const next = removeOptimisticRoomMessage(current, clientMessageId);
-        projectionRef.current = next;
-        return next;
-      });
+      const current = runtimeLedger.getOrCreate(room.id).projection;
+      const next = removeOptimisticRoomMessage(current, clientMessageId);
+      runtimeLedger.replace(room.id, next);
+      if (selectedId === room.id) setProjection(next);
       setDraft(message);
       setError(publicErrorText(requestError, '消息暂时未发送，请稍后重试。'));
     }
@@ -394,19 +395,21 @@ export function RoomsFeature() {
         pathId: 'agent.session.abort',
         params: { sessionId },
       });
-      setProjection((current) => {
-        const participantId = room?.participants.find(
-          (participant) => participant.sessionId === sessionId,
-        )?.id ?? '';
+      const participantId = room?.participants.find(
+        (participant) => participant.sessionId === sessionId,
+      )?.id ?? '';
+      const roomId = room?.id ?? '';
+      if (roomId) {
+        const runtimeLedger = roomRuntimeLedgerRef.current;
         const next = abortRoomParticipantTurn(
-          current,
+          runtimeLedger.getOrCreate(roomId).projection,
           turnId,
           participantId,
           Date.now(),
         );
-        projectionRef.current = next;
-        return next;
-      });
+        runtimeLedger.replace(roomId, next);
+        if (selectedId === roomId) setProjection(next);
+      }
     } catch (requestError) {
       setError(publicErrorText(requestError, '暂时无法停止这个 Agent，请稍后重试。'));
     } finally {
@@ -431,9 +434,7 @@ export function RoomsFeature() {
         },
       });
       if (receipt.ok !== true || receipt.status === 'cancellation_pending') {
-        const pending = Array.isArray(receipt.pendingTargets)
-          ? receipt.pendingTargets.filter((item): item is string => typeof item === 'string')
-          : [];
+        const pending = cancellationTargetLabels(receipt.pendingTargets);
         setError(
           pending.length > 0
             ? `停止信号已送达，但仍在确认：${pending.join('、')}。可再次停止，界面不会把它误报为已结束。`
@@ -441,11 +442,14 @@ export function RoomsFeature() {
         );
         return;
       }
-      setProjection((current) => {
-        const next = abortRoomTurn(current, turnId, Date.now());
-        projectionRef.current = next;
-        return next;
-      });
+      const runtimeLedger = roomRuntimeLedgerRef.current;
+      const next = abortRoomTurn(
+        runtimeLedger.getOrCreate(room.id).projection,
+        turnId,
+        Date.now(),
+      );
+      runtimeLedger.replace(room.id, next);
+      if (selectedId === room.id) setProjection(next);
     } catch (requestError) {
       setError(publicErrorText(requestError, '暂时无法停止整条 Room 任务，请稍后重试。'));
     } finally {
@@ -689,6 +693,7 @@ export function RoomsFeature() {
         body: { confirmTitle: deleteConfirmTitle },
       });
       const nextRooms = rooms.filter((item) => item.id !== room.id);
+      roomRuntimeLedgerRef.current.remove(room.id);
       setRooms(nextRooms);
       setSelectedId(nextRooms[0]?.id ?? '');
       setDeleteOpen(false);
@@ -1529,6 +1534,29 @@ function roomComposerPlaceholder(room?: RoomSummary): string {
   if (!room) return '先选择或新建 Room';
   if (room.status === 'archived') return '恢复 Room 后继续交流';
   return room.roomKind === 'roleplay' ? '向群聊发送消息，输入 @ 可点名…' : '向 Room 发消息，输入 @ 可点名…';
+}
+function cancellationTargetLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const labels: Record<string, string> = {
+    provider: '模型生成',
+    tool: '工具调用',
+    shell: '命令行进程',
+    retry: '自动重试',
+    compaction: '上下文压缩',
+    branch_summary: '分支整理',
+    timer: '定时唤醒',
+    continuation: '后续任务',
+    session: 'Agent Session',
+  };
+  return [...new Set(value.flatMap((raw) => {
+    if (typeof raw === 'string' && raw.trim()) return [raw.trim()];
+    const item = record(raw);
+    const surface = textValue(item.surface);
+    if (!surface) return [];
+    const targetCount = Array.isArray(item.targetIds) ? item.targetIds.length : 0;
+    const label = labels[surface] ?? '后台任务';
+    return [targetCount > 1 ? `${label}（${targetCount} 项）` : label];
+  }))];
 }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function uniquePaths(values: string[]): string[] { return values.map((value) => value.trim()).filter((value, index, all) => value.startsWith('/') && all.indexOf(value) === index).slice(0, 12); }

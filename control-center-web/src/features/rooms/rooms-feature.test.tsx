@@ -70,6 +70,68 @@ describe('Rooms experience', () => {
     });
   });
 
+  it('shows the user message and routing lane before the server accepts the send', async () => {
+    const pending = deferred<{ ok: true }>();
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '即时反馈 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', []),
+      'agent.room.message': () => pending.promise,
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    await user.type(composer, '发送后不能空白等待');
+    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+
+    expect(screen.getByText('发送后不能空白等待')).toBeInTheDocument();
+    expect(screen.getByText('Room 路由')).toBeInTheDocument();
+    expect(screen.getAllByText('正在发送').length).toBeGreaterThan(0);
+    expect(composer).toHaveValue('');
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true);
+
+    pending.resolve({ ok: true });
+  });
+
+  it('retains an in-flight Room turn while navigating between Rooms', async () => {
+    const pendingSend = deferred<{ ok: true }>();
+    const pendingRefresh = deferred<ReturnType<typeof roomSnapshot>>();
+    let roomASnapshotCalls = 0;
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': {
+        ok: true,
+        items: [roomSummary('room-a', 'Room A'), roomSummary('room-b', 'Room B')],
+      },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': (request: ControlRequest) => {
+        if (request.params?.roomId === 'room-b') return roomSnapshot('room-b', []);
+        roomASnapshotCalls += 1;
+        return roomASnapshotCalls === 1 ? roomSnapshot('room-a', []) : pendingRefresh.promise;
+      },
+      'agent.room.message': () => pendingSend.promise,
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    await user.type(composer, '切换页面也要看得到我');
+    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    expect(screen.getByText('切换页面也要看得到我')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '打开 Room：Room B' }));
+    await screen.findByText('还没有公开 Post');
+    await user.click(screen.getByRole('button', { name: '打开 Room：Room A' }));
+
+    expect(await screen.findByText('切换页面也要看得到我')).toBeInTheDocument();
+    expect(screen.getByText('Room 路由')).toBeInTheDocument();
+    pendingRefresh.resolve(roomSnapshot('room-a', []));
+    await waitFor(() => expect(roomASnapshotCalls).toBe(2));
+    expect(screen.getByText('切换页面也要看得到我')).toBeInTheDocument();
+
+    pendingSend.resolve({ ok: true });
+  });
+
   it('removes an optimistic message and restores the draft when the real API rejects it', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '失败恢复 Room')] },
@@ -954,7 +1016,10 @@ describe('Rooms experience', () => {
         status: 'cancellation_pending',
         cancellationReceiptId: 'room-cancel:pending',
         surfaces: {},
-        pendingTargets: ['provider', 'shell'],
+        pendingTargets: [
+          { surface: 'provider', state: 'requested', targetIds: ['provider:1'] },
+          { surface: 'shell', state: 'unknown', targetIds: ['shell:1', 'shell:2'] },
+        ],
       },
     } });
     const user = userEvent.setup();
@@ -963,7 +1028,7 @@ describe('Rooms experience', () => {
     await user.click(await screen.findByRole('button', { name: '停止全部' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '仍在确认：provider、shell',
+      '仍在确认：模型生成、命令行进程（2 项）',
     );
     expect(screen.getByRole('button', { name: '停止全部' })).toBeEnabled();
   });
