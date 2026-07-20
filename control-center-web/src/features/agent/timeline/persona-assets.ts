@@ -1,7 +1,3 @@
-import lunaPortrait from '@/assets/personas/luna-v2.webp';
-import solPortrait from '@/assets/personas/sol-v2.webp';
-import terraPortrait from '@/assets/personas/terra-v2.webp';
-
 export type PersonaPresence = 'idle' | 'listening' | 'thinking' | 'done' | 'warning';
 
 type PersonaAssetStates = Readonly<Record<PersonaPresence, string>>;
@@ -22,15 +18,22 @@ const legacyCompanionStates: PersonaAssetStates = {
   warning: '/companions/RagImeCompanionWarning.png',
 };
 
+const portraitAssets = {
+  flash: '/companions/personas/wisdom-weasel-flash-v1.webp',
+  luna: '/companions/personas/wisdom-weasel-luna-v1.webp',
+  sol: '/companions/personas/wisdom-weasel-sol-v1.webp',
+  terra: '/companions/personas/wisdom-weasel-terra-v1.webp',
+} as const;
+
 export const personaAssetManifest = {
-  schemaVersion: 'rag-ime.persona-assets.v3',
+  schemaVersion: 'rag-ime.persona-assets.v4',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
     'rag-ime-companion-v1': assetRecord('zhiyou-v1', 'legacy-state', '经典形象', legacyCompanionStates),
-    'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '初识阶段', singlePortrait(lunaPortrait)),
-    'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '此刻阶段', singlePortrait(terraPortrait)),
-    'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '构筑阶段', singlePortrait(solPortrait)),
-    'rag-ime-timeline-flash-v1': assetRecord('flash-v1', 'flash', '闪念阶段', singlePortrait(lunaPortrait)),
+    'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '初识阶段', singlePortrait(portraitAssets.luna)),
+    'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '此刻阶段', singlePortrait(portraitAssets.terra)),
+    'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '构筑阶段', singlePortrait(portraitAssets.sol)),
+    'rag-ime-timeline-flash-v1': assetRecord('flash-v1', 'flash', '闪念阶段', singlePortrait(portraitAssets.flash)),
   },
 } as const;
 
